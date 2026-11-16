@@ -53,7 +53,7 @@ Then:
 
    > A coordinator runs on this machine: I am `<your exact name and reference>`, the operator's
    > single question interface. A question meant for him reaches me from the end of your turn
-   > (`/orchestrator-decide`), never by a message. Asking me the facts — whose pull request is
+   > (`/orchestrator:decide`), never by a message. Asking me the facts — whose pull request is
    > this, is anyone on this branch, file or subject — is optional and never a gate.
    > The facts attribute to you: <each pull request with its branch, or « none »>. Reply only
    > to correct that.

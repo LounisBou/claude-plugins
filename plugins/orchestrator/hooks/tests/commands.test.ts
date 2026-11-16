@@ -266,21 +266,19 @@ test('the module hooks every form of the four commands and registers on nothing 
   // spellings live here. Measured live, the host hands the plugin's command (no `name:`) as
   // `orchestrator:<file>` and the installer's user command as its bare short name; the 0.80.0
   // `orchestrator:<short>` stays. A registered copy is refused (a built-in's name, a colon
-  // outside the charset), so no session event registers anything here.
+  // outside the charset), so no session event registers anything here. A command the model is
+  // offered has no short name, so no bare form: only sleeping keeps one.
   const { registrations } = mounted()
   expect(registrations.map(r => [r.event, r.matcher])).toEqual([
     ['command.run', { command: 'orchestrator:orchestrator-status' }],
     ['command.run', { command: 'orchestrator:status' }],
-    ['command.run', { command: 'orchestrator-status' }],
     ['command.run', { command: 'orchestrator:orchestrator-progress' }],
     ['command.run', { command: 'orchestrator:progress' }],
-    ['command.run', { command: 'orchestrator-progress' }],
     ['command.run', { command: 'orchestrator:orchestrator-sleeping' }],
     ['command.run', { command: 'orchestrator:sleeping' }],
     ['command.run', { command: 'orchestrator-sleeping' }],
     ['command.run', { command: 'orchestrator:orchestrator-agents' }],
     ['command.run', { command: 'orchestrator:agents' }],
-    ['command.run', { command: 'orchestrator-agents' }],
   ])
 })
 
@@ -292,10 +290,7 @@ test('a bare short name is answered when its user command is the plugin\'s copy,
   const { registrations } = mounted()
   const passed = async (x: unknown) => ({ passed: x })
   for (const [command, empty] of [
-    ['orchestrator-status', 'Live sessions: none measured yet.'],
-    ['orchestrator-agents', 'Implementer agents: none running.'],
     ['orchestrator-sleeping', 'Sleeping orchestrators: none.'],
-    ['orchestrator-progress', 'no dispatch record registered'],
   ] as const) {
     const hook = registrations.find(r => r.matcher?.['command'] === command)!
     const e = { command, args: '' }
@@ -315,28 +310,28 @@ test('a bare short name is answered when its user command is the plugin\'s copy,
 
 test('the copy is read where the installer wrote it: the override, else the config dir', async () => {
   const { registrations } = mounted()
-  const status = registrations.find(r => r.matcher?.['command'] === 'orchestrator-status')!
-  const e = { command: 'orchestrator-status', args: '' }
+  const sleeping = registrations.find(r => r.matcher?.['command'] === 'orchestrator-sleeping')!
+  const e = { command: 'orchestrator-sleeping', args: '' }
   const passed = async (x: unknown) => ({ passed: x })
   const over = fakeDollar()
   over.env['ORCHESTRATOR_COMMANDS_DIR'] = '/w/project/.claude/commands'
-  over.files.set('/w/project/.claude/commands/orchestrator-status.md', MARKED)
-  over.files.set(`${HOME}/.claude/commands/orchestrator-status.md`, UNMARKED)
-  expect(await status.handler(over.dollar, e, passed)).toEqual({ text: 'Live sessions: none measured yet.' })
+  over.files.set('/w/project/.claude/commands/orchestrator-sleeping.md', MARKED)
+  over.files.set(`${HOME}/.claude/commands/orchestrator-sleeping.md`, UNMARKED)
+  expect(await sleeping.handler(over.dollar, e, passed)).toEqual({ text: 'Sleeping orchestrators: none.' })
   const config = fakeDollar()
   config.env['CLAUDE_CONFIG_DIR'] = '/cfg'
-  config.files.set('/cfg/commands/orchestrator-status.md', MARKED)
-  expect(await status.handler(config.dollar, e, passed)).toEqual({ text: 'Live sessions: none measured yet.' })
+  config.files.set('/cfg/commands/orchestrator-sleeping.md', MARKED)
+  expect(await sleeping.handler(config.dollar, e, passed)).toEqual({ text: 'Sleeping orchestrators: none.' })
 })
 
 test('an empty config dir is an unset one: the copy is read under the home directory\'s', async () => {
   const { registrations } = mounted()
-  const status = registrations.find(r => r.matcher?.['command'] === 'orchestrator-status')!
-  const e = { command: 'orchestrator-status', args: '' }
+  const sleeping = registrations.find(r => r.matcher?.['command'] === 'orchestrator-sleeping')!
+  const e = { command: 'orchestrator-sleeping', args: '' }
   const empty = fakeDollar()
   empty.env['CLAUDE_CONFIG_DIR'] = ''
-  empty.files.set(`${HOME}/.claude/commands/orchestrator-status.md`, MARKED)
-  expect(await status.handler(empty.dollar, e, async (x: unknown) => ({ passed: x }))).toEqual({ text: 'Live sessions: none measured yet.' })
+  empty.files.set(`${HOME}/.claude/commands/orchestrator-sleeping.md`, MARKED)
+  expect(await sleeping.handler(empty.dollar, e, async (x: unknown) => ({ passed: x }))).toEqual({ text: 'Sleeping orchestrators: none.' })
 })
 
 test('sleeping lists each sleeping orchestrator, or says none, or says the record is unreadable', () => {
@@ -531,7 +526,7 @@ test('progress answers the records this session registered, under the side-read 
 test('the registry is read under the state override, and under the config dir without it', async () => {
   // The registry's writer — the launcher's dispatch tool — resolves ORCHESTRATOR_STATE_DIR
   // before the config dir, the resolution the shell pipeline always had; the module's
-  // reader resolves the same root or the override silences /orchestrator-progress forever
+  // reader resolves the same root or the override silences /orchestrator:progress forever
   // (the reviewed boundary this wiring closes). The module's own artifacts — the store,
   // the log — stay config-dir-bound: no surviving script shares them.
   const { registrations } = mounted()

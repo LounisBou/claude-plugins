@@ -28,7 +28,7 @@ export const TWO_QUESTIONS = [
 // The blocks text of a row the operator reported on 2026-10-25, its references glued by a slash.
 export const GLUED_BLOCKS = 'merge of infra#195/infra#196 (staging lot content), E2E waiver for geo-git-flow#21/geo-git-flow#22'
 
-// The shape `/orchestrator-decide` step 2 writes, in the operator's language: a bold line
+// The shape `/orchestrator:decide` step 2 writes, in the operator's language: a bold line
 // holding the sender's own numbering, labelled fields, the choices, the recommendation. The
 // fixture is French on purpose: it checks that labels are read by their shape, accents and
 // all, never by an English word list. Kept here with its expected strings, under the fixture

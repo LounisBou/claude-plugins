@@ -50,12 +50,12 @@ subcommand prints is below, and its header is read only for a line this does not
 - `sleep`, `sleeping`, `wake-done`, `drop` — the sleeping orchestrators' record, below.
 
 **Every answer you give rests on a reading made in that turn**, never on your memory of the
-last one. `/orchestrator-status` reads every live session, its role and its fill. Your only
+last one. `/orchestrator:status` reads every live session, its role and its fill. Your only
 file is `<state dir>/coordinator/notes.md` (the script's state directory): the pull requests
 each orchestrator holds — what `owners` attributed at your start, overridden by its
 correction — the flags you sent, and the sessions you have announced to; only what no
 command answers, under 4,000 characters, a line that no longer holds removed. After a
-compaction, read `/orchestrator-status`, then the notes.
+compaction, read `/orchestrator:status`, then the notes.
 
 **Between turns nothing runs on a clock of yours.** Asked to keep watch, run
 `coordinator.sh check --every 600` in the background, never a scheduled prompt: it ends on its
@@ -100,7 +100,7 @@ After his yes to an audit an orchestrator proposed, you launch it, `--of` the pr
 
 While you run, every orchestrator sends you each question meant for him — its own arbitrations, and its
 agents' questions it relays — instead of asking him in its own tab. **Every relayed question
-goes through a decision round, by default**: the whole method of `/orchestrator-decide`, run
+goes through a decision round, by default**: the whole method of `/orchestrator:decide`, run
 without his asking and without his typing that command, even for a single question, so that
 he has every question, grouped by the orchestrator that asks. Every message of the round
 names you and the sender.
@@ -130,7 +130,7 @@ one `settle`; neither is presented again. When he tells you to
 focus on one subject and present nothing else, present none of the other due questions until
 he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in
 one line, sender and what it blocks, without leaving the subject. When he asks to take them
-all, `/coordinator-decide` runs one round over every orchestrator's questions. The orchestrator
+all, `/orchestrator:coordinator-decide` runs one round over every orchestrator's questions. The orchestrator
 that asked does not repeat it either: it stays open in the round until he answers it.
 
 **A question settled elsewhere leaves your tab at once.** `round` records each entry whose
@@ -220,7 +220,7 @@ peer's request, or to make room. Read `references/orchestrators.md` then, and fo
 
 ## Your context
 
-The module measures it every turn; read the live state with `/orchestrator-status`, your
+The module measures it every turn; read the live state with `/orchestrator:status`, your
 own session's row included. At the gate —
 the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000 —
 with no question awaiting his answer, succeed yourself without asking and tell the operator

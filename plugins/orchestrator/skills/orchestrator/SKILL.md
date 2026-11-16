@@ -61,7 +61,7 @@ words.
    blockers, deliveries and gate crossings: act on each; one that needs no action gets no reply. An agent's question or stop is
    yours to answer; only the operator's own goes to him. An agent reporting « waiting »
    has stalled: read its tree. Real load on a shared machine is stopped at once. Once a pull request merges, tell each agent whose brief waits on it, in the same turn: the merge's answer names the open rows whose blocker or note names it.
-7. **The fill is measured, never estimated.** Read `/orchestrator-status` before you
+7. **The fill is measured, never estimated.** Read `/orchestrator:status` before you
    dispatch. An agent past the gate gets no new phase: rotate it.
 8. **Kill what you start, delete what you build**; what the launcher did not close is proved with `ps` and `ls`. No date or hour is typed from memory: paste
    `date -u +%FT%TZ` or the event's timestamp.
@@ -87,7 +87,7 @@ Each file is one moment's: read the file or files the moment names, and no other
 | Dispatching a row, choosing a tier (`build`) | `references/brief.md` |
 | Spawning, dispatching, verifying, standing down, closing an agent | `references/agents.md` |
 | Rotating an agent past its gate | `references/rotation.md` |
-| Handing over | `/orchestrator-succeed`, then `references/succession-predecessor.md` |
+| Handing over | `/orchestrator:succeed`, then `references/succession-predecessor.md` |
 | Taking over | the text `succession.sh takeover` prints, nothing else |
 | Pausing, opening | `references/pause-opening-move.md` |
 | Launching a review round (`build`) | `references/review-thresholds.md`, `references/review-round.md` |

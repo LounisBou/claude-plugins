@@ -121,7 +121,7 @@ function lineOfRow(row: PaneRow, todos: ReadonlyMap<string, number> = new Map())
   }
 }
 
-// What /orchestrator-status says: the pane's own rows as a table, the urgent
+// What /orchestrator:status says: the pane's own rows as a table, the urgent
 // first — the sessions past the rotation gate lead, each side by fill — under a
 // header line naming the columns, the same rows the supervision pane draws
 // beside this store.
@@ -131,7 +131,7 @@ export function statusText(rows: Record<string, SessionRow>, todos: ReadonlyMap<
   return [`Live sessions (${lines.length}), most urgent first:`, ...sessionTable(lines)].join('\n')
 }
 
-// What /orchestrator-agents says: the same rows cut to the implementer agents
+// What /orchestrator:agents says: the same rows cut to the implementer agents
 // alone — the role the dispatching domains spawn — shaped and sorted the same
 // way, so a coordinator's or an auditor's own fill never crowds the agents out.
 //
@@ -209,7 +209,7 @@ export function parseDispatchRow(line: string): DispatchRow | null {
   }
 }
 
-// What /orchestrator-progress says, one record file per group: the rows still
+// What /orchestrator:progress says, one record file per group: the rows still
 // open first — in flight, decisions pending; a successor reads them as work, never as
 // history — and a row the operator deferred as `deferred=<id> … ruling=<his words>`, as
 // `dispatch-record.sh summary --open` prints it, never as work to dispatch — then the tally the record's own summary shapes
@@ -333,22 +333,26 @@ async function goalsLine($: Held, goalsFile: string, bound: number): Promise<str
   return line.startsWith('goals ') ? line : null
 }
 
+// The forms of a command without a short name: the plugin's, never a bare name.
+const pluginForms = (file: string, short: string): string[] => commandForms(file, short).filter(form => !isBare(form))
+
 export function register(on: On<Held>): void {
   // Each matcher names one form the host hands the hook (short-names.ts, measured live): the
   // plugin's command as `orchestrator:<file>`, the 0.80.0 `orchestrator:<short>`, and the bare
   // `<short>` of the user command the installer writes, answered only when that copy is this
-  // plugin's — the operator's own command of the same name runs as he wrote it. The envelope's
-  // own command field is the key a matcher narrows on, so each hook answers its command's run
-  // alone, never another plugin's and never the host's own commands. The engine validates
+  // plugin's — the operator's own command of the same name runs as he wrote it. A command the
+  // model is offered has no short name (short-names.tsv), so no bare form. The envelope's own
+  // command field is the key a matcher narrows on, so each hook answers its command's run alone,
+  // never another plugin's and never the host's own commands. The engine validates
   // neither key nor field; the wiring tests pin the exact objects.
-  for (const command of commandForms('status', 'orchestrator-status')) {
+  for (const command of pluginForms('status', 'orchestrator-status')) {
     on('command.run', { command }, async ($, e, next) => {
       if (!(await ownRun($, e))) return next(e)
       return { text: statusText(withRemote(await readRows($), await readRemote($), Date.now(), REMOTE_STALE_AFTER_MS), await todoCounts($)) }
     }).catch(fallBack)
   }
 
-  for (const command of commandForms('progress', 'orchestrator-progress')) {
+  for (const command of pluginForms('progress', 'orchestrator-progress')) {
     on('command.run', { command }, async ($, e, next) => {
       if (!(await ownRun($, e))) return next(e)
       return { text: await progressText($) }
@@ -364,7 +368,7 @@ export function register(on: On<Held>): void {
     }).catch(fallBack)
   }
 
-  for (const command of commandForms('agents', 'orchestrator-agents')) {
+  for (const command of pluginForms('agents', 'orchestrator-agents')) {
     on('command.run', { command }, async ($, e, next) => {
       if (!(await ownRun($, e))) return next(e)
       const rows = await readRows($)

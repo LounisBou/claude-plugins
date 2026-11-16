@@ -31,7 +31,7 @@ function baseName(word: string): string {
 // (`-<pgid>`), or one that takes a variable a lister filled, through a loop (`pgrep x | while
 // read p; do kill $p; done`, `for p in $(pgrep x); do kill $p; done`). `fuser -k` and
 // `kill-port`, bare or behind a package runner, kill by port or file. `kill 1234`, `kill $pid`, `kill %1`, `kill $(cat file)` (the pid kept in a
-// file) and `kill -0 …` (a probe, it kills nothing) are not kills by pattern, and neither
+// file), `pkill -P "$(cat file)"` (the children of a recorded pid) and `kill -0 …` (a probe, it kills nothing) are not kills by pattern, and neither
 // is a `command -v` lookup, which runs nothing. Words in quotes, heredocs and arguments of
 // other programs are data, but for the string a shell runs after `-c` and the words eval
 // runs, and the text the line writes to the standard input of a shell (`echo 'pkill x' | sh`,
@@ -73,6 +73,7 @@ function killOf(command: ShellCommand, depth: number, seen: (reason: string) => 
   const { argv, wrappers, lookup, substitutions, piped } = command
   if (lookup) return
   const program = baseName(argv[0] ?? '')
+  if (program === 'pkill' && childrenOfRecorded(argv.slice(1), substitutions)) return
   if (program === 'pkill' || program === 'killall') { seen(program); return }
   if (program === 'fuser' && argv.some(isFuserKill)) { seen('fuser -k'); return }
   if (runsKillPort(argv)) { seen('kill-port'); return }
@@ -156,6 +157,25 @@ function isRecordedPid(held: readonly ShellCommand[]): boolean {
   const [program, file] = only.argv
   return only.substitutions.length === 0 && only.wrappers.length === 0 && only.argv.length === 2 && program === 'cat' && file !== undefined && !/^-|[*?[]/.test(file)
 }
+
+/*
+ * Whether pkill's words reach only the children of a pid the session recorded: at most one signal
+ * (`-9`, `-TERM`), then `-P` and the pid read back from its file in quotes (`"$(cat <file>)"`: the
+ * one substitution, a recorded pid, which the reader leaves in place as empty words; unquoted it
+ * leaves none, and where it stood is unknown). No pattern, no other option. A pid typed in digits is
+ * no proof the session started it, and `-P 1` reaches every detached process.
+ */
+function childrenOfRecorded(args: readonly string[], substitutions: readonly (readonly ShellCommand[])[]): boolean {
+  const words = SIGNAL.test(args[0] ?? '') ? args.slice(1) : args
+  if (words[0] !== '-P') return false
+  const target = words.slice(1)
+  const [only] = substitutions
+  return substitutions.length === 1 && only !== undefined && isRecordedPid(only) && target.length > 0 && target.every(word => word === '')
+}
+
+// A signal option: a number, or a name of three letters or more (`-TERM`, `-SIGKILL`, `-USR1`), never
+// a one-letter option such as `-U` that takes the next word as its value.
+const SIGNAL = /^-(?:[0-9]{1,2}|[A-Z]{3,}[0-9]?)$/
 
 // Whether the words after `kill` aim at more than one process: `0` (the caller's group),
 // `-1` (every process of the user) or `-<digits>`, `-$$`, `-$name` (a group). The options

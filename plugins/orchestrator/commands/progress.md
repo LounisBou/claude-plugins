@@ -30,7 +30,7 @@ whatever this command printed.
    stands down the work in flight on it.
 3. Read the dispatch record's summary:
    `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh summary <record>`
-   — the record `/orchestrator-succeed` and the takeover name. Keep every `signal=` line: they are
+   — the record `/orchestrator:succeed` and the takeover name. Keep every `signal=` line: they are
    the routing corrections this build has earned, and a signal nobody reads is a
    measurement nobody took.
 4. Measure your own context: read

@@ -441,7 +441,7 @@ test('/orchestrator-supervision opens the pane in a coordinator or an orchestrat
     const fx = fakeDollar({ launchName })
     const answer = await handlers['command.run'](fx.dollar, run)
     expect(answer.text).toContain('coordinator session (« Coord: … »), listing the orchestrators, or in an orchestrator session')
-    expect(answer.text).toContain('/orchestrator-status lists the sessions here')
+    expect(answer.text).toContain('/orchestrator:status lists the sessions here')
     expect(fx.opened).toEqual([])
   }
 })

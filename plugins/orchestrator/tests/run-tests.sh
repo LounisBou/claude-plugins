@@ -1980,7 +1980,7 @@ ok_brief "$B/slashpath.md"; printf 'Run `/orchestrator:status`, read `/nowhere/a
 check "a path with a colon is still a path" "1" "$(bash "$LINT" "$B/slashpath.md" 2>&1 | grep -c 'path does not exist: /nowhere/at/all:x/spec.md')"
 # The plugin's own commands are reached by their short names too, `/orchestrator-<name>` and
 # `/coordinator[-<name>]`: no path either. A path under such a word is still a path.
-ok_brief "$B/short.md"; printf 'Run `/orchestrator-status`, then `/coordinator`, `/coordinator-end` and `/orchestrator-sleeping drop Orch: x`.\n' >> "$B/short.md"
+ok_brief "$B/short.md"; printf 'Run `/orchestrator-audit`, then `/coordinator`, `/coordinator-end` and `/orchestrator-sleeping drop Orch: x`.\n' >> "$B/short.md"
 check_status "the plugin's short command names are not paths" 0 bash "$LINT" "$B/short.md"
 check "they raise no path finding" "0" "$(bash "$LINT" "$B/short.md" 2>&1 | grep -c 'path does not exist')"
 ok_brief "$B/shortpath.md"; printf 'Read `/orchestrator-x/y`.\n' >> "$B/shortpath.md"
@@ -2827,7 +2827,7 @@ ps_line "$d1succ" "$PROMPT_COLON" /dev/ttys901 > "$WORK/ps-succ.txt"
 check "and a successor's, with the remote-control flag behind it" "Orch: f" \
   "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
 # A successor reads the state through `succession.sh takeover` (decision 0007): no brief is
-# written, so the launcher reads none; the prompt `/orchestrator-succeed` writes carries the load
+# written, so the launcher reads none; the prompt `/orchestrator:succeed` writes carries the load
 # of the rulebook with its mode and the takeover command, and is passed as given.
 SUCCB="$WORK/succession-brief.md"; printf '# Orchestrator succession brief — scratch\n\nMode: build\n' > "$SUCCB"
 TAKEOVER_PROMPT='Load the skill orchestrator:orchestrator with the argument "build", then run /p/succession.sh takeover /r.jsonl --mode build --tty /dev/ttys900 and execute what it prints.'
@@ -3399,16 +3399,24 @@ check "a command planted under a skill's name falls the check, and names it" "co
 # The short names (the operator's rulings of 2026-10-24 and 2026-10-25): the plugin's commands
 # carry no `name:`, so the typeahead reads `/orchestrator:<file>` as it did, and the short names,
 # the coordinator's `coordinator-…`, the others `orchestrator-…`, come from `short-names.tsv`,
-# which the installer writes as user commands. A command file the table does not know is one
-# whose short name nobody chose. The pane has one command, for both roles (rule 229 of the rules
+# which the installer writes as user commands. Only a command the model is not offered
+# (`disable-model-invocation: true`) has one: the model's list already holds every other as
+# `orchestrator:<file>`, and a copy would list it twice. A command file of that kind the table does
+# not know is one whose short name nobody chose; one of the other kind the table names is doubled.
+# The pane has one command, for both roles (rule 229 of the rules
 # review, the operator's ruling of 2026-11-04: « B, Ne garder que /orchestrator:supervision »).
-COMMAND_NAMES='agents:orchestrator-agents audit:orchestrator-audit coordinator:coordinator coordinator-decide:coordinator-decide coordinator-end:coordinator-end decide:orchestrator-decide install:orchestrator-install progress:orchestrator-progress sleeping:orchestrator-sleeping status:orchestrator-status succeed:orchestrator-succeed supervision:orchestrator-supervision uninstall:orchestrator-uninstall'
-short_names_wrong() {  # <commands dir> <table>: one line per command named, unnamed or unknown
-  local pair f stem
+COMMAND_NAMES='audit:orchestrator-audit coordinator:coordinator coordinator-end:coordinator-end install:orchestrator-install sleeping:orchestrator-sleeping supervision:orchestrator-supervision uninstall:orchestrator-uninstall'
+short_names_wrong() {  # <commands dir> <table>: one line per command named, unnamed, unknown or doubled
+  local pair f stem listed
   for f in "$1"/*.md; do
     stem=$(basename "$f" .md)
     awk 'NR == 1 { next } /^---$/ { exit } { print }' "$f" | grep -q '^name: ' && echo "named:$stem"
-    awk -F '\t' -v s="$stem" '$2 == s { found = 1 } END { exit !found }' "$2" || echo "unknown:$stem"
+    listed=yes; awk -F '\t' -v s="$stem" '$2 == s { found = 1 } END { exit !found }' "$2" || listed=no
+    if awk 'NR == 1 { next } /^---$/ { exit } { print }' "$f" | grep -qx 'disable-model-invocation: true'; then
+      [ "$listed" = yes ] || echo "unknown:$stem"
+    else
+      [ "$listed" = no ] || echo "doubled:$stem"
+    fi
   done
   for pair in $COMMAND_NAMES; do
     awk -F '\t' -v s="${pair#*:}" -v f="${pair%%:*}" '$1 == s && $2 == f { found = 1 } END { exit !found }' "$2" \
@@ -3419,8 +3427,8 @@ check "no command carries a name, and the table gives each its short name" "" \
   "$(short_names_wrong "$ROOT/commands" "$ROOT/short-names.tsv")"
 SNCMDS="$WORK/short-name-commands"; mkdir -p "$SNCMDS"; cp "$ROOT"/commands/*.md "$SNCMDS"/
 awk 'NR == 2 { print "name: orchestrator-status" } { print }' "$ROOT/commands/status.md" > "$SNCMDS/status.md"
-cp "$ROOT/commands/status.md" "$SNCMDS/stray.md"; grep -v '^orchestrator-agents' "$ROOT/short-names.tsv" > "$WORK/short-names.tsv"
-check "a command with a name, one the table does not know and one it lost fail the check" "unknown:agents|named:status|unknown:stray|missing:agents" \
+cp "$ROOT/commands/sleeping.md" "$SNCMDS/stray.md"; { grep -v '^orchestrator-audit' "$ROOT/short-names.tsv"; printf 'orchestrator-status\tstatus\n'; } > "$WORK/short-names.tsv"
+check "a command with a name, one the table does not know, one it lost and one it doubles fail the check" "unknown:audit|named:status|doubled:status|unknown:stray|missing:audit" \
   "$(short_names_wrong "$SNCMDS" "$WORK/short-names.tsv" | paste -sd'|' -)"
 check "the pane has one command, the coordinator's copy gone from the commands and the table" "no|0" \
   "$([ -e "$ROOT/commands/coordinator-supervision.md" ] && echo yes || echo no)|$(grep -c 'coordinator-supervision' "$ROOT/short-names.tsv")"
@@ -3461,7 +3469,7 @@ check "the decision round no longer looks the coordinator up or sends it the que
 CDECIDE="$ROOT/commands/coordinator-decide.md"
 check "coordinator-decide reads round --by-urgency, follows decide.md's shape, relays each ruling verbatim, and is listed" \
   "yes|yes|yes|yes|1|yes" \
-  "$(spells "$CDECIDE" '--by-urgency`: its open `operator` entries are the round')|$(spells "$CDECIDE" "The round's shape is \`/orchestrator-decide\`'s, read from \`commands/decide.md\`")|$(spells "$CDECIDE" 'verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender')|$(spells "$CDECIDE" 'orchestrator, the groups ordered by their oldest wait')|$(sed -n '1,5p' "$CDECIDE" | grep -c '^allowed-tools: .*coordinator\.sh.*SendMessage')|$(spells "$ROOT/README.md" '| `/coordinator-decide` |')"
+  "$(spells "$CDECIDE" '--by-urgency`: its open `operator` entries are the round')|$(spells "$CDECIDE" "The round's shape is \`/orchestrator:decide\`'s, read from \`commands/decide.md\`")|$(spells "$CDECIDE" 'verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender')|$(spells "$CDECIDE" 'orchestrator, the groups ordered by their oldest wait')|$(sed -n '1,5p' "$CDECIDE" | grep -c '^allowed-tools: .*coordinator\.sh.*SendMessage')|$(spells "$ROOT/README.md" '| `/orchestrator:coordinator-decide` |')"
 COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$ROOT/skills/coordination/references/succession.md" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
   -e 's#<subject>#ops#' -e "s#<your working directory>#$WORK#" -e 's#${CLAUDE_PLUGIN_ROOT}#/plugin#g')
 coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
@@ -3521,7 +3529,7 @@ AUDBRIEF="$ROOT/templates/agent-audit-brief.md"
 # audit brief for a pointer to the succession template's « Standing context », which carries
 # them once: the copy, the spawn line in full, the operator told, the handshake.
 AUDSUCCTPL="$ROOT/templates/auditor-succession-brief.md"
-# The predecessor tells the operator BEFORE it hands over, as /orchestrator-succeed orders it:
+# The predecessor tells the operator BEFORE it hands over, as /orchestrator:succeed orders it:
 # « handed over » is its last message, nothing follows it.
 AUDBRIEFSPAWN=$(grep -m1 -o '{{ITERM_AGENT_SH}} spawn .*' "$AUDSUCCTPL" 2>/dev/null | sed -e 's/^{{ITERM_AGENT_SH}} spawn //' -e 's/`.*$//' \
   -e 's#{{REPOSITORY}}#'"$WORK"'#' -e 's#<succession brief path>#/tmp/audit-succession-brief.md#')
@@ -9394,7 +9402,7 @@ done
 
 # The short names as user commands (the operator's ruling of 2026-10-25): the plugin's commands
 # read `/orchestrator:<file>` in the typeahead, and the installer writes `/coordinator`,
-# `/orchestrator-status` and the rest in the host's user commands directory. Each is a copy of
+# `/orchestrator-sleeping` and the rest in the host's user commands directory. Each is a copy of
 # its plugin command with the plugin root spelled out (the host expands no plugin variable in a
 # user command, measured live) and a marker line, so an update rewrites its own files alone and
 # an operator's file of the same name is never touched.
@@ -9402,7 +9410,7 @@ SNMARK='installed-by: claude-orchestrator'
 SNH="$WORK/home-short"; mkdir -p "$SNH/.claude"; stub_venv "$SNH"
 SND="$SNH/.claude/commands"
 snout=$(inst "$SNH" 2>&1)
-check "the installer writes one command per short name, each marked as the plugin's" "13|13|13" \
+check "the installer writes one command per short name, each marked as the plugin's" "7|7|7" \
   "$(ls "$SND" 2>/dev/null | wc -l | tr -d ' ')|$(grep -lx "$SNMARK" "$SND"/*.md 2>/dev/null | wc -l | tr -d ' ')|$(printf '%s\n' "$snout" | grep -c 'short command written: ')"
 check "each copy is its plugin command, the plugin root spelled out and the marker after the opening line" "" \
   "$(diff <(sed "s#\${CLAUDE_PLUGIN_ROOT}#$ROOT#g" "$ROOT/commands/sleeping.md" | awk -v m="$SNMARK" 'NR == 2 { print m } { print }') "$SND/orchestrator-sleeping.md" 2>&1)"
@@ -9416,7 +9424,7 @@ check "the pane's short name carries the file's own body, and no coordinator cop
 # An update: a copy written by an earlier version names that version's root; it is rewritten.
 sed -i.bak "s#$ROOT#/old/plugin/root#g" "$SND/coordinator.md"; rm -f "$SND"/*.bak
 snout=$(inst "$SNH" 2>&1)
-check "an update rewrites a copy an earlier version wrote, and leaves the current ones" "0|1|12" \
+check "an update rewrites a copy an earlier version wrote, and leaves the current ones" "0|1|6" \
   "$(grep -c '/old/plugin/root' "$SND/coordinator.md")|$(printf '%s\n' "$snout" | grep -c 'short command rewritten: .*coordinator.md')|$(printf '%s\n' "$snout" | grep -c 'short command up to date: ')"
 # The operator's own file of the same name: kept as written, said, and skipped.
 printf -- '---\ndescription: my own coordinator\n---\nmine\n' > "$SND/coordinator.md"
@@ -9424,15 +9432,15 @@ snout=$(inst "$SNH" 2>&1)
 check "an operator's file of the same name is never overwritten, and the installer says so" "mine|1" \
   "$(tail -1 "$SND/coordinator.md")|$(printf '%s\n' "$snout" | grep -c "kept: $SND/coordinator.md is not this plugin's")"
 snout=$(uninst "$SNH" 2>&1)
-check "uninstall removes the plugin's copies alone, the operator's file kept" "coordinator.md|12" \
+check "uninstall removes the plugin's copies alone, the operator's file kept" "coordinator.md|6" \
   "$(ls "$SND")|$(printf '%s\n' "$snout" | grep -c 'short command removed: ')"
 SNDRY="$WORK/home-short-dry"; mkdir -p "$SNDRY/.claude"
 snout=$(inst "$SNDRY" --dry-run 2>&1)
-check "a dry run lists each short command and writes none" "none|13" \
+check "a dry run lists each short command and writes none" "none|7" \
   "$([ -d "$SNDRY/.claude/commands" ] && echo written || echo none)|$(printf '%s\n' "$snout" | grep -c '\[dry-run\] short command written: ')"
 stub_venv "$SNDRY"; inst "$SNDRY" >/dev/null 2>&1
 snout=$(uninst "$SNDRY" --dry-run 2>&1)
-check "an uninstall dry run lists the copies and removes none" "13|13" \
+check "an uninstall dry run lists the copies and removes none" "7|7" \
   "$(ls "$SNDRY/.claude/commands" | wc -l | tr -d ' ')|$(printf '%s\n' "$snout" | grep -c '\[dry-run\] short command removed: ')"
 # The module's own pass at each session start, `short-commands.sh sync`: a copy whose root
 # differs is rewritten, a current one untouched, a foreign one untouched, a missing one left
@@ -9440,14 +9448,14 @@ check "an uninstall dry run lists the copies and removes none" "13|13" \
 SNS="$WORK/short-sync"; mkdir -p "$SNS"
 ORCHESTRATOR_COMMANDS_DIR="$SNS" bash "$ROOT/short-commands.sh" install >/dev/null 2>&1
 sed -i.bak "s#$ROOT#/old/plugin/root#g" "$SNS/orchestrator-audit.md"; rm -f "$SNS"/*.bak
-printf -- '---\ndescription: my own status\n---\nmine\n' > "$SNS/orchestrator-status.md"
-rm -f "$SNS/orchestrator-decide.md"
+printf -- '---\ndescription: my own uninstall\n---\nmine\n' > "$SNS/orchestrator-uninstall.md"
+rm -f "$SNS/orchestrator-install.md"
 touch -t 202001010000 "$SNS/coordinator.md"
 snout=$(bash "$ROOT/short-commands.sh" sync --dir "$SNS" 2>&1)
 check "sync rewrites a copy whose root differs and says it" "0|  short command rewritten: $SNS/orchestrator-audit.md" \
   "$(grep -c '/old/plugin/root' "$SNS/orchestrator-audit.md")|$snout"
 check "sync leaves a current copy, a foreign file and a removed one as they are" "202001010000|mine|absent" \
-  "$(date -r "$SNS/coordinator.md" +%Y%m%d%H%M)|$(tail -1 "$SNS/orchestrator-status.md")|$([ -f "$SNS/orchestrator-decide.md" ] && echo present || echo absent)"
+  "$(date -r "$SNS/coordinator.md" +%Y%m%d%H%M)|$(tail -1 "$SNS/orchestrator-uninstall.md")|$([ -f "$SNS/orchestrator-install.md" ] && echo present || echo absent)"
 check "sync on a directory that does not exist writes nothing and succeeds" "0|none" \
   "$(bash "$ROOT/short-commands.sh" sync --dir "$WORK/no-such-dir" >/dev/null 2>&1; echo $?)|$([ -d "$WORK/no-such-dir" ] && echo created || echo none)"
 # A row dropped from the table leaves its copy behind on every machine that installed it, and
