@@ -10,10 +10,10 @@ import { DECK_FILE, DECK_VERSION, deckSessions, parseDeck } from '../packages/co
 import { DECK_READER_CONTRACT, DECK_STALE_AFTER_MS } from '../packages/core/src/deck-reader.ts'
 import { parseJournalEvent } from '../packages/core/src/learning.ts'
 import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '../packages/core/src/names.ts'
-import { gateTokensOf, measureFilePath, MEASURE_VERSION, type MeasureReading } from '../packages/core/src/orchestration.ts'
+import { gateTokensOf, measureFilePath, MEASURE_VERSION, ROUND_DIR, type MeasureReading } from '../packages/core/src/orchestration.ts'
 import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
 import { CI_CHECK } from '../packages/core/src/readiness.ts'
-import { parseRoundQuestion } from '../packages/core/src/round-question.ts'
+import { parseRoundQuestion, ROUND_READER_CONTRACT } from '../packages/core/src/round-question.ts'
 import { planAsked, planClaimed, planPane, planRelayed, planWithdrawal, type Fields, type Plan } from '../plugins/orchestrator/hooks/settle.ts'
 import { DECK_REFRESH_MS } from '../plugins/orchestrator/hooks/deck.ts'
 import { GOLDEN_DECK } from '../plugins/orchestrator/hooks/tests/golden-deck.ts'
@@ -86,7 +86,7 @@ describe('deck.json: the orchestrator writes, core reads', () => {
 })
 
 describe('deck.json: the orchestrator writes, statusbar reads the open questions', () => {
-  const show = (deck: string, name = 'Orch: Claude plugins'): string => {
+  const show = (deck: string, name = 'Coord: machine'): string => {
     const state = mkdtempSync(join(tmpdir(), 'deck-state-'))
     writeFileSync(join(state, DECK_FILE), deck)
     const config = join(state, 'statusline-config.txt')
@@ -111,7 +111,9 @@ describe('deck.json: the orchestrator writes, statusbar reads the open questions
   it('shows it to the sessions that handle the operator\'s questions only', () => {
     const fresh = GOLDEN_DECK.replace('2026-10-28T14:00:00.000Z', new Date().toISOString())
     assert.equal(show(fresh, 'Coord: machine'), '✋ 1 (1 urgent)')
-    assert.equal(show(fresh, 'Audit: method'), '✋ 1 (1 urgent)')
+    // An orchestrator and an auditor count the questions they asked, never the machine's total.
+    assert.equal(show(fresh, 'Orch: Claude plugins'), '')
+    assert.equal(show(fresh, 'Audit: method'), '')
     assert.equal(show(fresh, ''), '')
     assert.equal(show(fresh, 'Agent: statusbar'), '')
   })
@@ -123,6 +125,55 @@ describe('deck.json: the orchestrator writes, statusbar reads the open questions
   it('reads the file name, the version and the bound from the data core writes', () => {
     const data: unknown = JSON.parse(readFileSync('plugins/statusbar/core/deck-reader.json', 'utf8'))
     assert.deepEqual(data, { $comment: (data as { $comment: string }).$comment, ...DECK_READER_CONTRACT })
+  })
+})
+
+describe('round entries: the orchestrator writes, statusbar counts the session\'s own open questions', () => {
+  const SESSION = '60ed5626-9879-4041-892a-5db0ff0bad69'
+  const NAME = 'Orch: demo'
+  const choices = [{ letter: 'A', text: 'Ship it now' }, { letter: 'B', text: 'Wait for the review' }]
+  // The object `ask` stores (question.ts `askedEntry`) and the entry the relay writes (round.ts `roundEntry`), open.
+  const asked = (id: string, name: string, session: string, urgent = false): Record<string, unknown> => ({
+    v: 2, id, sender: { session, name, role: 'orchestrator', machine: 'here' }, subject: 's', context: 'c', ask: 'Ship?', choices, recommended: 'B', why: 'w',
+    blocks: 's', status: 'open', at: '2026-11-15T10:00:00.000Z', answer: null, seq: 1, ...(urgent ? { urgent: true } : {}),
+  })
+  const relayed = (id: string, name: string, session: string, kind: string): Record<string, unknown> => ({
+    id, from: name, session, kind, since: '2026-11-15T10:00:00.000Z', blocks: null, question: 'words', choices, recommendation: 'A', status: 'open', at: '2026-11-15T10:00:01.000Z', answer: null,
+  })
+  const show = (entries: Record<string, unknown>[], name: string, session: string): string => {
+    const state = mkdtempSync(join(tmpdir(), 'round-state-'))
+    mkdirSync(join(state, ROUND_DIR))
+    for (const entry of entries) writeFileSync(join(state, ROUND_DIR, `${String(entry['id'])}.json`), JSON.stringify(entry))
+    const config = join(state, 'statusline-config.txt')
+    writeFileSync(config, 'SHOW_DIRECTORY=0\nSHOW_BRANCH=0\nSHOW_PR=0\nSHOW_MODEL=0\nSHOW_SESSION_NAME=0\nSHOW_CONTEXT=0\nSHOW_USAGE=0\nSHOW_LINES_CHANGED=0\n')
+    try {
+      return spawnSync('bash', ['plugins/statusbar/statusline/statusline.sh'], {
+        input: JSON.stringify({ session_name: name, session_id: session }), encoding: 'utf8', env: { ...process.env, ORCHESTRATOR_STATE_DIR: state, STATUSBAR_CONFIG: config },
+      }).stdout.replace(/\x1b\[[0-9;]*m/g, '').trim()
+    } finally {
+      rmSync(state, { recursive: true, force: true })
+    }
+  }
+
+  it('reads the directory and the words from the data core writes', () => {
+    const data: unknown = JSON.parse(readFileSync('plugins/statusbar/core/round-reader.json', 'utf8'))
+    assert.deepEqual(data, { $comment: (data as { $comment: string }).$comment, ...ROUND_READER_CONTRACT })
+    assert.equal(ROUND_READER_CONTRACT.dir, ROUND_DIR)
+  })
+
+  it('counts, of the entries both writers store, the open questions to the operator that its session asked', () => {
+    const entries = [
+      asked('q-1', NAME, SESSION), asked('q-2', NAME, SESSION, true), asked('q-3', 'Orch: other', 'other-session', true),
+      relayed('r-1', NAME, SESSION, 'operator'), relayed('r-2', NAME, SESSION, 'done'), relayed('r-3', 'Orch: other', 'other-session', 'operator'),
+    ]
+    // Its own reader and the shell's agree on whose they are.
+    const mine = entries.filter(entry => parseRoundQuestion(entry)?.asker === NAME && parseRoundQuestion(entry)?.kind === 'operator')
+    assert.equal(mine.length, 3)
+    assert.equal(show(entries, NAME, SESSION), '✋ 3 (1 urgent)')
+    assert.equal(show(entries, 'Orch: other', 'other-session'), '✋ 2 (1 urgent)')
+    assert.equal(show(entries, NAME, 'a-successor'), '✋ 3 (1 urgent)')
+    assert.equal(show(entries, 'Orch: renamed', SESSION), '✋ 3 (1 urgent)')
+    assert.equal(show(entries, 'Orch: nobody', 'nobody'), '')
   })
 })
 
