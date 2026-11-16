@@ -160,7 +160,7 @@ test('the command line: a number, then known options; the bounds are numbers', (
   assert.equal(bad(['7'], { CI_WATCH_BASE_WAIT: 'x' }), 'unread 7 CI_WATCH_BASE_WAIT is a number of seconds|5')
   assert.equal(bad(['7'], { CI_WATCH_MERGE_WAIT: 'x' }), 'unread 7 CI_WATCH_MERGE_WAIT is a number of seconds|5')
   const parsed = parseArgs(['7', '--no-base', '--repo', 'o/r', '--base-workflow', 'CI'], { HOME: '/h', CI_WATCH_BASE_WORKFLOWS: 'A,B' })
-  assert.deepEqual([parsed.base, parsed.repo, parsed.workflows, parsed.interval, parsed.registerWait, parsed.stateDir], [false, 'o/r', ['CI'], '10', 180, '/h/.claude/claude-orchestrator'])
+  assert.deepEqual([parsed.base, parsed.repo, parsed.workflows, parsed.interval, parsed.registerWait, parsed.stateDir], [false, 'o/r', ['CI'], '30', 180, '/h/.claude/claude-orchestrator'])
   assert.deepEqual(parseArgs(['7'], { CI_WATCH_BASE_WORKFLOWS: 'Lint,CI,\nX' }).workflows, ['Lint', 'CI'])
 })
 

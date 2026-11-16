@@ -61,7 +61,7 @@ export function parseArgs(argv: readonly string[], env: Env): Options {
   if (target === undefined) throw unread('', USAGE)
   const pr = target.pr
   let repo = target.repo
-  let interval = '10'
+  let interval = '30'
   let base = true
   let workflows: string[] = []
   for (let k = 0; k < rest.length; k++) {
