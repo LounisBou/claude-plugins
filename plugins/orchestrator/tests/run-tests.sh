@@ -8193,8 +8193,8 @@ echo "== iterm-agents: the home server's configuration =="
 # is one, in a detached server of the suite's own, killed at once.
 HOMECONF="$ROOT/skills/iterm-agents/tmux/home.conf"
 check "the conf sets each option the home server needs" "1|1|1|1|1|1|1|1|1" \
-  "$(for l in '^set -g focus-events on$' '^set -g extended-keys always$' '^set -g extended-keys-format csi-u$' \
-      "^set -as terminal-features 'xterm\*:extkeys'\$" '^set -g automatic-rename off$' '^set -g mouse on$' \
+  "$(for l in '^set -g focus-events on$' '^set -gq extended-keys always$' '^set -gq extended-keys-format csi-u$' \
+      "^set -asq terminal-features 'xterm\*:extkeys'\$" '^set -g automatic-rename off$' '^set -g mouse on$' \
       '^set -g prefix C-b$' '^bind C-b send-prefix$' '^set-hook -g session-created "set-option @orchestrator-home 1"$'; do
       grep -c -- "$l" "$HOMECONF"; done | paste -sd'|' -)"
 if command -v tmux >/dev/null 2>&1; then
@@ -8204,6 +8204,14 @@ if command -v tmux >/dev/null 2>&1; then
   check "a server started on it marks its session, read the way the launcher reads it, and keeps its keys" \
     "1|always|off|1" \
     "$(tmux -L "$CONFSRV" show -qv -t "$confpane" @orchestrator-home)|$(tmux -L "$CONFSRV" show -gv extended-keys)|$(tmux -L "$CONFSRV" show -wgv automatic-rename)|$(tmux -L "$CONFSRV" list-keys -T prefix C-b | grep -c send-prefix)"
+  # An option the running tmux does not know (extended-keys-format before tmux 3.5, extended-keys
+  # and terminal-features before 3.2) must load without an error: the conf is sourced here with
+  # those options renamed to ones no tmux has, which stands for the older tmux.
+  oldconf="$(mktemp)"
+  sed 's/extended-keys/no-such-keys/; s/terminal-features/no-such-features/' "$HOMECONF" > "$oldconf"
+  check "a tmux that does not know the extended-keys options and terminal-features loads the conf without an error" "" \
+    "$(tmux -L "$CONFSRV" source-file "$oldconf" 2>&1)"
+  rm -f "$oldconf"
   # extended-keys-format came with tmux 3.5: an older one ignores the line, and has nothing to read.
   if tmux -L "$CONFSRV" show -gv extended-keys-format >/dev/null 2>&1; then
     check "and its extended keys are sent in the csi-u format" "csi-u" "$(tmux -L "$CONFSRV" show -gv extended-keys-format)"
