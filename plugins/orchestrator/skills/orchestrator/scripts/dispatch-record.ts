@@ -958,7 +958,7 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
     // One line: the note is printed on its row's line of `summary --open` and of the takeover.
     const value = (args[0] ?? '').replace(/\s+/g, ' ').trim()
     if (cmd === 'blocker' && !blockerValid(value)) die(ctx, `blocker: ${BLOCKER_FORMS}, got: ${value}`)
-    if (cmd === 'blocker' && truthy(rowOf(ctx, id)['deferred']) && untilOf(value) === undefined) die(ctx, `blocker: row ${id} is deferred, its blocker is its revisit date: until <ISO UTC time>, got: ${value}`)
+    if (cmd === 'blocker' && truthy(rowOf(ctx, id)['deferred']) && untilOf(value) === undefined) die(ctx, `blocker: row ${id} is deferred, its blocker is its revisit date: until <ISO UTC time> (undefer it to give it another blocker), got: ${value}`)
     return rewrite(ctx, id, row => {
       if (cmd === 'note' && value === '') delete row['note']
       else row[cmd] = value

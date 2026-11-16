@@ -74,7 +74,7 @@ fact that changes a question still to come updates it before it is presented.
    too: never copy it. A goal
    ruled out: `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`, which the
    stop gate reads. Work deferred (« later, when I say so »):
-   `dispatch-record.sh defer <record> <id>` (a row) or `dispatch-record.sh goals <record> defer <G>`
+   `dispatch-record.sh defer <record> <id>` (a row, its blocker first set to its revisit date, `until <ISO UTC time>`) or `dispatch-record.sh goals <record> defer <G>`
    (a goal) with `--ruling "<his words, dated>"`, never left open as a question; the turn then
    declares `declare_wait({kind: "deferred", blocks: "<n> items"})`, which asks him nothing.
 3. Relay it at once, showing nothing of it, to the agent whose STOP it answers, if any — `SendMessage`,

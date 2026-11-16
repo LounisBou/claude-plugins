@@ -260,8 +260,10 @@ export function blockerFallen(blocker: unknown, now: number): boolean {
 }
 
 /**
- * The open rows ready with nobody on them: a fallen blocker (`blockerFallen`, at `now`), and neither a live agent (`live`, the session names the launcher lists running) nor an open pull
- * request (`lines`, the ledger's) naming the row. A session or a pull request names a row by the row's keyword in the
+ * The open rows ready with nobody on them: a fallen blocker (`blockerFallen`, at `now`), and neither a live
+ * agent (`live`, the session names the launcher lists running) nor an open pull request (`lines`, the ledger's)
+ * naming the row. A row the operator deferred is listed, flagged `deferred`, only once its `until` blocker has
+ * passed; with any other blocker it is never listed. A session or a pull request names a row by the row's keyword in the
  * agent's subject (a whole word of it), or by the row's note: `Agent: <subject>` of a live session, `<repo>#<n>` of a
  * line. `texts` are the dispatch records' texts; the ledger's lines and any other line are no row.
  */

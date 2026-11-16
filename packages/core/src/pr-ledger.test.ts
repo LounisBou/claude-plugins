@@ -185,6 +185,18 @@ describe('an unattended pull request', () => {
       assert.deepEqual(deferredAt(undefined, MOMENT), [])
     })
 
+    it('a due deferred row is held by a live agent or an open pull request as any row is, and comes after the ready rows beside it', () => {
+      const MOMENT = Date.parse('2026-11-28T08:00:00Z')
+      const due = rowText({ deferred: 'later', blocker: 'until 2026-11-28T08:00:00Z' })
+      const at = (text: string, over: { lines?: LedgerLine[]; live?: string[] } = {}) =>
+        readyRows({ texts: [text], lines: over.lines ?? [], live: new Set(over.live ?? []), now: MOMENT })
+      assert.deepEqual(at(due, { live: ['Agent: tokendrift'] }), [])
+      assert.deepEqual(at(due, { lines: [line({ agent: 'Agent: tokendrift' })] }), [])
+      const both = at(rowText({ id: 13, label: 'GATEFIX: a gate' }) + due)
+      assert.deepEqual(both.map(r => [r.id, r.deferred === true]), [[13, false], [12, true]])
+      assert.equal(readyRowsLine(both)?.split('\n').length, 2)
+    })
+
     it('names a row with no keyword as such, and only its note can hold it', () => {
       assert.equal(readyRowsLine(ready(rowText({ label: undefined }))), 'Lignes prêtes sans agent : 12 no keyword')
       assert.equal(readyRowsLine(ready(rowText({ label: ': no word' }), { live: ['Agent: tokendrift'] })), 'Lignes prêtes sans agent : 12 no keyword')

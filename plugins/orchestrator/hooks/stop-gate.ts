@@ -114,7 +114,7 @@ const NOT_DONE_ONE = 'Not done: %s is still there. Finish it, or say what blocks
 const NOT_DONE_MANY = 'Not done: %s are still there. Finish them, or say what blocks them.'
 // The deferral path beside the others: work the operator put off is recorded with his ruling
 // and ended on its own declared wait, never put to him again as a question.
-const DEFER_ROW = 'record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
+const DEFER_ROW = 'set its revisit date (dispatch-record.sh blocker <record> <id> "until <ISO UTC time>"), record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
   + 'and declare a deferred wait'
 const ROW_ONE = `Not done: row %s is open%p. Dispatch it, close it, or say what blocks it — or, if the operator deferred it, ${DEFER_ROW}.`
 const ROW_MANY = `Not done: rows %s are open%p. Dispatch them, close them, or say what blocks them — or, if the operator deferred them, ${DEFER_ROW}.`
