@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { agentLine, answerMeaning, briefOf, closeVerb, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, roundSettled, rowLines, TEMPLATE, todoStray, toApply, type Artifacts, type ListedRow } from './succession.ts'
+import { agentLine, answerMeaning, briefOf, closeVerb, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, roundSettled, rowLines, rowOfBrief, TEMPLATE, todoStray, toApply, type Artifacts, type ListedRow } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -395,6 +395,66 @@ test('an agent spawned since the deck\'s last write is printed from the launcher
   assert.match(w.err.join(''), / agents=2 agents_disagree=1 /)
   assert.equal(w.journaled.length, 1)
   assert.deepEqual((w.journaled[0] as { fact: unknown }).fact, { failure: 'succession-lost-state', count: 1, prs: [] })
+})
+
+test('rowOfBrief reads the row a brief was printed for: a phase brief\'s, a rotation brief\'s; none from free text', () => {
+  assert.equal(rowOfBrief('# belt — API\n\nYou are the implementer of row 259 of the dispatch record. You implement.\n\nMode: build\nRow: 259 API: routes\n'), '259')
+  assert.equal(rowOfBrief('# belt — resume brief for row 262: the stop gate\n\nYou are the ROTATION agent.\n'), '262')
+  assert.equal(rowOfBrief('Mode: build\nRow: 264 LINT: rules — note: after row 2\n'), '264')
+  assert.equal(rowOfBrief('Agent: takeoversense works row 265, see the note.\n'), undefined)
+  assert.equal(rowOfBrief(undefined), undefined)
+})
+
+test('ownersOf binds a live agent to the row its brief was printed for, never to a row whose note merely names it', () => {
+  // The takeover of 2026-11-15: 259 read READY NOT STARTED, 262 and 264 NO OWNER, and 265, whose note
+  // named takeoversense, went to it.
+  const rows = [
+    { id: '259', line: '', label: 'TAKEOVERSENSE: the takeover reads', blocker: 'none' },
+    { id: '262', line: '', label: 'UNHOLD: the stop gate' },
+    { id: '264', line: '', label: 'ARCHIVESORT: the archive' },
+    { id: '265', line: '', label: 'TAKEOVERPROMPT: the takeover defects', blocker: 'none', note: 'seen in takeoversense\'s session' },
+  ]
+  const seats = [
+    { name: 'Agent: takeoversense', tty: null, row: '259' },
+    { name: 'Agent: unhold', tty: null, row: '262' },
+    { name: 'Agent: archivesort', tty: null, row: '264' },
+  ]
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: seats.map(seat => seat.name), seats, questions: [] }, () => 'fallen'), [
+    '259 takeoversense', '262 unhold', '264 archivesort', '265 READY NOT STARTED',
+  ])
+})
+
+test('ownersOf: an agent whose brief names no row is bound by a note in the dispatch\'s form, never by a passing mention', () => {
+  const rows = [
+    { id: '265', line: '', label: 'TAKEOVERPROMPT', blocker: 'none', note: 'seen in takeoversense\'s session and in review 396' },
+    { id: '266', line: '', label: 'FOLLOW', blocker: 'none', note: 'Dispatched 2026-11-15T22:40Z: Agent: takeoversense (ttys000)' },
+  ]
+  const seats = [{ name: 'Agent: takeoversense', tty: null }]
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: seats.map(seat => seat.name), seats, questions: [] }, () => 'fallen'), ['265 READY NOT STARTED', '266 takeoversense'])
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: ['Agent: takeoversense'], questions: [] }, () => 'fallen'), ['265 READY NOT STARTED', '266 takeoversense'])
+})
+
+test('the takeover reads each agent\'s row in the brief its launch named', () => {
+  const w = world({
+    rows: [
+      JSON.stringify({ id: 259, label: 'TAKEOVERSENSE: the takeover reads', state: 'open', blocker: 'none' }),
+      JSON.stringify({ id: 264, label: 'ARCHIVESORT: the archive', state: 'open' }),
+      JSON.stringify({ id: 265, label: 'TAKEOVERPROMPT: the takeover defects', state: 'open', blocker: 'none', note: 'seen in takeoversense\'s session' }),
+    ].join('\n') + '\n',
+    deck: deckOf([orchestrator(NAME, null, [], ['Agent: takeoversense', 'Agent: archivesort'])]),
+  })
+  mkdirSync(join(w.state, 'prompts'), { recursive: true })
+  writeFileSync(join(w.briefs, 'takeoversense-brief.md'), '# belt — TAKEOVERSENSE\n\nYou are the implementer of row 259 of the dispatch record.\n')
+  writeFileSync(join(w.briefs, 'archivesort-rotation.md'), '# belt — resume brief for row 264: the archive\n')
+  writeFileSync(join(w.state, 'prompts', 'launch-Agent--takeoversense-1700000000000.sh'), `#!/bin/sh\nexport ORCHESTRATOR_BRIEF='${join(w.briefs, 'takeoversense-brief.md')}' && run\n`)
+  writeFileSync(join(w.state, 'prompts', 'launch-Agent--archivesort-1700000000000.sh'), `#!/bin/sh\nexport ORCHESTRATOR_BRIEF='${join(w.briefs, 'archivesort-rotation.md')}' && run\n`)
+  assert.equal(w.run('--tty', '/dev/ttys009'), 0)
+  assert.match(w.text(), /- Row owners: 259 takeoversense; 264 archivesort; 265 READY NOT STARTED\n/)
+  // A brief path that cannot be read (here a directory) binds no row, and the takeover still prints.
+  writeFileSync(join(w.state, 'prompts', 'launch-Agent--archivesort-1700000009000.sh'), `#!/bin/sh\nexport ORCHESTRATOR_BRIEF='${w.briefs}' && run\n`)
+  w.out.length = 0
+  assert.equal(w.run('--tty', '/dev/ttys009'), 0)
+  assert.match(w.text(), /- Row owners: 259 takeoversense; 264 NO OWNER; 265 READY NOT STARTED\n/)
 })
 
 test('the deck and the launcher agreeing journal nothing; no list leaves the deck as it is', () => {

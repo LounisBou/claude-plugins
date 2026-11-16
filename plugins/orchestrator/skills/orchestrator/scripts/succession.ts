@@ -10,7 +10,8 @@
 // Live state, and nothing of it lands in a file.
 //
 // The Live state: the open rows at level 1; their owners, « ruling » for a deferred one, an open
-// row's live agent as its note names it (the dispatch writes `Dispatched …: Agent: <name>` there),
+// row's live agent as the row its brief was printed for binds it (a hand-written note naming an
+// agent whose brief names no row, `Dispatched …: Agent: <name>`),
 // else its blocker checked on its artifact (the pull request merged, the row closed, the release
 // installed, the `until` time passed; a `measure` never falls): fallen and with no agent, READY NOT
 // STARTED; a row whose note names an agent no longer live, DISPATCHED, NO LIVE AGENT; an open row
@@ -157,6 +158,8 @@ export interface LiveAgent {
   readonly name: string
   readonly tty: string | null
   readonly brief?: string
+  /** The row its brief was printed for (rowOfBrief); undefined when no brief names one. */
+  readonly row?: string
 }
 
 /** What the state holds open for this orchestrator. */
@@ -263,6 +266,19 @@ export function briefOf(state: string, name: string): string | undefined {
   if (newest === undefined) return undefined
   const found = /export ORCHESTRATOR_BRIEF=(?:'([^']*)'|([^\s;&]+))/.exec(readText(join(dir, newest.file)) ?? '')
   return found === null ? undefined : (found[1] ?? found[2])
+}
+
+/**
+ * The row a brief was printed for, the id the dispatch recorded: a phase brief's « You are the
+ * implementer of row <id> » or its `Row: <id>` line, a rotation brief's « resume brief for row <id>: ».
+ * Undefined for any other text: a row mentioned in passing binds nothing.
+ */
+export function rowOfBrief(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined
+  const found = /^You are the implementer of row ([1-9][0-9]*) of the dispatch record\b/m.exec(text)
+    ?? /^# .*\bresume brief for row ([1-9][0-9]*):/m.exec(text)
+    ?? /^Row: ([1-9][0-9]*)\b/m.exec(text)
+  return found?.[1]
 }
 
 /** An agent as the Live state prints it: its name, then its tty and brief where known. */
@@ -591,7 +607,11 @@ export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () 
   const live = liveAgents(deck.agents, chained, listed)
   const seats = live.agents.map(agent => {
     const brief = briefOf(state, agent.name)
-    return brief === undefined ? agent : { ...agent, brief }
+    if (brief === undefined) return agent
+    // A brief that cannot be read binds no row: the takeover still prints the rest of the state.
+    let row: string | undefined
+    try { row = rowOfBrief(readText(brief)) } catch { row = undefined }
+    return row === undefined ? { ...agent, brief } : { ...agent, brief, row }
   })
   // A row of a record older than the ledger names no pull request the ledger holds: the forge's open
   // ones are matched to the open rows, by what a label names and the heads its review recorded.
@@ -632,15 +652,17 @@ export function rowLines(rows: readonly OpenRow[]): string[] {
 
 const bareName = (name: string): string => name.replace(/^Agent:\s*/, '').trim()
 
-/** Whether a text names that agent: its name whole, not as the start of a longer word. */
+/**
+ * Whether a note names that agent in the dispatch's form, `Agent: <name>` (`Dispatched …: Agent: <name>`),
+ * its name whole, not as the start of a longer word; a name mentioned in passing is no dispatch.
+ */
 function names(text: string, agent: string): boolean {
   const name = bareName(agent).toLowerCase()
   if (name === '') return false
   const lower = text.toLowerCase()
   for (let at = lower.indexOf(name); at !== -1; at = lower.indexOf(name, at + 1)) {
-    const before = lower[at - 1] ?? ' '
     const after = lower[at + name.length] ?? ' '
-    if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)) return true
+    if (/(?:^|[^a-z0-9])agent:\s*$/.test(lower.slice(0, at)) && !/[a-z0-9]/.test(after)) return true
   }
   return false
 }
@@ -683,10 +705,11 @@ export function fallOf(blocker: string, facts: Artifacts): Fall {
 }
 
 /**
- * Who works each open row, from the facts the state holds: the deck's live agents its note names
- * (the dispatch writes `Dispatched …: Agent: <name>` there; listed without the role prefix), never a
- * guess from its label. A deferred row reads « ruling »; a row with no live agent reads its blocker
- * checked on its artifact: `blocked: <blocker>` while it stands, then an open pull request it holds,
+ * Who works each open row, from the facts the state holds: the live agents whose brief was printed
+ * for it (rowOfBrief, the id the dispatch recorded), never a guess from its label nor a name its note
+ * merely mentions; an agent whose brief names no row is matched on a note naming it in the dispatch's
+ * form, `Dispatched …: Agent: <name>` (listed without the role prefix). A deferred row reads
+ * « ruling »; a row with no live agent reads its blocker checked on its artifact: `blocked: <blocker>` while it stands, then an open pull request it holds,
  * DISPATCHED, NO LIVE AGENT when its note names an agent the deck no longer lists, READY NOT STARTED
  * once its blocker has fallen, `blocker unread: <blocker>` when its artifact cannot be read; a row
  * with no blocker recorded reads NO OWNER.
@@ -695,7 +718,8 @@ export function ownersOf(open: OpenState, fall: (blocker: string) => Fall = () =
   return open.rows.map(row => {
     if ((row.ruling ?? '') !== '') return `${row.id} ruling`
     const note = row.note ?? ''
-    const live = open.agents.filter(agent => names(note, agent))
+    const seats: readonly LiveAgent[] = open.seats ?? open.agents.map(name => ({ name, tty: null }))
+    const live = seats.filter(seat => (seat.row === undefined ? names(note, seat.name) : seat.row === row.id)).map(seat => seat.name)
     if (live.length > 0) return `${row.id} ${live.map(bareName).join(', ')}`
     // A blocker still standing says why nobody is on the row; once it fell, an open pull request the row holds is its owner.
     const fell = row.blocker === undefined ? undefined : fall(row.blocker)
