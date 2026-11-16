@@ -2259,7 +2259,11 @@ check "pr-gate reads a free plan's refusal of the rulesets and protection as not
 check "pr-gate prints no error line for a free plan's refusal of the required checks" "" \
   "$(gh8 pr-gate 12 2>&1 >/dev/null)"
 gate8 req-plan-prot "$PULL8B" '{"statuses":[]}' "$SCAN8"; req8 "$PLAN403" '{"protection":{"required_status_checks":{"contexts":["build"],"checks":[]}}}'
-check "pr-gate keeps the protection's checks when the free plan refuses the rulesets" "PENDING 1 2" "$(running8)"
+check "pr-gate keeps the protection's checks when the free plan refuses the rulesets, nothing unverified" "PENDING 1 2 0" \
+  "$(gh8 pr-gate 12 2>/dev/null | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], c["running"], c["total"], len(c["unverified"]))')"
+gate8 req-plan-rules "$PULL8B" '{"statuses":[]}' "$SCAN8"; req8 "$RULES8" "$PLAN403"
+check "pr-gate keeps the rulesets' checks when the free plan refuses the protection, nothing unverified" "PENDING 1 2 0" \
+  "$(gh8 pr-gate 12 2>/dev/null | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], c["running"], c["total"], len(c["unverified"]))')"
 gate8 req-perm "$PULL8B" '{"statuses":[]}' "$SCAN8"; req8 '{"__status":403,"message":"Resource not accessible by integration"}' "$PLAN403"
 check "pr-gate stays unverified on a permission 403 of the rulesets, beside a free plan refusal" \
   "PENDING 0 1 rulesets of main: Resource not accessible by integration" \
