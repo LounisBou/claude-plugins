@@ -25,7 +25,7 @@ below, and the `args` object holds the subcommand's arguments.
 |---|---|---|
 | `pr-get` | `[--branch B \| --pr N]` | The PR of a branch (default: the current one) or number `N`, as a list of one (`pr-lines`; `--json`: the list). An unknown number exits 4 |
 | `pr-list` | | Open PRs, a line each (`pr-lines`); `--json`: the full list |
-| `pr-panel` | | The open PRs, newest first (at most 50), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` from the head's status check rollup (`SUCCESS`, `FAILURE`, `PENDING`, `NONE` when nothing reported) |
+| `pr-panel` | | The open PRs, newest first (at most 100), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` from the head's status check rollup (`SUCCESS`, `FAILURE`, `PENDING`; a head with no rollup, or a green one holding a skipped run, is `PENDING`, as `pr-checks` reads it) |
 | `pr-status` | `<pr>` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
 | `pr-checks` | `<pr>` | Verdict, counts, failed and skipped names (`checks-summary`); `--json`: commit status and check runs |
 | `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |

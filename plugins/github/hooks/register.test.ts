@@ -441,7 +441,7 @@ test('the pane clips a long title so the CI label shows at a narrow width', asyn
 })
 
 test('the pane lists every PR the query answers, each with its own CI state', async ($, on) => {
-  const many = [100, 99, 94, 93, 92, 91, 90].map((n) => panelRow(n, { ci: n === 100 ? '?' : n === 90 ? 'NONE' : 'SUCCESS' }))
+  const many = [100, 99, 94, 93, 92, 91, 90].map((n) => panelRow(n, { ci: n === 100 ? '?' : n === 90 ? 'PENDING' : 'SUCCESS' }))
   const runs: GhRun[] = []
   await stubMod(on, runs, [], byCommand({ 'pr-panel': () => ok(JSON.stringify(many)) }))
   await startSession($)
@@ -450,7 +450,7 @@ test('the pane lists every PR the query answers, each with its own CI state', as
   const ui = await $.ui.mount({ ...PANE_EVENT })
   expect(await ui.find({ type: 'Box', key: 'label-100', text: 'CI:?' })).toBeDefined()
   expect(await ui.find({ type: 'Box', key: 'label-94', text: 'CI:SUCCESS' })).toBeDefined()
-  expect(await ui.find({ type: 'Box', key: 'label-90', text: 'CI:NONE' })).toBeDefined()
+  expect(await ui.find({ type: 'Box', key: 'label-90', text: 'CI:PENDING' })).toBeDefined()
   expect(runs.length).toBe(1)
   await ui.unmount()
 })
@@ -1930,7 +1930,6 @@ function stubPane(on: TestOn, runs: GhRun[], ci: () => string, pane: () => PaneS
       panelRow(12, { title: 'fix: related PRs', ci: ci(), failed: ci() === 'FAILURE' ? ['lint'] : [] }),
       panelRow(11, { title: 'feat: minimize nodes', draft: true, ci: ci(), failed: ci() === 'FAILURE' ? ['lint'] : [] }),
     ])),
-    'pr-list': () => ok('[]'),
     'pr-comment': () => ok('posted'),
   }))
 }
@@ -1966,6 +1965,70 @@ test('the open pane is read again every five minutes, never sooner, and toasts a
   await ui.unmount()
   // Drawing a pane whose rows were just read reads nothing.
   expect(reads(runs)).toBe(2)
+})
+
+test('a read made a little after its tick does not make the next tick skip', async ($, on) => {
+  const clock = mock.clock(on)
+  const runs: GhRun[] = []
+  await stubPane(on, runs, () => 'SUCCESS')
+  await startSession($)
+  await $.command.run({ command: 'prs', args: '' })
+
+  await clock.advance(WATCH_MS)
+  expect(reads(runs)).toBe(2)
+  // A write read the rows again 5 s after the tick: the next tick finds them 295 s old, and reads.
+  await clock.advance(5_000)
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 12, body: 'Fixed' } })
+  await clock.settle()
+  expect(reads(runs)).toBe(3)
+  await clock.advance(WATCH_MS - 5_000)
+  expect(reads(runs)).toBe(4)
+})
+
+test('a pane that is open but undrawn, or missing from the host\'s list, is not read on the watch', async ($, on) => {
+  const clock = mock.clock(on)
+  const runs: GhRun[] = []
+  let panes: unknown = PANES.shown
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.panes', () => ({ value: panes }))
+  await stubMod(on, runs, [], byCommand({ 'pr-panel': () => ok(PR_LIST) }))
+  await startSession($)
+  await $.command.run({ command: 'prs', args: '' })
+
+  panes = [{ ...PANES.shown[0], isPlaced: false }]
+  await clock.advance(WATCH_MS)
+  panes = PANES.closed
+  await clock.advance(WATCH_MS)
+  expect(reads(runs)).toBe(1)
+})
+
+test('a host that cannot list its panes reads the watched pane as shown', async ($, on) => {
+  const clock = mock.clock(on)
+  const runs: GhRun[] = []
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.panes', () => ({ deny: 'no panes' }))
+  await stubMod(on, runs, [], byCommand({ 'pr-panel': () => ok(PR_LIST) }))
+  await startSession($)
+  await $.command.run({ command: 'prs', args: '' })
+
+  await clock.advance(WATCH_MS)
+  expect(reads(runs)).toBe(2)
+})
+
+test('an answer of pr-panel that is not a list of rows is an error line, the rows kept', async ($, on) => {
+  let call = 0
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  await stubMod(on, [], [], byCommand({
+    'pr-panel': () => ok((call += 1) === 1 ? PR_LIST : JSON.stringify([{ number: 1, title: 't', url: 'u', draft: false, comments: 'many', ci: 'SUCCESS', failed: [] }])),
+  }))
+  await startSession($)
+  await $.command.run({ command: 'prs', args: '' })
+
+  const ui = await $.ui.mount({ ...PANE_EVENT })
+  await ui.press({ key: 'refresh' })
+  expect(await ui.find({ type: 'Text', text: /fix: related PRs/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /without its comment count or CI state/ })).toBeDefined()
+  await ui.unmount()
 })
 
 test('a pane that is not shown is never read on the watch, and read once when it shows again', async ($, on) => {

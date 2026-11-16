@@ -48,7 +48,7 @@ def pr_list(args):
 
 
 # The most open pull requests the panel reads, newest first, in one query.
-_PANEL_PRS = 50
+_PANEL_PRS = 100
 
 _PANEL_QUERY = """
 query($owner:String!, $name:String!, $first:Int!) {
@@ -80,7 +80,7 @@ query($owner:String!, $name:String!, $first:Int!) {
 }
 """
 
-# A completed check run that did not pass, in the ready guard's words: anything but these.
+# A completed check run that did not pass, in the ready guard's words (fmt.gate_ci): anything but these.
 _PANEL_PASSING = ("SUCCESS", "NEUTRAL", "SKIPPED")
 _PANEL_ROLLUP = {"SUCCESS": "SUCCESS", "FAILURE": "FAILURE", "ERROR": "FAILURE", "PENDING": "PENDING", "EXPECTED": "PENDING"}
 
@@ -98,14 +98,27 @@ def _panel_failed(contexts):
     return failed
 
 
+def _panel_unproven(contexts, draft):
+    """Whether a check run proved nothing, as the ready guard reads it: skipped, and neutral on a draft."""
+    unproven = ("SKIPPED", "NEUTRAL") if draft else ("SKIPPED",)
+    return any(
+        isinstance(n, dict) and n.get("__typename") == "CheckRun" and n.get("status") == "COMPLETED"
+        and n.get("conclusion") in unproven
+        for n in contexts
+    )
+
+
 def _panel_row(pull):
     commits = (pull.get("commits") or {}).get("nodes") or []
     commit = (commits[0] if commits else None) or {}
     rollup = (commit.get("commit") or {}).get("statusCheckRollup") or {}
     threads = (pull.get("reviewThreads") or {}).get("nodes") or []
-    # No rollup: nothing reported on the head (NONE). A state this table does not know reads "?".
-    ci = _PANEL_ROLLUP.get(rollup.get("state"), "?") if rollup else "NONE"
     contexts = (rollup.get("contexts") or {}).get("nodes") or []
+    # No rollup: CI has not reported on the head yet, PENDING as the ready guard reads it. A state
+    # this table does not know reads "?"; a green rollup holding a run that proved nothing is PENDING.
+    ci = _PANEL_ROLLUP.get(rollup.get("state"), "?") if rollup else "PENDING"
+    if ci == "SUCCESS" and _panel_unproven(contexts, bool(pull.get("isDraft"))):
+        ci = "PENDING"
     return {
         "number": pull.get("number"),
         "title": pull.get("title") or "",

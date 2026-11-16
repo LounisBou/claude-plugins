@@ -2784,12 +2784,16 @@ nodes = [
     pull(3, "expected", rollup("EXPECTED")),
     pull(2, "green", rollup("SUCCESS", run("test", "COMPLETED", "NEUTRAL"))),
     pull(1, "nothing yet", None),
+    pull(0, "skipped", rollup("SUCCESS", run("test", "COMPLETED", "SUCCESS"), run("docs", "COMPLETED", "SKIPPED"))),
+    pull(-1, "draft neutral", rollup("SUCCESS", run("test", "COMPLETED", "NEUTRAL")), draft=True),
+    pull(-2, "unknown state", rollup("SOMETHING_NEW")),
+    dict(pull(-3, "no commit", None), commits={"nodes": []}),
 ]
 json.dump({"repository": {"pullRequests": {"nodes": nodes}}}, open(sys.argv[1], "w"))
 PY
 rows=$(ghp pr-panel)
 check "pr-panel answers one row a pull request, newest first, with its CI and comments" \
-  "5 red FAILURE 6 False|4 running PENDING 0 True|3 expected PENDING 0 False|2 green SUCCESS 0 False|1 nothing yet NONE 0 False" \
+  "5 red FAILURE 6 False|4 running PENDING 0 True|3 expected PENDING 0 False|2 green SUCCESS 0 False|1 nothing yet PENDING 0 False|0 skipped PENDING 0 False|-1 draft neutral PENDING 0 True|-2 unknown state ? 0 False|-3 no commit PENDING 0 False" \
   "$(printf '%s' "$rows" | python3 -c '
 import json, sys
 print("|".join("%d %s %s %s %s" % (r["number"], r["title"], r["ci"], r["comments"], r["draft"]) for r in json.load(sys.stdin)))')"

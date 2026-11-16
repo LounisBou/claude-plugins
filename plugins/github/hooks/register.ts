@@ -687,10 +687,18 @@ async function paneShown($: Mod): Promise<boolean> {
 // The clock's now, NaN when the host cannot say: nothing then looks old, so a drawn pane never reads in a loop.
 const nowMs = ($: Mod): Promise<number> => Promise.resolve($.clock.now()).then(Number, () => NaN)
 
-// The rows are due when a write made them stale or they are older than the watch.
-async function due($: Mod): Promise<boolean> {
+// How much younger than the watch the rows may be when the timer fires: a read is stamped a few
+// awaits after its tick, so the next tick finds them a little under WATCH_MS old.
+export const TICK_SLACK_MS = 10_000
+
+// The rows are due when a write made them stale or they are older than the watch. The timer is
+// itself the cadence (fromTimer): it reads when the rows are within the slack of the interval,
+// and when the clock cannot say how old they are; a drawing never does, or it would read in a loop.
+async function due($: Mod, fromTimer: boolean): Promise<boolean> {
   if (dirty || readAt === undefined) return true
-  return await nowMs($) - readAt >= WATCH_MS
+  const age = await nowMs($) - readAt
+  if (Number.isNaN(age)) return fromTimer
+  return age >= WATCH_MS - (fromTimer ? TICK_SLACK_MS : 0)
 }
 
 // The CI changes worth a toast between two reads: a PR read in both whose
@@ -732,8 +740,8 @@ async function refresh($: Mod): Promise<void> {
 }
 
 // The pane is read again when it is shown and its rows are due; a hidden pane reads nothing.
-async function refreshIfDue($: Mod, shown?: boolean): Promise<void> {
-  if (await due($) && (shown ?? await paneShown($))) await refresh($)
+async function refreshIfDue($: Mod, fromTimer: boolean, shown?: boolean): Promise<void> {
+  if (await due($, fromTimer) && (shown ?? await paneShown($))) await refresh($)
 }
 
 // One timer while the pane is open; a reload of the module cancels it with
@@ -741,7 +749,7 @@ async function refreshIfDue($: Mod, shown?: boolean): Promise<void> {
 function startWatch($: Mod): void {
   if (watch) return
   watch = $.clock.every(WATCH_MS, () => {
-    void refreshIfDue($)
+    void refreshIfDue($, true)
   })
 }
 
@@ -2691,7 +2699,7 @@ export function register(on: On<Mod>): void {
       // pane is shown, else when it shows again. Unawaited.
       if (watch && !READS.has(e.command)) {
         dirty = true
-        void refreshIfDue($)
+        void refreshIfDue($, false)
       }
       return { result }
     } catch (err: unknown) {
@@ -2720,9 +2728,10 @@ export function register(on: On<Mod>): void {
   on('command.run', { command: 'prs' }, async ($, e, next) => {
     if (!ownedCommands.has('prs')) return next(e)
     try {
-      const rows = await collectRows($)
+      // Stamped before the read, as refresh does: a write during it stays dirty.
       readAt = await nowMs($)
       dirty = false
+      const rows = await collectRows($)
       await update($, pane, (p) => ({ ...p, rows, error: null }))
       await $.ui.open({ id: PANE_ID, title: 'PRs', closeOnEscape: true })
       startWatch($)
@@ -2762,7 +2771,7 @@ export function register(on: On<Mod>): void {
     const { Box, Text, Button, Link } = $.ui.resolve(e)
     const width = e.props?.bodyColumns ?? 80
     // Drawn means shown: a pane whose rows are due is read again, and redrawn when the read ends.
-    if (watch) void refreshIfDue($, true)
+    if (watch) void refreshIfDue($, false, true)
     const state = await read($, pane)
     const rows = state.rows.length === 0
       ? [Text({ key: 'empty', children: [state.refreshing ? 'Loading…' : 'No open PRs'] })]

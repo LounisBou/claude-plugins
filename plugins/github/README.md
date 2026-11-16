@@ -93,9 +93,9 @@ it. `/github:doctor` then confirms everything is ready.
 - **`/checks [pr]`** — combined CI status of a PR, with the failed checks
   named, defaulting to the current branch's. It is the ready guard's verdict
   (« Ready pull requests »): a skipped check, or a neutral one on a draft, is
-  `PENDING`, and the pane shows the same.
+  `PENDING`, and the pane shows the same (a check the base requires that has not reported yet is not counted there).
 - **`/threads [pr]`** — the open review threads of a PR, as a markdown table.
-- **`/prs`** — opens a pane listing the open PRs (the newest 50): number, title and draft
+- **`/prs`** — opens a pane listing the open PRs (the newest 100): number, title and draft
   flag, CI state and comment count, with a Refresh button, all read in one GraphQL query
   (`pr-panel`). While it is shown it reads the PRs again every five minutes and after each
   write through the tool, and a toast says when a PR's CI ends in success or failure. A pane
