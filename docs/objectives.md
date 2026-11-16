@@ -15,5 +15,5 @@ claude-plugins serves the other projects, not itself.
 Working mode: one Claude session per change, without the orchestrator's hooks; tests, PR,
 `/code-review`, merge when CI is green.
 
-Status as of 2026-11-22: PRs merged, defects met, tokens spent; decision on extending the simple
+Review due 2026-11-22: merged PRs, defects met, tokens spent; decision on extending the simple
 mode to the other projects.
