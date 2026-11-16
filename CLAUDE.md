@@ -23,8 +23,7 @@ A monorepo of independent Claude Code plugins under `plugins/<name>/`.
 - This repository is in auto-merge: the session that opens a pull request merges it, with a
   merge commit, once the repository rules and the blocking suites (`ci/plugins.json`) pass. What
   CI runs, and when, is in `docs/architecture.md`, « What CI holds ».
-- The program in progress is `docs/specs/program-design.md`; its goals table is
-  the program's end point; no goal of the design is set aside.
+- The repository's objectives are `docs/objectives.md`; changes here are made in simple sessions (one session per change: tests, pull request, `/code-review`, merge on green CI).
 - Each change is one pull request, with one review, green CI and auto-merge.
 - A friction met only while working on claude-plugins becomes no new rule, guard, gate or check of
   the method unless the same problem is seen on one of the operator's other projects; it is fixed by

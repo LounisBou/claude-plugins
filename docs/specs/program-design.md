@@ -1,3 +1,5 @@
+Superseded by `docs/objectives.md` since 2026-11-16.
+
 # The claude-plugins program — design
 
 ## Purpose — the operator's words (2026-11-14)
