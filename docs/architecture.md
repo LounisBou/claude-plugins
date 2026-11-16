@@ -21,7 +21,7 @@ ci/prompts.json                   the prompt budgets and the duplicate ceiling
 ci/scenarios.json                 what each kind of session loads, summed by `npm run context`
 .github/workflows/ci.yml          the one workflow: the repository rules, the plugin suites, then `ci`,
                                   the one check GitHub requires (core's readiness contract)
-docs/                             architecture, conventions, contracts, migration, decisions, specs
+docs/                             architecture, conventions, contracts, migration, objectives, decisions, specs
 ```
 
 A plugin is the unit of installation, versioning and release. The repository is the unit of
