@@ -969,7 +969,7 @@ bash "$REC" defer "$DR" "$d1" --ruling "2026-10-29: later, when I am on mini-tec
 check "defer keeps the row open and records his words" "open|2026-10-29: later, when I am on mini-tech" \
   "$(jq -r --argjson i "$d1" 'select(.id==$i)|.state' "$DR")|$(jq -r --argjson i "$d1" 'select(.id==$i)|.deferred' "$DR")"
 check "summary --open shows a deferred row as deferred, with its ruling, and the live one as open" \
-  "deferred=$d1 label=the mini-tech row ruling=2026-10-29: later, when I am on mini-tech|open=$d2 label=the live row" \
+  "deferred=$d1 label=the mini-tech row ruling=2026-10-29: later, when I am on mini-tech blocker=until 2026-11-28T08:00:00Z|open=$d2 label=the live row" \
   "$(bash "$REC" summary "$DR" --open | grep "^deferred=")|$(bash "$REC" summary "$DR" --open | grep '^open=')"
 bash "$REC" goals "$DR" defer G1 --ruling "2026-10-29: later, when I am on mini-tech" >/dev/null
 bash "$REC" goals "$DR" defer G3 --ruling "« same »" >/dev/null
