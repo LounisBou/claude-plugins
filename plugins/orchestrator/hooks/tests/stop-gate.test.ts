@@ -2477,6 +2477,19 @@ test('a to-do he put off is deferred work: a done ending names the deferred line
   expect(checkWakeDone({ ...left, deferred: [], deferredRows: [], ending: 'deferred', ids: '1 items' })).toBeNull()
 })
 
+test('the ids of a deferred ending accept the to-do form its refusal prints (to-do 3, todo 3, to-dos 3)', () => {
+  const left = { agents: [], checkouts: [], deferred: ['5 (a)'], deferredRows: ['5 (a)'], todosDeferred: ['3 (item 3)'], ending: 'deferred' as const }
+  expect(checkWakeDone({ ...left, ids: '5, to-do 3' })).toBeNull()
+  expect(checkWakeDone({ ...left, ids: 'row 5, to-do 3' })).toBeNull()
+  expect(checkWakeDone({ ...left, ids: '5, todo 3' })).toBeNull()
+  expect(checkWakeDone({ ...left, ids: '5, to-dos 3' })).toBeNull()
+  expect(checkWakeDone({ ...left, ids: '5, T3' })).toBeNull()
+  expect(checkWakeDone({ ...left, ids: '5' })!.reason).toContain('missing to-do 3')
+  expect(checkWakeDone({ ...left, ids: '5, to-do 9' })!.reason).toContain('unknown to-do 9')
+  expect(checkWakeDone({ ...left, ids: 'to-do 3, row 5' })).toBeNull()
+  expect(checkWakeDone({ ...left, ids: 'to-do 3, 5' })!.reason).toContain('unknown to-do 5')
+})
+
 test('the stop of an orchestrator ending on done is refused while its list holds an open item, and passes once it is closed', async () => {
   const { handlers } = mounted()
   const open = fakeDollar({ todos: todoLine(1) + todoLine(2, { state: 'closed', verdict: 'row 5' }) })
