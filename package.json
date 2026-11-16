@@ -21,6 +21,7 @@
     "permissions": "node --experimental-strip-types --no-warnings scripts/permissions.ts",
     "rules": "node --experimental-strip-types --no-warnings scripts/rules.ts",
     "context": "node --experimental-strip-types --no-warnings scripts/context.ts",
+    "birth": "node --experimental-strip-types --no-warnings scripts/birth.ts",
     "outcome": "node --experimental-strip-types --no-warnings scripts/outcome.ts",
     "ablation": "node --experimental-strip-types --no-warnings scripts/ablation.ts"
   },

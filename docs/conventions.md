@@ -114,6 +114,10 @@ changed by a pull request that edits this file and the code it governs together.
 - What a kind of session loads is a scenario of `ci/scenarios.json`; `npm run context` sums
   its tokens, and CI writes each pull request's difference by scenario in its summary. A new
   skill or command a session loads in full joins the scenario of that session.
+- What a session carries at its birth is measured on the transcripts the host keeps, not simulated:
+  `npm run birth` gives the first model call's tokens by role and by part, for the sessions born since
+  the last deploy of the catalogue (`-- --plugin <name>`: of that plugin), against the oldest sessions
+  and those before that deploy. It runs on the operator's machine, reports, and blocks nothing.
 - A rule that enters a prompt replaces one.
 - `npm run rules` lists the rules a prompt states that neither code holds nor an eval names: a
   rule left to prose alone is a candidate for a guard, an eval, or removal. It reports: a line of the
