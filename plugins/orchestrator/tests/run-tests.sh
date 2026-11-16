@@ -957,9 +957,12 @@ check "a reference set off by two spaces leaves no trailing space in the owner, 
 # `waiting: deferred — <n> items` once nothing else is open.
 DD="$WORK/deferred-build"; DR="$DD/dispatch.jsonl"; DG="$DD/goals.md"
 bash "$REC" goals "$DR" init --spec none --goal "first goal" --goal "second goal" --goal "third goal" >/dev/null
-d1=$(bash "$REC" open "$DR" --class x --tier light --label "the mini-tech row")
+d1=$(bash "$REC" open "$DR" --class x --tier light --label "the mini-tech row" --blocker "until 2026-11-28T08:00:00Z")
 d2=$(bash "$REC" open "$DR" --class x --tier light --label "the live row")
 check_status "defer a row without --ruling dies" 1 bash "$REC" defer "$DR" "$d1"
+check_status "defer a row with no revisit date dies" 1 bash "$REC" defer "$DR" "$d2" --ruling "later"
+check_status "a deferred row keeps its revisit date as its blocker" 1 bash -c "bash '$REC' defer '$DR' '$d1' --ruling later >/dev/null && bash '$REC' blocker '$DR' '$d1' none"
+bash "$REC" undefer "$DR" "$d1" >/dev/null
 check_status "defer an unknown row dies" 1 bash "$REC" defer "$DR" 99 --ruling "later"
 check_status "defer a goal without --ruling dies" 1 bash "$REC" goals "$DR" defer G1
 bash "$REC" defer "$DR" "$d1" --ruling "2026-10-29: later, when I am on mini-tech" >/dev/null

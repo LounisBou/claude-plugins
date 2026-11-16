@@ -9,7 +9,7 @@
 // instructions of `templates/orchestrator-succession-brief.md` filled from those files, then the
 // Live state, and nothing of it lands in a file.
 //
-// The Live state: the open rows at level 1; their owners, « ruling » for a deferred one, an open
+// The Live state: the open rows at level 1; their owners, « ruling » for a deferred one (DEFERRED DUE once its `until` date has come), an open
 // row's live agent as the row its brief was printed for binds it (a hand-written note naming an
 // agent whose brief names no row, `Dispatched …: Agent: <name>`),
 // else its blocker checked on its artifact (the pull request merged, the row closed, the release
@@ -709,14 +709,15 @@ export function fallOf(blocker: string, facts: Artifacts): Fall {
  * for it (rowOfBrief, the id the dispatch recorded), never a guess from its label nor a name its note
  * merely mentions; an agent whose brief names no row is matched on a note naming it in the dispatch's
  * form, `Dispatched …: Agent: <name>` (listed without the role prefix). A deferred row reads
- * « ruling »; a row with no live agent reads its blocker checked on its artifact: `blocked: <blocker>` while it stands, then an open pull request it holds,
+ * « ruling » until its `until` date, then DEFERRED DUE; a row with no live agent reads its blocker checked on its artifact: `blocked: <blocker>` while it stands, then an open pull request it holds,
  * DISPATCHED, NO LIVE AGENT when its note names an agent the deck no longer lists, READY NOT STARTED
  * once its blocker has fallen, `blocker unread: <blocker>` when its artifact cannot be read; a row
  * with no blocker recorded reads NO OWNER.
  */
 export function ownersOf(open: OpenState, fall: (blocker: string) => Fall = () => 'unread'): string[] {
   return open.rows.map(row => {
-    if ((row.ruling ?? '') !== '') return `${row.id} ruling`
+    // A deferred row waits for its revisit date, its `until` blocker; once it has come the row goes back to the operator.
+    if ((row.ruling ?? '') !== '') return `${row.id} ${row.blocker !== undefined && untilOf(row.blocker) !== undefined && fall(row.blocker) === 'fallen' ? 'DEFERRED DUE, ask the operator: relaunch or drop' : 'ruling'}`
     const note = row.note ?? ''
     const seats: readonly LiveAgent[] = open.seats ?? open.agents.map(name => ({ name, tty: null }))
     const live = seats.filter(seat => (seat.row === undefined ? names(note, seat.name) : seat.row === row.id)).map(seat => seat.name)

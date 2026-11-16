@@ -221,10 +221,14 @@ export function unattendedLine(list: readonly Unattended[], unread: readonly str
   return parts.length === 0 ? null : `PR délaissées : ${parts.join(' ; ')}`
 }
 
-/** An open dispatch row ready to start: its number and its keyword, the label's first word. */
+/**
+ * An open dispatch row ready to start: its number and its keyword, the label's first word. A row the
+ * operator deferred is listed once its `until` date has come (`deferred`): it goes back to him, relaunched or dropped.
+ */
 export interface ReadyRow {
   readonly id: number
   readonly keyword: string
+  readonly deferred?: true
 }
 
 /** The subject of an `Agent: <subject>` session name, lowercased; null for any other name. */
@@ -256,8 +260,7 @@ export function blockerFallen(blocker: unknown, now: number): boolean {
 }
 
 /**
- * The open rows ready with nobody on them: a fallen blocker (`blockerFallen`, at `now`), not deferred,
- * and neither a live agent (`live`, the session names the launcher lists running) nor an open pull
+ * The open rows ready with nobody on them: a fallen blocker (`blockerFallen`, at `now`), and neither a live agent (`live`, the session names the launcher lists running) nor an open pull
  * request (`lines`, the ledger's) naming the row. A session or a pull request names a row by the row's keyword in the
  * agent's subject (a whole word of it), or by the row's note: `Agent: <subject>` of a live session, `<repo>#<n>` of a
  * line. `texts` are the dispatch records' texts; the ledger's lines and any other line are no row.
@@ -283,7 +286,9 @@ export function readyRows(input: {
       const row = value as Record<string, unknown>
       const { id, state, blocker, deferred, label, note } = row
       if (typeof id !== 'number' || state !== 'open' || !blockerFallen(blocker, now)) continue
-      if (typeof deferred === 'string' && deferred.trim() !== '') continue
+      const putOff = typeof deferred === 'string' && deferred.trim() !== ''
+      // A deferred row comes back on its date, an `until`: any other blocker is no date.
+      if (putOff && (typeof blocker !== 'string' || untilOf(blocker) === undefined)) continue
       const words = typeof label === 'string' ? label.trim() : ''
       const keyword = /^[^\s:]+/u.exec(words)?.[0] ?? ''
       const held = (typeof note === 'string' ? note : '').toLowerCase()
@@ -293,15 +298,25 @@ export function readyRows(input: {
       const named = (subject: string | null): boolean => subject !== null && wanted !== '' && spelled(subject).includes(spelled(wanted))
       if (alive.some(subject => named(subject) || spelled(held).includes(spelled(`agent: ${subject}`)))) continue
       if (input.lines.some(line => named(agentSubject(line.agent)) || new RegExp(`(?<![a-z0-9._-])${(line.repo.split('/')[1] ?? '').replace(/\./g, '\\.')}#${line.pr}(?![0-9])`, 'i').test(held))) continue
-      ready.push({ id, keyword: keyword === '' ? 'no keyword' : keyword })
+      ready.push({ id, keyword: keyword === '' ? 'no keyword' : keyword, ...(putOff ? { deferred: true as const } : {}) })
     }
   }
   return ready
 }
 
-/** « Lignes prêtes sans agent : <id> <KEYWORD>, … »; null when none is ready. */
+/**
+ * « Lignes prêtes sans agent : <id> <KEYWORD>, … », then, for the deferred rows whose date has come,
+ * « Lignes différées à leur date de réexamen : … — à demander à l'opérateur : relancer ou abandonner »; null when none.
+ */
 export function readyRowsLine(list: readonly ReadyRow[]): string | null {
-  return list.length === 0 ? null : `Lignes prêtes sans agent : ${list.map(row => `${row.id} ${row.keyword}`).join(', ')}`
+  const named = (rows: readonly ReadyRow[]): string => rows.map(row => `${row.id} ${row.keyword}`).join(', ')
+  const ready = list.filter(row => row.deferred !== true)
+  const due = list.filter(row => row.deferred === true)
+  const lines = [
+    ...(ready.length === 0 ? [] : [`Lignes prêtes sans agent : ${named(ready)}`]),
+    ...(due.length === 0 ? [] : [`Lignes différées à leur date de réexamen : ${named(due)} — à demander à l'opérateur : relancer ou abandonner`]),
+  ]
+  return lines.length === 0 ? null : lines.join('\n')
 }
 
 /** The lines whose pull request is no longer open, in the repositories the forge listed (`open`, by repository). */
