@@ -676,16 +676,11 @@ test('a heading in a pull request description is refused, a hash in a comment or
   expect(lint('pr-create', { title: 't', body: 'Fixes #12\n#hashtag\n```sh\n# a shell comment\n```\n\n' + NONE })).toEqual([])
 })
 
-test('the « Self-review » heading is the one heading a pull request description may carry', () => {
-  const review = '## Self-review\n- Correctness: one finding, fixed in a1b2c3d.\n- Tests: none missing.'
-  expect(lint('pr-create', { title: 't', body: 'Adds the reset.\n\n' + review + '\n\n' + NONE })).toEqual([])
-  expect(lint('pr-update', { pr: 1, body: 'Adds the reset.\n\n### self-review ###\n- Tests: none missing.\n\n' + NONE })).toEqual([])
-  expect(lintWith('pr-create', { title: 't', body: 'Adds the reset.\n\n' + review }, '', NEGATIVE_PHRASES, false)).toEqual([])
-  for (const other of ['## Summary', '## Self-review notes', '# Self reviewed', '## Self-review: done']) {
-    expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + other + '\n- x\n\n' + NONE }), other)
+test('a « Self-review » heading is refused like any other heading in a pull request description', () => {
+  for (const heading of ['## Summary', '## Self-review', '### self-review ###']) {
+    expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + heading + '\n- Tests: none missing.\n\n' + NONE }), heading)
       .toEqual(['body: no heading of any kind in a pull request description, it starts with the summary text'])
   }
-  expect(rulesOf('pr-create', { title: 't', body: 'Adds it.\n\n' + review + '\n\n## Notes\nmore\n\n' + NONE }).length).toBe(1)
 })
 
 test('the four sections bind a GeoNative repository only, every other rule binds all', () => {
@@ -1078,7 +1073,7 @@ test('a description without the four sections is observed for a GeoNative reposi
 
   for (const [repo, observed] of [['geonativefr/geonative-api', true], ['LounisBou/claude-plugins', false]] as const) {
     journaled.length = 0
-    const body = 'Adds the reset.\n\n## Self-review\n- Tests: none missing.'
+    const body = 'Adds the reset.'
     const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', repo, args: { title: 'feat: add the reset', body } })
     expect(out, repo).toEqual({ result: 'ok' })
     expect(journaled, repo).toEqual(observed ? ['github.writing.rule'] : [])
@@ -2304,11 +2299,6 @@ test('a gh pr edit body without the sections is observed in a GeoNative reposito
   journaled.length = 0
   await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 --repo acme/front -b \'Adds the reset; at last.\'' })
   expect(journaled).toEqual(['github.writing.rule'])
-  // The Self-review heading is no fault, in a repository of GeoNative's with its sections or in another without.
-  journaled.length = 0
-  await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 -R acme/front -b \'Adds the reset.\n\n## Self-review\n- Tests: none missing.\'' })
-  await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 -R geonativefr/front -b \'Adds the reset.\n\n## Self-review\n- Tests: none missing.\n\n' + NONE + '\'' })
-  expect(journaled).toEqual([])
 })
 
 test('a gh.py run names its repository with --repo or -R, which decides whether the four sections bind its description', async ($, on) => {

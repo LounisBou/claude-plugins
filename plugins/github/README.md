@@ -49,8 +49,8 @@ it. `/github:doctor` then confirms everything is ready.
   `engine/writing/`: no semicolon in prose (code spans, fenced blocks and
   URLs are not prose), no trailer of any kind (`Co-Authored-By`,
   `Signed-off-by`, `Claude-Session`, any `<word>-by`, `Change-Id`), a
-  title on one line and within 72 characters, no heading in a PR description
-  but `Self-review`, every CVE id in a PR description a link to its advisory,
+  title on one line and within 72 characters, no heading in a PR description,
+  every CVE id in a PR description a link to its advisory,
   and a security update's tables, one per advisory. No PR description carries a
   horizontal rule but the `---` between two screenshots, nor a negative phrasing
   from a fixed list in its summary. In a GeoNative repository (owner

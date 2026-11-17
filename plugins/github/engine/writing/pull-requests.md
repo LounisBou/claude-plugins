@@ -13,7 +13,7 @@ after the conventional prefix, no clause on how or why — that belongs in the d
 
 In a repository of the `geonativefr` GitHub organisation (its owner, whatever the case) follow this exact
 template. In any other repository the description is the summary text alone, then what a pull request
-may carry (screenshots, the « Self-review » section): the four sections below, and every rule that
+may carry (screenshots): the four sections below, and every rule that
 names them (the order, the items, the references above them, the text after them, the bold labels), are
 GeoNative's own. A repository the checkout cannot name is read as GeoNative's, so that a problem is
 shown rather than hidden.
@@ -57,9 +57,7 @@ With nothing to do at deployment and no linked PR, a description ends with:
 ```
 
 No heading: the description starts directly with the summary text, never
-with `## Summary` or any other title. The one heading allowed is `## Self-review`, the section the
-method requires of the author: it sits after the summary and the screenshots, and before the four
-sections where the repository has them. State what the PR does, never what it does not
+with `## Summary`, `## Self-review` or any other title. State what the PR does, never what it does not
 do — no list of omissions, no rejected alternatives, no things left untouched. Phrase
 a prerequisite positively ("X must have Y set", not "it will fail without Y"). The
 plugin observes, through its tool and through the shell alike, in the summary, the phrasings that say what the PR does not do. The summary names no pull request: no

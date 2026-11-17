@@ -7,9 +7,9 @@ claude plugin validate "$HERE" >/dev/null || { echo "FAIL claude plugin validate
 for ref in $(grep -o 'references/[a-z-]*\.md' "$HERE/skills/lifecycle/SKILL.md" | sort -u); do
   [ -f "$HERE/skills/lifecycle/$ref" ] || { echo "FAIL the kernel names $ref, which does not exist"; fail=1; }
 done
-# The self-review the implementer owes before its pull request: its section, its readers, its answer.
+# The self-review the implementer owes before its pull request: its readers, its answer in the report.
 kernel=$(tr '\n' ' ' < "$HERE/skills/lifecycle/SKILL.md")
-for phrase in '## Self-review' 'Once the gate is green, before the pull request opens' 'read-only `orchestrator:lens`' 'one line each' 'origin/<base>...HEAD' '« Self-review » section' 'The outside review reads it first'; do
+for phrase in '## Self-review' 'Once the gate is green, before the pull request opens' 'read-only `orchestrator:lens`' 'one line each' 'origin/<base>...HEAD' "implementer's report" 'The outside review reads those lines first'; do
   printf '%s' "$kernel" | grep -qF -- "$phrase" || { echo "FAIL the kernel's self-review lacks « $phrase »"; fail=1; }
 done
 [ "$fail" -eq 0 ] && echo "method: all checks passed"

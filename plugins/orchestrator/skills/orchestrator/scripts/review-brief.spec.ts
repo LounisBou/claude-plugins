@@ -30,7 +30,7 @@ test('every field of the real template is filled: no placeholder is left, and th
   assert.deepEqual(placeholdersOf(text), [])
   assert.match(text, /^# app — review: a fix of the thing \(row 9 THING\)\n/)
   assert.match(text, /1\. Spec: `\/b\/thing-brief\.md`/)
-  assert.match(text, /pull request 12 \(its « Self-review » section first\), branch `fix\/thing`, head `0123456789abcdef0123456789abcdef01234567`, base `origin\/main`/)
+  assert.match(text, /pull request 12 \(the self-review lines of the implementer's report first\), branch `fix\/thing`, head `0123456789abcdef0123456789abcdef01234567`, base `origin\/main`/)
   assert.match(text, /Working directory: `\/w\/review-12`/)
   assert.match(text, /session \*\*`Orch: acme \[a1b2c3\]`\*\*/)
   assert.match(text, /`<repo>#12 0123456789abcdef0123456789abcdef01234567 — <n> findings/)
