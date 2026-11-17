@@ -568,12 +568,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         return await letThrough(todoOpen(open.map(todoName)))
       }
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
-      // A turn puts one question to the operator: the blocks after the first wait for his answer.
-      const blocks = questionBlocks(String(e.last_assistant_message ?? ''))
-      if (blocks > 1) {
-        await logLine($, 'guards', `stop gate: ${blocks} question blocks in one message`)
-        return await letThrough(manyQuestionsReason(blocks))
-      }
       if (role === 'coordinator') return next(e)
       const state = await stateDir($)
       // A question asked with `ask` still open stays in the round until he answers it, its answer
@@ -596,6 +590,12 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       if (restated.length > 0) {
         await logLine($, 'guards', `stop gate: restated question ${restated.join(', ')}`)
         return await letThrough(restatedReason(restated))
+      }
+      // A turn puts one question to the operator: the blocks after the first wait for his answer.
+      const blocks = questionBlocks(String(e.last_assistant_message ?? ''))
+      if (blocks > 1) {
+        await logLine($, 'guards', `stop gate: ${blocks} question blocks in one message`)
+        return await letThrough(manyQuestionsReason(blocks))
       }
       // Check 1, what will wake you. The agents of this orchestrator are the chain
       // entries its own session wrote, still running one by the listing's glyph.

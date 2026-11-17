@@ -186,17 +186,22 @@ test('a message with three question blocks is told to present the first, the res
   expect(told.observed).toBe(MANY_REASON)
 })
 
-test('a message with one question block is let be, whoever the session', async () => {
+test('a message with one question block is not told, and a coordinator is left alone', async () => {
   const { handlers } = mounted()
   const { dollar } = fakeDollar({})
   const one = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED }))
-  expect(one.observed === undefined || !one.observed.includes('questions in one message')).toBe(true)
-  // A coordinator is held to it as an orchestrator is; one block passes, three are told.
+  expect(one.observed ?? '').not.toContain('questions in one message')
   const coord = fakeDollar({ launchName: 'Coord: machine' })
-  const single = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: ASKED }))
+  const single = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: THREE }))
   expect(single.observed).toBeUndefined()
-  const many = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: THREE }))
-  expect(many.observed).toBe(MANY_REASON)
+})
+
+test('a message copying an open question and asking one more is told as a restatement first', async () => {
+  const { handlers } = mounted()
+  askTurnStarted()
+  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
+  const told = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `${ASKED_BLOCK}\n\n**Question 1 of 1** (q-new-1)` }))
+  expect(told.observed).toBe(RESTATED_REASON)
 })
 
 test('an orchestrator ending on an operator wait that blocks nothing gets the blocks-nothing refusal, not the no-question one', async () => {
