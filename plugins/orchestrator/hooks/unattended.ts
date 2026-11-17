@@ -17,6 +17,7 @@ import { messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { fileWanted, readPrFile, refreshPrFile } from './pr-file.ts'
 import { prsOfRepo, type PrFile } from './pr-file-format.ts'
+import type { RecordText } from './row-owner.ts'
 
 // The nouns a reading holds.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
@@ -25,11 +26,12 @@ type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
 export const UNATTENDED_BOUND_MS = 20_000
 
 // `ready`: the open rows whose blocker has fallen (`none`, or an `until` past) that no live agent and no open pull request holds; `readyLine` says them.
-// `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `kept`: its lines still open; `texts`: its records' texts.
+// `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `kept`: its lines still open; `records`: its records, each with its path and its text.
+// `live`: the names of the agents the launcher lists running, among those a line names (every one when its listing could not be read).
 // `wanted`: whether the sweep, the coordinator or a takeover ask the file to hold a repository or a pull request (`prs.wanted`).
 export type Reading = {
   list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
-  ended: Ended[]; kept: LedgerLine[]; texts: string[]; wanted: boolean
+  ended: Ended[]; kept: LedgerLine[]; records: RecordText[]; live: ReadonlySet<string>; wanted: boolean
 }
 export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
 
@@ -157,7 +159,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
     if (seen === null) await logLine($, 'unattended', "the launcher's listing unread: every agent a line names is taken for running, no row is named ready")
     return seen
   }
-  const named = new Set(kept.flatMap(line => (line.status === 'working' && line.agent ? [line.agent] : [])))
+  const named = new Set([...kept, ...ended.map(e => e.line)].flatMap(line => (line.status === 'working' && line.agent ? [line.agent] : [])))
   const live = named.size > 0 ? await running() ?? named : named
   const list = unattended({ open, lines: kept, live, now, claimed: await othersClaims($, state, sessionId, now) })
   const texts = own.map(record => record.text)
@@ -166,7 +168,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
     const agents = await running()
     if (agents !== null) ready = readyRows({ texts, lines: kept, live: agents, now })
   }
-  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, texts, wanted }
+  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, records: own, live, wanted }
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.
