@@ -148,24 +148,66 @@ def pr_status(args):
     # The few lines by default; the full pull request with --json, or under a --format that reads it.
     sha = (pull.get("head") or {}).get("sha") or ""
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
-    runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
+    runs = _check_runs(owner, name, sha)
     args.format = "pr-summary"
     return {"pull": pull, "ci": _gate_ci(owner, name, pull, sha, statuses, (runs or {}).get("check_runs") or [])}
 
 
+# GitHub's page size for the check runs of a commit, and the pages read before the gate refuses to guess.
+_CHECK_RUNS_PAGE = 100
+_CHECK_RUNS_PAGES = 30
+
+
+def _check_runs(owner, name, sha):
+    """Every check run at a head, newest suite first, as one answer ({"check_runs": [...], ...}): a head
+    that a label write reruns again and again holds far more than one page, and the success the gate
+    reads rests on the older ones. A read that would pass _CHECK_RUNS_PAGES pages fails, so that the
+    gate never decides on a part of the runs."""
+    path = "/repos/%s/%s/commits/%s/check-runs?per_page=%d" % (owner, name, sha, _CHECK_RUNS_PAGE)
+    answer = http.rest("GET", path)
+    runs = list(answer.get("check_runs") or [])
+    total = answer.get("total_count")
+    page = 1
+    chunk = len(runs)
+    while chunk == _CHECK_RUNS_PAGE and not (_is_count(total) and len(runs) >= total):
+        if page >= _CHECK_RUNS_PAGES:
+            raise errors.ApiError("more than %d check runs at %s" % (_CHECK_RUNS_PAGE * _CHECK_RUNS_PAGES, sha))
+        page += 1
+        more = (http.rest("GET", "%s&page=%d" % (path, page)).get("check_runs")) or []
+        runs.extend(more)
+        chunk = len(more)
+    return dict(answer, check_runs=runs)
+
+
+def _is_count(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _run_state(run):
+    """A workflow run's conclusion once it finished, else its status; "rerun" while a run started
+    again goes (its run id is kept, its earlier attempt may have failed)."""
+    if run.get("status") == "completed":
+        return run.get("conclusion")
+    attempt = run.get("run_attempt")
+    if run.get("status") in fmt.ACTIVE and isinstance(attempt, int) and not isinstance(attempt, bool) and attempt > 1:
+        return fmt.RERUN
+    return run.get("status")
+
+
 def _suite_workflows(owner, name, sha):
     """The workflow of each check suite at a head, {suite id as a string: workflow
-    id}, and its workflow run, {suite id as a string: run id}, from the Actions
-    runs. (None, None) when the call fails: the gate then counts every run rather
+    id}, its workflow run, {suite id as a string: run id}, and that run's state,
+    {suite id as a string: its conclusion once finished, else its status (_run_state)}, from the Actions
+    runs. (None, None, None) when the call fails: the gate then counts every run rather
     than guess which belong together."""
     try:
         data = http.rest("GET", "/repos/%s/%s/actions/runs?head_sha=%s&per_page=100" % (owner, name, sha))
     except errors.GhError as exc:
         print("error: cannot read the Actions runs of %s: %s" % (sha, exc.message), file=sys.stderr)
-        return None, None
+        return None, None, None
     except OSError as exc:
         print("error: cannot read the Actions runs of %s: %s" % (sha, exc), file=sys.stderr)
-        return None, None
+        return None, None, None
     placed = [
         run
         for run in (data or {}).get("workflow_runs") or []
@@ -173,7 +215,8 @@ def _suite_workflows(owner, name, sha):
     ]
     workflows = {str(run["check_suite_id"]): run["workflow_id"] for run in placed}
     suite_runs = {str(run["check_suite_id"]): run.get("id") for run in placed}
-    return workflows, suite_runs
+    states = {str(run["check_suite_id"]): _run_state(run) for run in placed}
+    return workflows, suite_runs, states
 
 
 _PLAN_REFUSAL = "upgrade to github pro"
@@ -267,10 +310,10 @@ def _no_ci(owner, name, pull, statuses, runs, required, unverified):
 def _gate_ci(owner, name, pull, sha, statuses, runs, reads=None):
     """CI at the head as the ready guard reads it (fmt.gate_ci), the checks the base requires and whether
     the repository has no CI at all read beside it."""
-    workflows, suite_runs = _suite_workflows(owner, name, sha)
+    workflows, suite_runs, states = _suite_workflows(owner, name, sha)
     required, unverified = _required_checks(owner, name, _base(pull), reads)
     no_ci = _no_ci(owner, name, pull, statuses, runs, required, unverified)
-    return fmt.gate_ci(statuses, runs, bool(pull.get("draft")), workflows, suite_runs, required, unverified, no_ci)
+    return fmt.gate_ci(statuses, runs, bool(pull.get("draft")), workflows, suite_runs, required, unverified, no_ci, states)
 
 
 def _stacked(owner, name, pull, reads):
@@ -303,8 +346,8 @@ def pr_checks(args):
     pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, args.pr))
     sha = (pull.get("head") or {}).get("sha", "")
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
-    runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
-    workflows, suite_runs = _suite_workflows(owner, name, sha)
+    runs = _check_runs(owner, name, sha)
+    workflows, suite_runs, states = _suite_workflows(owner, name, sha)
     required, unverified = _required_checks(owner, name, _base(pull))
     check_runs = runs.get("check_runs", [])
     return {
@@ -314,6 +357,7 @@ def pr_checks(args):
         "draft": bool(pull.get("draft")),
         "workflows": workflows,
         "workflow_runs": suite_runs,
+        "workflow_states": states,
         "required": sorted(required),
         "unverified": unverified,
     }
@@ -340,7 +384,7 @@ def pr_gate(args):
     if args.head_only:
         return gate
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
-    runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
+    runs = _check_runs(owner, name, sha)
     reads = {}
     gate.update(
         {

@@ -73,8 +73,72 @@ def _stale_suites(workflows, suite_runs, runs):
     }
 
 
-def _latest_runs(runs, workflows, suite_runs=None):
-    """The latest run of each check. A check is its name, its app (app.id, or
+# The states of a workflow run that has not finished, as GitHub names its status.
+ACTIVE = ("queued", "in_progress", "waiting", "requested", "pending")
+# What a finished run did not decide: a run cancelled or skipped proved nothing.
+_UNSETTLED = ("cancelled", "skipped")
+# A run started again (a re-run keeps its run id): it goes, but what its earlier attempt did may have failed.
+RERUN = "rerun"
+# A finished run that passed at the workflow level.
+_PASSED = ("success", "neutral")
+_GOING = ACTIVE + (RERUN,)
+# What a finished check run can have concluded without having failed.
+_NOT_FAILED = ("success", "neutral", "skipped", "cancelled")
+
+
+def _placed(workflows, suite_runs):
+    """{workflow id: [(run id, check suite id as a string)], the newest run first}, for the runs
+    whose suite is placed and whose run id is an integer."""
+    placed = {}
+    for suite, run_id in (suite_runs or {}).items():
+        workflow = workflows.get(suite)
+        if workflow is not None and _is_id(run_id):
+            placed.setdefault(workflow, []).append((run_id, suite))
+    for entries in placed.values():
+        entries.sort(reverse=True)
+    return placed
+
+
+def _after_success(placed, states):
+    """The check suites of a workflow run newer than the latest settled run of its workflow,
+    when that run succeeded: a run still going, cancelled or skipped after a success at the same
+    head (a label write fires one, and a workflow that cancels its in-progress run cancels the
+    one before) decides nothing, the success speaks for the workflow. A settled run that failed,
+    a run started again (its earlier attempt may have failed) and one whose state is unknown hide
+    nothing: a failure is real, and the others prove nothing."""
+    hidden = set()
+    for entries in placed.values():
+        for index, (_, suite) in enumerate(entries):
+            state = states.get(suite)
+            if state in ACTIVE or state in _UNSETTLED:
+                continue
+            if state == "success":
+                hidden.update(newer for _, newer in entries[:index])
+            break
+    return hidden
+
+
+def _unreported(placed, states, runs):
+    """The workflow runs that ended without a check run to show for it (a startup failure, a
+    workflow file GitHub refused), each named by its state: the latest settled run of a workflow,
+    when it did not pass and no check run belongs to it, is a failure no check names."""
+    checked = {str((run.get("check_suite") or {}).get("id")) for run in runs}
+    failed = []
+    for entries in placed.values():
+        for _, suite in entries:
+            state = states.get(suite)
+            if state in ACTIVE or state in _UNSETTLED:
+                continue
+            if state is not None and state != RERUN and state not in _PASSED and suite not in checked:
+                failed.append("workflow run (%s)" % state)
+            break
+    return failed
+
+
+def _latest_runs(runs, workflows, suite_runs=None, states=None):
+    """(the latest run of each check, the workflow runs still going that no check run speaks for,
+    the failures no check run names).
+    A check is its name, its app (app.id, or
     app.slug when that is all the payload carries; no app, the name alone) and
     its workflow: every Actions run shares one app, so a job of one workflow
     would hide the same-named job of another. workflows maps a check suite id
@@ -88,17 +152,45 @@ def _latest_runs(runs, workflows, suite_runs=None):
     nothing here may hide a failure or a running run. A skipped or neutral run
     of an older workflow run (suite_runs maps a check suite id to its workflow
     run id) counts as nothing: it proved nothing, and the latest workflow run of
-    its workflow, which has check runs, speaks for it."""
+    its workflow, which has check runs, speaks for it. So does a cancelled one
+    (a workflow that cancels its in-progress run when a newer one starts), and also
+    while the latest run of its workflow still goes (states maps a check suite id to its
+    workflow run's conclusion, or its status while it goes): that run, whose jobs
+    are not all created yet, counts as running through the second value. The runs
+    newer than the latest settled run of a workflow, when it succeeded, are left
+    out altogether (_after_success), those holding a failed job excepted. Every other conclusion of an older run counts."""
     if workflows is None:
-        return list(runs)
+        return list(runs), 0, []
+    states = states or {}
+    placed = _placed(workflows, suite_runs)
+    hidden = _after_success(placed, states)
+    # A job that failed in a run newer than the success is a failure, whatever its run goes on to do.
+    hidden -= {
+        str((run.get("check_suite") or {}).get("id"))
+        for run in runs
+        if run.get("status") == "completed" and run.get("conclusion") not in _NOT_FAILED
+    }
+    if hidden:
+        runs = [run for run in runs if str((run.get("check_suite") or {}).get("id")) not in hidden]
+        suite_runs = {suite: run_id for suite, run_id in suite_runs.items() if suite not in hidden}
+        placed = _placed(workflows, suite_runs)
     stale = _stale_suites(workflows, suite_runs, runs)
+    # The workflows whose latest run still goes: it replaces every older run that was cancelled.
+    going = {}
+    for entries in placed.values():
+        if states.get(entries[0][1]) in _GOING:
+            going.update({suite: entries[0][1] for _, suite in entries[1:]})
+    incomplete = {str((run.get("check_suite") or {}).get("id")) for run in runs if run.get("status") != "completed"}
+    waiting = sum(1 for entries in placed.values() if states.get(entries[0][1]) in _GOING and entries[0][1] not in incomplete)
     kept = []
     groups = {}
     for run in runs:
         app = run.get("app") or {}
         suite = (run.get("check_suite") or {}).get("id")
-        unproven = run.get("status") == "completed" and run.get("conclusion") in ("skipped", "neutral")
-        if unproven and str(suite) in stale:
+        completed = run.get("status") == "completed"
+        if completed and run.get("conclusion") in ("skipped", "neutral", "cancelled") and str(suite) in stale:
+            continue
+        if completed and run.get("conclusion") == "cancelled" and str(suite) in going:
             continue
         key = (run.get("name"), app.get("id", app.get("slug")), workflows.get(str(suite)))
         if key[2] is None and suite is not None:
@@ -110,12 +202,13 @@ def _latest_runs(runs, workflows, suite_runs=None):
     for group in groups.values():
         newest = max(run["id"] for run in group)
         kept.extend(run for run in group if run["id"] == newest)
-    return kept
+    return kept, waiting, _unreported(placed, states, runs)
 
 
-def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=None, unverified=None, no_ci=False):
+def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=None, unverified=None, no_ci=False, states=None):
     """CI at one head, as the ready guard reads it. Only the latest run of each
-    check counts, and none skipped or neutral in an older workflow run. A completed check passes
+    check counts, and none skipped, neutral or cancelled in an older workflow run, nor any in a run
+    newer than the workflow's last settled success (_latest_runs). A completed check passes
     on success, and on neutral out of draft. A skipped one, and on a draft a
     neutral one, did not prove anything: not green when the base branch requires that check
     (required), since its skip proves nothing the base asks, or when nothing else at the head
@@ -131,16 +224,16 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=Non
     (unverified: what it read and why) leaves the result at best PENDING: a check the
     base requires may be missing from the runs, so green cannot be told."""
     commit_statuses = (statuses or {}).get("statuses") or []
-    runs = _latest_runs(runs, workflows, suite_runs)
+    runs, waiting, unreported_runs = _latest_runs(runs, workflows, suite_runs, states)
     passing = ("success",) if draft else ("success", "neutral")
     unproven = ("skipped", "neutral") if draft else ("skipped",)
     completed = [run for run in runs if run.get("status") == "completed"]
     failed = [
         run.get("name", "?") for run in completed if run.get("conclusion") not in passing + unproven
-    ] + [status.get("context", "?") for status in commit_statuses if status.get("state") in ("failure", "error")]
+    ] + unreported_runs + [status.get("context", "?") for status in commit_statuses if status.get("state") in ("failure", "error")]
     running = [run for run in runs if run.get("status") != "completed"] + [
         status for status in commit_statuses if status.get("state") == "pending"
-    ]
+    ] + ["workflow run"] * waiting
     required_names = set(required or ())
     proved = any(run.get("conclusion") in passing for run in completed) or any(
         status.get("state") == "success" for status in commit_statuses
@@ -185,6 +278,7 @@ def _checks_status(obj):
         obj.get("required"),
         obj.get("unverified"),
         bool(obj.get("no_ci")),
+        obj.get("workflow_states"),
     )
     return json.dumps({"result": ci["result"], "failed_checks": ci["failed"]}, sort_keys=True)
 
@@ -391,6 +485,7 @@ def _checks_summary(obj):
         obj.get("required"),
         obj.get("unverified"),
         bool(obj.get("no_ci")),
+        obj.get("workflow_states"),
     )
     lines = ["checks: %s (%d total, %d running, %d failed, %d skipped)" % (
         ci["result"], ci["total"], ci["running"], len(ci["failed"]), len(ci["skipped"]))]

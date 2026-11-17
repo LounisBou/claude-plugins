@@ -2497,6 +2497,141 @@ check "pr-gate hides nothing behind a latest workflow run with no check run" "FA
 RUNS8='{"check_runs":[{"id":1,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":11,"name":"test (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
 gate8 wf-event "$PULL8" '{"statuses":[]}' "$RUNS8" '{"workflow_runs":[{"id":20,"event":"pull_request","check_suite_id":200,"workflow_id":1},{"id":10,"event":"push","check_suite_id":100,"workflow_id":1}]}'
 check "pr-gate keeps the failed job of an older workflow run" "FAILURE test  2" "$(ci8)"
+# A workflow that cancels its in-progress run when a newer one starts (a label write fires two runs
+# at one head): the cancelled run is superseded, and only the latest run of its workflow counts. The
+# jobs of the cancelled run 10 (suite 100) that the newer run 20 (suite 200) has not created yet are
+# not failures, and neither are those it has.
+CANC_JOBS='{"id":1,"name":"guards","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"cancelled"},{"id":2,"name":"secrets","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"cancelled"},{"id":3,"name":"changes","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"cancelled"}'
+CANC_RUNS='{"workflow_runs":[{"id":20,"event":"pull_request","status":"in_progress","check_suite_id":200,"workflow_id":1},{"id":10,"event":"pull_request","status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1}]}'
+RUNS9='{"check_runs":['"$CANC_JOBS"',{"id":11,"name":"changes","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":12,"name":"lint","app":{"id":15368},"check_suite":{"id":200},"status":"in_progress","conclusion":null}]}'
+gate8 wf-cancelled-running "$PULL8" '{"statuses":[]}' "$RUNS9" "$CANC_RUNS"
+check "pr-gate counts no cancelled job of a superseded run, the newer run still running" "PENDING   2" "$(ci8)"
+check "pr-checks counts no cancelled job of a superseded run" "PENDING" \
+  "$(gh8 pr-checks 12 --format checks-status | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+check "pr-status names no failed check for a superseded cancelled run" \
+  "checks: PENDING (2 total, 1 running, failed: none)" "$(gh8 pr-status 12 | grep '^checks:')"
+RUNS10='{"check_runs":['"$CANC_JOBS"',{"id":11,"name":"changes","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":12,"name":"guards","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":13,"name":"secrets","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
+gate8 wf-cancelled-green "$PULL8" '{"statuses":[]}' "$RUNS10" \
+  '{"workflow_runs":[{"id":20,"status":"completed","conclusion":"success","check_suite_id":200,"workflow_id":1},{"id":10,"status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate is green when the newer run of the workflow passed over a cancelled one" "SUCCESS   3" "$(ci8)"
+# The cancelled run is the latest of its workflow and none of its runs succeeded at the head: it counts as not passed.
+gate8 wf-cancelled-latest "$PULL8" '{"statuses":[]}' '{"check_runs":['"$CANC_JOBS"']}' \
+  '{"workflow_runs":[{"id":20,"status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate counts the cancelled jobs of the latest run of their workflow" "FAILURE guards,secrets,changes  3" "$(ci8)"
+gate8 wf-cancelled-after-failure "$PULL8" '{"statuses":[]}' '{"check_runs":['"$CANC_JOBS"',{"id":4,"name":"test","app":{"id":15368},"check_suite":{"id":50},"status":"completed","conclusion":"failure"}]}' \
+  '{"workflow_runs":[{"id":20,"status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1},{"id":10,"status":"completed","conclusion":"failure","check_suite_id":50,"workflow_id":1}]}'
+check "pr-gate counts the cancelled run after a failed one: no success speaks for the workflow" "FAILURE guards,secrets,changes,test  4" "$(ci8)"
+# A newer run still going with no check run yet is a run going, not a failure: the cancelled job it
+# has not created yet is not counted, and the head is not green.
+gate8 wf-cancelled-unchecked "$PULL8" '{"statuses":[]}' '{"check_runs":['"$CANC_JOBS"']}' \
+  '{"workflow_runs":[{"id":20,"status":"queued","check_suite_id":200,"workflow_id":1},{"id":10,"status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1}]}'
+check "pr-status counts a newer run with no check run as running, no cancelled job failed" \
+  "checks: PENDING (0 total, 1 running, failed: none)" "$(gh8 pr-status 12 | grep '^checks:')"
+# Jobs the newer run creates later (needs:) are not created yet: green so far is still running.
+gate8 wf-cancelled-needs "$PULL8" '{"statuses":[]}' '{"check_runs":['"$CANC_JOBS"',{"id":11,"name":"changes","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}' "$CANC_RUNS"
+check "pr-status reads a newer run going, its created jobs all green, as running" \
+  "checks: PENDING (1 total, 1 running, failed: none)" "$(gh8 pr-status 12 | grep '^checks:')"
+# The cancelled run is not superseded when no run of its workflow is newer, nor when the call fails.
+gate8 wf-cancelled-down "$PULL8" '{"statuses":[]}' "$RUNS9" '{"__status":500,"message":"boom"}'
+check "pr-gate counts the cancelled jobs when the Actions runs call fails" "FAILURE guards,secrets,changes  5" "$(ci8 2>/dev/null)"
+gate8 wf-cancelled-noid "$PULL8" '{"statuses":[]}' '{"check_runs":['"$CANC_JOBS"',{"id":11,"name":"changes","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}' \
+  '{"workflow_runs":[{"status":"completed","conclusion":"success","check_suite_id":200,"workflow_id":1},{"status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate counts a cancelled run whose workflow run has no id" "FAILURE guards,secrets  3" "$(ci8)"
+# A cancelled run is not superseded by a newer run of a different workflow.
+gate8 wf-cancelled-other "$PULL8" '{"statuses":[]}' '{"check_runs":['"$CANC_JOBS"',{"id":11,"name":"changes","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}' \
+  '{"workflow_runs":[{"id":20,"status":"completed","conclusion":"success","check_suite_id":200,"workflow_id":2},{"id":10,"status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate keeps the cancelled run of a workflow no newer run of it replaced" "FAILURE guards,secrets,changes  4" "$(ci8)"
+# Only a cancelled job of a superseded run is dropped: its failed job still counts.
+gate8 wf-cancelled-failed "$PULL8" '{"statuses":[]}' '{"check_runs":['"$CANC_JOBS"',{"id":4,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":11,"name":"changes","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}' "$CANC_RUNS"
+check "pr-gate keeps the failed job of a superseded cancelled run" "FAILURE test  2" "$(ci8)"
+# The sequence of a repository whose CI reruns on every label write and cancels its in-progress run:
+# the head passed (suite 50, workflow 1; suite 60, workflow 2), the gate's label flip fires a run that
+# the next flip cancels. A run after the last settled success that has not settled decides nothing, so
+# Ready stays through the whole sequence; a settled failure after it, or a head that never passed,
+# is what moves it.
+job() { printf '{"id":%s,"name":"%s","app":{"id":15368},"check_suite":{"id":%s},"status":"%s","conclusion":%s}' "$1" "$2" "$3" "$4" "$5"; }
+WF() { printf '{"id":%s,"status":"%s","conclusion":%s,"check_suite_id":%s,"workflow_id":%s}' "$1" "$2" "$3" "$4" "$5"; }
+PASSED="$(job 1 changes 50 completed '"success"'),$(job 2 guards 50 completed '"success"'),$(job 3 harness 60 completed '"success"')"
+PASSEDWF="$(WF 5 completed '"success"' 50 1),$(WF 6 completed '"success"' 60 2)"
+seq8() { gate8 "seq-$1" "$PULL8" '{"statuses":[]}' '{"check_runs":['"$2"']}' '{"workflow_runs":['"$3"']}'; }
+seq8 passed "$PASSED" "$PASSEDWF"
+check "#907 sequence: the head passed" "SUCCESS   3" "$(ci8)"
+seq8 flip "$PASSED,$(job 11 guards 100 completed '"cancelled"'),$(job 21 changes 200 completed '"success"'),$(job 22 lint 200 in_progress null)" \
+  "$PASSEDWF,$(WF 10 completed '"cancelled"' 100 1),$(WF 20 in_progress null 200 1),$(WF 11 queued null 110 2)"
+check "#907 sequence: the flip's runs, one cancelled and one going, leave the head green" "SUCCESS   3" "$(ci8)"
+check "#907 sequence: pr-checks reads the same" "SUCCESS" \
+  "$(gh8 pr-checks 12 --format checks-status | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+seq8 superseded "$PASSED,$(job 11 guards 100 completed '"cancelled"'),$(job 21 changes 200 completed '"cancelled"'),$(job 31 changes 300 completed '"success"'),$(job 32 lint 300 in_progress null)" \
+  "$PASSEDWF,$(WF 10 completed '"cancelled"' 100 1),$(WF 20 completed '"cancelled"' 200 1),$(WF 30 in_progress null 300 1)"
+check "#907 sequence: a run cancelled by the next one, which goes, leaves the head green" "SUCCESS   3" "$(ci8)"
+seq8 failed "$PASSED,$(job 31 changes 300 completed '"success"'),$(job 32 lint 300 completed '"failure"')" \
+  "$PASSEDWF,$(WF 30 completed '"failure"' 300 1)"
+check "#907 sequence: a settled failure after the success is a failure" "FAILURE lint  4" "$(ci8)"
+seq8 failed-going "$PASSED,$(job 31 changes 300 completed '"success"'),$(job 32 lint 300 completed '"failure"')" \
+  "$PASSEDWF,$(WF 30 completed '"failure"' 300 1),$(WF 40 in_progress null 400 1)"
+check "#907 sequence: a failure is not hidden by a run going after it" "FAILURE lint  4" "$(ci8)"
+seq8 new-head "$(job 11 guards 100 completed '"cancelled"'),$(job 21 changes 200 completed '"success"'),$(job 22 lint 200 in_progress null)" \
+  "$(WF 10 completed '"cancelled"' 100 1),$(WF 20 in_progress null 200 1)"
+check "#907 sequence: a head no run succeeded at is not green" "PENDING   2" "$(ci8)"
+# A run started again keeps its run id and goes: what its earlier attempt did was not a success.
+seq8 rerun "$PASSED,$(job 31 changes 300 completed '"success"'),$(job 32 lint 300 in_progress null)" \
+  "$PASSEDWF,$(WF 30 in_progress null 300 1 | sed 's/"conclusion"/"run_attempt":2,"conclusion"/')"
+check "#907 sequence: a failed run started again holds the head while it goes" "PENDING   4" "$(ci8)"
+# A run that ended with no check run to name it (the workflow file refused, a startup failure) is a failure.
+seq8 startup "$PASSED" "$PASSEDWF,$(WF 30 completed '"startup_failure"' 300 1)"
+check "#907 sequence: a run after the success that ended with no check run is a failure" "FAILURE workflow run (startup_failure)  3" "$(ci8)"
+# A run whose state the Actions runs do not give proves nothing and hides nothing behind a success.
+seq8 unknown "$PASSED,$(job 31 lint 300 completed '"failure"')" "$PASSEDWF,{\"id\":30,\"check_suite_id\":300,\"workflow_id\":1}"
+check "#907 sequence: a run of unknown state hides its failure from no success" "FAILURE lint  4" "$(ci8)"
+# A workflow run waiting for its first check run, with no older run, holds the head.
+seq8 lone-queued "" "$(WF 30 queued null 300 1)"
+check "#907 sequence: a lone run that has not started holds the head" "PENDING   0" "$(ci8)"
+# A job that failed in a run newer than the success blocks at once, the run going on or cancelled after it.
+seq8 failed-job-going "$PASSED,$(job 31 test 300 completed '"failure"'),$(job 32 lint 300 in_progress null)" "$PASSEDWF,$(WF 30 in_progress null 300 1)"
+check "#907 sequence: a failed job of a run going after the success is a failure" "FAILURE test  5" "$(ci8)"
+seq8 failed-job-cancelled "$PASSED,$(job 31 test 300 completed '"failure"')" "$PASSEDWF,$(WF 30 completed '"cancelled"' 300 1)"
+check "#907 sequence: a failed job of a run cancelled after the success is a failure" "FAILURE test  4" "$(ci8)"
+# The check runs of a head are read in full: the success run sits on the second page once the label-fired
+# runs fill the first, and the gate does not read PENDING for want of it.
+pages8() {
+  gate8 "seq-pages" "$PULL8" '{"statuses":[]}' "$(python3 -c '
+import json
+runs = [{"id": 1000 + i, "name": "job%d" % i, "app": {"id": 15368}, "check_suite": {"id": 200}, "status": "completed", "conclusion": "cancelled"} for i in range(100)]
+print(json.dumps({"total_count": 103, "check_runs": runs}))')" '{"workflow_runs":['"$PASSEDWF,$(WF 20 in_progress null 200 1)"']}'
+  printf '{"total_count":103,"check_runs":['"$PASSED"']}' > "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_check-runs__per_page=100&page=2.json"
+}
+pages8
+check "#907 sequence: the success run on the second page of check runs keeps the head green" "SUCCESS   3" "$(ci8)"
+check "pr-gate reads the second page of check runs" "yes" \
+  "$(grep -q 'check-runs?per_page=100&page=2' "$F8/sent.jsonl" && echo yes || echo no)"
+check "pr-checks reads the second page of check runs" "SUCCESS" \
+  "$(gh8 pr-checks 12 --format checks-status | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+seq8 other-workflow "$PASSED,$(job 21 harness 210 in_progress null)" "$PASSEDWF,$(WF 21 in_progress null 210 2)"
+check "#907 sequence: a run going after a success holds nothing back, its workflow's success speaks" "SUCCESS   3" "$(ci8)"
+seq8 never "$(job 21 harness 210 in_progress null),$(job 1 changes 50 completed '"success"')" "$(WF 5 completed '"success"' 50 1),$(WF 21 in_progress null 210 2)"
+check "#907 sequence: a workflow that never succeeded at the head still holds it" "PENDING   2" "$(ci8)"
+# Ready stays: the same sequence through the guard's decision (hooks/ready.ts), read through bun.
+if command -v bun >/dev/null 2>&1; then
+  moves8() {
+    GATE="$(gh8 pr-gate 12 | python3 -c 'import json,sys; g=json.load(sys.stdin); g["labels"]=["Ready"]; print(json.dumps(g))')" ROOT="$ROOT" HEAD="$GATEHEAD" bun -e '
+const { parseGate, missingItems, labelMove } = await import(process.env.ROOT + "/hooks/ready.ts")
+const gate = parseGate(process.env.GATE)
+const at = "2026-11-01T10:00:00Z"
+const rec = (kind) => ({ name: kind + ".20261101T100000Z.p-" + kind + ".json", text: JSON.stringify({ v: 1, repo: "acme/thing", pr: 12, head: process.env.HEAD, kind, result: "pass", producer: "p-" + kind, detail: "", session: "", at }) })
+const missing = missingItems(gate, [rec("review"), rec("norms"), rec("e2e")])
+console.log((labelMove(gate, missing) ?? "stays") + " " + missing.join("; "))
+'
+  }
+  seq8 flip "$PASSED,$(job 11 guards 100 completed '"cancelled"'),$(job 21 changes 200 completed '"success"'),$(job 22 lint 200 in_progress null)" \
+    "$PASSEDWF,$(WF 10 completed '"cancelled"' 100 1),$(WF 20 in_progress null 200 1),$(WF 11 queued null 110 2)"
+  check "#907 sequence: Ready stays on the flip's runs, one cancelled and one going" "stays " "$(moves8)"
+  seq8 failed "$PASSED,$(job 31 changes 300 completed '"success"'),$(job 32 lint 300 completed '"failure"')" "$PASSEDWF,$(WF 30 completed '"failure"' 300 1)"
+  check "#907 sequence: Ready goes back to Not Ready on a settled failure" "not-ready CI failed: lint" "$(moves8)"
+  seq8 failed-job-going "$PASSED,$(job 31 test 300 completed '"failure"'),$(job 32 lint 300 in_progress null)" "$PASSEDWF,$(WF 30 in_progress null 300 1)"
+  check "#907 sequence: Ready goes back to Not Ready on a failed job of a run going" "not-ready CI failed: test" "$(moves8)"
+  seq8 new-head "$(job 11 guards 100 completed '"cancelled"'),$(job 22 lint 200 in_progress null)" "$(WF 10 completed '"cancelled"' 100 1),$(WF 20 in_progress null 200 1)"
+  check "#907 sequence: Ready goes back to Not Ready on a head no run succeeded at" "not-ready CI still running" "$(moves8)"
+fi
 gate8 unknown '{"__status":404,"message":"Not Found"}' '{}' '{}'
 check_status "pr-gate of an unknown pull request exits 4" 4 gh8 pr-gate 12
 gate8 nohead '{"number":12,"state":"open","head":{}}' '{}' '{}'
