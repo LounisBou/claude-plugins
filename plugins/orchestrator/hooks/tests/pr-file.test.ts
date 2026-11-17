@@ -5,7 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import { changeLines, LOG_KEPT, parsePrAnswer, prQuery, refreshPrFile, reposToRead, trackedPrs, withEnded, withLogLines } from '../pr-file.ts'
 import {
-  ENDED_KEPT_MS, isFresh, parsePrFile, prFilePath, prLogPath, prsOfRepo, prWantedPath, PR_FILE_INTERVAL_MS, repoOfOrigin, wantedRepos, withWanted, type FilePr, type PrFile,
+  ENDED_KEPT_MS, isFresh, READING_KEPT_MS, parsePrFile, prFilePath, prLogPath, prsOfRepo, prWantedPath, PR_FILE_INTERVAL_MS, repoOfOrigin, wantedRepos, withWanted, type FilePr, type PrFile,
 } from '../pr-file-format.ts'
 import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
 import { hostOf } from '../../core/capture.ts'
@@ -64,11 +64,12 @@ test('the pull requests the records on the machine name are gathered by reposito
 test('one query asks every repository its open pull requests and each recorded one by its number, with its checks', () => {
   const query = prQuery(new Map([['acme/app', [7, 8]], ['acme/lib', []]]))
   expect(query.startsWith('query{viewer{login} rateLimit{cost remaining} ')).toBe(true)
-  expect(query).toContain('r0:repository(owner:"acme",name:"app"){open:pullRequests(states:OPEN,first:50,orderBy:{field:CREATED_AT,direction:DESC})')
+  expect(query).toContain('r0:repository(owner:"acme",name:"app"){open:pullRequests(states:OPEN,first:100,orderBy:{field:CREATED_AT,direction:DESC})')
   expect(query).toContain('n7:pullRequest(number:7)')
   expect(query).toContain('n8:pullRequest(number:8)')
   expect(query).toContain('r1:repository(owner:"acme",name:"lib")')
   expect(query.match(/statusCheckRollup/g)?.length).toBe(2)
+  expect(query).toContain('ended:pullRequests(states:[MERGED,CLOSED],first:50,orderBy:{field:UPDATED_AT,direction:DESC})')
 })
 
 test('the answer keeps every open pull request, the last ones ended, every recorded one and the fork a head comes from; a repository with no data is unread', () => {
@@ -108,6 +109,8 @@ test('the change log says each state change once, one line each, and nothing on 
   ])
   expect(changeLines(before, after, [], 'T')).not.toContain('T acme/app#9 no longer open')
   expect(changeLines(undefined, after, ['acme/app'], 'T')).toEqual([])
+  // A pull request first seen already ended (the ended page) is no change: no line.
+  expect(changeLines(before, [...after, pr(20, 'MERGED'), pr(21, 'CLOSED')], ['acme/app'], 'T')).toHaveLength(6)
   expect(withLogLines('a\nb\n', ['c'])).toBe('a\nb\nc\n')
   expect(withLogLines(Array.from({ length: LOG_KEPT }, (_, i) => `l${i}`).join('\n'), ['last']).split('\n').filter(Boolean).length).toBe(LOG_KEPT)
 })
@@ -210,11 +213,16 @@ test('the repositories the checkouts want are read beside the records\', each wa
 test('a GitHub origin names its repository in every form; the file answers for a repository only when its reading is current', () => {
   for (const url of ['https://github.com/acme/app.git', 'git@github.com:acme/app.git', 'ssh://git@github.com/acme/app', 'https://user@github.com/acme/app/']) expect(repoOfOrigin(url)).toBe('acme/app')
   expect(repoOfOrigin('https://gitlab.com/acme/app.git')).toBe(undefined)
-  const file: PrFile = { v: 1, at: 'x', tried: 'x', viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(7, 'OPEN'), pr(1, 'OPEN', { repo: 'acme/lib' })] }
-  expect(prsOfRepo(file, 'acme/app')?.map(p => p.pr)).toEqual([7])
-  expect(prsOfRepo(file, 'acme/lib')).toBe(undefined)
-  expect(prsOfRepo({ ...file, error: 'down' }, 'acme/app')).toBe(undefined)
-  expect(prsOfRepo(undefined, 'acme/app')).toBe(undefined)
+  const at = '2026-11-17T16:00:00Z'
+  const file: PrFile = { v: 1, at, tried: at, viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(7, 'OPEN'), pr(1, 'OPEN', { repo: 'acme/lib' })] }
+  expect(prsOfRepo(file, 'acme/app', NOW)?.map(p => p.pr)).toEqual([7])
+  expect(prsOfRepo(file, 'acme/lib', NOW)).toBe(undefined)
+  expect(prsOfRepo({ ...file, error: 'down' }, 'acme/app', NOW)).toBe(undefined)
+  expect(prsOfRepo(undefined, 'acme/app', NOW)).toBe(undefined)
+  // A reading older than READING_KEPT_MS, or none yet (the try written before the first call), is no current one.
+  expect(prsOfRepo(file, 'acme/app', NOW + READING_KEPT_MS)?.length).toBe(1)
+  expect(prsOfRepo(file, 'acme/app', NOW + READING_KEPT_MS + 1)).toBe(undefined)
+  expect(prsOfRepo({ ...file, at: null }, 'acme/app', NOW)).toBe(undefined)
 })
 
 test('a file that cannot be written after the call still holds its try: a reader within the interval makes no second call', async () => {
@@ -244,7 +252,7 @@ test('a file that cannot be written makes no call, and says so on the log', asyn
 
 test('no pull request is said gone from an open list that ran past its page', async () => {
   const forge: Record<string, string | null> = { 'acme/app': JSON.stringify([{ number: 7 }, { number: 9 }]), 'acme/lib': '[]' }
-  const { dollar, calls, files } = world(forge)
+  const { dollar, calls, files, file } = world(forge)
   await refreshPrFile(dollar, NOW)
   // The page now runs past 50: #9 is beyond it, not gone.
   forge['acme/app'] = JSON.stringify([{ number: 7 }])
@@ -255,7 +263,8 @@ test('no pull request is said gone from an open list that ran past its page', as
   }
   await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS)
   expect(calls.length).toBe(2)
-  expect(files.get(prLogPath(STATE))).toBe('2026-11-17T16:01:00Z acme/app open past 50: the rest unread\n')
+  expect(files.get(prLogPath(STATE))).toBe('2026-11-17T16:01:00Z acme/app open past 100: the rest unread\n')
+  expect([file()?.repos, file()?.unread]).toEqual([['acme/lib'], ['acme/app']])
 })
 
 test('two sessions refreshing at once make one forge call: the lock holds the second off', async () => {

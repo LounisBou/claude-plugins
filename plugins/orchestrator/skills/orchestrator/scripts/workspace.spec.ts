@@ -142,7 +142,7 @@ function sweepFile(w: World): void {
     }
   }
   mkdirSync(join(dir, 'state'), { recursive: true })
-  writeFileSync(join(dir, 'state', 'prs.json'), JSON.stringify({ v: 1, at: 'x', tried: 'x', viewer: 'me', repos, unread: [], prs }))
+  writeFileSync(join(dir, 'state', 'prs.json'), JSON.stringify({ v: 1, at: new Date(w.clock).toISOString(), tried: 'x', viewer: 'me', repos, unread: [], prs }))
 }
 
 const lsofOf = (...cwds: string[]): string => cwds.map((c, i) => `p${i + 1}\nfcwd\nn${c}\n`).join('')
@@ -752,8 +752,6 @@ test('sweep: a repository the file holds no reading of keeps its checkouts, said
   const why = "acme/proj is not in the machine's pull request file yet"
   assert.deepEqual(r.out.split('\n').filter(l => l !== ''), [`kept ${a}: pull requests unreadable: ${why}`, `kept ${b}: pull requests unreadable: ${why}`])
   assert.equal(r.err, `workspace: sweep: cannot read the pull requests of acme/proj (${why}); nothing is deleted for it\n`)
-  w.prs[join(dir, 'proj.git')] = ok('not json')
-  assert.match((await ws(w, 'sweep')).out, /unreadable: acme\/proj is not in the machine's pull request file yet/)
   const d = await ws(w, 'sweep', '--deadline', '0')
   assert.deepEqual(d, { code: 0, out: '', err: 'workspace: sweep: deadline of 0s spent; the rest waits for the next sweep\n' })
   assert.ok(existsSync(a) && existsSync(b))

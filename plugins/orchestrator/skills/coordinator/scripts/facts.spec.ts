@@ -65,7 +65,7 @@ function prFile(forge: Record<string, string>): string {
     const [n = '', head = '', where = 'same'] = line.trim().split(/\s+/)
     return /^\d+$/.test(n) ? [{ repo, pr: Number(n), state: 'OPEN', head, fork: where.startsWith('fork:') ? where.slice(5) : null }] : []
   }))
-  return JSON.stringify({ v: 1, at: 'T', tried: 'T', viewer: 'me', repos: Object.keys(forge), unread: [], prs })
+  return JSON.stringify({ v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), viewer: 'me', repos: Object.keys(forge), unread: [], prs })
 }
 
 interface Setup {
@@ -330,7 +330,7 @@ describe('facts', () => {
     assert.equal(run(f, 'facts'), 2)
     assert.ok(f.out.includes("unread forge github.com/o/app: no current reading in the machine's pull request file"))
     assert.ok(f.out.includes("unread forge github.com/o/other: no current reading in the machine's pull request file"))
-    writeFileSync(join(f.state, 'prs.json'), JSON.stringify({ v: 1, at: 'T', tried: 'T', error: 'HTTP 502', viewer: 'me', repos: ['o/app'], unread: [], prs: [] }))
+    writeFileSync(join(f.state, 'prs.json'), JSON.stringify({ v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), error: 'HTTP 502', viewer: 'me', repos: ['o/app'], unread: [], prs: [] }))
     assert.equal(run(f, 'facts'), 2)
     assert.ok(f.out.includes("unread forge github.com/o/app: no current reading in the machine's pull request file"))
     const missing = fixture({ env: { ORCHESTRATOR_HOST_CLI: 'h', COORDINATOR_PS_TABLE: '/no/such/ps', ORCHESTRATOR_MODULE_DIR: '/no/module' } })

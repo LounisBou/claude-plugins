@@ -862,7 +862,7 @@ function loadPrs(s: Sweep, url: string | undefined): Pr[] | { readonly why: stri
   const known = s.prs.get(repo)
   if (known !== undefined) return known
   s.wanted.add(repo)
-  const held = prsOfRepo(s.file, repo)
+  const held = prsOfRepo(s.file, repo, s.ctx.deps.now())
   const read = held === undefined
     ? { why: `${repo} is not in the machine's pull request file yet` }
     : held.map(pr => ({ number: pr.pr, state: pr.state, headRefName: pr.head, headRefOid: pr.sha }))

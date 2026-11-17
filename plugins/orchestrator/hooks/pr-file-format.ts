@@ -94,9 +94,17 @@ export function isFresh(file: PrFile | undefined, now: number): boolean {
   return Number.isFinite(tried) && now - tried < PR_FILE_INTERVAL_MS
 }
 
-/** The file's pull requests of a repository it read; undefined when it holds no current reading of it. */
-export function prsOfRepo(file: PrFile | undefined, repo: string): readonly FilePr[] | undefined {
+/** The age past which a reading is no current one: the sweep's own cache lived as long. */
+export const READING_KEPT_MS = 30 * 60 * 1000
+
+/**
+ * The file's pull requests of a repository it read; undefined when it holds no current reading of it:
+ * none, a failed last refresh, a reading older than READING_KEPT_MS at `now`, or an open list that ran
+ * past its page (the refresh counts it unread).
+ */
+export function prsOfRepo(file: PrFile | undefined, repo: string, now: number): readonly FilePr[] | undefined {
   if (file === undefined || file.error !== undefined || !file.repos.includes(repo)) return undefined
+  if (!(now - Date.parse(file.at ?? '') <= READING_KEPT_MS)) return undefined
   return file.prs.filter(pr => pr.repo === repo)
 }
 

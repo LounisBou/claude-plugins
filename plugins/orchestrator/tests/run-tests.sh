@@ -9878,8 +9878,9 @@ CW
 cprs() {  # <state directory> [error]: the file in that directory, its last refresh failed when an error is given
   mkdir -p "$1"
   local pr='{"repo":"%s","pr":%s,"state":"OPEN","head":"%s","fork":%s}'
-  printf '{"v":1,"at":"T","tried":"T",%s"viewer":"me","repos":["o/app","o/other","o/lone","o/amb"],"unread":[],"prs":[%s,%s,%s,%s,%s,%s,%s]}\n' \
-    "${2:+\"error\":\"$2\",}" "$(printf "$pr" o/app 7 feat/x null)" "$(printf "$pr" o/app 8 feat/y null)" "$(printf "$pr" o/app 9 feat/z null)" \
+  local at; at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  printf '{"v":1,"at":"%s","tried":"%s",%s"viewer":"me","repos":["o/app","o/other","o/lone","o/amb"],"unread":[],"prs":[%s,%s,%s,%s,%s,%s,%s]}\n' \
+    "$at" "$at" "${2:+\"error\":\"$2\",}" "$(printf "$pr" o/app 7 feat/x null)" "$(printf "$pr" o/app 8 feat/y null)" "$(printf "$pr" o/app 9 feat/z null)" \
     "$(printf "$pr" o/app 10 feat/w null)" "$(printf "$pr" o/amb 11 feat/v null)" "$(printf "$pr" o/amb 12 feat/d null)" "$(printf "$pr" o/amb 13 feat/f '"someone"')" \
     > "$1/prs.json"
 }

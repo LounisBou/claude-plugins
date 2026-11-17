@@ -478,7 +478,7 @@ export function readFacts(ctx: Context): Facts {
       continue
     }
     wanted.push(named)
-    const held = prsOfRepo(file, named)
+    const held = prsOfRepo(file, named, ctx.now().getTime())
     if (held === undefined) {
       unread.push(`forge ${repo}: no current reading in the machine's pull request file`)
       continue

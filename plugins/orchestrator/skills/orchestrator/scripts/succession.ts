@@ -44,8 +44,8 @@ import { fileURLToPath } from 'node:url'
 import { chainPath, parseChain } from '../../../core/chain-entries.ts'
 import { DECK_FILE, parseDeck } from '../../../core/deck.ts'
 import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../core/orchestration.ts'
-import { readText } from '../../../core/store.ts'
-import { parsePrFile, prFilePath, prsOfRepo } from '../../../hooks/pr-file-format.ts'
+import { readText, update } from '../../../core/store.ts'
+import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, withWanted } from '../../../hooks/pr-file-format.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { setting } from '../../../core/env.ts'
 import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts'
@@ -771,13 +771,21 @@ export function notInstalled(worktree: string, env: Env, now: Date): string {
 /**
  * The machine's pull request file (the hooks module refreshes it, one forge call a minute for the
  * whole machine), read once: each pull request's state and each repository's open pull requests, as
- * it holds them; undefined where it holds no current reading.
+ * it holds them; undefined where it holds no current reading, that repository then in `missed`, for
+ * the file to read from its next refresh (`prs.wanted`).
  */
-export function filePrs(env: Env): { readonly state: (repo: string, pr: number) => string | undefined; readonly open: OpenPrReader } {
+export function filePrs(env: Env, now: number): { readonly state: (repo: string, pr: number) => string | undefined; readonly open: OpenPrReader; readonly missed: Set<string> } {
   const file = parsePrFile(readText(prFilePath(stateRoot(env))) ?? '')
+  const missed = new Set<string>()
+  const held = (repo: string) => {
+    const prs = prsOfRepo(file, repo, now)
+    if (prs === undefined) missed.add(repo)
+    return prs
+  }
   return {
-    state: (repo, pr) => prsOfRepo(file, repo)?.find(held => held.pr === pr)?.state,
-    open: repo => prsOfRepo(file, repo)?.filter(held => held.state === 'OPEN').map(held => ({ repo, pr: held.pr, head: held.sha })),
+    state: (repo, pr) => held(repo)?.find(one => one.pr === pr)?.state,
+    open: repo => held(repo)?.filter(one => one.state === 'OPEN').map(one => ({ repo, pr: one.pr, head: one.sha })),
+    missed,
   }
 }
 
@@ -931,7 +939,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const round = archiveRound(stateRoot(env), now, io)
   const request: Request = { ...parsed, name }
   const launcher = join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh')
-  const prs = filePrs(env)
+  const prs = filePrs(env, now.getTime())
   const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))())
   if ((open.disagree ?? 0) > 0) {
     const journal = deps.journal ?? scriptJournal(env, deps.now, line => io.err(`${line}\n`))
@@ -941,6 +949,14 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const installedLine = (): string => (installed ??= notInstalled(parsed.worktree, env, now))
   const facts: Artifacts = { rows: all, prState: deps.prState ?? prs.state, installed: installedLine, now: now.getTime() }
   const owners = ownersOf(open, blocker => fallOf(blocker, facts))
+  // A repository the file held no current reading of is read from its next refresh on.
+  if (prs.missed.size > 0) {
+    try {
+      update(prWantedPath(stateRoot(env)), current => withWanted(current ?? '', [...prs.missed], now.getTime()), { waitMs: 2000 })
+    } catch (error) {
+      io.err(`succession: the repositories wanted in the pull request file not written: ${(error as Error).message}\n`)
+    }
+  }
   const stray = todoStray(readText(todoPath(stateRoot(env), name)) ?? '', all)
   const project = projectOf(parsed.worktree, parsed.record)
   const close = closeVerb(parsed.tty, deps.paneWindow ?? tmuxWindow)

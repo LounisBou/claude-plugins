@@ -16,7 +16,7 @@ import { isStale, livePids, livePidsArgv, parseSessionRow, publishUnattended, se
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { readPrFile, refreshPrFile } from './pr-file.ts'
-import { prsOfRepo, type PrFile } from './pr-file-format.ts'
+import { prsOfRepo, prWantedPath, wantedRepos, type PrFile } from './pr-file-format.ts'
 
 // The nouns a reading holds.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
@@ -36,8 +36,8 @@ export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string
 // orchestrations' work: those the operator opened and those `own` names (by prKey), never a
 // teammate's. Their labels say what rests on him (`Ready`, `On Hold`); undefined when the file holds
 // no current reading of the repository.
-export function openOf(file: PrFile | undefined, repo: string, own: ReadonlySet<string>): OpenPr[] | undefined {
-  return prsOfRepo(file, repo)?.filter(pr => pr.state === 'OPEN' && (pr.author === file?.viewer || own.has(prKey(repo, pr.pr)))).map(pr => ({
+export function openOf(file: PrFile | undefined, repo: string, own: ReadonlySet<string>, now: number): OpenPr[] | undefined {
+  return prsOfRepo(file, repo, now)?.filter(pr => pr.state === 'OPEN' && (pr.author === file?.viewer || own.has(prKey(repo, pr.pr)))).map(pr => ({
     repo, pr: pr.pr, createdAt: pr.createdAt, labels: pr.labels, ...(pr.mergeable === null ? {} : { mergeable: pr.mergeable }),
   }))
 }
@@ -117,16 +117,17 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   const own = await linesOf($, await registered($, state, sessionId), orchestrationOf(row.name))
   // Only the repositories the session's dispatch record names, read in the machine's file, refreshed
   // first when it is older than its interval: the checkout's own repository holds pull requests of the
-  // operator's that no orchestration of his records.
+  // operator's that no orchestration of his records. A turn end refreshes it too when the sweep, the
+  // coordinator or a takeover want repositories read (`prs.wanted`), whatever its own record holds.
   const repos = [...new Set(own.flatMap(record => record.lines.map(line => line.repo)))]
-  if (repos.length > 0) await refreshPrFile($, now)
+  if (repos.length > 0 || wantedRepos(await readOr($, prWantedPath(state)), now).length > 0) await refreshPrFile($, now)
   const file = repos.length > 0 ? await readPrFile($) : undefined
   const open: OpenPr[] = []
   const unread: string[] = []
   const ownKeys = new Set(own.flatMap(record => record.lines.map(line => prKey(line.repo, line.pr))))
   for (const repo of repos) {
     // A file whose last refresh failed holds the pull requests of an earlier read: unknown now.
-    const listed = openOf(file, repo, ownKeys)
+    const listed = openOf(file, repo, ownKeys, now)
     if (listed === undefined) unread.push(repo)
     else open.push(...listed)
   }

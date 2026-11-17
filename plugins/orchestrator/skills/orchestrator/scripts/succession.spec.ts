@@ -928,15 +928,16 @@ test('a quotation a to-do item holds is named by its item through the takeover; 
 test('the takeover reads pull requests in the machine\'s pull request file, never the forge: a state, the open ones with their heads, nothing where it holds no current reading', () => {
   const state = mkdtempSync(join(tmpdir(), 'succession-prs-'))
   const pr = (n: number, st: string) => ({ repo: 'acme/app', pr: n, state: st, head: `b${n}`, sha: `${n}`.repeat(7) })
-  const file = { v: 1, at: 'T', tried: 'T', viewer: 'me', repos: ['acme/app'], unread: ['acme/lib'], prs: [pr(7, 'OPEN'), pr(8, 'MERGED'), { ...pr(9, 'OPEN'), repo: 'acme/lib' }] }
+  const file = { v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), viewer: 'me', repos: ['acme/app'], unread: ['acme/lib'], prs: [pr(7, 'OPEN'), pr(8, 'MERGED'), { ...pr(9, 'OPEN'), repo: 'acme/lib' }] }
   writeFileSync(join(state, 'prs.json'), JSON.stringify(file))
-  const read = filePrs({ ORCHESTRATOR_STATE_DIR: state })
+  const read = filePrs({ ORCHESTRATOR_STATE_DIR: state }, NOW.getTime())
   assert.equal(read.state('acme/app', 8), 'MERGED')
   assert.equal(read.state('acme/app', 99), undefined)
   assert.equal(read.state('acme/lib', 9), undefined)
   assert.deepEqual(read.open('acme/app'), [{ repo: 'acme/app', pr: 7, head: '7777777' }])
   assert.equal(read.open('acme/lib'), undefined)
+  assert.deepEqual([...read.missed], ['acme/lib'])
   writeFileSync(join(state, 'prs.json'), JSON.stringify({ ...file, error: 'HTTP 502' }))
-  assert.equal(filePrs({ ORCHESTRATOR_STATE_DIR: state }).open('acme/app'), undefined)
+  assert.equal(filePrs({ ORCHESTRATOR_STATE_DIR: state }, NOW.getTime()).open('acme/app'), undefined)
   rmSync(state, { recursive: true, force: true })
 })

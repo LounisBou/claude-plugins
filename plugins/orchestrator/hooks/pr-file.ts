@@ -24,7 +24,7 @@ type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock'>
 /** The bound of the one forge call. */
 export const PR_FILE_CALL_MS = 15_000
 /** The open and the ended pull requests read per repository, and the labels per pull request. */
-export const OPEN_PAGE = 50
+export const OPEN_PAGE = 100
 export const ENDED_PAGE = 50
 const LABELS_PAGE = 10
 /** The change log's last lines kept. */
@@ -247,7 +247,8 @@ async function refreshUnder($: Held, state: string, before: PrFile | undefined, 
   const file: PrFile = answer === undefined
     ? { v: PR_FILE_VERSION, ...kept, tried: at, ...(tracked.size > 0 ? { error: failure } : { repos: [], unread: [], prs: [] }) }
     : {
-      v: PR_FILE_VERSION, at, tried: at, viewer: answer.viewer, repos: answer.repos, unread: answer.unread,
+      // A repository whose open list ran past its page is read only in part: unread for every reader.
+      v: PR_FILE_VERSION, at, tried: at, viewer: answer.viewer, repos: answer.repos.filter(repo => !truncated.includes(repo)), unread: [...answer.unread, ...truncated],
       ...(answer.cost === null ? {} : { cost: answer.cost }), ...(partial === undefined ? {} : { partial }), prs: withEnded(before, answer.prs, answer.repos, now, at),
     }
   const lines = answer === undefined
