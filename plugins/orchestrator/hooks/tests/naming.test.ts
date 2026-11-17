@@ -412,6 +412,7 @@ test("a successor the launcher finds already in its home session goes on to step
 
 test("a successor whose move does not happen is woken in its tab, the launcher's answer logged", async () => {
   const cases: [string, { exitCode: number; stdout: string; stderr?: string } | Error, string][] = [
+    ['the launcher keeps it for another reason (stay:)', { exitCode: 0, stdout: 'stay: only an orchestrator moves into a home session, and this session is named "Agent: x"\n' }, 'the launcher kept the session where it is: only an orchestrator moves into a home session'],
     ['the launcher answers nothing', { exitCode: 0, stdout: '' }, 'the launcher kept the session where it is: no answer'],
     ['the move fails', { exitCode: 1, stdout: '', stderr: 'ERROR: home: this session is not a tab of iTerm2s' }, 'the move into a home session failed, the session stays where it is: ERROR: home: this session is not a tab of iTerm2s'],
     ['the move cannot run', new Error('spawn failed'), 'the move into a home session could not run, the session stays where it is: spawn failed'],
