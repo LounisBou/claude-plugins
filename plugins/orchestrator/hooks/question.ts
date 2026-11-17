@@ -390,10 +390,13 @@ export async function claimAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pr
 
 // Words typed in the asker's tab that end with a question mark and name none of the choices of a
 // question that has some are a question back, never his choice: closing it on them left the asker
-// to restate the choice in prose, with no ✋ and no counter (2026-11-17).
+// to restate the choice in prose, with no ✋ and no counter (2026-11-17). A text cut at TYPED_CAP
+// (it ends with the cut's marker) no longer shows its end: any question mark of it counts.
 function asksBack(entry: Asked): boolean {
-  const typed = entry.claimed?.typed.trimEnd() ?? ''
-  return entry.choices.length > 0 && /[?？]$/.test(typed) && answersChoice(typed, entry.choices) === undefined
+  const said = entry.claimed?.typed ?? ''
+  const cut = /\n\[cut at \d+ of \d+ characters\]$/.test(said)
+  const typed = said.replace(/\n\[cut at \d+ of \d+ characters\]$/, '').trimEnd()
+  return entry.choices.length > 0 && (cut ? /[?？]/ : /[?？]$/).test(typed) && answersChoice(typed, entry.choices) === undefined
 }
 
 /**

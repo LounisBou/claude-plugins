@@ -449,6 +449,23 @@ test('words he types that ask something back and name no choice leave a question
   expect(askedGroups(stored(files)).flat().map(open => open.id)).toEqual([entry.id])
 })
 
+test('a question back cut at the cap, or on a consent question, leaves it open as well', async () => {
+  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
+  const status = async (fields: Record<string, unknown>, typed: string) => {
+    const { dollar, files } = world()
+    await ask(dollar, { ...FULL, urgent: undefined, ...fields })
+    await claimAsked(dollar, 'composer', typed, NOW)
+    await settleClaimed(dollar, [], NOW)
+    return { status: stored(files)[0]?.status, records: [...files.keys()].filter(p => p.includes('/consents/')).length }
+  }
+  const long = `${'Pourquoi cela ? '.repeat(40)}Est-ce bien pris en compte ?`
+  expect(long.length).toBeGreaterThan(500)
+  expect(await status({}, long)).toMatchObject({ status: 'open' })
+  expect(await status({}, `${'Je pense que '.repeat(60)} oui`)).toMatchObject({ status: 'answered' })
+  expect(await status(consent, 'Accorder ?')).toEqual({ status: 'open', records: 0 })
+  expect(await status(consent, 'Accorder')).toMatchObject({ status: 'answered', records: 1 })
+})
+
 test('words that end with a question mark still answer when they name a choice, or when the question has no choices', async () => {
   const answered = async (fields: Record<string, unknown>, typed: string) => {
     const { dollar, files } = world()
