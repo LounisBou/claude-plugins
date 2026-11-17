@@ -276,3 +276,20 @@ test('a refresh another session made between the read and the lock counts: read 
   await refreshPrFile(dollar, NOW + 1000)
   expect(calls).toEqual([])
 })
+
+test('a file read before whose next write fails after the call keeps its pull requests and its new try: no second call within the interval', async () => {
+  const { dollar, calls, file } = world()
+  await refreshPrFile(dollar, NOW)
+  const run = dollar.process.run
+  dollar.process.run = async (argv, init) => {
+    if (argv[0] === 'mv' && argv[3] === prFilePath(STATE) && calls.length > 1) return { exitCode: 1, stdout: '', stderr: 'disk full' }
+    return run(argv, init)
+  }
+  await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS)
+  expect(calls.length).toBe(2)
+  expect(file()?.tried).toBe('2026-11-17T16:01:00Z')
+  expect(file()?.at).toBe('2026-11-17T16:00:00Z')
+  expect(file()?.prs.length).toBeGreaterThan(0)
+  await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS + 1000)
+  expect(calls.length).toBe(2)
+})
