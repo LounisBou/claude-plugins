@@ -54,7 +54,7 @@ export function apiCalls(lines: string): ApiCall[] {
     const message = record(entry['message'])
     const model = text(message['model'])
     if (!Number.isFinite(at) || (model !== undefined && model.startsWith('<'))) continue
-    const id = text(message['id']) ?? `${prompt}:${at}`
+    const id = text(message['id']) ?? `${prompt}-${at}`
     const usage = record(message['usage'])
     const stopReason = text(message['stop_reason'])
     const content = Array.isArray(message['content']) ? message['content'].map(record) : []
@@ -114,8 +114,8 @@ export function lastTurn(path: string, endedAt: number, { startedAt, maxBytes = 
     for (let window = TAIL_START_BYTES; ; window *= 2) {
       const length = Math.min(size, window)
       const buffer = Buffer.alloc(length)
-      readSync(fd, buffer, 0, length, size - length)
-      let body = buffer.toString('utf8')
+      const got = readSync(fd, buffer, 0, length, size - length)
+      let body = buffer.toString('utf8', 0, got)
       const whole = length === size
       // The window's first line is cut unless the window is the whole file.
       if (!whole) body = body.slice(body.indexOf('\n') + 1)

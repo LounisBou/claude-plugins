@@ -32,6 +32,12 @@ test('apiCalls: each call whole and raw, in order: ids, model, the usage object 
   assert.equal(calls[0]?.model, 'claude-opus-5-5')
 })
 
+test('apiCalls: a response with no message id is keyed by its prompt and time, in the shape the identifier redaction keeps', () => {
+  const noId = JSON.stringify({ type: 'assistant', timestamp: T('10:00:02'), message: { model: 'claude-opus-5-5', content: [], usage: usage(0, 5) } })
+  const [only] = apiCalls([user('10:00:00', 'p1'), noId].join('\n'))
+  assert.match(only?.message ?? '', /^[A-Za-z0-9_-]{1,80}$/)
+})
+
 test('callFields: raw facts, ISO end, the tool names and the stop reason; no tool input or output, no derived value', () => {
   const tool = { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'never kept' } }
   const server = { type: 'server_tool_use', id: 'srvtoolu_1', name: 'advisor', input: { q: 'never kept' } }

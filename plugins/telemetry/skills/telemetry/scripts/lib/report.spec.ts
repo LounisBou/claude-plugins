@@ -703,6 +703,23 @@ test('cold rewrites: a call read by the live writer and again by a backfill is o
   })
 })
 
+test('cold rewrites: the write floor is inclusive, a write not above the read is warm, a session with no role is other, a first call after the week is not counted', () => {
+  const events = [
+    apiCall(S(1), '2026-11-09T09:00:00.000Z', 'p0', 'm0', usageOf(0, 1)),
+    // Exactly the floor, more than it read: cold.
+    apiCall(S(1), '2026-11-09T11:00:00.000Z', 'p1', 'm1', usageOf(9_999, 10_000)),
+    // One token under the floor: not cold.
+    apiCall(S(1), '2026-11-09T13:00:00.000Z', 'p2', 'm2', usageOf(0, 9_999)),
+    // Above the floor but not above what it read: warm.
+    apiCall(S(1), '2026-11-09T15:00:00.000Z', 'p3', 'm3', usageOf(50_000, 50_000)),
+    // After the week's end: not counted.
+    apiCall(S(1), '2026-11-20T09:00:00.000Z', 'p4', 'm4', usageOf(0, 90_000)),
+  ]
+  scratch({ events }, config => {
+    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: other 1 of 3 \(10k written; <55 min 0 \(0k\), 55-65 min 0 \(0k\), >65 min 1 \(10k\)\)/)
+  })
+})
+
 test('api_call events enter no cost, context or token figure of the report', () => {
   const events = [
     ev('2026-11-09T09:00:00Z', 'turn_end', S(1), { cost_usd: 5, turn_cost_usd: 5, context_tokens: 300_000 }),
