@@ -31,25 +31,6 @@ export function refuse(reason: string): { block: string } {
   return { block: reason }
 }
 
-// The wake decision at the summary level, the composition the done branch of
-// check 1 makes when the facts disagree with the message. A busy own agent and
-// a declared blocking question both RELEASE the stop — the agent's idle notice
-// and the answer are what wake the orchestrator next (stop_gate.py:363-364;
-// its wrapper's header names the busy agent first among the releases).
-export function wakeDecision(summary: {
-  busyOwnAgents: readonly string[]
-  blockingQuestion: string | null
-  openRows: readonly string[]
-  leftBehind?: readonly string[]
-}): { decision: 'pass' } | { decision: 'block'; reason: string } {
-  if (summary.busyOwnAgents.length > 0) return { decision: 'pass' }
-  if (summary.blockingQuestion !== null) return { decision: 'pass' }
-  const left = summary.leftBehind ?? []
-  const deferred = summary.openRows
-  if (left.length === 0 && deferred.length === 0) return { decision: 'pass' }
-  return { decision: 'block', reason: notDoneReasons(left, deferred).join(' ') }
-}
-
 // One race, the whole gate's own law: stop_gate.py runs under a single deadline
 // checked between its external calls, and a read that cannot answer in time
 // lets the stop pass. The degraded answer is a value told apart from the work's
@@ -100,7 +81,7 @@ const DECLARE = 'Declare the wait with the `declare_wait` tool, whose descriptio
 // --- the refusal texts (stop_gate.py:126-146, verbatim but where the declared wait changed them) -----------------------------------
 
 // The waits that fit a turn, by what will wake it: what the two refusals below name.
-const BUSY_FITS = 'An agent of yours is busy: declare no wait, its idle notice wakes you.'
+const BUSY_FITS = 'An agent of yours is busy: declare no wait, its idle notice wakes you. Past its bound in one turn, the module\'s line on it does.'
 const OTHER_FITS = 'If only an irreversible or outward act waits for the operator\'s answer, declare an operator wait; '
   + 'if every goal is met or ruled out, declare done; '
   + 'if the operator deferred it, his ruling recorded, declare a deferred wait; else launch what you announced.'
@@ -564,8 +545,41 @@ export function checkWake(facts: {
 // How long a subscription to a peer's idle notice counts as something that will wake the
 // session: a notice that never comes (a peer that crashed past the host's own exit notice,
 // a lost delivery) must not hold the gate open for ever. Two hours covers a takeover's
-// verification and an agent's long turn.
+// verification and an agent's long turn. The same bound holds for a busy own agent, which
+// releases the stop: past it in one turn, the orchestrator is woken (busyWake below).
 export const NOTICE_TTL_MS = 2 * 60 * 60 * 1000
+
+// A busy own agent as its host record reads it: `since` its turn's start (statusUpdatedAt), `key`
+// that turn (its session and start). Its fill is left out: measured at a turn's end only, it would
+// be the one before this turn.
+export type BusyAgent = { label: string; key: string; since: number }
+
+// The line that wakes an orchestrator on an agent busy past the bound in one turn.
+export function busyLine(agent: BusyAgent, now: number): string {
+  const minutes = Math.floor((now - agent.since) / 60_000)
+  return `[module] ${agent.label} busy ${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')} in one turn — read its tree`
+}
+
+/*
+ * The orchestrator's wake on its busy agents, once per bound each turn: the lines of the agents
+ * past a bound not told yet (`told`: the bounds told per turn, updated here, its other turns
+ * dropped), and the instant the next bound of those still busy falls, null when none is.
+ */
+export function busyWake(agents: readonly BusyAgent[], told: Map<string, number>, now: number): { lines: string[]; next: number | null } {
+  for (const key of [...told.keys()]) if (!agents.some(agent => agent.key === key)) told.delete(key)
+  const lines: string[] = []
+  let next: number | null = null
+  for (const agent of agents) {
+    const bounds = Math.floor((now - agent.since) / NOTICE_TTL_MS)
+    if (bounds > (told.get(agent.key) ?? 0)) {
+      lines.push(busyLine(agent, now))
+      told.set(agent.key, bounds)
+    }
+    const at = agent.since + ((told.get(agent.key) ?? 0) + 1) * NOTICE_TTL_MS
+    next = next === null ? at : Math.min(next, at)
+  }
+  return { lines, next }
+}
 
 // Whether a subscription still stands at `now`: the ones past their time-to-live are
 // dropped from the map as they are read.

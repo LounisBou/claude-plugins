@@ -1,5 +1,5 @@
 // hooks/tests/stop-gate.test.ts
-// The stop gate's boundaries: the decision shapes (the summary-level wake decision, the deadline
+// The stop gate's boundaries: the decision shapes (the deadline
 // race), the ported checks
 // (the wake walk, the once-per-tell CI read over ci-watch's precomputed logs), and the
 // wiring over a faked $ — every field the classic.Stop event really carries pinned by a
@@ -8,11 +8,11 @@
 // where the data source did not change beneath them.
 import { expect, test } from 'claude-code/testing'
 import {
-  wakeDecision, withDeadline, isDegradedPass,
+  withDeadline, isDegradedPass,
   deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
-  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions, putsChoiceToOperator, PROSE_CHOICE_REASON,
+  noticeFrom, awaitingAny, NOTICE_TTL_MS, busyWake, parseGoalsCheck, goalsPaths, restatedQuestions, putsChoiceToOperator, PROSE_CHOICE_REASON,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait, type Heads,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
@@ -49,10 +49,6 @@ const ASKED_HERE = askedHere()
 
 
 // --- the decision shapes -----------------------------------------------------------------
-
-test('a summary with nothing holding the stop passes', () => {
-  expect(wakeDecision({ busyOwnAgents: [], blockingQuestion: null, openRows: [] })).toEqual({ decision: 'pass' })
-})
 
 // Program goal 9: a turn that declared no wait gets the decision of one whose last line says nothing.
 test('a turn with no declare_wait and a `waiting:` line gets the same decision as one without the line', async () => {
@@ -293,27 +289,6 @@ test('the blocks-nothing refusal says what the operator wait is for in one claus
   const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'the report\n\nwaiting: operator — blocks: nothing' }))
   expect(refused.observed).toContain('Your wait on the operator blocks nothing: that wait is for a question he must answer.')
   expect(refused.observed).not.toContain('the coordinator would put it to him')
-})
-
-test('a busy own agent releases the stop — its idle notice will wake the orchestrator', () => {
-  // Declared deviation from the brief's sketch, which expected 'block': stop_gate.py:363-364
-  // returns the moment one of its own agents is busy, the shell wrapper's own header names
-  // the busy agent first among the things that release the hold, and the design doc lists
-  // it among the wake conditions. Inverting it here would refuse every stop an agent
-  // survives — the opposite of the ported gate.
-  expect(wakeDecision({ busyOwnAgents: ['Agent: belt-p3'], blockingQuestion: null, openRows: [] })).toEqual({ decision: 'pass' })
-})
-
-test('a blocking question declared on the last line releases the stop', () => {
-  expect(wakeDecision({ busyOwnAgents: [], blockingQuestion: 'the operator', openRows: [] }).decision).toBe('pass')
-})
-
-test('an open dispatch row holds the stop and names the row', () => {
-  const d = wakeDecision({ busyOwnAgents: [], blockingQuestion: null, openRows: ['r-12 (the report row)'] })
-  expect(d.decision).toBe('block')
-  expect((d as { reason: string }).reason).toBe('Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it'
-    + ' — or, if the operator deferred it, set its revisit date (dispatch-record.sh blocker <record> <id> "until <ISO UTC time>"), record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
-    + 'and declare a deferred wait.')
 })
 
 test('a CI read that exceeds its time bound degrades to pass-and-log', async () => {
@@ -683,6 +658,9 @@ type Setup = {
   // with its text, its owner file and its goals.md reading.
   recordOwner?: string
   shared?: { path: string; text: string; owner?: string; goals?: { exitCode: number; stdout: string } }[]
+  // The busy agent's host process on ttys002 (its pid), and further files read by path.
+  busyAgentPid?: string
+  files?: Record<string, string>
 }
 
 function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: string[]; wrote: Record<string, string>; stamp: { atRun?: string | undefined }; inits: Record<string, ProcessRunInit | undefined> } {
@@ -723,6 +701,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
           throw new Error(`ENOENT: ${p}`)
         }
         if (p === `${HOME}/.claude/sessions/77.json` && setup.hostRecord !== undefined) return setup.hostRecord
+        if (setup.files?.[p] !== undefined) return setup.files[p]
         if (p === `${S.root}/stop-gate/a1b2c3.goals` && setup.goalsShown !== undefined) return setup.goalsShown
         if (p.startsWith(`${S.root}/store/sessions/`) && setup.sessions?.[p.slice(`${S.root}/store/sessions/`.length)] !== undefined) return setup.sessions[p.slice(`${S.root}/store/sessions/`.length)]!
         if (setup.roundHang === 'read' && (p.startsWith(`${S.root}/round/`))) return new Promise(() => undefined)
@@ -790,6 +769,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
           const bin = setup.selfBin ?? 'hostcli'
           return { exitCode: 0, stdout: setup.noLaunchName ? `  501 ${bin}\n` : `  501 ${bin} --name ${setup.launchName ?? 'Orch: belt'}\n`, stderr: '' }
         }
+        if (argv[0] === 'ps' && argv[1] === '-t' && argv[2] === 'ttys002' && setup.busyAgentPid) return { exitCode: 0, stdout: `${setup.busyAgentPid}\n`, stderr: '' }
         if (argv[0] === 'ps' && argv[1] === '-t' && argv[2] === 'ttys003') {
           // The idle agent's host process: its pid, then its working directory.
           return { exitCode: 0, stdout: setup.agentRow ?? '   77 hostcli\n', stderr: '' }
@@ -941,6 +921,100 @@ test('a busy own agent releases the stop, no pull request read for it', async ()
   expect(passed).toBe(e)
   expect(answer).toBe(e)
   expect(ran.filter(l => l.startsWith('gh')).length).toBe(0)
+})
+
+// A busy own agent releases the stop, and arms the busy wake: its host record (busy since its
+// turn's start) is read when the timer fires, and the session's own (pid 501) when there is one.
+function busyWorld(busyFor: number, drops = 0) {
+  const since = Date.now() - busyFor
+  const files: Record<string, string> = {
+    [`${HOME}/.claude/sessions/88.json`]: JSON.stringify({ pid: 88, sessionId: 's-agent', status: 'busy', statusUpdatedAt: since }),
+  }
+  const fx = fakeDollar({ listing: BUSY_ROW, chain: OWNED, busyAgentPid: '88', files })
+  const timers: { ms: number; fire: () => unknown; cancelled: boolean }[] = []
+  const submitted: string[] = []
+  const dollar = {
+    ...fx.dollar,
+    clock: { ...fx.dollar.clock, after: (ms: number, fire: () => unknown) => {
+      const timer = { ms, fire, cancelled: false }
+      timers.push(timer)
+      return { cancel: () => { timer.cancelled = true } }
+    } },
+    prompt: { ...fx.dollar.prompt, submit: async ({ text }: { text: string }) => {
+      if (drops-- > 0) return { drop: 'the session is busy' }
+      submitted.push(text)
+      return undefined
+    } },
+  } as unknown as World
+  return { dollar, timers, submitted, ran: fx.ran, files }
+}
+
+test('a busy own agent past the bound wakes its orchestrator once, with a line naming it, its time and its fill', async () => {
+  const { handlers } = mounted()
+  const w = busyWorld(NOTICE_TTL_MS + 5 * 60_000)
+  const e = stopEvent({})
+  expect((await stop(handlers['classic.Stop'], w.dollar, e)).passed).toBe(e)
+  const before = w.ran.length
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual(['[module] Agent: belt-p3 busy 2h05 in one turn — read its tree'])
+  // Local reads only: the tick runs no forge call.
+  expect(w.ran.slice(before).filter(l => l.startsWith('gh'))).toEqual([])
+  // Armed again at the next bound of the same turn, and the same bound never told twice.
+  expect(w.timers.length).toBe(1)
+  expect(w.timers[0]!.ms).toBeGreaterThan(NOTICE_TTL_MS - 6 * 60_000)
+  expect(w.timers[0]!.ms).toBeLessThanOrEqual(NOTICE_TTL_MS - 5 * 60_000)
+  await stop(handlers['classic.Stop'], w.dollar, e)
+  await w.timers.pop()!.fire()
+  expect(w.submitted.length).toBe(1)
+})
+
+test('a busy own agent under the bound wakes nothing: the timer waits for the bound', async () => {
+  const { handlers } = mounted()
+  const w = busyWorld(60 * 60_000)
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual([])
+  expect(w.timers.length).toBe(1)
+  expect(w.timers[0]!.ms).toBeLessThanOrEqual(60 * 60_000)
+  expect(w.timers[0]!.ms).toBeGreaterThan(59 * 60_000)
+})
+
+test('the busy wake waits while the session is in a turn of its own, then wakes it at its end', async () => {
+  const { handlers } = mounted()
+  const w = busyWorld(NOTICE_TTL_MS + 5 * 60_000)
+  const own = `${HOME}/.claude/sessions/501.json`
+  w.files[own] = JSON.stringify({ pid: 501, sessionId: 'a1b2c3', status: 'busy', statusUpdatedAt: 1 })
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  // The wake stands across the session's turns: nothing cancels it but the next arm.
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual([])
+  expect(w.timers.map(t => t.ms)).toEqual([60_000])
+  w.files[own] = JSON.stringify({ pid: 501, sessionId: 'a1b2c3', status: 'idle', statusUpdatedAt: 2 })
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual(['[module] Agent: belt-p3 busy 2h05 in one turn — read its tree'])
+})
+
+test('a busy wake the host drops is tried again a minute later, its bound still untold', async () => {
+  const { handlers } = mounted()
+  const w = busyWorld(NOTICE_TTL_MS + 5 * 60_000, 1)
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual([])
+  expect(w.timers.map(t => t.ms)).toEqual([60_000])
+  await w.timers.shift()!.fire()
+  expect(w.submitted.length).toBe(1)
+})
+
+test('the busy wake tells each bound of a turn once, and a new turn afresh', () => {
+  const told = new Map<string, number>()
+  const agent = (key: string, since: number) => ({ label: 'Agent: a', key, since })
+  expect(busyWake([agent('s 0', 0)], told, NOTICE_TTL_MS - 1)).toEqual({ lines: [], next: NOTICE_TTL_MS })
+  expect(busyWake([agent('s 0', 0)], told, NOTICE_TTL_MS).lines).toEqual(['[module] Agent: a busy 2h00 in one turn — read its tree'])
+  expect(busyWake([agent('s 0', 0)], told, NOTICE_TTL_MS + 1)).toEqual({ lines: [], next: 2 * NOTICE_TTL_MS })
+  expect(busyWake([agent('s 0', 0)], told, 2 * NOTICE_TTL_MS).lines.length).toBe(1)
+  // A new turn: the old one's bounds are dropped, and its own first bound is told.
+  expect(busyWake([agent('s 9', 9)], told, 9 + NOTICE_TTL_MS).lines.length).toBe(1)
+  expect([...told.keys()]).toEqual(['s 9'])
 })
 
 // A stop that passes and adds exactly one `warn <what>` line to the log: the demoted cases' shape.
