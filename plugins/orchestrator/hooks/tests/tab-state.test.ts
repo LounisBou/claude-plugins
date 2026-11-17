@@ -92,7 +92,13 @@ test('a turn ends on the wait it wrote, else the gate, else idle', () => {
   expect(stateAfterTurn('operator', false)).toBe('asks')
   expect(stateAfterTurn('question', true)).toBe('held')
   expect(stateAfterTurn('blocked', false)).toBe('held')
-  expect(stateAfterTurn('done', true)).toBe('done')
+  // An orchestrator's own done wait names no pull request: at rest, never ✓ (done is the Ready read's alone).
+  expect(stateAfterTurn('done', true)).toBe('gate')
+  expect(stateAfterTurn('done', false)).toBe('idle')
+  for (const waiting of ['operator', 'question', 'blocked', 'waiting', 'delivered', 'done', null] as const) {
+    expect(stateAfterTurn(waiting, false)).not.toBe('done')
+    expect(stateAfterTurn(waiting, true)).not.toBe('done')
+  }
   // A delivery is under review until the orchestrator's read of its pull request finds it Ready.
   expect(stateAfterTurn('delivered', false)).toBe('review')
   expect(stateAfterTurn(null, true)).toBe('gate')

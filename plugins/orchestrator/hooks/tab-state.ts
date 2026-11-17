@@ -102,12 +102,13 @@ export function stateAfterPr(shown: string, pr: { state: string; ready?: boolean
 
 // What a turn's end leaves on the window: the wait its session wrote (a delivery is in, under
 // review until the orchestrator's read of its pull request finds it Ready; the operator is asked
-// something; or the session waits on its orchestrator), else the gate, else nothing pending.
+// something; or the session waits on its orchestrator), else the gate, else nothing pending. An
+// orchestrator's own `done` wait names no pull request: it is at rest like any session with nothing
+// pending, and `done` (✓) is only ever written by the read of a pull request that carries Ready.
 export function stateAfterTurn(waiting: WaitKind | null | undefined, pastGate: boolean): TabState {
   if (waiting === 'delivered') return 'review'
-  if (waiting === 'done') return 'done'
   if (waiting === 'operator') return 'asks'
-  if (waiting) return 'held'
+  if (waiting && waiting !== 'done') return 'held'
   return pastGate ? 'gate' : 'idle'
 }
 
