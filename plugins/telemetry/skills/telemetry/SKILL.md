@@ -6,7 +6,7 @@ description: Use when asked to scan the recorded session events for secrets, to 
 # telemetry
 
 ```bash
-node --experimental-strip-types --no-warnings <this skill's directory>/scripts/telemetry.ts <check|backfill|report> --config "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" [<transcript.jsonl>...]
+node --experimental-strip-types --no-warnings <this skill's directory>/scripts/telemetry.ts <check|backfill [--turns]|report> --config "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" [<transcript.jsonl>...]
 ```
 
 Print the output as it is. `check` names file, line and pattern of each finding, never the value. `report [--week <day>] [--tool <repo>]...` prints the week's cost, delay, questions and refusals.

@@ -665,3 +665,52 @@ test('the three lines come after the nine figures, and the scripts run in the re
     assert.ok(out.findIndex(l => l.startsWith('9 main green')) < out.indexOf(lineOf(out, 'prompt budgets')))
   })
 })
+
+const first = (cache_read: number, cache_write: number): Record<string, unknown> => ({ in: 2, out: 9, cache_read, cache_write, write_1h: cache_write, write_5m: 0 })
+const MIN = 60_000
+
+test('cold rewrites: per role, the first calls after an idle gap that wrote more than they read, by the gap\'s bucket; the first call of a session and a warm one are not', () => {
+  const turn = (session: string, ts: string, firstCall: Record<string, unknown>, idle: number | undefined, extra: Record<string, unknown> = {}): Record<string, unknown> =>
+    ev(ts, 'turn_end', session, { first_call: firstCall, ...(idle === undefined ? {} : { idle_ms: idle }), ...extra })
+  const events = [
+    ev('2026-11-09T09:00:00Z', 'session_start', S(1), { role: 'orchestrator' }),
+    turn(S(1), '2026-11-09T09:01:00Z', first(0, 40_000), undefined, { role: 'orchestrator' }),
+    turn(S(1), '2026-11-09T09:30:00Z', first(40_000, 300), 20 * MIN),
+    turn(S(1), '2026-11-09T10:40:00Z', first(0, 41_000), 54 * MIN),
+    turn(S(1), '2026-11-09T11:40:00Z', first(0, 42_000), 55 * MIN, { resumed: true }),
+    turn(S(1), '2026-11-09T13:00:00Z', first(0, 43_000), 65 * MIN),
+    turn(S(1), '2026-11-09T15:00:00Z', first(0, 44_000), 66 * MIN),
+    turn(S(1), '2026-11-09T16:00:00Z', first(0, 5_000), 120 * MIN),
+    turn(S(2), '2026-11-10T09:00:00Z', first(0, 20_000), 90 * MIN, { role: 'agent' }),
+    turn(S(1), '2026-11-02T09:00:00Z', first(0, 99_000), 90 * MIN),
+  ]
+  scratch({ events }, config => {
+    const line = find(lines(config), 'cold rewrites: ')
+    assert.equal(line, 'cold rewrites: agent 1 of 1 (20k written; <55 min 0 (0k), 55-65 min 0 (0k), >65 min 1 (20k)); orchestrator 4 of 6 (170k written; <55 min 1 (41k), 55-65 min 2 (85k), >65 min 1 (44k); 1 on a resumed process) — a first call after an idle gap that wrote ≥ 10k and more than it read, per session role')
+  })
+})
+
+test('cold rewrites: a session recorded live is counted from its live turns alone, a backfill adds the sessions it alone knows; n/a, with how to fill it, when none', () => {
+  const turn = (session: string, source: string | undefined, idle: number): Record<string, unknown> =>
+    ev('2026-11-09T09:00:00Z', 'turn_end', session, { first_call: first(0, 30_000), idle_ms: idle, role: 'agent', ...(source === undefined ? {} : { source }) })
+  const events = [turn(S(1), undefined, 70 * MIN), turn(S(1), 'transcript', 70 * MIN), turn(S(1), 'transcript', 80 * MIN), turn(S(2), 'transcript', 70 * MIN)]
+  scratch({ events }, config => {
+    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: agent 2 of 2 \(60k written; <55 min 0 \(0k\), 55-65 min 0 \(0k\), >65 min 2 \(60k\)\) — /)
+  })
+  scratch({ events: [ev('2026-11-09T09:00:00Z', 'turn_end', S(1), { first_call: first(0, 30_000) })] }, config => {
+    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: n\/a — no turn_end with a first call and an idle gap in the week \(a past week: `telemetry\.ts backfill --turns/)
+  })
+})
+
+test('turns read back from a transcript carry no cost: a resumed session whose live turns are all costed is still summed from them', () => {
+  const events = [
+    ev('2026-11-09T09:00:00Z', 'turn_end', S(1), { cost_usd: 5, turn_cost_usd: 5, context_tokens: 300_000 }),
+    ev('2026-11-09T10:00:00Z', 'turn_end', S(1), { cost_usd: 1, turn_cost_usd: 1, context_tokens: 100_000 }),
+    ev('2026-11-09T10:30:00Z', 'turn_end', S(1), { first_call: first(0, 30_000), idle_ms: 70 * MIN, source: 'transcript' }),
+  ]
+  scratch({ events }, config => {
+    const out = lines(config)
+    assert.equal(find(out, '  restarted: '), '  restarted: 1 resumed sessions whose cumulative cost restarted lower: 1 summed from their per-turn costs, 0 n/a')
+    assert.match(find(out, '3 context height'), /^3 context height: 1 of 2 turns above 200k/)
+  })
+})

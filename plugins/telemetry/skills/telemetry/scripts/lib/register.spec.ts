@@ -343,3 +343,19 @@ test('session.start: not a repository, no remote or a host that fails: the direc
     assert.equal((await projectOfStart(options)).project, 'claude-plugins', JSON.stringify(options))
   }
 })
+
+test('resume: the first turn of a process that started on an existing conversation is marked; the next, and a new conversation\'s, are not', async () => {
+  const resumed = host({ messages: F('session.messages') })
+  const a = hooks()
+  await a.hook('session.start')(resumed.$, F('session.start'), through({ cwd: '/w' }))
+  await a.hook('turn.complete')(resumed.$, F('turn.complete.child'), through({ text: '' }))
+  await a.hook('turn.complete')(resumed.$, F('turn.complete'), through({ text: '' }))
+  await a.hook('turn.complete')(resumed.$, F('turn.complete'), through({ text: '' }))
+  const fresh = host()
+  const b = hooks()
+  await b.hook('session.start')(fresh.$, F('session.start'), through({ cwd: '/w' }))
+  await b.hook('turn.complete')(fresh.$, F('turn.complete'), through({ text: '' }))
+  const resumedOf = (runs: { stdin: string | undefined }[]): unknown[] => runs.flatMap(r => (r.stdin ?? '').trim().split('\n')).map(l => JSON.parse(l) as Record<string, unknown>).filter(e => e['event'] === 'turn_end').map(e => e['resumed'])
+  assert.deepEqual(resumedOf(resumed.runs), [undefined, true, undefined])
+  assert.deepEqual(resumedOf(fresh.runs), [undefined])
+})

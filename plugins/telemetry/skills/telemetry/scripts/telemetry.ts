@@ -6,7 +6,9 @@
 //   telemetry.ts export   --auto [--foreground] --config <dir>
 //                                                         the export a session's end starts: at most once a day,
 //                                                         detached unless --foreground
-//   telemetry.ts backfill --config <dir> <transcript>...  one session_summary per past transcript
+//   telemetry.ts backfill [--turns] --config <dir> <transcript>...
+//                                                         one session_summary per past transcript; with --turns, also
+//                                                         one turn_end per turn, with its first call's cache figures
 //   telemetry.ts sweep    [--auto] --config <dir>         the sessions that never ended, summarized, the settled
 //                                                         round questions and the dispatch record's writes the
 //                                                         orchestrator's journal holds; with --auto, at most once a day
@@ -23,15 +25,16 @@ import { fileURLToPath } from 'node:url'
 import { moduleDirOf } from '../../../core/orchestration.ts'
 import { firstRepository, makeEvent, remoteUrlsArgv, type Event } from '../../../hooks/collect.ts'
 import { planArchive } from './lib/archive.ts'
+import { cacheFields, cacheTurns, lastTurn } from './lib/cache.ts'
 import { runAuto } from './lib/auto.ts'
 import { exportExclusive, logsRepo, machineName, type Git } from './lib/export.ts'
 import { parseOptions, report, type Check, type Gh } from './lib/report.ts'
 import { parseEnvFile, type EnvSecrets } from './lib/redact.ts'
 import { append, check, eventsDir, parseEvent } from './lib/store.ts'
 import { claimSweep, sweep, sweepDue } from './lib/sweep.ts'
-import { summarizeFile, transcriptOf } from './lib/transcript.ts'
+import { summarize, summarizeFile, transcriptOf } from './lib/transcript.ts'
 
-export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill|sweep [--auto]|report [--week <YYYY-MM-DD>] [--tool <owner/name>]...} --config <dir> [<transcript>...]'
+export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill [--turns]|sweep [--auto]|report [--week <YYYY-MM-DD>] [--tool <owner/name>]...} --config <dir> [<transcript>...]'
 
 /** A git command is never left running past this. */
 export const GIT_TIMEOUT_MS = 60_000
@@ -71,15 +74,32 @@ export function readSecrets(env: Deps['env']): { secrets: EnvSecrets } | { error
   }
 }
 
-/** A session_end enriched with what its transcript holds; any other event as it came. */
+/**
+ * A session_end enriched with what its transcript holds, and a turn_end of the session's own loop
+ * with its first API call's cache figures; any other event as it came.
+ */
 export function enrich(line: string, config: string): string {
   const event = parseEvent(line)
-  if (typeof event === 'string' || event.event !== 'session_end') return line
+  if (typeof event === 'string') return line
+  if (event.event === 'turn_end' && event['agent'] === undefined && event['first_call'] === undefined) return enrichTurn(line, event, config)
+  if (event.event !== 'session_end') return line
   const path = transcriptOf(config, event.session)
   if (path === undefined) return line
   try {
     const { title, role, effort, models, first_turn_ms, totals } = summarizeFile(path)
     return JSON.stringify({ ...event, title, role, effort, models, first_turn_ms, totals })
+  } catch {
+    return line
+  }
+}
+
+/** A turn_end with the first call of the transcript's last turn, when that turn ended where the event says; as it came when the transcript cannot say. */
+function enrichTurn(line: string, event: Event, config: string): string {
+  const path = transcriptOf(config, event.session)
+  if (path === undefined) return line
+  try {
+    const turn = lastTurn(path, Date.parse(event.ts))
+    return turn === undefined ? line : JSON.stringify({ ...event, ...cacheFields(turn) })
   } catch {
     return line
   }
@@ -98,6 +118,15 @@ export function backfillEvent(path: string, now: number): Event | undefined {
   const summary = summarizeFile(path)
   const at = summary.ended === undefined ? now : Date.parse(summary.ended)
   return makeEvent('session_summary', Number.isFinite(at) ? at : now, session, { ...summary, source: 'transcript' })
+}
+
+/** One turn_end per turn of a past transcript, with the first call's cache figures; the session's title and role as its summary reads them. */
+export function backfillTurns(path: string): Event[] {
+  const session = basename(path, '.jsonl')
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(session)) return []
+  const body = readFileSync(path, 'utf8')
+  const { title, role } = summarize(body)
+  return cacheTurns(body).map(turn => makeEvent('turn_end', turn.end, session, { turn: turn.prompt, ...cacheFields(turn), title, role, source: 'transcript' }))
 }
 
 export function run(args: readonly string[], deps: Deps): number {
@@ -171,13 +200,19 @@ export function run(args: readonly string[], deps: Deps): number {
     }
     case 'backfill': {
       const events: string[] = []
-      for (const path of operands) {
+      let turns = 0
+      for (const path of operands.filter(operand => operand !== '--turns')) {
         const event = backfillEvent(path, deps.now())
         if (event === undefined) deps.err(`backfill: ${basename(path)} is not a session transcript, skipped`)
         else events.push(JSON.stringify(event))
+        if (event !== undefined && operands.includes('--turns')) {
+          const found = backfillTurns(path)
+          turns += found.length
+          events.push(...found.map(turn => JSON.stringify(turn)))
+        }
       }
       const { written } = append(eventsDir(stateDir), events.join('\n'), secrets)
-      deps.out(`backfill: ${written} session(s) summarized`)
+      deps.out(`backfill: ${written - turns} session(s) summarized${operands.includes('--turns') ? `, ${turns} turn(s) read back` : ''}`)
       return 0
     }
     case 'sweep': {

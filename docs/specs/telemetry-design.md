@@ -13,7 +13,7 @@ for what no file holds after the fact: the decider of a refusal, a tool's durati
 fill and cost at each turn, a session's start latency, a spawn's link to its parent. After the
 fact, from the host's own transcript (`<config>/projects/*/<session>.jsonl`), for what it
 already holds: the title (`custom-title`), the effort of each answer, the models, the token
-totals. The transcript is read at `session.end` to enrich that event, and by `backfill` for
+totals, and each turn's first API call (its cache counts by TTL, the idle gap before it). The transcript is read at `session.end` to enrich that event, at each turn's end to enrich the `turn_end` (its tail only), and by `backfill` for
 sessions that ended before the plugin was installed; the daily sweep reads it for a session that
 ended without a `session.end` (« Phase 2 »).
 

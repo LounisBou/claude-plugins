@@ -461,3 +461,14 @@ test('target: a record result of another repository gives no head to the call, a
   assert.deepEqual(targetOf(recorded({ pr: 7, repo: 'Acme/Thing' }), { text: written }), { repo: 'Acme/Thing', pr: 7, head: SHA.slice(0, 12) })
   assert.deepEqual(targetOf(recorded({ pr: 7, repo: 'acme/thing' }), { text: 'error: no such head' }), { repo: 'acme/thing', pr: 7 })
 })
+
+test('turn_end: resumed marks the session\'s own loop only, and only when true; the Collector hands it out once', () => {
+  assert.equal(turnEnd(AT, S, F('turn.complete'), {}, undefined, true)['resumed'], true)
+  assert.equal(turnEnd(AT, S, F('turn.complete'), {}, undefined, false)['resumed'], undefined)
+  assert.equal(turnEnd(AT, S, F('turn.complete.child'), {}, undefined, true)['resumed'], undefined)
+  const c = new Collector()
+  assert.equal(c.takeResumed(), false)
+  c.markResumed()
+  assert.equal(c.takeResumed(), true)
+  assert.equal(c.takeResumed(), false)
+})

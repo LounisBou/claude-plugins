@@ -64,8 +64,8 @@ export const EVENT_SCHEMA = {
     ],
   },
   turn_end: {
-    summary: 'A turn ends: its cost, tokens and the context fill.',
-    writers: ['hook `turn.complete`; `$.session.usage()`'],
+    summary: 'A turn ends: its cost, tokens and the context fill, and for the session\'s own loop what its first API call did to the prompt cache.',
+    writers: ['hook `turn.complete`; `$.session.usage()`', 'the writer, which adds `first_call` and `idle_ms` from the session\'s transcript when it appends the line', '`telemetry.ts backfill --turns <transcript>`, one per turn of a past transcript (source `transcript`)'],
     fields: [
       field('turn', 'string', 'The turn id.'),
       field('reason', 'string', 'Why the turn ended.'),
@@ -77,6 +77,10 @@ export const EVENT_SCHEMA = {
       field('window', 'number', 'The context window (the session\'s own loop only).', TOKENS),
       field('cost_usd', 'number', 'The session\'s cumulative cost, up to this turn: never sum it across events.', 'usd'),
       field('turn_cost_usd', 'number', 'This turn\'s own cost: `cost_usd` less the previous turn\'s (the first turn: its whole value). Sum this one across events.', 'usd'),
+      field('first_call', 'object', 'The turn\'s first API call on its own, the one that pays a cold rewrite after an idle gap (the calls after it are warm and drown it in `tokens`): `in`, `out`, `cache_read`, `cache_write`, and `write_1h`, `write_5m`, its `cache_write` by cache TTL. The session\'s own loop only; absent when the transcript could not be read or did not hold the turn.', TOKENS),
+      field('idle_ms', 'number', 'From the end of the session\'s previous API call to the start of this turn\'s first: how long the prompt cache sat unused. Absent for the session\'s first call.', 'ms'),
+      field('resumed', 'boolean', 'True on the first turn of a process that started on a conversation that already held messages (`--resume`); absent otherwise. Live events only.'),
+      field('source', 'string', '`transcript` on a turn read back by a backfill; absent on a live event.'),
     ],
   },
   tool_call: {

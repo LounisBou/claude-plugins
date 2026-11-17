@@ -16,6 +16,11 @@ import { dayFiles, eventsDir } from './store.ts'
 /** What each figure of the target is held to. */
 export const TARGETS = { contextTokens: 200_000, generationMs: 2 * 3_600_000, firstTurnTokens: 60_000, lineToMergeMs: 3_600_000, toolSpendPercent: 20 } as const
 
+/** A cold rewrite: a turn's first call, after an idle gap, that wrote at least this many tokens to the prompt cache and wrote more than it read. */
+export const COLD_REWRITE = { minWriteTokens: 10_000 } as const
+/** The idle-gap buckets a cold rewrite is counted in, in minutes: under the first bound, up to the second included, above it. Around the cache's one-hour lifetime. */
+export const IDLE_BUCKETS_MIN = [55, 65] as const
+
 export interface GhResult {
   readonly status: number
   readonly stdout: string
@@ -117,6 +122,7 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
   const sessions = new Map<string, Session>()
   const questions = new Map<string, number>()
   const turns: { session: string; tokens: number }[] = []
+  const firstCalls: FirstCall[] = []
   for (const name of dayFiles(eventsDir(join(input.config, 'telemetry')))) {
     for (const line of readFileSync(join(eventsDir(join(input.config, 'telemetry')), name), 'utf8').split('\n')) {
       let e: Record<string, unknown>
@@ -153,6 +159,11 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       s.inside = true
       if (kind === 'session_start') s.began = true
       if (kind === 'turn_end') {
+        const first = record(e['first_call'])
+        const idle = num(e['idle_ms'])
+        if (idle !== undefined && num(first['cache_write']) !== undefined) firstCalls.push({ session: id, idleMs: idle, read: num(first['cache_read']) ?? 0, write: num(first['cache_write']) ?? 0, resumed: e['resumed'] === true, backfilled: e['source'] === 'transcript' })
+        // A turn read back from a transcript has no cost and no context fill: it is no gap in the live figures.
+        if (e['source'] === 'transcript') continue
         // A turn with no figure of its own (the host gave none) leaves a sum of the window's turns incomplete.
         const turnCost = num(e['turn_cost_usd'])
         if (turnCost === undefined) s.turnUncosted = true
@@ -181,7 +192,51 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       }
     }
   }
-  return { sessions, questions, turns }
+  return { sessions, questions, turns, firstCalls }
+}
+
+/** What a turn_end holds of its first API call, with the idle gap before it. */
+interface FirstCall {
+  session: string
+  idleMs: number
+  read: number
+  write: number
+  resumed: boolean
+  /** Read back from a transcript by a backfill, not recorded live. */
+  backfilled: boolean
+}
+
+/**
+ * The cold-rewrite line: per session role, the first calls that wrote more than they read after an
+ * idle gap, with the tokens they wrote, by the gap's bucket. A session recorded live is counted from
+ * its live events alone, so a backfill over it adds nothing twice.
+ */
+function coldRewrites(calls: readonly FirstCall[], roleOf: (session: string) => string): string {
+  const live = new Set(calls.filter(c => !c.backfilled).map(c => c.session))
+  const counted = calls.filter(c => !c.backfilled || !live.has(c.session))
+  if (counted.length === 0) return NA('no turn_end with a first call and an idle gap in the week (a past week: `telemetry.ts backfill --turns <transcript>...`)')
+  const [low, high] = IDLE_BUCKETS_MIN
+  const bucket = (ms: number): number => (ms < low * 60_000 ? 0 : ms <= high * 60_000 ? 1 : 2)
+  const labels = [`<${low} min`, `${low}-${high} min`, `>${high} min`]
+  const roles = new Map<string, { calls: number; cold: { count: number; tokens: number }[]; resumed: number }>()
+  for (const c of counted) {
+    const r = roles.get(roleOf(c.session)) ?? { calls: 0, cold: labels.map(() => ({ count: 0, tokens: 0 })), resumed: 0 }
+    roles.set(roleOf(c.session), r)
+    r.calls++
+    if (c.write < COLD_REWRITE.minWriteTokens || c.write <= c.read) continue
+    const cold = r.cold[bucket(c.idleMs)]
+    if (cold !== undefined) {
+      cold.count++
+      cold.tokens += c.write
+    }
+    if (c.resumed) r.resumed++
+  }
+  const parts = [...roles].sort(([a], [b]) => (a < b ? -1 : 1)).map(([role, r]) => {
+    const count = r.cold.reduce((n, c) => n + c.count, 0)
+    const written = r.cold.reduce((n, c) => n + c.tokens, 0)
+    return `${role} ${count} of ${r.calls} (${tok(written)} written; ${r.cold.map((c, i) => `${labels[i]} ${c.count} (${tok(c.tokens)})`).join(', ')}${r.resumed > 0 ? `; ${r.resumed} on a resumed process` : ''})`
+  })
+  return `${parts.join('; ')} — a first call after an idle gap that wrote ≥ ${tok(COLD_REWRITE.minWriteTokens)} and more than it read, per session role`
 }
 
 /** The files of a directory of the orchestrator's module, read by `parse`; a file `parse` refuses is left out. */
@@ -326,7 +381,7 @@ export function report(input: ReportInput): string[] {
   const module = moduleDirOf(input.config, input.env['ORCHESTRATOR_MODULE_DIR'])
   const tools = input.tools.length > 0 ? input.tools : [input.repositoryAt(input.cwd)].filter((r): r is string => r !== undefined)
   const skipped = { n: 0 }
-  const { sessions, questions, turns } = gather(input, start, end, skipped)
+  const { sessions, questions, turns, firstCalls } = gather(input, start, end, skipped)
   const isTool = (name: string): boolean => tools.some(t => t.toLowerCase() === name.toLowerCase())
   const remotes = new Map<string, string | undefined>()
   const repositoryAt = (dir: string): string | undefined => (remotes.has(dir) ? remotes.get(dir) : remotes.set(dir, input.repositoryAt(dir)).get(dir))
@@ -492,6 +547,8 @@ export function report(input: ReportInput): string[] {
   out.push(`  coverage: this table counts ${[...sources.values()].reduce((n, c) => n + c.count, 0)} refusals, the role table ${[...byRole.values()].reduce((n, d) => n + d.all, 0)}; no journal for ${noJournal.length === 0 ? 'any plugin that refused' : noJournal.join(', ')}`)
   out.push('', 'role          refusals  of them by a plugin')
   for (const [role, d] of byRole) out.push(`${role.padEnd(12)}  ${String(d.all).padStart(8)}  ${String(d.plugin).padStart(19)}`)
+
+  out.push('', `cold rewrites: ${coldRewrites(firstCalls, session => sessions.get(session)?.role ?? 'other')}`)
 
   // The figures of the target, in its order.
   const roleTurns = new Map<string, number[]>()

@@ -192,9 +192,10 @@ export function usageFacts(usage: unknown): UsageFacts {
 /**
  * `turn_end`. `turnCostUsd` is the turn's own cost, the difference the collector computed between
  * this turn's cumulative figure and the previous one (`Collector.turnCost`); `cost_usd` stays the
- * session's cumulative figure.
+ * session's cumulative figure. `resumed` marks the first turn of a process started on an existing
+ * conversation. The first call's figures are not here: the writer reads them from the transcript.
  */
-export function turnEnd(at: number, session: string, input: unknown, usage: UsageFacts, turnCostUsd?: number): Event {
+export function turnEnd(at: number, session: string, input: unknown, usage: UsageFacts, turnCostUsd?: number, resumed?: boolean): Event {
   const e = record(input)
   const u = record(e['usage'])
   const refusal = record(e['refusal'])
@@ -211,6 +212,7 @@ export function turnEnd(at: number, session: string, input: unknown, usage: Usag
     window: e['agentId'] === undefined ? usage.window : undefined,
     cost_usd: usage.costUsd,
     turn_cost_usd: turnCostUsd,
+    resumed: resumed === true && e['agentId'] === undefined ? true : undefined,
   })
 }
 
@@ -603,6 +605,8 @@ export class Collector {
   launchedAt: number | undefined
   firstTurnSeen = false
   turns = 0
+  /** The process started on a conversation that already held messages, and its first turn has not ended yet. */
+  private resumePending = false
   private costSoFar: number | undefined
   private actor: { title: string; role: string } | undefined
   private headRead = false
@@ -620,6 +624,18 @@ export class Collector {
     const before = this.costSoFar ?? 0
     this.costSoFar = Math.max(before, costUsd)
     return Math.round(Math.max(0, costUsd - before) * 1e9) / 1e9
+  }
+
+  /** Notes that the process started on an existing conversation (`--resume`). */
+  markResumed(): void {
+    this.resumePending = true
+  }
+
+  /** True once, on the first turn that ends after `markResumed`. */
+  takeResumed(): boolean {
+    const resumed = this.resumePending
+    this.resumePending = false
+    return resumed
   }
 
   /** The session's title, once known. */

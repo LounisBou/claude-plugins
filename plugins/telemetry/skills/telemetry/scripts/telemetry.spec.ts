@@ -322,3 +322,48 @@ test('report: the checkout\'s figures reach the report through the dependency, r
     assert.ok(deps.outs.includes('rules held by prose alone: 0 of 1 (held by code 1, named by an eval 0)'))
   })
 })
+
+/** A transcript of two turns: a cold start, then a turn 70 minutes later that rewrote the cache. */
+const CACHE_LINES = [
+  { type: 'user', timestamp: '2026-11-17T10:00:00.000Z', promptId: 'p1', message: { content: 'never kept' } },
+  { type: 'assistant', timestamp: '2026-11-17T10:00:02.000Z', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 2, output_tokens: 9, cache_read_input_tokens: 0, cache_creation_input_tokens: 30000, cache_creation: { ephemeral_1h_input_tokens: 30000, ephemeral_5m_input_tokens: 0 } } } },
+  { type: 'user', timestamp: '2026-11-17T11:10:00.000Z', promptId: 'p2', message: { content: 'never kept' } },
+  { type: 'assistant', timestamp: '2026-11-17T11:10:02.000Z', message: { id: 'm2', model: 'claude-opus-5-5', usage: { input_tokens: 3, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 31000, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 31000 } } } },
+  { type: 'assistant', timestamp: '2026-11-17T11:10:09.000Z', message: { id: 'm3', model: 'claude-opus-5-5', usage: { input_tokens: 3, output_tokens: 5, cache_read_input_tokens: 31000, cache_creation_input_tokens: 200 } } },
+].map(l => JSON.stringify(l)).join('\n')
+const turnEnd = (extra: Record<string, unknown> = {}): string => JSON.stringify({ v: 1, ts: '2026-11-17T11:10:10.000Z', event: 'turn_end', session: S, turn: 'host-turn', ...extra })
+
+test('append: a turn_end of the session\'s own loop takes its first call and idle gap from the transcript; a subagent\'s, one already carrying them, one the transcript does not hold are as they came', () => {
+  harness((config, deps, setStdin) => {
+    mkdirSync(join(config, 'projects', '-w'), { recursive: true })
+    writeFileSync(join(config, 'projects', '-w', `${S}.jsonl`), `${CACHE_LINES}\n`)
+    const child = turnEnd({ agent: 'a1' })
+    const carried = turnEnd({ first_call: { cache_write: 1 } })
+    const early = turnEnd({ ts: '2026-11-17T10:30:00.000Z' })
+    assert.equal(enrich(child, config), child)
+    assert.equal(enrich(carried, config), carried)
+    assert.equal(enrich(early, config), early)
+    setStdin(`${turnEnd()}\n`)
+    assert.equal(run(['append', '--config', config], deps), 0)
+    const [line] = readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    assert.deepEqual(line?.['first_call'], { in: 3, out: 20, cache_read: 0, cache_write: 31000, write_1h: 0, write_5m: 31000 })
+    assert.equal(line?.['idle_ms'], 4_200_000)
+  })
+})
+
+test('backfill --turns: one turn_end per turn beside the summary, read back from the transcript, none without the flag', () => {
+  harness((config, deps) => {
+    const path = join(config, `${S}.jsonl`)
+    mkdirSync(config, { recursive: true })
+    writeFileSync(path, `${CACHE_LINES}\n`)
+    assert.equal(run(['backfill', '--config', config, path], deps), 0)
+    assert.deepEqual(deps.outs, ['backfill: 1 session(s) summarized'])
+    assert.equal(run(['backfill', '--turns', '--config', config, path, '/x/notes.jsonl'], deps), 0)
+    assert.deepEqual(deps.outs.at(-1), 'backfill: 1 session(s) summarized, 2 turn(s) read back')
+    const events = readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    const turns = events.filter(e => e['event'] === 'turn_end')
+    assert.deepEqual(turns.map(e => [e['turn'], e['source'], e['idle_ms']]), [['p1', 'transcript', undefined], ['p2', 'transcript', 4_200_000]])
+    assert.deepEqual(turns[1]?.['first_call'], { in: 3, out: 20, cache_read: 0, cache_write: 31000, write_1h: 0, write_5m: 31000 })
+    assert.equal(events.filter(e => e['event'] === 'session_summary').length, 2)
+  })
+})
