@@ -306,12 +306,6 @@ export function gateText(name: string, tokens: number, percent: number): string 
   return `[module] ${name} context ${tokens.toLocaleString('en-US')} (${percent}%) — at the gate`
 }
 
-// An agent busy past the bound in one turn, to its orchestrator: what wakes it to read that agent's tree (SKILL.md rule 6 says how to judge it).
-export function busyText(name: string, ms: number, tokens: number, percent: number): string {
-  const minutes = Math.floor(ms / 60_000)
-  return `[module] ${name} busy ${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')} in one turn, context ${tokens.toLocaleString('en-US')} (${percent}%) — read its tree`
-}
-
 // The same crossing said to the agent itself, in its own session, once per crossing: it cannot
 // read its own figure, so the stand-down starts from this line, not from its brief alone.
 export function gateSelfText(tokens: number, percent: number): string {

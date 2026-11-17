@@ -12,7 +12,7 @@ import {
   deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
-  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions, putsChoiceToOperator, PROSE_CHOICE_REASON,
+  noticeFrom, awaitingAny, NOTICE_TTL_MS, busyWake, parseGoalsCheck, goalsPaths, restatedQuestions, putsChoiceToOperator, PROSE_CHOICE_REASON,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait, type Heads,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
@@ -21,6 +21,7 @@ import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration } f
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf } from './fakes.ts'
 import { capture, hookOf, hostOf } from '../../core/capture.ts'
+import { measureFilePath } from '../gauge-core.ts'
 import { fieldsOf, type Events, type Hook, type Host, type Matcher, type Noun, type ProcessRunInit, type ToolSpec } from '../../core/host.ts'
 
 // The host a hook under test is handed: every noun, those a fake does not set throwing.
@@ -658,6 +659,9 @@ type Setup = {
   // with its text, its owner file and its goals.md reading.
   recordOwner?: string
   shared?: { path: string; text: string; owner?: string; goals?: { exitCode: number; stdout: string } }[]
+  // The busy agent's host process on ttys002 (its pid), and further files read by path.
+  busyAgentPid?: string
+  files?: Record<string, string>
 }
 
 function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: string[]; wrote: Record<string, string>; stamp: { atRun?: string | undefined }; inits: Record<string, ProcessRunInit | undefined> } {
@@ -698,6 +702,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
           throw new Error(`ENOENT: ${p}`)
         }
         if (p === `${HOME}/.claude/sessions/77.json` && setup.hostRecord !== undefined) return setup.hostRecord
+        if (setup.files?.[p] !== undefined) return setup.files[p]
         if (p === `${S.root}/stop-gate/a1b2c3.goals` && setup.goalsShown !== undefined) return setup.goalsShown
         if (p.startsWith(`${S.root}/store/sessions/`) && setup.sessions?.[p.slice(`${S.root}/store/sessions/`.length)] !== undefined) return setup.sessions[p.slice(`${S.root}/store/sessions/`.length)]!
         if (setup.roundHang === 'read' && (p.startsWith(`${S.root}/round/`))) return new Promise(() => undefined)
@@ -765,6 +770,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
           const bin = setup.selfBin ?? 'hostcli'
           return { exitCode: 0, stdout: setup.noLaunchName ? `  501 ${bin}\n` : `  501 ${bin} --name ${setup.launchName ?? 'Orch: belt'}\n`, stderr: '' }
         }
+        if (argv[0] === 'ps' && argv[1] === '-t' && argv[2] === 'ttys002' && setup.busyAgentPid) return { exitCode: 0, stdout: `${setup.busyAgentPid}\n`, stderr: '' }
         if (argv[0] === 'ps' && argv[1] === '-t' && argv[2] === 'ttys003') {
           // The idle agent's host process: its pid, then its working directory.
           return { exitCode: 0, stdout: setup.agentRow ?? '   77 hostcli\n', stderr: '' }
@@ -916,6 +922,65 @@ test('a busy own agent releases the stop, no pull request read for it', async ()
   expect(passed).toBe(e)
   expect(answer).toBe(e)
   expect(ran.filter(l => l.startsWith('gh')).length).toBe(0)
+})
+
+// A busy own agent releases the stop, and arms the busy wake: its host record (busy since its
+// turn's start) and its last measure are read when the timer fires.
+function busyWorld(busyFor: number) {
+  const since = Date.now() - busyFor
+  const fx = fakeDollar({
+    listing: BUSY_ROW, chain: OWNED, busyAgentPid: '88',
+    files: {
+      [`${HOME}/.claude/sessions/88.json`]: JSON.stringify({ pid: 88, sessionId: 's-agent', status: 'busy', statusUpdatedAt: since }),
+      [measureFilePath(`${HOME}/.claude`, 's-agent', undefined)]: JSON.stringify({ version: 1, context_tokens: 193000, context_window: 1000000, context_percent: 19, model: 'm', updated_at: 't' }),
+    },
+  })
+  const timers: { ms: number; fire: () => unknown }[] = []
+  const submitted: string[] = []
+  const dollar = {
+    ...fx.dollar,
+    clock: { ...fx.dollar.clock, after: (ms: number, fire: () => unknown) => { timers.push({ ms, fire }); return { cancel: () => undefined } } },
+    prompt: { ...fx.dollar.prompt, submit: async ({ text }: { text: string }) => { submitted.push(text); return undefined } },
+  } as unknown as World
+  return { dollar, timers, submitted }
+}
+
+test('a busy own agent past the bound wakes its orchestrator once, with a line naming it, its time and its fill', async () => {
+  const { handlers } = mounted()
+  const w = busyWorld(NOTICE_TTL_MS + 5 * 60_000)
+  const e = stopEvent({})
+  expect((await stop(handlers['classic.Stop'], w.dollar, e)).passed).toBe(e)
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual(['[module] Agent: belt-p3 busy 2h05 in one turn, context 193,000 (19%) — read its tree'])
+  // Armed again at the next bound of the same turn, and the same bound never told twice.
+  expect(w.timers.length).toBe(1)
+  expect(w.timers[0]!.ms).toBeGreaterThan(NOTICE_TTL_MS - 6 * 60_000)
+  await stop(handlers['classic.Stop'], w.dollar, e)
+  await w.timers.pop()!.fire()
+  expect(w.submitted.length).toBe(1)
+})
+
+test('a busy own agent under the bound wakes nothing: the timer waits for the bound', async () => {
+  const { handlers } = mounted()
+  const w = busyWorld(60 * 60_000)
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual([])
+  expect(w.timers.length).toBe(1)
+  expect(w.timers[0]!.ms).toBeLessThanOrEqual(60 * 60_000)
+  expect(w.timers[0]!.ms).toBeGreaterThan(59 * 60_000)
+})
+
+test('the busy wake tells each bound of a turn once, and a new turn afresh', () => {
+  const told = new Map<string, number>()
+  const agent = (key: string, since: number) => ({ label: 'Agent: a', key, since })
+  expect(busyWake([agent('s 0', 0)], told, NOTICE_TTL_MS - 1)).toEqual({ lines: [], next: NOTICE_TTL_MS })
+  expect(busyWake([agent('s 0', 0)], told, NOTICE_TTL_MS).lines).toEqual(['[module] Agent: a busy 2h00 in one turn — read its tree'])
+  expect(busyWake([agent('s 0', 0)], told, NOTICE_TTL_MS + 1)).toEqual({ lines: [], next: 2 * NOTICE_TTL_MS })
+  expect(busyWake([agent('s 0', 0)], told, 2 * NOTICE_TTL_MS).lines.length).toBe(1)
+  // A new turn: the old one's bounds are dropped, and its own first bound is told.
+  expect(busyWake([agent('s 9', 9)], told, 9 + NOTICE_TTL_MS).lines.length).toBe(1)
+  expect([...told.keys()]).toEqual(['s 9'])
 })
 
 // A stop that passes and adds exactly one `warn <what>` line to the log: the demoted cases' shape.

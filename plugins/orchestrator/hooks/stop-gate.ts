@@ -81,7 +81,7 @@ const DECLARE = 'Declare the wait with the `declare_wait` tool, whose descriptio
 // --- the refusal texts (stop_gate.py:126-146, verbatim but where the declared wait changed them) -----------------------------------
 
 // The waits that fit a turn, by what will wake it: what the two refusals below name.
-const BUSY_FITS = 'An agent of yours is busy: declare no wait, its idle notice wakes you.'
+const BUSY_FITS = 'An agent of yours is busy: declare no wait, its idle notice wakes you. Past two hours busy, the module\'s line on it does.'
 const OTHER_FITS = 'If only an irreversible or outward act waits for the operator\'s answer, declare an operator wait; '
   + 'if every goal is met or ruled out, declare done; '
   + 'if the operator deferred it, his ruling recorded, declare a deferred wait; else launch what you announced.'
@@ -546,9 +546,40 @@ export function checkWake(facts: {
 // session: a notice that never comes (a peer that crashed past the host's own exit notice,
 // a lost delivery) must not hold the gate open for ever. Two hours covers a takeover's
 // verification and an agent's long turn. The same bound holds for a busy own agent, which
-// releases the stop: past it in one turn, the agent's measure wakes its orchestrator
-// (supervision.ts reportBusy), once per bound.
+// releases the stop: past it in one turn, the orchestrator is woken (busyWake below).
 export const NOTICE_TTL_MS = 2 * 60 * 60 * 1000
+
+// A busy own agent as its host record reads it: `since` its turn's start (statusUpdatedAt),
+// `key` that turn (its session and start), its last measured fill when one was read.
+export type BusyAgent = { label: string; key: string; since: number; tokens?: number; percent?: number }
+
+// The line that wakes an orchestrator on an agent busy past the bound in one turn.
+export function busyLine(agent: BusyAgent, now: number): string {
+  const minutes = Math.floor((now - agent.since) / 60_000)
+  const fill = agent.tokens === undefined ? '' : `, context ${agent.tokens.toLocaleString('en-US')} (${agent.percent ?? '?'}%)`
+  return `[module] ${agent.label} busy ${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')} in one turn${fill} — read its tree`
+}
+
+/*
+ * The orchestrator's wake on its busy agents, once per bound each turn: the lines of the agents
+ * past a bound not told yet (`told`: the bounds told per turn, updated here, its other turns
+ * dropped), and the instant the next bound of those still busy falls, null when none is.
+ */
+export function busyWake(agents: readonly BusyAgent[], told: Map<string, number>, now: number): { lines: string[]; next: number | null } {
+  for (const key of [...told.keys()]) if (!agents.some(agent => agent.key === key)) told.delete(key)
+  const lines: string[] = []
+  let next: number | null = null
+  for (const agent of agents) {
+    const bounds = Math.floor((now - agent.since) / NOTICE_TTL_MS)
+    if (bounds > (told.get(agent.key) ?? 0)) {
+      lines.push(busyLine(agent, now))
+      told.set(agent.key, bounds)
+    }
+    const at = agent.since + ((told.get(agent.key) ?? 0) + 1) * NOTICE_TTL_MS
+    next = next === null ? at : Math.min(next, at)
+  }
+  return { lines, next }
+}
 
 // Whether a subscription still stands at `now`: the ones past their time-to-live are
 // dropped from the map as they are read.
