@@ -3,10 +3,10 @@
 // read, the change log, and the refresh over a faked $: one forge call per interval whatever the
 // sessions reading it, a failed call keeping what was read before, a lock another session holds.
 import { expect, test } from 'claude-code/testing'
+import { changeLines, LOG_KEPT, parsePrAnswer, prQuery, refreshPrFile, reposToRead, trackedPrs, withEnded, withLogLines } from '../pr-file.ts'
 import {
-  changeLines, isFresh, LOG_KEPT, parsePrAnswer, parsePrFile, prFilePath, prLogPath, prQuery, refreshPrFile, trackedPrs, withLogLines,
-  PR_FILE_INTERVAL_MS, type FilePr, type PrFile,
-} from '../pr-file.ts'
+  ENDED_KEPT_MS, isFresh, parsePrFile, prFilePath, prLogPath, prsOfRepo, prWantedPath, PR_FILE_INTERVAL_MS, repoOfOrigin, wantedRepos, withWanted, type FilePr, type PrFile,
+} from '../pr-file-format.ts'
 import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
 import { hostOf } from '../../core/capture.ts'
 
@@ -71,13 +71,13 @@ test('one query asks every repository its open pull requests and each recorded o
   expect(query.match(/statusCheckRollup/g)?.length).toBe(2)
 })
 
-test('the answer keeps the open pull requests the viewer opened and every recorded one; a repository with no data is unread', () => {
+test('the answer keeps every open pull request, the last ones ended, every recorded one and the fork a head comes from; a repository with no data is unread', () => {
   const node = (n: number, state: string, login: string, extra: object = {}) => ({
     number: n, state, isDraft: n === 9, createdAt: 't', headRefName: `b${n}`, headRefOid: 's', mergeable: 'MERGEABLE', author: { login }, labels: { nodes: [{ name: 'Ready' }, {}] }, ...extra,
   })
   const answer = parsePrAnswer(new Map([['acme/app', [8]], ['acme/lib', []]]), JSON.stringify({ data: {
     viewer: { login: 'me' }, rateLimit: { cost: 2 },
-    r0: { open: { pageInfo: { hasNextPage: true }, nodes: [node(7, 'OPEN', 'me'), node(9, 'OPEN', 'someone'), {}] }, n8: node(8, 'MERGED', 'someone', { commits: { nodes: [{ commit: { statusCheckRollup: null } }] } }) },
+    r0: { open: { pageInfo: { hasNextPage: true }, nodes: [node(7, 'OPEN', 'me'), node(9, 'OPEN', 'someone', { isCrossRepository: true, headRepositoryOwner: { login: 'fan' } }), {}] }, ended: { nodes: [node(5, 'CLOSED', 'me')] }, n8: node(8, 'MERGED', 'someone', { commits: { nodes: [{ commit: { statusCheckRollup: null } }] } }) },
     r1: null,
   } }))
   expect(answer?.viewer).toBe('me')
@@ -85,9 +85,12 @@ test('the answer keeps the open pull requests the viewer opened and every record
   expect(answer?.repos).toEqual(['acme/app'])
   expect(answer?.unread).toEqual(['acme/lib'])
   expect(answer?.truncated).toEqual(['acme/app'])
+  const common = { draft: false, sha: 's', createdAt: 't', labels: ['Ready'], mergeable: 'MERGEABLE' }
   expect(answer?.prs).toEqual([
-    { repo: 'acme/app', pr: 7, state: 'OPEN', draft: false, head: 'b7', sha: 's', author: 'me', createdAt: 't', labels: ['Ready'], mergeable: 'MERGEABLE' },
-    { repo: 'acme/app', pr: 8, state: 'MERGED', draft: false, head: 'b8', sha: 's', author: 'someone', createdAt: 't', labels: ['Ready'], mergeable: 'MERGEABLE', ci: 'none' },
+    { repo: 'acme/app', pr: 5, state: 'CLOSED', head: 'b5', author: 'me', fork: null, ...common },
+    { repo: 'acme/app', pr: 7, state: 'OPEN', head: 'b7', author: 'me', fork: null, ...common },
+    { repo: 'acme/app', pr: 9, state: 'OPEN', head: 'b9', author: 'someone', fork: 'fan', ...common, draft: true },
+    { repo: 'acme/app', pr: 8, state: 'MERGED', head: 'b8', author: 'someone', fork: null, ...common, ci: 'none' },
   ])
   expect(parsePrAnswer(new Map(), 'not json')).toBe(undefined)
   expect(parsePrAnswer(new Map(), '{"errors":[{"message":"rate limited"}]}')).toBe(undefined)
@@ -95,7 +98,7 @@ test('the answer keeps the open pull requests the viewer opened and every record
 })
 
 const pr = (n: number, state: FilePr['state'], more: Partial<FilePr> = {}): FilePr =>
-  ({ repo: 'acme/app', pr: n, state, draft: false, head: `b${n}`, sha: 's', author: 'me', createdAt: null, labels: [], mergeable: null, ...more })
+  ({ repo: 'acme/app', pr: n, state, draft: false, head: `b${n}`, sha: 's', author: 'me', createdAt: null, labels: [], mergeable: null, fork: null, ...more })
 
 test('the change log says each state change once, one line each, and nothing on the first file', () => {
   const before: PrFile = { v: 1, at: 'x', tried: 'x', viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(7, 'OPEN', { draft: true, ci: 'pending' }), pr(8, 'OPEN'), pr(9, 'OPEN'), pr(10, 'CLOSED')] }
@@ -181,4 +184,35 @@ test('a query the forge resolves in part is read for the rest: the repository it
   expect(files.get(prLogPath(STATE))).toBe("2026-11-17T16:00:00Z read in part: gh exited 1: gh: Could not resolve to a Repository with the name 'acme/lib'.\n")
   await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS)
   expect(files.get(prLogPath(STATE))?.split('\n').filter(Boolean).length).toBe(1)
+})
+
+test('a pull request seen ended is stamped when first seen so, kept a week in the repositories read, then dropped', () => {
+  const at = '2026-11-17T16:00:00Z'
+  const before: PrFile = { v: 1, at, tried: at, viewer: 'me', repos: ['acme/app', 'acme/lib'], unread: [], prs: [
+    pr(3, 'MERGED', { ended: '2026-11-15T00:00:00Z' }), pr(4, 'CLOSED', { ended: '2026-11-01T00:00:00Z' }), pr(6, 'MERGED', { repo: 'acme/lib', ended: '2026-11-15T00:00:00Z' }), pr(7, 'OPEN'),
+  ] }
+  const next = withEnded(before, [pr(7, 'MERGED'), pr(8, 'OPEN')], ['acme/app'], NOW, 'T')
+  expect(next.map(p => [p.repo, p.pr, p.state, p.ended])).toEqual([
+    ['acme/app', 7, 'MERGED', 'T'], ['acme/app', 8, 'OPEN', undefined], ['acme/app', 3, 'MERGED', '2026-11-15T00:00:00Z'],
+  ])
+  expect(withEnded(undefined, [pr(3, 'CLOSED')], ['acme/app'], NOW, 'T')[0]?.ended).toBe('T')
+  expect(ENDED_KEPT_MS).toBe(7 * 24 * 3600 * 1000)
+})
+
+test('the repositories the checkouts want are read beside the records\', each wanted a week after it was last asked', async () => {
+  const { dollar, files } = world()
+  files.set(prWantedPath(STATE), withWanted('acme/old 2026-11-01T00:00:00.000Z\nacme/app 2026-11-17T00:00:00.000Z\n', ['acme/web'], NOW))
+  expect(wantedRepos(files.get(prWantedPath(STATE)) ?? '', NOW)).toEqual(['acme/app', 'acme/web'])
+  expect([...await reposToRead(dollar, STATE, NOW)]).toEqual([['acme/app', [7, 8]], ['acme/lib', [3]], ['acme/web', []]])
+  expect(wantedRepos('not a repo 2026-11-17T00:00:00Z\nacme/x never\n', NOW)).toEqual([])
+})
+
+test('a GitHub origin names its repository in every form; the file answers for a repository only when its reading is current', () => {
+  for (const url of ['https://github.com/acme/app.git', 'git@github.com:acme/app.git', 'ssh://git@github.com/acme/app', 'https://user@github.com/acme/app/']) expect(repoOfOrigin(url)).toBe('acme/app')
+  expect(repoOfOrigin('https://gitlab.com/acme/app.git')).toBe(undefined)
+  const file: PrFile = { v: 1, at: 'x', tried: 'x', viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(7, 'OPEN'), pr(1, 'OPEN', { repo: 'acme/lib' })] }
+  expect(prsOfRepo(file, 'acme/app')?.map(p => p.pr)).toEqual([7])
+  expect(prsOfRepo(file, 'acme/lib')).toBe(undefined)
+  expect(prsOfRepo({ ...file, error: 'down' }, 'acme/app')).toBe(undefined)
+  expect(prsOfRepo(undefined, 'acme/app')).toBe(undefined)
 })

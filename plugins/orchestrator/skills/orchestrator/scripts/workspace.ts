@@ -51,17 +51,14 @@ import {
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { setting, stateDir, type Env } from '../../../core/paths.ts'
-import { writeAtomic } from '../../../core/store.ts'
+import { readText, update, writeAtomic } from '../../../core/store.ts'
+import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted, type PrFile } from '../../../hooks/pr-file-format.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 
 export const USAGE = 'usage: workspace.sh {create|pin|delete|sweep|list} ... (see header)'
 
 /** How long the process table is given to answer. */
 export const LSOF_MS = 20_000
-/** The most a pull-request list is given, in seconds; a sweep's deadline cuts it shorter. */
-export const GH_SECONDS = 60
-/** A cached pull-request list is asked again past this age. */
-export const PRS_FRESH_MS = 30 * 60_000
 /** Branches a pull request of another fork shares by name: never swept on a name. */
 export const LONG_LIVED = ['main', 'master', 'develop', 'trunk'] as const
 
@@ -801,33 +798,12 @@ export async function list(ctx: Context, argv: readonly string[] = []): Promise<
 
 // --- sweep: the leftovers, decided on facts (design §61) ------------------------------------
 
-/** A pull request as `gh pr list --json headRefName,state,headRefOid,number` prints it. */
+/** A pull request as the sweep reads it in the machine's pull request file. */
 export interface Pr {
   readonly number?: number
   readonly state?: string
   readonly headRefName?: string
   readonly headRefOid?: string
-}
-
-/** The list `gh` printed, or undefined when it is not one. */
-export function parsePrs(text: string): Pr[] | undefined {
-  let raw: unknown
-  try {
-    raw = JSON.parse(text)
-  } catch {
-    return undefined
-  }
-  if (!Array.isArray(raw)) return undefined
-  return raw.map((p: unknown): Pr => {
-    if (typeof p !== 'object' || p === null) return {}
-    const o = p as Record<string, unknown>
-    return {
-      ...(typeof o['number'] === 'number' ? { number: o['number'] } : {}),
-      ...(typeof o['state'] === 'string' ? { state: o['state'] } : {}),
-      ...(typeof o['headRefName'] === 'string' ? { headRefName: o['headRefName'] } : {}),
-      ...(typeof o['headRefOid'] === 'string' ? { headRefOid: o['headRefOid'] } : {}),
-    }
-  })
 }
 
 export type BranchFacts =
@@ -849,27 +825,15 @@ export function branchFacts(prs: readonly Pr[], branch: string): BranchFacts {
   return { kind: 'over', number: last.number ?? 0, state: last.state ?? '', heads: mine.map(p => p.headRefOid ?? '').filter(h => h !== '') }
 }
 
-/** The POSIX `cksum` of a text: the key of an origin's cache file, the same the shell wrote. */
-export function cksum(text: string): number {
-  const bytes = Buffer.from(text, 'utf8')
-  let crc = 0
-  const step = (byte: number): void => {
-    crc ^= byte << 24
-    for (let i = 0; i < 8; i++) crc = crc & 0x80000000 ? (crc << 1) ^ 0x04c11db7 : crc << 1
-    crc >>>= 0
-  }
-  for (const b of bytes) step(b)
-  for (let n = bytes.length; n > 0; n = Math.floor(n / 256)) step(n & 0xff)
-  return ~crc >>> 0
-}
-
 interface Sweep {
   readonly ctx: Context
   readonly dry: boolean
   readonly deadline: number | undefined
   readonly t0: number
-  readonly cache: string
-  /** Each origin's list, or the reason it cannot be read, once per run. */
+  /** The machine's pull request file, read once per run, and the repositories the sweep asked it for. */
+  readonly file: PrFile | undefined
+  readonly wanted: Set<string>
+  /** Each repository's list, or the reason it cannot be read, once per run. */
   readonly prs: Map<string, Pr[] | { readonly why: string }>
 }
 
@@ -886,55 +850,25 @@ function keep(ctx: Context, path: string, reason: string): void {
 }
 
 /**
- * The repository's pull requests, read once per origin whatever the number of checkouts, and
- * kept in the state directory for thirty minutes: a list is the slow part of a sweep, and a
- * sweep cut by the stop gate's deadline restarted from nothing every time. A failure is said
- * once for the repository, never cached, and nothing is deleted for it.
+ * The repository's pull requests, as the machine's pull request file holds them (the hooks module
+ * refreshes it, one forge call a minute for the whole machine): its open ones and those merged or
+ * closed within a week. A repository the file holds no current reading of is said once and nothing
+ * is deleted for it; the sweep asks the file to read it from then on (`prs.wanted`).
  */
-async function loadPrs(s: Sweep, real: string): Promise<Pr[] | { readonly why: string }> {
-  const ctx = s.ctx
-  const url = await gitOut(ctx, real, ['remote', 'get-url', 'origin'])
+function loadPrs(s: Sweep, url: string | undefined): Pr[] | { readonly why: string } {
   if (url === undefined) return { why: 'the checkout has no origin to ask' }
-  const key = String(cksum(url))
-  const known = s.prs.get(key)
+  const repo = repoOfOrigin(url)
+  if (repo === undefined) return { why: `${url} is no GitHub repository` }
+  const known = s.prs.get(repo)
   if (known !== undefined) return known
-  const cached = join(s.cache, `${key}.json`)
-  try {
-    if (ctx.deps.now() - statSync(cached).mtimeMs < PRS_FRESH_MS) {
-      const prs = parsePrs(readFileSync(cached, 'utf8'))
-      if (prs !== undefined) {
-        s.prs.set(key, prs)
-        return prs
-      }
-    }
-  } catch {
-    // No cache, or one that cannot be read: the list is asked.
-  }
-  let secs = GH_SECONDS
-  if (s.deadline !== undefined) secs = Math.min(GH_SECONDS, Math.max(1, s.deadline - Math.floor((ctx.deps.now() - s.t0) / 1000)))
-  // --limit: the default lists thirty, and a merged pull request older than that would read as
-  // « no pull request » and never be swept. Two hundred, not a thousand: the long list was most
-  // of a sweep's time, and a merged pull request past it reads as « no pull request », which
-  // keeps the checkout — the safe side.
-  const signals = [AbortSignal.timeout(secs * 1000), ...(ctx.signal === undefined ? [] : [ctx.signal])]
-  const ran = await ctx.deps.run(['gh', 'pr', 'list', '--state', 'all', '--limit', '200', '--json', 'headRefName,state,headRefOid,number'], {
-    cwd: real, stderr: 'pipe', signal: AbortSignal.any(signals),
-  })
-  const prs = ran.status === 0 ? parsePrs(ran.stdout) : undefined
-  if (prs === undefined) {
-    const why = ran.stderr.split('\n')[0] || 'no readable answer'
-    say(ctx, `sweep: cannot read the pull requests of ${url} (${why}); nothing is deleted for it`)
-    const bad = { why }
-    s.prs.set(key, bad)
-    return bad
-  }
-  try {
-    writeAtomic(cached, ran.stdout, 0o644)
-  } catch {
-    // A list that cannot be kept is asked again next time.
-  }
-  s.prs.set(key, prs)
-  return prs
+  s.wanted.add(repo)
+  const held = prsOfRepo(s.file, repo)
+  const read = held === undefined
+    ? { why: `${repo} is not in the machine's pull request file yet` }
+    : held.map(pr => ({ number: pr.pr, state: pr.state, headRefName: pr.head, headRefOid: pr.sha }))
+  if (!Array.isArray(read)) say(s.ctx, `sweep: cannot read the pull requests of ${repo} (${read.why}); nothing is deleted for it`)
+  s.prs.set(repo, read)
+  return read
 }
 
 /** Whether the pull request is about this commit: its head, or a descendant of it the clone can see. */
@@ -964,7 +898,7 @@ export async function decide(s: Sweep, real: string): Promise<Verdict> {
       rec = ''
     }
     if (rec === '') return keepIt('no recorded pull request for this pin')
-    const prs = await loadPrs(s, real)
+    const prs = loadPrs(s, await gitOut(ctx, real, ['remote', 'get-url', 'origin']))
     if (!Array.isArray(prs)) return keepIt(`pull requests unreadable: ${prs.why}`)
     const pr = prs.find(p => String(p.number) === rec)
     if (pr === undefined) return keepIt(`pull request #${rec} is not in the repository's list`)
@@ -986,7 +920,7 @@ export async function decide(s: Sweep, real: string): Promise<Verdict> {
   const defaultBranch = (await gitOut(ctx, real, ['symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD'])) ?? ''
   if ((LONG_LIVED as readonly string[]).includes(br)) return keepIt(`on ${br}, a long-lived branch`)
   if (`origin/${br}` === defaultBranch) return keepIt(`on ${br}, the repository's default branch`)
-  const prs = await loadPrs(s, real)
+  const prs = loadPrs(s, await gitOut(ctx, real, ['remote', 'get-url', 'origin']))
   if (!Array.isArray(prs)) return keepIt(`pull requests unreadable: ${prs.why}`)
   const facts = branchFacts(prs, br)
   switch (facts.kind) {
@@ -1144,15 +1078,25 @@ export async function sweep(ctx: Context, argv: readonly string[]): Promise<void
   const sctx: Context = { ...ctx, ...(signal === undefined ? {} : { signal }) }
   const env = ctx.deps.env
   const state = setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir('claude-orchestrator', env, setting(env, 'HOME'))
-  const s: Sweep = { ctx: sctx, dry, deadline, t0, cache: join(state, 'sweep-prs'), prs: new Map() }
-  // The trashes, then the orphans — local and cheap — then the checkouts, which ask the pull
-  // requests: a sweep cut by its deadline has done the cheap part first.
-  if (!(await sweepTrash(s))) return
-  if (!(await sweepOrphans(s, root))) return
-  for (const d of checkoutDirs(ctx.root)) {
-    if (!present(join(d, '.git'))) continue
-    if (spent(s)) return sayDeadline(s)
-    await sweepOne(s, d)
+  const s: Sweep = { ctx: sctx, dry, deadline, t0, file: parsePrFile(readText(prFilePath(state)) ?? ''), wanted: new Set(), prs: new Map() }
+  try {
+    // The trashes, then the orphans — local and cheap — then the checkouts, which read the pull
+    // requests: a sweep cut by its deadline has done the cheap part first.
+    if (!(await sweepTrash(s))) return
+    if (!(await sweepOrphans(s, root))) return
+    for (const d of checkoutDirs(ctx.root)) {
+      if (!present(join(d, '.git'))) continue
+      if (spent(s)) return sayDeadline(s)
+      await sweepOne(s, d)
+    }
+  } finally {
+    if (s.wanted.size > 0) {
+      try {
+        update(prWantedPath(state), current => withWanted(current ?? '', [...s.wanted], ctx.deps.now()), { waitMs: 2000 })
+      } catch (error) {
+        say(ctx, `sweep: the repositories wanted in the pull request file not written: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
   }
 }
 

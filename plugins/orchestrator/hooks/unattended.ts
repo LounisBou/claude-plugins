@@ -15,7 +15,8 @@ import { isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, owner
 import { isStale, livePids, livePidsArgv, parseSessionRow, publishUnattended, sessionKey, storeOf, type ProcessTable, type SessionRow } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
-import { readPrFile, refreshPrFile, type PrFile } from './pr-file.ts'
+import { readPrFile, refreshPrFile } from './pr-file.ts'
+import { prsOfRepo, type PrFile } from './pr-file-format.ts'
 
 // The nouns a reading holds.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
@@ -31,10 +32,12 @@ export type Reading = {
 }
 export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
 
-// The open pull requests of a repository as the machine's file holds them: those the operator opened
-// and those a record names. Their labels say what rests on him (`Ready`, `On Hold`).
-export function openOf(file: PrFile, repo: string): OpenPr[] {
-  return file.prs.filter(pr => pr.repo === repo && pr.state === 'OPEN').map(pr => ({
+// The open pull requests of a repository as the machine's file holds them that are the
+// orchestrations' work: those the operator opened and those `own` names (by prKey), never a
+// teammate's. Their labels say what rests on him (`Ready`, `On Hold`); undefined when the file holds
+// no current reading of the repository.
+export function openOf(file: PrFile | undefined, repo: string, own: ReadonlySet<string>): OpenPr[] | undefined {
+  return prsOfRepo(file, repo)?.filter(pr => pr.state === 'OPEN' && (pr.author === file?.viewer || own.has(prKey(repo, pr.pr)))).map(pr => ({
     repo, pr: pr.pr, createdAt: pr.createdAt, labels: pr.labels, ...(pr.mergeable === null ? {} : { mergeable: pr.mergeable }),
   }))
 }
@@ -120,10 +123,12 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   const file = repos.length > 0 ? await readPrFile($) : undefined
   const open: OpenPr[] = []
   const unread: string[] = []
+  const ownKeys = new Set(own.flatMap(record => record.lines.map(line => prKey(line.repo, line.pr))))
   for (const repo of repos) {
     // A file whose last refresh failed holds the pull requests of an earlier read: unknown now.
-    if (file === undefined || file.error !== undefined || !file.repos.includes(repo)) unread.push(repo)
-    else open.push(...openOf(file, repo))
+    const listed = openOf(file, repo, ownKeys)
+    if (listed === undefined) unread.push(repo)
+    else open.push(...listed)
   }
   // A failed refresh is said once by the file's own log line; a repository not in it yet, here.
   if (unread.length > 0 && file?.error === undefined) await logLine($, 'unattended', `pull requests unread for ${unread.join(', ')}: not in the machine's file yet`)

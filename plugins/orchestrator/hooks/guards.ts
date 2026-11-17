@@ -53,7 +53,7 @@ import {
 } from './observe.ts'
 import { todoName } from './todo-format.ts'
 import { prWake } from './ledger.ts'
-import { PR_FILE_INTERVAL_MS } from './pr-file.ts'
+import { PR_FILE_INTERVAL_MS } from './pr-file-format.ts'
 
 // The nouns the guards hold.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'prompt' | 'session' | 'tool' | 'clock' | 'ui' | 'settings'>
