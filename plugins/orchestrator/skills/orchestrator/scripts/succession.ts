@@ -44,7 +44,8 @@ import { fileURLToPath } from 'node:url'
 import { chainPath, parseChain } from '../../../core/chain-entries.ts'
 import { DECK_FILE, parseDeck } from '../../../core/deck.ts'
 import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../core/orchestration.ts'
-import { readText } from '../../../core/store.ts'
+import { readText, update } from '../../../core/store.ts'
+import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, withWanted } from '../../../hooks/pr-file-format.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { setting } from '../../../core/env.ts'
 import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts'
@@ -531,29 +532,30 @@ export interface Linked {
  * The pull requests the open rows hold, read live: the repositories to ask are the project's, the
  * deck's, the ledger's and those a label names in full; the forge lists each one's open pull
  * requests, and a row holds those it names (by label or surface) and those standing at a head its
- * review recorded. A pull request the ledger says someone is on reads by its line, else it is open
- * with no agent. One no row holds is another orchestration's, and stays out.
+ * review recorded. A pull request the ledger says someone is on reads by its line until `state` reads
+ * it merged or closed, else it is open with no agent. One no row holds is another orchestration's, and
+ * stays out.
  */
-export function linkRows(rows: readonly OpenRow[], ledger: readonly LedgerLine[], seed: readonly (string | undefined)[], open: OpenPrReader): Linked {
+export function linkRows(
+  rows: readonly OpenRow[], ledger: readonly LedgerLine[], seed: readonly (string | undefined)[], open: OpenPrReader,
+  state: (repo: string, pr: number) => string | undefined = () => undefined,
+): Linked {
   if (!rows.some(row => (row.refs?.length ?? 0) > 0 || (row.heads?.length ?? 0) > 0)) return { rows, prs: [], unread: [] }
   const full = rows.flatMap(row => (row.refs ?? []).filter(ref => ref.includes('/')).map(ref => ref.split('#')[0] ?? ''))
   const repos = [...new Set([...seed, ...ledger.map(line => line.repo), ...full].filter((repo): repo is string => typeof repo === 'string' && /^[^/\s]+\/[^/\s]+$/.test(repo)))]
   const forge: ForgePr[] = []
   const unread: string[] = []
-  const readRepos = new Set<string>()
   for (const repo of repos) {
     const read = open(repo)
     if (read === undefined) unread.push(repo)
-    else {
-      readRepos.add(repo)
-      forge.push(...read)
-    }
+    else forge.push(...read)
   }
   const standing = (key: string): string | undefined => {
     const onForge = forge.some(pr => prKey(pr.repo, pr.pr) === key)
     const line = ledger.find(l => prKey(l.repo, l.pr) === key)
-    // A repository the forge was read for no longer lists a merged or closed pull request: its ledger line says nothing of it.
-    if (line !== undefined && (onForge || !readRepos.has(line.repo))) return `${key} ${statusText(line)}`
+    // A merged or closed pull request's ledger line says nothing of it; one the file does not hold yet keeps its line.
+    const ended = line !== undefined && ['MERGED', 'CLOSED'].includes(state(line.repo, line.pr) ?? '')
+    if (line !== undefined && !ended) return `${key} ${statusText(line)}`
     return onForge ? `${key} open, no agent` : undefined
   }
   const described = new Map<string, string>()
@@ -592,7 +594,10 @@ function todoHolders(todoText: string): Holder[] {
 }
 
 /** Reads the state this orchestrator holds open from the files that keep it. */
-export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () => undefined, listed?: readonly ListedRow[]): OpenState {
+export function readOpen(
+  request: Request, env: Env, openPrs: OpenPrReader = () => undefined, listed?: readonly ListedRow[],
+  prState?: (repo: string, pr: number) => string | undefined,
+): OpenState {
   const state = stateRoot(env)
   const recordText = readText(request.record) ?? ''
   // The ledger names each pull request it attends with its own repository: the deck lists numbers
@@ -618,7 +623,7 @@ export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () 
   const round = join(state, ROUND_DIR)
   const names = existsSync(round) ? readdirSync(round).filter(name => name.endsWith('.json')).sort() : []
   const entries = names.map(name => readText(join(round, name)))
-  const found = linkRows(openRows(parseRecord(recordText), [...roundHolders(entries), ...todoHolders(readText(todoPath(state, request.name)) ?? '')]), ledger, [deck.repo, projectOf(request.worktree, request.record)], openPrs)
+  const found = linkRows(openRows(parseRecord(recordText), [...roundHolders(entries), ...todoHolders(readText(todoPath(state, request.name)) ?? '')]), ledger, [deck.repo, projectOf(request.worktree, request.record)], openPrs, prState)
   const lines = ledger.map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
   const prs = [...lines, ...found.prs.filter(line => !lines.includes(line)), ...found.unread]
   const settled = roundSettled(
@@ -767,36 +772,30 @@ export function notInstalled(worktree: string, env: Env, now: Date): string {
   }
 }
 
-/** A pull request's state on the forge (`gh pr view`), undefined when it cannot be read. */
-export function forgeState(env: Env): (repo: string, pr: number) => string | undefined {
-  return (repo, pr) => {
-    try {
-      const state = execFileSync('gh', ['pr', 'view', String(pr), '-R', repo, '--json', 'state', '-q', '.state'], {
-        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, env: { ...process.env, ...env },
-      }).trim()
-      return state === '' ? undefined : state
-    } catch {
-      return undefined
-    }
+/**
+ * The machine's pull request file (the hooks module refreshes it, one forge call a minute for the
+ * whole machine), read once: each pull request's state and each repository's open pull requests, as
+ * it holds them; undefined where it holds no current reading, that repository then in `missed`, or
+ * does not hold the pull request, `<repo>#<n>` then in `missed`: the file reads them from its next
+ * refresh on (`prs.wanted`).
+ */
+export function filePrs(env: Env, now: number): { readonly state: (repo: string, pr: number) => string | undefined; readonly open: OpenPrReader; readonly missed: Set<string> } {
+  const file = parsePrFile(readText(prFilePath(stateRoot(env))) ?? '')
+  const missed = new Set<string>()
+  const held = (repo: string) => {
+    const prs = prsOfRepo(file, repo, now)
+    if (prs === undefined) missed.add(repo)
+    return prs
   }
-}
-
-/** A repository's open pull requests as `gh pr list` tells them, undefined when it cannot be read. */
-export function forgeOpenPrs(env: Env): OpenPrReader {
-  return repo => {
-    try {
-      const listed: unknown = JSON.parse(execFileSync('gh', ['pr', 'list', '-R', repo, '--state', 'open', '--limit', '200', '--json', 'number,headRefOid'], {
-        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, env: { ...process.env, ...env },
-      }))
-      if (!Array.isArray(listed)) return undefined
-      return listed.flatMap(item => {
-        const number = field(item, 'number')
-        const head = field(item, 'headRefOid')
-        return typeof number === 'number' && typeof head === 'string' ? [{ repo, pr: number, head }] : []
-      })
-    } catch {
-      return undefined
-    }
+  return {
+    state: (repo, pr) => {
+      const prs = held(repo)
+      const found = prs?.find(one => one.pr === pr)
+      if (prs !== undefined && found === undefined) missed.add(`${repo}#${pr}`)
+      return found?.state
+    },
+    open: repo => held(repo)?.filter(one => one.state === 'OPEN').map(one => ({ repo, pr: one.pr, head: one.sha })),
+    missed,
   }
 }
 
@@ -950,15 +949,25 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const round = archiveRound(stateRoot(env), now, io)
   const request: Request = { ...parsed, name }
   const launcher = join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh')
-  const open = readOpen(request, env, deps.openPrs ?? forgeOpenPrs(env), (deps.list ?? (() => launcherList(launcher, env)))())
+  const prs = filePrs(env, now.getTime())
+  const prState = deps.prState ?? prs.state
+  const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))(), prState)
   if ((open.disagree ?? 0) > 0) {
     const journal = deps.journal ?? scriptJournal(env, deps.now, line => io.err(`${line}\n`))
     writeAudit(journal, auditRun(env, now), 'failure', 'orchestrator.succession.agents', { failure: 'succession-lost-state', count: open.disagree ?? 0, prs: [] })
   }
   let installed: string | undefined
   const installedLine = (): string => (installed ??= notInstalled(parsed.worktree, env, now))
-  const facts: Artifacts = { rows: all, prState: deps.prState ?? forgeState(env), installed: installedLine, now: now.getTime() }
+  const facts: Artifacts = { rows: all, prState, installed: installedLine, now: now.getTime() }
   const owners = ownersOf(open, blocker => fallOf(blocker, facts))
+  // A repository the file held no current reading of, or a pull request it does not hold, is read from its next refresh on.
+  if (prs.missed.size > 0) {
+    try {
+      update(prWantedPath(stateRoot(env)), current => withWanted(current ?? '', [...prs.missed], now.getTime()), { waitMs: 2000 })
+    } catch (error) {
+      io.err(`succession: the repositories wanted in the pull request file not written: ${(error as Error).message}\n`)
+    }
+  }
   const stray = todoStray(readText(todoPath(stateRoot(env), name)) ?? '', all)
   const project = projectOf(parsed.worktree, parsed.record)
   const close = closeVerb(parsed.tty, deps.paneWindow ?? tmuxWindow)

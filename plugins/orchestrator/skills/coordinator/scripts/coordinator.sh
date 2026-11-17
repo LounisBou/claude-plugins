@@ -145,9 +145,9 @@
 # Sources, each replaceable for the suite: the process table (`ps`, or the file
 # COORDINATOR_PS_TABLE, lines `<pid> <ppid> <tty> <command>`), the working directories
 # (`lsof`, or COORDINATOR_CWDS, lines `<pid> <path>`), the checkouts (`workspace.sh list`),
-# and the open pull requests (`gh pr list` in the repository, or COORDINATOR_FORGE, called
-# as `<command> <repository directory>` and printing `<number> <head branch> <head>` lines,
-# <head> `same` for a branch of the repository itself, `fork:<owner>` for a fork's), and the
+# the open pull requests (the machine's pull request file `<state>/prs.json`, which the hooks
+# module refreshes in one forge call a minute for the whole machine; a GitHub repository it holds
+# no current reading of is unread, and asked for in `<state>/prs.wanted`), and the
 # remote rows (`store/remote` under the module's directory, MODULE below: one JSON row per file,
 # written by the hooks module as it receives them from orchestrators on other machines; read
 # here, never written).

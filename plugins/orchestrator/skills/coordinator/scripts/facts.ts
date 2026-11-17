@@ -6,7 +6,8 @@ import { basename, join } from 'node:path'
 import { ROLES } from '../../../core/names.ts'
 import type { WaitKind } from '../../../core/orchestration.ts'
 import { setting } from '../../../core/paths.ts'
-import { writeAtomic } from '../../../core/store.ts'
+import { update, writeAtomic } from '../../../core/store.ts'
+import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted } from '../../../hooks/pr-file-format.ts'
 import { die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
 import { fieldsOf, readSleeping } from './sleeping.ts'
 
@@ -464,24 +465,34 @@ export function readFacts(ctx: Context): Facts {
   const unique = new Map(places.map(p => [line(p), p]))
   facts.places = sorted([...unique.keys()]).map(k => unique.get(k) as Place)
 
-  // The open pull requests, once per repository, read in the first tree found for it.
-  const forge = setting(ctx.env, 'COORDINATOR_FORGE')
-  const seen = new Set<string>()
-  for (const place of facts.places) {
-    if (seen.has(place.repo)) continue
-    seen.add(place.repo)
-    const listed = forge !== undefined
-      ? ctx.run(forge, [place.top])
-      : ctx.run('gh', ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,headRefName,isCrossRepository,headRepositoryOwner',
-        '--jq', '.[] | "\\(.number) \\(.headRefName) \\(if .isCrossRepository then "fork:\\(.headRepositoryOwner.login)" else "same" end)"'], { cwd: place.top })
-    if (listed.status !== 0) {
-      unread.push(`forge ${place.repo}: ${firstLine(listed.stderr)}`)
+  // The open pull requests, as the machine's pull request file holds them (the hooks module
+  // refreshes it, one forge call a minute for the whole machine): a repository it holds no current
+  // reading of is unread, and the file is asked to read it from then on (`prs.wanted`).
+  const state = stateOf(ctx.env)
+  const file = parsePrFile(readFile(prFilePath(state)) ?? '')
+  const wanted: string[] = []
+  for (const repo of new Set(facts.places.map(p => p.repo))) {
+    const named = repoOfOrigin(repo)
+    if (named === undefined) {
+      unread.push(`forge ${repo}: not a GitHub repository, which the machine's pull request file holds alone`)
       continue
     }
-    facts.readRepos.push(place.repo)
-    for (const row of trimEnd(listed.stdout).split('\n')) {
-      const f = row.trim().split(/\s+/).filter(x => x !== '')
-      if (f.length >= 2) facts.prs.push({ repo: place.repo, num: f[0] ?? '', branch: f[1] ?? '', head: f[2] ?? '-' })
+    wanted.push(named)
+    const held = prsOfRepo(file, named, ctx.now().getTime())
+    if (held === undefined) {
+      unread.push(`forge ${repo}: no current reading in the machine's pull request file`)
+      continue
+    }
+    facts.readRepos.push(repo)
+    for (const pr of held) {
+      if (pr.state === 'OPEN') facts.prs.push({ repo, num: String(pr.pr), branch: pr.head, head: pr.fork === null ? 'same' : `fork:${pr.fork}` })
+    }
+  }
+  if (wanted.length > 0) {
+    try {
+      update(prWantedPath(state), current => withWanted(current ?? '', wanted, ctx.now().getTime()), { waitMs: 2000 })
+    } catch (error) {
+      unread.push(`pull request file: the repositories wanted not written: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
   remoteRows(ctx, facts)
@@ -759,10 +770,6 @@ export function ownersTable(facts: Facts): Owner[] {
     const unknown = (evidence: string) => owners.push({ pr, orch: 'unknown', evidence })
     if (pr.head.startsWith('fork:')) {
       unknown(`head branch in a fork, owned by ${pr.head.slice(5)}`)
-      continue
-    }
-    if (pr.head !== 'same') {
-      unknown('the forge gave no head repository')
       continue
     }
     const tops = facts.places.filter(p => p.repo === pr.repo && p.branch === pr.branch).map(p => p.top)

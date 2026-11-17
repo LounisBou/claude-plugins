@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { agentLine, answerMeaning, briefOf, closeVerb, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, roundSettled, rowLines, rowOfBrief, TEMPLATE, todoStray, toApply, type Artifacts, type ListedRow } from './succession.ts'
+import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, roundSettled, rowLines, rowOfBrief, TEMPLATE, todoStray, toApply, type Artifacts, type ListedRow } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -797,7 +797,7 @@ test('a row\'s pull request named in its label by a short or a full repository, 
   assert.match(text, /- Pull requests open \(number, head, where each stands\): acme\/flow#30 en cours \(agent Agent: tokens\); acme\/site open pull requests unread\n/)
 })
 
-test('a blocker still standing keeps its word over an open pull request the row names, and a ledger line for a pull request the forge no longer lists owns nothing', () => {
+test('a blocker still standing keeps its word over an open pull request the row names, and a ledger line for a pull request the file reads merged owns nothing', () => {
   const rows = [
     JSON.stringify({ id: 1, label: 'DOCS: after flow#30', state: 'open', blocker: 'PR acme/flow#30 merged' }),
     JSON.stringify({ id: 2, label: 'FIX acme/flow#31 merged since', state: 'open' }),
@@ -807,8 +807,12 @@ test('a blocker still standing keeps its word over an open pull request the row 
   const w = world({ rows, deck, round: [], todo: '', prs: { 'acme/flow#30': 'OPEN' } })
   const out: string[] = []
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: () => 'OPEN', openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
+  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: (_repo, pr) => (pr === 31 ? 'MERGED' : 'OPEN'), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
   assert.match(out.join(''), /- Row owners: 1 blocked: PR acme\/flow#30 merged; 2 NO OWNER\n/)
+  // Opened since the file's last reading: absent from its open list, its ledger line still owns the row.
+  out.length = 0
+  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: (_repo, pr) => (pr === 30 ? 'OPEN' : undefined), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
+  assert.match(out.join(''), /- Row owners: 1 blocked: PR acme\/flow#30 merged; 2 acme\/flow#31 en cours \(agent Agent: gone\)\n/)
 })
 
 test('an owner file that names none says on stderr that the session\'s own name stands in', () => {
@@ -923,4 +927,22 @@ test('a quotation a to-do item holds is named by its item through the takeover; 
   assert.equal(w.run(), 0)
   assert.ok(w.text().includes('note=to-do words [words: to-do 15]'))
   assert.ok(!w.text().includes('naissance') && !w.text().includes('Questions the operator answered'))
+})
+
+test('the takeover reads pull requests in the machine\'s pull request file, never the forge: a state, the open ones with their heads, nothing where it holds no current reading', () => {
+  const state = mkdtempSync(join(tmpdir(), 'succession-prs-'))
+  const pr = (n: number, st: string) => ({ repo: 'acme/app', pr: n, state: st, head: `b${n}`, sha: `${n}`.repeat(7) })
+  const file = { v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), viewer: 'me', repos: ['acme/app'], unread: ['acme/lib'], prs: [pr(7, 'OPEN'), pr(8, 'MERGED'), { ...pr(9, 'OPEN'), repo: 'acme/lib' }] }
+  writeFileSync(join(state, 'prs.json'), JSON.stringify(file))
+  const read = filePrs({ ORCHESTRATOR_STATE_DIR: state }, NOW.getTime())
+  assert.equal(read.state('acme/app', 8), 'MERGED')
+  assert.equal(read.state('acme/app', 99), undefined)
+  assert.equal(read.state('acme/lib', 9), undefined)
+  assert.deepEqual(read.open('acme/app'), [{ repo: 'acme/app', pr: 7, head: '7777777' }])
+  assert.equal(read.open('acme/lib'), undefined)
+  // A pull request of a repository read that the file does not hold is asked by its number.
+  assert.deepEqual([...read.missed], ['acme/app#99', 'acme/lib'])
+  writeFileSync(join(state, 'prs.json'), JSON.stringify({ ...file, error: 'HTTP 502' }))
+  assert.equal(filePrs({ ORCHESTRATOR_STATE_DIR: state }, NOW.getTime()).open('acme/app'), undefined)
+  rmSync(state, { recursive: true, force: true })
 })

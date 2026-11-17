@@ -19,14 +19,15 @@ interface Repo {
 
 interface World {
   readonly repos: Record<string, Repo>
-  readonly forge?: Record<string, string | RunResult>
+  /** The machine's pull request file, by `owner/name`: its open pull requests, `<number> <head branch> <same|fork:owner>` a line. */
+  readonly forge?: Record<string, string>
   readonly workspace?: string | RunResult
   readonly ps?: RunResult
   readonly lsof?: RunResult
   readonly paneps?: RunResult
 }
 
-/** A stand-in for git, the workspace listing, the forge, ps and lsof. */
+/** A stand-in for git, the workspace listing, ps and lsof. */
 function world(w: World): (command: string, args: readonly string[], options?: RunOptions) => RunResult {
   const repoOf = (dir: string): [string, Repo] | undefined =>
     Object.entries(w.repos).filter(([top]) => dir === top || dir.startsWith(`${top}/`)).sort((a, b) => b[0].length - a[0].length)[0]
@@ -54,10 +55,17 @@ function world(w: World): (command: string, args: readonly string[], options?: R
     }
     if (command === 'ps') return args[0] === '-p' ? (w.paneps ?? fail(1, '')) : (w.ps ?? fail(1, 'ps: no'))
     if (command === 'lsof') return w.lsof ?? fail(1, '')
-    const answer = w.forge?.[args[0] ?? ''] ?? w.forge?.[options?.cwd ?? '']
-    if (answer !== undefined) return typeof answer === 'string' ? ok(answer) : answer
-    return fail(1, `the forge does not know ${args[0] ?? options?.cwd ?? ''}`)
+    return fail(1, `no stand-in for ${command}`)
   }
+}
+
+/** The machine's pull request file holding `forge`'s repositories as read, their open pull requests. */
+function prFile(forge: Record<string, string>): string {
+  const prs = Object.entries(forge).flatMap(([repo, lines]) => lines.split('\n').flatMap(line => {
+    const [n = '', head = '', where = 'same'] = line.trim().split(/\s+/)
+    return /^\d+$/.test(n) ? [{ repo, pr: Number(n), state: 'OPEN', head, fork: where.startsWith('fork:') ? where.slice(5) : null }] : []
+  }))
+  return JSON.stringify({ v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), viewer: 'me', repos: Object.keys(forge), unread: [], prs })
 }
 
 interface Setup {
@@ -85,6 +93,10 @@ function setup(build: (dir: (name: string) => string) => { world: World; env?: R
     env['COORDINATOR_CWDS'] = join(root, 'cwds')
   }
   const f = fixture({ env, run: world(built.world), here: join(root, 'skills', 'coordinator', 'scripts') })
+  if (built.world.forge !== undefined) {
+    mkdirSync(f.state, { recursive: true })
+    writeFileSync(join(f.state, 'prs.json'), prFile(built.world.forge))
+  }
   return { f, dir }
 }
 
@@ -94,10 +106,10 @@ function run(f: Fixture, ...argv: string[]): number {
 
 describe('repositoryOf', () => {
   it('reads one remote reached over each protocol as one repository', () => {
-    assert.equal(repositoryOf('git@forge.example:o/app.git'), 'forge.example/o/app')
-    assert.equal(repositoryOf('https://forge.example/o/app.git'), 'forge.example/o/app')
-    assert.equal(repositoryOf('ssh://git@forge.example/o/app/'), 'forge.example/o/app')
-    assert.equal(repositoryOf('git+ssh://u@forge.example/o/app'), 'forge.example/o/app')
+    assert.equal(repositoryOf('git@github.com:o/app.git'), 'github.com/o/app')
+    assert.equal(repositoryOf('https://github.com/o/app.git'), 'github.com/o/app')
+    assert.equal(repositoryOf('ssh://git@github.com/o/app/'), 'github.com/o/app')
+    assert.equal(repositoryOf('git+ssh://u@github.com/o/app'), 'github.com/o/app')
   })
 })
 
@@ -203,7 +215,7 @@ describe('remote rows', () => {
   })
 })
 
-/** The suite's world: one source tree, checkouts of o/app and o/other, briefs, a forge. */
+/** The suite's world: one source tree, checkouts of o/app and o/other, briefs, the machine's pull request file. */
 function bench(over: { ps?: string; cwds?: string; world?: Partial<World>; env?: Record<string, string> } = {}): Setup & { readonly t: Record<string, string> } {
   const t: Record<string, string> = {}
   const s = setup(d => {
@@ -211,22 +223,22 @@ function bench(over: { ps?: string; cwds?: string; world?: Partial<World>; env?:
     t['o1'] = d('ws/other/o1'); t['o2'] = d('ws/other/o2'); t['n1'] = d('ws/none/n1'); t['briefs'] = d('briefs')
     writeFileSync(join(t['briefs'], 'a1.md'), 'The phase.\n\n- Your orchestrator is the session **`Orch: alpha [aaa111]`** — that exact name.\n')
     writeFileSync(join(t['briefs'], 'c1.md'), 'A brief that names no orchestrator.\n')
-    const app = { origin: 'git@forge.example:o/app.git' }
+    const app = { origin: 'git@github.com:o/app.git' }
     const repos: Record<string, Repo> = {
-      [t['src']]: { branch: 'main', ...app }, [t['a1']]: { branch: 'feat/x', origin: 'https://forge.example/o/app.git' },
-      [t['b1']]: { branch: 'feat/x', ...app }, [t['c1']]: { branch: 'feat/y', origin: 'ssh://git@forge.example/o/app' },
-      [t['idle']]: { branch: 'feat/w', ...app }, [t['o1']]: { branch: 'feat/x', origin: 'git@forge.example:o/other.git' },
-      [t['o2']]: { branch: 'feat/o', origin: 'git@forge.example:o/other.git' }, [t['n1']]: { branch: 'feat/x', origin: 'git@forge.example:o/none.git' },
+      [t['src']]: { branch: 'main', ...app }, [t['a1']]: { branch: 'feat/x', origin: 'https://github.com/o/app.git' },
+      [t['b1']]: { branch: 'feat/x', ...app }, [t['c1']]: { branch: 'feat/y', origin: 'ssh://git@github.com/o/app' },
+      [t['idle']]: { branch: 'feat/w', ...app }, [t['o1']]: { branch: 'feat/x', origin: 'git@github.com:o/other.git' },
+      [t['o2']]: { branch: 'feat/o', origin: 'git@github.com:o/other.git' }, [t['n1']]: { branch: 'feat/x', origin: 'git@github.com:o/none.git' },
     }
     const b = t['briefs']
     return {
       world: {
         repos,
         workspace: [t['a1'], t['b1'], t['c1'], t['idle'], t['o1'], t['o2'], t['n1'], '', join(t['briefs'])].map(p => `${p}   | x | y`).join('\n') + '\n',
-        forge: { [t['src']]: '7 feat/x same\n8 feat/y same\n9 feat/z same\n10 feat/w same\nnoise\n', [t['o1']]: '' },
+        forge: { 'o/app': '7 feat/x same\n8 feat/y same\n9 feat/z same\n10 feat/w same\nnoise\n', 'o/other': '' },
         ...over.world,
       },
-      env: { COORDINATOR_FORGE: '/stand-in/forge', ...over.env },
+      env: { ...over.env },
       ps: over.ps ?? [
         `100 1 ttys100 /usr/bin/hostcli --model m Read and execute ${b}/orch.md --name Orch: alpha --remote-control Orch: alpha`,
         `101 1 ttys101 /usr/bin/hostcli Read and execute ${b}/a1.md. Your orchestrator is Orch: wrong [zzz999]. --name Agent: a1`,
@@ -248,23 +260,23 @@ describe('facts', () => {
     assert.equal(run(f, 'facts'), 2)
     const [src, a1, b1, c1, idle, o1, o2] = [t['src'], t['a1'], t['b1'], t['c1'], t['idle'], t['o1'], t['o2']]
     assert.deepEqual(f.out, [
-      `session 100 | ttys100 | Orch: alpha | Orch: alpha | forge.example/o/app | main | ${src}`,
-      `session 101 | ttys101 | Agent: a1 | Orch: alpha [aaa111] | forge.example/o/app | feat/x | ${a1}`,
-      `session 102 | ttys102 | Agent: b1 | Orch: beta [bbb222] | forge.example/o/app | feat/x | ${b1}`,
-      `session 103 | ttys103 | Agent: c1 | unknown | forge.example/o/app | feat/y | ${c1}`,
-      `session 106 | ttys106 | Agent: o1 | Orch: gamma [ccc333] | forge.example/o/other | feat/x | ${o1}`,
-      `checkout ${a1} | forge.example/o/app | feat/x`,
-      `checkout ${b1} | forge.example/o/app | feat/x`,
-      `checkout ${c1} | forge.example/o/app | feat/y`,
-      `checkout ${idle} | forge.example/o/app | feat/w`,
-      `checkout ${o1} | forge.example/o/other | feat/x`,
-      `checkout ${o2} | forge.example/o/other | feat/o`,
+      `session 100 | ttys100 | Orch: alpha | Orch: alpha | github.com/o/app | main | ${src}`,
+      `session 101 | ttys101 | Agent: a1 | Orch: alpha [aaa111] | github.com/o/app | feat/x | ${a1}`,
+      `session 102 | ttys102 | Agent: b1 | Orch: beta [bbb222] | github.com/o/app | feat/x | ${b1}`,
+      `session 103 | ttys103 | Agent: c1 | unknown | github.com/o/app | feat/y | ${c1}`,
+      `session 106 | ttys106 | Agent: o1 | Orch: gamma [ccc333] | github.com/o/other | feat/x | ${o1}`,
+      `checkout ${a1} | github.com/o/app | feat/x`,
+      `checkout ${b1} | github.com/o/app | feat/x`,
+      `checkout ${c1} | github.com/o/app | feat/y`,
+      `checkout ${idle} | github.com/o/app | feat/w`,
+      `checkout ${o1} | github.com/o/other | feat/x`,
+      `checkout ${o2} | github.com/o/other | feat/o`,
       `heavy 200 | ${src} | bash ./tests/run-tests.sh`,
       `heavy 300 | ${a1} | timeout 595 /usr/bin/hostcli plugin eval . --case x`,
-      `collision checkouts | forge.example/o/app | feat/x | ${a1}, ${b1}`,
-      'collision sessions | forge.example/o/app | feat/x | 101 Agent: a1, 102 Agent: b1',
+      `collision checkouts | github.com/o/app | feat/x | ${a1}, ${b1}`,
+      'collision sessions | github.com/o/app | feat/x | 101 Agent: a1, 102 Agent: b1',
       'collision heavy | 200, 300',
-      'collision pr | forge.example/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222]',
+      'collision pr | github.com/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222]',
       `unread checkout ${t['briefs']}: not a git tree`,
     ])
   })
@@ -298,7 +310,7 @@ describe('facts', () => {
     // Nothing new at the first reading: it sleeps, the newcomer arrives, the next reading ends it.
     const ctx = { ...f.ctx, sleep: (ms: number) => { f.slept.push(ms); writeFileSync(ps, readFileSync(ps, 'utf8') + newcomer); writeFileSync(f.ctx.env['COORDINATOR_CWDS'] ?? '', `107 ${t['src']}\n`, { flag: 'a' }) } }
     assert.equal(main(ctx, ['check', '--every', '5']), 0)
-    const found = ['newcomer Orch: delta', 'collision sessions | forge.example/o/app | main | 100 Orch: alpha, 107 Orch: delta']
+    const found = ['newcomer Orch: delta', 'collision sessions | github.com/o/app | main | 100 Orch: alpha, 107 Orch: delta']
     assert.deepEqual([f.out, f.slept], [found, [5000]])
     assert.equal(run(f, 'check'), 0)
     assert.deepEqual(f.out, found)
@@ -313,11 +325,14 @@ describe('facts', () => {
     assert.deepEqual(f.err, [`coordinator: check: cannot record the findings in ${join(f.state, 'coordinator-check.json')}`])
   })
 
-  it('says a forge and a process table it could not read', () => {
-    const { f, t } = bench({ world: { forge: {} } })
+  it('says a repository the pull request file holds no reading of, and a process table it could not read', () => {
+    const { f } = bench({ world: { forge: {} } })
     assert.equal(run(f, 'facts'), 2)
-    assert.ok(f.out.includes(`unread forge forge.example/o/app: the forge does not know ${t['src']}`))
-    assert.ok(f.out.includes(`unread forge forge.example/o/other: the forge does not know ${t['o1']}`))
+    assert.ok(f.out.includes("unread forge github.com/o/app: no current reading in the machine's pull request file"))
+    assert.ok(f.out.includes("unread forge github.com/o/other: no current reading in the machine's pull request file"))
+    writeFileSync(join(f.state, 'prs.json'), JSON.stringify({ v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), error: 'HTTP 502', viewer: 'me', repos: ['o/app'], unread: [], prs: [] }))
+    assert.equal(run(f, 'facts'), 2)
+    assert.ok(f.out.includes("unread forge github.com/o/app: no current reading in the machine's pull request file"))
     const missing = fixture({ env: { ORCHESTRATOR_HOST_CLI: 'h', COORDINATOR_PS_TABLE: '/no/such/ps', ORCHESTRATOR_MODULE_DIR: '/no/module' } })
     assert.equal(run(missing, 'facts'), 2)
     assert.deepEqual(missing.out, ['unread processes: /no/such/ps cannot be read', 'unread checkouts: '])
@@ -332,7 +347,7 @@ describe('facts', () => {
     chmodSync(join(bin, 'lsof'), 0o755)
     const withLsof = fixture({ env: { ...f.ctx.env, PATH: `:${bin}` }, run: (c, a, o) => f.ctx.run(c, a, o) })
     assert.equal(run(withLsof, 'facts'), 2)
-    assert.deepEqual(withLsof.out, [`session 7 | ttys7 | Agent: s | unknown | h/o/r | m | ${dir('r')}`, 'unread directories: lsof failed: exit 1', 'unread forge h/o/r: the forge does not know pr'])
+    assert.deepEqual(withLsof.out, [`session 7 | ttys7 | Agent: s | unknown | h/o/r | m | ${dir('r')}`, 'unread directories: lsof failed: exit 1', "unread forge h/o/r: not a GitHub repository, which the machine's pull request file holds alone"])
     const noLsof = fixture({ env: { ...f.ctx.env, PATH: dir('empty') }, run: (c, a, o) => f.ctx.run(c, a, o) })
     assert.equal(run(noLsof, 'facts'), 2)
     assert.ok(noLsof.out.includes('unread directories: lsof is missing'))
@@ -342,16 +357,17 @@ describe('facts', () => {
     assert.ok(noPs.out.some(l => l.startsWith("unread sessions: the host's name is unknown")))
   })
 
-  it('reads the forge with gh in the tree when no stand-in is given', () => {
+  it('reads the open pull requests in the machine\'s file, never the forge, and asks the file for each repository it reads', () => {
     const calls: string[] = []
     const { f, dir } = setup(d => ({
-      world: { repos: { [d('r')]: { branch: 'feat/a', origin: 'h:o/r' } }, workspace: '', forge: { [d('r')]: '5 feat/a same\n' } },
+      world: { repos: { [d('r')]: { branch: 'feat/a', origin: 'git@github.com:o/r.git' } }, workspace: '', forge: { 'o/r': '5 feat/a same\n' } },
       ps: '7 1 ttys7 hostcli --name Orch: r\n', cwds: `7 ${d('r')}\n`,
     }))
-    const spy = fixture({ env: f.ctx.env, run: (c, a, o) => { calls.push(`${c} ${o?.cwd ?? ''}`); return f.ctx.run(c, a, o) } })
+    const spy = fixture({ env: f.ctx.env, run: (c, a, o) => { calls.push(c); return f.ctx.run(c, a, o) } })
     assert.equal(run(spy, 'owners'), 0)
-    assert.deepEqual(spy.out, [`pr h/o/r#5 | feat/a | Orch: r | session 7 in ${dir('r')}`])
-    assert.ok(calls.includes(`gh ${dir('r')}`))
+    assert.deepEqual(spy.out, [`pr github.com/o/r#5 | feat/a | Orch: r | session 7 in ${dir('r')}`])
+    assert.ok(!calls.includes('gh'))
+    assert.match(readFileSync(join(f.state, 'prs.wanted'), 'utf8'), /^o\/r \S+\n$/)
   })
 
   it('shows the live waits, the unattended lines and the fresh remote rows', () => {
@@ -386,7 +402,7 @@ describe('facts', () => {
       `remote Orch: far | on bench | updated ${fresh} | context 5 (1%) | repository o/app | prs o/app#7, o/app#9, o/app#99, o/gone#5 | operator since ${fresh} | blocks: b`,
       `remote Orch: near | on lab | updated ${fresh} | context 0 (0%) | repository none | prs o/gone#5, nohash | done since ?`,
       `remote Orch: quiet | on lab | updated ${fresh} | context 0 (0%) | repository none | prs none | working`,
-      'collision pr | forge.example/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222], Orch: far',
+      'collision pr | github.com/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222], Orch: far',
       'collision pr | o/gone#5 | - | Orch: far, Orch: near',
       `unread remote ${join(f.ctx.env['ORCHESTRATOR_MODULE_DIR'] ?? '', 'store', 'remote', 'bad')}: not a JSON row`,
     ])
@@ -395,7 +411,7 @@ describe('facts', () => {
     const owners = fixture({ env: f.ctx.env, run: (c, a, o) => f.ctx.run(c, a, o) })
     assert.equal(run(owners, 'owners'), 2)
     assert.deepEqual(owners.out.filter(l => l.includes('remote on')), [
-      `pr forge.example/o/app#9 | feat/z | Orch: far | remote on bench, updated ${fresh}`,
+      `pr github.com/o/app#9 | feat/z | Orch: far | remote on bench, updated ${fresh}`,
       `pr o/gone#5 | - | Orch: far | remote on bench, updated ${fresh}, not read on the forge here`,
       `pr o/gone#5 | - | Orch: near | remote on lab, updated ${fresh}, not read on the forge here`,
       `pr #nohash | - | Orch: near | remote on lab, updated ${fresh}, not read on the forge here`,
@@ -428,26 +444,25 @@ describe('owners', () => {
     const { f, t } = bench()
     assert.equal(run(f, 'owners'), 2)
     assert.deepEqual(f.out.filter(l => l.startsWith('pr ')), [
-      `pr forge.example/o/app#7 | feat/x | Orch: alpha [aaa111] | session 101 in ${t['a1']}`,
-      `pr forge.example/o/app#7 | feat/x | Orch: beta [bbb222] | session 102 in ${t['b1']}`,
-      `pr forge.example/o/app#8 | feat/y | unknown | session 103 in ${t['c1']} names no orchestrator`,
-      'pr forge.example/o/app#9 | feat/z | unknown | no checkout on feat/z',
-      `pr forge.example/o/app#10 | feat/w | unknown | no session in ${t['idle']}`,
+      `pr github.com/o/app#7 | feat/x | Orch: alpha [aaa111] | session 101 in ${t['a1']}`,
+      `pr github.com/o/app#7 | feat/x | Orch: beta [bbb222] | session 102 in ${t['b1']}`,
+      `pr github.com/o/app#8 | feat/y | unknown | session 103 in ${t['c1']} names no orchestrator`,
+      'pr github.com/o/app#9 | feat/z | unknown | no checkout on feat/z',
+      `pr github.com/o/app#10 | feat/w | unknown | no session in ${t['idle']}`,
     ])
   })
 
-  it('says unknown for an idle checkout beside a busy one, two orchestrators in one checkout, a fork, no head, an unread brief', () => {
+  it('says unknown for an idle checkout beside a busy one, two orchestrators in one checkout, a fork, an unread brief', () => {
     const t: Record<string, string> = {}
     const { f } = setup(d => {
       t['v1'] = d('ws/v1'); t['v2'] = d('ws/v2'); t['d1'] = d('ws/d1'); t['k'] = d('ws/k'); t['adir'] = d('adir')
-      const amb = { origin: 'git@h:o/amb.git' }
+      const amb = { origin: 'git@github.com:o/amb.git' }
       return {
         world: {
           repos: { [t['v1']]: { branch: 'feat/v', ...amb }, [t['v2']]: { branch: 'feat/v', ...amb }, [t['d1']]: { branch: 'feat/d', ...amb }, [t['k']]: { branch: 'feat/k', ...amb } },
           workspace: `${t['v2']}\n`,
-          forge: { [t['d1']]: '11 feat/v same\n12 feat/d same\n13 feat/f fork:someone\n14 feat/g\n15 feat/k same\n' },
+          forge: { 'o/amb': '11 feat/v same\n12 feat/d same\n13 feat/f fork:someone\n15 feat/k same\n' },
         },
-        env: { COORDINATOR_FORGE: '/stand-in' },
         ps: ['130 1 t Your orchestrator is Orch: a [aaa]. --name Agent: v1', '131 1 t hostcli Your orchestrator is Orch: a [aaa]. --name Agent: d1',
           '132 1 t hostcli Your orchestrator is Orch: b [bbb]. --name Agent: d2', `133 1 t hostcli Read and execute ${t['adir']} --name Agent: k`].join('\n'),
         cwds: `131 ${t['d1']}\n132 ${t['d1']}\n133 ${t['k']}\n`,
@@ -455,11 +470,10 @@ describe('owners', () => {
     })
     assert.equal(run(f, 'owners'), 2)
     assert.deepEqual(f.out, [
-      `pr h/o/amb#11 | feat/v | unknown | no session in ${t['v2']}`,
-      `pr h/o/amb#12 | feat/d | unknown | sessions 131, 132 in ${t['d1']} name different orchestrators: Orch: a [aaa], Orch: b [bbb]`,
-      'pr h/o/amb#13 | feat/f | unknown | head branch in a fork, owned by someone',
-      'pr h/o/amb#14 | feat/g | unknown | the forge gave no head repository',
-      `pr h/o/amb#15 | feat/k | unknown | session 133 in ${t['k']}: brief ${t['adir']} cannot be read`,
+      `pr github.com/o/amb#11 | feat/v | unknown | no session in ${t['v2']}`,
+      `pr github.com/o/amb#12 | feat/d | unknown | sessions 131, 132 in ${t['d1']} name different orchestrators: Orch: a [aaa], Orch: b [bbb]`,
+      'pr github.com/o/amb#13 | feat/f | unknown | head branch in a fork, owned by someone',
+      `pr github.com/o/amb#15 | feat/k | unknown | session 133 in ${t['k']}: brief ${t['adir']} cannot be read`,
       `unread brief ${t['adir']}: cannot be read`,
     ])
   })
@@ -468,13 +482,13 @@ describe('owners', () => {
     const { f } = bench()
     mkdirSync(f.state, { recursive: true })
     writeFileSync(join(f.state, 'sleeping.json'), JSON.stringify([
-      { name: 'Orch: gamma', slept: '2026-10-13T10:00:00Z', prs: ['forge.example/o/app#9 feat/z', 'forge.example/o/app#9 again', 'forge.example/o/app#7 feat/x', 3] },
-      { name: 'Orch: none' }, 'not a record', { name: {}, prs: ['forge.example/o/app#10 feat/w'] },
+      { name: 'Orch: gamma', slept: '2026-10-13T10:00:00Z', prs: ['github.com/o/app#9 feat/z', 'github.com/o/app#9 again', 'github.com/o/app#7 feat/x', 3] },
+      { name: 'Orch: none' }, 'not a record', { name: {}, prs: ['github.com/o/app#10 feat/w'] },
     ]))
     assert.equal(run(f, 'owners'), 2)
     assert.deepEqual(f.out.filter(l => l.includes('#9 ') || l.includes('#10 ')), [
-      'pr forge.example/o/app#9 | feat/z | Orch: gamma | sleeping since 2026-10-13T10:00:00Z',
-      `pr forge.example/o/app#10 | feat/w | unknown | no session in ${f.out.find(l => l.includes('#10 '))?.split('no session in ')[1] ?? ''}`,
+      'pr github.com/o/app#9 | feat/z | Orch: gamma | sleeping since 2026-10-13T10:00:00Z',
+      `pr github.com/o/app#10 | feat/w | unknown | no session in ${f.out.find(l => l.includes('#10 '))?.split('no session in ')[1] ?? ''}`,
     ])
     writeFileSync(join(f.state, 'sleeping.json'), 'not json')
     const broken = fixture({ env: f.ctx.env, run: (c, a, o) => f.ctx.run(c, a, o) })

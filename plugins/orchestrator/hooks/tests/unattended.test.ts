@@ -5,7 +5,7 @@
 // prompt's context and the session's row; and the one refusal of a done or a deferred wait.
 import { expect, test } from 'claude-code/testing'
 import { readUnattended, register as registerUnattended, unattendedRefusal } from '../unattended.ts'
-import { readOr, safe } from '../unattended.ts'
+import { openOf, readOr, safe } from '../unattended.ts'
 import { register as registerWait, Declarations } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
@@ -187,6 +187,12 @@ test('only the repositories of the session\'s dispatch record are read, never it
   empty.files.set(RECORD, JSON.stringify({ id: 1, state: 'open', label: 'a row' }) + '\n')
   expect((await readUnattended(empty.dollar, 's-orch', NOW))?.list).toEqual([])
   expect(empty.runs.filter(argv => argv[0] === 'gh')).toEqual([])
+  // Unless the sweep, the coordinator or a takeover want a repository read: the turn end refreshes the machine's file for them.
+  empty.files.set(`${MODULE}/prs.wanted`, `acme/home ${new Date(NOW).toISOString()}\n`)
+  await readUnattended(empty.dollar, 's-orch', NOW)
+  const asked = empty.runs.filter(argv => argv[0] === 'gh').map(argv => String(argv[4]))
+  expect(asked.length).toBe(1)
+  expect(asked[0]).toContain('repository(owner:"acme",name:"home")')
 })
 
 test('the line of a pull request the file reads merged or closed has ended: read apart, left for the tick to tell and archive', async () => {
@@ -478,4 +484,14 @@ test('the helpers every reader of a registered record shares: a session id made 
   const $ = hostOf({ fs: { read: async (p: string) => { if (p !== '/there') throw new Error('ENOENT'); return 'text' } } })
   expect(await readOr($, '/there')).toBe('text')
   expect(await readOr($, '/gone')).toBe('')
+})
+
+test('the open pull requests of a repository are the operator\'s and those a record names, never a teammate\'s; none where the file holds no current reading', () => {
+  const pr = (n: number, author: string, state: 'OPEN' | 'MERGED' = 'OPEN') =>
+    ({ repo: 'acme/app', pr: n, state, draft: false, head: `b${n}`, sha: 's', author, createdAt: null, labels: [], mergeable: null, fork: null })
+  const at = new Date(NOW).toISOString()
+  const file = { v: 1, at, tried: at, viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(1, 'me'), pr(2, 'teammate'), pr(3, 'teammate'), pr(4, 'me', 'MERGED')] }
+  expect(openOf(file, 'acme/app', new Set(['acme/app#3']), NOW)?.map(p => p.pr)).toEqual([1, 3])
+  expect(openOf(file, 'acme/lib', new Set(), NOW)).toBe(undefined)
+  expect(openOf({ ...file, error: 'HTTP 502' }, 'acme/app', new Set(), NOW)).toBe(undefined)
 })

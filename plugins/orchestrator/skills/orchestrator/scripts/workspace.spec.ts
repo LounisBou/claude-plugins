@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { run, type Ran, type Run, type RunOptions } from './lib/process.ts'
+import type { FilePr } from '../../../hooks/pr-file-format.ts'
 import {
-  ancestors, branchFacts, cksum, copyable, copyFiles, copyList, encode, leavesRepository, main, manifestPath, neverCopied, parseCwds, parsePrs,
+  ancestors, branchFacts, copyable, copyFiles, copyList, encode, leavesRepository, main, manifestPath, neverCopied, parseCwds,
   settingsRules, underRoot, USAGE, type Deps,
 } from './workspace.ts'
 
@@ -97,8 +98,52 @@ function world(env: Record<string, string> = {}): World {
 async function ws(w: World, ...argv: string[]): Promise<{ code: number; out: string; err: string }> {
   w.stdout.length = 0
   w.stderr.length = 0
+  if (argv[0] === 'sweep') sweepFile(w)
   const code = await main(argv, w.deps)
   return { code, out: w.stdout.join(''), err: w.stderr.join('') }
+}
+
+/*
+ * What the hooks module's refresh would leave for a sweep: every checkout whose origin is a local
+ * bare repository `<dir>/<name>.git` given a GitHub address, `https://github.com/acme/<name>`, and the
+ * machine's pull request file holding, for each origin `w.prs` answers with a list, its pull requests
+ * in that repository; an origin it answers with no list is not in the file.
+ */
+function sweepFile(w: World): void {
+  const root = join(dir, 'root')
+  for (const project of existsSync(root) ? readdirSync(root) : []) {
+    for (const name of statSync(join(root, project)).isDirectory() ? readdirSync(join(root, project)) : []) {
+      const c = join(root, project, name)
+      if (!existsSync(join(c, '.git'))) continue
+      let origin = ''
+      try {
+        origin = g(c, 'remote', 'get-url', 'origin')
+      } catch {
+        continue
+      }
+      const bare = /^(.*)\/([^/]+)\.git$/.exec(origin)
+      if (bare !== null && bare[1] === dir) g(c, 'remote', 'set-url', 'origin', `https://github.com/acme/${bare[2] ?? ''}`)
+    }
+  }
+  const repos: string[] = []
+  const prs: object[] = []
+  for (const [origin, answer] of Object.entries(w.prs)) {
+    if (typeof answer === 'function' || answer.status !== 0) continue
+    let listed: unknown
+    try {
+      listed = JSON.parse(answer.stdout)
+    } catch {
+      continue
+    }
+    if (!Array.isArray(listed)) continue
+    const repo = `acme/${origin.replace(/^.*\//, '').replace(/\.git$/, '')}`
+    repos.push(repo)
+    for (const p of listed as { number: number; state: string; headRefName: string; headRefOid: string }[]) {
+      prs.push({ repo, pr: p.number, state: p.state, draft: false, head: p.headRefName, sha: p.headRefOid, author: 'me', createdAt: null, labels: [], mergeable: null, fork: null })
+    }
+  }
+  mkdirSync(join(dir, 'state'), { recursive: true })
+  writeFileSync(join(dir, 'state', 'prs.json'), JSON.stringify({ v: 1, at: new Date(w.clock).toISOString(), tried: 'x', viewer: 'me', repos, unread: [], prs }))
 }
 
 const lsofOf = (...cwds: string[]): string => cwds.map((c, i) => `p${i + 1}\nfcwd\nn${c}\n`).join('')
@@ -138,27 +183,13 @@ test('the pure readings: the host spelling, the ancestors, the process table, th
   assert.ok(!underRoot('/r-old/p/c', '/r'))
 })
 
-test('cksum is the POSIX checksum the shell keyed the cache by', () => {
-  for (const text of ['', 'git@example.invalid:owner/proj.git', 'é'.repeat(300)]) {
-    const want = Number(execFileSync('cksum', { input: text, encoding: 'utf8' }).split(' ')[0])
-    assert.equal(cksum(text), want, text)
-  }
-})
-
-test('the pull requests of a branch: none, the lowest open, the last over, or no state decided on', () => {
-  assert.equal(parsePrs('nope'), undefined)
-  assert.equal(parsePrs('{}'), undefined)
-  const prs = parsePrs(JSON.stringify([
-    { number: 3, state: 'OPEN', headRefName: 'a' }, { number: 2, state: 'OPEN', headRefName: 'a' },
-    { number: 4, state: 'MERGED', headRefName: 'b', headRefOid: 'x' }, { number: 6, state: 'CLOSED', headRefName: 'b', headRefOid: 'y' },
-    { number: 7, state: 'DRAFT?', headRefName: 'c' }, { state: 'MERGED', headRefName: 'd' }, 5,
-  ])) ?? []
-  assert.deepEqual(prs.at(-1), {})
+test('the pull requests of a branch: none, the lowest open, or the last over', () => {
+  const pr = (n: number, state: FilePr['state'], head: string, sha = ''): FilePr =>
+    ({ repo: 'acme/app', pr: n, state, draft: false, head, sha, author: null, createdAt: null, labels: [], mergeable: null, fork: null })
+  const prs = [pr(3, 'OPEN', 'a'), pr(2, 'OPEN', 'a'), pr(4, 'MERGED', 'b', 'x'), pr(6, 'CLOSED', 'b', 'y')]
   assert.deepEqual(branchFacts(prs, 'z'), { kind: 'none' })
   assert.deepEqual(branchFacts(prs, 'a'), { kind: 'open', number: 2 })
   assert.deepEqual(branchFacts(prs, 'b'), { kind: 'over', number: 6, state: 'CLOSED', heads: ['x', 'y'] })
-  assert.deepEqual(branchFacts(prs, 'c'), { kind: 'unknown' })
-  assert.deepEqual(branchFacts(prs, 'd'), { kind: 'unknown' })
 })
 
 test('copyList keeps each path at its place, a link as a link; an unreadable file fails the pass', () => {
@@ -618,7 +649,7 @@ test('sweep empties the trashes first; a dry run says so and empties nothing', a
   assert.equal((await ws(w, 'list')).out, '', 'the trash is never a checkout')
 })
 
-test('sweep decides on facts, asks each origin once, caches the list, and keeps what any guard holds', async () => {
+test('sweep decides on facts read in the machine\'s pull request file, asks the forge nothing, and keeps what any guard holds', async () => {
   const src = pushed('proj')
   const src2 = pushed('proj2')
   const src3 = pushed('proj3', 'stable')
@@ -682,16 +713,9 @@ test('sweep decides on facts, asks each origin once, caches the list, and keeps 
   assert.equal(dry.code, 0)
   assert.ok(all.every(existsSync), 'a dry run deletes nothing')
   assert.equal(dry.out.split('\n').filter(l => l.startsWith('would delete ')).length, 6)
-  assert.equal(w.gh.length, 2, 'once per origin, never once per checkout; a long-lived or default branch asks none')
-  assert.ok(w.gh.every(c => c.endsWith('pr list --state all --limit 200 --json headRefName,state,headRefOid,number')))
-  assert.equal(readdirSync(join(dir, 'state', 'sweep-prs')).length, 2)
-  assert.equal(readdirSync(join(dir, 'state', 'sweep-prs'))[0]?.endsWith('.json'), true)
-  w.gh.length = 0
-  await ws(w, 'sweep', '--dry-run')
-  assert.equal(w.gh.length, 0, 'a fresh cache asks gh nothing')
-  w.clock += 31 * 60_000
-  await ws(w, 'sweep', '--dry-run')
-  assert.equal(w.gh.length, 2, 'a list older than thirty minutes is asked again')
+  assert.equal(w.gh.length, 0, 'the forge is never asked: the file is the hooks module\'s to refresh')
+  assert.deepEqual(readFileSync(join(dir, 'state', 'prs.wanted'), 'utf8').split('\n').filter(Boolean).map(l => l.split(' ')[0]).sort(), ['acme/proj', 'acme/proj2'],
+    'the repositories of the checkouts are asked of the file, a long-lived or default branch\'s none')
 
   const r = await ws(w, 'sweep')
   assert.equal(r.code, 0, r.err)
@@ -703,7 +727,7 @@ test('sweep decides on facts, asks each origin once, caches the list, and keeps 
     `kept ${nopr}: no pull request for branch feat/nopr`,
     `kept ${dirty}: the tree is dirty`,
     `kept ${live}: a live process has its working directory inside`,
-    `kept ${odd}: the pull requests of branch feat/odd are in no state this sweep decides on`,
+    `kept ${odd}: no pull request for branch feat/odd`,
     `kept ${onMain}: on main, a long-lived branch`,
     `kept ${stable}: on stable, the repository's default branch`,
     `kept ${past}: the head is not the one of pull request #12 (MERGED): the branch moved past it`,
@@ -711,42 +735,31 @@ test('sweep decides on facts, asks each origin once, caches the list, and keeps 
     `kept ${pSame}: pinned to the current head of open pull request #9`,
     `kept ${pNorec}: no recorded pull request for this pin`,
     `kept ${pAbsent}: pull request #99 is not in the repository's list`,
-    `kept ${pDraft}: pull request #10 is in state DRAFT`,
+    `kept ${pDraft}: pull request #10 is not in the repository's list`,
     `kept ${noOrigin}: pull requests unreadable: the checkout has no origin to ask`,
   ])
 })
 
-test('sweep: an unreadable list keeps the repository\'s checkouts, said once, never cached; a deadline cancels and stops', async () => {
+test('sweep: a repository the file holds no reading of keeps its checkouts, said once; a deadline stops', async () => {
   const src = pushed('proj')
   const w = world()
   const a = await clone(w, src, 'a', 'feat/a')
   const b = await clone(w, src, 'b', 'feat/b')
   const r = await ws(w, 'sweep')
-  assert.deepEqual(r.out.split('\n').filter(l => l !== ''), [
-    `kept ${a}: pull requests unreadable: gh: no such repository`, `kept ${b}: pull requests unreadable: gh: no such repository`,
-  ])
-  assert.equal(r.err, `workspace: sweep: cannot read the pull requests of ${join(dir, 'proj.git')} (gh: no such repository); nothing is deleted for it\n`)
-  assert.ok(!existsSync(join(dir, 'state', 'sweep-prs')))
-  w.prs[join(dir, 'proj.git')] = ok('not json')
-  assert.match((await ws(w, 'sweep')).out, /unreadable: no readable answer/)
+  const why = "acme/proj is not in the machine's pull request file yet"
+  assert.deepEqual(r.out.split('\n').filter(l => l !== ''), [`kept ${a}: pull requests unreadable: ${why}`, `kept ${b}: pull requests unreadable: ${why}`])
+  assert.equal(r.err, `workspace: sweep: cannot read the pull requests of acme/proj (${why}); nothing is deleted for it\n`)
   const d = await ws(w, 'sweep', '--deadline', '0')
   assert.deepEqual(d, { code: 0, out: '', err: 'workspace: sweep: deadline of 0s spent; the rest waits for the next sweep\n' })
-  // A list that does not come within what is left of the deadline is cancelled, and keeps the item.
-  let cancelled = false
-  w.deps = { ...w.deps, run: async (argv: readonly [string, ...string[]], options: RunOptions = {}) => {
-    if (argv[0] !== 'gh') return run(argv, options)
-    // A gh that never answers; the timer stands for the live child that keeps the process up.
-    const alive = setTimeout(() => undefined, 10_000)
-    return new Promise(done => options.signal?.addEventListener('abort', () => {
-      clearTimeout(alive)
-      cancelled = true
-      done({ status: null, stdout: '', stderr: '' })
-    }))
-  } }
-  const late = await ws(w, 'sweep', '--deadline', '1.5')
-  assert.ok(cancelled)
-  assert.match(late.out, /kept .*: pull requests unreadable: no readable answer/)
   assert.ok(existsSync(a) && existsSync(b))
+})
+
+test('sweep: an origin that is no GitHub repository keeps its checkout', async () => {
+  const src = pushed('proj')
+  const w = world()
+  const c = await clone(w, src, 'c', 'feat/c')
+  g(c, 'remote', 'set-url', 'origin', 'https://gitlab.example/acme/proj.git')
+  assert.equal((await ws(w, 'sweep')).out, `kept ${c}: pull requests unreadable: https://gitlab.example/acme/proj.git is no GitHub repository\n`)
 })
 
 test('sweep: the orphans of deleted checkouts go, before any checkout; a live session or a sibling of the root keeps its own', async () => {
