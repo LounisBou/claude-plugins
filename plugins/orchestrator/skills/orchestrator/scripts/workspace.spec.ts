@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { run, type Ran, type Run, type RunOptions } from './lib/process.ts'
+import type { FilePr } from '../../../hooks/pr-file-format.ts'
 import {
   ancestors, branchFacts, copyable, copyFiles, copyList, encode, leavesRepository, main, manifestPath, neverCopied, parseCwds,
   settingsRules, underRoot, USAGE, type Deps,
@@ -182,17 +183,13 @@ test('the pure readings: the host spelling, the ancestors, the process table, th
   assert.ok(!underRoot('/r-old/p/c', '/r'))
 })
 
-test('the pull requests of a branch: none, the lowest open, the last over, or no state decided on', () => {
-  const prs = [
-    { number: 3, state: 'OPEN', headRefName: 'a' }, { number: 2, state: 'OPEN', headRefName: 'a' },
-    { number: 4, state: 'MERGED', headRefName: 'b', headRefOid: 'x' }, { number: 6, state: 'CLOSED', headRefName: 'b', headRefOid: 'y' },
-    { number: 7, state: 'DRAFT?', headRefName: 'c' }, { state: 'MERGED', headRefName: 'd' },
-  ]
+test('the pull requests of a branch: none, the lowest open, or the last over', () => {
+  const pr = (n: number, state: FilePr['state'], head: string, sha = ''): FilePr =>
+    ({ repo: 'acme/app', pr: n, state, draft: false, head, sha, author: null, createdAt: null, labels: [], mergeable: null, fork: null })
+  const prs = [pr(3, 'OPEN', 'a'), pr(2, 'OPEN', 'a'), pr(4, 'MERGED', 'b', 'x'), pr(6, 'CLOSED', 'b', 'y')]
   assert.deepEqual(branchFacts(prs, 'z'), { kind: 'none' })
   assert.deepEqual(branchFacts(prs, 'a'), { kind: 'open', number: 2 })
   assert.deepEqual(branchFacts(prs, 'b'), { kind: 'over', number: 6, state: 'CLOSED', heads: ['x', 'y'] })
-  assert.deepEqual(branchFacts(prs, 'c'), { kind: 'unknown' })
-  assert.deepEqual(branchFacts(prs, 'd'), { kind: 'unknown' })
 })
 
 test('copyList keeps each path at its place, a link as a link; an unreadable file fails the pass', () => {

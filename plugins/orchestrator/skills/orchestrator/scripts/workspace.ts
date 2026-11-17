@@ -51,8 +51,8 @@ import {
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { setting, stateDir, type Env } from '../../../core/paths.ts'
-import { readText, update, writeAtomic } from '../../../core/store.ts'
-import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted, type PrFile } from '../../../hooks/pr-file-format.ts'
+import { readText, update } from '../../../core/store.ts'
+import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted, type FilePr, type PrFile } from '../../../hooks/pr-file-format.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 
 export const USAGE = 'usage: workspace.sh {create|pin|delete|sweep|list} ... (see header)'
@@ -798,31 +798,19 @@ export async function list(ctx: Context, argv: readonly string[] = []): Promise<
 
 // --- sweep: the leftovers, decided on facts (design §61) ------------------------------------
 
-/** A pull request as the sweep reads it in the machine's pull request file. */
-export interface Pr {
-  readonly number?: number
-  readonly state?: string
-  readonly headRefName?: string
-  readonly headRefOid?: string
-}
-
 export type BranchFacts =
   | { readonly kind: 'none' }
   | { readonly kind: 'open'; readonly number: number }
   | { readonly kind: 'over'; readonly number: number; readonly state: string; readonly heads: readonly string[] }
-  | { readonly kind: 'unknown' }
 
-/** What the pull requests of a branch say: none, one open (the lowest), all over (the last), or no state decided on. */
-export function branchFacts(prs: readonly Pr[], branch: string): BranchFacts {
-  const mine = prs.filter(p => p.headRefName === branch)
+/** What the pull requests of a branch say: none, one open (the lowest), or all over (the last). */
+export function branchFacts(prs: readonly FilePr[], branch: string): BranchFacts {
+  const mine = prs.filter(p => p.head === branch)
   if (mine.length === 0) return { kind: 'none' }
-  const numbers = mine.map(p => p.number)
-  if (!numbers.every((n): n is number => n !== undefined)) return { kind: 'unknown' }
   const open = mine.filter(p => p.state === 'OPEN')
-  if (open.length > 0) return { kind: 'open', number: Math.min(...open.map(p => p.number ?? 0)) }
-  if (!mine.every(p => p.state === 'MERGED' || p.state === 'CLOSED')) return { kind: 'unknown' }
-  const last = mine.reduce((a, b) => ((b.number ?? 0) > (a.number ?? 0) ? b : a))
-  return { kind: 'over', number: last.number ?? 0, state: last.state ?? '', heads: mine.map(p => p.headRefOid ?? '').filter(h => h !== '') }
+  if (open.length > 0) return { kind: 'open', number: Math.min(...open.map(p => p.pr)) }
+  const last = mine.reduce((a, b) => (b.pr > a.pr ? b : a))
+  return { kind: 'over', number: last.pr, state: last.state, heads: mine.map(p => p.sha).filter(h => h !== '') }
 }
 
 interface Sweep {
@@ -834,7 +822,7 @@ interface Sweep {
   readonly file: PrFile | undefined
   readonly wanted: Set<string>
   /** Each repository's list, or the reason it cannot be read, once per run. */
-  readonly prs: Map<string, Pr[] | { readonly why: string }>
+  readonly prs: Map<string, readonly FilePr[] | { readonly why: string }>
 }
 
 function spent(s: Sweep): boolean {
@@ -855,7 +843,7 @@ function keep(ctx: Context, path: string, reason: string): void {
  * closed within a week. A repository the file holds no current reading of is said once and nothing
  * is deleted for it; the sweep asks the file to read it from then on (`prs.wanted`).
  */
-function loadPrs(s: Sweep, url: string | undefined): Pr[] | { readonly why: string } {
+function loadPrs(s: Sweep, url: string | undefined): readonly FilePr[] | { readonly why: string } {
   if (url === undefined) return { why: 'the checkout has no origin to ask' }
   const repo = repoOfOrigin(url)
   if (repo === undefined) return { why: `${url} is no GitHub repository` }
@@ -863,10 +851,8 @@ function loadPrs(s: Sweep, url: string | undefined): Pr[] | { readonly why: stri
   if (known !== undefined) return known
   s.wanted.add(repo)
   const held = prsOfRepo(s.file, repo, s.ctx.deps.now())
-  const read = held === undefined
-    ? { why: `${repo} is not in the machine's pull request file yet` }
-    : held.map(pr => ({ number: pr.pr, state: pr.state, headRefName: pr.head, headRefOid: pr.sha }))
-  if (!Array.isArray(read)) say(s.ctx, `sweep: cannot read the pull requests of ${repo} (${read.why}); nothing is deleted for it`)
+  const read = held ?? { why: `${repo} is not in the machine's pull request file yet` }
+  if ('why' in read) say(s.ctx, `sweep: cannot read the pull requests of ${repo} (${read.why}); nothing is deleted for it`)
   s.prs.set(repo, read)
   return read
 }
@@ -899,18 +885,14 @@ export async function decide(s: Sweep, real: string): Promise<Verdict> {
     }
     if (rec === '') return keepIt('no recorded pull request for this pin')
     const prs = loadPrs(s, await gitOut(ctx, real, ['remote', 'get-url', 'origin']))
-    if (!Array.isArray(prs)) return keepIt(`pull requests unreadable: ${prs.why}`)
-    const pr = prs.find(p => String(p.number) === rec)
+    if ('why' in prs) return keepIt(`pull requests unreadable: ${prs.why}`)
+    const pr = prs.find(p => String(p.pr) === rec)
     if (pr === undefined) return keepIt(`pull request #${rec} is not in the repository's list`)
-    const state = pr.state ?? 'None'
-    if (state.startsWith('MERGED') || state.startsWith('CLOSED')) return deleteIt(`pull request #${rec} is ${state}`)
-    if (state.startsWith('OPEN')) {
-      const head = (await gitOut(ctx, real, ['rev-parse', 'HEAD'])) ?? ''
-      return (pr.headRefOid ?? '') === head
-        ? keepIt(`pinned to the current head of open pull request #${rec}`)
-        : deleteIt(`the head of pull request #${rec} moved off the pinned commit`)
-    }
-    return keepIt(`pull request #${rec} is in state ${state}`)
+    if (pr.state !== 'OPEN') return deleteIt(`pull request #${rec} is ${pr.state}`)
+    const head = (await gitOut(ctx, real, ['rev-parse', 'HEAD'])) ?? ''
+    return pr.sha === head
+      ? keepIt(`pinned to the current head of open pull request #${rec}`)
+      : deleteIt(`the head of pull request #${rec} moved off the pinned commit`)
   }
   const br = (await gitOut(ctx, real, ['symbolic-ref', '--short', '-q', 'HEAD'])) ?? ''
   if (br === '') return keepIt('no branch checked out, so no pull request to match')
@@ -921,7 +903,7 @@ export async function decide(s: Sweep, real: string): Promise<Verdict> {
   if ((LONG_LIVED as readonly string[]).includes(br)) return keepIt(`on ${br}, a long-lived branch`)
   if (`origin/${br}` === defaultBranch) return keepIt(`on ${br}, the repository's default branch`)
   const prs = loadPrs(s, await gitOut(ctx, real, ['remote', 'get-url', 'origin']))
-  if (!Array.isArray(prs)) return keepIt(`pull requests unreadable: ${prs.why}`)
+  if ('why' in prs) return keepIt(`pull requests unreadable: ${prs.why}`)
   const facts = branchFacts(prs, br)
   switch (facts.kind) {
     case 'none':
@@ -934,8 +916,6 @@ export async function decide(s: Sweep, real: string): Promise<Verdict> {
       return (await about(ctx, real, facts.heads))
         ? deleteIt(`the pull request #${facts.number} of branch ${br} is ${facts.state}`)
         : keepIt(`the head is not the one of pull request #${facts.number} (${facts.state}): the branch moved past it`)
-    default:
-      return keepIt(`the pull requests of branch ${br} are in no state this sweep decides on`)
   }
 }
 
