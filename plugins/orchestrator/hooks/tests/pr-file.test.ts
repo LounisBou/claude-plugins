@@ -210,6 +210,13 @@ test('the repositories the checkouts want are read beside the records\', each wa
   expect(wantedRepos('not a repo 2026-11-17T00:00:00Z\nacme/x never\n', NOW)).toEqual([])
 })
 
+test('a pull request a reader wants by its number is read by it, beside its repository\'s', async () => {
+  const { dollar, files } = world()
+  files.set(prWantedPath(STATE), withWanted('', ['acme/lib#40', 'acme/web#5', 'acme/app#7'], NOW))
+  expect([...await reposToRead(dollar, STATE, NOW)]).toEqual([['acme/app', [7, 8]], ['acme/lib', [3, 40]], ['acme/web', [5]]])
+  expect(wantedRepos('acme/app#0 2026-11-17T00:00:00Z\nacme/app#x 2026-11-17T00:00:00Z\n', NOW)).toEqual([])
+})
+
 test('a GitHub origin names its repository in every form; the file answers for a repository only when its reading is current', () => {
   for (const url of ['https://github.com/acme/app.git', 'git@github.com:acme/app.git', 'ssh://git@github.com/acme/app', 'https://user@github.com/acme/app/']) expect(repoOfOrigin(url)).toBe('acme/app')
   expect(repoOfOrigin('https://gitlab.com/acme/app.git')).toBe(undefined)

@@ -532,29 +532,30 @@ export interface Linked {
  * The pull requests the open rows hold, read live: the repositories to ask are the project's, the
  * deck's, the ledger's and those a label names in full; the forge lists each one's open pull
  * requests, and a row holds those it names (by label or surface) and those standing at a head its
- * review recorded. A pull request the ledger says someone is on reads by its line, else it is open
- * with no agent. One no row holds is another orchestration's, and stays out.
+ * review recorded. A pull request the ledger says someone is on reads by its line until `state` reads
+ * it merged or closed, else it is open with no agent. One no row holds is another orchestration's, and
+ * stays out.
  */
-export function linkRows(rows: readonly OpenRow[], ledger: readonly LedgerLine[], seed: readonly (string | undefined)[], open: OpenPrReader): Linked {
+export function linkRows(
+  rows: readonly OpenRow[], ledger: readonly LedgerLine[], seed: readonly (string | undefined)[], open: OpenPrReader,
+  state: (repo: string, pr: number) => string | undefined = () => undefined,
+): Linked {
   if (!rows.some(row => (row.refs?.length ?? 0) > 0 || (row.heads?.length ?? 0) > 0)) return { rows, prs: [], unread: [] }
   const full = rows.flatMap(row => (row.refs ?? []).filter(ref => ref.includes('/')).map(ref => ref.split('#')[0] ?? ''))
   const repos = [...new Set([...seed, ...ledger.map(line => line.repo), ...full].filter((repo): repo is string => typeof repo === 'string' && /^[^/\s]+\/[^/\s]+$/.test(repo)))]
   const forge: ForgePr[] = []
   const unread: string[] = []
-  const readRepos = new Set<string>()
   for (const repo of repos) {
     const read = open(repo)
     if (read === undefined) unread.push(repo)
-    else {
-      readRepos.add(repo)
-      forge.push(...read)
-    }
+    else forge.push(...read)
   }
   const standing = (key: string): string | undefined => {
     const onForge = forge.some(pr => prKey(pr.repo, pr.pr) === key)
     const line = ledger.find(l => prKey(l.repo, l.pr) === key)
-    // A repository the forge was read for no longer lists a merged or closed pull request: its ledger line says nothing of it.
-    if (line !== undefined && (onForge || !readRepos.has(line.repo))) return `${key} ${statusText(line)}`
+    // A merged or closed pull request's ledger line says nothing of it; one the file does not hold yet keeps its line.
+    const ended = line !== undefined && ['MERGED', 'CLOSED'].includes(state(line.repo, line.pr) ?? '')
+    if (line !== undefined && !ended) return `${key} ${statusText(line)}`
     return onForge ? `${key} open, no agent` : undefined
   }
   const described = new Map<string, string>()
@@ -593,7 +594,10 @@ function todoHolders(todoText: string): Holder[] {
 }
 
 /** Reads the state this orchestrator holds open from the files that keep it. */
-export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () => undefined, listed?: readonly ListedRow[]): OpenState {
+export function readOpen(
+  request: Request, env: Env, openPrs: OpenPrReader = () => undefined, listed?: readonly ListedRow[],
+  prState?: (repo: string, pr: number) => string | undefined,
+): OpenState {
   const state = stateRoot(env)
   const recordText = readText(request.record) ?? ''
   // The ledger names each pull request it attends with its own repository: the deck lists numbers
@@ -619,7 +623,7 @@ export function readOpen(request: Request, env: Env, openPrs: OpenPrReader = () 
   const round = join(state, ROUND_DIR)
   const names = existsSync(round) ? readdirSync(round).filter(name => name.endsWith('.json')).sort() : []
   const entries = names.map(name => readText(join(round, name)))
-  const found = linkRows(openRows(parseRecord(recordText), [...roundHolders(entries), ...todoHolders(readText(todoPath(state, request.name)) ?? '')]), ledger, [deck.repo, projectOf(request.worktree, request.record)], openPrs)
+  const found = linkRows(openRows(parseRecord(recordText), [...roundHolders(entries), ...todoHolders(readText(todoPath(state, request.name)) ?? '')]), ledger, [deck.repo, projectOf(request.worktree, request.record)], openPrs, prState)
   const lines = ledger.map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
   const prs = [...lines, ...found.prs.filter(line => !lines.includes(line)), ...found.unread]
   const settled = roundSettled(
@@ -771,8 +775,9 @@ export function notInstalled(worktree: string, env: Env, now: Date): string {
 /**
  * The machine's pull request file (the hooks module refreshes it, one forge call a minute for the
  * whole machine), read once: each pull request's state and each repository's open pull requests, as
- * it holds them; undefined where it holds no current reading, that repository then in `missed`, for
- * the file to read from its next refresh (`prs.wanted`).
+ * it holds them; undefined where it holds no current reading, that repository then in `missed`, or
+ * does not hold the pull request, `<repo>#<n>` then in `missed`: the file reads them from its next
+ * refresh on (`prs.wanted`).
  */
 export function filePrs(env: Env, now: number): { readonly state: (repo: string, pr: number) => string | undefined; readonly open: OpenPrReader; readonly missed: Set<string> } {
   const file = parsePrFile(readText(prFilePath(stateRoot(env))) ?? '')
@@ -783,7 +788,12 @@ export function filePrs(env: Env, now: number): { readonly state: (repo: string,
     return prs
   }
   return {
-    state: (repo, pr) => held(repo)?.find(one => one.pr === pr)?.state,
+    state: (repo, pr) => {
+      const prs = held(repo)
+      const found = prs?.find(one => one.pr === pr)
+      if (prs !== undefined && found === undefined) missed.add(`${repo}#${pr}`)
+      return found?.state
+    },
     open: repo => held(repo)?.filter(one => one.state === 'OPEN').map(one => ({ repo, pr: one.pr, head: one.sha })),
     missed,
   }
@@ -940,16 +950,17 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const request: Request = { ...parsed, name }
   const launcher = join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh')
   const prs = filePrs(env, now.getTime())
-  const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))())
+  const prState = deps.prState ?? prs.state
+  const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))(), prState)
   if ((open.disagree ?? 0) > 0) {
     const journal = deps.journal ?? scriptJournal(env, deps.now, line => io.err(`${line}\n`))
     writeAudit(journal, auditRun(env, now), 'failure', 'orchestrator.succession.agents', { failure: 'succession-lost-state', count: open.disagree ?? 0, prs: [] })
   }
   let installed: string | undefined
   const installedLine = (): string => (installed ??= notInstalled(parsed.worktree, env, now))
-  const facts: Artifacts = { rows: all, prState: deps.prState ?? prs.state, installed: installedLine, now: now.getTime() }
+  const facts: Artifacts = { rows: all, prState, installed: installedLine, now: now.getTime() }
   const owners = ownersOf(open, blocker => fallOf(blocker, facts))
-  // A repository the file held no current reading of is read from its next refresh on.
+  // A repository the file held no current reading of, or a pull request it does not hold, is read from its next refresh on.
   if (prs.missed.size > 0) {
     try {
       update(prWantedPath(stateRoot(env)), current => withWanted(current ?? '', [...prs.missed], now.getTime()), { waitMs: 2000 })

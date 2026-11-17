@@ -1,9 +1,9 @@
 // hooks/pr-file-format.ts
 // The machine's pull request file's format, pure, owned here and read by the hooks module (pr-file.ts,
 // which refreshes it) and by the scripts that read it (the sweep, the coordinator's facts, the
-// takeover): `<state>/prs.json`, its change log `prs.log`, and `prs.wanted`, the repositories the
-// checkouts' readers ask the file to hold beside those the records name, one `<owner/name> <ISO time>`
-// a line, dropped past ENDED_KEPT_MS.
+// takeover): `<state>/prs.json`, its change log `prs.log`, and `prs.wanted`, the repositories (and
+// pull requests, by number) the readers ask the file to hold beside those the records name, one
+// `<owner/name>[#<n>] <ISO time>` a line, dropped past ENDED_KEPT_MS.
 
 /** The file's age past which a reader refreshes it: 60 calls an hour at most, about 1 % of the forge's 5 000. */
 export const PR_FILE_INTERVAL_MS = 60_000
@@ -116,12 +116,12 @@ export function repoOfOrigin(url: string): string | undefined {
 
 export const prWantedPath = (state: string): string => `${state}/prs.wanted`
 
-/** The repositories a wanted file's text asks for at `now`, those asked within ENDED_KEPT_MS. */
+/** What a wanted file's text asks for at `now`, `<owner/name>` or `<owner/name>#<n>`, asked within ENDED_KEPT_MS. */
 export function wantedRepos(text: string, now: number): string[] {
   const kept = new Set<string>()
   for (const line of text.split('\n')) {
     const [repo = '', at = ''] = line.trim().split(/\s+/)
-    if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) && now - Date.parse(at) <= ENDED_KEPT_MS) kept.add(repo)
+    if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:#[1-9][0-9]*)?$/.test(repo) && now - Date.parse(at) <= ENDED_KEPT_MS) kept.add(repo)
   }
   return [...kept]
 }

@@ -15,8 +15,8 @@ import { isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, owner
 import { isStale, livePids, livePidsArgv, parseSessionRow, publishUnattended, sessionKey, storeOf, type ProcessTable, type SessionRow } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
-import { readPrFile, refreshPrFile } from './pr-file.ts'
-import { prsOfRepo, prWantedPath, wantedRepos, type PrFile } from './pr-file-format.ts'
+import { fileWanted, readPrFile, refreshPrFile } from './pr-file.ts'
+import { prsOfRepo, type PrFile } from './pr-file-format.ts'
 
 // The nouns a reading holds.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
@@ -26,9 +26,10 @@ export const UNATTENDED_BOUND_MS = 20_000
 
 // `ready`: the open rows whose blocker has fallen (`none`, or an `until` past) that no live agent and no open pull request holds; `readyLine` says them.
 // `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `kept`: its lines still open; `texts`: its records' texts.
+// `wanted`: whether the sweep, the coordinator or a takeover ask the file to hold a repository or a pull request (`prs.wanted`).
 export type Reading = {
   list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
-  ended: Ended[]; kept: LedgerLine[]; texts: string[]
+  ended: Ended[]; kept: LedgerLine[]; texts: string[]; wanted: boolean
 }
 export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
 
@@ -120,7 +121,8 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   // operator's that no orchestration of his records. A turn end refreshes it too when the sweep, the
   // coordinator or a takeover want repositories read (`prs.wanted`), whatever its own record holds.
   const repos = [...new Set(own.flatMap(record => record.lines.map(line => line.repo)))]
-  if (repos.length > 0 || wantedRepos(await readOr($, prWantedPath(state)), now).length > 0) await refreshPrFile($, now)
+  const wanted = await fileWanted($, state, now)
+  if (repos.length > 0 || wanted) await refreshPrFile($, now)
   const file = repos.length > 0 ? await readPrFile($) : undefined
   const open: OpenPr[] = []
   const unread: string[] = []
@@ -164,7 +166,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
     const agents = await running()
     if (agents !== null) ready = readyRows({ texts, lines: kept, live: agents, now })
   }
-  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, texts }
+  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, texts, wanted }
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.

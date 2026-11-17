@@ -176,10 +176,20 @@ export async function trackedPrs($: Host<'fs'>, state: string): Promise<Map<stri
   return tracked
 }
 
-/** The repositories to read: those the records name, with their numbers, and those the checkouts' readers want. */
+/** Whether a reader asks the file to hold a repository or a pull request at `now` (`prs.wanted`). */
+export async function fileWanted($: Host<'fs'>, state: string, now: number): Promise<boolean> {
+  return wantedRepos(await readOr($, prWantedPath(state)), now).length > 0
+}
+
+/** The repositories to read: those the records name, with their numbers, and those the readers want, with theirs. */
 export async function reposToRead($: Host<'fs'>, state: string, now: number): Promise<Map<string, number[]>> {
   const tracked = await trackedPrs($, state)
-  for (const repo of wantedRepos(await readOr($, prWantedPath(state)), now)) if (!tracked.has(repo)) tracked.set(repo, [])
+  for (const wanted of wantedRepos(await readOr($, prWantedPath(state)), now)) {
+    const [repo = '', pr] = wanted.split('#')
+    const numbers = tracked.get(repo) ?? []
+    if (pr !== undefined && !numbers.includes(Number(pr))) numbers.push(Number(pr))
+    tracked.set(repo, numbers)
+  }
   return tracked
 }
 

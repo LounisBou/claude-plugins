@@ -1017,11 +1017,12 @@ test('a busy wake the host drops is tried again a minute later, its bound still 
 })
 
 // An orchestrator whose record holds the line of acme/app#9, the forge answering the machine file's query.
-function prWorld(open: number[], drops = 0) {
+function prWorld(open: number[], drops = 0, over: Parameters<typeof fakeDollar>[0] = {}) {
   const fx = fakeDollar({
     records: [OPEN_PR_LINE('Agent: nine')], recordOwner: 'Orch: belt',
     sessions: { a1b2c3: JSON.stringify({ role: 'orchestrator', name: 'Orch: belt', repo: 'acme/app', context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() }) },
     forge: { 'acme/app': JSON.stringify(open.map(number => ({ number, createdAt: '2026-11-15T06:00:00Z' }))) },
+    ...over,
   })
   const timers: { ms: number; fire: () => unknown; cancelled: boolean }[] = []
   const submitted: string[] = []
@@ -1064,6 +1065,17 @@ test('an open pull request entering the anomaly wakes the orchestrator once; not
   expect(w.timers.map(t => t.ms)).toEqual([60_000])
   await w.timers.shift()!.fire()
   expect(w.submitted.length).toBe(1)
+  expect(w.timers.map(t => t.ms)).toEqual([60_000])
+})
+
+test('with no pull request of its own, the tick keeps the file current while a reader wants it: one call an interval', async () => {
+  const { handlers } = mounted()
+  const w = prWorld([], 0, { records: [''], files: { [`${STATE}/prs.wanted`]: `acme/web ${new Date().toISOString()}\n` }, forge: { 'acme/web': '[]' } })
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  expect(w.timers.map(t => t.ms)).toEqual([0])
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual([])
+  expect(w.ran.filter(l => l.startsWith('gh api graphql')).length).toBe(1)
   expect(w.timers.map(t => t.ms)).toEqual([60_000])
 })
 
