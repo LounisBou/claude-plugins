@@ -703,12 +703,11 @@ test('a Bash CI undraft passes outside auto-merge too, with one line', async ($,
   expect(seen.journal).toEqual([])
 })
 
-test('going back to draft is always let through, and puts Not Ready', async ($, on) => {
+test('going back to draft is always let through and moves no label', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'] })
   const out = await $.tool.call(bash('gh pr ready 12 -R acme/thing --undo'))
   expect(out.deny).toBeUndefined()
-  expect(seen.runs.map((r) => r.command)).toEqual(['pr-readiness'])
-  expect(seen.runs[0]?.args).toEqual({ pr: 12, state: 'not-ready' })
+  expect(seen.runs.map((r) => r.command)).toEqual([])
   const tool = await $.tool.call(gh('pr-draft', { pr: 12 }))
   expect(tool).toEqual({ result: 'ok' })
   expect(gates(seen)).toBe(0)
@@ -2231,7 +2230,7 @@ test('gh pr ready --undo=false leaves draft and is observed outside auto-merge, 
   const back = await $.tool.call(bash('gh pr ready 12 -R acme/thing --undo=true'))
   expect(back.deny).toBeUndefined()
   expect(seen.journal).toEqual(['github.draft.leave'])
-  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'not-ready' }]])
+  expect(readinessRuns(seen)).toEqual([])
 })
 
 const ORIGIN = { 'remote get-url origin': { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n' } }

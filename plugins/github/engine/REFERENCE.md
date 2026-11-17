@@ -105,7 +105,7 @@ head; the request carries no `event`, which keeps the review pending.
 |---|---|---|
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
 | `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready, its labels untouched (« Guards »). `--for-ci`: out of draft only for its CI, with `Not Ready` put on it |
-| `pr-draft` | `<pr>` | Back to draft, with `Not Ready` put on it |
+| `pr-draft` | `<pr>` | Back to draft, its labels untouched: `Ready` follows the records at the head, not the draft state |
 | `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` and take the other off, creating the labels when missing; prints the state, `(unchanged)` when nothing changed. `ready` only when the gate reads it ready, else the label carried and `Missing: …` |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, any case. One line per label, `created <name>` or `present <name>`, with ` #<colour>` when not the house colour |
 | `label-add` | `<pr> <label>...` | Add labels |
@@ -310,7 +310,8 @@ undrafted for CI goes back to draft first.
 
 A PR carrying `Not Ready` with no passed check at its head may leave draft for its CI, unasked:
 `pr-ready --for-ci` or `gh pr ready`, still `Not Ready`. Back to draft (`pr-draft`, `gh pr ready
---undo`, `gh pr create --draft`) always passes and puts `Not Ready`. A `git push` puts a `Ready`
+--undo`) always passes and leaves `Ready` or `Not Ready` as the records at the head make them;
+`gh pr create --draft` puts `Not Ready` on the new pull request. A `git push` puts a `Ready`
 PR of the pushed branch back to `Not Ready`.
 
 **Auto-merge split.** A merge runs only in a repository of `auto-merge.json`, the ready guard on
