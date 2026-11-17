@@ -674,6 +674,8 @@ type Setup = {
   goals?: { exitCode: number; stdout: string } | 'hang'
   goalsShown?: string
   round?: Record<string, string>
+  // The session rows of the store (store/sessions/<name>), by file name.
+  sessions?: Record<string, string>
   roundHang?: 'list' | 'read'
   // The to-do list of the session (todo.ts), read from the module's todo directory.
   todos?: string
@@ -722,6 +724,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         }
         if (p === `${HOME}/.claude/sessions/77.json` && setup.hostRecord !== undefined) return setup.hostRecord
         if (p === `${S.root}/stop-gate/a1b2c3.goals` && setup.goalsShown !== undefined) return setup.goalsShown
+        if (p.startsWith(`${S.root}/store/sessions/`) && setup.sessions?.[p.slice(`${S.root}/store/sessions/`.length)] !== undefined) return setup.sessions[p.slice(`${S.root}/store/sessions/`.length)]!
         if (setup.roundHang === 'read' && (p.startsWith(`${S.root}/round/`))) return new Promise(() => undefined)
         const asked = p.startsWith(`${S.root}/round/`) ? setup.round?.[p.slice(S.root.length + 7)] : undefined
         if (asked !== undefined) return asked
@@ -754,6 +757,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
           ))
         }
         if (p === PROJECTS) return []
+        if (p === `${S.root}/store/sessions`) return Object.keys(setup.sessions ?? {}).map(name => ({ name, kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }))
         if (p === `${S.root}/round`) {
           if (setup.roundHang === 'list') return new Promise(() => undefined)
           return Object.entries(setup.round ?? {}).map(([name, text]) => ({ name, kind: 'file', size: text.length, mtimeMs: 0, isLink: false }))

@@ -9,8 +9,9 @@ import type { WaitKind } from './relay.ts'
 // written, a wait on the orchestrator written (held), a delivery whose pull request is not known
 // Ready (under review), a delivery whose pull request carries Ready (done: it waits for the
 // merge), the delivered pull request merged or closed (the agent's work is over and its
-// orchestrator owes its close), the context past its gate. `asks` is the operator's alone: a
-// window that waits on its orchestrator is `held`.
+// orchestrator owes its close), the context past its gate. `asks` is the operator's alone, and
+// shown only while the session has an open round entry: a window that waits on its orchestrator is
+// `held`, and an operator wait no entry is open for is at rest.
 export type TabState = 'busy' | 'idle' | 'asks' | 'held' | 'review' | 'done' | 'over' | 'gate'
 
 // The session option the home command's conf sets on every session it makes: an agent is a
@@ -102,13 +103,15 @@ export function stateAfterPr(shown: string, pr: { state: string; ready?: boolean
 
 // What a turn's end leaves on the window: the wait its session wrote (a delivery is in, under
 // review until the orchestrator's read of its pull request finds it Ready; the operator is asked
-// something; or the session waits on its orchestrator), else the gate, else nothing pending. An
-// orchestrator's own `done` wait names no pull request: it is at rest like any session with nothing
-// pending, and `done` (✓) is only ever written by the read of a pull request that carries Ready.
-export function stateAfterTurn(waiting: WaitKind | null | undefined, pastGate: boolean): TabState {
+// something, shown only when `asked`, that is while the session has an open round entry; or the
+// session waits on its orchestrator), else the gate, else nothing pending. An operator wait no entry
+// is open for is at rest. An orchestrator's own `done` wait names no pull request: it is at rest like
+// any session with nothing pending, and `done` (✓) is only ever written by the read of a pull request
+// that carries Ready.
+export function stateAfterTurn(waiting: WaitKind | null | undefined, pastGate: boolean, asked = false): TabState {
+  if (asked) return 'asks'
   if (waiting === 'delivered') return 'review'
-  if (waiting === 'operator') return 'asks'
-  if (waiting && waiting !== 'done') return 'held'
+  if (waiting && waiting !== 'done' && waiting !== 'operator') return 'held'
   return pastGate ? 'gate' : 'idle'
 }
 
