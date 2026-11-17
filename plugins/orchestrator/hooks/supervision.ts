@@ -3555,16 +3555,27 @@ async function windowAddress($: Host<'env' | 'plugin' | 'process'>): Promise<str
   }
 }
 
-// A turn ended: the wait it left in the session's wait file, else the gate, else rest.
+// A turn ended: the questions the session has open, else the wait it left, else the gate, else rest.
 async function showTurnEnd($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>): Promise<void> {
   try {
     const tab = await tabOf($)
     if (!tab) return
-    const wait = await readWait($, await $.session.id())
-    await showTabState($, stateAfterTurn(wait?.waiting, tab.memory.past))
+    const sessionId = await $.session.id()
+    const wait = await readWait($, sessionId)
+    const asked = (await readAsked($)).some(entry => entry.sender.session === sessionId && entry.status === 'open')
+    await showTabState($, stateAfterTurn(wait?.waiting, tab.memory.past, asked))
   } catch (err) {
     await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)
   }
+}
+
+// Writes the state of another session's window: its address is its session row's, the server the caller's
+// (a home session's processes share one). A session with no window, or no server here, is left as it is.
+export async function setSessionWindow($: Host<'env' | 'fs' | 'plugin' | 'process'>, sessionId: string, state: TabState): Promise<void> {
+  const tab = await tabOf($).catch(() => null)
+  const address = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))?.tmux
+  if (!tab || !address) return
+  await $.process.run(stateArgv(tab.bin, { socket: tab.target.socket, pane: address }, state), { timeoutMs: TMUX_TIMEOUT_MS }).catch(() => undefined)
 }
 
 // A measure: the gate's side remembered for the turn's end, and shown at once on a window at rest.
