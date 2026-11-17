@@ -176,13 +176,24 @@ def _suite_workflows(owner, name, sha):
     return workflows, suite_runs
 
 
+_PLAN_REFUSAL = "upgrade to github pro"
+
+
+def _feature_absent(exc):
+    """Whether GitHub refused a read because the repository's plan has no such feature (a 403 « Upgrade
+    to GitHub Pro » on a private repository of the free plan): the feature does not exist, so it requires
+    nothing. Any other refusal is a failure of the read."""
+    return isinstance(exc, errors.AuthError) and _PLAN_REFUSAL in exc.message.lower()
+
+
 def _required_checks(owner, name, base):
     """(contexts, unverified): the status check contexts the base branch requires, from its
     rulesets and its branch protection, read apart, and the reads that failed. A check GitHub
     has not created yet at a head is in neither list of runs, so only this names it. No contexts
-    and nothing unverified when the pull request names no base. A failed read says why on stderr
-    and is named in unverified, one entry per read: the gate never reads green over it, and the
-    contexts the other read gave are kept."""
+    and nothing unverified when the pull request names no base. A read the plan refuses (the feature
+    does not exist for the repository) requires nothing and is not unverified. Any other failed read
+    says why on stderr and is named in unverified, one entry per read: the gate never reads green over
+    it, and the contexts the other read gave are kept."""
     if not base:
         return set(), []
     branch = quote(base, safe="")
@@ -192,6 +203,8 @@ def _required_checks(owner, name, base):
         try:
             return http.rest("GET", "/repos/%s/%s/%s" % (owner, name, path), **kw)
         except (errors.GhError, OSError) as exc:
+            if _feature_absent(exc):
+                return None
             why = exc.message if isinstance(exc, errors.GhError) else exc
             print("error: cannot read the checks %s requires: %s" % (base, why), file=sys.stderr)
             unverified.append("%s of %s: %s" % (what, base, why))

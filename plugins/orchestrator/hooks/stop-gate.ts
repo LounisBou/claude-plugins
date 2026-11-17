@@ -557,6 +557,8 @@ export function isSuccessorSpawn(command: string): boolean {
 // accepted: `<n> rows` with ` G<m>` for goals, and the ids, each named and none unknown.
 const COUNT_ITEMS = /^(\d+)\s+items?$/i
 const COUNT_FORM = /^(\d+)\s+rows?(?:\s+G(\d+))?$/i
+const TODO_WORD = /^to-?dos?$/i
+const ROW_WORD = /^rows?$/i
 function idsMismatch(listed: string, rows: readonly string[], goals: readonly string[], todos: readonly string[] = []): string | null {
   const total = rows.length + goals.length + todos.length
   const countWrong = COUNT_WRONG.replace('%s', `${total} items`)
@@ -571,10 +573,19 @@ function idsMismatch(listed: string, rows: readonly string[], goals: readonly st
   for (const row of rows) wanted.set((row.split(' ')[0] ?? '').toUpperCase(), `row ${row.split(' ')[0]}`)
   for (const goal of goals) wanted.set(goal.toUpperCase(), goal)
   for (const todo of todos) wanted.set(`T${todo.split(' ')[0]}`.toUpperCase(), `to-do ${todo.split(' ')[0]}`)
-  const named = listed.split(/[,\s]+/).filter(id => id !== '' && !/^rows?$/i.test(id))
-  const upper = named.map(id => id.toUpperCase())
+  // A to-do is named « to-do 7 » (as the refusal prints it), « todo 7 », « to-dos 7 » or « T7 »: after a
+  // to-do word a bare number is that to-do; a row word gives the bare numbers back to the rows.
+  const named: { id: string, said: string }[] = []
+  let kind: 'row' | 'todo' = 'row'
+  for (const token of listed.split(/[,\s]+/).filter(id => id !== '')) {
+    if (TODO_WORD.test(token)) kind = 'todo'
+    else if (ROW_WORD.test(token)) kind = 'row'
+    else if (kind === 'todo' && /^\d+$/.test(token)) named.push({ id: `T${token}`, said: `to-do ${token}` })
+    else named.push({ id: token, said: token })
+  }
+  const upper = named.map(item => item.id.toUpperCase())
   const missing = [...wanted].filter(([id]) => !upper.includes(id)).map(([, name]) => name)
-  const unknown = named.filter(id => !wanted.has(id.toUpperCase()))
+  const unknown = named.filter(item => !wanted.has(item.id.toUpperCase())).map(item => item.said)
   if (missing.length === 0 && unknown.length === 0) return null
   const said = [missing.length > 0 ? `missing ${missing.join(', ')}` : '', unknown.length > 0 ? `unknown ${unknown.join(', ')}` : '']
   return IDS_WRONG.replace('%s', said.filter(part => part !== '').join('; '))
