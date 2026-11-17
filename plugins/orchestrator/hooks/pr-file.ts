@@ -1,12 +1,14 @@
 // hooks/pr-file.ts
 // The machine's one pull request file: `<state>/prs.json`, every pull request the dispatch records on
-// the machine name (their ledger lines) and every open one the operator opened in their repositories,
-// with its state, draft, head, labels, mergeable and one CI word, beside `<state>/prs.log`, one line
+// the machine name (their ledger lines), every open one of their repositories and of those the
+// checkouts want (`prs.wanted`), and those seen merged or closed within ENDED_KEPT_MS, with its state,
+// draft, head, labels, mergeable, fork and one CI word, beside `<state>/prs.log`, one line
 // per change. No daemon refreshes it: a reader that finds it older than PR_FILE_INTERVAL_MS refreshes
 // it, under the file's lock, in one forge call for every repository (one GraphQL query), so the
 // machine pays one call per interval whatever the number of orchestrators or pull requests. A call
 // that fails keeps the pull requests read before and says so on the log; the next try waits a whole
-// interval, never a loop.
+// interval, never a loop: the try is written to the file before the call, and a file that cannot be
+// written makes no call.
 import { ledgerLines, prKey } from '../core/pr-ledger.ts'
 import { withLockOver } from '../core/store-io.ts'
 import { RECORDS_DIR } from '../core/orchestration.ts'
@@ -34,15 +36,15 @@ const FIELDS = `${BASE} labels(first:${LABELS_PAGE}){nodes{name}}`
 const ENDED = `ended:pullRequests(states:[MERGED,CLOSED],first:${ENDED_PAGE},orderBy:{field:UPDATED_AT,direction:DESC}){nodes{${BASE}}}`
 
 /**
- * The one query: per repository, its open pull requests (one page of OPEN_PAGE), the last ones
- * merged or closed (one page of ENDED_PAGE, for the sweep's clones) and each pull request the
+ * The one query: per repository, its open pull requests (one page of OPEN_PAGE, the newest), the last
+ * ones merged or closed (one page of ENDED_PAGE, for the sweep's clones) and each pull request the
  * records name, by its number, with its head's check rollup; the viewer; the call's cost.
  */
 export function prQuery(tracked: ReadonlyMap<string, readonly number[]>): string {
   const parts = [...tracked].map(([repo, numbers], i) => {
     const [owner = '', name = ''] = repo.split('/')
     const named = numbers.map(n => `n${n}:pullRequest(number:${n}){${FIELDS} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}`).join(' ')
-    return `r${i}:repository(owner:${literal(owner)},name:${literal(name)}){open:pullRequests(states:OPEN,first:${OPEN_PAGE}){pageInfo{hasNextPage} nodes{${FIELDS}}} ${ENDED} ${named}}`
+    return `r${i}:repository(owner:${literal(owner)},name:${literal(name)}){open:pullRequests(states:OPEN,first:${OPEN_PAGE},orderBy:{field:CREATED_AT,direction:DESC}){pageInfo{hasNextPage} nodes{${FIELDS}}} ${ENDED} ${named}}`
   })
   return `query{viewer{login} rateLimit{cost remaining} ${parts.join(' ')}}`
 }
@@ -227,6 +229,9 @@ async function refreshUnder($: Held, state: string, before: PrFile | undefined, 
   let answer: PrAnswer | undefined
   let failure = ''
   if (tracked.size > 0) {
+    // The try is on the file before the call: a reader of any session waits the interval even when
+    // the file cannot be written after it, and a file that cannot be written now makes no call.
+    await writeAtomic($, prFilePath(state), `${JSON.stringify(before === undefined ? { v: PR_FILE_VERSION, ...kept, tried: at } : { ...before, tried: at })}\n`)
     const ran = await $.process.run(prQueryArgv(tracked), { timeoutMs: PR_FILE_CALL_MS }).catch((err: unknown) => {
       failure = messageOf(err)
       return null
@@ -238,6 +243,7 @@ async function refreshUnder($: Held, state: string, before: PrFile | undefined, 
     else if (ran !== null && answer === undefined) failure = 'the answer holds no data'
   }
   const partial = answer !== undefined && failure !== '' ? failure : undefined
+  const truncated = answer?.truncated ?? []
   const file: PrFile = answer === undefined
     ? { v: PR_FILE_VERSION, ...kept, tried: at, ...(tracked.size > 0 ? { error: failure } : { repos: [], unread: [], prs: [] }) }
     : {
@@ -247,7 +253,8 @@ async function refreshUnder($: Held, state: string, before: PrFile | undefined, 
   const lines = answer === undefined
     ? (tracked.size > 0 ? [`${at} refresh failed: ${failure}`] : [])
     : [
-        ...changeLines(before, file.prs, answer.repos, at), ...answer.truncated.map(repo => `${at} ${repo} open past ${OPEN_PAGE}: the rest unread`),
+        // A repository whose open list ran past its page is not read whole: no pull request is said gone from it.
+        ...changeLines(before, file.prs, answer.repos.filter(repo => !truncated.includes(repo)), at), ...answer.truncated.map(repo => `${at} ${repo} open past ${OPEN_PAGE}: the rest unread`),
         ...(partial !== undefined && partial !== before?.partial ? [`${at} read in part: ${partial}`] : []),
       ]
   await writeAtomic($, prFilePath(state), `${JSON.stringify(file)}\n`)

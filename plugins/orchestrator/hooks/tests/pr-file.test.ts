@@ -64,7 +64,7 @@ test('the pull requests the records on the machine name are gathered by reposito
 test('one query asks every repository its open pull requests and each recorded one by its number, with its checks', () => {
   const query = prQuery(new Map([['acme/app', [7, 8]], ['acme/lib', []]]))
   expect(query.startsWith('query{viewer{login} rateLimit{cost remaining} ')).toBe(true)
-  expect(query).toContain('r0:repository(owner:"acme",name:"app"){open:pullRequests(states:OPEN,first:50)')
+  expect(query).toContain('r0:repository(owner:"acme",name:"app"){open:pullRequests(states:OPEN,first:50,orderBy:{field:CREATED_AT,direction:DESC})')
   expect(query).toContain('n7:pullRequest(number:7)')
   expect(query).toContain('n8:pullRequest(number:8)')
   expect(query).toContain('r1:repository(owner:"acme",name:"lib")')
@@ -215,4 +215,64 @@ test('a GitHub origin names its repository in every form; the file answers for a
   expect(prsOfRepo(file, 'acme/lib')).toBe(undefined)
   expect(prsOfRepo({ ...file, error: 'down' }, 'acme/app')).toBe(undefined)
   expect(prsOfRepo(undefined, 'acme/app')).toBe(undefined)
+})
+
+test('a file that cannot be written after the call still holds its try: a reader within the interval makes no second call', async () => {
+  const { dollar, calls, file } = world()
+  const run = dollar.process.run
+  // The file written after the call does not land.
+  dollar.process.run = async (argv, init) => {
+    if (argv[0] === 'mv' && argv[3] === prFilePath(STATE) && calls.length > 0) return { exitCode: 1, stdout: '', stderr: 'disk full' }
+    return run(argv, init)
+  }
+  await refreshPrFile(dollar, NOW)
+  expect(calls.length).toBe(1)
+  expect(file()?.tried).toBe('2026-11-17T16:00:00Z')
+  await refreshPrFile(dollar, NOW + 1000)
+  expect(calls.length).toBe(1)
+})
+
+test('a file that cannot be written makes no call, and says so on the log', async () => {
+  const { dollar, calls, logs } = world()
+  const run = dollar.process.run
+  dollar.process.run = async (argv, init) => (argv[0] === 'mv' && argv[3] === prFilePath(STATE) ? { exitCode: 1, stdout: '', stderr: 'read-only' } : run(argv, init))
+  await refreshPrFile(dollar, NOW)
+  await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS)
+  expect(calls).toEqual([])
+  expect(logs.filter(l => l.includes('refresh failed') && l.includes('read-only')).length).toBe(2)
+})
+
+test('no pull request is said gone from an open list that ran past its page', async () => {
+  const forge: Record<string, string | null> = { 'acme/app': JSON.stringify([{ number: 7 }, { number: 9 }]), 'acme/lib': '[]' }
+  const { dollar, calls, files } = world(forge)
+  await refreshPrFile(dollar, NOW)
+  // The page now runs past 50: #9 is beyond it, not gone.
+  forge['acme/app'] = JSON.stringify([{ number: 7 }])
+  const run = dollar.process.run
+  dollar.process.run = async (argv, init) => {
+    const ran = await run(argv, init)
+    return argv[0] === 'gh' ? { ...ran, stdout: String(ran.stdout).replace('"pageInfo":{"hasNextPage":false}', '"pageInfo":{"hasNextPage":true}') } : ran
+  }
+  await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS)
+  expect(calls.length).toBe(2)
+  expect(files.get(prLogPath(STATE))).toBe('2026-11-17T16:01:00Z acme/app open past 50: the rest unread\n')
+})
+
+test('two sessions refreshing at once make one forge call: the lock holds the second off', async () => {
+  const { dollar, calls, file } = world()
+  await Promise.all([refreshPrFile(dollar, NOW), refreshPrFile(dollar, NOW)])
+  expect(calls.length).toBe(1)
+  expect(file()?.repos).toEqual(['acme/app', 'acme/lib'])
+})
+
+test('a refresh another session made between the read and the lock counts: read again under the lock, no call', async () => {
+  const { dollar, calls, files } = world()
+  const run = dollar.process.run
+  // The other session's refresh lands just before this one takes the lock.
+  dollar.process.run = async (argv, init) => {
+    if (lockRun(argv, new Map()) !== null) files.set(prFilePath(STATE), `${JSON.stringify({ v: 1, at: 'x', tried: '2026-11-17T16:00:00Z', prs: [] })}\n`)
+    return run(argv, init)
+  }
+  await refreshPrFile(dollar, NOW + 1000)
+  expect(calls).toEqual([])
 })
