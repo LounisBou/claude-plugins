@@ -28,7 +28,7 @@ below, and the `args` object holds the subcommand's arguments.
 | `pr-panel` | | The open PRs, newest first (at most 100), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` from the head's status check rollup (`SUCCESS`, `FAILURE`, `PENDING`; a head with no rollup, or a green one holding a skipped run, is `PENDING`, as `pr-checks` reads it) |
 | `pr-status` | `<pr>` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
 | `pr-checks` | `<pr>` | Verdict, counts, failed and skipped names (`checks-summary`); `--json`: commit status and check runs |
-| `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
+| `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read, which the module uses to reread the head before it writes a label |
 | `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
 | `pr-files` | `<pr>` | Totals, a line per changed path (`files-summary`); `--json`: with the patches, paginated |
@@ -106,7 +106,7 @@ head; the request carries no `event`, which keeps the review pending.
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
 | `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready, its labels untouched (« Guards »). `--for-ci`: out of draft only for its CI, with `Not Ready` put on it |
 | `pr-draft` | `<pr>` | Back to draft, its labels untouched: `Ready` follows the records at the head, not the draft state |
-| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` and take the other off, creating the labels when missing; prints the state, `(unchanged)` when nothing changed. `ready` only when the gate reads it ready, else the label carried and `Missing: …` |
+| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` and take the other off, creating the labels when missing (a PR that carries the label already and not the other changes nothing and reads nothing of the repository's labels); prints the state, `(unchanged)` when nothing changed. `ready` only when the gate reads it ready, else the label carried and `Missing: …` |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, any case. One line per label, `created <name>` or `present <name>`, with ` #<colour>` when not the house colour |
 | `label-add` | `<pr> <label>...` | Add labels |
 | `label-remove` | `<pr> <label>` | Remove one label — GitHub deletes one per call |

@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, onlyAbsentRecords, parseGate, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords, deletes, deletesRecords,
+  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords, deletes, deletesRecords,
   recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove, stackedCi,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -174,6 +174,14 @@ test('pr-gate\'s answer is read, a malformed one throws', () => {
   expect(parseGate(JSON.stringify(gate())).head).toBe(HEAD)
   expect(() => parseGate('ok')).toThrow()
   expect(() => parseGate('{"head": "abc"}')).toThrow()
+})
+
+test('pr-gate --head-only\'s answer gives the head, the draft and the labels, a malformed one throws', () => {
+  expect(parseHeadRead(JSON.stringify({ head: HEAD, draft: true, labels: ['Ready'] }))).toEqual({ head: HEAD, draft: true, labels: ['Ready'] })
+  expect(parseHeadRead(JSON.stringify({ head: HEAD, labels: [] })).draft).toBe(false)
+  expect(() => parseHeadRead('ok')).toThrow()
+  expect(() => parseHeadRead(JSON.stringify({ head: 'abc', labels: [] }))).toThrow()
+  expect(() => parseHeadRead(JSON.stringify({ head: HEAD }))).toThrow()
 })
 
 test('a CI undraft is a Not Ready pull request none of whose checks has passed yet', () => {

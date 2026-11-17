@@ -2072,6 +2072,25 @@ printf '%s' '[{"name":"Ready","color":"27e760"},{"name":"Not Ready","color":"8c1
 printf '%s' '[{"name":"Ready"}]' > "$F7/GET_repos_acme_thing_issues_7_labels__per_page=100.json"
 check "pr-readiness says so when nothing changes" "ready (unchanged)" "$(gh7 pr-readiness 7 ready)"
 check "pr-readiness changes nothing on a second call" "" "$(sent7)"
+check "pr-readiness reads no list of the repository's labels when the pull request carries the label already" "0" \
+  "$(grep -c '"path": "/repos/acme/thing/labels?' "$F7/sent.jsonl")"
+
+# The shortcut is only for a pull request that carries the wanted label and not the other one.
+new7 ready-both-carried
+printf '%s' '[{"name":"Ready","color":"27e760"},{"name":"Not Ready","color":"8c1455"}]' \
+  > "$F7/GET_repos_acme_thing_labels__per_page=100.json"
+printf '%s' '[{"name":"Ready"},{"name":"Not Ready"}]' > "$F7/GET_repos_acme_thing_issues_7_labels__per_page=100.json"
+gh7 pr-readiness 7 ready >/dev/null
+check "pr-readiness takes the other label off a pull request that carries both, after reading the repository's labels" \
+  "1 DELETE /repos/acme/thing/issues/7/labels/Not%20Ready null" \
+  "$(grep -c '"path": "/repos/acme/thing/labels?' "$F7/sent.jsonl") $(sent7)"
+new7 ready-missing
+printf '%s' '[{"name":"Ready","color":"27e760"},{"name":"Not Ready","color":"8c1455"}]' \
+  > "$F7/GET_repos_acme_thing_labels__per_page=100.json"
+printf '%s' '[]' > "$F7/GET_repos_acme_thing_issues_7_labels__per_page=100.json"
+gh7 pr-readiness 7 ready >/dev/null
+check "pr-readiness reads the repository's labels before it puts a label the pull request lacks" "1" \
+  "$(grep -c '"path": "/repos/acme/thing/labels?' "$F7/sent.jsonl")"
 
 new7 notready-creates
 printf '%s' '[{"name":"Ready"}]' > "$F7/GET_repos_acme_thing_issues_7_labels__per_page=100.json"
@@ -2252,6 +2271,33 @@ gate8 bottom "$(printf '%s' "$STACK8" | sed 's/"ref":"feat-a"/"ref":"main"/')" '
 gh8 pr-gate 12 >/dev/null
 check "pr-gate never reads the default branch as a stacked base, nor asks" "0" \
   "$(grep -c 'state=open&head=' "$F8/sent.jsonl")"
+
+# The base branch and its rules are read once per computation, by the stacked test and the required checks alike.
+gate8 base-once "$STACK8" '{"statuses":[]}' '{"check_runs":[]}'
+printf '%s' '[{"number":11,"head":{"ref":"feat-a"}}]' > "$F8/GET_repos_acme_thing_pulls__state=open&head=acme%3Afeat-a&per_page=100.json"
+printf '%s' '{"name":"feat-a","protected":false}' > "$F8/GET_repos_acme_thing_branches_feat-a.json"
+gh8 pr-gate 12 >/dev/null
+check "pr-gate reads the base branch once and its rules once" "1 1" \
+  "$(grep -c '"path": "/repos/acme/thing/branches/feat-a"' "$F8/sent.jsonl" | tr -d '\n') $(grep -c '"path": "/repos/acme/thing/rules/branches/feat-a?' "$F8/sent.jsonl" | tr -d '\n')"
+printf '%s' '{"name":"feat-a","protected":true}' > "$F8/GET_repos_acme_thing_branches_feat-a.json"
+rm "$F8/sent.jsonl"; gh8 pr-gate 12 >/dev/null
+check "pr-gate reads a protected base once, its rules once" "1 1" \
+  "$(grep -c '"path": "/repos/acme/thing/branches/feat-a"' "$F8/sent.jsonl" | tr -d '\n') $(grep -c '"path": "/repos/acme/thing/rules/branches/feat-a?' "$F8/sent.jsonl" | tr -d '\n')"
+
+# The rules read for the stacked test are the rules the required checks use: a required check the head has not reported is pending.
+gate8 rules-shared "$STACK8" '{"statuses":[]}' '{"check_runs":[]}'
+printf '%s' '[{"number":11,"head":{"ref":"feat-a"}}]' > "$F8/GET_repos_acme_thing_pulls__state=open&head=acme%3Afeat-a&per_page=100.json"
+printf '%s' '{"name":"feat-a","protected":false}' > "$F8/GET_repos_acme_thing_branches_feat-a.json"
+printf '%s' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"build"}]}}]' > "$F8/GET_repos_acme_thing_rules_branches_feat-a__per_page=100.json"
+check "pr-gate uses the rules it read for the stacked test as the base's required checks" "False PENDING 1 1" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["stacked"], d["ci"]["result"], d["ci"]["total"], end=" ")')$(grep -c '"path": "/repos/acme/thing/rules/branches/feat-a?' "$F8/sent.jsonl")"
+
+gate8 head-only "$PULL8" '{"state":"success","statuses":[]}' '{"check_runs":[]}'
+check "pr-gate --head-only answers the head, the draft, the state and the labels" \
+  "acme/thing 12 open False $GATEHEAD Not Ready|bug" \
+  "$(gh8 pr-gate 12 --head-only | python3 -c 'import json,sys; d=json.load(sys.stdin); assert sorted(d) == ["draft", "head", "labels", "pr", "repo", "state"], sorted(d); print(d["repo"], d["pr"], d["state"], d["draft"], d["head"], "|".join(d["labels"]))')"
+check "pr-gate --head-only is one read, of the pull request" "GET /repos/acme/thing/pulls/12" \
+  "$(python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F8/sent.jsonl")"
 
 gate8 none "$PULL8" '{"state":"pending","statuses":[]}' '{"total_count":0,"check_runs":[]}'
 check "pr-gate reads no check at all as pending, total 0" "PENDING   0" "$(ci8)"

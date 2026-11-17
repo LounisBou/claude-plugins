@@ -186,14 +186,25 @@ def _feature_absent(exc):
     return isinstance(exc, errors.AuthError) and _PLAN_REFUSAL in exc.message.lower()
 
 
-def _required_checks(owner, name, base):
+def _read_once(reads, owner, name, path, **kw):
+    """A read of the repository, answered from `reads` when this computation made it already: the base
+    branch and its rules are read by the stacked test and by the required checks alike. A read that
+    fails is not kept."""
+    key = (path, bool(kw.get("paginate")))
+    if key not in reads:
+        reads[key] = http.rest("GET", "/repos/%s/%s/%s" % (owner, name, path), **kw)
+    return reads[key]
+
+
+def _required_checks(owner, name, base, reads=None):
     """(contexts, unverified): the status check contexts the base branch requires, from its
     rulesets and its branch protection, read apart, and the reads that failed. A check GitHub
     has not created yet at a head is in neither list of runs, so only this names it. No contexts
     and nothing unverified when the pull request names no base. A read the plan refuses (the feature
     does not exist for the repository) requires nothing and is not unverified. Any other failed read
     says why on stderr and is named in unverified, one entry per read: the gate never reads green over
-    it, and the contexts the other read gave are kept."""
+    it, and the contexts the other read gave are kept. `reads` is what the computation read already."""
+    reads = {} if reads is None else reads
     if not base:
         return set(), []
     branch = quote(base, safe="")
@@ -201,7 +212,7 @@ def _required_checks(owner, name, base):
 
     def read(what, path, **kw):
         try:
-            return http.rest("GET", "/repos/%s/%s/%s" % (owner, name, path), **kw)
+            return _read_once(reads, owner, name, path, **kw)
         except (errors.GhError, OSError) as exc:
             if _feature_absent(exc):
                 return None
@@ -253,16 +264,16 @@ def _no_ci(owner, name, pull, statuses, runs, required, unverified):
         return False
 
 
-def _gate_ci(owner, name, pull, sha, statuses, runs):
+def _gate_ci(owner, name, pull, sha, statuses, runs, reads=None):
     """CI at the head as the ready guard reads it (fmt.gate_ci), the checks the base requires and whether
     the repository has no CI at all read beside it."""
     workflows, suite_runs = _suite_workflows(owner, name, sha)
-    required, unverified = _required_checks(owner, name, _base(pull))
+    required, unverified = _required_checks(owner, name, _base(pull), reads)
     no_ci = _no_ci(owner, name, pull, statuses, runs, required, unverified)
     return fmt.gate_ci(statuses, runs, bool(pull.get("draft")), workflows, suite_runs, required, unverified, no_ci)
 
 
-def _stacked(owner, name, pull):
+def _stacked(owner, name, pull, reads):
     """Whether the pull request is stacked: its base is the head branch of another open pull request of
     the repository, and no long-lived branch: neither the default branch nor one under branch protection or a
     ruleset (main, develop, staging and their kind, which a release pull request heads too). A read that fails
@@ -278,9 +289,9 @@ def _stacked(owner, name, pull):
         number = pull.get("number")
         if not any(isinstance(p, dict) and p.get("number") != number for p in pulls or []):
             return False
-        if (http.rest("GET", "/repos/%s/%s/branches/%s" % (owner, name, branch)) or {}).get("protected"):
+        if (_read_once(reads, owner, name, "branches/%s" % branch) or {}).get("protected"):
             return False
-        return not (http.rest("GET", "/repos/%s/%s/rules/branches/%s" % (owner, name, branch), paginate=True) or [])
+        return not (_read_once(reads, owner, name, "rules/branches/%s" % branch, paginate=True) or [])
     except (errors.GhError, OSError) as exc:
         why = exc.message if isinstance(exc, errors.GhError) else exc
         print("error: cannot read whether %s is a stacked base: %s" % (base, why), file=sys.stderr)
@@ -317,22 +328,30 @@ def pr_gate(args):
     sha = (pull.get("head") or {}).get("sha") or ""
     if not _FULL_SHA.fullmatch(sha):
         raise errors.ApiError("pull request %s has no head sha" % args.pr)
-    statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
-    runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
     state = "merged" if pull.get("merged_at") else pull.get("state", "")
-    return {
+    gate = {
         "repo": ("%s/%s" % (owner, name)).lower(),
         "pr": pull.get("number", args.pr),
         "state": state,
         "draft": bool(pull.get("draft")),
         "head": sha.lower(),
         "labels": [label.get("name", "") for label in pull.get("labels") or []],
-        # The pull request's commit count at this head, read in the same answer as the head.
-        "commits": pull.get("commits"),
-        "base": _base(pull),
-        "stacked": _stacked(owner, name, pull),
-        "ci": _gate_ci(owner, name, pull, sha, statuses, (runs or {}).get("check_runs") or []),
     }
+    if args.head_only:
+        return gate
+    statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
+    runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
+    reads = {}
+    gate.update(
+        {
+            # The pull request's commit count at this head, read in the same answer as the head.
+            "commits": pull.get("commits"),
+            "base": _base(pull),
+            "stacked": _stacked(owner, name, pull, reads),
+            "ci": _gate_ci(owner, name, pull, sha, statuses, (runs or {}).get("check_runs") or [], reads),
+        }
+    )
+    return gate
 
 
 # The most files GitHub lists for a commit on one page: a commit that reaches it may hold more.
@@ -580,6 +599,7 @@ def register(subparsers):
 
     parser = subparsers.add_parser("pr-gate", help="state, head, labels and CI, as the ready guard reads them")
     parser.add_argument("pr", type=int)
+    parser.add_argument("--head-only", dest="head_only", action="store_true", help="the head, state, draft and labels, from the pull request alone")
     parser.set_defaults(handler=pr_gate)
 
     parser = subparsers.add_parser("pr-fingerprint", help="the fingerprint of the pull request's own commits at a head")

@@ -121,12 +121,15 @@ def _set_readiness(owner, name, pr, state):
     """Put the label the state names on the pull request and take the other off.
     Returns the lines created, whether anything changed and the name the label carries."""
     wanted, other = _STATES[state]
-    lines, names = _ensure(owner, name)
-    created = [line for line in lines if line.startswith("created ")]
     carried = {
         label["name"].lower(): label["name"]
         for label in http.rest("GET", "/repos/%s/%s/issues/%s/labels" % (owner, name, pr), paginate=True)
     }
+    # Carrying the wanted label and not the other one means the labels exist: nothing is read or written.
+    if wanted.lower() in carried and other.lower() not in carried:
+        return [], False, carried[wanted.lower()]
+    lines, names = _ensure(owner, name)
+    created = [line for line in lines if line.startswith("created ")]
     changed = False
     if names[wanted].lower() not in carried:
         http.rest("POST", "/repos/%s/%s/issues/%s/labels" % (owner, name, pr), {"labels": [names[wanted]]})
