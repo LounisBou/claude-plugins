@@ -1017,7 +1017,7 @@ test('a busy wake the host drops is tried again a minute later, its bound still 
 })
 
 // An orchestrator whose record holds the line of acme/app#9, the forge answering the machine file's query.
-function prWorld(open: number[]) {
+function prWorld(open: number[], drops = 0) {
   const fx = fakeDollar({
     records: [OPEN_PR_LINE('Agent: nine')], recordOwner: 'Orch: belt',
     sessions: { a1b2c3: JSON.stringify({ role: 'orchestrator', name: 'Orch: belt', repo: 'acme/app', context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() }) },
@@ -1032,7 +1032,11 @@ function prWorld(open: number[]) {
       timers.push(timer)
       return { cancel: () => { timer.cancelled = true } }
     } },
-    prompt: { ...fx.dollar.prompt, submit: async ({ text }: { text: string }) => { submitted.push(text); return undefined } },
+    prompt: { ...fx.dollar.prompt, submit: async ({ text }: { text: string }) => {
+      if (drops-- > 0) return { drop: 'the session is busy' }
+      submitted.push(text)
+      return undefined
+    } },
   } as unknown as World
   return { dollar, timers, submitted, ran: fx.ran, wrote: fx.wrote }
 }
@@ -1061,6 +1065,19 @@ test('an open pull request entering the anomaly wakes the orchestrator once; not
   await w.timers.shift()!.fire()
   expect(w.submitted.length).toBe(1)
   expect(w.timers.map(t => t.ms)).toEqual([60_000])
+})
+
+test('a pull request wake the host drops is tried again a minute later, told then, and its line archived only once told', async () => {
+  const { handlers } = mounted()
+  const w = prWorld([], 1)
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual([])
+  expect(Object.keys(w.wrote).some(p => p.endsWith('.archive.jsonl'))).toBe(false)
+  expect(w.timers.map(t => t.ms)).toEqual([60_000])
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual(['[module] acme/app#9 merged: its agent Agent: nine is done with it, close it.'])
+  expect(Object.keys(w.wrote).some(p => p.endsWith('.archive.jsonl'))).toBe(true)
 })
 
 test('the busy wake tells each bound of a turn once, and a new turn afresh', () => {

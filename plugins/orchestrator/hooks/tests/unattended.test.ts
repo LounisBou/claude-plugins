@@ -193,7 +193,7 @@ test('the line of a pull request the file reads merged or closed has ended: read
   const { dollar, files } = world()
   const reading = await readUnattended(dollar, 's-orch', NOW)
   expect(reading?.ended.map(e => [e.line.pr, e.state, e.path])).toEqual([[5, 'MERGED', RECORD]])
-  expect(reading?.watched).toBe(3)
+  expect(reading?.kept.map(l => l.pr)).toEqual([7, 8, 6])
   expect(files.has('/briefs/app/dispatch-record.archive.jsonl')).toBe(false)
 })
 
@@ -203,7 +203,17 @@ test('a repository the forge did not list is said unknown, never « none », and
   expect(reading?.list).toEqual([])
   expect(reading?.line).toBe('En anomalie : inconnues pour acme/app (forge illisible)')
   expect(files.has('/briefs/app/dispatch-record.archive.jsonl')).toBe(false)
-  expect(logs.some(l => l.includes('pull requests unread for acme/app: gh exited 1: HTTP 502'))).toBe(true)
+  expect(logs.some(l => l.includes('refresh failed, the file kept: gh exited 1: HTTP 502'))).toBe(true)
+})
+
+test('a file whose last refresh failed says its repositories unknown, even after an earlier good read', async () => {
+  const forge: Record<string, string | null> = { 'acme/app': JSON.stringify([{ number: 8 }]) }
+  const { dollar } = world({ forge })
+  expect((await readUnattended(dollar, 's-orch', NOW))?.unread).toEqual([])
+  forge['acme/app'] = null
+  const reading = await readUnattended(dollar, 's-orch', NOW + 60_000)
+  expect(reading?.unread).toEqual(['acme/app'])
+  expect(reading?.list).toEqual([])
 })
 
 test('a launcher listing that cannot be read takes every agent a line names for running', async () => {

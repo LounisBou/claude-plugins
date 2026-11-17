@@ -151,7 +151,7 @@ export function waitingRows(text: string, merged: { repo: string | null; pr: num
   return found
 }
 
-// The line the merge's answer carries, or null when no open row waits on it.
+// The line the tick's wake on a merge carries beside it, or null when no open row waits on it.
 export function mergeRelayLine(merged: { repo: string | null; pr: number }, rows: readonly { id: number; label: string; agent: string | null }[]): string | null {
   if (rows.length === 0) return null
   const named = rows.map(row => `row ${row.id}${row.label === '' ? '' : ` « ${row.label} »`}${row.agent === null ? '' : ` (${row.agent})`}`)
@@ -197,26 +197,35 @@ export function anomalyLine(u: Unattended): string {
 /*
  * The orchestrator's wake on its pull requests, read in the machine's file (no forge call of its own
  * beyond the file's refresh): a line for each pull request merged or closed, with the open rows waiting
- * on a merged one (mergeRelayLine), and one for each entering the anomaly not told yet (`told`, the
- * anomalies told, updated here: one that leaves it is dropped, so a re-entry is told again). `settle`
+ * on a merged one (mergeRelayLine), and one for each entering the anomaly, each once (`told`, what
+ * was told, updated here: one that leaves the anomaly is dropped, so a re-entry is told again). `settle`
  * archives the ended lines once their wake is delivered; `watching`, whether a line is still open.
  * A reading that failed tells nothing and keeps watching.
  */
-export async function prWake($: Held, told: Set<string>): Promise<{ lines: string[]; watching: boolean; settle: () => Promise<void> }> {
-  const reading = await boundedReading($, await $.session.id())
+export async function prWake($: Held, told: Set<string>, now: number = Date.now()): Promise<{ lines: string[]; watching: boolean; settle: () => Promise<void> }> {
+  const reading = await boundedReading($, await $.session.id(), now)
   if (reading === null) return { lines: [], watching: true, settle: async () => undefined }
   const lines: string[] = []
+  // What is told now: the anomalies and the ended pull requests, the latter keyed apart so an
+  // archive that failed is not told again at every tick; what is no longer either is dropped.
+  // Only the orchestration's own: a pull request no record names is said at its turn end, never woken on.
+  const own = new Set(reading.kept.map(line => prKey(line.repo, line.pr)))
+  const anomalies = reading.list.filter(u => u.waits === undefined && own.has(prKey(u.repo, u.pr)))
+  const current = new Set([...anomalies.map(u => prKey(u.repo, u.pr)), ...reading.ended.map(e => `${prKey(e.line.repo, e.line.pr)} ended`)])
+  // A repository the file could not read this time keeps what was told of it: no wake again on its return.
+  const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
+  for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
   for (const ended of reading.ended) {
+    const key = `${prKey(ended.line.repo, ended.line.pr)} ended`
+    if (told.has(key)) continue
+    told.add(key)
     const { repo, pr, agent } = ended.line
     lines.push(endedLine({ repo, pr, state: ended.state, agent: ended.line.status === 'working' ? agent : undefined }))
     if (ended.state === 'MERGED') {
-      const relay = mergeRelayLine({ repo, pr }, waitingRows(ended.text, { repo: repo.toLowerCase(), pr }))
+      const relay = mergeRelayLine({ repo, pr }, reading.texts.flatMap(text => waitingRows(text, { repo: repo.toLowerCase(), pr })))
       if (relay !== null) lines.push(relay)
     }
   }
-  const anomalies = reading.list.filter(u => u.waits === undefined)
-  const now = new Set(anomalies.map(u => prKey(u.repo, u.pr)))
-  for (const key of [...told]) if (!now.has(key)) told.delete(key)
   for (const u of anomalies) {
     if (told.has(prKey(u.repo, u.pr))) continue
     told.add(prKey(u.repo, u.pr))
@@ -233,5 +242,5 @@ export async function prWake($: Held, told: Set<string>): Promise<{ lines: strin
       }
     }
   }
-  return { lines, watching: reading.watched > 0, settle }
+  return { lines, watching: reading.kept.length > 0, settle }
 }

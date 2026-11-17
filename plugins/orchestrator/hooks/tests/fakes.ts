@@ -102,22 +102,24 @@ export function journalled<D extends Journalled>(dollar: D): { dollar: D; journa
 }
 
 // The forge's answer to the machine file's one query (pr-file.ts prQuery), built from each
-// repository's open pull requests as `gh pr list` listed them (null: the forge cannot be read, the
-// call exits 1). Every repository the query names is answered, its open ones opened by the viewer;
-// a pull request asked by its number and not listed open reads `closed[n]` of the repository, merged
-// when none is given. Null for a run that is no such query.
+// repository's open pull requests (`[{number, createdAt, labels, mergeable}]`; null: the forge cannot
+// be read, the call exits 1 with no data; undefined: a repository it cannot resolve, its alias null
+// and the call exiting 1 with the rest of its data, as `gh api graphql` does). The open ones are the
+// viewer's; a pull request asked by its number and not listed open reads `closed[n]` of the
+// repository, merged when none is given. Null for a run that is no such query.
 export function prQueryRun(
   argv: readonly string[], open: (repo: string) => string | null | undefined, closed: Record<string, Record<number, 'MERGED' | 'CLOSED'>> = {},
 ): { exitCode: number; stdout: string; stderr: string } | null {
   if (argv[0] !== 'gh' || argv[1] !== 'api' || argv[2] !== 'graphql') return null
   const query = String(argv[4] ?? '').replace(/^query=/, '')
   const data: Record<string, unknown> = { viewer: { login: 'me' }, rateLimit: { cost: 1, remaining: 4999 } }
+  const errors: string[] = []
   for (const part of query.split(/(?=\br\d+:repository\()/).slice(1)) {
     const [, alias = '', owner = '', name = ''] = /^(r\d+):repository\(owner:"([^"]*)",name:"([^"]*)"\)/.exec(part) ?? []
     const repo = `${owner}/${name}`
     const listed = open(repo)
     if (listed === null) return { exitCode: 1, stdout: '', stderr: 'HTTP 502' }
-    if (listed === undefined) { data[alias] = null; continue }
+    if (listed === undefined) { data[alias] = null; errors.push(`Could not resolve to a Repository with the name '${repo}'.`); continue }
     const items = JSON.parse(listed) as { number: number; createdAt?: string; labels?: { name: string }[]; mergeable?: string }[]
     const node = (item: { number: number; createdAt?: string; labels?: { name: string }[]; mergeable?: string }, state = 'OPEN') => ({
       number: item.number, state, isDraft: false, createdAt: item.createdAt ?? null, headRefName: `b${item.number}`, headRefOid: 'a'.repeat(40),
@@ -130,5 +132,6 @@ export function prQueryRun(
     }
     data[alias] = answer
   }
-  return { exitCode: 0, stdout: JSON.stringify({ data }), stderr: '' }
+  return errors.length === 0 ? { exitCode: 0, stdout: JSON.stringify({ data }), stderr: '' }
+    : { exitCode: 1, stdout: JSON.stringify({ data, errors: errors.map(message => ({ type: 'NOT_FOUND', message })) }), stderr: `gh: ${errors.join('\n')}` }
 }

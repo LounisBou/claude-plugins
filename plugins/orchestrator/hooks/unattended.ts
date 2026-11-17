@@ -24,12 +24,12 @@ type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
 export const UNATTENDED_BOUND_MS = 20_000
 
 // `ready`: the open rows whose blocker has fallen (`none`, or an `until` past) that no live agent and no open pull request holds; `readyLine` says them.
-// `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `watched`: its lines still open.
+// `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `kept`: its lines still open; `texts`: its records' texts.
 export type Reading = {
   list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
-  ended: Ended[]; watched: number
+  ended: Ended[]; kept: LedgerLine[]; texts: string[]
 }
-export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string; text: string }
+export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
 
 // The open pull requests of a repository as the machine's file holds them: those the operator opened
 // and those a record names. Their labels say what rests on him (`Ready`, `On Hold`).
@@ -121,10 +121,12 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   const open: OpenPr[] = []
   const unread: string[] = []
   for (const repo of repos) {
-    if (file === undefined || !file.repos.includes(repo)) unread.push(repo)
+    // A file whose last refresh failed holds the pull requests of an earlier read: unknown now.
+    if (file === undefined || file.error !== undefined || !file.repos.includes(repo)) unread.push(repo)
     else open.push(...openOf(file, repo))
   }
-  if (unread.length > 0) await logLine($, 'unattended', `pull requests unread for ${unread.join(', ')}: ${file?.error ?? 'not in the machine\'s file yet'}`)
+  // A failed refresh is said once by the file's own log line; a repository not in it yet, here.
+  if (unread.length > 0 && file?.error === undefined) await logLine($, 'unattended', `pull requests unread for ${unread.join(', ')}: not in the machine's file yet`)
   // A line whose pull request the file reads merged or closed has ended: told and archived by the module's tick.
   const states = new Map((file?.prs ?? []).map(pr => [prKey(pr.repo, pr.pr), pr.state]))
   const ended: Ended[] = []
@@ -132,7 +134,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   for (const record of own) {
     for (const line of record.lines) {
       const state = states.get(prKey(line.repo, line.pr))
-      if (state === 'MERGED' || state === 'CLOSED') ended.push({ line, state, path: record.path, text: record.text })
+      if (state === 'MERGED' || state === 'CLOSED') ended.push({ line, state, path: record.path })
       else kept.push(line)
     }
   }
@@ -156,13 +158,13 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
     const agents = await running()
     if (agents !== null) ready = readyRows({ texts, lines: kept, live: agents, now })
   }
-  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, watched: kept.length }
+  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, texts }
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.
-export async function boundedReading($: Held, sessionId: string): Promise<Reading | null> {
+export async function boundedReading($: Held, sessionId: string, now: number = Date.now()): Promise<Reading | null> {
   try {
-    const done = await withDeadline(readUnattended($, sessionId), UNATTENDED_BOUND_MS)
+    const done = await withDeadline(readUnattended($, sessionId, now), UNATTENDED_BOUND_MS)
     if (!isDegradedPass(done)) return done
     await logLine($, 'unattended', `the reading did not finish within ${UNATTENDED_BOUND_MS} ms`)
   } catch (err) {

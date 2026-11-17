@@ -381,6 +381,24 @@ test('a pull request entering the anomaly wakes its orchestrator once, again onl
   expect((await prWake(world.dollar, told)).lines.length).toBe(1)
 })
 
+test('a merge whose archive fails is told once, not at every tick; a row of another record of the orchestration waiting on it is named', async () => {
+  const other = '/briefs/web/dispatch-record.jsonl'
+  const world = fake({
+    session: 's-orch', reportsTo: null, readOnly: true, forge: { 'acme/app': '[]' },
+    rows: { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n`, [`${STATE}/records/s-orch`]: `${RECORD}\n${other}\n`, [`${other}.owner`]: `${ORCH}\n`, [other]: `${JSON.stringify({ id: 9, state: 'open', label: 'P20 web', blocker: 'PR acme/app#17 merged' })}\n` },
+  })
+  const told = new Set<string>()
+  const first = await prWake(world.dollar, told)
+  expect(first.lines).toEqual([
+    '[module] acme/app#17 merged: its agent Agent: p17 is done with it, close it.',
+    "[module] acme/app#17 merged; open rows waiting on it: row 9 « P20 web ». Tell each one's agent now.",
+  ])
+  await first.settle()
+  expect(world.files.get(RECORD)).toContain('"pr":17')
+  expect(world.logged.some(l => l.includes('archive of /briefs/app/dispatch-record.jsonl failed'))).toBe(true)
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
+})
+
 test('a reading that fails tells nothing and keeps watching', async () => {
   const world = fake({ session: 's-orch', reportsTo: null })
   world.files.delete(`${STATE}/store/sessions/s-orch`)

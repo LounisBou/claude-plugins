@@ -166,3 +166,19 @@ test('a machine whose records name no pull request asks the forge nothing', asyn
   expect(calls).toEqual([])
   expect(file()?.repos).toEqual([])
 })
+
+test('a query the forge resolves in part is read for the rest: the repository it cannot resolve unread, its errors said once on the log', async () => {
+  const forge: Record<string, string | null | undefined> = { 'acme/app': JSON.stringify([{ number: 7 }]), 'acme/lib': undefined }
+  const { dollar, file, files } = world(forge as Record<string, string | null>)
+  // world maps a missing answer to null; this one answers the unresolved repository as the forge does.
+  const run = dollar.process.run
+  dollar.process.run = async (argv, init) => prQueryRun(argv, repo => forge[repo], { 'acme/app': { 8: 'CLOSED' } }) ?? run(argv, init)
+  await refreshPrFile(dollar, NOW)
+  expect(file()?.repos).toEqual(['acme/app'])
+  expect(file()?.unread).toEqual(['acme/lib'])
+  expect(file()?.error).toBe(undefined)
+  expect(file()?.prs.map(p => [p.pr, p.state])).toEqual([[7, 'OPEN'], [8, 'CLOSED']])
+  expect(files.get(prLogPath(STATE))).toBe("2026-11-17T16:00:00Z read in part: gh exited 1: gh: Could not resolve to a Repository with the name 'acme/lib'.\n")
+  await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS)
+  expect(files.get(prLogPath(STATE))?.split('\n').filter(Boolean).length).toBe(1)
+})

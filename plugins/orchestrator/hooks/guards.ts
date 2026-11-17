@@ -981,7 +981,7 @@ async function moduleTick($: Held, memory: TickMemory, timer: unknown): Promise<
     }
     let settle = async (): Promise<void> => undefined
     if (memory.watch) {
-      const prs = await prWake($, memory.anomalies)
+      const prs = await prWake($, memory.anomalies, now)
       lines.push(...prs.lines)
       memory.watch = prs.watching
       settle = prs.settle

@@ -48,6 +48,8 @@ export interface PrFile {
   readonly at: string | null
   readonly tried: string
   readonly error?: string
+  /** The errors of a call read in part (a repository or a number the forge cannot resolve). */
+  readonly partial?: string
   /** The forge's cost of the last call, in its rate limit's points. */
   readonly cost?: number
   readonly viewer: string | null
@@ -88,7 +90,7 @@ export function parsePrFile(raw: string): PrFile | undefined {
   if (r['v'] !== VERSION || typeof r['tried'] !== 'string' || !Array.isArray(r['prs'])) return undefined
   return {
     v: VERSION, at: text(r['at']), tried: r['tried'], ...(typeof r['error'] === 'string' ? { error: r['error'] } : {}),
-    ...(typeof r['cost'] === 'number' ? { cost: r['cost'] } : {}),
+    ...(typeof r['cost'] === 'number' ? { cost: r['cost'] } : {}), ...(typeof r['partial'] === 'string' ? { partial: r['partial'] } : {}),
     viewer: text(r['viewer']), repos: strings(r['repos']), unread: strings(r['unread']),
     prs: r['prs'].flatMap(item => filePrOf(item) ?? []),
   }
@@ -279,16 +281,25 @@ async function refreshUnder($: Held, state: string, before: PrFile | undefined, 
       failure = messageOf(err)
       return null
     })
+    // A query some of whose parts the forge cannot resolve (a repository gone, a number that never
+    // was) exits 1 with the rest of its data: the data is read, its errors said once on the log.
+    if (ran !== null) answer = parsePrAnswer(tracked, String(ran.stdout ?? ''))
     if (ran !== null && ran.exitCode !== 0) failure = `gh exited ${ran.exitCode}: ${String(ran.stderr ?? '').trim()}`
-    answer = ran !== null && ran.exitCode === 0 ? parsePrAnswer(tracked, String(ran.stdout ?? '')) : undefined
-    if (ran !== null && ran.exitCode === 0 && answer === undefined) failure = 'the answer holds no data'
+    else if (ran !== null && answer === undefined) failure = 'the answer holds no data'
   }
+  const partial = answer !== undefined && failure !== '' ? failure : undefined
   const file: PrFile = answer === undefined
     ? { v: VERSION, ...kept, tried: at, ...(tracked.size > 0 ? { error: failure } : { repos: [], unread: [], prs: [] }) }
-    : { v: VERSION, at, tried: at, viewer: answer.viewer, repos: answer.repos, unread: answer.unread, ...(answer.cost === null ? {} : { cost: answer.cost }), prs: answer.prs }
+    : {
+      v: VERSION, at, tried: at, viewer: answer.viewer, repos: answer.repos, unread: answer.unread,
+      ...(answer.cost === null ? {} : { cost: answer.cost }), ...(partial === undefined ? {} : { partial }), prs: answer.prs,
+    }
   const lines = answer === undefined
     ? (tracked.size > 0 ? [`${at} refresh failed: ${failure}`] : [])
-    : [...changeLines(before, answer.prs, answer.repos, at), ...answer.truncated.map(repo => `${at} ${repo} open past ${OPEN_PAGE}: the rest unread`)]
+    : [
+        ...changeLines(before, answer.prs, answer.repos, at), ...answer.truncated.map(repo => `${at} ${repo} open past ${OPEN_PAGE}: the rest unread`),
+        ...(partial !== undefined && partial !== before?.partial ? [`${at} read in part: ${partial}`] : []),
+      ]
   await writeAtomic($, prFilePath(state), `${JSON.stringify(file)}\n`)
   if (lines.length > 0) await writeAtomic($, prLogPath(state), withLogLines(await readOr($, prLogPath(state)), lines))
   if (answer === undefined && tracked.size > 0) await logLine($, 'prs', `refresh failed, the file kept: ${failure}`)
