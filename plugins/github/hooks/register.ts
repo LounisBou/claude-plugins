@@ -23,10 +23,10 @@ import {
   acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
-  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
+  notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, toolLabelling, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, writesRecords,
   RECORDS_REFUSAL, deletes, deletesRecords,
-  type Act, type Carried, type Gate, type Labelling, type RecordFile,
+  type Act, type Carried, type Gate, type HeadRead, type Labelling, type RecordFile,
 } from './ready.ts'
 
 // The host's nouns the module calls.
@@ -1310,9 +1310,9 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
     if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted, carried), missing }
     return { missing }
   }
-  let now: Gate
+  let now: HeadRead
   try {
-    now = parseGate(await runGh($, 'pr-gate', { pr }, repo))
+    now = parseHeadRead(await runGh($, 'pr-gate', { pr, 'head-only': true }, repo))
   } catch (err: unknown) {
     return { line: gateLeftLine(repo, pr, reasonOf(err).trim()) }
   }

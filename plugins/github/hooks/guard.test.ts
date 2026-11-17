@@ -2103,6 +2103,21 @@ test('a read of the checks through the tool puts Ready when the four hold, its o
   expect(gates(seen)).toBe(2)
 })
 
+// The head is read again before the label is written by the one read that says it, not by a second gate.
+const headChecks = (seen: Seen) => seen.runs.filter((r) => r.command === 'pr-gate').map((r) => r.args?.['head-only'] === true)
+
+test('a read of the gate rechecks the head with a head-only read', async ($, on) => {
+  const seen = await world($, on)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(headChecks(seen)).toEqual([false, true])
+})
+
+test('a read of the checks computes the gate once and rechecks the head with a head-only read', async ($, on) => {
+  const seen = await world($, on)
+  await $.tool.call(gh('pr-checks', { pr: 12 }))
+  expect(headChecks(seen)).toEqual([false, true])
+})
+
 const ACTIONS_LINE = 'error: cannot read the Actions runs of ' + HEAD + ': boom (HTTP 500)'
 
 test('a read of the gate through the tool shows the line of its Actions call, after a JSON the module still read', async ($, on) => {

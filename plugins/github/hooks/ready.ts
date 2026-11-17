@@ -520,6 +520,17 @@ export function parseGate(text: string): Gate {
   return gate as Gate
 }
 
+// What pr-gate --head-only answers: the head, the draft and the labels, which the gate reads again just before it writes.
+export type HeadRead = Pick<Gate, 'head' | 'draft' | 'labels'>
+
+export function parseHeadRead(text: string): HeadRead {
+  const read: unknown = JSON.parse(text)
+  if (!isRecord(read) || typeof read['head'] !== 'string' || !/^[0-9a-f]{40}$/.test(read['head']) || !Array.isArray(read['labels'])) {
+    throw new Error('pr-gate answered no head and labels')
+  }
+  return { head: read['head'], draft: read['draft'] === true, labels: read['labels'].map(String) }
+}
+
 const head7 = (sha: string) => sha.slice(0, 7)
 
 // The records of the pull request at a head (its own, omitted) that parse and agree with it, by file name,
