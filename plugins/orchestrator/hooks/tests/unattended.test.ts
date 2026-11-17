@@ -286,6 +286,19 @@ test('the turn end leaves the ready rows beside the unattended pull requests for
   expect((await handlers['prompt.submit'](quiet, { text: 'go' })).context).toBe(undefined)
 })
 
+test('a change of one of the two lines says that line alone at the next prompt', async () => {
+  const handlers = mounted()
+  const first = world({ forge: labelled({ 9: ['Ready'] }, [7, 8, 6, 9, 10, 11]) })
+  await handlers['turn.complete'](first.dollar, { reason: 'answer' })
+  const said = (await handlers['prompt.submit'](first.dollar, { text: 'go' })).context
+  expect(said).toEqual(['Attend ton geste : acme/app#9 (Ready)', 'En anomalie : acme/app#8 (sans agent depuis 2026-11-14T10:00Z), acme/app#11 (sans agent depuis 2026-11-11T08:00Z)'])
+  // A new Ready pull request: the anomaly line, unchanged, is not told again.
+  const next = world({ forge: labelled({ 9: ['Ready'], 12: ['Ready'] }, [7, 8, 6, 9, 10, 11, 12]) })
+  await handlers['turn.complete'](next.dollar, { reason: 'answer' })
+  const then = (await handlers['prompt.submit'](next.dollar, { text: 'go' })).context
+  expect(then).toEqual(['Attend ton geste : acme/app#9 (Ready), acme/app#12 (Ready)'])
+})
+
 test('a session that is no orchestrator reads nothing', async () => {
   const { dollar, files, runs } = world()
   files.set(`${MODULE}/store/sessions/s-orch`, row('agent', 'Agent: seven'))

@@ -64,7 +64,7 @@ export interface WaitsOnOperator {
 }
 
 /**
- * An open pull request no agent holds, and since when: its line's last setting, else its opening. With
+ * An open pull request no agent holds, and since when: its line's last setting, else its opening (a wait on the operator: since the wait began). With
  * `waits` it rests on the operator's gesture; without, it is in anomaly (Not Ready, no agent, no wait).
  */
 export interface Unattended {
@@ -239,8 +239,8 @@ export function unattended(input: {
     }
     const since = line === undefined ? open.createdAt : line.updated
     const why: WaitsOnOperator | undefined = onHim ? { why: 'record', ...(line?.on === undefined ? {} : { on: line.on }) }
-      : hasLabel(open, READY_LABEL) ? { why: 'ready' }
-        : hasLabel(open, HOLD_LABEL) ? { why: 'hold' }
+      : hasLabel(open, HOLD_LABEL) ? { why: 'hold' }
+        : hasLabel(open, READY_LABEL) ? { why: 'ready' }
           : undefined
     left.push({ repo: open.repo, pr: open.pr, since: onHim && line !== undefined ? line.since : since, ...(why === undefined ? {} : { waits: why }) })
   }
@@ -261,7 +261,7 @@ function waitsText(u: Unattended, at: (iso: string | null) => string): string {
   const name = prKey(u.repo, u.pr)
   if (u.waits?.why === 'ready') return `${name} (Ready)`
   if (u.waits?.why === 'hold') return `${name} (en pause)`
-  return `${name} (attend ${u.waits?.on ?? '?'} depuis ${at(u.since)})`
+  return `${name} (attend ${(u.waits?.on ?? '?').replace(/\s+/g, ' ').trim()} depuis ${at(u.since)})`
 }
 
 /**

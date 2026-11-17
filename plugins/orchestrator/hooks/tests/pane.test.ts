@@ -11,7 +11,7 @@
 import { expect, test, type Reply } from 'claude-code/testing'
 import { capture, hostOf, type Captured } from '../../core/capture.ts'
 import { fieldsOf, type Events, type FsEntry, type Host, type Noun, type On, type ProcessRunInit, type UiElements } from '../../core/host.ts'
-import { agentPaneRows, paneRows, readRound, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
+import { agentPaneRows, paneRows, parseSessionRow, readRound, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
 import { readAsked, settle } from '../question.ts'
 import { type RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
@@ -2499,6 +2499,14 @@ test('what waits on the operator and what is in anomaly are two lines, only the 
   const waits = { ...SPLIT, line: said[0], prs: SPLIT.prs.slice(0, 2) }
   const calm = await paneTree({ s: orch('Orch: s', { unattended: waits as never }) })
   expect(JSON.stringify(calm)).not.toContain('warning')
+})
+
+test('a published row\'s unattended view is read with its kinds; a malformed kind drops the view, and a row of an older module (no kind) is all anomaly', () => {
+  const stored = (waits: unknown) => JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: s' }), unattended: { ...SPLIT, prs: [{ repo: 'acme/app', pr: 4, since: SINCE, ...(waits === undefined ? {} : { waits }) }] } })
+  expect(parseSessionRow(stored({ why: 'ready' }))?.unattended?.prs[0]?.waits).toEqual({ why: 'ready' })
+  expect(parseSessionRow(stored({ why: 'record', on: 'ton merge' }))?.unattended?.prs[0]?.waits).toEqual({ why: 'record', on: 'ton merge' })
+  for (const bad of [{ why: 'later' }, { why: 'record', on: 3 }, 'ready', null]) expect(parseSessionRow(stored(bad))?.unattended, JSON.stringify(bad)).toBe(undefined)
+  expect(parseSessionRow(stored(undefined))?.unattended?.prs[0]?.waits).toBe(undefined)
 })
 
 test('an orchestrator\'s own pane draws the two lines above its agents, the anomaly alone in warning', async () => {

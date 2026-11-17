@@ -282,6 +282,8 @@ describe('what waits on the operator, and what is in anomaly', () => {
   it('puts an On Hold pull request on the operator as his own pause', () => {
     assert.deepEqual(read({ open: [open(9, ['On Hold'])] }), [{ repo: 'acme/app', pr: 9, since: '2026-11-13T09:00:00Z', waits: { why: 'hold' } }])
     assert.equal(read({ open: [open(9, ['Not Ready', 'on hold'])] })[0]?.waits?.why, 'hold')
+    // His pause is said even when Ready is there too.
+    assert.equal(read({ open: [open(9, ['Ready', 'On Hold'])] })[0]?.waits?.why, 'hold')
   })
 
   it('puts on the operator a pull request whose line waits on him, even set a moment ago', () => {
@@ -299,6 +301,12 @@ describe('what waits on the operator, and what is in anomaly', () => {
     assert.deepEqual(read({ open: [open(7, ['Ready'])], lines: [line()], live: ['Agent: seven'] }), [])
     assert.deepEqual(read({ open: [open(7, ['Ready'])], lines: [line({ status: 'parked', ruling: 'later', agent: undefined })] }), [])
     assert.deepEqual(read({ open: [open(9, ['Ready'])], claimed: ['acme/app#9'] }), [])
+  })
+
+  it('leaves out a Ready or On Hold pull request while a wait on something else is fresh, an agent being on it in all but name', () => {
+    const ci = line({ status: 'waiting', on: 'la CI', agent: undefined, updated: new Date(NOW - 1000).toISOString() })
+    for (const labels of [['Ready'], ['On Hold']]) assert.deepEqual(read({ open: [open(7, labels)], lines: [ci] }), [], labels.join())
+    assert.equal(read({ open: [open(7, ['Ready'])], lines: [{ ...ci, updated: new Date(NOW - UNATTENDED_AFTER_MS - 1).toISOString() }] })[0]?.waits?.why, 'ready')
   })
 
   it('reads who a wait is on: the operator by his names, never another party', () => {
@@ -319,6 +327,9 @@ describe('what waits on the operator, and what is in anomaly', () => {
       'Attend ton geste : acme/app#4 (Ready), acme/app#5 (en pause), acme/app#6 (attend ton merge depuis 2026-11-14T10:00Z)',
       'En anomalie : acme/app#7 (sans agent depuis 2026-11-14T10:00Z) ; inconnues pour acme/lib (forge illisible)',
     ].join('\n'))
+    // A newline in a wait's words never breaks the line.
+    assert.equal(unattendedLine([{ repo: 'acme/app', pr: 6, since: AT, waits: { why: 'record', on: 'ton merge\nEn anomalie : x' } }], []),
+      'Attend ton geste : acme/app#6 (attend ton merge En anomalie : x depuis 2026-11-14T10:00Z)')
     assert.deepEqual(unattendedParts(list.slice(0, 2), []).map(part => part.anomaly), [false])
     assert.equal(unattendedLine(list.slice(0, 2), []), 'Attend ton geste : acme/app#4 (Ready), acme/app#5 (en pause)')
     assert.deepEqual(unattendedParts(list.slice(3), []).map(part => part.anomaly), [true])

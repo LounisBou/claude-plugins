@@ -210,7 +210,8 @@ export function register(on: On<Held>): void {
       const sessionId = await $.session.id()
       const reading = await boundedReading($, sessionId)
       if (reading !== null) {
-        const read = [reading.line, reading.readyLine].flatMap(text => text ?? [])
+        // Each line is told apart: a change of one never says the others again.
+        const read = [reading.line, reading.readyLine].flatMap(text => (text ?? '').split('\n').filter(said => said !== ''))
         const before = lastRead.get(sessionId) ?? []
         lastRead.set(sessionId, read)
         // A change leaves the new lines only, beside the lines an earlier turn end left that no prompt has said yet and that still hold.
