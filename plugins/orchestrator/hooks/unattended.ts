@@ -29,7 +29,7 @@ export type Reading = { list: Unattended[]; unread: string[]; line: string | nul
 // The forge's open pull requests of a repository opened under the operator's account: the work of
 // the orchestrations, never a teammate's. Their labels say what rests on him (`Ready`, `On Hold`).
 export function forgeArgv(repo: string): string[] {
-  return ['gh', 'pr', 'list', '-R', repo, '--state', 'open', '--author', '@me', '--limit', String(FORGE_LIMIT), '--json', 'number,createdAt,labels']
+  return ['gh', 'pr', 'list', '-R', repo, '--state', 'open', '--author', '@me', '--limit', String(FORGE_LIMIT), '--json', 'number,createdAt,labels,mergeable']
 }
 
 // The forge's answer read, or null when it is no list of pull requests.
@@ -42,10 +42,10 @@ export function parseOpenPrs(repo: string, stdout: string): OpenPr[] | null {
   }
   if (!Array.isArray(value)) return null
   return value.flatMap(item => {
-    const { number, createdAt, labels } = (item ?? {}) as { number?: unknown; createdAt?: unknown; labels?: unknown }
+    const { number, createdAt, labels, mergeable } = (item ?? {}) as { number?: unknown; createdAt?: unknown; labels?: unknown; mergeable?: unknown }
     const names = Array.isArray(labels) ? labels.flatMap(label => (typeof (label as { name?: unknown } | null)?.name === 'string' ? [(label as { name: string }).name] : [])) : []
     return typeof number === 'number' && Number.isInteger(number) && number > 0
-      ? [{ repo, pr: number, createdAt: typeof createdAt === 'string' ? createdAt : null, labels: names }]
+      ? [{ repo, pr: number, createdAt: typeof createdAt === 'string' ? createdAt : null, labels: names, ...(typeof mergeable === 'string' ? { mergeable } : {}) }]
       : []
   })
 }
@@ -188,7 +188,7 @@ export async function boundedReading($: Held, sessionId: string): Promise<Readin
 }
 
 // What the declared wait asks before it takes a done or a deferred: the refusal while a pull request
-// is in anomaly (no agent, not Ready, no wait of its own), else null: what rests on the operator
+// is in anomaly (no agent, not Ready, no wait of its own, or in conflict), else null: what rests on the operator
 // holds nothing. Handed to wait.ts by register.ts.
 export async function holdsDone($: Held, wait: DeclaredWait): Promise<string | null> {
   if (wait.kind !== 'done' && wait.kind !== 'deferred') return null

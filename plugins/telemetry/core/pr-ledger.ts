@@ -46,12 +46,13 @@ export type LedgerSet =
   | { readonly repo: string; readonly pr: number; readonly status: 'waiting'; readonly on: string }
   | { readonly repo: string; readonly pr: number; readonly status: 'parked'; readonly ruling: string }
 
-/** An open pull request as the forge lists it, with the names of its labels when the caller read them. */
+/** An open pull request as the forge lists it, with the names of its labels and its `mergeable` state when the caller read them. */
 export interface OpenPr {
   readonly repo: string
   readonly pr: number
   readonly createdAt: string | null
   readonly labels?: readonly string[]
+  readonly mergeable?: string
 }
 
 /**
@@ -65,13 +66,14 @@ export interface WaitsOnOperator {
 
 /**
  * An open pull request no agent holds, and since when: its line's last setting, else its opening (a wait on the operator: since the wait began). With
- * `waits` it rests on the operator's gesture; without, it is in anomaly (Not Ready, no agent, no wait).
+ * `waits` it rests on the operator's gesture; without, it is in anomaly (Not Ready, no agent, no wait, or in conflict: `conflict`).
  */
 export interface Unattended {
   readonly repo: string
   readonly pr: number
   readonly since: string | null
   readonly waits?: WaitsOnOperator
+  readonly conflict?: true
 }
 
 const REPO_PART = /^[A-Za-z0-9_.-]+$/
@@ -217,6 +219,7 @@ export function isFreshWait(line: LedgerLine, now: number): boolean {
  * another orchestration records (`claimed`, by prKey) is that orchestration's to attend. Each is
  * told apart: one that rests on the operator (carrying `Ready` or `On Hold`, or whose line waits on
  * him, even freshly) comes with `waits`; the rest, Not Ready with no agent and no recorded wait, are in anomaly.
+ * One the forge reads `CONFLICTING` (`UNKNOWN`, computed late, counts nothing) is in anomaly whatever it waits on: `conflict`.
  */
 export function unattended(input: {
   readonly open: readonly OpenPr[]
@@ -238,11 +241,12 @@ export function unattended(input: {
       if (isFreshWait(line, input.now)) continue
     }
     const since = line === undefined ? open.createdAt : line.updated
-    const why: WaitsOnOperator | undefined = onHim ? { why: 'record', ...(line?.on === undefined ? {} : { on: line.on }) }
+    const conflict = open.mergeable === 'CONFLICTING'
+    const why: WaitsOnOperator | undefined = conflict ? undefined : onHim ? { why: 'record', ...(line?.on === undefined ? {} : { on: line.on }) }
       : hasLabel(open, HOLD_LABEL) ? { why: 'hold' }
         : hasLabel(open, READY_LABEL) ? { why: 'ready' }
           : undefined
-    left.push({ repo: open.repo, pr: open.pr, since: onHim && line !== undefined ? line.since : since, ...(why === undefined ? {} : { waits: why }) })
+    left.push({ repo: open.repo, pr: open.pr, since: onHim && line !== undefined ? line.since : since, ...(why === undefined ? {} : { waits: why }), ...(conflict ? { conflict } : {}) })
   }
   return left
 }
@@ -267,14 +271,14 @@ function waitsText(u: Unattended, at: (iso: string | null) => string): string {
 /**
  * The reading's lines: « Attend ton geste : <repo>#<n> (Ready), <repo>#<n> (en pause), <repo>#<n> (attend <on> depuis <t>) »
  * for what rests on the operator, « En anomalie : <repo>#<n> (sans agent depuis <t>), … » for the pull requests Not Ready
- * with no agent and no recorded wait, then the repositories whose open pull requests the forge did not list, said unknown
+ * with no agent and no recorded wait (« <repo>#<n> (en conflit) » for one the forge reads in conflict), then the repositories whose open pull requests the forge did not list, said unknown
  * on the anomaly line; none for what is empty.
  */
 export function unattendedParts(list: readonly Unattended[], unread: readonly string[], at: (iso: string | null) => string = minuteOf): UnattendedPart[] {
   const waits = list.filter(u => u.waits !== undefined)
   const anomalies = list.filter(u => u.waits === undefined)
   const alarm: string[] = []
-  if (anomalies.length > 0) alarm.push(anomalies.map(u => `${prKey(u.repo, u.pr)} (sans agent depuis ${at(u.since)})`).join(', '))
+  if (anomalies.length > 0) alarm.push(anomalies.map(u => `${prKey(u.repo, u.pr)} (${u.conflict ? 'en conflit' : `sans agent depuis ${at(u.since)}`})`).join(', '))
   if (unread.length > 0) alarm.push(`inconnues pour ${unread.join(', ')} (forge illisible)`)
   return [
     ...(waits.length === 0 ? [] : [{ anomaly: false, text: `${WAITS_HEAD} : ${waits.map(u => waitsText(u, at)).join(', ')}` }]),
