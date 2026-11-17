@@ -99,7 +99,11 @@ export function runsTakeover(command: string): boolean {
 // The prompt window 0 resumes a successor with once its takeover's turn moved it.
 export const TAKEN_OVER_TEXT = 'Your takeover is done and this session now runs in its home session. Continue where you left off.'
 
-// The prompt that wakes a successor whose move did not happen (the launcher kept it, or the move failed):
+// The prompt that wakes a successor the launcher found already in a home session: its takeover is done
+// there, and its turn ended on the announcement with nothing of its own yet to start the next one.
+export const TAKEN_OVER_HOME_TEXT = 'Your takeover is done and this session already runs in its home session. Go on to step 4 of your takeover, unless your takeover turn already did it: dispatch every open row with no agent that the phase rules allow, or declare the wait naming what you wait on.'
+
+// The prompt that wakes a successor whose move did not happen (the launcher kept it for another reason, or the move failed):
 // its turn ended on the announcement and nothing of its own is there yet to start the next one.
 export const TAKEN_OVER_STAYED_TEXT = 'Your takeover is done but this session stays in its tab: the move into a home session did not happen. Go on to step 4 of your takeover, unless your takeover turn already did it: dispatch every open row with no agent that the phase rules allow, or declare the wait naming what you wait on.'
 
@@ -249,7 +253,7 @@ export function register(on: On<Held>): void {
       // the launcher starts the home server whose window 0 resumes this very session,
       // and the tab that shows it, then this session ends and window 0 takes over with
       // the resume's prompt. Anything but a move leaves the session where it is.
-      if (!ending && parseSessionName(name)?.role === 'orchestrator' && await movedHome($, name, resumeText(name))) {
+      if (!ending && parseSessionName(name)?.role === 'orchestrator' && await movedHome($, name, resumeText(name)) === 'moved') {
         $.command.run({ command: 'exit' })
           .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
         return next(e)
@@ -264,16 +268,17 @@ export function register(on: On<Held>): void {
     }
     // A successor that took over in a plain tab: the same move, under the name the launcher gave
     // it, which the launcher reads on its tty. Its agents in tabs stay there; its spawns from
-    // window 0 are windows.
-    else if (homeAfterTakeover && !ending && await movedHome($, '', TAKEN_OVER_TEXT)) {
-      $.command.run({ command: 'exit' })
-        .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
-      return next(e)
-    }
-    // The move did not happen: the turn that ended on the announcement is not followed by one of
-    // its own making, so the module starts it, as it does for a session resumed under its name.
+    // window 0 are windows. Where the launcher finds it in a home session already, or the move did
+    // not happen, the turn that ended on the announcement is not followed by one of its own making,
+    // so the module starts it, as it does for a session resumed under its name.
     else if (homeAfterTakeover && !ending) {
-      $.prompt.submit({ text: TAKEN_OVER_STAYED_TEXT })
+      const move = await movedHome($, '', TAKEN_OVER_TEXT)
+      if (move === 'moved') {
+        $.command.run({ command: 'exit' })
+          .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
+        return next(e)
+      }
+      $.prompt.submit({ text: move === 'home' ? TAKEN_OVER_HOME_TEXT : TAKEN_OVER_STAYED_TEXT })
         .catch((err: unknown) => logLine($, 'naming', `the wake of a successor that stays in its tab failed: ${reasonOf(err)}`))
     }
     if (ending) {
@@ -298,24 +303,28 @@ export function homeArgv(root: string, sessionId: string, name: string, prompt =
   return [launcherOf(root), 'home', '--session', sessionId, ...(name === '' ? [] : ['--name', name]), '--prompt', prompt]
 }
 
-// Whether the launcher moved this session (`moved: …` on its first line). A session it
-// keeps (`stay: …`) and a move that failed both stay where they are; a failure is logged.
-async function movedHome($: Host<'plugin' | 'env' | 'process' | 'session'>, name: string, prompt: string): Promise<boolean> {
+// What the launcher did with this session, from its first line: `moved: …` (moved into a home session),
+// `home` (`stay: this session already runs in a home session`: it is in one), or null (a session it
+// keeps for another reason, or a move that failed; both are logged).
+const ALREADY_HOME = 'stay: this session already runs in a home session'
+
+async function movedHome($: Host<'plugin' | 'env' | 'process' | 'session'>, name: string, prompt: string): Promise<'moved' | 'home' | null> {
   try {
     const sessionId = await $.session.id()
     const done = await $.process.run(homeArgv($.plugin.root, sessionId, name, prompt), { timeoutMs: HOME_MOVE_MS })
     const first = String(done?.stdout ?? '').split('\n')[0] ?? ''
     if (done?.exitCode === 0 && first.startsWith('moved: ')) {
       await logLine($, 'naming', `moved into its home session: ${first.slice('moved: '.length)}`)
-      return true
+      return 'moved'
     }
     if (done?.exitCode !== 0) {
       await logLine($, 'naming', `the move into a home session failed, the session stays where it is: ${String(done?.stderr ?? '').trim().split('\n').pop() || `exit ${done?.exitCode}`}`)
     } else {
       await logLine($, 'naming', `the launcher kept the session where it is: ${first.startsWith('stay: ') ? first.slice('stay: '.length) : first || 'no answer'}`)
+      if (first === ALREADY_HOME) return 'home'
     }
   } catch (err) {
     await logLine($, 'naming', `the move into a home session could not run, the session stays where it is: ${reasonOf(err)}`)
   }
-  return false
+  return null
 }
