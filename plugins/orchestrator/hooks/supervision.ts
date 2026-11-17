@@ -3589,8 +3589,8 @@ export async function showAskStates($: Host<'env' | 'fs' | 'plugin' | 'process'>
 // The store keys of the sessions with an open operator entry in the round.
 async function openOperatorKeys($: Host<'env' | 'fs' | 'plugin' | 'process'>): Promise<Set<string>> {
   const keys = new Set<string>()
-  for (const { entry } of await readRound($)) {
-    if (entry.status === 'open' && entry.kind === 'operator') keys.add(sessionKey(entry.session))
+  for (const entry of await readAsked($)) {
+    if (entry.status === 'open') keys.add(sessionKey(entry.sender.session))
   }
   return keys
 }
@@ -3619,9 +3619,9 @@ async function windowAddress($: Host<'env' | 'plugin' | 'process'>): Promise<str
   }
 }
 
-// Whether the round holds an open operator entry of the session: the question its operator wait waits on.
-export function holdsOpenOperator(read: readonly { entry: RoundEntry }[], sessionId: string): boolean {
-  return read.some(({ entry }) => entry.session === sessionId && entry.status === 'open' && entry.kind === 'operator')
+// Whether the round holds an open question asked with `ask` by the session: the one its operator wait waits on.
+export function holdsOpenOperator(asked: readonly Asked[], sessionId: string): boolean {
+  return asked.some(entry => entry.sender.session === sessionId && entry.status === 'open')
 }
 
 // A turn ended: the wait it left in the session's wait file, else the gate, else rest. The operator's
@@ -3633,7 +3633,7 @@ async function showTurnEnd($: Host<'env' | 'fs' | 'plugin' | 'process' | 'sessio
     const sessionId = await $.session.id()
     const wait = await readWait($, sessionId)
     const asked = wait?.waiting === 'operator'
-      && holdsOpenOperator(await readRound($), sessionId)
+      && holdsOpenOperator(await readAsked($), sessionId)
     await showTabState($, stateAfterTurn(wait?.waiting, tab.memory.past, asked))
   } catch (err) {
     await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)

@@ -1081,7 +1081,8 @@ test('the window of a delivery moves between review and done by the Ready label 
 
 // The owner's stop sweeps the ✋ of its idle agents whose question closed elsewhere: at rest, with no turn of theirs to clear it.
 const AGENT_ROW = JSON.stringify({ role: 'agent', name: 'Agent: idle', pid: '501', tty: '/dev/ttys003', repo: null, context_percent: 12, context_tokens: 120000, window: 1000000, model: 'm', busy: false, updated_at: '2026-11-17T09:00:00.000Z' })
-const OPERATOR_ENTRY = (session: string, status: string) => JSON.stringify({ id: `q-${session}-1`, from: 'Agent: idle', session, kind: 'operator', since: '2026-11-17T09:00:00.000Z', blocks: 'G1', question: 'Which one?', choices: [], recommendation: null, status, at: '2026-11-17T09:00:00.000Z', answer: null })
+// A question the agent's session asked with `ask`, as the round stores it (the Asked v2 shape).
+const OPERATOR_ENTRY = (session: string, status: string) => askedHere({ id: `q-${session}-1`, sender: { session, name: 'Agent: idle', role: 'agent', machine: 'box-1' }, status })
 async function stopAsking(sessions: Record<string, string>, round: Record<string, string>, panes: string) {
   const { handlers } = mounted()
   const fx = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN","labels":[]}', panes, env: HOME_ENV, sessions, round })
