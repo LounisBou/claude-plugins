@@ -86,7 +86,7 @@ test('the orchestrator\'s acceptance passes the review over a failed one or on i
     expect(missingItems(gate(), files)).toEqual([])
     expect(reviewAccepted(gate(), files)).toBe(SET_ASIDE)
   }
-  expect(gateReadyLine('acme/thing', 12, HEAD, false, SET_ASIDE))
+  expect(gateReadyLine('acme/thing', 12, HEAD, SET_ASIDE))
     .toBe('github: acme/thing#12 Ready at 0123456: review accepted by the orchestrator (' + SET_ASIDE
       + '), passed E2E and green CI hold at its head.')
   expect(reviewAccepted(gate(), ALL)).toBeUndefined()
@@ -138,7 +138,7 @@ test('a repository with no CI configured is ready on its other conditions, and t
   const none = gate({}, { result: 'NONE', total: 0, running: 0 })
   expect(missingItems(none, ALL)).toEqual([])
   expect(stackedCi(none, ALL)).toBe('no CI configured')
-  expect(gateReadyLine('acme/thing', 12, HEAD, false, undefined, {}, [], stackedCi(none, ALL))).toContain('no CI configured hold')
+  expect(gateReadyLine('acme/thing', 12, HEAD, undefined, {}, [], stackedCi(none, ALL))).toContain('no CI configured hold')
   expect(missingItems(none, ALL.filter((r) => !r.name.startsWith('e2e')))).toEqual(['e2e: no record at 0123456'])
 })
 

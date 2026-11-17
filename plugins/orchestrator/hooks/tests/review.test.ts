@@ -89,8 +89,6 @@ test('the gate\'s verdict is said in a few words: Ready at its head, or what is 
     .toBe('Not Ready at 0123456. Missing: review: fail at 0123456, e2e: no record at 0123456, CI still running')
   const accepted = fake('Orch: belt', { result: `github: acme/thing#128 not Ready yet at 0123456. review accepted by the orchestrator (${detail}). Missing: e2e: no record at 0123456` })
   expect((await handler()(accepted.dollar, ACCEPTED)).result).toBe('Not Ready at 0123456. Missing: e2e: no record at 0123456\nrounds: no dispatch-record row names acme/thing#128, none raised: open its row with a label naming acme/thing#128')
-  const again = fake('Orch: belt', { result: 'github: acme/thing#128 back to draft, then Ready at 0123456: a clean review, passed E2E and green CI hold at its head.' })
-  expect((await handler()(again.dollar, { pr: 128, verdict: 'pass' })).result.split('\n')[0]).toBe('back to draft, then Ready at 0123456')
 })
 
 test('a github line of another shape is left whole, its echo of the detail named; a refusal comes back whole', async () => {

@@ -23,7 +23,6 @@ const AUTO_MERGE = '/data/auto-merge.json'
 const AUTO_DEPLOY = '/data/auto-deploy.json'
 const EXEMPTION = '/data/e2e-exempt/acme/thing.json'
 const PLAN = '/data/check-plans/acme/thing/12.json'
-const ciUndraftFile = (repo: string, pr: number) => '/data/ci-undraft.' + encodeURIComponent(repo) + '.' + pr + '.json'
 
 let sessions = 0
 
@@ -42,8 +41,6 @@ type World = {
   autoMerge?: string[]
   // The deploy list file, as written (an object) or as raw text.
   deployList?: unknown
-  // The CI undrafts the plugin already made, one mark file each.
-  ciUndrafts?: Array<{ repo: string; pr: number; head: string }>
   // git's answers, by its argv after git.
   git?: Record<string, { exitCode: number; stdout: string; stderr?: string }>
   // git's answers in another directory than the session's, by that directory, then by argv after git.
@@ -151,7 +148,6 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
   const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], skills: [], files: {}, contexts: [], reads: [], checks: [], journal: [], events: [] }
   if (w.autoMerge !== undefined) seen.files[AUTO_MERGE] = JSON.stringify({ repositories: w.autoMerge })
   if (w.deployList !== undefined) seen.files[AUTO_DEPLOY] = typeof w.deployList === 'string' ? w.deployList : JSON.stringify(w.deployList)
-  for (const m of w.ciUndrafts ?? []) seen.files[ciUndraftFile(m.repo, m.pr)] = JSON.stringify({ v: 1, ...m })
   if (w.plan !== undefined) seen.files[PLAN] = JSON.stringify(w.plan)
   if (w.exemption !== undefined) seen.files[EXEMPTION] = typeof w.exemption === 'string' ? w.exemption : JSON.stringify(w.exemption)
   const session = 'guard-session-' + ++sessions
@@ -2284,69 +2280,22 @@ for (const [route, call] of UNDRAFT_ACTS) {
   })
 }
 
-test('outside auto-merge the gate puts a pull request out of draft for its CI back to draft, then Ready', async ($, on) => {
-  const seen = await world($, on, { draft: false, ciUndrafts: [{ repo: 'acme/thing', pr: 12, head: HEAD }] })
-  const out = await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(commands(seen)).toEqual(['pr-gate', 'pr-gate', 'pr-draft', 'pr-readiness'])
-  expect(seen.logs).toEqual(['github: acme/thing#12 back to draft, then Ready at 0123456: a clean review,'
-    + ' passed E2E and green CI hold at its head.'])
-  const gate = JSON.parse(String(out.result))
-  expect([gate.draft, gate.labels]).toEqual([true, ['Ready']])
-})
-
-// The head a pull request is marked as undrafted for CI at, or '' when it is not or the mark is spent.
-const marked = (seen: Seen, repo = 'acme/thing', pr = 12): string => {
-  const text = seen.files[ciUndraftFile(repo, pr)]
-  return text === undefined ? '' : JSON.parse(text).head
-}
 const CI_PENDING = { result: 'PENDING', running: 0, skipped: ['test'], total: 1 }
 
-test('a pull request the plugin undrafted for CI goes back to draft once the four hold, then Ready, and the mark is spent', async ($, on) => {
+test('a pull request the plugin took out of draft for its CI stays out of draft when the gate writes Ready', async ($, on) => {
   const w: World = { ci: CI_PENDING }
   const seen = await world($, on, w)
   await $.tool.call(gh('pr-ready', { pr: 12 }))
-  expect(marked(seen)).toBe(HEAD)
   seen.pull!.draft = false
   w.ci = {}
   seen.runs.length = 0
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(commands(seen)).toEqual(['pr-gate', 'pr-gate', 'pr-draft', 'pr-readiness'])
-  expect(marked(seen)).toBe('')
+  seen.logs.length = 0
+  const out = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(commands(seen)).toEqual(['pr-gate', 'pr-gate', 'pr-readiness'])
+  expect(seen.logs).toEqual([READY_LINE])
+  const gate = JSON.parse(String(out.result))
+  expect([gate.draft, gate.labels]).toEqual([false, ['Ready']])
 })
-
-test('a Bash CI undraft leaves the same mark', async ($, on) => {
-  const seen = await world($, on, { ci: CI_PENDING })
-  await $.tool.call(bash('gh pr ready 12 -R acme/thing'))
-  expect(marked(seen)).toBe(HEAD)
-})
-
-test('a pull request the plugin undrafted for CI stays covered when a push moves its head', async ($, on) => {
-  const w: World = { ci: CI_PENDING, heads: [MOVED] }
-  const seen = await world($, on, w)
-  await $.tool.call(gh('pr-ready', { pr: 12 }))
-  expect(marked(seen)).toBe(MOVED)
-  // A correction is pushed: the head is another one, still out of draft, and the four hold at it.
-  seen.pull!.draft = false
-  w.ci = {}
-  w.heads = [HEAD]
-  seen.runs.length = 0
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(commands(seen)).toEqual(['pr-gate', 'pr-gate', 'pr-draft', 'pr-readiness'])
-  expect(marked(seen)).toBe('')
-})
-
-for (const [route, call] of [['tool', () => gh('pr-ready', { pr: 12 })], ['Bash', () => bash('gh pr ready 12 -R acme/thing')]] as const) {
-  test('a ' + route + ' CI undraft of a pull request the operator already took out of draft leaves no mark', async ($, on) => {
-    const w: World = { draft: false, ci: CI_PENDING }
-    const seen = await world($, on, w)
-    await $.tool.call(call())
-    expect(marked(seen)).toBe('')
-    w.ci = {}
-    seen.runs.length = 0
-    await $.tool.call(gh('pr-gate', { pr: 12 }))
-    expect(commands(seen)).toEqual(['pr-gate', 'pr-gate', 'pr-readiness'])
-  })
-}
 
 test('a pull request the operator took out of draft gets Ready and stays out of draft', async ($, on) => {
   const seen = await world($, on, { draft: false })
@@ -2355,37 +2304,6 @@ test('a pull request the operator took out of draft gets Ready and stays out of 
   expect(seen.logs).toEqual([READY_LINE])
   const gate = JSON.parse(String(out.result))
   expect([gate.draft, gate.labels]).toEqual([false, ['Ready']])
-})
-
-test('a mark left before the operator re-drafted and undrafted the pull request no longer covers it', async ($, on) => {
-  const w: World = { ci: CI_PENDING }
-  const seen = await world($, on, w)
-  await $.tool.call(gh('pr-ready', { pr: 12 }))
-  // The operator re-drafts: the gate reads the draft and drops the mark.
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(marked(seen)).toBe('')
-  // Then undrafts it himself, the four holding.
-  seen.pull!.draft = false
-  w.ci = {}
-  seen.runs.length = 0
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(commands(seen)).toEqual(['pr-gate', 'pr-gate', 'pr-readiness'])
-})
-
-test('a mark is dropped with the pull request it names once that is closed', async ($, on) => {
-  const gate = { repo: 'acme/thing', pr: 12, state: 'closed', draft: false, head: HEAD, labels: ['Not Ready'],
-    ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1 } }
-  const seen = await world($, on, { gate, ciUndrafts: [{ repo: 'acme/thing', pr: 12, head: HEAD }, { repo: 'acme/other', pr: 3, head: HEAD }] })
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(marked(seen)).toBe('')
-  expect(marked(seen, 'acme/other', 3)).toBe(HEAD)
-})
-
-test('in auto-merge the gate puts Ready on a pull request out of draft as it stands, marked or not', async ($, on) => {
-  const seen = await world($, on, { draft: false, autoMerge: ['acme/thing'], ciUndrafts: [{ repo: 'acme/thing', pr: 12, head: HEAD }] })
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(commands(seen)).toEqual(['pr-gate', 'pr-gate', 'pr-readiness'])
-  expect(seen.logs).toEqual([READY_LINE])
 })
 
 test('a head that moves while the gate reads it gets no label, and the line says so', async ($, on) => {

@@ -846,14 +846,13 @@ export function ciUndraftLine(repo: string, pr: number): string {
 }
 
 // The lines the gate says when it reads a pull request: the label it put, or what is still missing.
-// redrafted: outside auto-merge it put the pull request back to draft first, out of draft for its CI.
 // accepted: the points the orchestrator's acceptance set aside at the head, named in place of a clean review.
 // excused: the kinds the check plan or the exemption stood for, named.
 // carried: the kinds counted at the head from an earlier head of the same diff.
 // ciText: what stands for green CI on a stacked pull request, or in a repository with no CI (stackedCi).
-export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false, accepted?: string, excused: Excused = {},
+export function gateReadyLine(repo: string, pr: number, head: string, accepted?: string, excused: Excused = {},
   carried: Carried[] = [], ciText = 'green CI'): string {
-  return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
+  return 'github: ' + repo + '#' + pr + ' Ready at ' + head7(head)
     + ': ' + (accepted ? reviewAcceptedLine(accepted) : 'a clean review') + ', '
     + (excused.norms ? 'no norms check needed (' + excused.norms + '), ' : '')
     + (excused.e2e ? 'no E2E needed (' + excused.e2e + ')' : 'passed E2E') + ' and ' + ciText + ' hold at its head'
