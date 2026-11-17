@@ -4155,6 +4155,12 @@ def cmd_home_release(args):
 # How often the follower reads the old server, and how long an agent stays at rest before it moves.
 FOLLOW_POLL = float(os.environ.get("ORCHESTRATOR_HOME_FOLLOW_POLL", "3"))
 FOLLOW_QUIET = float(os.environ.get("ORCHESTRATOR_HOME_FOLLOW_QUIET", "5"))
+# How long the follower waits for the old server's sessions to reach rest before it gives up,
+# leaving them where they are and saying so.
+FOLLOW_DEADLINE = float(os.environ.get("ORCHESTRATOR_HOME_FOLLOW_DEADLINE", str(4 * 3600)))
+# A command the host runs for a session in the background, a monitor among them: the host wraps
+# each in a shell that sources its snapshot (the hooks module's ownBackground, hooks/stop-gate.ts).
+HOST_SHELL = "/shell-snapshots/snapshot-"
 
 
 def server_conf():
@@ -4264,6 +4270,46 @@ def at_rest(record, now=None):
     return (time.time() if now is None else now) * 1000 - since >= FOLLOW_QUIET * 1000
 
 
+def host_background(pid):
+    """The commands the host `pid` runs in the background, a monitor among them: every host
+    shell whose chain of parents reaches it. None when the process table cannot be read."""
+    try:
+        done = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,command="],
+                              capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if done.returncode != 0:
+        return None
+    parent, command = {}, {}
+    for line in done.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) >= 2 and parts[0].isdigit():
+            parent[parts[0]] = parts[1]
+            command[parts[0]] = parts[2] if len(parts) == 3 else ""
+    if not parent:
+        return None
+    found = []
+    for child, line in command.items():
+        if HOST_SHELL not in line:
+            continue
+        at = parent.get(child)
+        for _ in range(64):
+            if not at or at in ("0", "1"):
+                break
+            if at == str(pid):
+                found.append(line)
+                break
+            at = parent.get(at)
+    return found
+
+
+def resting(pid):
+    """Whether the host `pid` may be moved now: its record at rest (at_rest) and no command of
+    its own running in the background, whose end would wake it in a place the move has left.
+    A process table that cannot be read proves no rest."""
+    return at_rest(host_registry(pid)) and host_background(pid) == []
+
+
 def follow_launch(pid, record, name):
     """`(program, "")` that resumes in a new window the session the record of the host `pid`
     names, under `name`, with its launch's options, its current pair and the ORCHESTRATOR_
@@ -4290,8 +4336,12 @@ def follow_launch(pid, record, name):
         resume = with_pair(resume, model, effort)
     except PairUnreadable:
         pass  # the pair its launch asked for
+    env = host_env(pid)
+    if env is None:
+        # Replayed empty, it would lose the variables that tie the agent to its orchestrator.
+        return None, "its environment cannot be read"
     # A name that is no shell identifier is left out: it would break the launch's chain.
-    exports = {k: v for k, v in (host_env(pid) or {}).items()
+    exports = {k: v for k, v in env.items()
                if re.fullmatch(r"ORCHESTRATOR_[A-Za-z0-9_]*", k) and k not in HOME_ENV_DROPPED}
     cli = shutil.which(HOST_CLI) or HOST_CLI
     line = " ".join(shlex.quote(w) for w in [cli] + resume)
@@ -4311,8 +4361,7 @@ def follow_one(old, new, window, window_name, tty, pid, record, refused):
             follow_line("%s stays in %s: %s" % (name, old, why))
         return False
     host = host_identity(tty)
-    # Read again right before the move: a turn that began since is never cut.
-    if not host or str(host[0]) != str(pid) or not at_rest(host_registry(pid)):
+    if not host or str(host[0]) != str(pid):
         return False
     program = "%s -l %s" % (LOGIN_SHELL, write_launch_script(launch, name, "follow"))
     try:
@@ -4328,6 +4377,15 @@ def follow_one(old, new, window, window_name, tty, pid, record, refused):
                        old))
         return False
     new_window, new_tty = fields
+    # Read again right before the kill, the new window made: a turn or a background command that
+    # began since is never cut, and the window that waited for it goes.
+    if not resting(pid):
+        try:
+            tmux_call(["-L", new, "kill-window", "-t", new_window])
+        except TmuxError as exc:
+            follow_line("%s: its unused window %s in %s was not killed (%s)"
+                        % (name, new_window, new, exc))
+        return False
     try:
         tmux_call(["-L", old, "kill-window", "-t", window])
     except TmuxError:
@@ -4350,7 +4408,7 @@ def close_delivered(old, window, window_name, tty, pid, record):
     its process proved ended, its session id said for a later resume. True once closed."""
     name = current_name(record.get("name") or window_name)
     host = host_identity(tty)
-    if not host or str(host[0]) != str(pid) or not at_rest(host_registry(pid)):
+    if not host or str(host[0]) != str(pid) or not resting(pid):
         return False
     try:
         tmux_call(["-L", old, "kill-window", "-t", window])
@@ -4366,6 +4424,27 @@ def close_delivered(old, window, window_name, tty, pid, record):
     follow_line("%s (session %s) closed, not moved: its work is delivered; resume it with "
                 "--resume %s" % (name, record.get("sessionId"), record.get("sessionId")))
     return True
+
+
+def follow_pane(old, new, window, window_name, tty, state, pid, orchestrator, refused, told):
+    """One pane of the old server read once: its session moved, or closed when its work is
+    delivered, once at rest. True when nothing is left to wait for in it."""
+    record = host_registry(pid) or {}
+    if record.get("sessionId") == orchestrator or not at_rest(record):
+        return False
+    background = host_background(pid)
+    if background:
+        name = current_name(record.get("name") or window_name)
+        if (pid, "background") not in told:
+            told.add((pid, "background"))
+            follow_line("%s waits for its background command(s) to end: %s"
+                        % (name, "; ".join(line[:80] for line in background)))
+        return False
+    if background is None:
+        return False
+    if state in DELIVERED_STATES:
+        return close_delivered(old, window, window_name, tty, pid, record)
+    return follow_one(old, new, window, window_name, tty, pid, record, refused)
 
 
 def end_followed(old, new, refused, clients):
@@ -4397,6 +4476,17 @@ def cmd_home_follow(args):
     there. The old server ends once no session runs in it."""
     if not args.from_ or not args.to or not args.session:
         die("home-follow: --from, --to and --session are required")
+    try:
+        follow_home(args)
+    except Exception as exc:
+        # The follower runs alone: an error it did not foresee is said where the moves are said.
+        follow_line("the follower stopped on an error (%s: %s): the sessions left in %s stay there"
+                    % (type(exc).__name__, exc, args.from_))
+        raise
+
+
+def follow_home(args):
+    """cmd_home_follow's work, its arguments checked."""
     old, new = args.from_, args.to
     deadline = time.time() + HOME_WAIT + SPAWN_TIMEOUT
     while True:
@@ -4415,7 +4505,8 @@ def cmd_home_follow(args):
                            merge=True)
         except Exception as exc:
             follow_line("the chain of %s was not handed to %s: %s" % (args.tty, zero[1], exc))
-    refused, clients = {}, []
+    refused, clients, told = {}, [], set()
+    deadline = time.time() + FOLLOW_DEADLINE
     while home_answers(old):
         clients = server_clients(old) or clients
         panes = follow_panes(old)
@@ -4423,27 +4514,34 @@ def cmd_home_follow(args):
             # A listing that failed proves nothing: the server is never ended on it.
             time.sleep(FOLLOW_POLL)
             continue
-        waiting = 0
+        waiting = []
         for window, window_name, tty, state in panes:
             try:
                 hosts = host_clis_on(tty, strict=True)
             except Exception:
-                waiting += 1  # a process table that cannot be read is no empty pane
+                waiting.append(window_name)  # a process table that cannot be read is no empty pane
                 continue
             pid = hosts[0] if hosts else None
             if not pid or not str(pid).isdigit() or pid in refused:
                 continue
-            record = host_registry(pid) or {}
-            if record.get("sessionId") != args.session and at_rest(record):
-                if state in DELIVERED_STATES:
-                    if close_delivered(old, window, window_name, tty, pid, record):
-                        continue
-                elif follow_one(old, new, window, window_name, tty, pid, record, refused):
+            try:
+                if follow_pane(old, new, window, window_name, tty, state, pid, args.session,
+                               refused, told):
                     continue
+            except Exception as exc:
+                # One pane's failure stops neither the others nor the follower: it is read again.
+                said = "%s: not moved this round: %s" % (window_name, exc)
+                if said not in told:
+                    told.add(said)
+                    follow_line(said)
             if pid not in refused:
-                waiting += 1
+                waiting.append(window_name)
         if not waiting:
             break
+        if time.time() >= deadline:
+            follow_line("%s still holds %s after %ds, never at rest: they stay there, and so does "
+                        "the server" % (old, ", ".join(waiting), FOLLOW_DEADLINE))
+            return
         time.sleep(FOLLOW_POLL)
     end_followed(old, new, refused, clients)
 

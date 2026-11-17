@@ -8690,9 +8690,13 @@ fs.appendFileSync('$FW/args-' + sid, args.join(' ') + '\\n')
 if (!process.env.STUB_NO_TRANSCRIPT) { fs.mkdirSync('$FW/projects/p', { recursive: true }); fs.appendFileSync('$FW/projects/p/' + sid + '.jsonl', '{}\\n') }
 fs.writeFileSync('$FW/env-' + sid, Object.keys(process.env).filter(k => k.startsWith('ORCHESTRATOR_')).sort().map(k => k + '=' + process.env[k]).join('\\n') + '\\n')
 fs.writeFileSync('$FW/cfg/sessions/' + process.pid + '.json', JSON.stringify({ pid: process.pid, sessionId: sid, cwd: '$FW', name: after('--name') ?? '', status: process.env.STUB_STATUS ?? 'idle', statusUpdatedAt: 0 }))
+// A command run in the background, as the host runs one: a shell that sources its snapshot.
+if (process.env.STUB_BG) fs.writeFileSync('$FW/bg-' + sid, String(require('child_process').spawn('/bin/sh', ['-c', ': /shell-snapshots/snapshot-stub; sleep 600; :'], { stdio: 'ignore' }).pid))
 setInterval(() => {}, 1 << 30)
 SH
   chmod +x "$FW/bin/f-host"
+  # The follower ends once the old process is gone; the resume starts in its new window just after.
+  fresumed() { i=0; while ! grep -q -- "--resume $1" "$FW/args-$1" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done; }
   # The old server, started from another deploy's conf: window 0 is the orchestrator's old place,
   # its session already gone; one agent, busy. The new server, whose window 0 runs the resumed
   # orchestrator.
@@ -8710,6 +8714,7 @@ SH
   # Its turn ends.
   sed -i.bak 's/"status":"busy"/"status":"idle"/' "$FW/cfg/sessions/$oldpid.json"; rm -f "$FW/cfg/sessions/$oldpid.json.bak"
   i=0; while kill -0 "$fpid" 2>/dev/null && [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done
+  fresumed sid-a
   check "at its turn's end the agent is resumed in the new server under its name, with its launch's options and its ORCHESTRATOR_ variables" \
     "Agent: a|--permission-mode auto --resume sid-a --name Agent: a|1|1" \
     "$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: a')|$(tail -1 "$FW/args-sid-a")|$(grep -c '^ORCHESTRATOR_SPAWNED=1$' "$FW/env-sid-a")|$(grep -c '^ORCHESTRATOR_REPORTS_TO=Orch: f$' "$FW/env-sid-a")"
@@ -8739,9 +8744,82 @@ SH
     "$(alive "$dpid")|$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -cx 'Agent: d')|$(grep -c 'home-follow: Agent: d (session sid-d) closed, not moved: its work is delivered; resume it with --resume sid-d' "$FW/state/close.log")|$(ft -L "$FOLD" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: n')|$(grep -c -- '--resume sid-n' "$FW/args-sid-n")"
   printf '{}\n' > "$FW/projects/p/sid-n.jsonl"
   i=0; while kill -0 "$fpid" 2>/dev/null && [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done
+  fresumed sid-n
   check "once its first turn is written, it moves, and the old server ends" "Agent: n|1|down" \
     "$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: n')|$(grep -c -- '--resume sid-n' "$FW/args-sid-n")|$(ft -L "$FOLD" has-session 2>/dev/null && echo up || echo down)"
   ft -L "$FOLD" kill-server 2>/dev/null; ft -L "$FNEW" kill-server 2>/dev/null
+
+  # The orchestrator's chain follows it into the new server: an agent moved is pointed at its new
+  # window, one closed leaves it. An agent whose pull request is merged (state over) is closed like a
+  # delivered one; one running a command in the background waits for its end, which would wake it in
+  # the window the move left.
+  fpy "ia.make_home('$FNEW', 'Orch: f', '$FW', \"env STUB_SID=sid-o $FW/bin/f-host --resume sid-o --name 'Orch: f'\", 'suite')" >/dev/null 2>&1
+  ft -L "$FOLD" -f "$FW/old.conf" new-session -d -s home -n 'Orch: f' "sleep $FMARK"
+  ft -L "$FOLD" new-window -d -t home: -n 'Agent: c' "env STUB_SID=sid-c $FW/bin/f-host --name 'Agent: c'"
+  ft -L "$FOLD" new-window -d -t home: -n 'Agent: v' "env STUB_SID=sid-v $FW/bin/f-host --name 'Agent: v'"
+  ft -L "$FOLD" set-option -w -t 'home:Agent: v' @state over
+  ft -L "$FOLD" new-window -d -t home: -n 'Agent: g' "env STUB_SID=sid-g STUB_BG=1 $FW/bin/f-host --name 'Agent: g'"
+  i=0; while { [ "$(grep -l -e '"sid-c"' -e '"sid-v"' -e '"sid-g"' -e '"sid-o"' "$FW"/cfg/sessions/*.json 2>/dev/null | wc -l | tr -d ' ')" -lt 4 ] || [ ! -s "$FW/bg-sid-g" ]; } && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+  vpid=$(basename "$(grep -l '"sid-v"' "$FW"/cfg/sessions/*.json)" .json)
+  gpid=$(basename "$(grep -l '"sid-g"' "$FW"/cfg/sessions/*.json)" .json)
+  ctab=$(fpy "print(ia.socket_tab_id('$FOLD', '$(ft -L "$FOLD" list-windows -F '#{window_id} #W' | sed -n 's/ Agent: c$//p')'))")
+  vtab=$(fpy "print(ia.socket_tab_id('$FOLD', '$(ft -L "$FOLD" list-windows -F '#{window_id} #W' | sed -n 's/ Agent: v$//p')'))")
+  mkdir -p "$FW/state/chains"
+  printf '{"tab_id":"%s","tty":"/dev/ttys801","owner":"own"}\n{"tab_id":"%s","tty":"/dev/ttys802","owner":"own"}\n' "$ctab" "$vtab" > "$FW/state/chains/ttys800.jsonl"
+  zerotty=$(ft -L "$FNEW" display -p -t home:0 '#{pane_tty}')
+  fpy "ia.cmd_home_follow(ia.args_of('home-follow', {'from_': '$FOLD', 'to': '$FNEW', 'session': 'sid-o', 'tty': '/dev/ttys800', 'owner': 'own'}))" > "$FW/follow4.out" 2>&1 &
+  fpid=$!
+  i=0; while ! { grep -q 'Agent: g waits' "$FW/state/close.log" && grep -q 'Agent: c (session sid-c) moved' "$FW/state/close.log"; } 2>/dev/null && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
+  cwin=$(ft -L "$FNEW" list-windows -F '#{window_id} #W' 2>/dev/null | sed -n 's/ Agent: c$//p')
+  check "the orchestrator's chain follows it: the agent moved names its new window there, the one closed is dropped, the old chain is gone" \
+    "1|0|1|absent" \
+    "$(grep -c "\"tab_id\": *\"$(fpy "print(ia.socket_tab_id('$FNEW', '$cwin'))")\"" "$FW/state/chains/$(basename "$zerotty").jsonl" 2>/dev/null)|$(grep -c "$vtab" "$FW/state/chains/$(basename "$zerotty").jsonl" 2>/dev/null)|$(grep -c '"owner": *"tmux:' "$FW/state/chains/$(basename "$zerotty").jsonl" 2>/dev/null)|$([ -e "$FW/state/chains/ttys800.jsonl" ] && echo present || echo absent)"
+  check "an agent whose pull request is merged (state over) is closed, not moved" "gone|0|1" \
+    "$(alive "$vpid")|$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -cx 'Agent: v')|$(grep -c 'home-follow: Agent: v (session sid-v) closed, not moved' "$FW/state/close.log")"
+  check "an agent at rest with a command running in the background is not moved, and says once what it waits for" \
+    "Agent: g|alive|1|1" \
+    "$(ft -L "$FOLD" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: g')|$(alive "$gpid")|$(grep -c 'home-follow: Agent: g waits for its background command(s) to end: /bin/sh -c : /shell-snapshots/snapshot-stub' "$FW/state/close.log")|$(wc -l < "$FW/args-sid-g" | tr -d ' ')"
+  kill "$(cat "$FW/bg-sid-g")" 2>/dev/null
+  i=0; while kill -0 "$fpid" 2>/dev/null && [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done
+  fresumed sid-g
+  check "once its background command ended, it moves, and the old server ends" "Agent: g|1|down" \
+    "$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: g')|$(grep -c -- '--resume sid-g' "$FW/args-sid-g")|$(ft -L "$FOLD" has-session 2>/dev/null && echo up || echo down)"
+  ft -L "$FOLD" kill-server 2>/dev/null
+
+  # What cannot be moved stays, and the follower says so: an environment it cannot read (the agent
+  # would lose the variables tying it to its orchestrator), a turn begun between the check and the
+  # kill, a failure on one pane, an error of the follower's own, and the deadline.
+  ft -L "$FOLD" -f "$FW/old.conf" new-session -d -s home -n 'Orch: f' "sleep $FMARK"
+  ft -L "$FOLD" new-window -d -t home: -n 'Agent: r' "env STUB_SID=sid-r $FW/bin/f-host --name 'Agent: r'"
+  i=0; while [ "$(grep -l '"sid-r"' "$FW"/cfg/sessions/*.json 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+  rpid=$(basename "$(grep -l '"sid-r"' "$FW"/cfg/sessions/*.json)" .json)
+  rfollow() { fpy "$1
+ia.cmd_home_follow(ia.args_of('home-follow', {'from_': '$FOLD', 'to': '$FNEW', 'session': 'sid-o'}))" > "$FW/follow-r.out" 2>&1; }
+  ORCHESTRATOR_HOST_ENV=null rfollow ""
+  check "an agent whose environment cannot be read stays, said, and its server is left running" "1|1|alive|up" \
+    "$(grep -c "home-follow: Agent: r stays in $FOLD: its environment cannot be read" "$FW/state/close.log")|$(grep -c "home-follow: $FOLD keeps 1 session(s) the move cannot resume; it is left running" "$FW/state/close.log")|$(alive "$rpid")|$(ft -L "$FOLD" has-session 2>/dev/null && echo up || echo down)"
+  ORCHESTRATOR_HOME_FOLLOW_DEADLINE=1 rfollow "ia.resting = lambda pid: False"
+  check "an agent whose turn began between the check and the kill stays, its window in the new server killed, and the deadline says who stayed" \
+    "0|alive|1" \
+    "$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -cx 'Agent: r')|$(alive "$rpid")|$(grep -c "home-follow: $FOLD still holds Agent: r after 1s, never at rest: they stay there, and so does the server" "$FW/state/close.log")"
+  ORCHESTRATOR_HOME_FOLLOW_DEADLINE=1 rfollow "
+def boom(*a):
+    raise RuntimeError('boom')
+ia.follow_pane = boom"
+  check "a failure on one pane is said once and the follower goes on to its deadline" "1|2|alive" \
+    "$(grep -c 'home-follow: Agent: r: not moved this round: boom' "$FW/state/close.log")|$(grep -c "home-follow: $FOLD still holds Agent: r" "$FW/state/close.log")|$(alive "$rpid")"
+  rfollow "
+def boom(*a):
+    raise RuntimeError('boom')
+ia.follow_panes = boom"
+  check "an error of the follower's own is said where the moves are, the sessions left as they are" "1|alive" \
+    "$(grep -c "home-follow: the follower stopped on an error (RuntimeError: boom): the sessions left in $FOLD stay there" "$FW/state/close.log")|$(alive "$rpid")"
+  ft -L "$FOLD" kill-server 2>/dev/null; ft -L "$FNEW" kill-server 2>/dev/null
+  # The follower is started apart from the session that asks for it, through the launcher's request.
+  ORCHESTRATOR_HOME_WAIT=0 ORCHESTRATOR_SPAWN_TIMEOUT=0 fpy "ia.start_home_follow('$FOLD', '$FNEW', '', '', 'sid-z')"
+  i=0; while ! grep -q 'the orchestrator sid-z never resumed' "$FW/state/close.log" 2>/dev/null && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
+  check "start_home_follow runs the follower in a process of its own, its lines in close.log" "1" \
+    "$(grep -c "home-follow: the orchestrator sid-z never resumed in $FNEW: the sessions of $FOLD stay there" "$FW/state/close.log")"
 
   # Every live home server reads the conf of the launcher's commit, with no restart; a server that
   # is no home server is left alone.
@@ -8758,6 +8836,32 @@ SH
 else
   skip_case "the home servers follow a deploy" "no tmux, or not macOS"
 fi
+check "an agent is at rest once idle for FOLLOW_QUIET seconds: not before, never busy, idle alone with no time" \
+  "False|True|False|True" \
+  "$(ORCHESTRATOR_HOME_FOLLOW_QUIET=5 ipy "
+r = dict(status='idle', statusUpdatedAt=1000)
+print('|'.join(str(x) for x in [ia.at_rest(r, now=3), ia.at_rest(r, now=7), ia.at_rest(dict(status='busy', statusUpdatedAt=0), now=99), ia.at_rest(dict(status='idle'))]))")"
+# The old server's end: its tab closed once the server is gone, closed by force past the wait; a
+# server that keeps a session the move cannot resume is neither ended nor closed.
+efprobe() { ORCHESTRATOR_CLOSE_TIMEOUT=0 ORCHESTRATOR_STATE_DIR="$WORK/efstate" ipy "
+calls = []
+class T(ia.Terminal):
+    def find(self, tty):
+        calls.append('find ' + tty); return $1
+    def close(self, tty, expect):
+        calls.append('close ' + tty)
+ia.ITERM = T()
+ia.home_no_tab = lambda: False
+ia.home_answers = lambda s: True
+ia.kill_watched_home = lambda s: calls.append('kill ' + s) or True
+ia.trace_home = lambda *a: calls.append('trace ' + a[0])
+ia.end_followed('orch-o', 'orch-n', $2, ['/dev/ttys1'])
+print('calls=' + ','.join(calls))" | sed -n 's/^calls=//p'; }
+check "the old server, empty, is ended and its tab closed by force once the wait is over" \
+  "kill orch-o,trace orch-o,find /dev/ttys1,close /dev/ttys1" "$(efprobe True '{}')"
+check "a tab already gone is not closed again" "kill orch-o,trace orch-o,find /dev/ttys1" "$(efprobe False '{}')"
+check "a server that keeps a session the move cannot resume is neither ended nor its tab closed" "" \
+  "$(efprobe True "{'9': 'x'}")"
 
 # The words of a launch, replayed: the conversation's own names dropped, the rest kept as typed.
 rw() { "$py" -c "
