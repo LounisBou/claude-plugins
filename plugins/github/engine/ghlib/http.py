@@ -11,11 +11,14 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from . import errors
 
 API = "https://api.github.com"
 _MAX_RETRIES = 3
+_MAX_WAIT = 60
 
 
 def token():
@@ -73,28 +76,29 @@ def _raise_for(status, data):
     raise errors.ApiError("%s (HTTP %s)" % (message, status))
 
 
-def _request(method, url, body, headers):
+def _send(method, url, body, headers):
+    """One attempt: (status, parsed body, response headers). Headers are read only off a refusal."""
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req) as resp:
             raw = resp.read().decode()
             if not raw:
-                return resp.status, {}
+                return resp.status, {}, {}
             try:
-                return resp.status, json.loads(raw)
+                return resp.status, json.loads(raw), {}
             except ValueError:
                 # Not every endpoint answers in JSON: the diff and patch media
                 # types return plain text. Hand that body back as a string
                 # instead of failing to parse it as an object.
-                return resp.status, raw
+                return resp.status, raw, {}
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode()
         try:
             parsed = json.loads(raw) if raw else {}
         except ValueError:
             parsed = {"message": raw[:200]}
-        return exc.code, parsed
+        return exc.code, parsed, exc.headers
 
 
 def _rate_limited(status, data):
@@ -105,6 +109,41 @@ def _rate_limited(status, data):
         return True
     message = (data.get("message") or "") if isinstance(data, dict) else ""
     return status == 403 and "rate limit" in message.lower()
+
+
+def _reset_message(headers):
+    """Why a spent primary quota will not be asked again: when it resets, in Paris and UTC."""
+    try:
+        stamp = datetime.fromtimestamp(int(headers.get("x-ratelimit-reset")), timezone.utc)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "reset time unknown"
+    text = stamp.strftime("%H:%M UTC")
+    try:
+        text = stamp.astimezone(ZoneInfo("Europe/Paris")).strftime("%H:%M Paris, ") + text
+    except KeyError:
+        # No tz database on this machine: the UTC time alone still says when.
+        pass
+    return "resets at " + text
+
+
+def _request(method, url, body, headers):
+    """(status, body) of a request. A spent primary quota (x-ratelimit-remaining: 0) raises at
+    once: asking again before the reset is refused again. A secondary limit waits Retry-After,
+    at most a minute, else 1 s then 2 s, and its last refusal is returned for the caller to map."""
+    for attempt in range(_MAX_RETRIES):
+        status, data, received = _send(method, url, body, headers)
+        if not _rate_limited(status, data):
+            return status, data
+        if received.get("x-ratelimit-remaining") == "0":
+            message = (data.get("message") if isinstance(data, dict) else None) or "rate limit exceeded"
+            raise errors.RateLimited("%s: the quota %s" % (message, _reset_message(received)))
+        if attempt < _MAX_RETRIES - 1:
+            try:
+                wait = max(0, min(int(received.get("retry-after")), _MAX_WAIT))
+            except (TypeError, ValueError):
+                wait = 2 ** attempt
+            time.sleep(wait)
+    return status, data
 
 
 def _call(method, path, body=None, accept="application/vnd.github+json"):
@@ -127,18 +166,10 @@ def _call(method, path, body=None, accept="application/vnd.github+json"):
         "Content-Type": "application/json",
         "User-Agent": "github-plugin",
     }
-    for attempt in range(_MAX_RETRIES):
-        status, data = _request(method, API + path, body, headers)
-        if _rate_limited(status, data) and attempt < _MAX_RETRIES - 1:
-            time.sleep(2 ** attempt)
-            continue
-        # The last attempt falls through here, so the final response decides:
-        # _raise_for maps a persistent 429 to RateLimited (exit 5). There is no
-        # post-loop raise, because the loop cannot exhaust without returning or
-        # raising, and a line that can never run is a lie about the control flow.
-        if status >= 400:
-            _raise_for(status, data)
-        return data
+    status, data = _request(method, API + path, body, headers)
+    if status >= 400:
+        _raise_for(status, data)
+    return data
 
 
 def rest(method, path, body=None, paginate=False, accept="application/vnd.github+json"):
@@ -175,14 +206,9 @@ def graphql(query, variables):
         "Content-Type": "application/json",
         "User-Agent": "github-plugin",
     }
-    for attempt in range(_MAX_RETRIES):
-        status, data = _request(
-            "POST", "https://api.github.com/graphql", {"query": query, "variables": variables}, headers
-        )
-        if _rate_limited(status, data) and attempt < _MAX_RETRIES - 1:
-            time.sleep(2 ** attempt)
-            continue
-        break
+    status, data = _request(
+        "POST", "https://api.github.com/graphql", {"query": query, "variables": variables}, headers
+    )
     if status >= 400:
         _raise_for(status, data)
     if "errors" in data:

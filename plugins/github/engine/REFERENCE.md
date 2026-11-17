@@ -365,6 +365,6 @@ Answered by the mod (README « Repositories in auto-deploy »).
 | `2` | authentication failure |
 | `3` | API error |
 | `4` | not found |
-| `5` | rate limited after retries |
+| `5` | rate limited: a spent quota at once, with its reset time in Paris and UTC; a secondary limit after its retries |
 
 Every failure prints one `error:` line to stderr.
