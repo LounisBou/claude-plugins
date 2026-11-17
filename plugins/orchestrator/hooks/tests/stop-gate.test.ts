@@ -21,7 +21,6 @@ import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration } f
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf } from './fakes.ts'
 import { capture, hookOf, hostOf } from '../../core/capture.ts'
-import { measureFilePath } from '../gauge-core.ts'
 import { fieldsOf, type Events, type Hook, type Host, type Matcher, type Noun, type ProcessRunInit, type ToolSpec } from '../../core/host.ts'
 
 // The host a hook under test is handed: every noun, those a fake does not set throwing.
@@ -934,7 +933,7 @@ function busyWorld(busyFor: number, drops = 0) {
     listing: BUSY_ROW, chain: OWNED, busyAgentPid: '88',
     files: {
       [`${HOME}/.claude/sessions/88.json`]: JSON.stringify({ pid: 88, sessionId: 's-agent', status: 'busy', statusUpdatedAt: since }),
-      [measureFilePath(`${HOME}/.claude`, 's-agent', undefined)]: JSON.stringify({ version: 1, context_tokens: 193000, context_window: 1000000, context_percent: 19, model: 'm', updated_at: 't' }),
+      [`${HOME}/.claude/claude-orchestrator/measure/s-agent.json`]: JSON.stringify({ version: 1, context_tokens: 193000, context_window: 1000000, context_percent: 19, model: 'm', updated_at: 't' }),
     },
   })
   const timers: { ms: number; fire: () => unknown; cancelled: boolean }[] = []
