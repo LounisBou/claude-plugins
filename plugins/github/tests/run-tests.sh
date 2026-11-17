@@ -2401,8 +2401,8 @@ printf '%s' '{"number":7,"node_id":"PR_x"}' > "$F7/GET_repos_acme_thing_pulls_7.
 gh7 pr-draft 7 >/dev/null
 check "pr-draft converts the pull request to a draft" "1" \
   "$(grep -c 'convertPullRequestToDraft' "$F7/sent.jsonl")"
-check "pr-draft leaves the labels of the pull request as they are" \
-  "" "$(sent7 | grep '/issues/' || true)"
+check "a Ready pull request put back to draft stays Ready: pr-draft writes no label" \
+  "0" "$(sent7 | grep -c 'labels' || true)"
 
 new7 ready-for-ci
 printf '%s' '{"number":7,"node_id":"PR_x"}' > "$F7/GET_repos_acme_thing_pulls_7.json"

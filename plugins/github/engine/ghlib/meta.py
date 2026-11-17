@@ -67,7 +67,7 @@ def pr_ready(args):
 
 def pr_draft(args):
     owner, name = repo.owner_repo()
-    # Draft is the operator's gesture, independent of Ready: the labels stay as the records at the head make them.
+    # Draft is the operator's gesture, independent of Ready: the labels follow the records at the head.
     return http.graphql(_DRAFT, {"id": _node_id(owner, name, args.pr)})
 
 

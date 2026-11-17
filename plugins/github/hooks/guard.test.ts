@@ -713,15 +713,6 @@ test('going back to draft is always let through and moves no label', async ($, o
   expect(gates(seen)).toBe(0)
 })
 
-test('a Ready pull request put back to draft stays Ready: the gate follows the records at its head, not the draft state', async ($, on) => {
-  const seen = await world($, on, { ...FOUR, draft: false, labels: ['Ready'], autoMerge: ['acme/thing'] })
-  await $.tool.call(gh('pr-draft', { pr: 12 }))
-  const read = await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(commands(seen)).toEqual(['pr-draft', 'pr-gate'])
-  expect(readinessRuns(seen)).toEqual([])
-  expect(JSON.parse(String(read.result))).toMatchObject({ draft: true, labels: ['Ready'] })
-})
-
 test('going back to draft through the tool is not asked outside auto-merge', async ($, on) => {
   const seen = await world($, on, { verdict: { decision: 'ask' }, answer: 'Deny' })
   const out = await $.tool.call(gh('pr-draft', { pr: 12 }, 'acme/other'))
