@@ -47,7 +47,7 @@ export async function replicate($: Pushing, entry: Asked): Promise<void> {
     let reason: string | null = null
     if (line === null) reason = `past the line's cap of ${ASKED_LINE_CAP} characters`
     else {
-      const sent = await sendToCoordinator($, coordinator.to, line).catch((err: unknown) => ({ isDelivered: false, reason: messageOf(err) }))
+      const sent = await sendToCoordinator($, coordinator, line).catch((err: unknown) => ({ isDelivered: false, reason: messageOf(err) }))
       if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
     }
     const replica: Replica = {

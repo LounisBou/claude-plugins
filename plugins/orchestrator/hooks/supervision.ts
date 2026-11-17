@@ -1271,7 +1271,7 @@ export async function tellSettled($: Host<'env' | 'fs' | 'plugin' | 'process' | 
     try {
       // No bound given, the caller's own deadline holds the sends.
       const left = until - Date.now()
-      const send = () => sendToCoordinator($, to, settledText(entry, answer))
+      const send = () => sendTo($, to, settledText(entry, answer))
       const sent = left === Infinity ? await send() : left > 0 ? await withDeadline(send(), left) : null
       if (!sent || isDegradedPass(sent)) await logLine($, 'supervision', `round: no time left to tell ${addressLabel(to)} that ${entry.id} is settled`)
       else if (!sent.isDelivered) await logLine($, 'supervision', `round: the settled notice of ${entry.id} was not delivered to ${addressLabel(to)}: ${sent.reason ?? 'no answer'}`)
@@ -1822,6 +1822,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     try {
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
         const delivery = deliveryOf(e.text)
+        const learnt = learntOf(delivery, Date.now())
+        if (learnt) await learnCoordinator($, learnt, true)
         if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body), peerAddress(delivery))
         const q = isQ(delivery.body) ? parseQ(delivery.body) : null
         // A question asked with `ask` crossing machines (remote-asked.ts): its owner's push, taken
@@ -1861,7 +1863,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           await refreshDeck($)
           return received
         }
-        const learnt = learntOf(delivery, Date.now())
         if (learnt) await learnCoordinator($, learnt)
         const successor = successorOf(delivery, Date.now())
         const taken = successor ? await learnSuccessor($, successor) : null
@@ -2474,7 +2475,7 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   if (orchestrating && wait && patch) {
     const entry = roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString())
     await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, pending: entry.id, pending_key: key, name, pid })
-    const sent = await sendToCoordinator($, to, qAskLine(entry, await machineOf($)))
+    const sent = await sendToCoordinator($, coordinator!, qAskLine(entry, await machineOf($)))
     if (sent?.isDelivered) return
     await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
     const now = await readWait($, sessionId)
@@ -2503,7 +2504,7 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
     ? factsLine(await readDeliveryFacts(argv => $.process.run(argv, { timeoutMs: FACTS_BOUND_MS, cwd: checkout }), whole))
     : null
   const text = wait ? relayText(name, wait, patch!.waiting_since!, context, facts) : noStatusText(name, context, answer)
-  const sent = orchestrating ? await sendToCoordinator($, to, text) : await $.session.send({ to, text })
+  const sent = orchestrating ? await sendToCoordinator($, coordinator!, text) : await $.session.send({ to, text })
   if (sent?.isDelivered) {
     await writeWait($, sessionId, { ...(patch ?? before ?? {}), relayed: key, name, pid })
   } else {
@@ -2859,9 +2860,23 @@ async function registeredSession($: Host<'env' | 'fs'>, name: string, recordText
   return chosen.length === 1 && only ? { sessionId: only.sessionId } : null
 }
 
-// A send to the coordinator. A name the host refuses as several sessions' is sent once more to
-// the one the refusal places on this machine, by its reference, when it names exactly one.
-export async function sendToCoordinator($: Host<'session'>, to: CoordinatorTo, text: string): Promise<SessionSendResult> {
+// A send to the coordinator. An address a peer delivery taught that refuses — a bridge whose
+// session ended when the coordinator handed over to a successor of its name — is forgotten once
+// the name delivers, its next delivery teaching the new one (learnCoordinator): the name alone is
+// the coordinator, whatever session holds it now.
+export type Coordinator = { to: CoordinatorTo; name: string; local: boolean }
+export async function sendToCoordinator($: Host<'clock' | 'env' | 'fs' | 'process' | 'session'>, coordinator: Coordinator, text: string): Promise<SessionSendResult> {
+  const sent = await sendTo($, coordinator.to, text)
+  if (sent?.isDelivered || coordinator.local || coordinator.to === coordinator.name) return sent
+  const named = await sendTo($, coordinator.name, text)
+  if (!named?.isDelivered) return sent
+  await learnCoordinator($, { name: coordinator.name, from: null, at: new Date().toISOString() })
+  return named
+}
+
+// A name the host refuses as several sessions' is sent once more to the one the refusal places on
+// this machine, by its reference, when it names exactly one.
+async function sendTo($: Host<'session'>, to: CoordinatorTo, text: string): Promise<SessionSendResult> {
   const sent = await $.session.send({ to, text })
   if (sent?.isDelivered || typeof to !== 'string') return sent
   const here = String(sent.reason ?? '').split('\n').flatMap(line => line.match(/^\s*(.+ \[[^\]\s]+\]) — .*\bon this machine\b/)?.[1] ?? [])
@@ -2879,10 +2894,13 @@ function addressLabel(to: CoordinatorTo): string {
   return typeof to === 'string' ? to : `session ${to.sessionId}`
 }
 
-async function learnCoordinator($: Host<'clock' | 'env' | 'fs' | 'process'>, learnt: { name: string; from: string | null; at: string }): Promise<void> {
+// `forgotten`: taught only when the address of a coordinator of that name was forgotten, by any of
+// its deliveries, its acknowledgments among them; any other coordinator's message teaches always.
+async function learnCoordinator($: Host<'clock' | 'env' | 'fs' | 'process'>, learnt: { name: string; from: string | null; at: string }, forgotten = false): Promise<void> {
   const path = `${await storeOf($)}/coordinator-learnt`
   const known = parseLearnt(String(await $.fs.read(path).catch(() => '')))
   if (known && known.name === learnt.name && known.from === learnt.from) return
+  if (forgotten && !(known && known.name === learnt.name && known.from === null)) return
   await writeAtomic($, path, JSON.stringify(learnt) + '\n')
 }
 
@@ -2984,8 +3002,7 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`
   if (!rowIsNews(row, parseRowSent(String(await $.fs.read(path).catch(() => ''))), now)) return
-  let sent = await sendToCoordinator($, to.to, rowText(row))
-  if (!sent?.isDelivered && to.to !== to.name) sent = await sendToCoordinator($, to.name, rowText(row))
+  const sent = await sendToCoordinator($, to, rowText(row))
   if (sent?.isDelivered) await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
   else await logLine($, 'supervision', `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
 }
