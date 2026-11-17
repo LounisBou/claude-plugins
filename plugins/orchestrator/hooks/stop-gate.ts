@@ -549,15 +549,15 @@ export function checkWake(facts: {
 // releases the stop: past it in one turn, the orchestrator is woken (busyWake below).
 export const NOTICE_TTL_MS = 2 * 60 * 60 * 1000
 
-// A busy own agent as its host record reads it: `since` its turn's start (statusUpdatedAt),
-// `key` that turn (its session and start), its last measured fill when one was read.
-export type BusyAgent = { label: string; key: string; since: number; tokens?: number; percent?: number }
+// A busy own agent as its host record reads it: `since` its turn's start (statusUpdatedAt), `key`
+// that turn (its session and start). Its fill is left out: measured at a turn's end only, it would
+// be the one before this turn.
+export type BusyAgent = { label: string; key: string; since: number }
 
 // The line that wakes an orchestrator on an agent busy past the bound in one turn.
 export function busyLine(agent: BusyAgent, now: number): string {
   const minutes = Math.floor((now - agent.since) / 60_000)
-  const fill = agent.tokens === undefined ? '' : `, context ${agent.tokens.toLocaleString('en-US')} (${agent.percent ?? '?'}%)`
-  return `[module] ${agent.label} busy ${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')} in one turn${fill} — read its tree`
+  return `[module] ${agent.label} busy ${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, '0')} in one turn — read its tree`
 }
 
 /*

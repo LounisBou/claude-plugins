@@ -287,19 +287,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // The last prompt the operator typed in this session, keyed by its id like the memos
   // above: the tier map's guard stands aside when it names the map or a tier.
   let lastTyped: { sessionId: string; text: string; at: string } | null = null
-  // The wake on this session's busy agents (busyWake): armed by a stop a busy agent released,
-  // cancelled at the next turn's start, with the bounds told per agent turn.
-  const busy: BusyMemory = { timer: null, told: new Map() }
-  on('turn.start', {}, async (_$, e, next) => {
-    // A subagent's turn is not the session's: the main thread's stop armed the wake, and stands.
-    if (e.agentId) return next(e)
-    busy.timer?.cancel()
-    busy.timer = null
-    return next(e)
-  }).catch(async ($, e, next) => {
-    await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
+  // The wake on this session's busy agents (busyWake): armed by a stop a busy agent released, it
+  // stands across the turns until a later stop arms it again, with the bounds told per agent turn.
+  const busy: BusyMemory = { timer: null, told: new Map(), own: null }
   on('prompt.submit', async ($, e, next) => {
     if (typedByOperator(String(e.origin?.kind ?? ''))) {
       try {
@@ -664,7 +654,10 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const { agents, resident } = ownAgents(rows, entries, owner, hostStatus)
       // A busy agent releases the stop below; past the bound in one turn, this timer wakes the session.
-      if (agents.some(agent => agent.state === 'busy')) armBusy($, busy, agents.filter(agent => agent.state === 'busy'), 0)
+      if (agents.some(agent => agent.state === 'busy')) {
+        busy.own = pid
+        armBusy($, busy, agents.filter(agent => agent.state === 'busy'), 0)
+      }
       // An idle agent whose pull request merged is delivered; one whose pull request is open
       // lives until the merge, the kept findings its own to correct, and is never asked to stand down.
       const delivered: string[] = []
@@ -923,8 +916,9 @@ async function inTime<T>($: Held, work: () => Promise<T>, until: number): Promis
   }
 }
 
-// The busy wake's module memory: its armed timer, and the bounds told per agent turn.
-type BusyMemory = { timer: { cancel(): void } | null; told: Map<string, number> }
+// The busy wake's module memory: its armed timer, the bounds told per agent turn, and this
+// session's own host pid, whose record says whether it is between turns.
+type BusyMemory = { timer: { cancel(): void } | null; told: Map<string, number>; own: string | null }
 
 // The busy wake armed `delay` ms from now over `agents`, any timer before it cancelled; a timer no
 // longer the one armed reads nothing. A clock that arms nothing is one log line, never a held stop.
@@ -945,13 +939,19 @@ function armBusy($: Held, memory: BusyMemory, agents: readonly OwnAgent[], delay
 }
 
 // One reading of the busy agents' host records: a line each for those past a bound not told yet,
-// submitted as one wake, then the timer armed again at the next bound of those still busy. A wake
-// the host drops or refuses is told nothing: the bounds are restored and tried again a minute later.
+// submitted as one wake, then the timer armed again at the next bound of those still busy. A
+// session in a turn of its own is read again a minute later, its wake kept for the turn's end; a
+// wake the host drops or refuses is told nothing: the bounds are restored and tried again a minute later.
 async function busyTick($: Held, memory: BusyMemory, agents: readonly OwnAgent[], timer: unknown): Promise<void> {
   if (memory.timer !== timer) return
   memory.timer = null
   const was = new Map(memory.told)
   try {
+    const config = await configDir($)
+    if (memory.own && hostRecordOf(String(await $.fs.read(`${config}/sessions/${memory.own}.json`).catch(() => '')))?.status === 'busy') {
+      armBusy($, memory, agents, BUSY_RETRY_MS)
+      return
+    }
     const now = Date.now()
     const { lines, next } = busyWake(await busyAgents($, agents), memory.told, now)
     if (lines.length > 0) {
@@ -966,8 +966,8 @@ async function busyTick($: Held, memory: BusyMemory, agents: readonly OwnAgent[]
   }
 }
 
-// The agents still busy, by the host's record of the session on each one's tty (its turn's start),
-// and their last measured fill: local reads only.
+// The agents still busy, by the host's record of the session on each one's tty (its turn's start):
+// local reads only.
 async function busyAgents($: Held, agents: readonly OwnAgent[]): Promise<BusyAgent[]> {
   const config = await configDir($)
   const found: BusyAgent[] = []
@@ -978,13 +978,7 @@ async function busyAgents($: Held, agents: readonly OwnAgent[]): Promise<BusyAge
       const record = hostRecordOf(String(await $.fs.read(`${config}/sessions/${pid}.json`).catch(() => '')))
       if (!record?.sessionId || !record.status) continue
       if (record.status === 'busy' && record.since === undefined) await logLine($, 'guards', `busy wake: ${agent.label}'s host record gives no turn start`)
-      if (record.status === 'busy' && record.since !== undefined) {
-        const reading = parseMeasure(String(await $.fs.read(measureFilePath(config, record.sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))).catch(() => '')))
-        found.push({
-          label: agent.label, key: `${record.sessionId} ${record.since}`, since: record.since,
-          ...(reading?.context_tokens !== undefined ? { tokens: reading.context_tokens, percent: reading.context_percent } : {}),
-        })
-      }
+      if (record.status === 'busy' && record.since !== undefined) found.push({ label: agent.label, key: `${record.sessionId} ${record.since}`, since: record.since })
       break
     }
   }
