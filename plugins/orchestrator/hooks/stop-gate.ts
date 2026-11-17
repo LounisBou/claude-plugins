@@ -291,12 +291,15 @@ export { parseChain as chainEntries } from '../core/chain-entries.ts'
 // pull_request_of() ported over the answers the handler read: the branch's pull
 // request, or nothing. The one gh read the shell gate paid per idle agent stays one
 // read in the handler; this decides what the answer says.
-export function pullRequestOf(branch: string | null, answer: string | null): { number: string; state: string } | null {
+export function pullRequestOf(branch: string | null, answer: string | null): { number: string; state: string; ready?: boolean } | null {
   if (!branch || !answer) return null
   try {
     const pr: unknown = JSON.parse(answer)
     if (!isObject(pr) || pr['number'] === undefined || pr['state'] === undefined) return null
-    return { number: String(pr['number']), state: String(pr['state']) }
+    // Ready is the label the github ready gate puts at the head; an answer with no labels says nothing of it.
+    const labels = pr['labels']
+    const ready = Array.isArray(labels) ? labels.some(label => isObject(label) && label['name'] === 'Ready') : undefined
+    return { number: String(pr['number']), state: String(pr['state']), ...(ready === undefined ? {} : { ready }) }
   } catch {
     return null
   }

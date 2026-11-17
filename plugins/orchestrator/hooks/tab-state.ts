@@ -6,8 +6,10 @@
 import type { WaitKind } from './relay.ts'
 
 // One word each: a turn started, a turn ended with nothing pending, a wait on the operator
-// written, a delivery written, the context past its gate.
-export type TabState = 'busy' | 'idle' | 'asks' | 'done' | 'gate'
+// written, a delivery whose pull request is not known Ready (under review), a delivery whose pull
+// request carries Ready (done: it waits for the merge), the delivered pull request merged or
+// closed (the agent's work is over and its orchestrator owes its close), the context past its gate.
+export type TabState = 'busy' | 'idle' | 'asks' | 'review' | 'done' | 'over' | 'gate'
 
 // The session option the home command's conf sets on every session it makes: an agent is a
 // window of a session that carries it.
@@ -45,10 +47,43 @@ export function stateArgv(bin: string, target: TabTarget, state: TabState): stri
   return [bin, '-S', target.socket, 'set-option', '-w', '-t', target.pane, STATE_OPTION, state]
 }
 
+// The panes of the server, one `<tty> <pane id> <state>` line each: a chain entry names an agent
+// by the tty of its pane, a pane id is a window's address for set-option, and the state is the
+// one its window shows now (empty when it shows none).
+export function panesArgv(bin: string, socket: string): string[] {
+  return [bin, '-S', socket, 'list-panes', '-a', '-F', `#{pane_tty} #{pane_id} #{${STATE_OPTION}}`]
+}
+
+export type PaneShown = { tty: string; pane: string; shown: string }
+
+// The answer of panesArgv, line by line; a line that is not of that shape is no pane.
+export function panesOf(stdout: string): PaneShown[] {
+  const panes: PaneShown[] = []
+  for (const line of stdout.split('\n')) {
+    const [tty, pane, shown] = line.trim().split(' ')
+    if (tty && pane) panes.push({ tty, pane, shown: shown ?? '' })
+  }
+  return panes
+}
+
+// What the pull request of an idle agent says its window should show, or null to leave it. A
+// merged or closed one: the work is over (over). An open one changes only a window that shows a
+// delivery: the Ready label turns « under review » into « done », and a pull request that lost it
+// (a new head voids it) turns « done » back. An agent at rest on no delivery keeps its own state.
+export function stateAfterPr(shown: string, pr: { state: string; ready?: boolean | undefined }): TabState | null {
+  if (pr.state === 'MERGED' || pr.state === 'CLOSED') return shown === 'over' ? null : 'over'
+  if (pr.state !== 'OPEN' || pr.ready === undefined) return null
+  if (pr.ready && shown === 'review') return 'done'
+  if (!pr.ready && shown === 'done') return 'review'
+  return null
+}
+
 // What a turn's end leaves on the window: the wait its session wrote (the operator is asked
-// something, or a delivery is in), else the gate, else nothing pending.
+// something, or a delivery is in: under review until the orchestrator's read of the pull request
+// finds it Ready), else the gate, else nothing pending.
 export function stateAfterTurn(waiting: WaitKind | null | undefined, pastGate: boolean): TabState {
-  if (waiting === 'done' || waiting === 'delivered') return 'done'
+  if (waiting === 'delivered') return 'review'
+  if (waiting === 'done') return 'done'
   if (waiting) return 'asks'
   return pastGate ? 'gate' : 'idle'
 }

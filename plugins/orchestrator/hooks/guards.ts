@@ -37,7 +37,7 @@ import {
 import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
-import { coordinatorAddress, REFERENCED } from './supervision.ts'
+import { coordinatorAddress, REFERENCED, showPrStates } from './supervision.ts'
 import { askedThisTurn, readAsked } from './question.ts'
 import { fieldsOf, messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
 import { asksTheMode } from './mode-dialog.ts'
@@ -622,12 +622,16 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // lives until the merge, the kept findings its own to correct, and is never asked to stand down.
       const delivered: string[] = []
       const awaitingMerge: string[] = []
+      // What each pull request read says its agent's window should show (merged or closed: over; Ready: done).
+      const read: { tty: string; pr: { state: string; ready?: boolean | undefined } }[] = []
       for (const agent of agents) {
         if (agent.state !== 'idle') continue
         const pr = await pullRequestRead($, agent.tty, until)
         if (pr?.state === 'MERGED') delivered.push(`${agent.label} (pull request #${pr.number}, ${pr.state})`)
         if (pr?.state === 'OPEN') awaitingMerge.push(agent.label)
+        if (pr) read.push({ tty: agent.tty, pr })
       }
+      await inTime($, () => showPrStates($, read), until)
       // The process table, read once for both checks: the commands and monitors this
       // session started in the background (check 1: one still running will wake it, and
       // names the line that fits) and the ci-watches alive at all (check 2: a head waited
@@ -934,7 +938,7 @@ async function mustReadText($: Held, path: string, what: string, until: number):
 // run in that checkout — the only network the gate pays, for an idle agent alone. Any
 // read that fails, or cannot answer in time, is no pull request: the refusal simply does
 // not name the agent, never a stop held on it.
-async function pullRequestRead($: Held, tty: string, until: number): Promise<{ number: string; state: string } | null> {
+async function pullRequestRead($: Held, tty: string, until: number): Promise<{ number: string; state: string; ready?: boolean } | null> {
   const left = () => Math.max(1, until - Date.now())
   const config = await configDir($)
   const host = await inTime($, () => hostOn(
@@ -954,7 +958,7 @@ async function pullRequestRead($: Held, tty: string, until: number): Promise<{ n
   // One --json argument, the fields comma-joined: gh reads a second word as a second
   // positional and refuses the call. Run in the agent's checkout, the repository its
   // branch is pushed to.
-  const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', branch, '--json', 'number,state'], until, cwd), until)
+  const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', branch, '--json', 'number,state,labels'], until, cwd), until)
   if (!gh || gh.exitCode !== 0) return null
   return pullRequestOf(branch, String(gh.stdout ?? ''))
 }

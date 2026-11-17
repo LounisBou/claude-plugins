@@ -3,7 +3,7 @@
 // (tab-state.ts, wired in supervision.ts): one word per state, written only when it changes,
 // only inside a home session, and a failing tmux call never fails the hook.
 import { expect, test } from 'claude-code/testing'
-import { homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, targetOf } from '../tab-state.ts'
+import { homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, targetOf } from '../tab-state.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
@@ -30,6 +30,35 @@ test('the argv of the mark read and of the state write', () => {
   expect(stateArgv('tmux', target, 'busy')).toEqual(['tmux', '-S', SOCKET, 'set-option', '-w', '-t', '%3', '@state', 'busy'])
 })
 
+test('the panes of the server are listed with their ttys and the state each window shows', () => {
+  expect(panesArgv('tmux', SOCKET)).toEqual(['tmux', '-S', SOCKET, 'list-panes', '-a', '-F', '#{pane_tty} #{pane_id} #{@state}'])
+  expect(panesOf('/dev/ttys003 %4 done\n/dev/ttys004 %5 \n/dev/ttys005 %6\n\nnot a pane\n')).toEqual([
+    { tty: '/dev/ttys003', pane: '%4', shown: 'done' },
+    { tty: '/dev/ttys004', pane: '%5', shown: '' },
+    { tty: '/dev/ttys005', pane: '%6', shown: '' },
+    { tty: 'not', pane: 'a', shown: 'pane' },
+  ])
+  expect(panesOf('')).toEqual([])
+})
+
+test('a merged or closed pull request puts its agent over, once; an open one moves only a delivery, by its Ready label', () => {
+  for (const state of ['MERGED', 'CLOSED']) {
+    for (const shown of ['', 'idle', 'review', 'done']) expect(stateAfterPr(shown, { state, ready: true })).toBe('over')
+    expect(stateAfterPr('over', { state })).toBeNull()
+  }
+  expect(stateAfterPr('review', { state: 'OPEN', ready: true })).toBe('done')
+  expect(stateAfterPr('done', { state: 'OPEN', ready: false })).toBe('review')
+  // Nothing moves a window that shows no delivery, one already right, or one whose labels were not read.
+  for (const shown of ['', 'idle', 'busy', 'asks', 'gate', 'over']) {
+    expect(stateAfterPr(shown, { state: 'OPEN', ready: true })).toBeNull()
+    expect(stateAfterPr(shown, { state: 'OPEN', ready: false })).toBeNull()
+  }
+  expect(stateAfterPr('done', { state: 'OPEN', ready: true })).toBeNull()
+  expect(stateAfterPr('review', { state: 'OPEN', ready: false })).toBeNull()
+  expect(stateAfterPr('review', { state: 'OPEN' })).toBeNull()
+  expect(stateAfterPr('review', { state: 'DRAFT' })).toBeNull()
+})
+
 test('the window is the answer when the session carries the mark, else none', () => {
   expect(windowOf('1|home:@3.%7\n')).toBe('home:@3.%7')
   expect(windowOf('|home:@3.%7\n')).toBeNull()
@@ -41,7 +70,8 @@ test('a turn ends on the wait it wrote, else the gate, else idle', () => {
   expect(stateAfterTurn('question', true)).toBe('asks')
   expect(stateAfterTurn('blocked', false)).toBe('asks')
   expect(stateAfterTurn('done', true)).toBe('done')
-  expect(stateAfterTurn('delivered', false)).toBe('done')
+  // A delivery is under review until the orchestrator's read of its pull request finds it Ready.
+  expect(stateAfterTurn('delivered', false)).toBe('review')
   expect(stateAfterTurn(null, true)).toBe('gate')
   expect(stateAfterTurn(null, false)).toBe('idle')
 })
@@ -52,7 +82,7 @@ test('a measure moves only a window at rest, onto the gate and back', () => {
   expect(stateAfterMeasure('gate', true)).toBeNull()
   expect(stateAfterMeasure('gate', false)).toBe('idle')
   expect(stateAfterMeasure('idle', false)).toBeNull()
-  for (const held of ['busy', 'asks', 'done'] as const) {
+  for (const held of ['busy', 'asks', 'review', 'done', 'over'] as const) {
     expect(stateAfterMeasure(held, true)).toBeNull()
     expect(stateAfterMeasure(held, false)).toBeNull()
   }
@@ -167,12 +197,12 @@ test('asks when a wait for the operator is written', async () => {
   expect(fx.states()).toEqual(['busy', 'asks'])
 })
 
-test('done when a delivery is written', async () => {
+test('review when a delivery is written: done only once its pull request is read Ready', async () => {
   const chains = mounted()
   const fx = fake({ pane: '%13' })
   await drive(chains, 'turn.start', fx.dollar, {})
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('PR opened, 40 passed.\nstatus: done — PR 12'))
-  expect(fx.states()).toEqual(['busy', 'done'])
+  expect(fx.states()).toEqual(['busy', 'review'])
 })
 
 test('gate when a measure puts a window at rest past its gate, idle when it is back under', async () => {

@@ -43,7 +43,7 @@ import {
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck, type QEvent } from './remote-round.ts'
-import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
+import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
 import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
@@ -3503,6 +3503,33 @@ async function showTabState($: Host<'env' | 'plugin' | 'process'>, state: TabSta
   } catch (err) {
     tab.memory.shown = null
     await tabFailure($, tab.memory, messageOf(err))
+  }
+}
+
+// The windows of the agents whose pull request was read: merged or closed, their work is over and
+// their orchestrator owes their close (`over`); an open one that carries Ready turns a delivery's
+// window from « under review » to « done », and one that lost it back (stateAfterPr). Asked by the
+// orchestrator's stop gate, which already reads each idle agent's pull request: no poller of its
+// own. The agents are named by the ttys of their panes, found on the server this session runs in;
+// each state stands until the window's own session writes its next. A session outside a home
+// session shows nothing; a failure is said once and the gate goes on.
+export async function showPrStates($: Host<'env' | 'plugin' | 'process'>, reads: readonly { tty: string; pr: { state: string; ready?: boolean | undefined } }[]): Promise<void> {
+  if (reads.length === 0) return
+  try {
+    const tab = await tabOf($)
+    if (!tab) return
+    const listed = await $.process.run(panesArgv(tab.bin, tab.target.socket), { timeoutMs: TMUX_TIMEOUT_MS })
+    if (!listed || listed.exitCode !== 0) throw new Error(`tmux exited ${listed?.exitCode ?? 'without answer'} listing the panes`)
+    const panes = panesOf(String(listed.stdout ?? ''))
+    for (const { tty, pr } of reads) {
+      const window = panes.find(pane => pane.tty === tty)
+      const next = window ? stateAfterPr(window.shown, pr) : null
+      if (!window || !next) continue
+      const set = await $.process.run(stateArgv(tab.bin, { socket: tab.target.socket, pane: window.pane }, next), { timeoutMs: TMUX_TIMEOUT_MS })
+      if (!set || set.exitCode !== 0) throw new Error(`tmux exited ${set?.exitCode ?? 'without answer'} writing ${next} on ${window.pane}`)
+    }
+  } catch (err) {
+    await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)
   }
 }
 
