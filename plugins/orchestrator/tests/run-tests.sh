@@ -1638,7 +1638,7 @@ WC="$WORK/wc"
 mkdir -p "$WC/bin" "$WC/bin-nolsof" "$WC/hosttmp" "$WC/src"
 export ORCHESTRATOR_HOST_TMP="$WC/hosttmp"
 export ORCHESTRATOR_WORKSPACES="$WORK/wcroot"
-# The sweep caches each repository's pull requests in the state directory: one of the suite's own.
+# The sweep reads the machine's pull request file in the state directory: one of the suite's own.
 export ORCHESTRATOR_STATE_DIR="$WC/state"
 rp() { ( cd "$1" && pwd -P ); }
 mkdir -p "$WORK/wcroot"
@@ -1656,14 +1656,11 @@ for n in 1 2 3; do
 done
 WCSRC="$WC/src/proj"; WCSRC2="$WC/src/proj2"; WCSRC3="$WC/src/proj3"
 
-# A fake `gh`: one JSON file per origin, named after the origin's last path part, and one
-# line per `pr list` call so the number of calls per repository can be counted.
+# A fake `gh` that only counts its calls: the sweep must make none.
 cat > "$WC/bin/gh" <<EOF
 #!/bin/bash
-[ -f "$WC/gh-offline" ] && { echo "gh: you are not logged in" >&2; exit 1; }
-[ "\$1 \$2" = "pr list" ] || exit 1
 echo "\$(pwd -P) \$*" >> "$WC/gh-calls"
-cat "$WC/prs-\$(basename "\$(git remote get-url origin)").json"
+exit 1
 EOF
 printf '#!/bin/bash\nexit 1\n' > "$WC/bin-nolsof/lsof"
 chmod +x "$WC/bin/gh" "$WC/bin-nolsof/lsof"
@@ -1846,6 +1843,23 @@ cat > "$WC/prs-origin2.git.json" <<EOF
 [{"number":1,"state":"MERGED","headRefName":"feat/p2","headRefOid":"$(head_of "$C_P2")"}]
 EOF
 for d in "$C_MERGED" "$C_CLOSED" "$C_OPEN" "$C_NOPR" "$C_DIRTY" "$C_UNPUSHED" "$C_LIVE" "$C_P2" "$C_MAIN" "$C_STABLE" "$C_PAST" "$C_BEHIND" "$P_MERGED" "$P_MOVED" "$P_SAME" "$P_NOREC" "$P_NOBRANCH"; do scratch "$d" >/dev/null; done
+# The sweep reads GitHub repositories only: each origin named as one (the pins share their
+# source's), restored once the sweep's cases are done; the machine's pull request file holds
+# the lists above, as the hooks module writes it.
+ghname() { case "$(git -C "$1" remote get-url origin)" in */origin2.git) echo acme/proj2 ;; */origin3.git) echo acme/proj3 ;; *) echo acme/proj ;; esac; }
+for d in "$WCSRC" "$WCSRC2" "$WCSRC3" "$C_MERGED" "$C_CLOSED" "$C_OPEN" "$C_NOPR" "$C_DIRTY" "$C_UNPUSHED" "$C_LIVE" "$C_P2" "$C_MAIN" "$C_STABLE" "$C_PAST" "$C_BEHIND"; do
+  git -C "$d" remote set-url origin "https://github.com/$(ghname "$d").git"
+done
+mkdir -p "$ORCHESTRATOR_STATE_DIR"
+node -e '
+const fs = require("fs")
+const [out, ...lists] = process.argv.slice(1)
+const repoOf = path => `acme/proj${/prs-origin(\d*)\.git\.json$/.exec(path)[1]}`
+const prs = lists.flatMap(path => JSON.parse(fs.readFileSync(path, "utf8")).map(p => ({ repo: repoOf(path), pr: p.number, state: p.state, draft: false, head: p.headRefName, sha: p.headRefOid })))
+const at = new Date().toISOString()
+fs.writeFileSync(out, JSON.stringify({ v: 1, at, tried: at, viewer: "me", repos: lists.map(repoOf), unread: [], prs }))
+' "$ORCHESTRATOR_STATE_DIR/prs.json" "$WC/prs-origin.git.json" "$WC/prs-origin2.git.json" "$WC/prs-origin3.git.json"
+cp "$ORCHESTRATOR_STATE_DIR/prs.json" "$WC/prs.json.kept"
 # The orphans of checkouts deleted before this change: the encoded root, an existing project,
 # then a name that matches no checkout. Those that must stay: one past the root's name without
 # the separator, one outside the root, two of a sibling of the root sharing its name as a
@@ -1878,33 +1892,28 @@ out=$(wcgh bash "$WS" sweep --dry-run 2>"$WC/sweep-dry.err"); code=$?
 check "a dry run exits 0 and deletes nothing, checkouts or host directories" "0|$BEFORE|1|1|1|1|1|1|1" "$code|$(nitems)|$(tmpstate)"
 check "a dry run prints its decisions: six deletions and the orphan, none done" "7|0" \
   "$(printf '%s\n' "$out" | grep -c '^would delete ')|$(printf '%s\n' "$out" | grep -c '^deleted ')"
-check "the pull requests are read once per repository, never once per checkout; a long-lived branch asks none" "2" "$(grep -c 'pr list' "$WC/gh-calls")"
-check "and with the fields the decision reads, two hundred at most" "2|2" \
-  "$(grep -c -- '--json headRefName,state,headRefOid,number' "$WC/gh-calls")|$(grep -c -- '--limit 200 ' "$WC/gh-calls")"
+check "the pull requests are read in the machine's file, never on the forge" "0" "$(grep -c . "$WC/gh-calls")"
+check "and the file is asked for each repository read, once; a long-lived branch asks none" "acme/proj|acme/proj2" \
+  "$(cut -d' ' -f1 "$ORCHESTRATOR_STATE_DIR/prs.wanted" | sort | paste -sd'|' -)"
 # The orphans are local and cheap, the pull requests a call per repository: a sweep cut by its
 # deadline has done the orphans first.
 first_ckt=$(printf '%s\n' "$out" | grep -n "^[a-z ]* $WCR/proj" | head -1 | cut -d: -f1)
 last_tmp=$(printf '%s\n' "$out" | grep -n "^[a-z ]* $ORCHESTRATOR_HOST_TMP/" | tail -1 | cut -d: -f1)
 check "the orphans are decided before any checkout" "1" "$([ -n "$last_tmp" ] && [ -n "$first_ckt" ] && [ "$last_tmp" -lt "$first_ckt" ] && echo 1 || echo 0)"
-CACHED=$(ls "$ORCHESTRATOR_STATE_DIR/sweep-prs" 2>/dev/null | grep -c .)
-: > "$WC/gh-calls"
-wcgh bash "$WS" sweep --dry-run >/dev/null 2>&1
-check "the lists are cached in the state directory, one file per origin; a second sweep asks gh nothing" "2|0" "$CACHED|$(grep -c . "$WC/gh-calls")"
-touch -t 200001010000 "$ORCHESTRATOR_STATE_DIR"/sweep-prs/*
-wcgh bash "$WS" sweep --dry-run >/dev/null 2>&1
-check "a list older than thirty minutes is asked again" "2" "$(grep -c . "$WC/gh-calls")"
-rm -rf "$ORCHESTRATOR_STATE_DIR/sweep-prs"
 
 out=$(wcgh bash "$WS" sweep --deadline 0 2>"$WC/sweep-dl.err"); code=$?
 check "a spent deadline stops cleanly before the next item: nothing deleted, said" "0|$BEFORE|1" \
   "$code|$(nitems)|$(grep -c 'deadline' "$WC/sweep-dl.err")"
 
-: > "$WC/gh-offline"
+rm -f "$ORCHESTRATOR_STATE_DIR/prs.json"
 out=$(wcgh bash "$WS" sweep 2>"$WC/sweep-off.err"); code=$?
-rm -f "$WC/gh-offline"
-check "gh unreachable: no checkout deleted, each repository says so once, the items are kept with the reason" "0|$BEFORE|2|1" \
-  "$code|$(nitems)|$(grep -c 'cannot read the pull requests' "$WC/sweep-off.err")|$(printf '%s\n' "$out" | grep -c "^kept $C_MERGED: .*pull requests")"
-check "and a failed call is never cached" "0" "$(ls "$ORCHESTRATOR_STATE_DIR/sweep-prs" 2>/dev/null | grep -c .)"
+check "no pull request file: no checkout deleted, each repository says so once, the items are kept with the reason" "0|$BEFORE|2|1" \
+  "$code|$(nitems)|$(grep -c 'cannot read the pull requests' "$WC/sweep-off.err")|$(printf '%s\n' "$out" | grep -c "^kept $C_MERGED: .*pull request")"
+node -e 'const fs = require("fs"); const f = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); fs.writeFileSync(process.argv[2], JSON.stringify({ ...f, error: "HTTP 502" }))' "$WC/prs.json.kept" "$ORCHESTRATOR_STATE_DIR/prs.json"
+out=$(wcgh bash "$WS" sweep 2>"$WC/sweep-off.err"); code=$?
+check "a file whose last refresh failed is no current reading: nothing deleted either" "0|$BEFORE|2" \
+  "$code|$(nitems)|$(grep -c 'cannot read the pull requests' "$WC/sweep-off.err")"
+cp "$WC/prs.json.kept" "$ORCHESTRATOR_STATE_DIR/prs.json"
 mkorphans
 
 out=$(wcgh bash "$WS" sweep 2>"$WC/sweep.err"); code=$?
@@ -1952,7 +1961,8 @@ for d in "$C_OPEN" "$C_NOPR" "$C_UNPUSHED" "$C_LIVE" "$C_MAIN" "$C_STABLE" "$C_P
 bash "$WS" delete "$C_DIRTY" --discard >/dev/null 2>&1
 bash "$WS" delete "$P_NOBRANCH" --discard >/dev/null 2>&1
 check "the temporary fixtures are gone and nothing is left under the root" "0" "$(nitems)"
-rm -rf "$ORCHESTRATOR_HOST_TMP"/* "$WC/gh-calls" "$ORCHESTRATOR_STATE_DIR"
+git -C "$WCSRC" remote set-url origin "$WC/origin.git"; git -C "$WCSRC2" remote set-url origin "$WC/origin2.git"; git -C "$WCSRC3" remote set-url origin "$WC/origin3.git"
+rm -rf "$ORCHESTRATOR_HOST_TMP"/* "$WC/gh-calls" "$WC/prs.json.kept" "$ORCHESTRATOR_STATE_DIR"
 
 unset ORCHESTRATOR_WORKSPACES GIT_CONFIG_GLOBAL ORCHESTRATOR_HOST_TMP ORCHESTRATOR_STATE_DIR
 
