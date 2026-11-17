@@ -1540,9 +1540,9 @@ test('a refused or failing focus or scroll request never blocks the draw', async
 
 // The fake host's screen draws an Input on one row whatever its `rows`, so the pane's own count
 // is read from where its scroll track appears: the fewest window rows that need none.
-async function countedRows(render: (props?: object) => Promise<El>): Promise<number> {
+async function countedRows(render: (props?: object) => Promise<El>, bodyColumns = 200): Promise<number> {
   for (let bodyRows = 1; bodyRows < 400; bodyRows++) {
-    const tree = await render({ scroll: { offset: 0, bodyRows }, bodyColumns: 200 })
+    const tree = await render({ scroll: { offset: 0, bodyRows }, bodyColumns })
     if (kidsOf(tree).every(k => k.props?.position !== 'absolute')) return bodyRows
   }
   throw new Error('the pane never fits')
@@ -2648,7 +2648,7 @@ const LONG = {
 test('a wait of 200 characters is cut to the pane\'s width on one line, never wrapped, and the rows counted are the rows drawn', async () => {
   expect(LONG_ON.length).toBeGreaterThan(200)
   const fx = fakeDollar({ launchName: 'Coord: main' })
-  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: long', updated_at: AGO() }), unattended: LONG }) + '\n')
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: long', updated_at: AGO(), repo: 'acme/app' }), unattended: LONG }) + '\n')
   const { handlers } = mounted(registerSupervision)
   await coordinatorRender(fx, handlers)
   const render = async (props: object = {}) => drawnTree(await handlers['ui.render'](fx.dollar, { ...renderEvent, props }, (x: unknown) => ({ passed: x })))
@@ -2665,7 +2665,13 @@ test('a wait of 200 characters is cut to the pane\'s width on one line, never wr
   const cut = text(pieces(kidsOf(elAt(elAt(narrow, 2), 1))[1]))
   expect(cut.endsWith('…')).toBe(true)
   expect(cut.length).toBe(58 - 2)
+  // The pull request stays a link on its line, the lines are cut by the host too, and the indent under the head is kept.
+  expect(links(narrow)).toEqual([['acme/app#4', 'https://github.com/acme/app/pull/4'], ['acme/app#5', 'https://github.com/acme/app/pull/5']])
+  expect(kidsOf(elAt(elAt(narrow, 2), 1)).map(node => node.props['wrap'])).toEqual(['truncate-end', 'truncate-end', 'truncate-end'])
+  const screen = drawScreen(narrow, 58)
+  expect(screen.filter(line => /^ {2}Attend ton geste :$|^ {4}acme\/app#[45]  /.test(line)).length).toBe(3)
   expect(await countedRows(render)).toBe(drawScreen(await render({ bodyColumns: 200 }), 198).length)
+  expect(await countedRows(render, 60)).toBe(drawScreen(narrow, 58).length)
   // The orchestrator's own pane, cut at its edge too.
   const own = mounted(registerSupervision)
   const ownFx = fakeDollar({ launchName: 'Orch: phase-3' })

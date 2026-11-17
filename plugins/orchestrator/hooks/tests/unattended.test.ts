@@ -5,7 +5,7 @@
 // prompt's context and the session's row; and the one refusal of a done or a deferred wait.
 import { expect, test } from 'claude-code/testing'
 import { readUnattended, register as registerUnattended, unattendedRefusal } from '../unattended.ts'
-import { openOf, readOr, safe } from '../unattended.ts'
+import { openOf, readOr } from '../unattended.ts'
 import { register as registerWait, Declarations } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
@@ -480,19 +480,18 @@ test('declare_wait takes a done from a session that handed over: the unattended 
   expect(declarations.current()?.kind).toBe('done')
 })
 
-test('the helpers every reader of a registered record shares: a session id made a file name, a read that gives "" for a file that is not there', async () => {
-  expect(safe('a b/c:d.e-f_g')).toBe('a_b_c_d.e-f_g')
+test('the helper every reader of a registered record shares: a read that gives "" for a file that is not there', async () => {
   const $ = hostOf({ fs: { read: async (p: string) => { if (p !== '/there') throw new Error('ENOENT'); return 'text' } } })
   expect(await readOr($, '/there')).toBe('text')
   expect(await readOr($, '/gone')).toBe('')
 })
 
-test('the open pull requests of a repository are those the session\'s own lines name, never the operator\'s or a teammate\'s that no line holds; none where the file holds no current reading', () => {
+test('the open pull requests of a repository are the file\'s, whoever opened them; none where the file holds no current reading', () => {
   const pr = (n: number, author: string, state: 'OPEN' | 'MERGED' = 'OPEN') =>
     ({ repo: 'acme/app', pr: n, state, draft: false, head: `b${n}`, sha: 's', author, createdAt: null, labels: [], mergeable: null, fork: null })
   const at = new Date(NOW).toISOString()
   const file = { v: 1, at, tried: at, viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(1, 'me'), pr(2, 'teammate'), pr(3, 'teammate'), pr(4, 'me', 'MERGED')] }
-  expect(openOf(file, 'acme/app', new Set(['acme/app#3']), NOW)?.map(p => p.pr)).toEqual([3])
-  expect(openOf(file, 'acme/lib', new Set(), NOW)).toBe(undefined)
-  expect(openOf({ ...file, error: 'HTTP 502' }, 'acme/app', new Set(), NOW)).toBe(undefined)
+  expect(openOf(file, 'acme/app', NOW)?.map(p => p.pr)).toEqual([1, 2, 3])
+  expect(openOf(file, 'acme/lib', NOW)).toBe(undefined)
+  expect(openOf({ ...file, error: 'HTTP 502' }, 'acme/app', NOW)).toBe(undefined)
 })

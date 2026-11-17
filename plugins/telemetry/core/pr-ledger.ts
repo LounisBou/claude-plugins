@@ -50,7 +50,6 @@ export type LedgerSet =
 export interface OpenPr {
   readonly repo: string
   readonly pr: number
-  readonly createdAt: string | null
   readonly labels?: readonly string[]
   readonly mergeable?: string
 }
@@ -214,10 +213,10 @@ export function isFreshWait(line: LedgerLine, now: number): boolean {
 }
 
 /**
- * The open pull requests of the orchestration's own lines that no agent holds: no live agent on it
- * and no wait set again within UNATTENDED_AFTER_MS, and not parked by the operator. An open pull
- * request no line holds is nobody's and is left out: it is drawn under no orchestrator. Each is told
- * apart: one that rests on the operator (carrying `Ready` or `On Hold`, or whose line waits on
+ * The pull requests of the orchestration's own lines that are open and that no agent holds: no live
+ * agent on it and no wait set again within UNATTENDED_AFTER_MS, and not parked by the operator. The
+ * lines are the only source: an open pull request no line names is nobody's and is not looked at.
+ * Each is told apart: one that rests on the operator (carrying `Ready` or `On Hold`, or whose line waits on
  * him, even freshly) comes with `waits`; the rest, Not Ready with no agent and no recorded wait, are in anomaly.
  * One the forge reads `CONFLICTING` (`UNKNOWN`, computed late, counts nothing) is in anomaly whatever it waits on: `conflict`.
  */
@@ -227,12 +226,11 @@ export function unattended(input: {
   readonly live: ReadonlySet<string>
   readonly now: number
 }): Unattended[] {
-  const byKey = new Map(input.lines.map(line => [prKey(line.repo, line.pr), line]))
+  const byKey = new Map(input.open.map(open => [prKey(open.repo, open.pr), open]))
   const left: Unattended[] = []
-  for (const open of input.open) {
-    const key = prKey(open.repo, open.pr)
-    const line = byKey.get(key)
-    if (line === undefined || line.status === 'parked') continue
+  for (const line of input.lines) {
+    const open = byKey.get(prKey(line.repo, line.pr))
+    if (open === undefined || line.status === 'parked') continue
     const onHim = line.status === 'waiting' && waitsOnOperator(line.on)
     if (!onHim) {
       if (line.status === 'working' && input.live.has(line.agent ?? '')) continue
@@ -243,7 +241,7 @@ export function unattended(input: {
       : hasLabel(open, HOLD_LABEL) ? { why: 'hold' }
         : hasLabel(open, READY_LABEL) ? { why: 'ready' }
           : undefined
-    left.push({ repo: open.repo, pr: open.pr, since: onHim ? line.since : line.updated, ...(why === undefined ? {} : { waits: why }), ...(conflict ? { conflict } : {}) })
+    left.push({ repo: line.repo, pr: line.pr, since: onHim ? line.since : line.updated, ...(why === undefined ? {} : { waits: why }), ...(conflict ? { conflict } : {}) })
   }
   return left
 }

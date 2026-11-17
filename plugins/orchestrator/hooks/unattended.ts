@@ -33,13 +33,12 @@ export type Reading = {
 }
 export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
 
-// The open pull requests of a repository as the machine's file holds them that the session's own
-// lines name (`own`, by prKey): an open pull request no line holds is nobody's, the operator's and a
-// teammate's included. Their labels say what rests on him (`Ready`, `On Hold`); undefined when the
-// file holds no current reading of the repository.
-export function openOf(file: PrFile | undefined, repo: string, own: ReadonlySet<string>, now: number): OpenPr[] | undefined {
-  return prsOfRepo(file, repo, now)?.filter(pr => pr.state === 'OPEN' && own.has(prKey(repo, pr.pr))).map(pr => ({
-    repo, pr: pr.pr, createdAt: pr.createdAt, labels: pr.labels, ...(pr.mergeable === null ? {} : { mergeable: pr.mergeable }),
+// The open pull requests of a repository as the machine's file holds them, for their labels and their
+// merge state (`Ready`, `On Hold`, `CONFLICTING`): the reading looks its own lines up in them, and lists
+// no other. Undefined when the file holds no current reading of the repository.
+export function openOf(file: PrFile | undefined, repo: string, now: number): OpenPr[] | undefined {
+  return prsOfRepo(file, repo, now)?.filter(pr => pr.state === 'OPEN').map(pr => ({
+    repo, pr: pr.pr, labels: pr.labels, ...(pr.mergeable === null ? {} : { mergeable: pr.mergeable }),
   }))
 }
 
@@ -48,8 +47,6 @@ export function unattendedRefusal(line: string): string {
   return `Not done: ${line}. Put an agent on each and record it (dispatch-record.sh pr <record> <owner/name>#<n> --working "<agent>"), `
     + 'record what it waits on (--waiting "<what>"), or the operator\'s ruling that parks it (--parked "<his words, dated>").'
 }
-
-export const safe = (id: string): string => id.replace(/[^A-Za-z0-9._-]/g, '_')
 
 export async function readOr($: Host<'fs'>, path: string): Promise<string> {
   return String(await $.fs.read(path).catch(() => ''))
@@ -89,18 +86,16 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   // Only the repositories the session's dispatch record names, read in the machine's file, refreshed
   // first when it is older than its interval; a turn end refreshes it too when the sweep, the
   // coordinator or a takeover want repositories read (`prs.wanted`), whatever its own record holds.
-  // Of the open pull requests of those repositories, only those the session's own lines name are its
-  // (`openOf`): any other is nobody's, drawn under no orchestrator.
+  // The session's own lines are the only pull requests listed (core's `unattended`): any other is nobody's.
   const repos = [...new Set(own.flatMap(record => record.lines.map(line => line.repo)))]
   const wanted = await fileWanted($, state, now)
   if (repos.length > 0 || wanted) await refreshPrFile($, now)
   const file = repos.length > 0 ? await readPrFile($) : undefined
   const open: OpenPr[] = []
   const unread: string[] = []
-  const ownKeys = new Set(own.flatMap(record => record.lines.map(line => prKey(line.repo, line.pr))))
   for (const repo of repos) {
     // A file whose last refresh failed holds the pull requests of an earlier read: unknown now.
-    const listed = openOf(file, repo, ownKeys, now)
+    const listed = openOf(file, repo, now)
     if (listed === undefined) unread.push(repo)
     else open.push(...listed)
   }

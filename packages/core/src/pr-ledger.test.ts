@@ -93,7 +93,7 @@ describe('the pull request ledger', () => {
 })
 
 describe('an unattended pull request', () => {
-  const open = (pr: number, createdAt: string | null = '2026-11-13T09:00:00Z', labels?: string[]) => ({ repo: 'acme/app', pr, createdAt, ...(labels === undefined ? {} : { labels }) })
+  const open = (pr: number, labels?: string[]) => ({ repo: 'acme/app', pr, ...(labels === undefined ? {} : { labels }) })
 
   it('is never an open pull request no line holds: it is nobody\'s, drawn under no orchestration', () => {
     assert.deepEqual(unattended({ open: [open(9)], lines: [], live: new Set(), now: NOW }), [])
@@ -264,7 +264,7 @@ describe('an unattended pull request', () => {
 })
 
 describe('what waits on the operator, and what is in anomaly', () => {
-  const open = (pr: number, labels: string[] = ['Not Ready']) => ({ repo: 'acme/app', pr, createdAt: '2026-11-13T09:00:00Z', labels })
+  const open = (pr: number, labels: string[] = ['Not Ready']) => ({ repo: 'acme/app', pr, labels })
   // Each pull request has its line, an agent that no longer runs on it unless the test gives its own.
   const read = (input: { open: ReturnType<typeof open>[]; lines?: LedgerLine[]; live?: string[] }) =>
     unattended({ open: input.open, lines: input.lines ?? input.open.map(o => line({ pr: o.pr, agent: 'Agent: gone' })), live: new Set(input.live ?? []), now: NOW })
