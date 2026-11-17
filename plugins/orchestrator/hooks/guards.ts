@@ -33,7 +33,7 @@ import {
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, type GoalsReading,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames, restatedQuestions, restatedReason,
-  putsChoiceToOperator, refuse, PROSE_CHOICE_REASON,
+  putsChoiceToOperator, refuse, PROSE_CHOICE_REASON, questionBlocks, manyQuestionsReason,
 } from './stop-gate.ts'
 import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
@@ -49,7 +49,7 @@ import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashW
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
 import { openFor } from './todo.ts'
 import {
-  MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, PROSE_CHOICE_CODE, refused, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
+  MAP_WRITE_CODE, MODE_DIALOG_CODE, MANY_QUESTIONS_CODE, observed, PROSE_CHOICE_CODE, refused, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
 } from './observe.ts'
 import { todoName } from './todo-format.ts'
 
@@ -609,6 +609,15 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       if (restated.length > 0) {
         await logLine($, 'guards', `stop gate: restated question ${restated.join(', ')}`)
         return await letThrough(restatedReason(restated))
+      }
+      // A turn puts one question to the operator: the blocks after the first wait for his answer. A refusal, the
+      // operator's rule being one question at a time; the re-fired stop (`stop_hook_active`) passes at the first
+      // line, so it refuses once per turn.
+      const blocks = questionBlocks(String(e.last_assistant_message ?? ''))
+      if (blocks > 1) {
+        await logLine($, 'guards', `stop gate: refused: ${blocks} question blocks in one message`)
+        await refused($, MANY_QUESTIONS_CODE)
+        return refuse(manyQuestionsReason(blocks))
       }
       // Check 1, what will wake you. The agents of this orchestrator are the chain
       // entries its own session wrote, still running one by the listing's glyph.

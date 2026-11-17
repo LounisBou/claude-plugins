@@ -3,7 +3,7 @@
 // race), the ported checks
 // (the wake walk, the once-per-tell CI read over ci-watch's precomputed logs), and the
 // wiring over a faked $ — every field the classic.Stop event really carries pinned by a
-// test that fails under the wrong spelling. The gate observes, and refuses a choice put to the operator in prose alone: what it once held a
+// test that fails under the wrong spelling. The gate observes, and refuses a choice put to the operator in prose and a message of several question blocks alone: what it once held a
 // stop for is its log line, and one escape in the journal; the texts are stop_gate.py's, verbatim
 // where the data source did not change beneath them.
 import { expect, test } from 'claude-code/testing'
@@ -12,7 +12,7 @@ import {
   deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
-  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions, putsChoiceToOperator, PROSE_CHOICE_REASON,
+  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions, putsChoiceToOperator, PROSE_CHOICE_REASON, questionBlocks,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait, type Heads,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
@@ -268,6 +268,48 @@ test('an auditor is refused the same way; the coordinator, whose decision round 
   expect(coordinator.answer.block).toBeUndefined()
   const agent = await refusedStop(handlers['classic.Stop'], fakeDollar({ launchName: 'Agent: belt' }).dollar, e)
   expect(agent.answer.block).toBeUndefined()
+})
+
+// --- a message puts one question to the operator ---------------------------------------------------
+
+const MANY_REASON = '3 questions in one message: present the first, the rest after his answer, one per message.'
+const THREE = [1, 2, 3].map(i => `**Question ${i} of 3**\n_Subject_ : matter ${i}\n_Question_ : Which one?`).join('\n\n')
+
+test('the question blocks of a message are the lines that open one, a quoted line not counted', () => {
+  expect(questionBlocks(THREE)).toBe(3)
+  expect(questionBlocks(ASKED)).toBe(1)
+  expect(questionBlocks('Question 1 of 2 — merge it?\nQuestion 2 of 2 — tag it?')).toBe(2)
+  expect(questionBlocks('### Question 1 of 2\n- **Question 2 of 2**\n3. Question 3 of 3')).toBe(3)
+  expect(questionBlocks('No question here, only the word Question and « 1 of 3 » in a sentence.')).toBe(0)
+  expect(questionBlocks('> **Question 1 of 1** (q-a1b2c3-1)\n\n**Question 1 of 1** (q-a1b2c3-2)')).toBe(1)
+})
+
+test('a message with three question blocks is refused: present the first, the rest after his answer', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({})
+  const out = await refusedStop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: THREE }))
+  expect(out.answer.block).toBe(MANY_REASON)
+  expect(out.passed).toBeNull()
+  expect(out.journal).toEqual(['refusal orchestrator.stop-gate.many-questions'])
+})
+
+test('a message with one question block passes, and a coordinator is left alone', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({})
+  const one = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED }))
+  expect(one.observed ?? '').not.toContain('questions in one message')
+  expect(fieldsIn(one.answer)['block']).toBeUndefined()
+  const coord = fakeDollar({ launchName: 'Coord: machine' })
+  const single = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: THREE }))
+  expect(single.observed).toBeUndefined()
+})
+
+test('a message copying an open question and asking one more is told as a restatement first', async () => {
+  const { handlers } = mounted()
+  askTurnStarted()
+  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
+  const told = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `${ASKED_BLOCK}\n\n**Question 1 of 1** (q-new-1)` }))
+  expect(told.observed).toBe(RESTATED_REASON)
 })
 
 test('an orchestrator ending on an operator wait that blocks nothing gets the blocks-nothing refusal, not the no-question one', async () => {
