@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { agentLine, answerMeaning, briefOf, closeVerb, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, roundSettled, rowLines, rowOfBrief, TEMPLATE, todoStray, toApply, type Artifacts, type ListedRow } from './succession.ts'
+import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, roundSettled, rowLines, rowOfBrief, TEMPLATE, todoStray, toApply, type Artifacts, type ListedRow } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -923,4 +923,20 @@ test('a quotation a to-do item holds is named by its item through the takeover; 
   assert.equal(w.run(), 0)
   assert.ok(w.text().includes('note=to-do words [words: to-do 15]'))
   assert.ok(!w.text().includes('naissance') && !w.text().includes('Questions the operator answered'))
+})
+
+test('the takeover reads pull requests in the machine\'s pull request file, never the forge: a state, the open ones with their heads, nothing where it holds no current reading', () => {
+  const state = mkdtempSync(join(tmpdir(), 'succession-prs-'))
+  const pr = (n: number, st: string) => ({ repo: 'acme/app', pr: n, state: st, head: `b${n}`, sha: `${n}`.repeat(7) })
+  const file = { v: 1, at: 'T', tried: 'T', viewer: 'me', repos: ['acme/app'], unread: ['acme/lib'], prs: [pr(7, 'OPEN'), pr(8, 'MERGED'), { ...pr(9, 'OPEN'), repo: 'acme/lib' }] }
+  writeFileSync(join(state, 'prs.json'), JSON.stringify(file))
+  const read = filePrs({ ORCHESTRATOR_STATE_DIR: state })
+  assert.equal(read.state('acme/app', 8), 'MERGED')
+  assert.equal(read.state('acme/app', 99), undefined)
+  assert.equal(read.state('acme/lib', 9), undefined)
+  assert.deepEqual(read.open('acme/app'), [{ repo: 'acme/app', pr: 7, head: '7777777' }])
+  assert.equal(read.open('acme/lib'), undefined)
+  writeFileSync(join(state, 'prs.json'), JSON.stringify({ ...file, error: 'HTTP 502' }))
+  assert.equal(filePrs({ ORCHESTRATOR_STATE_DIR: state }).open('acme/app'), undefined)
+  rmSync(state, { recursive: true, force: true })
 })

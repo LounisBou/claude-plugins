@@ -45,6 +45,7 @@ import { chainPath, parseChain } from '../../../core/chain-entries.ts'
 import { DECK_FILE, parseDeck } from '../../../core/deck.ts'
 import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../core/orchestration.ts'
 import { readText } from '../../../core/store.ts'
+import { parsePrFile, prFilePath, prsOfRepo } from '../../../hooks/pr-file-format.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { setting } from '../../../core/env.ts'
 import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts'
@@ -767,36 +768,16 @@ export function notInstalled(worktree: string, env: Env, now: Date): string {
   }
 }
 
-/** A pull request's state on the forge (`gh pr view`), undefined when it cannot be read. */
-export function forgeState(env: Env): (repo: string, pr: number) => string | undefined {
-  return (repo, pr) => {
-    try {
-      const state = execFileSync('gh', ['pr', 'view', String(pr), '-R', repo, '--json', 'state', '-q', '.state'], {
-        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, env: { ...process.env, ...env },
-      }).trim()
-      return state === '' ? undefined : state
-    } catch {
-      return undefined
-    }
-  }
-}
-
-/** A repository's open pull requests as `gh pr list` tells them, undefined when it cannot be read. */
-export function forgeOpenPrs(env: Env): OpenPrReader {
-  return repo => {
-    try {
-      const listed: unknown = JSON.parse(execFileSync('gh', ['pr', 'list', '-R', repo, '--state', 'open', '--limit', '200', '--json', 'number,headRefOid'], {
-        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000, env: { ...process.env, ...env },
-      }))
-      if (!Array.isArray(listed)) return undefined
-      return listed.flatMap(item => {
-        const number = field(item, 'number')
-        const head = field(item, 'headRefOid')
-        return typeof number === 'number' && typeof head === 'string' ? [{ repo, pr: number, head }] : []
-      })
-    } catch {
-      return undefined
-    }
+/**
+ * The machine's pull request file (the hooks module refreshes it, one forge call a minute for the
+ * whole machine), read once: each pull request's state and each repository's open pull requests, as
+ * it holds them; undefined where it holds no current reading.
+ */
+export function filePrs(env: Env): { readonly state: (repo: string, pr: number) => string | undefined; readonly open: OpenPrReader } {
+  const file = parsePrFile(readText(prFilePath(stateRoot(env))) ?? '')
+  return {
+    state: (repo, pr) => prsOfRepo(file, repo)?.find(held => held.pr === pr)?.state,
+    open: repo => prsOfRepo(file, repo)?.filter(held => held.state === 'OPEN').map(held => ({ repo, pr: held.pr, head: held.sha })),
   }
 }
 
@@ -950,14 +931,15 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const round = archiveRound(stateRoot(env), now, io)
   const request: Request = { ...parsed, name }
   const launcher = join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh')
-  const open = readOpen(request, env, deps.openPrs ?? forgeOpenPrs(env), (deps.list ?? (() => launcherList(launcher, env)))())
+  const prs = filePrs(env)
+  const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))())
   if ((open.disagree ?? 0) > 0) {
     const journal = deps.journal ?? scriptJournal(env, deps.now, line => io.err(`${line}\n`))
     writeAudit(journal, auditRun(env, now), 'failure', 'orchestrator.succession.agents', { failure: 'succession-lost-state', count: open.disagree ?? 0, prs: [] })
   }
   let installed: string | undefined
   const installedLine = (): string => (installed ??= notInstalled(parsed.worktree, env, now))
-  const facts: Artifacts = { rows: all, prState: deps.prState ?? forgeState(env), installed: installedLine, now: now.getTime() }
+  const facts: Artifacts = { rows: all, prState: deps.prState ?? prs.state, installed: installedLine, now: now.getTime() }
   const owners = ownersOf(open, blocker => fallOf(blocker, facts))
   const stray = todoStray(readText(todoPath(stateRoot(env), name)) ?? '', all)
   const project = projectOf(parsed.worktree, parsed.record)
