@@ -74,8 +74,10 @@ nothing else on the line. A TODO Staging or TODO Prod item is a task-list checkb
 item stands alone:
 it never points to another item ("do the same edit", "same as above", "likewise") and writes
 the action in full, the file, the value before and after, and the host or environment. One
-checkbox, one action: an edit and the restart, reload, deploy or migration that applies it are
-two checkboxes, never joined by "then" or "and run". A PRs Dependency or Related PRs
+checkbox, one action: an edit and the restart, reload or deploy that applies it are two
+checkboxes, never joined by "then" or "and run". A TODO is only an action a person does by hand:
+a step the deploy runs on its own (database migrations, cache clear, build) is never a TODO.
+A PRs Dependency or Related PRs
 item is a `- ` bullet — the line break and the dash are what keep
 GitHub's preview rendering every link as a pull request card. Never a heading, never a
 link inline after the label: `none` is the one thing ever written beside a label, and
@@ -85,9 +87,8 @@ listing the items they share. `**PRs Dependency:**` lists the PRs
 that ship before this one or at the same time: that is the delivery prerequisite, their
 deploy steps included. No TODO repeats it (« Deploy/Merge <PR> before this PR », their
 migrations, restarts or config): with no deploy action of its own, a PR has both TODOs at
-`none`, even with dependencies. A TODO states only a constraint the list cannot express: the
-dependency ships strictly before, or a step waits for an asynchronous operation of the
-dependency. `**Related PRs:**` lists the PRs truly linked to this work: part of the same
+`none`, even with dependencies. A TODO never names a PRs Dependency item nor its deploy: that
+section carries the order. `**Related PRs:**` lists the PRs truly linked to this work: part of the same
 batch, the origin of the bug, or a link of that strength. A follow-up PR, one that must come
 after this one, is never listed
 in Related PRs. Two PRs never depend on each other. English always, with no
