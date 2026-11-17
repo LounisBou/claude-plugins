@@ -3,7 +3,7 @@
 // race), the ported checks
 // (the wake walk, the once-per-tell CI read over ci-watch's precomputed logs), and the
 // wiring over a faked $ — every field the classic.Stop event really carries pinned by a
-// test that fails under the wrong spelling. The gate observes, never refuses: what it once held a
+// test that fails under the wrong spelling. The gate observes, and refuses a message of several question blocks alone: what it once held a
 // stop for is its log line, and one escape in the journal; the texts are stop_gate.py's, verbatim
 // where the data source did not change beneath them.
 import { expect, test } from 'claude-code/testing'
@@ -180,18 +180,29 @@ test('the question blocks of a message are the lines that open one, a quoted lin
   expect(questionBlocks('> **Question 1 of 1** (q-a1b2c3-1)\n\n**Question 1 of 1** (q-a1b2c3-2)')).toBe(1)
 })
 
-test('a message with three question blocks is told to present the first, the rest after his answer', async () => {
+// The one check besides the prose choice that refuses: the host reads the module's `block` field as the decision.
+async function refusedStop(dollar: World, e: StopEvent) {
   const { handlers } = mounted()
+  const fx = journalled(dollar)
+  let passed: unknown = null
+  const answer = await handlers['classic.Stop'](fx.dollar, e, async (x: unknown) => { passed = x; return x })
+  return { answer: fieldsIn(answer), passed, journal: fx.journal() }
+}
+
+test('a message with three question blocks is refused: present the first, the rest after his answer', async () => {
   const { dollar } = fakeDollar({})
-  const told = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: THREE }))
-  expect(told.observed).toBe(MANY_REASON)
+  const out = await refusedStop(dollar, stopEvent({ last_assistant_message: THREE }))
+  expect(out.answer['block']).toBe(MANY_REASON)
+  expect(out.passed).toBeNull()
+  expect(out.journal).toEqual(['refusal orchestrator.stop-gate.many-questions'])
 })
 
-test('a message with one question block is not told, and a coordinator is left alone', async () => {
+test('a message with one question block passes, and a coordinator is left alone', async () => {
   const { handlers } = mounted()
   const { dollar } = fakeDollar({})
   const one = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED }))
   expect(one.observed ?? '').not.toContain('questions in one message')
+  expect(fieldsIn(one.answer)['block']).toBeUndefined()
   const coord = fakeDollar({ launchName: 'Coord: machine' })
   const single = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: THREE }))
   expect(single.observed).toBeUndefined()

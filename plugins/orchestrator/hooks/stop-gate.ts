@@ -24,6 +24,13 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 
 // --- the decision shapes -----------------------------------------------------------------
 
+// The classic decision `{"decision":"block","reason":…}` answers through the module's own field:
+// `block` carries the reason text (the shipped types' ClassicResult documents exactly this mapping,
+// and a field of the wrong shape fails the hook, which is skipped: the stop would pass untold).
+export function refuse(reason: string): { block: string } {
+  return { block: reason }
+}
+
 // The wake decision at the summary level, the composition the done branch of
 // check 1 makes when the facts disagree with the message. A busy own agent and
 // a declared blocking question both RELEASE the stop — the agent's idle notice
