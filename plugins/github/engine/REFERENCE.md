@@ -106,7 +106,7 @@ head; the request carries no `event`, which keeps the review pending.
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
 | `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready, its labels untouched (« Guards »). `--for-ci`: out of draft only for its CI, with `Not Ready` put on it |
 | `pr-draft` | `<pr>` | Back to draft, its labels untouched: `Ready` follows the records at the head, not the draft state |
-| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` and take the other off, creating the labels when missing; prints the state, `(unchanged)` when nothing changed. `ready` only when the gate reads it ready, else the label carried and `Missing: …` |
+| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` and take the other off, creating the labels when missing (a PR that carries the label already and not the other changes nothing and reads nothing of the repository's labels); prints the state, `(unchanged)` when nothing changed. `ready` only when the gate reads it ready, else the label carried and `Missing: …` |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, any case. One line per label, `created <name>` or `present <name>`, with ` #<colour>` when not the house colour |
 | `label-add` | `<pr> <label>...` | Add labels |
 | `label-remove` | `<pr> <label>` | Remove one label — GitHub deletes one per call |
