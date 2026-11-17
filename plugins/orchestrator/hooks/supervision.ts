@@ -1823,7 +1823,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
         const delivery = deliveryOf(e.text)
         const learnt = learntOf(delivery, Date.now())
-        if (learnt) await learnCoordinator($, learnt, true)
+        // A write that fails here is one log line: the marked lines below are still consumed.
+        if (learnt) await learnCoordinator($, learnt, true).catch((err: unknown) => logLine($, 'supervision', `receive: ${messageOf(err)}`))
         if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body), peerAddress(delivery))
         const q = isQ(delivery.body) ? parseQ(delivery.body) : null
         // A question asked with `ask` crossing machines (remote-asked.ts): its owner's push, taken
@@ -2869,7 +2870,7 @@ export async function sendToCoordinator($: Host<'clock' | 'env' | 'fs' | 'proces
   const sent = await sendTo($, coordinator.to, text)
   if (sent?.isDelivered || coordinator.local || coordinator.to === coordinator.name) return sent
   const named = await sendTo($, coordinator.name, text)
-  if (!named?.isDelivered) return sent
+  if (!named?.isDelivered) return { isDelivered: false, reason: `${sent?.reason ?? 'no answer'}; by its name: ${named?.reason ?? 'no answer'}` }
   await learnCoordinator($, { name: coordinator.name, from: null, at: new Date().toISOString() })
   return named
 }
