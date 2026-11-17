@@ -515,6 +515,7 @@ let asking = false
 /** The main thread's turn started: it may ask one question again. */
 export function askTurnStarted(): void {
   thisTurn.length = 0
+  asking = false
 }
 
 /** A question was asked in this turn: the turn has asked its one. */

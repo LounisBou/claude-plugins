@@ -193,6 +193,7 @@ test('a turn asks one question: a second call in it is refused and stores nothin
   const second = await ask(dollar, { ...FULL, subject: 'a second matter', urgent: undefined }, new Date(NOW.getTime() + 1))
   const [only, ...rest] = stored(files)
   expect(rest).toEqual([])
+  expect([only?.status, only?.seq]).toEqual(['open', 1])
   expect(first.result).toContain(`Question 1 of 1** (${only?.id})`)
   expect(second.isError).toBe(true)
   expect(second.result).toContain(`this turn already asked ${only?.id}: one question per turn`)
@@ -206,7 +207,7 @@ test('two calls made together in one turn store one: the place is taken before a
   expect(calls.map(call => call.isError === true).sort()).toEqual([false, true])
 })
 
-test('a call that stores nothing leaves the turn its question: a refused field, a twin, a record or a failed write', async () => {
+test('a call that stores nothing leaves the turn its question: a refused field or a failed write', async () => {
   const { dollar, files } = world()
   expect((await ask(dollar, { ...FULL, question: 'no question mark' })).isError).toBe(true)
   const write = dollar.process.run
@@ -369,7 +370,7 @@ test('a question identical to one still open stores nothing: the open entry\'s i
   expect(again.result).toContain(questionBlock(open, { i: 1, n: 1 }))
   expect(again.result).not.toContain('Write this block in your message as it stands')
   expect(shown).toEqual([])
-  // The same session asking twice in one turn is no other.
+  // The same session asking it again, in a later turn, is no other.
   const twice = await ask(dollar, fields, new Date(NOW.getTime() + 1))
   expect(stored(files).length).toBe(1)
   expect(twice.result).toContain(`already open as ${open.id}`)
