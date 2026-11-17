@@ -875,10 +875,10 @@ test('a pane open when its session ends is open in the successor, the coordinato
 
 test('the successor carries its predecessor\'s name without the host\'s reference, and a role\'s pane is its own', async () => {
   const { handlers } = mounted(registerSupervision)
-  const fx = fakeDollar({ launchName: 'Orch: belt [329be3]' })
+  const fx = fakeDollar({ launchName: 'Orch: belt [a1b2c3]' })
   await handlers['command.run'](fx.dollar, supervisionRun)
   await endedByHost(fx, handlers)
-  expect((await successorStart(fx, 'Orch: belt [d4a685]')).opened.length).toBe(1)
+  expect((await successorStart(fx, 'Orch: belt [zzzzzz]')).opened.length).toBe(1)
   expect((await successorStart(fx, 'Orch: other')).opened).toEqual([])
   expect((await successorStart(fx, 'Coord: main')).opened).toEqual([])
   expect((await successorStart(fx, 'Agent: belt-p3')).opened).toEqual([])
