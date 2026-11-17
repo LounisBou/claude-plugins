@@ -391,12 +391,15 @@ export async function claimAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pr
 // Words typed in the asker's tab that end with a question mark and name none of the choices of a
 // question that has some are a question back, never his choice: closing it on them left the asker
 // to restate the choice in prose, with no ✋ and no counter (2026-11-17). A text cut at TYPED_CAP
-// (it ends with the cut's marker) no longer shows its end: any question mark of it counts.
-function asksBack(entry: Asked): boolean {
+// (it ends with the cut's marker) no longer shows its end: any question mark of it counts. Words a
+// choice is read from still settle: in the coordinator's own tab, those that open with one of a
+// consent question's choices (« Refuser, tu es sûr ? »), as settleClaimed reads them.
+function asksBack(entry: Asked, coordinator: boolean): boolean {
   const said = entry.claimed?.typed ?? ''
   const cut = /\n\[cut at \d+ of \d+ characters\]$/.test(said)
   const typed = said.replace(/\n\[cut at \d+ of \d+ characters\]$/, '').trimEnd()
-  return entry.choices.length > 0 && (cut ? /[?？]/ : /[?？]$/).test(typed) && answersChoice(typed, entry.choices) === undefined
+  if (entry.choices.length === 0 || !(cut ? /[?？]/ : /[?？]$/).test(typed) || answersChoice(typed, entry.choices) !== undefined) return false
+  return !(coordinator && entry.consent && leadingChoice(said, entry.choices, entry.consent, entry.ask) !== undefined)
 }
 
 /**
@@ -408,15 +411,15 @@ function asksBack(entry: Asked): boolean {
 export async function settleClaimed($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, kept: readonly string[], now: Date = new Date()): Promise<void> {
   const at = now.toISOString()
   const session = await $.session.id()
-  const keeps = (entry: Asked) => kept.includes(entry.id) || asksBack(entry)
+  // In the coordinator's own tab every order of his counts: words that open with a choice answer it.
+  const coordinator = await sessionRole($, session) === 'coordinator'
+  const keeps = (entry: Asked) => kept.includes(entry.id) || asksBack(entry, coordinator)
   await changeOpenAsked($, session, entry => {
     if (!entry.claimed || !keeps(entry)) return null
     const { claimed: _claimed, ...rest } = entry
     return { ...rest, seq: entry.seq + 1 }
   })
   const takes = (entry: Asked) => entry.sender.session === session && !!entry.claimed && !keeps(entry)
-  // In the coordinator's own tab every order of his counts: words that open with a choice answer it.
-  const coordinator = await sessionRole($, session) === 'coordinator'
   for (const id of await openAskedIds($, takes)) {
     let refused = false
     // Read before the lock, as the lock cannot: whether the coordinator here was shown it.

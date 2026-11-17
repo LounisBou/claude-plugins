@@ -466,6 +466,24 @@ test('a question back cut at the cap, or on a consent question, leaves it open a
   expect(await status(consent, 'Accorder')).toMatchObject({ status: 'answered', records: 1 })
 })
 
+test('in the coordinator\'s tab, words that open with a choice of a consent question settle it even ending with « ? »; those that name none leave it open', async () => {
+  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
+  const status = async (me: [string, string], fields: Record<string, unknown>, typed: string) => {
+    const { dollar, files } = world({ me })
+    await ask(dollar, { ...FULL, urgent: undefined, ...fields })
+    await claimAsked(dollar, 'composer', typed, NOW)
+    await settleClaimed(dollar, [], NOW)
+    return stored(files)[0]?.status
+  }
+  const coordinator: [string, string] = ['coordinator', 'Coord: general [a1b2c3]']
+  expect(await status(coordinator, consent, 'Refuser, tu es sûr ?')).toBe('answered')
+  expect(await status(coordinator, consent, 'Refuser ?')).toBe('answered')
+  expect(await status(coordinator, consent, 'Accorder, tu es sûr ?')).toBe('open')
+  expect(await status(coordinator, consent, 'Mon précédent message a-t-il été pris en compte ?')).toBe('open')
+  // Another session's tab keeps to the exact forms: no choice is read from « Refuser, tu es sûr ? ».
+  expect(await status(['orchestrator', 'Orch: belt [a1b2c3]'], consent, 'Refuser, tu es sûr ?')).toBe('open')
+})
+
 test('words that end with a question mark still answer when they name a choice, or when the question has no choices', async () => {
   const answered = async (fields: Record<string, unknown>, typed: string) => {
     const { dollar, files } = world()
