@@ -2497,6 +2497,37 @@ check "pr-gate hides nothing behind a latest workflow run with no check run" "FA
 RUNS8='{"check_runs":[{"id":1,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":11,"name":"test (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
 gate8 wf-event "$PULL8" '{"statuses":[]}' "$RUNS8" '{"workflow_runs":[{"id":20,"event":"pull_request","check_suite_id":200,"workflow_id":1},{"id":10,"event":"push","check_suite_id":100,"workflow_id":1}]}'
 check "pr-gate keeps the failed job of an older workflow run" "FAILURE test  2" "$(ci8)"
+# A workflow that cancels its in-progress run when a newer one starts (a label write fires two runs
+# at one head): the cancelled run is superseded, and only the latest run of its workflow counts. The
+# jobs of the cancelled run 10 (suite 100) that the newer run 20 (suite 200) has not created yet are
+# not failures, and neither are those it has.
+CANC_JOBS='{"id":1,"name":"guards","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"cancelled"},{"id":2,"name":"secrets","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"cancelled"},{"id":3,"name":"changes","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"cancelled"}'
+CANC_RUNS='{"workflow_runs":[{"id":20,"event":"pull_request","status":"in_progress","check_suite_id":200,"workflow_id":1},{"id":10,"event":"pull_request","status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1}]}'
+RUNS9='{"check_runs":['"$CANC_JOBS"',{"id":11,"name":"changes","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":12,"name":"lint","app":{"id":15368},"check_suite":{"id":200},"status":"in_progress","conclusion":null}]}'
+gate8 wf-cancelled-running "$PULL8" '{"statuses":[]}' "$RUNS9" "$CANC_RUNS"
+check "pr-gate counts no cancelled job of a superseded run, the newer run still running" "PENDING   2" "$(ci8)"
+check "pr-checks counts no cancelled job of a superseded run" "PENDING" \
+  "$(gh8 pr-checks 12 --format checks-status | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+check "pr-status names no failed check for a superseded cancelled run" \
+  "checks: PENDING (2 total, 1 running, failed: none)" "$(gh8 pr-status 12 | grep '^checks:')"
+RUNS10='{"check_runs":['"$CANC_JOBS"',{"id":11,"name":"changes","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":12,"name":"guards","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":13,"name":"secrets","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
+gate8 wf-cancelled-green "$PULL8" '{"statuses":[]}' "$RUNS10" "$CANC_RUNS"
+check "pr-gate is green when the newer run of the workflow passed over a cancelled one" "SUCCESS   3" "$(ci8)"
+# The cancelled run is the latest of its workflow: it counts as not passed.
+gate8 wf-cancelled-latest "$PULL8" '{"statuses":[]}' '{"check_runs":[{"id":1,"name":"guards","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":2,"name":"secrets","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"},{"id":3,"name":"guards","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"cancelled"},{"id":4,"name":"secrets","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"cancelled"}]}' \
+  '{"workflow_runs":[{"id":10,"status":"completed","conclusion":"success","check_suite_id":200,"workflow_id":1},{"id":20,"status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate counts the cancelled jobs of the latest run of their workflow" "FAILURE guards,secrets  2" "$(ci8)"
+# A newer run with no check run yet proves nothing: the cancelled run keeps counting.
+gate8 wf-cancelled-unchecked "$PULL8" '{"statuses":[]}' '{"check_runs":['"$CANC_JOBS"']}' \
+  '{"workflow_runs":[{"id":20,"status":"queued","check_suite_id":200,"workflow_id":1},{"id":10,"status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate hides no cancelled job behind a newer run with no check run" "FAILURE guards,secrets,changes  3" "$(ci8)"
+# A cancelled run of another workflow is not superseded by a newer run of this one.
+gate8 wf-cancelled-other "$PULL8" '{"statuses":[]}' '{"check_runs":['"$CANC_JOBS"',{"id":11,"name":"changes","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}' \
+  '{"workflow_runs":[{"id":20,"status":"completed","conclusion":"success","check_suite_id":200,"workflow_id":2},{"id":10,"status":"completed","conclusion":"cancelled","check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate keeps the cancelled run of a workflow no newer run of it replaced" "FAILURE guards,secrets,changes  4" "$(ci8)"
+# Only a cancelled job of a superseded run is dropped: its failed job still counts.
+gate8 wf-cancelled-failed "$PULL8" '{"statuses":[]}' '{"check_runs":['"$CANC_JOBS"',{"id":4,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":11,"name":"changes","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}' "$CANC_RUNS"
+check "pr-gate keeps the failed job of a superseded cancelled run" "FAILURE test  2" "$(ci8)"
 gate8 unknown '{"__status":404,"message":"Not Found"}' '{}' '{}'
 check_status "pr-gate of an unknown pull request exits 4" 4 gh8 pr-gate 12
 gate8 nohead '{"number":12,"state":"open","head":{}}' '{}' '{}'

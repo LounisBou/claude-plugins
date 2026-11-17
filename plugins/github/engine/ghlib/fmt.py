@@ -85,10 +85,13 @@ def _latest_runs(runs, workflows, suite_runs=None):
     is dropped. The latest is the greatest id, which grows with creation:
     started_at is kept by a re-run, so a re-run of an old run would pass for the
     newest. A run without an integer id, or tied on the greatest id, is kept:
-    nothing here may hide a failure or a running run. A skipped or neutral run
-    of an older workflow run (suite_runs maps a check suite id to its workflow
-    run id) counts as nothing: it proved nothing, and the latest workflow run of
-    its workflow, which has check runs, speaks for it."""
+    nothing here may hide a failure or a running run. A skipped, neutral or
+    cancelled run of an older workflow run (suite_runs maps a check suite id to
+    its workflow run id) counts as nothing: it proved nothing, or was superseded
+    (a workflow that cancels its in-progress run when a newer one starts), and the
+    latest workflow run of its workflow, which has check runs, speaks for it. A
+    cancelled run with no newer run of its workflow that has check runs still
+    counts, and so does every other conclusion of an older run."""
     if workflows is None:
         return list(runs)
     stale = _stale_suites(workflows, suite_runs, runs)
@@ -97,8 +100,8 @@ def _latest_runs(runs, workflows, suite_runs=None):
     for run in runs:
         app = run.get("app") or {}
         suite = (run.get("check_suite") or {}).get("id")
-        unproven = run.get("status") == "completed" and run.get("conclusion") in ("skipped", "neutral")
-        if unproven and str(suite) in stale:
+        superseded = run.get("status") == "completed" and run.get("conclusion") in ("skipped", "neutral", "cancelled")
+        if superseded and str(suite) in stale:
             continue
         key = (run.get("name"), app.get("id", app.get("slug")), workflows.get(str(suite)))
         if key[2] is None and suite is not None:
@@ -115,7 +118,7 @@ def _latest_runs(runs, workflows, suite_runs=None):
 
 def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=None, unverified=None, no_ci=False):
     """CI at one head, as the ready guard reads it. Only the latest run of each
-    check counts, and none skipped or neutral in an older workflow run. A completed check passes
+    check counts, and none skipped, neutral or cancelled in an older workflow run. A completed check passes
     on success, and on neutral out of draft. A skipped one, and on a draft a
     neutral one, did not prove anything: not green when the base branch requires that check
     (required), since its skip proves nothing the base asks, or when nothing else at the head
