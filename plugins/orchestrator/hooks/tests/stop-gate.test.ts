@@ -3,7 +3,7 @@
 // race), the ported checks
 // (the wake walk, the once-per-tell CI read over ci-watch's precomputed logs), and the
 // wiring over a faked $ — every field the classic.Stop event really carries pinned by a
-// test that fails under the wrong spelling. The gate observes, and refuses a message of several question blocks alone: what it once held a
+// test that fails under the wrong spelling. The gate observes, and refuses a choice put to the operator in prose and a message of several question blocks alone: what it once held a
 // stop for is its log line, and one escape in the journal; the texts are stop_gate.py's, verbatim
 // where the data source did not change beneath them.
 import { expect, test } from 'claude-code/testing'
@@ -12,7 +12,7 @@ import {
   deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
-  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions, questionBlocks,
+  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions, putsChoiceToOperator, PROSE_CHOICE_REASON, questionBlocks,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait, type Heads,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
@@ -166,6 +166,110 @@ test('a question answered or withdrawn may be written again, as one by its subje
   expect(elsewhere.observed).toBeUndefined()
 })
 
+// 2026-11-17, Orch: Blitz: its question settled as answered with his question back, the turn then ended on
+// this message: the choice restated in prose, with no entry open in the round, so no ✋ and no counter.
+const BLITZ = 'Le point 2 est corrigé. S1 sera déclarée prête dès que vous aurez tranché la question : '
+  + 'corriger les points 3 et 4 (A, que je recommande), ou la laisser telle quelle (C).'
+
+test('a final message that puts a choice or a decision to the operator in prose is told apart from a report', () => {
+  expect(putsChoiceToOperator(BLITZ)).toBe(true)
+  expect(putsChoiceToOperator('Two ways to go: A) cut the scope, B) move the date. I recommend A. Which one do you want?')).toBe(true)
+  expect(putsChoiceToOperator('The tests pass.\n\nShould I merge it now?')).toBe(true)
+  expect(putsChoiceToOperator('The tests pass.\n\nVoulez-vous que je fusionne maintenant ?')).toBe(true)
+  // A report that names choices already made, or lists lettered parts, asks him nothing.
+  expect(putsChoiceToOperator('He chose option A over B, so the scope was cut. The phase is done and merged.')).toBe(false)
+  expect(putsChoiceToOperator('Le choix (A) a été appliqué, (B) écarté, et (C) reste ouvert côté code. Tout est mergé.')).toBe(false)
+  expect(putsChoiceToOperator('Plan:\nA. the parser\nB. the gate\nC. the tests\n\nAll three are merged.')).toBe(false)
+  expect(putsChoiceToOperator('Did the build pass? Yes, all of it.')).toBe(false)
+  // The words of a request, used for something else or in the past, with lettered parts or none.
+  for (const report of [
+    'Étapes A) et B) terminées. Je recommande de passer à la phase suivante.',
+    'Lots livrés: A) parser B) gate.\n\nLet me know when you want the next phase.',
+    'Option A livrée; option B écartée. Je recommande de vérifier les logs.',
+    'Vous avez tranché la question : (A) appliqué, (B) écarté. Tout est mergé.',
+    'Ma recommandation (A) a été suivie, (B) écarté. Phase livrée.',
+    "Le choix d'architecture est fait (A, que je recommandais) ; (A cause du timeout) reste le lot.",
+    'Done: (A) parser, (B) gate merged. Anything else?',
+    'Merged. The agent asked: should I rebase?',
+    'The CI shows which job failed?',
+  ]) expect(putsChoiceToOperator(report)).toBe(false)
+  // The wait line the refusal itself teaches does not hide the question above it; options split by paragraphs are read.
+  expect(putsChoiceToOperator(`${BLITZ}\n\nwaiting: operator — blocks: S1`)).toBe(true)
+  expect(putsChoiceToOperator('Dès que vous aurez tranché :\n\nA. corriger\n\nB. laisser')).toBe(true)
+  expect(putsChoiceToOperator('The report says nothing on which tests failed?')).toBe(false)
+  expect(putsChoiceToOperator('')).toBe(false)
+  // A question block copied inside a fence or a quote is a quotation, not the turn's own question.
+  expect(putsChoiceToOperator(`Done.\n\n\`\`\`\n${BLITZ}\n\`\`\``)).toBe(false)
+  expect(putsChoiceToOperator(`Done.\n\n> ${BLITZ}`)).toBe(false)
+})
+
+// The one check of the gate that refuses; the others observe.
+async function refusedStop(handler: Guards['classic.Stop'], dollar: World, e: StopEvent) {
+  const fx = journalled(dollar)
+  let passed: unknown = null
+  const answer = await handler(fx.dollar, e, async (x: unknown) => { passed = x; return x })
+  return { answer: fieldsIn(answer), passed, journal: fx.journal() }
+}
+
+test('a turn that ends on a choice put to the operator in prose, with no question open in the round, is refused', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({})
+  const refused = await refusedStop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: BLITZ }))
+  expect(refused.answer.block).toBe(PROSE_CHOICE_REASON)
+  expect(refused.passed).toBeNull()
+  expect(refused.journal).toEqual(['refusal orchestrator.stop-gate.prose-choice'])
+  // The reason names the tool that asks, and the wait that follows.
+  expect(PROSE_CHOICE_REASON).toContain('mcp__orchestrator__ask')
+  expect(PROSE_CHOICE_REASON).toContain('operator wait')
+})
+
+test('the same message passes when a question of the session is open, when the stop is a re-fire, or when it is a report', async () => {
+  const { handlers } = mounted()
+  const e = stopEvent({ last_assistant_message: BLITZ })
+  const open = await stop(handlers['classic.Stop'], fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } }).dollar, e)
+  expect(fieldsIn(open.answer).block).toBeUndefined()
+  expect(open.answer).toBe(open.passed)
+  // A question settled or another session's leaves none open: refused.
+  const settled = askedHere({ status: 'answered', answer: { text: 'A', by: 'pane', at: '2026-11-14T10:05:00Z' } })
+  expect((await refusedStop(handlers['classic.Stop'], fakeDollar({ round: { 'q-a1b2c3-1.json': settled } }).dollar, e)).answer.block).toBe(PROSE_CHOICE_REASON)
+  // The host re-fires a refused stop with `stop_hook_active`: it passes, so a turn is refused once.
+  const again = await refusedStop(handlers['classic.Stop'], fakeDollar({}).dollar, stopEvent({ last_assistant_message: BLITZ, stop_hook_active: true }))
+  expect(again.answer.block).toBeUndefined()
+  expect(again.passed).not.toBeNull()
+  const report = await refusedStop(handlers['classic.Stop'], fakeDollar({}).dollar, stopEvent({ last_assistant_message: 'He chose option A over B. The phase is merged.' }))
+  expect(report.answer.block).toBeUndefined()
+  expect(report.journal).not.toContain('refusal orchestrator.stop-gate.prose-choice')
+})
+
+test('a round that cannot be read refuses nothing, and neither does a session that handed over', async () => {
+  const { handlers } = mounted()
+  const e = stopEvent({ last_assistant_message: BLITZ })
+  for (const hang of ['list', 'read'] as const) {
+    const fx = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE }, roundHang: hang, env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.2' } })
+    const unread = await refusedStop(handlers['classic.Stop'], fx.dollar, e)
+    expect(unread.answer.block).toBeUndefined()
+    expect(unread.passed).not.toBeNull()
+    expect(unread.journal).toEqual([])
+  }
+  // The successor's spawn, run through Bash without error, is the hand-over: its successor holds the questions.
+  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
+  await handlers['tool.call'](fakeDollar({}).dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
+  const handed = await refusedStop(handlers['classic.Stop'], fakeDollar({}).dollar, e)
+  expect(handed.answer.block).toBeUndefined()
+  expect(handed.passed).not.toBeNull()
+})
+
+test('an auditor is refused the same way; the coordinator, whose decision round presents questions in prose, is not', async () => {
+  const { handlers } = mounted()
+  const e = stopEvent({ last_assistant_message: BLITZ })
+  const auditor = await refusedStop(handlers['classic.Stop'], fakeDollar({ launchName: 'Audit: belt' }).dollar, e)
+  expect(auditor.answer.block).toBe(PROSE_CHOICE_REASON)
+  const coordinator = await refusedStop(handlers['classic.Stop'], fakeDollar({ launchName: 'Coord: machine' }).dollar, e)
+  expect(coordinator.answer.block).toBeUndefined()
+  const agent = await refusedStop(handlers['classic.Stop'], fakeDollar({ launchName: 'Agent: belt' }).dollar, e)
+  expect(agent.answer.block).toBeUndefined()
+})
+
 // --- a message puts one question to the operator ---------------------------------------------------
 
 const MANY_REASON = '3 questions in one message: present the first, the rest after his answer, one per message.'
@@ -180,19 +284,11 @@ test('the question blocks of a message are the lines that open one, a quoted lin
   expect(questionBlocks('> **Question 1 of 1** (q-a1b2c3-1)\n\n**Question 1 of 1** (q-a1b2c3-2)')).toBe(1)
 })
 
-// The one check besides the prose choice that refuses: the host reads the module's `block` field as the decision.
-async function refusedStop(dollar: World, e: StopEvent) {
-  const { handlers } = mounted()
-  const fx = journalled(dollar)
-  let passed: unknown = null
-  const answer = await handlers['classic.Stop'](fx.dollar, e, async (x: unknown) => { passed = x; return x })
-  return { answer: fieldsIn(answer), passed, journal: fx.journal() }
-}
-
 test('a message with three question blocks is refused: present the first, the rest after his answer', async () => {
+  const { handlers } = mounted()
   const { dollar } = fakeDollar({})
-  const out = await refusedStop(dollar, stopEvent({ last_assistant_message: THREE }))
-  expect(out.answer['block']).toBe(MANY_REASON)
+  const out = await refusedStop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: THREE }))
+  expect(out.answer.block).toBe(MANY_REASON)
   expect(out.passed).toBeNull()
   expect(out.journal).toEqual(['refusal orchestrator.stop-gate.many-questions'])
 })
@@ -341,6 +437,12 @@ test("the host's session record is read for its status alone", () => {
 test('a pull request is read from the branch and the answer, or not at all', () => {
   expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN"}')).toEqual({ number: '160', state: 'OPEN' })
   expect(pullRequestOf(null, '{"number":160,"state":"OPEN"}')).toBeNull()
+  // Ready is the label of that name; an answer with no labels says nothing of it.
+  expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","labels":[{"name":"Ready"}]}')).toEqual({ number: '160', state: 'OPEN', ready: true })
+  expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","labels":[{"name":"ready-ish"}]}')).toEqual({ number: '160', state: 'OPEN', ready: false })
+  expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","labels":[]}')).toEqual({ number: '160', state: 'OPEN', ready: false })
+  // The repository comes from the address the answer carries.
+  expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","url":"https://github.com/acme/app/pull/160"}')).toEqual({ number: '160', state: 'OPEN', repo: 'acme/app' })
   expect(pullRequestOf('feat/belt', null)).toBeNull()
   expect(pullRequestOf('feat/belt', 'not json')).toBeNull()
 })
@@ -598,6 +700,10 @@ type Setup = {
   hangHeadsWrite?: boolean
   hostRecord?: string
   agentRow?: string
+  // The answer of `gh pr view <ref>` by its first argument (a branch, or the number of another pull request), over prAnswer.
+  prByRef?: Record<string, string>
+  // The panes the home server lists (`<tty> <pane id> <state>` a line), read by the tab-state write.
+  panes?: string
   selfBin?: string
   goals?: { exitCode: number; stdout: string } | 'hang'
   goalsShown?: string
@@ -702,6 +808,10 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         const block = blockOf(argv, () => setup.transcript ?? '')
         if (block !== null) return { exitCode: 0, stdout: block, stderr: '' }
         ran.push(argv.join(' '))
+        if (argv[0] === 'tmux') {
+          const answer = argv[3] === 'display-message' ? '1|home:@3.%7\n' : argv[3] === 'list-panes' ? setup.panes ?? '' : ''
+          return { exitCode: 0, stdout: answer, stderr: '' }
+        }
         if (argv[0] === 'sh') {
           return { exitCode: 0, stdout: '123 ttys001\n', stderr: '' }
         }
@@ -730,6 +840,10 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
             : { exitCode: 128, stdout: '', stderr: '' }
         }
         if (argv[0] === 'gh') {
+          const byRef = setup.prByRef?.[argv[3] ?? '']
+          if (byRef !== undefined) return { exitCode: 0, stdout: byRef, stderr: '' }
+          // Another pull request, asked by its number in its repository, has only the answer given for it.
+          if (argv[4] === '-R') return { exitCode: 1, stdout: '', stderr: 'no answer' }
           return setup.prAnswer ? { exitCode: 0, stdout: setup.prAnswer, stderr: '' } : { exitCode: 1, stdout: '', stderr: 'no answer' }
         }
         if (argv[0] === 'bash' && argv[1] === LAUNCHER) {
@@ -925,6 +1039,101 @@ test('an idle agent delivered of its merged pull request is not refused: the log
     agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"MERGED"}',
   })
   await warnsNotRefuses(handlers, fx, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, MERGED)')
+})
+
+// The stop's read of an idle agent's pull request moves the agent's window in the home session: over
+// when the pull request is merged or closed, done or review by its Ready label for a delivery.
+const HOME_ENV = { TMUX: '/tmp/home.sock,4242,0', TMUX_PANE: '%1' }
+// In a home session the owner of a chain entry is the pane (`tmux:<socket>:<pane id>`), not the iTerm2 tab.
+const HOME_CHAIN = '{"tab_id":"T1","tty":"/dev/ttys003","owner":"tmux:/tmp/home.sock:%1"}\n'
+const AGENT_CHAIN = '{"tab_id":"T1","tty":"/dev/ttys003","owner":"17"}\n'
+const stateWrites = (ran: readonly string[]) => ran.filter(c => c.startsWith('tmux ') && c.includes(' set-option '))
+async function stopOn(prAnswer: string, panes: string, env: Record<string, string> = HOME_ENV) {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: env === HOME_ENV ? HOME_CHAIN : AGENT_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer, panes, env })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  return stateWrites(fx.ran)
+}
+
+test('the window of an idle agent whose pull request is merged or closed shows over, once', async () => {
+  const over = ['tmux -S /tmp/home.sock set-option -w -t %9 @state over']
+  expect(await stopOn('{"number":160,"state":"MERGED","labels":[]}', '/dev/ttys002 %8 idle\n/dev/ttys003 %9 done\n')).toEqual(over)
+  expect(await stopOn('{"number":160,"state":"CLOSED","labels":[]}', '/dev/ttys003 %9 review\n')).toEqual(over)
+  expect(await stopOn('{"number":160,"state":"MERGED"}', '/dev/ttys003 %9 over\n')).toEqual([])
+})
+
+test('the window of a delivery moves between review and done by the Ready label of its open pull request', async () => {
+  const ready = '{"number":160,"state":"OPEN","labels":[{"name":"enhancement"},{"name":"Ready"}]}'
+  const notReady = '{"number":160,"state":"OPEN","labels":[{"name":"enhancement"}]}'
+  expect(await stopOn(ready, '/dev/ttys003 %9 review\n')).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state done'])
+  expect(await stopOn(notReady, '/dev/ttys003 %9 done\n')).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state review'])
+  // An agent at rest on no delivery, a window already right, and an answer with no labels stay as they are.
+  // The label's case does not matter, as at the github ready gate.
+  expect(await stopOn('{"number":160,"state":"OPEN","labels":[{"name":"ready"}]}', '/dev/ttys003 %9 review\n')).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state done'])
+  expect(await stopOn(ready, '/dev/ttys003 %9 idle\n')).toEqual([])
+  expect(await stopOn(ready, '/dev/ttys003 %9 done\n')).toEqual([])
+  expect(await stopOn('{"number":160,"state":"OPEN"}', '/dev/ttys003 %9 review\n')).toEqual([])
+})
+
+// An agent holding several pull requests is ready only when each open one carries Ready: the branch's
+// own, and the others the dispatch record entrusts to it (its `working` lines).
+const LEDGER = (...prs: number[]) => prs.map(pr => JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr, status: 'working', agent: 'Agent: idle-p3', since: '2026-11-15T07:00:00Z', updated: '2026-11-15T07:00:00Z' })).join('\n') + '\n'
+const branchPr = (state: string, ready: boolean) => `{"number":160,"state":"${state}","url":"https://github.com/acme/app/pull/160","labels":[${ready ? '{"name":"Ready"}' : ''}]}`
+const otherPr = (state: string, ready: boolean) => `{"number":9,"state":"${state}","labels":[${ready ? '{"name":"Ready"}' : ''}]}`
+async function stopWithTwo(branch: string, other: string | undefined, shown: string) {
+  const { handlers } = mounted()
+  const fx = fakeDollar({
+    listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: branch,
+    prByRef: other === undefined ? {} : { '9': other }, records: [LEDGER(160, 9)], panes: `/dev/ttys003 %9 ${shown}\n`, env: HOME_ENV,
+  })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  return { writes: stateWrites(fx.ran), read9: fx.ran.some(c => c.startsWith('gh pr view 9 -R acme/app')), read160: fx.ran.some(c => c.startsWith('gh pr view 160')) }
+}
+
+test('an agent with two pull requests shows ready only when both carry Ready, merged ones set aside', async () => {
+  const toReview = ['tmux -S /tmp/home.sock set-option -w -t %9 @state review']
+  const toDone = ['tmux -S /tmp/home.sock set-option -w -t %9 @state done']
+  const toOver = ['tmux -S /tmp/home.sock set-option -w -t %9 @state over']
+  // One Ready and one not: not ready, so a window that shows ✓ goes back under review, and one under review stays.
+  const mixed = await stopWithTwo(branchPr('OPEN', true), otherPr('OPEN', false), 'done')
+  expect(mixed.writes).toEqual(toReview)
+  expect(mixed.read9).toBe(true)
+  // The branch's own pull request is read once, never again for its ledger line.
+  expect(mixed.read160).toBe(false)
+  expect((await stopWithTwo(branchPr('OPEN', true), otherPr('OPEN', false), 'review')).writes).toEqual([])
+  expect((await stopWithTwo(branchPr('OPEN', false), otherPr('OPEN', true), 'done')).writes).toEqual(toReview)
+  // Both Ready: ready.
+  expect((await stopWithTwo(branchPr('OPEN', true), otherPr('OPEN', true), 'review')).writes).toEqual(toDone)
+  // One merged and the other open and not Ready: not over, not ready. Open and Ready: ready.
+  expect((await stopWithTwo(branchPr('MERGED', true), otherPr('OPEN', false), 'done')).writes).toEqual(toReview)
+  expect((await stopWithTwo(branchPr('MERGED', false), otherPr('OPEN', true), 'review')).writes).toEqual(toDone)
+  // Everything merged or closed: over.
+  expect((await stopWithTwo(branchPr('MERGED', true), otherPr('CLOSED', false), 'done')).writes).toEqual(toOver)
+  // The other one cannot be read: nothing is known, so nothing moves.
+  expect((await stopWithTwo(branchPr('OPEN', true), undefined, 'review')).writes).toEqual([])
+  expect((await stopWithTwo(branchPr('MERGED', true), undefined, 'done')).writes).toEqual([])
+})
+
+test('a tmux that fails, or a pane the server does not list, never fails the stop: said once in the log, nothing written', async () => {
+  const merged = '{"number":160,"state":"MERGED","labels":[]}'
+  // The agent's tty is not among the panes: nothing is written.
+  expect(await stopOn(merged, '/dev/ttys009 %3 done\n')).toEqual([])
+  // The pane list fails: the stop passes, the log says so.
+  const { handlers } = mounted()
+  const down = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: merged, panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
+  const failing = { ...down.dollar, process: { ...down.dollar.process, run: async (argv: readonly string[], init?: ProcessRunInit) =>
+    argv[0] === 'tmux' && argv[3] === 'list-panes' ? { exitCode: 1, stdout: '', stderr: 'no server' } : init === undefined ? down.dollar.process.run(argv) : down.dollar.process.run(argv, init) } }
+  const out = await stop(handlers['classic.Stop'], failing as World, stopEvent({}))
+  expect(out.answer).toBe(out.passed)
+  expect(down.written.filter(l => l.includes('tab-state: tmux exited 1 listing the panes')).length).toBe(1)
+  expect(stateWrites(down.ran)).toEqual([])
+})
+
+test('outside a home session the stop writes no window state, and no tmux is called', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: AGENT_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"MERGED","labels":[]}', panes: '/dev/ttys003 %9 done\n' })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  expect(fx.ran.filter(c => c.startsWith('tmux '))).toEqual([])
 })
 
 test('the transcript is read from the event, not by hunting the projects directory', async () => {
@@ -1378,7 +1587,7 @@ test("the idle agent's pull request is read with one --json argument, in the age
     agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}',
   })
   await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
-  const gh = 'gh pr view feat/belt --json number,state'
+  const gh = 'gh pr view feat/belt --json number,state,labels,url'
   expect(fx.ran).toContain(gh)
   expect(fx.inits[gh]?.cwd).toBe('/tmp/h/work/belt')
   expect(fx.inits[gh]?.timeoutMs).toBeGreaterThan(0)

@@ -8223,17 +8223,56 @@ if command -v tmux >/dev/null 2>&1; then
   tmux -L "$CONFSRV" set -w -t home:0 @state busy 2>/dev/null
   tmux -L "$CONFSRV" set -w -t home:2 @state asks 2>/dev/null
   check "the tab bar shows each window's name and state icon in a padded block, the current one in bold, without index or session name" \
-    " sleep ● | second | third ✋ " \
+    " sleep ▶ | second | third ✋ " \
     "$(tmux -u -L "$CONFSRV" display -p -t home:0 '#{W:#{E:window-status-format}|,#{E:window-status-current-format}|}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/|$//' | tr -d '\n')"
-  # Each of the five states renders its own icon after the name, in the inactive block and in
+  # Each of the seven states renders its own icon after the name, in the inactive block and in
   # the current one; a state the module never writes renders none.
   stateicons=""
-  for st in busy idle asks done gate bogus; do
+  for st in busy idle asks review done over gate bogus; do
     tmux -L "$CONFSRV" set -w -t home:1 @state "$st" 2>/dev/null
     stateicons="$stateicons$(tmux -u -L "$CONFSRV" display -p -t home:1 '#{E:window-status-format}|#{E:window-status-current-format}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/second//g; s/  */ /g')/"
   done
   check "each state renders its icon in both blocks, an unknown state none" \
-    " ● | ● / ○ | ○ / ✋ | ✋ / ✓ | ✓ / ⚠ | ⚠ / | /" "$stateicons"
+    " ▶ | ▶ / ● | ● / ✋ | ✋ / ⧖ | ⧖ / ✓ | ✓ / ⏹ | ⏹ / ⚠ | ⚠ / | /" "$stateicons"
+  # Every icon keeps one colour on every tab, the current one drawing it in a #303030 block of its
+  # own, and each pair holds 7:1 (WCAG AAA): the colours read from the conf, ratios computed.
+  check "each icon has one colour on both kinds of tab, over a background that holds it at 7:1" "ok" \
+    "$(python3 -I - "$HOMECONF" <<'PY'
+import re, sys
+conf = open(sys.argv[1], encoding='utf-8').read()
+def lum(h):
+    c = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    c = [x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4 for x in c]
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+def ratio(a, b):
+    x, y = sorted((lum(a), lum(b)), reverse=True)
+    return (x + 0.05) / (y + 0.05)
+def formats(name):
+    return re.search(r"^set -g %s '(.*)'$" % name, conf, re.M).group(1)
+def icons(text, tab_bg):
+    out = {}
+    for m in re.finditer(r'\{==:#\{@state\},(\w+)\},((?:[^,}]|#,)*?),', text):
+        state, branch = m.group(1), m.group(2)
+        fg = re.findall(r'fg=(#[0-9a-f]{6})', branch)
+        bg = re.findall(r'bg=(#[0-9a-f]{6})', branch)
+        glyph = re.sub(r'#\[[^\]]*\]', '', branch).strip()
+        out[state] = (fg[-1], bg[-1] if bg else tab_bg, glyph)
+    return out
+inactive = icons(formats('window-status-format'), '#303030')
+current = icons(formats('window-status-current-format'), '#ffd75f')
+bad = []
+if set(inactive) != {'busy', 'idle', 'asks', 'held', 'review', 'done', 'over', 'gate'}: bad.append('states %s' % sorted(inactive))
+for state in inactive:
+    if inactive[state] != current.get(state): bad.append('%s differs between tabs: %s / %s' % (state, inactive[state], current.get(state)))
+    fg, bg, _ = inactive[state]
+    if ratio(fg, bg) < 7: bad.append('%s %.1f' % (state, ratio(fg, bg)))
+looks = [inactive[s][:2] for s in inactive]
+if len(set(looks)) != len(looks): bad.append('two states look alike')
+greens = [inactive[s][0] for s in ('busy', 'done')]
+if greens[0] == greens[1] or abs(lum(greens[0]) - lum(greens[1])) < 0.2: bad.append('the two greens are not apart')
+print('ok' if not bad else '; '.join(bad))
+PY
+)"
   # The held state, a wait on the orchestrator, shows its own pause icon in both blocks, never the
   # operator's hand.
   tmux -L "$CONFSRV" set -w -t home:1 @state held 2>/dev/null
