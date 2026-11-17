@@ -117,7 +117,9 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=Non
     """CI at one head, as the ready guard reads it. Only the latest run of each
     check counts, and none skipped or neutral in an older workflow run. A completed check passes
     on success, and on neutral out of draft. A skipped one, and on a draft a
-    neutral one, did not prove anything: not green. Any other conclusion is a
+    neutral one, did not prove anything: not green when the base branch requires that check
+    (required), since its skip proves nothing the base asks; a check the base does not require
+    and its own workflow skipped (a path-filtered job) holds nothing back. Any other conclusion is a
     failure, named by its check. A check still running is not green. No check
     at all is not green either: CI has not started on that head, so the result
     is PENDING, unless the repository has no CI configured (no_ci, read by the caller: no
@@ -138,7 +140,10 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=Non
     running = [run for run in runs if run.get("status") != "completed"] + [
         status for status in commit_statuses if status.get("state") == "pending"
     ]
-    skipped = [run.get("name", "?") for run in completed if run.get("conclusion") in unproven]
+    skipped = [
+        run.get("name", "?") for run in completed
+        if run.get("conclusion") in unproven and run.get("name") in set(required or ())
+    ]
     reported = {run.get("name") for run in runs} | {status.get("context") for status in commit_statuses}
     unreported = sorted(set(required or ()) - reported)
     running += unreported
