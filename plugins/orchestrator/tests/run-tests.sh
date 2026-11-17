@@ -8779,7 +8779,7 @@ SH
   check "an agent at rest with a command running in the background is not moved, and says once what it waits for" \
     "Agent: g|alive|1|1" \
     "$(ft -L "$FOLD" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: g')|$(alive "$gpid")|$(grep -c 'home-follow: Agent: g waits for its background command(s) to end: /bin/sh -c : /shell-snapshots/snapshot-stub' "$FW/state/close.log")|$(wc -l < "$FW/args-sid-g" | tr -d ' ')"
-  kill "$(cat "$FW/bg-sid-g")" 2>/dev/null
+  pkill -P "$(cat "$FW/bg-sid-g")" 2>/dev/null; kill "$(cat "$FW/bg-sid-g")" 2>/dev/null
   i=0; while kill -0 "$fpid" 2>/dev/null && [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done
   fresumed sid-g
   check "once its background command ended, it moves, and the old server ends" "Agent: g|1|down" \
@@ -8798,15 +8798,22 @@ ia.cmd_home_follow(ia.args_of('home-follow', {'from_': '$FOLD', 'to': '$FNEW', '
   ORCHESTRATOR_HOST_ENV=null rfollow ""
   check "an agent whose environment cannot be read stays, said, and its server is left running" "1|1|alive|up" \
     "$(grep -c "home-follow: Agent: r stays in $FOLD: its environment cannot be read" "$FW/state/close.log")|$(grep -c "home-follow: $FOLD keeps 1 session(s) the move cannot resume; it is left running" "$FW/state/close.log")|$(alive "$rpid")|$(ft -L "$FOLD" has-session 2>/dev/null && echo up || echo down)"
-  ORCHESTRATOR_HOME_FOLLOW_DEADLINE=1 rfollow "ia.resting = lambda pid: False"
+  ORCHESTRATOR_HOME_FOLLOW_DEADLINE=1 rfollow "ia.resting = lambda pid: False
+real_call = ia.tmux_call
+def recorded(argv, *a, **k):
+    if argv[:3] == ['-L', '$FNEW', 'kill-window']:
+        open('$FW/killed-new', 'a').write('x\\n')
+    return real_call(argv, *a, **k)
+ia.tmux_call = recorded"
   check "an agent whose turn began between the check and the kill stays, its window in the new server killed, and the deadline says who stayed" \
-    "0|alive|1" \
-    "$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -cx 'Agent: r')|$(alive "$rpid")|$(grep -c "home-follow: $FOLD still holds Agent: r after 1s, never at rest: they stay there, and so does the server" "$FW/state/close.log")"
+    "killed|0|alive|1" \
+    "$([ -s "$FW/killed-new" ] && echo killed)|$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -cx 'Agent: r')|$(alive "$rpid")|$(grep -c "home-follow: $FOLD still holds Agent: r after 1s, not moved: they stay there, and so does the server" "$FW/state/close.log")"
+  : > "$FW/state/close.log"
   ORCHESTRATOR_HOME_FOLLOW_DEADLINE=1 rfollow "
 def boom(*a):
     raise RuntimeError('boom')
 ia.follow_pane = boom"
-  check "a failure on one pane is said once and the follower goes on to its deadline" "1|2|alive" \
+  check "a failure on one pane is said once and the follower goes on to its deadline" "1|1|alive" \
     "$(grep -c 'home-follow: Agent: r: not moved this round: boom' "$FW/state/close.log")|$(grep -c "home-follow: $FOLD still holds Agent: r" "$FW/state/close.log")|$(alive "$rpid")"
   rfollow "
 def boom(*a):
@@ -8847,7 +8854,7 @@ efprobe() { ORCHESTRATOR_CLOSE_TIMEOUT=0 ORCHESTRATOR_STATE_DIR="$WORK/efstate" 
 calls = []
 class T(ia.Terminal):
     def find(self, tty):
-        calls.append('find ' + tty); return $1
+        calls.append('find ' + tty); return $1 and len(calls) < 6
     def close(self, tty, expect):
         calls.append('close ' + tty)
 ia.ITERM = T()
@@ -8856,11 +8863,11 @@ ia.home_answers = lambda s: True
 ia.kill_watched_home = lambda s: calls.append('kill ' + s) or True
 ia.trace_home = lambda *a: calls.append('trace ' + a[0])
 ia.end_followed('orch-o', 'orch-n', $2, ['/dev/ttys1'])
-print('calls=' + ','.join(calls))" | sed -n 's/^calls=//p'; }
+print('calls=' + ','.join(calls) + ';end')" | sed -n 's/^calls=//p'; }
 check "the old server, empty, is ended and its tab closed by force once the wait is over" \
-  "kill orch-o,trace orch-o,find /dev/ttys1,close /dev/ttys1" "$(efprobe True '{}')"
-check "a tab already gone is not closed again" "kill orch-o,trace orch-o,find /dev/ttys1" "$(efprobe False '{}')"
-check "a server that keeps a session the move cannot resume is neither ended nor its tab closed" "" \
+  "kill orch-o,trace orch-o,find /dev/ttys1,close /dev/ttys1;end" "$(efprobe True '{}')"
+check "a tab already gone is not closed again" "kill orch-o,trace orch-o,find /dev/ttys1;end" "$(efprobe False '{}')"
+check "a server that keeps a session the move cannot resume is neither ended nor its tab closed" ";end" \
   "$(efprobe True "{'9': 'x'}")"
 
 # The words of a launch, replayed: the conversation's own names dropped, the rest kept as typed.

@@ -4378,13 +4378,18 @@ def follow_one(old, new, window, window_name, tty, pid, record, refused):
         return False
     new_window, new_tty = fields
     # Read again right before the kill, the new window made: a turn or a background command that
-    # began since is never cut, and the window that waited for it goes.
+    # began since is not cut, and the window that waited for it goes. One that cannot be killed
+    # would resume the session beside the next round's: the session then stays where it is.
     if not resting(pid):
         try:
-            tmux_call(["-L", new, "kill-window", "-t", new_window])
+            done = tmux_call(["-L", new, "kill-window", "-t", new_window])
+            refusal = tmux_refusal(done) if done.returncode else ""
         except TmuxError as exc:
-            follow_line("%s: its unused window %s in %s was not killed (%s)"
-                        % (name, new_window, new, exc))
+            refusal = str(exc)
+        if refusal:
+            refused[pid] = "its unused window %s in %s was not killed (%s)" % (new_window, new,
+                                                                               refusal)
+            follow_line("%s stays in %s: %s" % (name, old, refused[pid]))
         return False
     try:
         tmux_call(["-L", old, "kill-window", "-t", window])
@@ -4512,6 +4517,10 @@ def follow_home(args):
         panes = follow_panes(old)
         if panes is None:
             # A listing that failed proves nothing: the server is never ended on it.
+            if time.time() >= deadline:
+                follow_line("%s could not be listed until the deadline, %ds: its sessions stay "
+                            "there, and so does the server" % (old, FOLLOW_DEADLINE))
+                return
             time.sleep(FOLLOW_POLL)
             continue
         waiting = []
@@ -4539,7 +4548,7 @@ def follow_home(args):
         if not waiting:
             break
         if time.time() >= deadline:
-            follow_line("%s still holds %s after %ds, never at rest: they stay there, and so does "
+            follow_line("%s still holds %s after %ds, not moved: they stay there, and so does "
                         "the server" % (old, ", ".join(waiting), FOLLOW_DEADLINE))
             return
         time.sleep(FOLLOW_POLL)
