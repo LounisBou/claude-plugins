@@ -26,7 +26,7 @@ import { machineLabel } from './remote-row.ts'
 import type { RoundEntry } from './round.ts'
 import { askedKey } from './asked-key.ts'
 import { callTodo, whoAmI } from './todo.ts'
-import { closesItself, coordinatorRuns, forgetRelayed, isRoundAnswer, parseRoundEntry, readBlock, readSessions, sessionKey, sessionRole, tellSettled, transcriptPathOf, writeConsent, type ConsentEntry } from './supervision.ts'
+import { setSessionWindow, closesItself, coordinatorRuns, forgetRelayed, isRoundAnswer, parseRoundEntry, readBlock, readSessions, sessionKey, sessionRole, tellSettled, transcriptPathOf, writeConsent, type ConsentEntry } from './supervision.ts'
 import { scanTail } from './session-name.ts'
 import { asksWords, isHisTurn, humanTurn, judgeWords, parseWords, wordsRecord, WORDS_FIELDS, WORDS_WINDOW_MS, type Words } from './consent-words.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planClaimed, planPane, planRelayed, planWithdrawal, settledMessage, type Fields, type Me, type Plan, type SettleRequest } from './settle.ts'
@@ -326,7 +326,13 @@ async function changeAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'
     }
   }
   for (const entry of changed) await replicate($, entry)
+  for (const session of new Set(changed.filter(entry => entry.status !== 'open').map(entry => entry.sender.session))) await settleWindow($, session)
   return changed
+}
+
+// A session whose last open question closed leaves its window at rest: the ✋ belongs to the questions, not to the turn.
+async function settleWindow($: Host<'env' | 'fs' | 'plugin' | 'process'>, session: string): Promise<void> {
+  if (!(await readAsked($)).some(entry => entry.status === 'open' && entry.sender.session === session)) await setSessionWindow($, session, 'idle')
 }
 
 /** Its session ended, or handed over with no successor: its open questions are withdrawn by it, with why. Answers the objects withdrawn. */
@@ -612,6 +618,8 @@ export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   }
   if (taken) return refuse(`a question with the id ${entry.id} is already in the round; ask again.`)
   await replicate($, entry)
+  // The ✋ is the question's: the asker's window shows it while the question is open.
+  await setSessionWindow($, entry.sender.session, 'asks')
   if (record?.answer) {
     return { result: `Answered from the record, not asked again: the operator answered this question on ${record.answer.at} by ${record.answer.by} — ${record.answer.text} (question ${record.id}). Stored as ${entry.id}, answered.` }
   }
@@ -807,6 +815,7 @@ export async function closeRound(
   }
   const relay = done.entry['v'] === ASK_VERSION ? null : parseRoundEntry(JSON.stringify(done.entry))
   const asked = done.entry['v'] === ASK_VERSION ? parseAsked(JSON.stringify(done.entry)) : null
+  if (asked !== null && asked.status !== 'open') await settleWindow($, asked.sender.session)
   if (done.relayed && relay !== null) await forgetRelayed($, relay)
   if (done.told) {
     // The notice reads a relay entry's fields: an object `ask` stored is told as one.

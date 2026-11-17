@@ -3,9 +3,7 @@
 // (tab-state.ts, wired in supervision.ts): one word per state, written only when it changes,
 // only inside a home session, and a failing tmux call never fails the hook.
 import { expect, test } from 'claude-code/testing'
-import { homeArgv, stateArgv, windowOf, panesArgv, panesOf, pullRequestsRead, stateAfterPr, stateAfterRound, stateAfterTurn, stateAfterMeasure, targetOf } from '../tab-state.ts'
-import { holdsOpenOperator } from '../supervision.ts'
-import { parseAsked } from '../question.ts'
+import { homeArgv, stateArgv, windowOf, panesArgv, panesOf, pullRequestsRead, stateAfterPr, stateAfterTurn, stateAfterMeasure, targetOf } from '../tab-state.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
@@ -107,13 +105,6 @@ test('a turn ends on the wait it wrote, else the gate, else idle', () => {
   expect(stateAfterTurn('delivered', false)).toBe('review')
   expect(stateAfterTurn(null, true)).toBe('gate')
   expect(stateAfterTurn(null, false)).toBe('idle')
-})
-
-test('a window showing ✋ is at rest once no operator entry of its session is open', () => {
-  expect(stateAfterRound('asks', false)).toBe('idle')
-  expect(stateAfterRound('asks', true)).toBeNull()
-  expect(stateAfterRound('idle', false)).toBeNull()
-  expect(stateAfterRound('held', false)).toBeNull()
 })
 
 test('a measure moves only a window at rest, onto the gate and back', () => {
@@ -387,19 +378,14 @@ const askedFile = (session: string, status: string) => JSON.stringify({
   subject: 'Which one', context: 'what is known', ask: 'Which one?', choices: [], recommended: null, why: null,
   blocks: 'G1', status, at: '2026-11-17T09:00:00.000Z', answer: null, seq: 1,
 })
-const asked = (...files: string[]) => files.map(text => parseAsked(text)!)
 
-test('an operator wait is held by an open question its own session asked, and by no other', () => {
-  expect(holdsOpenOperator(asked(askedFile('s-one', 'open')), 's-one')).toBe(true)
-  expect(holdsOpenOperator(asked(askedFile('s-one', 'answered')), 's-one')).toBe(false)
-  expect(holdsOpenOperator(asked(askedFile('s-two', 'open')), 's-one')).toBe(false)
-  expect(holdsOpenOperator([], 's-one')).toBe(false)
-})
-
-test('an unreadable round entry is said in the log, not skipped silently', async () => {
-  const chains = mounted()
-  const fx = fake({ pane: '%32' })
-  fx.files.set(`${STATE}/round/q-junk-1.json`, '{}')
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Done.'))
-  expect(fx.logged.some(line => line.includes('is no round entry'))).toBe(true)
+test('a turn ends with ✋ while a question its session asked is open, whatever its wait, and at rest once none is', async () => {
+  for (const [status, shown] of [['open', 'asks'], ['answered', 'idle']] as const) {
+    const chains = mounted()
+    const fx = fake({ pane: '%31' })
+    fx.files.set(`${STATE}/round/q-s-one-1.json`, askedFile('s-one', status))
+    await drive(chains, 'turn.start', fx.dollar, {})
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd('Which one?'))
+    expect(fx.states().at(-1)).toBe(shown)
+  }
 })

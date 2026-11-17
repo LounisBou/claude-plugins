@@ -109,16 +109,10 @@ export function stateAfterPr(shown: string, pr: { state: string; ready?: boolean
 // any session with nothing pending, and `done` (✓) is only ever written by the read of a pull request
 // that carries Ready.
 export function stateAfterTurn(waiting: WaitKind | null | undefined, pastGate: boolean, asked = false): TabState {
+  if (asked) return 'asks'
   if (waiting === 'delivered') return 'review'
-  if (waiting === 'operator' && asked) return 'asks'
   if (waiting && waiting !== 'done' && waiting !== 'operator') return 'held'
   return pastGate ? 'gate' : 'idle'
-}
-
-// What the owner's sweep says of an idle agent's window that shows ✋: it is at rest once no operator
-// entry of its session is open, the question having been closed elsewhere with no turn to clear it.
-export function stateAfterRound(shown: string, open: boolean): TabState | null {
-  return shown === 'asks' && !open ? 'idle' : null
 }
 
 // What a measure changes: only a window at rest takes the gate on, and leaves it when the

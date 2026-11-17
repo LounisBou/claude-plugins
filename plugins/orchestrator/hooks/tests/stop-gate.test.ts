@@ -17,7 +17,7 @@ import {
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
 import { askTurnStarted, askedInTurn, parseAsked, questionBlock } from '../question.ts'
-import { register as registerWait, AGENT_OPERATOR, ASK_FIRST, Declarations, parseDeclaration } from '../wait.ts'
+import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf } from './fakes.ts'
 import { capture, hookOf, hostOf } from '../../core/capture.ts'
@@ -1077,27 +1077,6 @@ test('the window of a delivery moves between review and done by the Ready label 
   expect(await stopOn(ready, '/dev/ttys003 %9 idle\n')).toEqual([])
   expect(await stopOn(ready, '/dev/ttys003 %9 done\n')).toEqual([])
   expect(await stopOn('{"number":160,"state":"OPEN"}', '/dev/ttys003 %9 review\n')).toEqual([])
-})
-
-// The owner's stop sweeps the ✋ of its idle agents whose question closed elsewhere: at rest, with no turn of theirs to clear it.
-const AGENT_ROW = JSON.stringify({ role: 'agent', name: 'Agent: idle', pid: '501', tty: '/dev/ttys003', repo: null, context_percent: 12, context_tokens: 120000, window: 1000000, model: 'm', busy: false, updated_at: '2026-11-17T09:00:00.000Z' })
-// A question the agent's session asked with `ask`, as the round stores it (the Asked v2 shape).
-const OPERATOR_ENTRY = (session: string, status: string) => askedHere({ id: `q-${session}-1`, sender: { session, name: 'Agent: idle', role: 'agent', machine: 'box-1' }, status })
-async function stopAsking(sessions: Record<string, string>, round: Record<string, string>, panes: string) {
-  const { handlers } = mounted()
-  const fx = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN","labels":[]}', panes, env: HOME_ENV, sessions, round })
-  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
-  return stateWrites(fx.ran)
-}
-
-test('an idle agent window showing ✋ is set at rest once its question is closed elsewhere, and kept while one is open', async () => {
-  const idle = 'tmux -S /tmp/home.sock set-option -w -t %9 @state idle'
-  expect(await stopAsking({ 's-idle': AGENT_ROW }, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'answered') }, '/dev/ttys003 %9 asks\n')).toEqual([idle])
-  expect(await stopAsking({ 's-idle': AGENT_ROW }, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'open') }, '/dev/ttys003 %9 asks\n')).toEqual([])
-  // Two rows naming one tty: which is live is not known, so the window is left as it is.
-  expect(await stopAsking({ 's-idle': AGENT_ROW, 's-old': AGENT_ROW }, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'answered') }, '/dev/ttys003 %9 asks\n')).toEqual([])
-  // A window with no session row on its tty is not judged: its ✋ stays, as said in the log.
-  expect(await stopAsking({}, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'answered') }, '/dev/ttys003 %9 asks\n')).toEqual([])
 })
 
 // An agent holding several pull requests is ready only when each open one carries Ready: the branch's
@@ -2680,13 +2659,6 @@ test('an operator wait waits on the questions asked with ask: their blocks unles
   const none = parseDeclaration({ kind: 'operator', blocks: 'G1' }, [])
   expect('error' in none && none.error).toBe(ASK_FIRST)
   expect('error' in parseDeclaration({ kind: 'tool' }, asked)).toBe(true)
-})
-
-test('an agent declares no operator wait, even with a question of its session open: its wait is its orchestrator\'s', async () => {
-  const wait = waitMounted()
-  const fx = fakeDollar({ launchName: 'Agent: belt', round: { 'q-a1b2c3-1.json': ASKED_HERE } })
-  const refused = await declare(wait, fx.dollar, { kind: 'operator' })
-  expect(refused).toEqual({ result: AGENT_OPERATOR, isError: true })
 })
 
 test('a turn that asked with ask and declared its wait without question passes the stop, first stop and re-fired alike', async () => {

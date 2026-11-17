@@ -20,17 +20,12 @@ import { holdsDone } from './unattended.ts'
 import { holdsTodos, openFor, whoAmI } from './todo.ts'
 import { todoName } from './todo-format.ts'
 import { readAsked } from './question.ts'
-import { sessionRole } from './supervision.ts'
 
 // The nouns the declaration holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock' | 'settings'>
 
 // Why an operator wait is refused with no question of the session's open.
 export const ASK_FIRST = 'An operator wait waits on the questions this session asked with `ask`, and none is open: ask the question first with `ask`, then declare the wait. If you ask him nothing, declare another kind.'
-
-// Why an agent's operator wait is refused: its questions go to the session that launched it, so its
-// wait on them is the orchestrator's (held), never the operator's.
-export const AGENT_OPERATOR = 'An agent waits on its orchestrator, not on the operator: end the turn with `status: blocked — <what it blocks>` or `status: question — <one line>`, and the orchestrator answers. Only an orchestrator waits on the operator, on the questions it asked with `ask`.'
 
 // What `blocks` may hold: one line, short enough to be a reason and not a report.
 export const BLOCKS_MAX = 300
@@ -258,11 +253,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   on('tool.call', { tool: `mcp__orchestrator__${WAIT_TOOL}` }, async ($, e) => {
     // A subagent's turn is not the session's: its end wakes the session, not a wait of its own.
     if (e.agentId) return { result: `${WAIT_TOOL} is the main session's: a subagent ends its turn by answering.`, isError: true }
-    // Fails closed: an operator wait is refused unless the session's role is known to ask the operator.
-    if (e['kind'] === 'operator') {
-      const role = await sessionRole($, await $.session.id())
-      if (role === null || role === 'agent') return { result: AGENT_OPERATOR, isError: true }
-    }
     const parsed = parseDeclaration(e, await openAsked($))
     if ('error' in parsed) return { result: parsed.error, isError: true }
     // A done or a deferred wait is held while a pull request is unattended (unattended.ts).
