@@ -4005,6 +4005,9 @@ def cmd_home(args):
             print("stay: this session already runs in a home session")
             return
         old_home = os.path.basename(os.environ.get("TMUX", "").split(",")[0])
+        if old_home == home_socket(args.session):
+            print("stay: this session already runs in a home session")
+            return
     pid, record = session_record(args.session)
     if not pid:
         die("home: no running process of session %s is in the host's registry; the session "
@@ -4287,8 +4290,9 @@ def follow_launch(pid, record, name):
         resume = with_pair(resume, model, effort)
     except PairUnreadable:
         pass  # the pair its launch asked for
+    # A name that is no shell identifier is left out: it would break the launch's chain.
     exports = {k: v for k, v in (host_env(pid) or {}).items()
-               if k.startswith("ORCHESTRATOR_") and k not in HOME_ENV_DROPPED}
+               if re.fullmatch(r"ORCHESTRATOR_[A-Za-z0-9_]*", k) and k not in HOME_ENV_DROPPED}
     cli = shutil.which(HOST_CLI) or HOST_CLI
     line = " ".join(shlex.quote(w) for w in [cli] + resume)
     return resume_program(cwd, pid, line, sid, exports=exports), ""
@@ -4414,10 +4418,19 @@ def cmd_home_follow(args):
     refused, clients = {}, []
     while home_answers(old):
         clients = server_clients(old) or clients
-        panes = follow_panes(old) or []
+        panes = follow_panes(old)
+        if panes is None:
+            # A listing that failed proves nothing: the server is never ended on it.
+            time.sleep(FOLLOW_POLL)
+            continue
         waiting = 0
         for window, window_name, tty, state in panes:
-            pid = cli_pid_on_tty(tty)
+            try:
+                hosts = host_clis_on(tty, strict=True)
+            except Exception:
+                waiting += 1  # a process table that cannot be read is no empty pane
+                continue
+            pid = hosts[0] if hosts else None
             if not pid or not str(pid).isdigit() or pid in refused:
                 continue
             record = host_registry(pid) or {}
