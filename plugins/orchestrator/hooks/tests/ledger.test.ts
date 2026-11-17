@@ -6,6 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 import { createdPr, prWake, register } from '../ledger.ts'
 import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
+import { prWantedPath } from '../pr-file-format.ts'
 import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
 import type { CatchHook, Events, Hook, Host, Noun } from '../../core/host.ts'
 
@@ -359,6 +360,12 @@ test('a pull request merged outside the session wakes its orchestrator with its 
   expect(world.files.get('/briefs/app/dispatch-record.archive.jsonl')).toContain('"pr":17')
   // Told and archived: the next tick has nothing to say.
   expect((await prWake(world.dollar, new Set())).lines).toEqual([])
+})
+
+test('the tick keeps watching while a reader wants the file, its own lines all ended', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS }, forge: { 'acme/app': '[]' } })
+  world.files.set(prWantedPath(STATE), `acme/web ${new Date().toISOString()}\n`)
+  expect((await prWake(world.dollar, new Set())).watching).toBe(true)
 })
 
 test('a pull request closed unmerged wakes its orchestrator with its agent to close, no row relayed', async () => {

@@ -53,7 +53,8 @@ import {
 } from './observe.ts'
 import { todoName } from './todo-format.ts'
 import { prWake } from './ledger.ts'
-import { PR_FILE_INTERVAL_MS } from './pr-file.ts'
+import { PR_FILE_INTERVAL_MS } from './pr-file-format.ts'
+import { fileWanted } from './pr-file.ts'
 
 // The nouns the guards hold.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'prompt' | 'session' | 'tool' | 'clock' | 'ui' | 'settings'>
@@ -663,7 +664,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         tick.busy = busyNow
         tick.busyAt = 0
       }
-      tick.watch = (await ledgerOf()).length > 0
+      tick.watch = (await ledgerOf()).length > 0 || await fileWanted($, state, Date.now())
       if (busyNow.length > 0 || tick.watch) armTick($, tick, 0)
       // An idle agent whose pull request merged is delivered; one whose pull request is open
       // lives until the merge, the kept findings its own to correct, and is never asked to stand down.

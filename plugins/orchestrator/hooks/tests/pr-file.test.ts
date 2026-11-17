@@ -3,10 +3,10 @@
 // read, the change log, and the refresh over a faked $: one forge call per interval whatever the
 // sessions reading it, a failed call keeping what was read before, a lock another session holds.
 import { expect, test } from 'claude-code/testing'
+import { changeLines, LOG_KEPT, parsePrAnswer, prQuery, refreshPrFile, reposToRead, trackedPrs, withEnded, withLogLines } from '../pr-file.ts'
 import {
-  changeLines, isFresh, LOG_KEPT, parsePrAnswer, parsePrFile, prFilePath, prLogPath, prQuery, refreshPrFile, trackedPrs, withLogLines,
-  PR_FILE_INTERVAL_MS, type FilePr, type PrFile,
-} from '../pr-file.ts'
+  ENDED_KEPT_MS, isFresh, READING_KEPT_MS, parsePrFile, prFilePath, prLogPath, prsOfRepo, prWantedPath, PR_FILE_INTERVAL_MS, repoOfOrigin, wantedRepos, withWanted, type FilePr, type PrFile,
+} from '../pr-file-format.ts'
 import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
 import { hostOf } from '../../core/capture.ts'
 
@@ -64,20 +64,21 @@ test('the pull requests the records on the machine name are gathered by reposito
 test('one query asks every repository its open pull requests and each recorded one by its number, with its checks', () => {
   const query = prQuery(new Map([['acme/app', [7, 8]], ['acme/lib', []]]))
   expect(query.startsWith('query{viewer{login} rateLimit{cost remaining} ')).toBe(true)
-  expect(query).toContain('r0:repository(owner:"acme",name:"app"){open:pullRequests(states:OPEN,first:50,orderBy:{field:CREATED_AT,direction:DESC})')
+  expect(query).toContain('r0:repository(owner:"acme",name:"app"){open:pullRequests(states:OPEN,first:100,orderBy:{field:CREATED_AT,direction:DESC})')
   expect(query).toContain('n7:pullRequest(number:7)')
   expect(query).toContain('n8:pullRequest(number:8)')
   expect(query).toContain('r1:repository(owner:"acme",name:"lib")')
   expect(query.match(/statusCheckRollup/g)?.length).toBe(2)
+  expect(query).toContain('ended:pullRequests(states:[MERGED,CLOSED],first:50,orderBy:{field:UPDATED_AT,direction:DESC})')
 })
 
-test('the answer keeps the open pull requests the viewer opened and every recorded one; a repository with no data is unread', () => {
+test('the answer keeps every open pull request, the last ones ended, every recorded one and the fork a head comes from; a repository with no data is unread', () => {
   const node = (n: number, state: string, login: string, extra: object = {}) => ({
     number: n, state, isDraft: n === 9, createdAt: 't', headRefName: `b${n}`, headRefOid: 's', mergeable: 'MERGEABLE', author: { login }, labels: { nodes: [{ name: 'Ready' }, {}] }, ...extra,
   })
   const answer = parsePrAnswer(new Map([['acme/app', [8]], ['acme/lib', []]]), JSON.stringify({ data: {
     viewer: { login: 'me' }, rateLimit: { cost: 2 },
-    r0: { open: { pageInfo: { hasNextPage: true }, nodes: [node(7, 'OPEN', 'me'), node(9, 'OPEN', 'someone'), {}] }, n8: node(8, 'MERGED', 'someone', { commits: { nodes: [{ commit: { statusCheckRollup: null } }] } }) },
+    r0: { open: { pageInfo: { hasNextPage: true }, nodes: [node(7, 'OPEN', 'me'), node(9, 'OPEN', 'someone', { isCrossRepository: true, headRepositoryOwner: { login: 'fan' } }), {}] }, ended: { nodes: [node(5, 'CLOSED', 'me')] }, n8: node(8, 'MERGED', 'someone', { commits: { nodes: [{ commit: { statusCheckRollup: null } }] } }) },
     r1: null,
   } }))
   expect(answer?.viewer).toBe('me')
@@ -85,9 +86,12 @@ test('the answer keeps the open pull requests the viewer opened and every record
   expect(answer?.repos).toEqual(['acme/app'])
   expect(answer?.unread).toEqual(['acme/lib'])
   expect(answer?.truncated).toEqual(['acme/app'])
+  const common = { draft: false, sha: 's', createdAt: 't', labels: ['Ready'], mergeable: 'MERGEABLE' }
   expect(answer?.prs).toEqual([
-    { repo: 'acme/app', pr: 7, state: 'OPEN', draft: false, head: 'b7', sha: 's', author: 'me', createdAt: 't', labels: ['Ready'], mergeable: 'MERGEABLE' },
-    { repo: 'acme/app', pr: 8, state: 'MERGED', draft: false, head: 'b8', sha: 's', author: 'someone', createdAt: 't', labels: ['Ready'], mergeable: 'MERGEABLE', ci: 'none' },
+    { repo: 'acme/app', pr: 5, state: 'CLOSED', head: 'b5', author: 'me', fork: null, ...common },
+    { repo: 'acme/app', pr: 7, state: 'OPEN', head: 'b7', author: 'me', fork: null, ...common },
+    { repo: 'acme/app', pr: 9, state: 'OPEN', head: 'b9', author: 'someone', fork: 'fan', ...common, draft: true },
+    { repo: 'acme/app', pr: 8, state: 'MERGED', head: 'b8', author: 'someone', fork: null, ...common, ci: 'none' },
   ])
   expect(parsePrAnswer(new Map(), 'not json')).toBe(undefined)
   expect(parsePrAnswer(new Map(), '{"errors":[{"message":"rate limited"}]}')).toBe(undefined)
@@ -95,7 +99,7 @@ test('the answer keeps the open pull requests the viewer opened and every record
 })
 
 const pr = (n: number, state: FilePr['state'], more: Partial<FilePr> = {}): FilePr =>
-  ({ repo: 'acme/app', pr: n, state, draft: false, head: `b${n}`, sha: 's', author: 'me', createdAt: null, labels: [], mergeable: null, ...more })
+  ({ repo: 'acme/app', pr: n, state, draft: false, head: `b${n}`, sha: 's', author: 'me', createdAt: null, labels: [], mergeable: null, fork: null, ...more })
 
 test('the change log says each state change once, one line each, and nothing on the first file', () => {
   const before: PrFile = { v: 1, at: 'x', tried: 'x', viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(7, 'OPEN', { draft: true, ci: 'pending' }), pr(8, 'OPEN'), pr(9, 'OPEN'), pr(10, 'CLOSED')] }
@@ -105,6 +109,8 @@ test('the change log says each state change once, one line each, and nothing on 
   ])
   expect(changeLines(before, after, [], 'T')).not.toContain('T acme/app#9 no longer open')
   expect(changeLines(undefined, after, ['acme/app'], 'T')).toEqual([])
+  // A pull request first seen already ended (the ended page) is no change: no line.
+  expect(changeLines(before, [...after, pr(20, 'MERGED'), pr(21, 'CLOSED')], ['acme/app'], 'T')).toHaveLength(6)
   expect(withLogLines('a\nb\n', ['c'])).toBe('a\nb\nc\n')
   expect(withLogLines(Array.from({ length: LOG_KEPT }, (_, i) => `l${i}`).join('\n'), ['last']).split('\n').filter(Boolean).length).toBe(LOG_KEPT)
 })
@@ -183,6 +189,49 @@ test('a query the forge resolves in part is read for the rest: the repository it
   expect(files.get(prLogPath(STATE))?.split('\n').filter(Boolean).length).toBe(1)
 })
 
+test('a pull request seen ended is stamped when first seen so, kept a week in the repositories read, then dropped', () => {
+  const at = '2026-11-17T16:00:00Z'
+  const before: PrFile = { v: 1, at, tried: at, viewer: 'me', repos: ['acme/app', 'acme/lib'], unread: [], prs: [
+    pr(3, 'MERGED', { ended: '2026-11-15T00:00:00Z' }), pr(4, 'CLOSED', { ended: '2026-11-01T00:00:00Z' }), pr(6, 'MERGED', { repo: 'acme/lib', ended: '2026-11-15T00:00:00Z' }), pr(7, 'OPEN'),
+  ] }
+  const next = withEnded(before, [pr(7, 'MERGED'), pr(8, 'OPEN')], ['acme/app'], NOW, 'T')
+  expect(next.map(p => [p.repo, p.pr, p.state, p.ended])).toEqual([
+    ['acme/app', 7, 'MERGED', 'T'], ['acme/app', 8, 'OPEN', undefined], ['acme/app', 3, 'MERGED', '2026-11-15T00:00:00Z'],
+  ])
+  expect(withEnded(undefined, [pr(3, 'CLOSED')], ['acme/app'], NOW, 'T')[0]?.ended).toBe('T')
+  expect(ENDED_KEPT_MS).toBe(7 * 24 * 3600 * 1000)
+})
+
+test('the repositories the checkouts want are read beside the records\', each wanted a week after it was last asked', async () => {
+  const { dollar, files } = world()
+  files.set(prWantedPath(STATE), withWanted('acme/old 2026-11-01T00:00:00.000Z\nacme/app 2026-11-17T00:00:00.000Z\n', ['acme/web'], NOW))
+  expect(wantedRepos(files.get(prWantedPath(STATE)) ?? '', NOW)).toEqual(['acme/app', 'acme/web'])
+  expect([...await reposToRead(dollar, STATE, NOW)]).toEqual([['acme/app', [7, 8]], ['acme/lib', [3]], ['acme/web', []]])
+  expect(wantedRepos('not a repo 2026-11-17T00:00:00Z\nacme/x never\n', NOW)).toEqual([])
+})
+
+test('a pull request a reader wants by its number is read by it, beside its repository\'s', async () => {
+  const { dollar, files } = world()
+  files.set(prWantedPath(STATE), withWanted('', ['acme/lib#40', 'acme/web#5', 'acme/app#7'], NOW))
+  expect([...await reposToRead(dollar, STATE, NOW)]).toEqual([['acme/app', [7, 8]], ['acme/lib', [3, 40]], ['acme/web', [5]]])
+  expect(wantedRepos('acme/app#0 2026-11-17T00:00:00Z\nacme/app#x 2026-11-17T00:00:00Z\n', NOW)).toEqual([])
+})
+
+test('a GitHub origin names its repository in every form; the file answers for a repository only when its reading is current', () => {
+  for (const url of ['https://github.com/acme/app.git', 'git@github.com:acme/app.git', 'ssh://git@github.com/acme/app', 'https://user@github.com/acme/app/']) expect(repoOfOrigin(url)).toBe('acme/app')
+  expect(repoOfOrigin('https://gitlab.com/acme/app.git')).toBe(undefined)
+  const at = '2026-11-17T16:00:00Z'
+  const file: PrFile = { v: 1, at, tried: at, viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(7, 'OPEN'), pr(1, 'OPEN', { repo: 'acme/lib' })] }
+  expect(prsOfRepo(file, 'acme/app', NOW)?.map(p => p.pr)).toEqual([7])
+  expect(prsOfRepo(file, 'acme/lib', NOW)).toBe(undefined)
+  expect(prsOfRepo({ ...file, error: 'down' }, 'acme/app', NOW)).toBe(undefined)
+  expect(prsOfRepo(undefined, 'acme/app', NOW)).toBe(undefined)
+  // A reading older than READING_KEPT_MS, or none yet (the try written before the first call), is no current one.
+  expect(prsOfRepo(file, 'acme/app', NOW + READING_KEPT_MS)?.length).toBe(1)
+  expect(prsOfRepo(file, 'acme/app', NOW + READING_KEPT_MS + 1)).toBe(undefined)
+  expect(prsOfRepo({ ...file, at: null }, 'acme/app', NOW)).toBe(undefined)
+})
+
 test('a file that cannot be written after the call still holds its try: a reader within the interval makes no second call', async () => {
   const { dollar, calls, file } = world()
   const run = dollar.process.run
@@ -210,7 +259,7 @@ test('a file that cannot be written makes no call, and says so on the log', asyn
 
 test('no pull request is said gone from an open list that ran past its page', async () => {
   const forge: Record<string, string | null> = { 'acme/app': JSON.stringify([{ number: 7 }, { number: 9 }]), 'acme/lib': '[]' }
-  const { dollar, calls, files } = world(forge)
+  const { dollar, calls, files, file } = world(forge)
   await refreshPrFile(dollar, NOW)
   // The page now runs past 50: #9 is beyond it, not gone.
   forge['acme/app'] = JSON.stringify([{ number: 7 }])
@@ -221,7 +270,8 @@ test('no pull request is said gone from an open list that ran past its page', as
   }
   await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS)
   expect(calls.length).toBe(2)
-  expect(files.get(prLogPath(STATE))).toBe('2026-11-17T16:01:00Z acme/app open past 50: the rest unread\n')
+  expect(files.get(prLogPath(STATE))).toBe('2026-11-17T16:01:00Z acme/app open past 100: the rest unread\n')
+  expect([file()?.repos, file()?.unread]).toEqual([['acme/lib'], ['acme/app']])
 })
 
 test('two sessions refreshing at once make one forge call: the lock holds the second off', async () => {
@@ -241,4 +291,21 @@ test('a refresh another session made between the read and the lock counts: read 
   }
   await refreshPrFile(dollar, NOW + 1000)
   expect(calls).toEqual([])
+})
+
+test('a file read before whose next write fails after the call keeps its pull requests and its new try: no second call within the interval', async () => {
+  const { dollar, calls, file } = world()
+  await refreshPrFile(dollar, NOW)
+  const run = dollar.process.run
+  dollar.process.run = async (argv, init) => {
+    if (argv[0] === 'mv' && argv[3] === prFilePath(STATE) && calls.length > 1) return { exitCode: 1, stdout: '', stderr: 'disk full' }
+    return run(argv, init)
+  }
+  await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS)
+  expect(calls.length).toBe(2)
+  expect(file()?.tried).toBe('2026-11-17T16:01:00Z')
+  expect(file()?.at).toBe('2026-11-17T16:00:00Z')
+  expect(file()?.prs.length).toBeGreaterThan(0)
+  await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS + 1000)
+  expect(calls.length).toBe(2)
 })

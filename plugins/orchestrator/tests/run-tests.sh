@@ -1638,7 +1638,7 @@ WC="$WORK/wc"
 mkdir -p "$WC/bin" "$WC/bin-nolsof" "$WC/hosttmp" "$WC/src"
 export ORCHESTRATOR_HOST_TMP="$WC/hosttmp"
 export ORCHESTRATOR_WORKSPACES="$WORK/wcroot"
-# The sweep caches each repository's pull requests in the state directory: one of the suite's own.
+# The sweep reads the machine's pull request file in the state directory: one of the suite's own.
 export ORCHESTRATOR_STATE_DIR="$WC/state"
 rp() { ( cd "$1" && pwd -P ); }
 mkdir -p "$WORK/wcroot"
@@ -1656,14 +1656,11 @@ for n in 1 2 3; do
 done
 WCSRC="$WC/src/proj"; WCSRC2="$WC/src/proj2"; WCSRC3="$WC/src/proj3"
 
-# A fake `gh`: one JSON file per origin, named after the origin's last path part, and one
-# line per `pr list` call so the number of calls per repository can be counted.
+# A fake `gh` that only counts its calls: the sweep must make none.
 cat > "$WC/bin/gh" <<EOF
 #!/bin/bash
-[ -f "$WC/gh-offline" ] && { echo "gh: you are not logged in" >&2; exit 1; }
-[ "\$1 \$2" = "pr list" ] || exit 1
 echo "\$(pwd -P) \$*" >> "$WC/gh-calls"
-cat "$WC/prs-\$(basename "\$(git remote get-url origin)").json"
+exit 1
 EOF
 printf '#!/bin/bash\nexit 1\n' > "$WC/bin-nolsof/lsof"
 chmod +x "$WC/bin/gh" "$WC/bin-nolsof/lsof"
@@ -1846,6 +1843,23 @@ cat > "$WC/prs-origin2.git.json" <<EOF
 [{"number":1,"state":"MERGED","headRefName":"feat/p2","headRefOid":"$(head_of "$C_P2")"}]
 EOF
 for d in "$C_MERGED" "$C_CLOSED" "$C_OPEN" "$C_NOPR" "$C_DIRTY" "$C_UNPUSHED" "$C_LIVE" "$C_P2" "$C_MAIN" "$C_STABLE" "$C_PAST" "$C_BEHIND" "$P_MERGED" "$P_MOVED" "$P_SAME" "$P_NOREC" "$P_NOBRANCH"; do scratch "$d" >/dev/null; done
+# The sweep reads GitHub repositories only: each origin named as one (the pins share their
+# source's), restored once the sweep's cases are done; the machine's pull request file holds
+# the lists above, as the hooks module writes it.
+ghname() { case "$(git -C "$1" remote get-url origin)" in */origin2.git) echo acme/proj2 ;; */origin3.git) echo acme/proj3 ;; *) echo acme/proj ;; esac; }
+for d in "$WCSRC" "$WCSRC2" "$WCSRC3" "$C_MERGED" "$C_CLOSED" "$C_OPEN" "$C_NOPR" "$C_DIRTY" "$C_UNPUSHED" "$C_LIVE" "$C_P2" "$C_MAIN" "$C_STABLE" "$C_PAST" "$C_BEHIND"; do
+  git -C "$d" remote set-url origin "https://github.com/$(ghname "$d").git"
+done
+mkdir -p "$ORCHESTRATOR_STATE_DIR"
+node -e '
+const fs = require("fs")
+const [out, ...lists] = process.argv.slice(1)
+const repoOf = path => `acme/proj${/prs-origin(\d*)\.git\.json$/.exec(path)[1]}`
+const prs = lists.flatMap(path => JSON.parse(fs.readFileSync(path, "utf8")).map(p => ({ repo: repoOf(path), pr: p.number, state: p.state, draft: false, head: p.headRefName, sha: p.headRefOid })))
+const at = new Date().toISOString()
+fs.writeFileSync(out, JSON.stringify({ v: 1, at, tried: at, viewer: "me", repos: lists.map(repoOf), unread: [], prs }))
+' "$ORCHESTRATOR_STATE_DIR/prs.json" "$WC/prs-origin.git.json" "$WC/prs-origin2.git.json" "$WC/prs-origin3.git.json"
+cp "$ORCHESTRATOR_STATE_DIR/prs.json" "$WC/prs.json.kept"
 # The orphans of checkouts deleted before this change: the encoded root, an existing project,
 # then a name that matches no checkout. Those that must stay: one past the root's name without
 # the separator, one outside the root, two of a sibling of the root sharing its name as a
@@ -1878,33 +1892,28 @@ out=$(wcgh bash "$WS" sweep --dry-run 2>"$WC/sweep-dry.err"); code=$?
 check "a dry run exits 0 and deletes nothing, checkouts or host directories" "0|$BEFORE|1|1|1|1|1|1|1" "$code|$(nitems)|$(tmpstate)"
 check "a dry run prints its decisions: six deletions and the orphan, none done" "7|0" \
   "$(printf '%s\n' "$out" | grep -c '^would delete ')|$(printf '%s\n' "$out" | grep -c '^deleted ')"
-check "the pull requests are read once per repository, never once per checkout; a long-lived branch asks none" "2" "$(grep -c 'pr list' "$WC/gh-calls")"
-check "and with the fields the decision reads, two hundred at most" "2|2" \
-  "$(grep -c -- '--json headRefName,state,headRefOid,number' "$WC/gh-calls")|$(grep -c -- '--limit 200 ' "$WC/gh-calls")"
+check "the pull requests are read in the machine's file, never on the forge" "0" "$(grep -c . "$WC/gh-calls")"
+check "and the file is asked for each repository read, once; a long-lived branch asks none" "acme/proj|acme/proj2" \
+  "$(cut -d' ' -f1 "$ORCHESTRATOR_STATE_DIR/prs.wanted" | sort | paste -sd'|' -)"
 # The orphans are local and cheap, the pull requests a call per repository: a sweep cut by its
 # deadline has done the orphans first.
 first_ckt=$(printf '%s\n' "$out" | grep -n "^[a-z ]* $WCR/proj" | head -1 | cut -d: -f1)
 last_tmp=$(printf '%s\n' "$out" | grep -n "^[a-z ]* $ORCHESTRATOR_HOST_TMP/" | tail -1 | cut -d: -f1)
 check "the orphans are decided before any checkout" "1" "$([ -n "$last_tmp" ] && [ -n "$first_ckt" ] && [ "$last_tmp" -lt "$first_ckt" ] && echo 1 || echo 0)"
-CACHED=$(ls "$ORCHESTRATOR_STATE_DIR/sweep-prs" 2>/dev/null | grep -c .)
-: > "$WC/gh-calls"
-wcgh bash "$WS" sweep --dry-run >/dev/null 2>&1
-check "the lists are cached in the state directory, one file per origin; a second sweep asks gh nothing" "2|0" "$CACHED|$(grep -c . "$WC/gh-calls")"
-touch -t 200001010000 "$ORCHESTRATOR_STATE_DIR"/sweep-prs/*
-wcgh bash "$WS" sweep --dry-run >/dev/null 2>&1
-check "a list older than thirty minutes is asked again" "2" "$(grep -c . "$WC/gh-calls")"
-rm -rf "$ORCHESTRATOR_STATE_DIR/sweep-prs"
 
 out=$(wcgh bash "$WS" sweep --deadline 0 2>"$WC/sweep-dl.err"); code=$?
 check "a spent deadline stops cleanly before the next item: nothing deleted, said" "0|$BEFORE|1" \
   "$code|$(nitems)|$(grep -c 'deadline' "$WC/sweep-dl.err")"
 
-: > "$WC/gh-offline"
+rm -f "$ORCHESTRATOR_STATE_DIR/prs.json"
 out=$(wcgh bash "$WS" sweep 2>"$WC/sweep-off.err"); code=$?
-rm -f "$WC/gh-offline"
-check "gh unreachable: no checkout deleted, each repository says so once, the items are kept with the reason" "0|$BEFORE|2|1" \
-  "$code|$(nitems)|$(grep -c 'cannot read the pull requests' "$WC/sweep-off.err")|$(printf '%s\n' "$out" | grep -c "^kept $C_MERGED: .*pull requests")"
-check "and a failed call is never cached" "0" "$(ls "$ORCHESTRATOR_STATE_DIR/sweep-prs" 2>/dev/null | grep -c .)"
+check "no pull request file: no checkout deleted, each repository says so once, the items are kept with the reason" "0|$BEFORE|2|1" \
+  "$code|$(nitems)|$(grep -c 'cannot read the pull requests' "$WC/sweep-off.err")|$(printf '%s\n' "$out" | grep -c "^kept $C_MERGED: .*pull request")"
+node -e 'const fs = require("fs"); const f = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); fs.writeFileSync(process.argv[2], JSON.stringify({ ...f, error: "HTTP 502" }))' "$WC/prs.json.kept" "$ORCHESTRATOR_STATE_DIR/prs.json"
+out=$(wcgh bash "$WS" sweep 2>"$WC/sweep-off.err"); code=$?
+check "a file whose last refresh failed is no current reading: nothing deleted either" "0|$BEFORE|2" \
+  "$code|$(nitems)|$(grep -c 'cannot read the pull requests' "$WC/sweep-off.err")"
+cp "$WC/prs.json.kept" "$ORCHESTRATOR_STATE_DIR/prs.json"
 mkorphans
 
 out=$(wcgh bash "$WS" sweep 2>"$WC/sweep.err"); code=$?
@@ -1952,7 +1961,8 @@ for d in "$C_OPEN" "$C_NOPR" "$C_UNPUSHED" "$C_LIVE" "$C_MAIN" "$C_STABLE" "$C_P
 bash "$WS" delete "$C_DIRTY" --discard >/dev/null 2>&1
 bash "$WS" delete "$P_NOBRANCH" --discard >/dev/null 2>&1
 check "the temporary fixtures are gone and nothing is left under the root" "0" "$(nitems)"
-rm -rf "$ORCHESTRATOR_HOST_TMP"/* "$WC/gh-calls" "$ORCHESTRATOR_STATE_DIR"
+git -C "$WCSRC" remote set-url origin "$WC/origin.git"; git -C "$WCSRC2" remote set-url origin "$WC/origin2.git"; git -C "$WCSRC3" remote set-url origin "$WC/origin3.git"
+rm -rf "$ORCHESTRATOR_HOST_TMP"/* "$WC/gh-calls" "$WC/prs.json.kept" "$ORCHESTRATOR_STATE_DIR"
 
 unset ORCHESTRATOR_WORKSPACES GIT_CONFIG_GLOBAL ORCHESTRATOR_HOST_TMP ORCHESTRATOR_STATE_DIR
 
@@ -9825,15 +9835,15 @@ mkrepo() {  # <path> <branch> <origin url>
   git init -q -b "$2" "$1" && git -C "$1" remote add origin "$3" \
     && git -C "$1" -c user.email=t@local -c user.name=t commit -q --allow-empty -m "Set up"
 }
-mkrepo "$CF/src/app" main git@forge.example:o/app.git
-mkrepo "$CWS/app/a1" feat/x https://forge.example/o/app.git
-mkrepo "$CWS/app/b1" feat/x git@forge.example:o/app.git
-mkrepo "$CWS/app/c1" feat/y ssh://git@forge.example/o/app
-mkrepo "$CWS/app/idle" feat/w git@forge.example:o/app.git
-mkrepo "$CWS/other/o1" feat/x git@forge.example:o/other.git
-mkrepo "$CWS/other/o2" feat/o git@forge.example:o/other.git
-mkrepo "$CWS/none/n1" feat/x git@forge.example:o/none.git
-mkrepo "$CWS/none/n2" feat/x git@forge.example:o/none.git
+mkrepo "$CF/src/app" main git@github.com:o/app.git
+mkrepo "$CWS/app/a1" feat/x https://github.com/o/app.git
+mkrepo "$CWS/app/b1" feat/x git@github.com:o/app.git
+mkrepo "$CWS/app/c1" feat/y ssh://git@github.com/o/app
+mkrepo "$CWS/app/idle" feat/w git@github.com:o/app.git
+mkrepo "$CWS/other/o1" feat/x git@github.com:o/other.git
+mkrepo "$CWS/other/o2" feat/o git@github.com:o/other.git
+mkrepo "$CWS/none/n1" feat/x git@github.com:o/none.git
+mkrepo "$CWS/none/n2" feat/x git@github.com:o/none.git
 real() { (cd "$1" && pwd -P); }
 RSRC=$(real "$CF/src/app"); RA1=$(real "$CWS/app/a1"); RB1=$(real "$CWS/app/b1"); RC1=$(real "$CWS/app/c1")
 RIDLE=$(real "$CWS/app/idle"); RO1=$(real "$CWS/other/o1"); RO2=$(real "$CWS/other/o2")
@@ -9863,15 +9873,18 @@ cat > "$CF/cwds" <<CW
 200 $RSRC
 300 $RA1
 CW
-cat > "$CF/forge" <<'FG'
-#!/bin/bash
-case "$(git -C "$1" remote get-url origin)" in
-  *o/app*) printf '7 feat/x same\n8 feat/y same\n9 feat/z same\n10 feat/w same\n' ;;
-  *o/lone*|*o/other*) ;;
-  *) echo "the forge does not know $1" >&2; exit 1 ;;
-esac
-FG
-chmod +x "$CF/forge"
+# The machine's pull request file, as the hooks module writes it: o/app's open pull requests,
+# o/other, o/lone and o/amb read, o/none not; facts reads it, never the forge.
+cprs() {  # <state directory> [error]: the file in that directory, its last refresh failed when an error is given
+  mkdir -p "$1"
+  local pr='{"repo":"%s","pr":%s,"state":"OPEN","head":"%s","fork":%s}'
+  local at; at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  printf '{"v":1,"at":"%s","tried":"%s",%s"viewer":"me","repos":["o/app","o/other","o/lone","o/amb"],"unread":[],"prs":[%s,%s,%s,%s,%s,%s,%s]}\n' \
+    "$at" "$at" "${2:+\"error\":\"$2\",}" "$(printf "$pr" o/app 7 feat/x null)" "$(printf "$pr" o/app 8 feat/y null)" "$(printf "$pr" o/app 9 feat/z null)" \
+    "$(printf "$pr" o/app 10 feat/w null)" "$(printf "$pr" o/amb 11 feat/v null)" "$(printf "$pr" o/amb 12 feat/d null)" "$(printf "$pr" o/amb 13 feat/f '"someone"')" \
+    > "$1/prs.json"
+}
+cprs "$CS"
 # The hooks module's wait files, as facts reads them for the orchestrators waiting at a turn's
 # end: a live one waiting on the operator, one whose pid is gone, a cleared wait, a broken file.
 CCFG="$WORK/coord-config"; CSTORE="$CCFG/claude-orchestrator/store/waits"; mkdir -p "$CSTORE"
@@ -9880,16 +9893,15 @@ printf '%s\n' '{"name":"Orch: gone","pid":"999","waiting":"operator","blocks":"x
 printf '%s\n' '{"name":"Orch: beta","pid":"101","waiting":null,"blocks":null,"waiting_since":null}' > "$CSTORE/s-beta"
 printf 'not json\n' > "$CSTORE/s-broken"
 cfacts() {
-  CLAUDE_CONFIG_DIR="$CCFG" ORCHESTRATOR_STATE_DIR="$CS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli \
-    COORDINATOR_PS_TABLE="${COORDINATOR_PS_TABLE:-$CF/ps}" COORDINATOR_CWDS="${COORDINATOR_CWDS:-$CF/cwds}" \
-    COORDINATOR_FORGE="${COORDINATOR_FORGE:-$CF/forge}" bash "$COORD" "$@"
+  CLAUDE_CONFIG_DIR="$CCFG" ORCHESTRATOR_STATE_DIR="${CSTATE:-$CS}" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli \
+    COORDINATOR_PS_TABLE="${COORDINATOR_PS_TABLE:-$CF/ps}" COORDINATOR_CWDS="${COORDINATOR_CWDS:-$CF/cwds}" bash "$COORD" "$@"
 }
 cfacts_status() { cfacts "$@" >/dev/null 2>&1; echo "exit $?"; }
 FACTS=$(cfacts facts 2>/dev/null)
 OWNERS=$(cfacts owners 2>/dev/null)
 
 check "facts lists each host session on a tty with its title, its orchestrator, its repository and branch" \
-  "session 100 | ttys100 | Orch: alpha | Orch: alpha | forge.example/o/app | main | $RSRC|session 101 | ttys101 | Agent: a1 | Orch: alpha [aaa111] | forge.example/o/app | feat/x | $RA1|session 102 | ttys102 | Agent: b1 | Orch: beta [bbb222] | forge.example/o/app | feat/x | $RB1|session 103 | ttys103 | Agent: c1 | unknown | forge.example/o/app | feat/y | $RC1|session 106 | ttys106 | Agent: o1 | Orch: gamma [ccc333] | forge.example/o/other | feat/x | $RO1" \
+  "session 100 | ttys100 | Orch: alpha | Orch: alpha | github.com/o/app | main | $RSRC|session 101 | ttys101 | Agent: a1 | Orch: alpha [aaa111] | github.com/o/app | feat/x | $RA1|session 102 | ttys102 | Agent: b1 | Orch: beta [bbb222] | github.com/o/app | feat/x | $RB1|session 103 | ttys103 | Agent: c1 | unknown | github.com/o/app | feat/y | $RC1|session 106 | ttys106 | Agent: o1 | Orch: gamma [ccc333] | github.com/o/other | feat/x | $RO1" \
   "$(printf '%s\n' "$FACTS" | grep '^session ' | tr '\n' '|' | sed 's/|$//')"
 check "a job with no tty, a process that is not the host and an evaluation's host are no sessions" "0|0|0" \
   "$(printf '%s\n' "$FACTS" | grep -c '^session 104 ')|$(printf '%s\n' "$FACTS" | grep -c '^session 105 ')|$(printf '%s\n' "$FACTS" | grep -c '^session 301 ')"
@@ -9905,7 +9917,7 @@ check "names in the former shape, « Orch : x », name the orchestrator the curr
   "session 100 | ttys100 | Orch : alpha | Orch: alpha|session 101 | ttys101 | Agent : a1 | Orch: alpha [aaa111]|session 102 | ttys102 | Agent : b1 | Orch: beta [bbb222]" \
   "$(COORDINATOR_PS_TABLE="$CF/ps-former" cfacts facts 2>/dev/null | grep '^session ' | cut -d'|' -f1-4 | sed 's/ $//' | tr '\n' '|' | sed 's/|$//')"
 check "the checkouts read are those of a repository a session works in" \
-  "checkout $RA1 | forge.example/o/app | feat/x|checkout $RB1 | forge.example/o/app | feat/x|checkout $RC1 | forge.example/o/app | feat/y|checkout $RIDLE | forge.example/o/app | feat/w|checkout $RO1 | forge.example/o/other | feat/x|checkout $RO2 | forge.example/o/other | feat/o" \
+  "checkout $RA1 | github.com/o/app | feat/x|checkout $RB1 | github.com/o/app | feat/x|checkout $RC1 | github.com/o/app | feat/y|checkout $RIDLE | github.com/o/app | feat/w|checkout $RO1 | github.com/o/other | feat/x|checkout $RO2 | github.com/o/other | feat/o" \
   "$(printf '%s\n' "$FACTS" | grep '^checkout ' | tr '\n' '|' | sed 's/|$//')"
 check "a heavy run is listed once, at its top process, with where it runs" \
   "heavy 200 | $RSRC | bash ./tests/run-tests.sh|heavy 300 | $RA1 | timeout 595 /usr/bin/hostcli plugin eval . --case x" \
@@ -9913,15 +9925,15 @@ check "a heavy run is listed once, at its top process, with where it runs" \
 check "a shell that only names a suite, and a pgrep looking for one, are no heavy run" "0|0" \
   "$(printf '%s\n' "$FACTS" | grep -c '^heavy 400 ')|$(printf '%s\n' "$FACTS" | grep -c '^heavy 401 ')"
 check "two checkouts on one branch of one repository are a collision" \
-  "collision checkouts | forge.example/o/app | feat/x | $RA1, $RB1" \
+  "collision checkouts | github.com/o/app | feat/x | $RA1, $RB1" \
   "$(printf '%s\n' "$FACTS" | grep '^collision checkouts ')"
 check "two sessions on one branch of one repository are a collision" \
-  "collision sessions | forge.example/o/app | feat/x | 101 Agent: a1, 102 Agent: b1" \
+  "collision sessions | github.com/o/app | feat/x | 101 Agent: a1, 102 Agent: b1" \
   "$(printf '%s\n' "$FACTS" | grep '^collision sessions ')"
 check "two heavy runs at once are a collision" "collision heavy | 200, 300" \
   "$(printf '%s\n' "$FACTS" | grep '^collision heavy ')"
 check "a pull request whose branch two orchestrations are on is a collision" \
-  "collision pr | forge.example/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222]" \
+  "collision pr | github.com/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222]" \
   "$(printf '%s\n' "$FACTS" | grep '^collision pr ')"
 check "the same branch in a repository nobody works in is no collision" "0" \
   "$(printf '%s\n' "$FACTS" | grep -c 'o/none')"
@@ -9954,12 +9966,12 @@ check "facts shows a live orchestrator's unattended pull requests, and none of a
 rm -rf "$CSESS"
 
 check "owners traces each open pull request to the orchestrator named in its agent's brief" \
-  "pr forge.example/o/app#7 | feat/x | Orch: alpha [aaa111] | session 101 in $RA1|pr forge.example/o/app#7 | feat/x | Orch: beta [bbb222] | session 102 in $RB1|pr forge.example/o/app#8 | feat/y | unknown | session 103 in $RC1 names no orchestrator|pr forge.example/o/app#9 | feat/z | unknown | no checkout on feat/z|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \
+  "pr github.com/o/app#7 | feat/x | Orch: alpha [aaa111] | session 101 in $RA1|pr github.com/o/app#7 | feat/x | Orch: beta [bbb222] | session 102 in $RB1|pr github.com/o/app#8 | feat/y | unknown | session 103 in $RC1 names no orchestrator|pr github.com/o/app#9 | feat/z | unknown | no checkout on feat/z|pr github.com/o/app#10 | feat/w | unknown | no session in $RIDLE" \
   "$(printf '%s\n' "$OWNERS" | tr '\n' '|' | sed 's/|$//')"
 check "owners exits 0 when every source was read" "exit 0" "$(cfacts_status owners)"
 
 # Nothing shared: one session in a repository of its own, one run.
-mkrepo "$CWS/lone/l1" feat/l git@forge.example:o/lone.git
+mkrepo "$CWS/lone/l1" feat/l git@github.com:o/lone.git
 printf '101 1 ttys101 /usr/bin/hostcli --name Agent: l1\n200 1 ttys100 bash ./tests/run-tests.sh\n' > "$CF/ps-quiet"
 printf '101 %s\n200 %s\n' "$(real "$CWS/lone/l1")" "$RSRC" > "$CF/cwds-quiet"
 check "no collision, exit 0 and no collision line" "exit 0|0" \
@@ -9973,13 +9985,14 @@ git -C "$CWS/app/b1" checkout -q feat/x
 
 # A source that cannot be read makes the answer unknown, never « no collision »: said,
 # and exit 2, with what was read still printed.
-printf '#!/bin/bash\necho "cannot reach the forge" >&2\nexit 1\n' > "$CF/forge-down"
-chmod +x "$CF/forge-down"
-check "a forge that cannot be read is said, and exit 2" \
-  "unread forge forge.example/o/app: cannot reach the forge|exit 2|exit 2" \
-  "$(COORDINATOR_FORGE="$CF/forge-down" cfacts facts 2>/dev/null | grep '^unread forge forge.example/o/app')|$(COORDINATOR_FORGE="$CF/forge-down" cfacts_status facts)|$(COORDINATOR_FORGE="$CF/forge-down" cfacts_status owners)"
+cprs "$CF/state-down" 'HTTP 502'
+check "a pull request file whose last refresh failed is said, and exit 2" \
+  "unread forge github.com/o/app: no current reading in the machine's pull request file|exit 2|exit 2" \
+  "$(CSTATE="$CF/state-down" cfacts facts 2>/dev/null | grep '^unread forge github.com/o/app')|$(CSTATE="$CF/state-down" cfacts_status facts)|$(CSTATE="$CF/state-down" cfacts_status owners)"
 check "and the rest is still printed" "1" \
-  "$(COORDINATOR_FORGE="$CF/forge-down" cfacts facts 2>/dev/null | grep -c '^collision checkouts ')"
+  "$(CSTATE="$CF/state-down" cfacts facts 2>/dev/null | grep -c '^collision checkouts ')"
+check "facts asks the file for each GitHub repository it reads, and calls no forge" "o/app|o/lone|o/other" \
+  "$(cut -d' ' -f1 "$CS/prs.wanted" | sort | paste -sd'|' -)"
 check "a process table that cannot be read is said, and exit 2" "unread processes: $CF/no-ps cannot be read|exit 2" \
   "$(COORDINATOR_PS_TABLE="$CF/no-ps" cfacts facts 2>/dev/null | grep '^unread ')|$(COORDINATOR_PS_TABLE="$CF/no-ps" cfacts_status facts)"
 # A session or a heavy run whose directory was not read is on no branch, so it would drop
@@ -9993,7 +10006,7 @@ printf '#!/bin/bash\necho "lsof: cannot read the kernel" >&2\nexit 1\n' > "$CF/b
 chmod +x "$CF/bin-lsof/lsof"
 clsof() {
   PATH="$CF/bin-lsof:$PATH" ORCHESTRATOR_STATE_DIR="$CS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli \
-    COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_FORGE="$CF/forge" bash "$COORD" "$@"
+    COORDINATOR_PS_TABLE="$CF/ps" ORCHESTRATOR_STATE_DIR="$CS" bash "$COORD" "$@"
 }
 check "an lsof that fails is said, and exit 2" "1|exit 2" \
   "$(clsof facts 2>/dev/null | grep -c '^unread directories: lsof failed: lsof: cannot read the kernel$')|$(clsof facts >/dev/null 2>&1; echo "exit $?")"
@@ -10031,25 +10044,25 @@ printf '110 %s\n111 %s\n' "$RC1" "$RA1" > "$CF/cwds-brief"
 cbrief() { COORDINATOR_PS_TABLE="$CF/ps-brief" COORDINATOR_CWDS="$CF/cwds-brief" cfacts "$@"; }
 CBRIEF=$(cbrief facts 2>/dev/null)
 check "a relative brief is read from its session's directory" \
-  "session 111 | ttys111 | Agent: r | Orch: gamma [ccc333] | forge.example/o/app | feat/x | $RA1" \
+  "session 111 | ttys111 | Agent: r | Orch: gamma [ccc333] | github.com/o/app | feat/x | $RA1" \
   "$(printf '%s\n' "$CBRIEF" | grep '^session 111 ')"
 skip_as_root "a brief that cannot be read is said, its session unknown, and exit 2" ||
 check "a brief that cannot be read is said, its session unknown, and exit 2" \
-  "unread brief $CF/briefs/locked.md: cannot be read|session 110 | ttys110 | Agent: k | unknown | forge.example/o/app | feat/y | $RC1|exit 2" \
+  "unread brief $CF/briefs/locked.md: cannot be read|session 110 | ttys110 | Agent: k | unknown | github.com/o/app | feat/y | $RC1|exit 2" \
   "$(printf '%s\n' "$CBRIEF" | grep '^unread brief ')|$(printf '%s\n' "$CBRIEF" | grep '^session 110 ')|$(cbrief facts >/dev/null 2>&1; echo "exit $?")"
 skip_as_root "and owners gives the unread brief as the reason, never « names no orchestrator »" ||
 check "and owners gives the unread brief as the reason, never « names no orchestrator »" \
-  "pr forge.example/o/app#8 | feat/y | unknown | session 110 in $RC1: brief $CF/briefs/locked.md cannot be read" \
+  "pr github.com/o/app#8 | feat/y | unknown | session 110 in $RC1: brief $CF/briefs/locked.md cannot be read" \
   "$(cbrief owners 2>/dev/null | grep '#8 ')"
 chmod 600 "$CF/briefs/locked.md"
 
 # owners says « unknown » where the chain allows two answers: a checkout on the branch with
 # no session beside one with a session, two sessions of one checkout naming two
 # orchestrators, and a pull request whose head is in a fork, whatever its branch is called.
-mkrepo "$CWS/amb/v1" feat/v git@forge.example:o/amb.git
-mkrepo "$CWS/amb/v2" feat/v git@forge.example:o/amb.git
-mkrepo "$CWS/amb/d1" feat/d git@forge.example:o/amb.git
-mkrepo "$CWS/amb/f1" feat/f git@forge.example:o/amb.git
+mkrepo "$CWS/amb/v1" feat/v git@github.com:o/amb.git
+mkrepo "$CWS/amb/v2" feat/v git@github.com:o/amb.git
+mkrepo "$CWS/amb/d1" feat/d git@github.com:o/amb.git
+mkrepo "$CWS/amb/f1" feat/f git@github.com:o/amb.git
 RV1=$(real "$CWS/amb/v1"); RV2=$(real "$CWS/amb/v2"); RD1=$(real "$CWS/amb/d1"); RF1=$(real "$CWS/amb/f1")
 cat > "$CF/ps-amb" <<'PS'
 130 1 ttys130 /usr/bin/hostcli Your orchestrator is Orch: alpha [aaa111]. --name Agent: v1
@@ -10058,29 +10071,28 @@ cat > "$CF/ps-amb" <<'PS'
 133 1 ttys133 /usr/bin/hostcli Your orchestrator is Orch: alpha [aaa111]. --name Agent: f1
 PS
 printf '130 %s\n131 %s\n132 %s\n133 %s\n' "$RV1" "$RD1" "$RD1" "$RF1" > "$CF/cwds-amb"
-printf '#!/bin/bash\nprintf "11 feat/v same\\n12 feat/d same\\n13 feat/f fork:someone\\n"\n' > "$CF/forge-amb"
-chmod +x "$CF/forge-amb"
-camb() { COORDINATOR_PS_TABLE="$CF/ps-amb" COORDINATOR_CWDS="$CF/cwds-amb" COORDINATOR_FORGE="$CF/forge-amb" cfacts "$@"; }
+camb() { COORDINATOR_PS_TABLE="$CF/ps-amb" COORDINATOR_CWDS="$CF/cwds-amb" cfacts "$@"; }
 check "owners says unknown for an idle checkout beside a busy one, two orchestrators in one checkout, and a fork" \
-  "pr forge.example/o/amb#11 | feat/v | unknown | no session in $RV2, beside a session in $RV1|pr forge.example/o/amb#12 | feat/d | unknown | sessions 131, 132 in $RD1 name different orchestrators: Orch: alpha [aaa111], Orch: beta [bbb222]|pr forge.example/o/amb#13 | feat/f | unknown | head branch in a fork, owned by someone" \
+  "pr github.com/o/amb#11 | feat/v | unknown | no session in $RV2, beside a session in $RV1|pr github.com/o/amb#12 | feat/d | unknown | sessions 131, 132 in $RD1 name different orchestrators: Orch: alpha [aaa111], Orch: beta [bbb222]|pr github.com/o/amb#13 | feat/f | unknown | head branch in a fork, owned by someone" \
   "$(camb owners 2>/dev/null | tr '\n' '|' | sed 's/|$//')"
 check "two orchestrators in one checkout are still a pull request collision; a fork's is none" \
-  "collision pr | forge.example/o/amb#12 | feat/d | Orch: alpha [aaa111], Orch: beta [bbb222]" \
+  "collision pr | github.com/o/amb#12 | feat/d | Orch: alpha [aaa111], Orch: beta [bbb222]" \
   "$(camb facts 2>/dev/null | grep '^collision pr ')"
 CT="$WORK/coord-tree/skills"
 mkdir -p "$CT/iterm-agents/scripts"
 cp -R "$ROOT/skills/coordinator" "$ROOT/skills/orchestrator" "$CT/" && cp -R "$ROOT/core" "$WORK/coord-tree/"
+mkdir -p "$WORK/coord-tree/hooks" && cp "$ROOT/hooks/pr-file-format.ts" "$WORK/coord-tree/hooks/"
 printf '#!/bin/bash\necho "workspace: cannot read the root" >&2\nexit 1\n' > "$CT/orchestrator/scripts/workspace.sh"
 check "a workspace list that fails is said, and exit 2" "unread checkouts: workspace: cannot read the root|exit 2" \
-  "$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"
+  "$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" ORCHESTRATOR_STATE_DIR="$CS" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" ORCHESTRATOR_STATE_DIR="$CS" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"
 rm -rf "$CT/orchestrator" && ln -s "$ROOT/skills/orchestrator" "$CT/orchestrator"
 # With no host name, no process is a session: an empty list read as « no collision ».
 check "a host name that cannot be known is said, and exit 2" "unread sessions: the host's name is unknown: set ORCHESTRATOR_HOST_CLI|exit 2" \
-  "$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"
+  "$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" ORCHESTRATOR_STATE_DIR="$CS" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" ORCHESTRATOR_STATE_DIR="$CS" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"
 # The host's name is the launcher's, read from it, never spelled in this script.
 printf 'HOST_CLI = os.environ.get("ORCHESTRATOR_HOST_CLI", "hostcli")\n' > "$CT/iterm-agents/scripts/iterm_agent.py"
 check "without ORCHESTRATOR_HOST_CLI the host's name is the launcher's default" "5" \
-  "$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep -c '^session ')"
+  "$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" ORCHESTRATOR_STATE_DIR="$CS" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep -c '^session ')"
 check "the script never spells the host's name" "0" "$(cat "$COORD" "$ROOT/skills/coordinator/scripts/facts.ts" | grep -v 'CLAUDE_CONFIG_DIR' | grep -ci 'claude')"
 check "an unknown subcommand is refused" "exit 1" "$(coord_status bogus)"
 
@@ -10095,9 +10107,9 @@ slc() { ORCHESTRATOR_STATE_DIR="$SLS" bash "$COORD" "$@"; }
 slc_status() { slc "$@" >/dev/null 2>&1; echo "exit $?"; }
 SLREC="$SLS/sleeping.json"
 check "sleep records a paused orchestrator and says so" "sleeping Orch: alpha" \
-  "$(slc sleep --name 'Orch: alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model a-model --effort high --pr 'forge.example/o/app#9 feat/z' --checkout "$SLP" 2>&1)"
+  "$(slc sleep --name 'Orch: alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model a-model --effort high --pr 'github.com/o/app#9 feat/z' --checkout "$SLP" 2>&1)"
 check "the record holds every field a wake needs, the time stamped in UTC" \
-  "Orch: alpha|$SLP/briefs/succession-brief.md|$SLP|a-model|high|forge.example/o/app#9 feat/z|$SLP|1" \
+  "Orch: alpha|$SLP/briefs/succession-brief.md|$SLP|a-model|high|github.com/o/app#9 feat/z|$SLP|1" \
   "$(jq -r '.[0] | [.name,.brief,.dir,.model,.effort,(.prs|join(",")),(.checkouts|join(",")),(.slept|test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")|if . then 1 else 0 end)] | map(tostring) | join("|")' "$SLREC" 2>/dev/null)"
 check "sleep leaves no lock behind" "0" "$([ -e "$SLS/coordinator.lock" ] && echo 1 || echo 0)"
 check "an orchestrator already sleeping is refused" "exit 1|coordinator: sleep: refused: Orch: alpha is already sleeping" \
@@ -10110,7 +10122,7 @@ check "sleep refuses a pause without an effort, and says where the pair is read"
 check "a refused sleep records nothing" "1" "$(jq length "$SLREC")"
 slc sleep --name 'Orch: beta' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model a-model --effort high >/dev/null 2>&1
 check "sleeping lists each one with its directory, pull requests, checkouts, brief, model and effort" \
-  "sleeping Orch: alpha | since * | $SLP | prs forge.example/o/app#9 feat/z | checkouts $SLP | brief $SLP/briefs/succession-brief.md | model a-model | effort high|sleeping Orch: beta | since * | $SLP | prs none | checkouts none | brief $SLP/briefs/succession-brief.md | model a-model | effort high" \
+  "sleeping Orch: alpha | since * | $SLP | prs github.com/o/app#9 feat/z | checkouts $SLP | brief $SLP/briefs/succession-brief.md | model a-model | effort high|sleeping Orch: beta | since * | $SLP | prs none | checkouts none | brief $SLP/briefs/succession-brief.md | model a-model | effort high" \
   "$(slc sleeping | sed -E 's/since [^ ]+/since */' | tr '\n' '|' | sed 's/|$//')"
 check "wake-done removes the woken one's record alone" "woken Orch: beta|Orch: alpha" \
   "$(slc wake-done --name 'Orch: beta' 2>&1)|$(jq -r 'map(.name)|join(",")' "$SLREC")"
@@ -10122,17 +10134,18 @@ check "a drop that cannot take the lock is refused and drops nothing" "exit 1|1|
 rm -rf "$SLS/coordinator.lock"
 SLDROP=$(slc drop --name 'Orch: alpha' 2>&1)
 check "drop removes the record, moves the brief under abandoned/ beside it, and names what it left untouched" \
-  "dropped Orch: alpha|brief moved to $SLP/briefs/abandoned/*-succession-brief.md|left untouched: forge.example/o/app#9 feat/z, $SLP|0|0|1" \
+  "dropped Orch: alpha|brief moved to $SLP/briefs/abandoned/*-succession-brief.md|left untouched: github.com/o/app#9 feat/z, $SLP|0|0|1" \
   "$(printf '%s' "$SLDROP" | sed -E 's#abandoned/[0-9TZ]+-#abandoned/*-#' | tr '\n' '|')|$(jq length "$SLREC")|$([ -f "$SLP/briefs/succession-brief.md" ] && echo 1 || echo 0)|$(ls "$SLP/briefs/abandoned" | grep -c 'succession-brief.md$')"
 check "sleeping prints nothing when none sleeps" "|exit 0" "$(slc sleeping)|$(slc_status sleeping)"
 echo 'not json' > "$SLREC"
 check "an unreadable sleeping record is said, never read as none" "exit 1|exit 1" "$(slc_status sleeping)|$(slc_status sleep --name 'Orch: c' --brief "$SLP/briefs/abandoned/$(ls "$SLP/briefs/abandoned" | head -1)" --dir "$SLP" --model m)"
 # owners: a pull request whose chain breaks on a sleeping orchestrator's absence is its own.
 echo x > "$SLP/briefs/b2.md"
-printf '[{"name":"Orch: gamma","brief":"%s","dir":"%s","model":"m","effort":"","slept":"2026-10-13T10:00:00Z","prs":["forge.example/o/app#9 feat/z","forge.example/o/app#7 feat/x"],"checkouts":[]}]\n' "$SLP/briefs/b2.md" "$SLP" > "$SLREC"
-SLOWN=$(ORCHESTRATOR_STATE_DIR="$SLS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$COORD" owners 2>/dev/null)
+printf '[{"name":"Orch: gamma","brief":"%s","dir":"%s","model":"m","effort":"","slept":"2026-10-13T10:00:00Z","prs":["github.com/o/app#9 feat/z","github.com/o/app#7 feat/x"],"checkouts":[]}]\n' "$SLP/briefs/b2.md" "$SLP" > "$SLREC"
+cprs "$SLS"
+SLOWN=$(ORCHESTRATOR_STATE_DIR="$SLS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" bash "$COORD" owners 2>/dev/null)
 check "owners gives a sleeping orchestrator's unknown pull request to it, and leaves a live session's alone" \
-  "pr forge.example/o/app#9 | feat/z | Orch: gamma | sleeping since 2026-10-13T10:00:00Z|2|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \
+  "pr github.com/o/app#9 | feat/z | Orch: gamma | sleeping since 2026-10-13T10:00:00Z|2|pr github.com/o/app#10 | feat/w | unknown | no session in $RIDLE" \
   "$(printf '%s\n' "$SLOWN" | grep '#9 ')|$(printf '%s\n' "$SLOWN" | grep -c '#7 .*session 10[12] ')|$(printf '%s\n' "$SLOWN" | grep '#10 ')"
 # The pause's rules, in the prose that carries them: the operator's word only, the
 # coordinator closes, the orchestrator spawns no successor at a pause, a woken one skips the
@@ -10180,7 +10193,7 @@ printf 'not json\n' > "$RREM/Orch___bad"
 printf 'half a row' > "$RREM/Orch___far.tmp-1"
 crem() {
   CLAUDE_CONFIG_DIR="$CRCFG" ORCHESTRATOR_STATE_DIR="$CS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli \
-    COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$COORD" "$@"
+    COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" ORCHESTRATOR_STATE_DIR="$CS" bash "$COORD" "$@"
 }
 crem_status() { crem "$@" >/dev/null 2>&1; echo "exit $?"; }
 RFACTS=$(crem facts 2>/dev/null)
@@ -10193,10 +10206,10 @@ check "a stale remote row, a local session's name, and a temporary file are not 
 check "a malformed remote row is unread, and facts and owners exit 2" "unread remote $RREM/Orch___bad: not a JSON row|exit 2|exit 2" \
   "$(printf '%s\n' "$RFACTS" | grep '^unread ')|$(crem_status facts)|$(crem_status owners)"
 check "a remote row listing a pull request a local session is on is a collision, and so is two remote rows on one pull request of an unread repository" \
-  "collision pr | forge.example/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222], Orch: far|collision pr | o/gone#5 | - | Orch: quiet, Orch: twin" \
+  "collision pr | github.com/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222], Orch: far|collision pr | o/gone#5 | - | Orch: quiet, Orch: twin" \
   "$(printf '%s\n' "$RFACTS" | grep '^collision pr ' | tr '\n' '|' | sed 's/|$//')"
 check "owners names the orchestrator of an unknown pull request a remote row lists, and says a pull request in an unread repository is not read" \
-  "pr forge.example/o/app#9 | feat/z | Orch: far | remote on bench-mac, updated $RNOW|pr forge.example/o/app#10 | feat/w | Orch: quiet | remote on lab-mini, updated $RNOW|pr o/gone#5 | - | Orch: quiet | remote on lab-mini, updated $RNOW, not read on the forge here|pr o/gone#5 | - | Orch: twin | remote on lab-mini, updated $RNOW, not read on the forge here" \
+  "pr github.com/o/app#9 | feat/z | Orch: far | remote on bench-mac, updated $RNOW|pr github.com/o/app#10 | feat/w | Orch: quiet | remote on lab-mini, updated $RNOW|pr o/gone#5 | - | Orch: quiet | remote on lab-mini, updated $RNOW, not read on the forge here|pr o/gone#5 | - | Orch: twin | remote on lab-mini, updated $RNOW, not read on the forge here" \
   "$(printf '%s\n' "$ROWNERS" | grep 'remote on' | tr '\n' '|' | sed 's/|$//')"
 check "a remote pull request absent from its repository's open list is not printed by owners, nor counted in a collision" "0|0" \
   "$(printf '%s\n' "$ROWNERS" | grep -c '#99')|$(printf '%s\n' "$RFACTS" | grep '^collision ' | grep -c '#99')"
