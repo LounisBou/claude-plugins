@@ -2309,7 +2309,24 @@ gate8 running "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status"
 check "pr-gate reads a running check as pending" "PENDING   1" "$(ci8)"
 
 gate8 skipped "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"skipped"},{"name":"lint","status":"completed","conclusion":"success"}]}'
-check "pr-gate never reads a skipped check as green" "PENDING  test 2" "$(ci8)"
+check "pr-gate reads a skipped check the base does not require as green, beside a check that passed" "SUCCESS   2" "$(ci8)"
+
+# The base requires the check its workflow skipped: the skip proves nothing the base asks, Ready stays held.
+STACKREQ8='{"number":12,"state":"open","draft":false,"commits":3,"head":{"sha":"'$GATEHEAD'","ref":"feat-b"},"base":{"ref":"feat-a","repo":{"default_branch":"main"}},"labels":[]}'
+gate8 skipped-required "$STACKREQ8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"skipped"},{"name":"lint","status":"completed","conclusion":"success"}]}'
+printf '%s' '[{"number":11,"head":{"ref":"feat-a"}}]' > "$F8/GET_repos_acme_thing_pulls__state=open&head=acme%3Afeat-a&per_page=100.json"
+printf '%s' '{"name":"feat-a","protected":false}' > "$F8/GET_repos_acme_thing_branches_feat-a.json"
+printf '%s' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "$F8/GET_repos_acme_thing_rules_branches_feat-a__per_page=100.json"
+check "pr-gate never reads a skipped check the base requires as green" "PENDING  test 2" "$(ci8)"
+check "pr-checks prints the verdict of pr-gate for a skipped check the base requires" "checks: PENDING (2 total, 0 running, 0 failed, 1 skipped)" \
+  "$(gh8 pr-checks 12 | head -1)"
+# The torrent-mate case (torrent-mate#907): a path-filtered matrix job skipped on a backend pull request, the
+# base requiring another check that passed.
+gate8 skipped-path-filtered "$STACKREQ8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"success"},{"name":"harness-full (shard ${{ matrix.shard }}/4)","status":"completed","conclusion":"skipped"}]}'
+printf '%s' '[{"number":11,"head":{"ref":"feat-a"}}]' > "$F8/GET_repos_acme_thing_pulls__state=open&head=acme%3Afeat-a&per_page=100.json"
+printf '%s' '{"name":"feat-a","protected":false}' > "$F8/GET_repos_acme_thing_branches_feat-a.json"
+printf '%s' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "$F8/GET_repos_acme_thing_rules_branches_feat-a__per_page=100.json"
+check "pr-gate does not hold Ready for a path-filtered job its workflow skipped and the base does not require" "SUCCESS   2" "$(ci8)"
 
 gate8 neutral-open "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"scan","status":"completed","conclusion":"neutral"}]}'
 check "pr-gate reads a neutral check out of draft as green" "SUCCESS   1" "$(ci8)"
