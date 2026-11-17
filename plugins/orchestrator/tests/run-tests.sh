@@ -5167,6 +5167,22 @@ check "the listing marks the caller's own row, names it, and marks no other" \
   "$(ORCHESTRATOR_SELF_TTY=/dev/ttys801 ORCHESTRATOR_PS_TABLE="$WORK/ps-stub.txt" "$py" -c "$STUB
 rows=asyncio.run(ia.list_rows(app))
 print('%s|%d' % ([r for r in rows if 'ttys801' in r][0], len([r for r in rows if 'ttys802' in r and '| self' in r])))" "$ROOT/skills/iterm-agents/scripts")"
+# A tab whose only process is the tmux client of a home server displays that server's windows;
+# it is no session of its own. Its line names the server and carries neither the title of the
+# window it shows (which would read as an orchestrator's name) nor « (host default) ».
+printf '/dev/ttys811 /opt/homebrew/bin/tmux -u -L orch-abcdef12 attach -t home\n' > "$WORK/ps-client.txt"
+printf '/dev/ttys812 tmux -u -L work attach -t work\n' >> "$WORK/ps-client.txt"
+check "a tab running a tmux client of a home server is listed once, as that client, with no window title" \
+  "w1/t1 | /dev/ttys811 | tmux client | tmux client of home (orch-abcdef12) — displays its windows|1|0" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-client.txt" "$py" -c "$STUB
+c=S('C','/dev/ttys811','✳ Orch: Claude plugins')
+rows=asyncio.run(ia.list_rows(App([W([T('1',[c],[])])])))
+print('%s|%d|%d' % (rows[0], len(rows), len([r for r in rows if 'Orch: Claude plugins' in r or '(host default)' in r])))" "$ROOT/skills/iterm-agents/scripts")"
+check "a tmux client of a server that is not a home session is listed as an ordinary tab" \
+  "w1/t1 | /dev/ttys812 | ✳ Work | (host default)" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-client.txt" "$py" -c "$STUB
+c=S('C','/dev/ttys812','✳ Work')
+print(asyncio.run(ia.list_rows(App([W([T('1',[c],[])])])))[0])" "$ROOT/skills/iterm-agents/scripts")"
 # The caller is not always IN the app. A session running in another terminal — a multiplexer,
 # a plain shell, a remote one — still has a tty, `self_tty` still resolves it, and the app has
 # no session on it. The chain is the app's and cannot be kept for a caller the app does not
