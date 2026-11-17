@@ -90,8 +90,9 @@ function world(answers: Answers = {}) {
 }
 
 test('the forge is asked for the open pull requests opened under the operator\'s account, and its answer read', () => {
-  expect(forgeArgv('acme/app')).toEqual(['gh', 'pr', 'list', '-R', 'acme/app', '--state', 'open', '--author', '@me', '--limit', '200', '--json', 'number,createdAt'])
-  expect(parseOpenPrs('acme/app', '[{"number":3,"createdAt":"t"},{"number":0},{"number":"4"},{}]')).toEqual([{ repo: 'acme/app', pr: 3, createdAt: 't' }])
+  expect(forgeArgv('acme/app')).toEqual(['gh', 'pr', 'list', '-R', 'acme/app', '--state', 'open', '--author', '@me', '--limit', '200', '--json', 'number,createdAt,labels'])
+  expect(parseOpenPrs('acme/app', '[{"number":3,"createdAt":"t","labels":[{"name":"Ready"},{"name":7},{}]},{"number":0},{"number":"4"},{}]')).toEqual([{ repo: 'acme/app', pr: 3, createdAt: 't', labels: ['Ready'] }])
+  expect(parseOpenPrs('acme/app', '[{"number":5,"createdAt":"t"},{"number":6,"labels":"Ready"}]')).toEqual([{ repo: 'acme/app', pr: 5, createdAt: 't', labels: [] }, { repo: 'acme/app', pr: 6, createdAt: null, labels: [] }])
   expect(parseOpenPrs('acme/app', '{}')).toBe(null)
   expect(parseOpenPrs('acme/app', 'not json')).toBe(null)
 })
@@ -101,7 +102,50 @@ test('an open pull request with no live agent, a stale wait or no line is unatte
   const reading = await readUnattended(dollar, 's-orch', NOW)
   expect(reading?.list.map(u => u.pr)).toEqual([8, 9])
   expect(reading?.unread).toEqual([])
-  expect(reading?.line).toBe('PR délaissées : acme/app#8 (sans agent depuis 2026-11-14T10:00Z), acme/app#9 (sans agent depuis 2026-11-19T08:00Z)')
+  expect(reading?.line).toBe('En anomalie : acme/app#8 (sans agent depuis 2026-11-14T10:00Z), acme/app#9 (sans agent depuis 2026-11-19T08:00Z)')
+})
+
+// The forge's list of the world's pull requests, each with the labels given (Not Ready unless said).
+const labelled = (labels: Record<number, string[]>, numbers: number[] = [7, 8, 6, 9, 10]) =>
+  ({ 'acme/app': JSON.stringify(numbers.map(n => ({ number: n, createdAt: `2026-11-1${n % 10}T08:00:00Z`, labels: (labels[n] ?? ['Not Ready']).map(name => ({ name })) }))) })
+
+test('a pull request no agent holds is told apart: Ready and On Hold wait on the operator, only Not Ready with no agent and no wait is in anomaly', async () => {
+  const { dollar } = world({ forge: labelled({ 8: ['On Hold'], 9: ['Ready'], 11: ['Not Ready'] }, [7, 8, 6, 9, 10, 11]) })
+  const reading = await readUnattended(dollar, 's-orch', NOW)
+  expect(reading?.list.map(u => [u.pr, u.waits?.why])).toEqual([[8, 'hold'], [9, 'ready'], [11, undefined]])
+  expect(reading?.line).toBe([
+    'Attend ton geste : acme/app#8 (en pause), acme/app#9 (Ready)',
+    'En anomalie : acme/app#11 (sans agent depuis 2026-11-11T08:00Z)',
+  ].join('\n'))
+})
+
+test('a line that waits on the operator is told so, even set a moment ago; one that waits on the CI is attended while fresh', async () => {
+  const { dollar, files } = world({ forge: labelled({}, [8, 9]) })
+  files.set(RECORD, [line(8, 'waiting', { on: 'le merge de l\'opérateur' }, '2026-11-14T10:59:00Z'), line(9, 'waiting', { on: 'la CI' }, '2026-11-14T10:59:00Z')].join('\n') + '\n')
+  const reading = await readUnattended(dollar, 's-orch', NOW)
+  expect(reading?.line).toBe("Attend ton geste : acme/app#8 (attend le merge de l'opérateur depuis 2026-11-14T09:00Z)")
+})
+
+test('the turn end says both lines, publishes the kind of each pull request, and declare_wait refuses a done only for an anomaly', async () => {
+  const handlers = mounted()
+  const waitsOnly = world({ forge: labelled({ 8: ['On Hold'], 9: ['Ready'] }) })
+  await handlers['turn.complete'](waitsOnly.dollar, { reason: 'answer' })
+  const published = JSON.parse(waitsOnly.files.get(`${MODULE}/store/sessions/s-orch`) ?? '{}').unattended
+  expect(published.prs.map((u: { pr: number; waits?: { why: string } }) => [u.pr, u.waits?.why])).toEqual([[8, 'hold'], [9, 'ready']])
+  expect(published.line).toBe('Attend ton geste : acme/app#8 (en pause), acme/app#9 (Ready)')
+  expect((await handlers['prompt.submit'](waitsOnly.dollar, { text: 'go' })).context).toEqual([published.line])
+  // Rows closed, only what rests on the operator left: nothing alarms, the done is taken.
+  const declare = declaring(new Declarations())
+  waitsOnly.files.set(RECORD, (waitsOnly.files.get(RECORD) ?? '').replace('"state":"open"', '"state":"closed"'))
+  expect((await declare(waitsOnly.dollar, { kind: 'done' })).isError).toBe(undefined)
+  // The same with one pull request in anomaly: the refusal names it alone.
+  const withAnomaly = world({ forge: labelled({ 8: ['On Hold'], 9: ['Ready'] }, [7, 8, 6, 9, 10, 11]) })
+  withAnomaly.files.set(RECORD, (withAnomaly.files.get(RECORD) ?? '').replace('"state":"open"', '"state":"closed"'))
+  const refused = await declare(withAnomaly.dollar, { kind: 'done' })
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toContain('Not done: En anomalie : acme/app#11')
+  expect(refused.result).not.toContain('Attend ton geste')
+  expect(refused.result).not.toContain('acme/app#9')
 })
 
 test('another orchestrator\'s line claims a pull request only while that claim is alive: its session is live, or its line a wait set again within 30 minutes', async () => {
@@ -155,7 +199,7 @@ test('a repository the forge did not list is said unknown, never « none », and
   const { dollar, files, logs } = world({ forge: { 'acme/app': null } })
   const reading = await readUnattended(dollar, 's-orch', NOW)
   expect(reading?.list).toEqual([])
-  expect(reading?.line).toBe('PR délaissées : inconnues pour acme/app (forge illisible)')
+  expect(reading?.line).toBe('En anomalie : inconnues pour acme/app (forge illisible)')
   expect(files.has('/briefs/app/dispatch-record.archive.jsonl')).toBe(false)
   expect(logs.some(l => l.includes('forge unread for acme/app: gh exited 1: HTTP 502'))).toBe(true)
 })
@@ -233,13 +277,26 @@ test('the turn end leaves the ready rows beside the unattended pull requests for
   await handlers['turn.complete'](dollar, { reason: 'answer' })
   const first = await handlers['prompt.submit'](dollar, { text: 'go', context: ['before'] })
   expect(first.context?.[0]).toBe('before')
-  expect(first.context?.[1]).toContain('PR délaissées : acme/app#8')
+  expect(first.context?.[1]).toContain('En anomalie : acme/app#8')
   expect(first.context?.slice(2)).toEqual(['Lignes prêtes sans agent : 21 IDLEWORK'])
   expect((await handlers['prompt.submit'](dollar, { text: 'go' })).context).toBe(undefined)
   // Nothing ready, nothing unattended: no line at all.
   const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
   await handlers['turn.complete'](quiet, { reason: 'answer' })
   expect((await handlers['prompt.submit'](quiet, { text: 'go' })).context).toBe(undefined)
+})
+
+test('a change of one of the two lines says that line alone at the next prompt', async () => {
+  const handlers = mounted()
+  const first = world({ forge: labelled({ 9: ['Ready'] }, [7, 8, 6, 9, 10, 11]) })
+  await handlers['turn.complete'](first.dollar, { reason: 'answer' })
+  const said = (await handlers['prompt.submit'](first.dollar, { text: 'go' })).context
+  expect(said).toEqual(['Attend ton geste : acme/app#9 (Ready)', 'En anomalie : acme/app#8 (sans agent depuis 2026-11-14T10:00Z), acme/app#11 (sans agent depuis 2026-11-11T08:00Z)'])
+  // A new Ready pull request: the anomaly line, unchanged, is not told again.
+  const next = world({ forge: labelled({ 9: ['Ready'], 12: ['Ready'] }, [7, 8, 6, 9, 10, 11, 12]) })
+  await handlers['turn.complete'](next.dollar, { reason: 'answer' })
+  const then = (await handlers['prompt.submit'](next.dollar, { text: 'go' })).context
+  expect(then).toEqual(['Attend ton geste : acme/app#9 (Ready), acme/app#12 (Ready)'])
 })
 
 test('a session that is no orchestrator reads nothing', async () => {
@@ -280,7 +337,7 @@ test('the turn end leaves the line for the next prompt\'s context, once, and on 
   await handlers['turn.complete'](dollar, { reason: 'answer', answer: 'x' })
   const published = JSON.parse(files.get(`${MODULE}/store/sessions/s-orch`) ?? '{}').unattended
   expect(published.prs.map((u: { pr: number }) => u.pr)).toEqual([8, 9])
-  expect(published.line).toContain('PR délaissées : acme/app#8')
+  expect(published.line).toContain('En anomalie : acme/app#8')
   const first = await handlers['prompt.submit'](dollar, { text: 'go', context: ['before'] })
   expect(first.context).toEqual(['before', published.line])
   const second = await handlers['prompt.submit'](dollar, { text: 'go' })
@@ -294,7 +351,7 @@ test('a line already said at the previous turn end is not said again, until it c
     await handlers['turn.complete'](target, { reason: 'answer' })
     return (await handlers['prompt.submit'](target, { text: 'go' })).context
   }
-  expect((await said(dollar))?.[0]).toContain('PR délaissées : acme/app#8')
+  expect((await said(dollar))?.[0]).toContain('En anomalie : acme/app#8')
   // The same reading at the next wakes: nothing is added to the prompt.
   expect(await said(dollar)).toBe(undefined)
   expect(await said(dollar)).toBe(undefined)
@@ -304,7 +361,7 @@ test('a line already said at the previous turn end is not said again, until it c
   // Nothing unattended any more, then the same line back: said again, it is news.
   const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
   expect(await said(quiet)).toBe(undefined)
-  expect((await said(dollar))?.[0]).toContain('PR délaissées : acme/app#8')
+  expect((await said(dollar))?.[0]).toContain('En anomalie : acme/app#8')
 })
 
 test('a changed line is said without the lines that did not change: the ready rows alone when the pull requests are as they were', async () => {
@@ -328,7 +385,7 @@ test('a line no prompt has said yet is kept across turn ends, while it still hol
   await handlers['turn.complete'](dollar, { reason: 'answer' })
   const said = (await handlers['prompt.submit'](dollar, { text: 'go' })).context
   expect(said?.length).toBe(2)
-  expect(said?.[0]).toContain('PR délaissées : acme/app#8')
+  expect(said?.[0]).toContain('En anomalie : acme/app#8')
   expect(said?.[1]).toBe('Lignes prêtes sans agent : 21 IDLEWORK')
   // A line that stopped holding before its prompt is not said.
   const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
@@ -366,7 +423,7 @@ test('declare_wait refuses done and deferred while a pull request is unattended,
   const { dollar } = world()
   const done = await declare(dollar, { kind: 'done' })
   expect(done.isError).toBe(true)
-  expect(done.result).toContain('Not done: PR délaissées : acme/app#8')
+  expect(done.result).toContain('Not done: En anomalie : acme/app#8')
   expect(done.result).toContain('acme/app#9')
   expect(declarations.current()).toBe(null)
   expect((await declare(dollar, { kind: 'deferred', blocks: '1 items' })).isError).toBe(true)
@@ -389,7 +446,7 @@ test('declare_wait refuses done and deferred while a pull request is unattended,
   const { dollar: unread, files: unreadFiles } = world({ forge: { 'acme/app': null } })
   closed(unreadFiles)
   expect((await declare(unread, { kind: 'done' })).isError).toBe(undefined)
-  expect(unattendedRefusal('PR délaissées : x#1 (sans agent depuis ?)')).toContain('dispatch-record.sh pr <record>')
+  expect(unattendedRefusal('En anomalie : x#1 (sans agent depuis ?)')).toContain('dispatch-record.sh pr <record>')
 })
 
 test('declare_wait takes a done from a session that handed over: the unattended pull requests are its successor\'s', async () => {

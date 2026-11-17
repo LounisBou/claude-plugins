@@ -402,6 +402,19 @@ describe('facts', () => {
     ])
   })
 
+  it('says each line of an orchestrator\'s unattended reading as a fact of its own', () => {
+    const { f } = bench()
+    const module = f.ctx.env['ORCHESTRATOR_MODULE_DIR'] ?? ''
+    mkdirSync(join(module, 'store', 'sessions'), { recursive: true })
+    const two = 'Attend ton geste : o/app#4 (Ready), o/app#5 (en pause)\nEn anomalie : o/app#9 (sans agent depuis 2026-10-14T09:00Z)'
+    writeFileSync(join(module, 'store', 'sessions', 's-alpha'), JSON.stringify({ role: 'orchestrator', name: 'Orch: alpha', pid: '100', unattended: { line: two } }) + '\n')
+    assert.equal(run(f, 'facts'), 2)
+    assert.deepEqual(f.out.filter(l => l.startsWith('unattended')), [
+      'unattended Orch: alpha | Attend ton geste : o/app#4 (Ready), o/app#5 (en pause)',
+      'unattended Orch: alpha | En anomalie : o/app#9 (sans agent depuis 2026-10-14T09:00Z)',
+    ])
+  })
+
   it('refuses an argument', () => {
     const f = fixture()
     assert.equal(run(f, 'facts', 'x'), 1)

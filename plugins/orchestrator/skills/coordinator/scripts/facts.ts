@@ -613,7 +613,8 @@ export function unattendedLines(ctx: Context, table: string): string[] {
     const line = isObject(unattended) ? unattended['line'] : undefined
     if (row['role'] !== 'orchestrator' || typeof line !== 'string' || !live.has(pidCell(row['pid']))) continue
     try {
-      lines.push(`unattended ${cell(or(row['name'], 'unnamed'))} | ${line}`)
+      // One fact line per line the module wrote: « Attend ton geste » and « En anomalie » each stand alone.
+      for (const said of line.split('\n')) if (said.trim() !== '') lines.push(`unattended ${cell(or(row['name'], 'unnamed'))} | ${said}`)
     } catch {
       // A name that is no scalar: no line.
     }

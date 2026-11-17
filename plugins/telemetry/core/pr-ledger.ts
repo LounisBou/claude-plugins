@@ -46,18 +46,32 @@ export type LedgerSet =
   | { readonly repo: string; readonly pr: number; readonly status: 'waiting'; readonly on: string }
   | { readonly repo: string; readonly pr: number; readonly status: 'parked'; readonly ruling: string }
 
-/** An open pull request as the forge lists it. */
+/** An open pull request as the forge lists it, with the names of its labels when the caller read them. */
 export interface OpenPr {
   readonly repo: string
   readonly pr: number
   readonly createdAt: string | null
+  readonly labels?: readonly string[]
 }
 
-/** An open pull request nobody attends, and since when: its line's last setting, else its opening. */
+/**
+ * What an unattended pull request waits on the operator for: `ready` (it carries `Ready`: his merge),
+ * `hold` (it carries `On Hold`: his own pause), `record` (its line says it waits on him, `on` his words).
+ */
+export interface WaitsOnOperator {
+  readonly why: 'ready' | 'hold' | 'record'
+  readonly on?: string
+}
+
+/**
+ * An open pull request no agent holds, and since when: its line's last setting, else its opening (a wait on the operator: since the wait began). With
+ * `waits` it rests on the operator's gesture; without, it is in anomaly (Not Ready, no agent, no wait).
+ */
 export interface Unattended {
   readonly repo: string
   readonly pr: number
   readonly since: string | null
+  readonly waits?: WaitsOnOperator
 }
 
 const REPO_PART = /^[A-Za-z0-9_.-]+$/
@@ -180,10 +194,29 @@ export function statusText(line: LedgerLine, at: (iso: string | null) => string 
   return "en attente par l'opérateur"
 }
 
+/** The label of a pull request the operator may merge, and the one he puts to pause it. */
+export const READY_LABEL = 'Ready'
+export const HOLD_LABEL = 'On Hold'
+
+const hasLabel = (open: OpenPr, label: string): boolean => (open.labels ?? []).some(name => name.trim().toLowerCase() === label.toLowerCase())
+
+/** Whether a wait's words name the operator: his merge, his gesture, his ruling. */
+export function waitsOnOperator(on: string | undefined): boolean {
+  return /(?<![\p{L}])(operator|opérateur|operateur|ton|toi|his|him)(?![\p{L}])/iu.test(on ?? '')
+}
+
+/** A wait set again within UNATTENDED_AFTER_MS: its pull request is still attended. */
+export function isFreshWait(line: LedgerLine, now: number): boolean {
+  const updated = Date.parse(line.updated)
+  return line.status === 'waiting' && Number.isFinite(updated) && now - updated <= UNATTENDED_AFTER_MS
+}
+
 /**
- * The open pull requests nobody attends: no live agent on it and no wait set again within
- * UNATTENDED_AFTER_MS, and not parked by the operator. One in no record is unattended outright; one
- * another orchestration records (`claimed`, by prKey) is that orchestration's to attend.
+ * The open pull requests no agent holds: no live agent on it and no wait set again within
+ * UNATTENDED_AFTER_MS, and not parked by the operator. One in no record is listed outright; one
+ * another orchestration records (`claimed`, by prKey) is that orchestration's to attend. Each is
+ * told apart: one that rests on the operator (carrying `Ready` or `On Hold`, or whose line waits on
+ * him, even freshly) comes with `waits`; the rest, Not Ready with no agent and no recorded wait, are in anomaly.
  */
 export function unattended(input: {
   readonly open: readonly OpenPr[]
@@ -197,28 +230,62 @@ export function unattended(input: {
   for (const open of input.open) {
     const key = prKey(open.repo, open.pr)
     const line = byKey.get(key)
-    if (line === undefined) {
-      if (!input.claimed?.has(key)) left.push({ repo: open.repo, pr: open.pr, since: open.createdAt })
-      continue
+    if (line === undefined && input.claimed?.has(key)) continue
+    if (line?.status === 'parked') continue
+    const onHim = line?.status === 'waiting' && waitsOnOperator(line.on)
+    if (line !== undefined && !onHim) {
+      if (line.status === 'working' && input.live.has(line.agent ?? '')) continue
+      if (isFreshWait(line, input.now)) continue
     }
-    if (line.status === 'parked') continue
-    if (line.status === 'working' && input.live.has(line.agent ?? '')) continue
-    const updated = Date.parse(line.updated)
-    if (line.status === 'waiting' && Number.isFinite(updated) && input.now - updated <= UNATTENDED_AFTER_MS) continue
-    left.push({ repo: open.repo, pr: open.pr, since: line.updated })
+    const since = line === undefined ? open.createdAt : line.updated
+    const why: WaitsOnOperator | undefined = onHim ? { why: 'record', ...(line?.on === undefined ? {} : { on: line.on }) }
+      : hasLabel(open, HOLD_LABEL) ? { why: 'hold' }
+        : hasLabel(open, READY_LABEL) ? { why: 'ready' }
+          : undefined
+    left.push({ repo: open.repo, pr: open.pr, since: onHim && line !== undefined ? line.since : since, ...(why === undefined ? {} : { waits: why }) })
   }
   return left
 }
 
+/** The start of the line that names what waits on the operator, and of the one that names the anomalies. */
+export const WAITS_HEAD = 'Attend ton geste'
+export const ANOMALY_HEAD = 'En anomalie'
+
+/** A line of the unattended reading: `anomaly` when it should alarm, else what waits on the operator. */
+export interface UnattendedPart {
+  readonly anomaly: boolean
+  readonly text: string
+}
+
+function waitsText(u: Unattended, at: (iso: string | null) => string): string {
+  const name = prKey(u.repo, u.pr)
+  if (u.waits?.why === 'ready') return `${name} (Ready)`
+  if (u.waits?.why === 'hold') return `${name} (en pause)`
+  return `${name} (attend ${(u.waits?.on ?? '?').replace(/\s+/g, ' ').trim()} depuis ${at(u.since)})`
+}
+
 /**
- * « PR délaissées : <repo>#<n> (sans agent depuis <t>), … », then the repositories whose open pull
- * requests the forge did not list, said unknown; null when there is neither.
+ * The reading's lines: « Attend ton geste : <repo>#<n> (Ready), <repo>#<n> (en pause), <repo>#<n> (attend <on> depuis <t>) »
+ * for what rests on the operator, « En anomalie : <repo>#<n> (sans agent depuis <t>), … » for the pull requests Not Ready
+ * with no agent and no recorded wait, then the repositories whose open pull requests the forge did not list, said unknown
+ * on the anomaly line; none for what is empty.
  */
+export function unattendedParts(list: readonly Unattended[], unread: readonly string[], at: (iso: string | null) => string = minuteOf): UnattendedPart[] {
+  const waits = list.filter(u => u.waits !== undefined)
+  const anomalies = list.filter(u => u.waits === undefined)
+  const alarm: string[] = []
+  if (anomalies.length > 0) alarm.push(anomalies.map(u => `${prKey(u.repo, u.pr)} (sans agent depuis ${at(u.since)})`).join(', '))
+  if (unread.length > 0) alarm.push(`inconnues pour ${unread.join(', ')} (forge illisible)`)
+  return [
+    ...(waits.length === 0 ? [] : [{ anomaly: false, text: `${WAITS_HEAD} : ${waits.map(u => waitsText(u, at)).join(', ')}` }]),
+    ...(alarm.length === 0 ? [] : [{ anomaly: true, text: `${ANOMALY_HEAD} : ${alarm.join(' ; ')}` }]),
+  ]
+}
+
+/** The reading's parts as text, one per line; null when there is none. */
 export function unattendedLine(list: readonly Unattended[], unread: readonly string[], at: (iso: string | null) => string = minuteOf): string | null {
-  const parts: string[] = []
-  if (list.length > 0) parts.push(list.map(u => `${prKey(u.repo, u.pr)} (sans agent depuis ${at(u.since)})`).join(', '))
-  if (unread.length > 0) parts.push(`inconnues pour ${unread.join(', ')} (forge illisible)`)
-  return parts.length === 0 ? null : `PR délaissées : ${parts.join(' ; ')}`
+  const parts = unattendedParts(list, unread, at)
+  return parts.length === 0 ? null : parts.map(part => part.text).join('\n')
 }
 
 /**

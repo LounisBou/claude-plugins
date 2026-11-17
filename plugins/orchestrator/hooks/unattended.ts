@@ -5,7 +5,7 @@
 // refusal they make. The lines of the pull requests the forge no longer lists open go to the archive
 // beside their record as they are met. Every read is bounded; one that fails is said, never a refusal.
 import {
-  archiveOf, endedLines, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
+  archiveOf, endedLines, isFreshWait, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
@@ -27,9 +27,9 @@ export const FORGE_LIMIT = 200
 export type Reading = { list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null }
 
 // The forge's open pull requests of a repository opened under the operator's account: the work of
-// the orchestrations, never a teammate's.
+// the orchestrations, never a teammate's. Their labels say what rests on him (`Ready`, `On Hold`).
 export function forgeArgv(repo: string): string[] {
-  return ['gh', 'pr', 'list', '-R', repo, '--state', 'open', '--author', '@me', '--limit', String(FORGE_LIMIT), '--json', 'number,createdAt']
+  return ['gh', 'pr', 'list', '-R', repo, '--state', 'open', '--author', '@me', '--limit', String(FORGE_LIMIT), '--json', 'number,createdAt,labels']
 }
 
 // The forge's answer read, or null when it is no list of pull requests.
@@ -42,14 +42,15 @@ export function parseOpenPrs(repo: string, stdout: string): OpenPr[] | null {
   }
   if (!Array.isArray(value)) return null
   return value.flatMap(item => {
-    const { number, createdAt } = (item ?? {}) as { number?: unknown; createdAt?: unknown }
+    const { number, createdAt, labels } = (item ?? {}) as { number?: unknown; createdAt?: unknown; labels?: unknown }
+    const names = Array.isArray(labels) ? labels.flatMap(label => (typeof (label as { name?: unknown } | null)?.name === 'string' ? [(label as { name: string }).name] : [])) : []
     return typeof number === 'number' && Number.isInteger(number) && number > 0
-      ? [{ repo, pr: number, createdAt: typeof createdAt === 'string' ? createdAt : null }]
+      ? [{ repo, pr: number, createdAt: typeof createdAt === 'string' ? createdAt : null, labels: names }]
       : []
   })
 }
 
-// The refusal of a done or deferred wait while a pull request is unattended: what to do instead.
+// The refusal of a done or deferred wait while a pull request is in anomaly: what to do instead.
 export function unattendedRefusal(line: string): string {
   return `Not done: ${line}. Put an agent on each and record it (dispatch-record.sh pr <record> <owner/name>#<n> --working "<agent>"), `
     + 'record what it waits on (--waiting "<what>"), or the operator\'s ruling that parks it (--parked "<his words, dated>").'
@@ -80,10 +81,10 @@ async function linesOf($: Host<'fs'>, records: readonly string[], own?: string |
 
 // Whether another orchestrator's line still claims its pull request: its session is live (the store's
 // own rule, isStale), or the line is a wait set again within the age the module reads for its own
-// lines, through unattended() with no agent running. A dead session's stale line claims nothing.
+// lines (isFreshWait). A dead session's stale line claims nothing.
 function claims(line: LedgerLine, sessionLive: boolean, now: number): boolean {
   if (sessionLive) return true
-  return line.status === 'waiting' && unattended({ open: [{ repo: line.repo, pr: line.pr, createdAt: null }], lines: [line], live: new Set(), now }).length === 0
+  return isFreshWait(line, now)
 }
 
 // The pull requests the other orchestrators on this machine record, while their claim is alive: theirs to attend.
@@ -187,11 +188,13 @@ export async function boundedReading($: Held, sessionId: string): Promise<Readin
 }
 
 // What the declared wait asks before it takes a done or a deferred: the refusal while a pull request
-// is unattended, else null. Handed to wait.ts by register.ts.
+// is in anomaly (no agent, not Ready, no wait of its own), else null: what rests on the operator
+// holds nothing. Handed to wait.ts by register.ts.
 export async function holdsDone($: Held, wait: DeclaredWait): Promise<string | null> {
   if (wait.kind !== 'done' && wait.kind !== 'deferred') return null
   const reading = await boundedReading($, await $.session.id())
-  return reading !== null && reading.list.length > 0 ? unattendedRefusal(unattendedLine(reading.list, []) ?? '') : null
+  const anomalies = reading?.list.filter(u => u.waits === undefined) ?? []
+  return anomalies.length > 0 ? unattendedRefusal(unattendedLine(anomalies, []) ?? '') : null
 }
 
 // The lines each turn end leaves for the next turn's context, by session.
@@ -207,7 +210,8 @@ export function register(on: On<Held>): void {
       const sessionId = await $.session.id()
       const reading = await boundedReading($, sessionId)
       if (reading !== null) {
-        const read = [reading.line, reading.readyLine].flatMap(text => text ?? [])
+        // Each line is told apart: a change of one never says the others again.
+        const read = [reading.line, reading.readyLine].flatMap(text => (text ?? '').split('\n').filter(said => said !== ''))
         const before = lastRead.get(sessionId) ?? []
         lastRead.set(sessionId, read)
         // A change leaves the new lines only, beside the lines an earlier turn end left that no prompt has said yet and that still hold.
