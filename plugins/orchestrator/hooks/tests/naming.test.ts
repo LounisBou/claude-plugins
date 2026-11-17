@@ -7,7 +7,7 @@ import type { Reply } from 'claude-code/testing'
 import { journalled, logLineOf } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type CapturedOn } from '../../core/capture.ts'
 import type { Events, Host, Noun, ProcessRunInit, ToolSpec } from '../../core/host.ts'
-import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, isEnding, homeArgv, resumeText, HOME_MOVE_MS, runsTakeover, TAKEN_OVER_TEXT, TAKEN_OVER_STAYED_TEXT } from '../naming.ts'
+import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, isEnding, homeArgv, resumeText, HOME_MOVE_MS, runsTakeover, TAKEN_OVER_TEXT, TAKEN_OVER_STAYED_TEXT, TAKEN_OVER_HOME_TEXT } from '../naming.ts'
 
 type World = Host<Noun>
 
@@ -394,9 +394,25 @@ test("a successor's takeover turn moves it into its home session, then ends it t
   expect(fx.processes.length).toBe(1)
 })
 
+test("a successor the launcher finds already in its home session goes on to step 4 there, the answer logged", async () => {
+  const { handlers } = mounted()
+  const fx = movingDollar({ exitCode: 0, stdout: 'stay: this session already runs in a home session\n' })
+  await handlers['tool.call:takeover'](fx.dollar, { command: TAKEOVER_LINE }, async () => ({ result: 'printed' }))
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.processes.length).toBe(1)
+  expect(fx.order).toEqual(['prompt'])
+  expect(fx.submits).toEqual([{ text: TAKEN_OVER_HOME_TEXT }])
+  expect(fx.logged.some(line => line.includes('the launcher kept the session where it is: this session already runs in a home session'))).toBe(true)
+  expect(TAKEN_OVER_HOME_TEXT).toContain('step 4')
+  expect(TAKEN_OVER_HOME_TEXT).not.toContain('did not happen')
+  // The wake is for the takeover's turn alone: the next turn wakes nothing.
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.submits.length).toBe(1)
+})
+
 test("a successor whose move does not happen is woken in its tab, the launcher's answer logged", async () => {
   const cases: [string, { exitCode: number; stdout: string; stderr?: string } | Error, string][] = [
-    ['the launcher keeps it (stay:)', { exitCode: 0, stdout: 'stay: this session already runs in a home session\n' }, 'the launcher kept the session where it is: this session already runs in a home session'],
+    ['the launcher keeps it for another reason (stay:)', { exitCode: 0, stdout: 'stay: only an orchestrator moves into a home session, and this session is named "Agent: x"\n' }, 'the launcher kept the session where it is: only an orchestrator moves into a home session'],
     ['the launcher answers nothing', { exitCode: 0, stdout: '' }, 'the launcher kept the session where it is: no answer'],
     ['the move fails', { exitCode: 1, stdout: '', stderr: 'ERROR: home: this session is not a tab of iTerm2s' }, 'the move into a home session failed, the session stays where it is: ERROR: home: this session is not a tab of iTerm2s'],
     ['the move cannot run', new Error('spawn failed'), 'the move into a home session could not run, the session stays where it is: spawn failed'],
