@@ -216,6 +216,7 @@ test('a file whose last refresh failed says its repositories unknown, even after
 })
 
 test('a launcher listing that cannot be read takes every agent a line names for running', async () => {
+  // Unread listing: the agents of 7 and 9 are taken for running, only 8 (a stale wait) is left.
   const { dollar } = world({ launcher: null })
   expect((await readUnattended(dollar, 's-orch', NOW))?.list.map(u => u.pr)).toEqual([8])
   const { dollar: other } = world({ launcher: '' })
