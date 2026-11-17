@@ -2104,8 +2104,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         }
       }
       const listed: Drawn[] = blocks.length === 0 ? [{ node: el.Text({ children: none }), rows: rowsOf(none, width) }] : blocks.map(block)
-      // A waiting row whose question asked with `ask` the pane draws is not one the operator is left
-      // without.
+      // A waiting row whose question asked with `ask` the pane holds, drawn or next in line, is not one
+      // the operator is left without.
       const askedHere = new Set(asked.map(entry => sessionKey(entry.sender.session)))
       const waiting = blocks.filter(row => row.waiting === 'operator' && !askedHere.has(row.key)).length
       const waitsFor = `${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
@@ -2168,8 +2168,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         node: el.Box({ marginTop: 1, children: [el.Text({ dimColor: true, wrap: 'truncate-end', children: '─'.repeat(width > 0 ? width : RULE_FALLBACK) })] }),
         rows: 2,
       }
-      // The questions asked with `ask`, grouped by asker, each line from a field of the object.
-      const askedPieces = askedLines(asked).map(line => ({
+      // The first question asked with `ask`, the only one drawn, each line from a field of the object.
+      const askedDrawn = askedLines(asked)
+      const askedPieces = askedDrawn.map(line => ({
         node: el.Box({ paddingLeft: line.indent, children: [rich(line.text, askedLook(line.look))] }),
         rows: rowsOf(takesRows(line.text), width - line.indent),
       }))
@@ -2267,7 +2268,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         return controls.map(control => ({ node: el.Box({ paddingLeft: indent, children: [control.node] }), rows: control.rows }))
       }
       // The controls go right under the lines of the question they answer: its Blocks line, the first.
-      const answeredEnd = answering === null ? -1 : askedLines(asked).findIndex(line => line.look === 'label')
+      const answeredEnd = answering === null ? -1 : askedDrawn.findIndex(line => line.look === 'label')
       if (answering !== null && answeredEnd >= 0) askedPieces.splice(answeredEnd + 1, 0, ...askedControls(answering))
       const section: Drawn[] = [
         { node: el.Text({ bold: true, color: 'suggestion', children: title }), rows: rowsOf(title, width) },

@@ -1298,7 +1298,7 @@ const askedObject = (session: string, name: string, at: string, over: Record<str
   blocks: 'acme/app#1', status: 'open', at, answer: null, seq: 1, ...over,
 })
 
-test('a question asked with ask is drawn from its fields, its asker once, and counted', async () => {
+test('the pane draws the first question asked with ask from its fields, its asker once, and counts all of them', async () => {
   const { fx, render } = await askingPane([])
   const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
   const second = askedObject('low', 'Orch: low', '2026-10-18T10:05:00.000Z', { subject: 'tag order', choices: [], recommended: null, why: null })
@@ -1309,8 +1309,10 @@ test('a question asked with ask is drawn from its fields, its asker once, and co
   expect(drawn.filter(t => t === 'Orch: low · orchestrator · box-1')).toEqual(['Orch: low · orchestrator · box-1'])
   const lines = shown(tree)
   const at = (text: string) => lines.findIndex(line => line.includes(text))
-  expect(['Question 1 of 2: merge order', 'Two pull requests touch one file.', 'Which merges first?', '[A] acme/app#1 first  ★', '[B] acme/app#2 first', '★ Recommendation: A — no rebase', 'Blocks: acme/app#1', 'Question 2 of 2: tag order']
+  expect(['merge order', 'Two pull requests touch one file.', 'Which merges first?', '[A] acme/app#1 first  ★', '[B] acme/app#2 first', '★ Recommendation: A — no rebase', 'Blocks: acme/app#1']
     .map(at).every((index, i, all) => index > 0 && (i === 0 || index > all[i - 1]!))).toBe(true)
+  expect(at('tag order')).toBe(-1)
+  expect(lines.some(line => /Question \d of \d/.test(line))).toBe(false)
 })
 
 test('a question asked with ask alone takes the place of the none line, and one whose asker has no live row is not drawn', async () => {
@@ -1356,7 +1358,7 @@ test('with no card, the first question asked with ask takes a picker under its o
   const lines = shown(tree)
   const at = (text: string) => lines.findIndex(line => line.includes(text))
   expect(at('Blocks: acme/app#1')).toBeLessThan(at('Choose: A (recommended)'))
-  expect(at('Choose: A (recommended)')).toBeLessThan(at('Question 2 of 2: tag order'))
+  expect(at('tag order')).toBe(-1)
   expect(lines.some(line => line.startsWith('arrows: move') || line.includes('Enter: choose'))).toBe(true)
   expect(fx.focused.map(f => f.key)).toContain(`choices:${first.id}`)
   expect(await countedRows(render)).toBe(drawScreen(await render({ bodyColumns: 200 }), 198).length)
@@ -1377,6 +1379,31 @@ test('a pick on a question asked with ask answers it by the pane, sends its aske
   const after = await render()
   expect(texts(after)).toContain('Questions for you — 1 pending')
   expect(picker(after).props.key).toBe(`choices:${second.id}`)
+})
+
+test('three open questions from two askers, the later asker\'s one urgent: the urgent one is drawn alone, its chooser answers it, then the earliest of the rest is drawn', async () => {
+  const early = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z', { subject: 'early one' })
+  const urgent = askedObject('high', 'Orch: high', '2026-10-18T10:05:00.000Z', { subject: 'urgent one', urgent: true })
+  const late = askedObject('low', 'Orch: low', '2026-10-18T10:06:00.000Z', { subject: 'late one' })
+  const { fx, sent, render } = await askedPane([early, urgent, late])
+  fx.files.set(`${SESSIONS}/high`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: high', context_percent: 10 })) + '\n')
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'coordinator', name: 'Coord: main', context_percent: 10 })) + '\n')
+  const subjects = (tree: El) => shown(tree).filter(line => /one$/.test(line) && !line.startsWith('Orch:'))
+  const askers = (tree: El) => shown(tree).filter(line => line.startsWith('Orch:') && line.includes(' · orchestrator · box-1'))
+  const first = await render()
+  expect(texts(first)).toContain('Questions for you — 3 pending')
+  expect(subjects(first)).toEqual(['Urgent — urgent one'])
+  expect(askers(first)).toEqual(['Orch: high · orchestrator · box-1'])
+  expect(picker(first).props.key).toBe(`choices:${urgent.id}`)
+  await pick(first, 'B')
+  expect(JSON.parse(String(fx.files.get(`${ROUND}/${urgent.id}.json`))).status).toBe('answered')
+  expect(sent.map(message => message.to)).toEqual([{ sessionId: 'high' }])
+  for (const stays of [early, late]) expect(JSON.parse(String(fx.files.get(`${ROUND}/${stays.id}.json`))).status).toBe('open')
+  const next = await render()
+  expect(texts(next)).toContain('Questions for you — 2 pending')
+  expect(subjects(next)).toEqual(['early one'])
+  expect(askers(next)).toEqual(['Orch: low · orchestrator · box-1'])
+  expect(picker(next).props.key).toBe(`choices:${early.id}`)
 })
 
 test('the Other answer of a question asked with ask is its field once picked, its words the answer; an empty field sends nothing', async () => {
@@ -1635,7 +1662,7 @@ test('a due question wakes the coordinator once: with the pane open only an urge
   expect(fx.submitted.length).toBe(2)
 })
 
-test('questions recorded while no pane is open, one already presented in the tab, are all drawn when the pane opens', async () => {
+test('questions recorded while no pane is open, one already presented in the tab, are drawn one at a time when the pane opens', async () => {
   const { fx, handlers, tick } = await wakingCoordinator([], { paneClosed: true })
   const plant = (asked: ReturnType<typeof askedObject>) => {
     fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
@@ -1654,9 +1681,9 @@ test('questions recorded while no pane is open, one already presented in the tab
   const tree = drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
   expect(elAt(tree, 0, 0).props.children).toBe('Questions for you — 2 pending')
   expect(JSON.stringify(tree)).toContain('Ship the first?')
-  expect(JSON.stringify(tree)).toContain('Ship the second?')
+  expect(JSON.stringify(tree)).not.toContain('Ship the second?')
   expect(JSON.parse(String(fx.files.get(`${ROUND}/${presented.id}.json`))).status).toBe('open')
-  // The controls are the first question's: answering it leaves the never-presented one.
+  // The controls are the drawn question's: answering it draws the never-presented one.
   await pick(tree, 'A')
   const next = await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
   expect(JSON.stringify(next)).toContain('Questions for you — 1 pending')
