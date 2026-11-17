@@ -6,8 +6,8 @@ import { basename, join } from 'node:path'
 import { ROLES } from '../../../core/names.ts'
 import type { WaitKind } from '../../../core/orchestration.ts'
 import { setting } from '../../../core/paths.ts'
-import { update, writeAtomic } from '../../../core/store.ts'
-import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted } from '../../../hooks/pr-file-format.ts'
+import { writeAtomic } from '../../../core/store.ts'
+import { parsePrFile, prFilePath, prsOfRepo, repoOfOrigin } from '../../../hooks/pr-file-format.ts'
 import { die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
 import { fieldsOf, readSleeping } from './sleeping.ts'
 
@@ -467,17 +467,15 @@ export function readFacts(ctx: Context): Facts {
 
   // The open pull requests, as the machine's pull request file holds them (the hooks module
   // refreshes it, one forge call a minute for the whole machine): a repository it holds no current
-  // reading of is unread, and the file is asked to read it from then on (`prs.wanted`).
+  // reading of is unread. The file reads the repositories the records and the sweep name.
   const state = stateOf(ctx.env)
   const file = parsePrFile(readFile(prFilePath(state)) ?? '')
-  const wanted: string[] = []
   for (const repo of new Set(facts.places.map(p => p.repo))) {
     const named = repoOfOrigin(repo)
     if (named === undefined) {
       unread.push(`forge ${repo}: not a GitHub repository, which the machine's pull request file holds alone`)
       continue
     }
-    wanted.push(named)
     const held = prsOfRepo(file, named, ctx.now().getTime())
     if (held === undefined) {
       unread.push(`forge ${repo}: no current reading in the machine's pull request file`)
@@ -486,13 +484,6 @@ export function readFacts(ctx: Context): Facts {
     facts.readRepos.push(repo)
     for (const pr of held) {
       if (pr.state === 'OPEN') facts.prs.push({ repo, num: String(pr.pr), branch: pr.head, head: pr.fork === null ? 'same' : `fork:${pr.fork}` })
-    }
-  }
-  if (wanted.length > 0) {
-    try {
-      update(prWantedPath(state), current => withWanted(current ?? '', wanted, ctx.now().getTime()), { waitMs: 2000 })
-    } catch (error) {
-      unread.push(`pull request file: the repositories wanted not written: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
   remoteRows(ctx, facts)

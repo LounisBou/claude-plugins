@@ -28,7 +28,7 @@ export const UNATTENDED_BOUND_MS = 20_000
 // `ready`: the open rows whose blocker has fallen (`none`, or an `until` past) that no live agent and no open pull request holds; `readyLine` says them.
 // `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `kept`: its lines still open; `records`: its records, each with its path and its text.
 // `live`: the names of the agents the launcher lists running, among those a line names (every one when its listing could not be read).
-// `wanted`: whether the sweep, the coordinator or a takeover ask the file to hold a repository or a pull request (`prs.wanted`).
+// `wanted`: whether the sweep asks the file to hold a repository (`prs.wanted`).
 export type Reading = {
   list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
   ended: Ended[]; kept: LedgerLine[]; records: RecordText[]; live: ReadonlySet<string>; wanted: boolean
@@ -86,8 +86,8 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   const state = await stateDir($)
   const own = await linesOf($, await registered($, state, sessionId), orchestrationOf(row.name))
   // Only the repositories the session's dispatch record names, read in the machine's file, refreshed
-  // first when it is older than its interval; a turn end refreshes it too when the sweep, the
-  // coordinator or a takeover want repositories read (`prs.wanted`), whatever its own record holds.
+  // first when it is older than its interval; a turn end refreshes it too when the sweep wants
+  // repositories read (`prs.wanted`), whatever its own record holds.
   // The session's own lines are the only pull requests listed (core's `unattended`): any other is nobody's.
   const repos = [...new Set(own.flatMap(record => record.lines.map(line => line.repo)))]
   const wanted = await fileWanted($, state, now)
