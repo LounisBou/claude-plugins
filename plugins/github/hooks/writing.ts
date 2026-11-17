@@ -2,7 +2,7 @@
 // carries before it leaves the machine. Only what code can decide without
 // judgement is here: a semicolon in prose, a trailer of any kind, a title on
 // more than one line or far past « about sixty characters », a heading in a
-// pull request description other than « Self-review », a TODO item that points to another or joins two
+// pull request description, a TODO item that points to another or joins two
 // actions, a CVE id that is no link, a security update without its tables,
 // the four sections a description of a GeoNative repository ends with and any text after them, a
 // pull request reference, a negative phrase or a bold label in its summary, a horizontal rule other
@@ -113,14 +113,12 @@ function strip(line: string): string {
 // Reviewed-by…), Claude-Session and Change-Id.
 const TRAILER = /^\s*([a-z]+(-[a-z]+)*-by|claude-session|change-id)\s*:/i
 const HEADING = /^ {0,3}#{1,6}(\s|$)/
-// The one heading a description may carry: the « Self-review » section the method requires of its author.
-const SELF_REVIEW = /^ {0,3}#{1,6}[ \t]+Self-review[ \t]*#*[ \t]*$/i
 
 const SEMICOLON_RULE = 'no semicolon in prose (writing/pull-requests.md and writing/comments.md); code in backticks or a fenced block may keep one'
 const TRAILER_RULE = 'no trailer of any kind, such as Co-Authored-By, Signed-off-by or Claude-Session (writing/commits.md)'
 const TITLE_LINE_RULE = 'a title is one line (writing/pull-requests.md, « Pull request titles »)'
 const TITLE_LENGTH_RULE = 'a title is about sixty characters at most, this one has '
-const HEADING_RULE = 'no heading of any kind in a pull request description, it starts with the summary text (writing/pull-requests.md, « Pull request descriptions »); the one heading allowed is « Self-review », the section the method requires'
+const HEADING_RULE = 'no heading of any kind in a pull request description, it starts with the summary text (writing/pull-requests.md, « Pull request descriptions »)'
 const TODO_RULE = 'a TODO Staging or TODO Prod item is a task-list checkbox, `- [ ] <step>`, never a bare `- ` bullet (writing/pull-requests.md, « Pull request descriptions »)'
 const TODO_LABEL = /^\*\*TODO (Staging|Prod):\*\*\s*$/
 // A bold label leading a line, `**Label:**`, alone or with text after it.
@@ -380,7 +378,7 @@ function lintField(kind: 'pr' | 'comment', field: string, text: string, phrases:
   const lines = proseLines(text)
   if (lines.some((l) => strip(l).includes(';'))) add(SEMICOLON_RULE)
   if (lines.some((l) => TRAILER.test(l))) add(TRAILER_RULE)
-  if (kind === 'pr' && field === 'body' && lines.some((l) => HEADING.test(l) && !SELF_REVIEW.test(l))) add(HEADING_RULE)
+  if (kind === 'pr' && field === 'body' && lines.some((l) => HEADING.test(l))) add(HEADING_RULE)
   if (kind === 'pr' && field === 'body' && geonative && bareTodoItem(lines)) add(TODO_RULE)
   if (kind === 'pr' && field === 'body') {
     if (geonative) {

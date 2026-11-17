@@ -11,7 +11,7 @@ test.afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 const FIELDS = (): string[] => [
   '--out', join(dir, 'review-12.md'), '--repo', 'acme/app', '--pr', '12', '--title', 'a fix of the thing (row 9 THING)',
-  '--spec', '/b/thing-brief.md', '--index', '/b/review-12-report.md', '--branch', 'fix/thing', '--head', '0123456789abcdef0123456789abcdef01234567',
+  '--spec', '/b/thing-brief.md', '--index', '/b/review-12-report.md', '--delivery-report', '/b/thing-report.md', '--branch', 'fix/thing', '--head', '0123456789abcdef0123456789abcdef01234567',
   '--worktree', '/w/review-12', '--orchestrator', 'Orch: acme [a1b2c3]', '--reason', 'it is one small hook fix',
 ]
 
@@ -30,7 +30,7 @@ test('every field of the real template is filled: no placeholder is left, and th
   assert.deepEqual(placeholdersOf(text), [])
   assert.match(text, /^# app — review: a fix of the thing \(row 9 THING\)\n/)
   assert.match(text, /1\. Spec: `\/b\/thing-brief\.md`/)
-  assert.match(text, /pull request 12 \(its « Self-review » section first\), branch `fix\/thing`, head `0123456789abcdef0123456789abcdef01234567`, base `origin\/main`/)
+  assert.match(text, /pull request 12 \(first the self-review lines of the implementer's report, `\/b\/thing-report\.md`\), branch `fix\/thing`, head `0123456789abcdef0123456789abcdef01234567`, base `origin\/main`/)
   assert.match(text, /Working directory: `\/w\/review-12`/)
   assert.match(text, /session \*\*`Orch: acme \[a1b2c3\]`\*\*/)
   assert.match(text, /`<repo>#12 0123456789abcdef0123456789abcdef01234567 — <n> findings/)
@@ -110,7 +110,7 @@ test('the optional fields and their defaults: plan is the spec, norms CONTRIBUTI
 
 test('a field missing or malformed is refused with its reason, and nothing is written', () => {
   const without = (flag: string): string[] => { const a = FIELDS(); const k = a.indexOf(flag); a.splice(k, 2); return a }
-  for (const flag of ['--out', '--repo', '--pr', '--title', '--spec', '--index', '--branch', '--head', '--worktree', '--orchestrator', '--reason']) {
+  for (const flag of ['--out', '--repo', '--pr', '--title', '--spec', '--index', '--delivery-report', '--branch', '--head', '--worktree', '--orchestrator', '--reason']) {
     const done = run(without(flag))
     assert.equal(done.code, 2, flag)
     assert.match(done.err, new RegExp(`${flag} is required`), flag)
@@ -142,6 +142,14 @@ test('--index is the path the review agent writes its index to: it fills the tem
   assert.match(done.err, /--report is no longer a flag: the review's index path is --index/)
   assert.match(done.err, /never the implementer's report/)
   assert.equal(existsSync(join(dir, 'review-12.md')), false)
+})
+
+test('--delivery-report names the implementer\'s report in the brief, for its self-review lines and its E2E line, and is an absolute path', () => {
+  assert.equal(run(FIELDS()).code, 0)
+  const text = readFileSync(join(dir, 'review-12.md'), 'utf8')
+  assert.match(text, /its E2E line, from the implementer's report \(`\/b\/thing-report\.md`\), never/)
+  const set = FIELDS(); set[set.indexOf('--delivery-report') + 1] = 'rel/report.md'
+  assert.match(run(set).err, /--delivery-report is an absolute path/)
 })
 
 test('an --index path that already exists is refused, naming it, and nothing is written; a new path is accepted', () => {
