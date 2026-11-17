@@ -17,6 +17,7 @@ import { isDegradedPass, orchestrationOf, ownerOf, withDeadline } from './stop-g
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
 import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
+import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
 import { archive, boundedReading, readOr, registered } from './unattended.ts'
 
 // The nouns a write holds.
@@ -182,11 +183,24 @@ export function register(on: On<Held>, now: () => Date = () => new Date(), bound
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => afterCall($, e, next, now, bound)).catch(net)
 }
 
-// The line a pull request of the orchestration merged or closed wakes it with: its agent to close.
-export function endedLine(ended: { repo: string; pr: number; state: 'MERGED' | 'CLOSED'; agent?: string | undefined }): string {
+// The open rows an agent owns in any record of the orchestration, as the takeover reads them: the row its
+// launch brief was printed for, in the record beside that brief, else the rows whose note names it.
+async function rowsHeldBy($: Held, agent: string, records: readonly RecordText[]): Promise<HeldRow[]> {
+  const dir = `${await stateDir($)}/prompts`
+  const launch = newestLaunch((await $.fs.list(dir).catch((): FsEntry[] => [])).map(entry => entry.name), agent)
+  const brief = launch === undefined ? undefined : briefOfLaunch(await readOr($, `${dir}/${launch}`))
+  const row = brief === undefined ? undefined : rowOfBrief(await readOr($, brief))
+  return rowsOwnedBy(agent, brief === undefined || row === undefined ? undefined : { row: Number(row), dir: dirOf(brief) }, records)
+}
+
+// The line a pull request of the orchestration merged or closed wakes it with: its agent to close when it
+// runs and holds nothing else; when it still holds something (`holds`: rows, other pull requests), to be told.
+export function endedLine(ended: { repo: string; pr: number; state: 'MERGED' | 'CLOSED'; agent?: string | undefined; holds?: readonly string[] }): string {
   const key = prKey(ended.repo, ended.pr)
   const what = ended.state === 'MERGED' ? 'merged' : 'closed unmerged'
-  return `[module] ${key} ${what}${ended.agent === undefined ? '' : `: its agent ${ended.agent} is done with it, close it`}.`
+  if (ended.agent === undefined) return `[module] ${key} ${what}.`
+  const holds = ended.holds ?? []
+  return `[module] ${key} ${what}: its agent ${ended.agent} ${holds.length > 0 ? `still holds ${holds.join(', ')}; tell it, do not close it` : 'is done with it, close it'}.`
 }
 
 // The line a pull request entering the anomaly wakes its orchestrator with.
@@ -215,16 +229,23 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
+  const waitingOn = (ended: (typeof reading.ended)[number]) => ended.state === 'MERGED'
+    ? reading.records.flatMap(record => waitingRows(record.text, { repo: ended.line.repo.toLowerCase(), pr: ended.line.pr }))
+    : []
   for (const ended of reading.ended) {
     const key = `${prKey(ended.line.repo, ended.line.pr)} ended`
     if (told.has(key)) continue
     told.add(key)
     const { repo, pr, agent } = ended.line
-    lines.push(endedLine({ repo, pr, state: ended.state, agent: ended.line.status === 'working' ? agent : undefined }))
-    if (ended.state === 'MERGED') {
-      const relay = mergeRelayLine({ repo, pr }, reading.texts.flatMap(text => waitingRows(text, { repo: repo.toLowerCase(), pr })))
-      if (relay !== null) lines.push(relay)
-    }
+    // Its agent is named only while it runs (the launcher's listing, where the close command ends it) and holds nothing else.
+    const named = ended.line.status === 'working' && agent !== undefined && reading.live.has(agent) ? agent : undefined
+    const holds = named === undefined ? [] : [
+      ...(await rowsHeldBy($, named, reading.records)).map(row => `row ${row.id} (${dirOf(row.path).split('/').pop()})`),
+      ...reading.kept.filter(line => line.status === 'working' && line.agent === named).map(line => prKey(line.repo, line.pr)),
+    ]
+    lines.push(endedLine({ repo, pr, state: ended.state, agent: named, holds }))
+    const relay = mergeRelayLine({ repo, pr }, waitingOn(ended))
+    if (relay !== null) lines.push(relay)
   }
   for (const u of anomalies) {
     if (told.has(prKey(u.repo, u.pr))) continue

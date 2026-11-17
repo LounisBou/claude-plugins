@@ -60,6 +60,8 @@ import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { archiveSettled } from './lib/round-archive.ts'
 import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
 import { askedKey } from '../../../hooks/asked-key.ts'
+import { bareName, briefOfLaunch, namesAgent as names, newestLaunch, rowOfBrief } from '../../../hooks/row-owner.ts'
+export { rowOfBrief }
 import type { Asked } from '../../../hooks/question.ts'
 import { parseConsentSubject } from '../../../core/consent-record.ts'
 
@@ -254,32 +256,13 @@ export function liveAgents(deck: readonly LiveAgent[], chained: readonly string[
  */
 export function briefOf(state: string, name: string): string | undefined {
   const dir = join(state, 'prompts')
-  const safe = `launch-${name.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 40)}-`
-  let newest: { ms: number; file: string } | undefined
+  let file: string | undefined
   try {
-    for (const file of readdirSync(dir)) {
-      const ms = file.startsWith(safe) && file.endsWith('.sh') ? Number(file.slice(safe.length, -3)) : NaN
-      if (Number.isInteger(ms) && (newest === undefined || ms > newest.ms)) newest = { ms, file }
-    }
+    file = newestLaunch(readdirSync(dir), name)
   } catch {
     return undefined
   }
-  if (newest === undefined) return undefined
-  const found = /export ORCHESTRATOR_BRIEF=(?:'([^']*)'|([^\s;&]+))/.exec(readText(join(dir, newest.file)) ?? '')
-  return found === null ? undefined : (found[1] ?? found[2])
-}
-
-/**
- * The row a brief was printed for, the id the dispatch recorded: a phase brief's « You are the
- * implementer of row <id> » or its `Row: <id>` line, a rotation brief's « resume brief for row <id>: ».
- * Undefined for any other text: a row mentioned in passing binds nothing.
- */
-export function rowOfBrief(text: string | undefined): string | undefined {
-  if (text === undefined) return undefined
-  const found = /^You are the implementer of row ([1-9][0-9]*) of the dispatch record\b/m.exec(text)
-    ?? /^# .*\bresume brief for row ([1-9][0-9]*):/m.exec(text)
-    ?? /^Row: ([1-9][0-9]*)\b/m.exec(text)
-  return found?.[1]
+  return file === undefined ? undefined : briefOfLaunch(readText(join(dir, file)) ?? '')
 }
 
 /** An agent as the Live state prints it: its name, then its tty and brief where known. */
@@ -653,23 +636,6 @@ export function rowLines(rows: readonly OpenRow[]): string[] {
   const shared = [...holders.values()].filter(group => group.length > 1)
   const lines = rows.map(row => (row.meant !== undefined && (holders.get(sameAs(row))?.length ?? 0) > 1 ? (row.bare ?? row.line) : row.line))
   return [...lines, ...shared.map(group => `note of rows ${group.map(row => row.id).join(', ')}: ${group[0]?.meant ?? ''}`)]
-}
-
-const bareName = (name: string): string => name.replace(/^Agent:\s*/, '').trim()
-
-/**
- * Whether a note names that agent in the dispatch's form, `Agent: <name>` (`Dispatched …: Agent: <name>`),
- * its name whole, not as the start of a longer word; a name mentioned in passing is no dispatch.
- */
-function names(text: string, agent: string): boolean {
-  const name = bareName(agent).toLowerCase()
-  if (name === '') return false
-  const lower = text.toLowerCase()
-  for (let at = lower.indexOf(name); at !== -1; at = lower.indexOf(name, at + 1)) {
-    const after = lower[at + name.length] ?? ' '
-    if (/(?:^|[^a-z0-9])agent:\s*$/.test(lower.slice(0, at)) && !/[a-z0-9]/.test(after)) return true
-  }
-  return false
 }
 
 /** Whether a blocker has fallen, read on its artifact: fallen, still standing, or not readable now. */
