@@ -175,6 +175,7 @@ test('the question blocks of a message are the lines that open one, a quoted lin
   expect(questionBlocks(THREE)).toBe(3)
   expect(questionBlocks(ASKED)).toBe(1)
   expect(questionBlocks('Question 1 of 2 — merge it?\nQuestion 2 of 2 — tag it?')).toBe(2)
+  expect(questionBlocks('### Question 1 of 2\n- **Question 2 of 2**\n3. Question 3 of 3')).toBe(3)
   expect(questionBlocks('No question here, only the word Question and « 1 of 3 » in a sentence.')).toBe(0)
   expect(questionBlocks('> **Question 1 of 1** (q-a1b2c3-1)\n\n**Question 1 of 1** (q-a1b2c3-2)')).toBe(1)
 })

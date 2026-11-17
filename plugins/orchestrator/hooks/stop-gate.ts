@@ -393,9 +393,9 @@ export const restatedReason = (ids: readonly string[]): string =>
   `Already in the round (${ids.join(', ')}): name it by its subject, do not copy it.`
 
 // How many question blocks a turn's final text puts to the operator: the lines that open one
-// (`**Question i of N**`, the id line aside), a quoted line not counted.
+// (`**Question i of N**`, a bullet, heading or numbered form too), a quoted line not counted.
 export function questionBlocks(message: string): number {
-  return message.split('\n').filter(line => /^\**Question \d+ of \d+\b/.test(line.trim())).length
+  return message.split('\n').filter(line => /^(?:[-+]\s+|#+\s+|\d+\.\s+)?\**Question \d+ of \d+\b/.test(line.trim())).length
 }
 
 export const manyQuestionsReason = (blocks: number): string =>
