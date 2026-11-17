@@ -159,6 +159,10 @@ export function askedEntry(fields: AskFields, sender: AskedSender, id: string, n
   return { v: ASK_VERSION, id, sender, ...fields, status: 'open', at: now.toISOString(), answer: null, seq: 1 }
 }
 
+const turnFull = (id: string | undefined): string =>
+  `this turn already asked ${id ?? 'a question'}: one question per turn. Ask this one after his answer (it wakes you), and say in the first question's blocks what waits on the others.`
+const TURN_FULL = turnFull(undefined)
+
 const isText = (value: unknown): value is string => typeof value === 'string'
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0
@@ -558,11 +562,9 @@ export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   if (e['agentId']) return refuse('a subagent asks its session, in its answer: only the main thread asks the operator.')
   const parsed = parseAsk(e)
   if ('error' in parsed) return refuse(parsed.error)
-  // One question per turn, by construction: a second is not stored, so no turn can hand him two blocks. What
-  // else waits goes in `blocks`, and is asked after his answer, which wakes the session.
-  if (asking || thisTurn.length > 0) {
-    return refuse(`this turn already asked ${thisTurn[0] ?? 'a question'}: one question per turn. Ask this one after his answer (it wakes you), and say in the first question's blocks what waits on the others.`)
-  }
+  // One question per turn, by construction: the place is taken here, before any await, so two calls made together
+  // find it taken; askOne refuses a question that would be stored as a second (a twin or a record is no second).
+  if (asking) return refuse(TURN_FULL)
   asking = true
   try {
     return await askOne($, parsed.fields, now)
@@ -603,6 +605,7 @@ async function askOne($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 's
   if (twin !== null) {
     return { result: `Not stored: this question is already open as ${twin.id}, asked ${twin.at}, and the operator has it; do not write it again in the chat, refer to it by its subject. For reference:\n\n${questionBlock(twin, { i: 1, n: 1 })}` }
   }
+  if (!record?.answer && thisTurn.length > 0) return refuse(turnFull(thisTurn[0]))
   const path = roundEntryPath(await stateDir($), entry.id)
   let taken = false
   try {

@@ -200,6 +200,16 @@ test('a turn asks one question: a second call in it is refused and stores nothin
   expect(second.result).not.toContain('Question 1 of 1')
 })
 
+test('the same question asked again in the turn is answered by its open twin, not refused', async () => {
+  const { dollar, files } = world()
+  const first = await ask(dollar, FULL)
+  const again = await ask(dollar, FULL, new Date(NOW.getTime() + 1))
+  expect(again.isError).toBeUndefined()
+  expect(again.result).toContain(`already open as ${stored(files)[0]?.id}`)
+  expect(first.result).toContain('Write this block in your message as it stands')
+  expect(stored(files).length).toBe(1)
+})
+
 test('two calls made together in one turn store one: the place is taken before any write is awaited', async () => {
   const { dollar, files } = world()
   const calls = await Promise.all([ask(dollar, FULL), ask(dollar, { ...FULL, subject: 'a second matter' }, new Date(NOW.getTime() + 1))])
