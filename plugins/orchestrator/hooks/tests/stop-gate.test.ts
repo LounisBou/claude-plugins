@@ -12,7 +12,7 @@ import {
   deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
-  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions,
+  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions, questionBlocks,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait, type Heads,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
@@ -164,6 +164,39 @@ test('a question answered or withdrawn may be written again, as one by its subje
   const other = fakeDollar({ round: { 'q-ffffff-1.json': askedHere({ id: 'q-ffffff-1', sender: { session: 'ffffff', name: 'Orch: other', role: 'orchestrator', machine: 'box-1' } }) } })
   const elsewhere = await stop(handlers['classic.Stop'], other.dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))
   expect(elsewhere.observed).toBeUndefined()
+})
+
+// --- a message puts one question to the operator ---------------------------------------------------
+
+const MANY_REASON = '3 questions in one message: present the first, the rest after his answer, one per message.'
+const THREE = [1, 2, 3].map(i => `**Question ${i} of 3**\n_Subject_ : matter ${i}\n_Question_ : Which one?`).join('\n\n')
+
+test('the question blocks of a message are the lines that open one, a quoted line not counted', () => {
+  expect(questionBlocks(THREE)).toBe(3)
+  expect(questionBlocks(ASKED)).toBe(1)
+  expect(questionBlocks('Question 1 of 2 — merge it?\nQuestion 2 of 2 — tag it?')).toBe(2)
+  expect(questionBlocks('No question here, only the word Question and « 1 of 3 » in a sentence.')).toBe(0)
+  expect(questionBlocks('> **Question 1 of 1** (q-a1b2c3-1)\n\n**Question 1 of 1** (q-a1b2c3-2)')).toBe(1)
+})
+
+test('a message with three question blocks is told to present the first, the rest after his answer', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({})
+  const told = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: THREE }))
+  expect(told.observed).toBe(MANY_REASON)
+})
+
+test('a message with one question block is let be, whoever the session', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({})
+  const one = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED }))
+  expect(one.observed === undefined || !one.observed.includes('questions in one message')).toBe(true)
+  // A coordinator is held to it as an orchestrator is; one block passes, three are told.
+  const coord = fakeDollar({ launchName: 'Coord: machine' })
+  const single = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: ASKED }))
+  expect(single.observed).toBeUndefined()
+  const many = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: THREE }))
+  expect(many.observed).toBe(MANY_REASON)
 })
 
 test('an orchestrator ending on an operator wait that blocks nothing gets the blocks-nothing refusal, not the no-question one', async () => {

@@ -32,7 +32,7 @@ import {
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, type GoalsReading,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames, restatedQuestions, restatedReason,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames, restatedQuestions, restatedReason, questionBlocks, manyQuestionsReason,
 } from './stop-gate.ts'
 import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
@@ -568,6 +568,12 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         return await letThrough(todoOpen(open.map(todoName)))
       }
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
+      // A turn puts one question to the operator: the blocks after the first wait for his answer.
+      const blocks = questionBlocks(String(e.last_assistant_message ?? ''))
+      if (blocks > 1) {
+        await logLine($, 'guards', `stop gate: ${blocks} question blocks in one message`)
+        return await letThrough(manyQuestionsReason(blocks))
+      }
       if (role === 'coordinator') return next(e)
       const state = await stateDir($)
       // A question asked with `ask` still open stays in the round until he answers it, its answer

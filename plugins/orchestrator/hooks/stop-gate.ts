@@ -392,6 +392,15 @@ export function restatedQuestions(message: string, open: readonly { id: string; 
 export const restatedReason = (ids: readonly string[]): string =>
   `Already in the round (${ids.join(', ')}): name it by its subject, do not copy it.`
 
+// How many question blocks a turn's final text puts to the operator: the lines that open one
+// (`**Question i of N**`, the id line aside), a quoted line not counted.
+export function questionBlocks(message: string): number {
+  return message.split('\n').filter(line => /^\**Question \d+ of \d+\b/.test(line.trim())).length
+}
+
+export const manyQuestionsReason = (blocks: number): string =>
+  `${blocks} questions in one message: present the first, the rest after his answer, one per message.`
+
 export type Held = { case: string; reason: string }
 
 // check_wake()'s first half: everything decidable before the facts of a done message
