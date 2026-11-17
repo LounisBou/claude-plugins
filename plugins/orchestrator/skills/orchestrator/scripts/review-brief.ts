@@ -1,7 +1,7 @@
 // review-brief — a review round's brief, filled from its fields.
 //
 //   review-brief.sh --out <path> --repo <owner/name> --pr <n> --title "<delivery>" --spec <path> --index <path>
-//     --branch <b> --head <sha> --worktree <dir> --orchestrator "<exact name and reference>" --reason "<why this size>"
+//     --delivery-report <path> --branch <b> --head <sha> --worktree <dir> --orchestrator "<exact name and reference>" --reason "<why this size>"
 //     [--size "<round size>"] [--lens <name>]... [--tier deep|standard|light] [--scope "<text>"]
 //     [--plan <path>] [--norms <path>] [--base <ref>] [--envelope "<text>"]
 //
@@ -14,7 +14,9 @@
 //
 // `--index` is the path where the REVIEW agent writes its index (the three-level report's second
 // level), never the implementer's report: it must be a new file, and an existing path is refused.
-// `--report`, this flag's former name, read as the implementer's report and was taken for it, so it
+// `--delivery-report` is the implementer's report (its self-review lines and its E2E line), a path the
+// brief names so the review session reads it; it is only read, never written.
+// `--report`, the index flag's former name, read as the implementer's report and was taken for it, so it
 // is refused with a message naming `--index`.
 //
 // No lens is a single reading by the review session itself: the lens list and the tier read `none`.
@@ -27,7 +29,7 @@ import { isEntry, processIo, type Io } from './lib/process.ts'
 import { fill } from './succession.ts'
 
 export const USAGE =
-  'usage: review-brief.sh --out <path> --repo <owner/name> --pr <n> --title "<delivery>" --spec <path> --index <path> --branch <b> --head <sha> '
+  'usage: review-brief.sh --out <path> --repo <owner/name> --pr <n> --title "<delivery>" --spec <path> --index <path> --delivery-report <path> --branch <b> --head <sha> '
   + '--worktree <dir> --orchestrator "<name [ref]>" --reason "<why this size>" [--size "<text>"] [--lens <name>]... [--tier deep|standard|light] '
   + '[--scope "<text>"] [--plan <path>] [--norms <path>] [--base <ref>] [--envelope "<text>"]'
 
@@ -37,7 +39,7 @@ export const TEMPLATE = join(here, '..', '..', '..', 'templates', 'agent-review-
 /** The one checklist every capture is audited against, by the path the briefs name. */
 const CHECKLIST = join(here, '..', 'references', 'screenshot-checklist.md')
 
-const REQUIRED = ['out', 'repo', 'pr', 'title', 'spec', 'index', 'branch', 'head', 'worktree', 'orchestrator', 'reason'] as const
+const REQUIRED = ['out', 'repo', 'pr', 'title', 'spec', 'index', 'delivery-report', 'branch', 'head', 'worktree', 'orchestrator', 'reason'] as const
 const OPTIONAL = ['size', 'tier', 'scope', 'plan', 'norms', 'base', 'envelope'] as const
 const TIERS = ['deep', 'standard', 'light']
 
@@ -48,6 +50,7 @@ export interface Fields {
   readonly title: string
   readonly spec: string
   readonly index: string
+  readonly deliveryReport: string
   readonly branch: string
   readonly head: string
   readonly worktree: string
@@ -82,7 +85,7 @@ export function parseArgs(argv: readonly string[]): Fields | { readonly error: s
   }
   for (const name of REQUIRED) if ((values.get(name) ?? '').trim() === '') return { error: `--${name} is required (${USAGE})` }
   const get = (name: string, otherwise = ''): string => (values.get(name) ?? '') || otherwise
-  for (const name of ['out', 'spec', 'index', 'worktree']) if (!isAbsolute(get(name))) return { error: `--${name} is an absolute path, got: ${get(name)}` }
+  for (const name of ['out', 'spec', 'index', 'delivery-report', 'worktree']) if (!isAbsolute(get(name))) return { error: `--${name} is an absolute path, got: ${get(name)}` }
   if (!/^[1-9][0-9]*$/.test(get('pr'))) return { error: `--pr is the pull request number, got: ${get('pr')}` }
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(get('repo'))) return { error: `--repo is owner/name, got: ${get('repo')}` }
   if (!/^[0-9a-f]{7,40}$/i.test(get('head'))) return { error: `--head is a commit sha, 7 to 40 hexadecimal characters, got: ${get('head')}` }
@@ -90,7 +93,7 @@ export function parseArgs(argv: readonly string[]): Fields | { readonly error: s
   if (!TIERS.includes(tier)) return { error: `--tier is deep, standard or light, got: ${tier}` }
   if (lenses.length === 0 && get('tier') !== '') return { error: '--tier goes with --lens: with no lens the tier reads none' }
   return {
-    out: get('out'), repo: get('repo'), pr: get('pr'), title: get('title'), spec: get('spec'), index: get('index'), branch: get('branch'),
+    out: get('out'), repo: get('repo'), pr: get('pr'), title: get('title'), spec: get('spec'), index: get('index'), deliveryReport: get('delivery-report'), branch: get('branch'),
     head: get('head'), worktree: get('worktree'), orchestrator: get('orchestrator'), reason: get('reason'), size: get('size'), lenses, tier,
     scope: get('scope'), plan: get('plan', get('spec')), norms: get('norms', 'CONTRIBUTING.md'), base: get('base', 'origin/main'), envelope: get('envelope', 'none'),
   }
@@ -122,6 +125,7 @@ function values(f: Fields): Record<string, string> {
     LENSES: lensed ? [f.lenses.map(lens => `- ${lens}`).join('\n'), ...(f.scope === '' ? [] : [f.scope])].join('\n\n') : f.scope === '' ? 'none' : `none\n\n${f.scope}`,
     SCREENSHOT_CHECKLIST: CHECKLIST,
     REPORT_PATH: f.index,
+    DELIVERY_REPORT: f.deliveryReport,
     ORCHESTRATOR_NAME: f.orchestrator,
     RESOURCE_ENVELOPE: f.envelope,
   }
