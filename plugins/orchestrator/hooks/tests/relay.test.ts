@@ -165,8 +165,9 @@ test('the withdrawal names the sender, the question and where it was answered', 
 
 // The coordinator is registered on this machine unless `remote`, where it is the one a peer
 // delivery taught (coordinator-learnt). `roundWrite: 'fail'` refuses every rename into the round,
-// `refuseInto` the renames into that one file.
-function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: string | null; remote?: boolean; send?: 'reject' | 'refuse'; roundWrite?: 'fail'; refuseInto?: string } = {}) {
+// `refuseInto` the renames into that one file. `staleAt` is an address the host answers as stale, as a
+// bridge does once its session ended, and the address the peer delivery taught.
+function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: string | null; remote?: boolean; send?: 'reject' | 'refuse'; roundWrite?: 'fail'; refuseInto?: string; staleAt?: string } = {}) {
   const files = new Map<string, string>()
   const sent: Parameters<World['session']['send']>[0][] = []
   const logged: string[] = []
@@ -176,7 +177,7 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
     role: over.role === undefined ? 'orchestrator' : over.role, name: over.name ?? 'Orch: belt', pid: '501', repo: null,
     context_percent: 20, context_tokens: 1, window: 100, model: 'a-model', busy: false, updated_at: '2026-10-14T09:00:00.000Z',
   }) + '\n')
-  if (over.coordinator !== null && over.remote) files.set(LEARNT, JSON.stringify({ name: over.coordinator ?? 'Coord: ops [abc]', from: null, at: 'T' }) + '\n')
+  if (over.coordinator !== null && over.remote) files.set(LEARNT, JSON.stringify({ name: over.coordinator ?? 'Coord: ops [abc]', from: over.staleAt ?? null, at: 'T' }) + '\n')
   else if (over.coordinator !== null) files.set(RECORD, JSON.stringify({ name: over.coordinator ?? 'Coord: ops [abc]', tty: '/dev/ttys9' }))
   const dollar: World = hostOf({
     session: {
@@ -184,6 +185,7 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
       send: async (args: Parameters<World['session']['send']>[0]): Promise<SessionSendResult> => {
         if (over.send === 'reject') throw new Error('the send was rejected')
         if (over.send === 'refuse') return { isDelivered: false, reason: 'nobody by that name' }
+        if (over.staleAt !== undefined && args.to === over.staleAt) return { isDelivered: false, reason: `Failed to send to ${over.staleAt}: HTTP 409 — the peer session may have ended or restarted, so this bridge ID is stale.` }
         sent.push(args)
         return { isDelivered: true }
       },
@@ -1609,4 +1611,54 @@ test('a push meeting a question this machine owns is ignored, and a reply to a q
   await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', reply))
   expect(objectAt(sender, id).status).toBe('open')
   expect(qAcks(sender, 'reply')).toEqual([])
+})
+
+// --- the coordinator replaced on its machine: the address the sender learnt is stale ------------
+
+// Observed 2026-11-17: the coordinator handed over to a successor of the same name, and the sender's
+// learnt address, its predecessor's bridge, answered every send with HTTP 409. The questions and the
+// waits went to that address alone, refused each time and entered nowhere; only the row fell back
+// to the name. Every send to the coordinator falls back to its name, forgets the stale address, and
+// learns the new one from the coordinator's own acknowledgment.
+const STALE_AT = 'bridge:session_predecessor'
+const learntFrom = (fx: ReturnType<typeof fake>) => JSON.parse(fx.files.get(LEARNT)!).from
+
+test('a question asked with ask reaches a coordinator whose learnt address went stale, by its name, and its ack teaches the new address', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true, staleAt: STALE_AT })
+  sender.dollar.ui.log = () => undefined
+  const coordinator = coordinatorMachine()
+  // The address is forgotten before the send by name: an acknowledgment landing as that send returns teaches the new one.
+  const send = sender.dollar.session.send
+  const forgottenAtSend: unknown[] = []
+  sender.dollar.session.send = async args => {
+    if (args.to === 'Coord: ops [abc]') forgottenAtSend.push(learntFrom(sender))
+    return send(args)
+  }
+  askTurnStarted()
+  const asked = await callAsk(sender.dollar, { tool: 'mcp__orchestrator__ask', ...ASKED_FIELDS })
+  const id = /Asked as (q-\S+?):/.exec(asked.result)![1]!
+  expect(pushes(sender).map(s => s.to)).toEqual(['Coord: ops [abc]'])
+  expect(forgottenAtSend).toEqual([null])
+  expect(learntFrom(sender)).toBeNull()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(pushes(sender)).text))
+  expect(objectAt(coordinator, id)).toMatchObject({ id, status: 'open', seq: 1 })
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', only(qAcks(coordinator, 'asked')).text))
+  expect(objectAt(sender, id).replica.state).toBe('acked')
+  expect(learntFrom(sender)).toBe(COORD_AT)
+})
+
+test('a wait reaches a coordinator whose learnt address went stale, by its name, is acked, and is not sent again unchanged', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true, staleAt: STALE_AT })
+  const coordinator = coordinatorMachine()
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(PROPOSAL))
+  expect(asks(sender).map(s => s.to)).toEqual(['Coord: ops [abc]'])
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(asks(sender)).text))
+  expect(entries(coordinator).length).toBe(1)
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', only(acks(coordinator)).text))
+  expect(waitOf(sender).pending).toBeNull()
+  expect(learntFrom(sender)).toBe(COORD_AT)
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(PROPOSAL))
+  expect(asks(sender).length).toBe(1)
 })
