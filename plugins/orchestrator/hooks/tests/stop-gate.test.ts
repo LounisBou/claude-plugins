@@ -827,6 +827,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
 type Guards = {
   'classic.Stop': Hook<World, Events['classic.Stop']>
   'prompt.submit': Hook<World, Events['prompt.submit']>
+  'turn.start': Hook<World, Events['turn.start']>
   // The guard on Bash, the last tool call it registers.
   'tool.call': Hook<World, Events['tool.call']>
   'tool.call:SendMessage': Hook<World, Events['tool.call']>
@@ -844,6 +845,7 @@ function mounted(declarations?: Declarations): { handlers: Guards; matchers: { '
       return gate(dollar, e, next)
     },
     'prompt.submit': hookOf(hooks, 'prompt.submit').handler,
+    'turn.start': hookOf(hooks, 'turn.start', {}).handler,
     'tool.call': hookOf(hooks, 'tool.call', { tool: 'Bash' }).handler,
     'tool.call:SendMessage': hookOf(hooks, 'tool.call', { tool: 'SendMessage' }).handler,
   }
@@ -926,7 +928,7 @@ test('a busy own agent releases the stop, no pull request read for it', async ()
 
 // A busy own agent releases the stop, and arms the busy wake: its host record (busy since its
 // turn's start) and its last measure are read when the timer fires.
-function busyWorld(busyFor: number) {
+function busyWorld(busyFor: number, drops = 0) {
   const since = Date.now() - busyFor
   const fx = fakeDollar({
     listing: BUSY_ROW, chain: OWNED, busyAgentPid: '88',
@@ -935,14 +937,22 @@ function busyWorld(busyFor: number) {
       [measureFilePath(`${HOME}/.claude`, 's-agent', undefined)]: JSON.stringify({ version: 1, context_tokens: 193000, context_window: 1000000, context_percent: 19, model: 'm', updated_at: 't' }),
     },
   })
-  const timers: { ms: number; fire: () => unknown }[] = []
+  const timers: { ms: number; fire: () => unknown; cancelled: boolean }[] = []
   const submitted: string[] = []
   const dollar = {
     ...fx.dollar,
-    clock: { ...fx.dollar.clock, after: (ms: number, fire: () => unknown) => { timers.push({ ms, fire }); return { cancel: () => undefined } } },
-    prompt: { ...fx.dollar.prompt, submit: async ({ text }: { text: string }) => { submitted.push(text); return undefined } },
+    clock: { ...fx.dollar.clock, after: (ms: number, fire: () => unknown) => {
+      const timer = { ms, fire, cancelled: false }
+      timers.push(timer)
+      return { cancel: () => { timer.cancelled = true } }
+    } },
+    prompt: { ...fx.dollar.prompt, submit: async ({ text }: { text: string }) => {
+      if (drops-- > 0) return { drop: 'the session is busy' }
+      submitted.push(text)
+      return undefined
+    } },
   } as unknown as World
-  return { dollar, timers, submitted }
+  return { dollar, timers, submitted, ran: fx.ran }
 }
 
 test('a busy own agent past the bound wakes its orchestrator once, with a line naming it, its time and its fill', async () => {
@@ -950,11 +960,15 @@ test('a busy own agent past the bound wakes its orchestrator once, with a line n
   const w = busyWorld(NOTICE_TTL_MS + 5 * 60_000)
   const e = stopEvent({})
   expect((await stop(handlers['classic.Stop'], w.dollar, e)).passed).toBe(e)
+  const before = w.ran.length
   await w.timers.shift()!.fire()
   expect(w.submitted).toEqual(['[module] Agent: belt-p3 busy 2h05 in one turn, context 193,000 (19%) — read its tree'])
+  // Local reads only: the tick runs no forge call.
+  expect(w.ran.slice(before).filter(l => l.startsWith('gh'))).toEqual([])
   // Armed again at the next bound of the same turn, and the same bound never told twice.
   expect(w.timers.length).toBe(1)
   expect(w.timers[0]!.ms).toBeGreaterThan(NOTICE_TTL_MS - 6 * 60_000)
+  expect(w.timers[0]!.ms).toBeLessThanOrEqual(NOTICE_TTL_MS - 5 * 60_000)
   await stop(handlers['classic.Stop'], w.dollar, e)
   await w.timers.pop()!.fire()
   expect(w.submitted.length).toBe(1)
@@ -969,6 +983,27 @@ test('a busy own agent under the bound wakes nothing: the timer waits for the bo
   expect(w.timers.length).toBe(1)
   expect(w.timers[0]!.ms).toBeLessThanOrEqual(60 * 60_000)
   expect(w.timers[0]!.ms).toBeGreaterThan(59 * 60_000)
+})
+
+test("the next turn's start cancels the busy wake, and a timer no longer armed reads nothing", async () => {
+  const { handlers } = mounted()
+  const w = busyWorld(NOTICE_TTL_MS + 5 * 60_000)
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  await handlers['turn.start'](w.dollar, { sessionId: 'a1b2c3' } as never, async (x: unknown) => x)
+  expect(w.timers[0]!.cancelled).toBe(true)
+  await w.timers[0]!.fire()
+  expect(w.submitted).toEqual([])
+})
+
+test('a busy wake the host drops is tried again a minute later, its bound still untold', async () => {
+  const { handlers } = mounted()
+  const w = busyWorld(NOTICE_TTL_MS + 5 * 60_000, 1)
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual([])
+  expect(w.timers.map(t => t.ms)).toEqual([60_000])
+  await w.timers.shift()!.fire()
+  expect(w.submitted.length).toBe(1)
 })
 
 test('the busy wake tells each bound of a turn once, and a new turn afresh', () => {

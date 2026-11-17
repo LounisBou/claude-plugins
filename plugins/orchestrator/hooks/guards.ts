@@ -291,8 +291,13 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // cancelled at the next turn's start, with the bounds told per agent turn.
   const busy: BusyMemory = { timer: null, told: new Map() }
   on('turn.start', {}, async (_$, e, next) => {
+    // A subagent's turn is not the session's: the main thread's stop armed the wake, and stands.
+    if (e.agentId) return next(e)
     busy.timer?.cancel()
     busy.timer = null
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
   on('prompt.submit', async ($, e, next) => {
@@ -940,21 +945,24 @@ function armBusy($: Held, memory: BusyMemory, agents: readonly OwnAgent[], delay
 }
 
 // One reading of the busy agents' host records: a line each for those past a bound not told yet,
-// submitted as one wake, then the timer armed again at the next bound of those still busy. A
-// failure is one log line, and the next stop arms it again.
+// submitted as one wake, then the timer armed again at the next bound of those still busy. A wake
+// the host drops or refuses is told nothing: the bounds are restored and tried again a minute later.
 async function busyTick($: Held, memory: BusyMemory, agents: readonly OwnAgent[], timer: unknown): Promise<void> {
   if (memory.timer !== timer) return
   memory.timer = null
+  const was = new Map(memory.told)
   try {
     const now = Date.now()
     const { lines, next } = busyWake(await busyAgents($, agents), memory.told, now)
     if (lines.length > 0) {
       const taken: unknown = await $.prompt.submit({ text: lines.join('\n') })
-      if (typeof taken === 'object' && taken !== null && 'drop' in taken && taken.drop) await logLine($, 'guards', `busy wake: the host dropped the wake: ${String(taken.drop)}`)
+      if (typeof taken === 'object' && taken !== null && 'drop' in taken && taken.drop) throw new Error(`the host dropped the wake: ${String(taken.drop)}`)
     }
     if (next !== null && memory.timer === null) armBusy($, memory, agents, next - now)
   } catch (err) {
+    memory.told = was
     await logLine($, 'guards', `busy wake: ${reasonOf(err)}`)
+    if (memory.timer === null) armBusy($, memory, agents, BUSY_RETRY_MS)
   }
 }
 
@@ -969,6 +977,7 @@ async function busyAgents($: Held, agents: readonly OwnAgent[]): Promise<BusyAge
     for (const pid of String(ps.stdout ?? '').split('\n').map(line => line.trim().split(/\s+/)[0] ?? '').filter(pid => /^\d+$/.test(pid))) {
       const record = hostRecordOf(String(await $.fs.read(`${config}/sessions/${pid}.json`).catch(() => '')))
       if (!record?.sessionId || !record.status) continue
+      if (record.status === 'busy' && record.since === undefined) await logLine($, 'guards', `busy wake: ${agent.label}'s host record gives no turn start`)
       if (record.status === 'busy' && record.since !== undefined) {
         const reading = parseMeasure(String(await $.fs.read(measureFilePath(config, record.sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))).catch(() => '')))
         found.push({
@@ -982,6 +991,7 @@ async function busyAgents($: Held, agents: readonly OwnAgent[]): Promise<BusyAge
   return found
 }
 const BUSY_READ_MS = 2000
+const BUSY_RETRY_MS = 60_000
 
 // The host's status of each tty's session: the processes on the tty, each one's host
 // record read under the config dir. A tty no record answers for is left out, and its

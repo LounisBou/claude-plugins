@@ -81,7 +81,7 @@ const DECLARE = 'Declare the wait with the `declare_wait` tool, whose descriptio
 // --- the refusal texts (stop_gate.py:126-146, verbatim but where the declared wait changed them) -----------------------------------
 
 // The waits that fit a turn, by what will wake it: what the two refusals below name.
-const BUSY_FITS = 'An agent of yours is busy: declare no wait, its idle notice wakes you. Past two hours busy, the module\'s line on it does.'
+const BUSY_FITS = 'An agent of yours is busy: declare no wait, its idle notice wakes you. Past its bound in one turn, the module\'s line on it does.'
 const OTHER_FITS = 'If only an irreversible or outward act waits for the operator\'s answer, declare an operator wait; '
   + 'if every goal is met or ruled out, declare done; '
   + 'if the operator deferred it, his ruling recorded, declare a deferred wait; else launch what you announced.'
