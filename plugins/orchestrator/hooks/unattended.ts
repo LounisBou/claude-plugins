@@ -29,7 +29,7 @@ export type Reading = { list: Unattended[]; unread: string[]; line: string | nul
 // The forge's open pull requests of a repository opened under the operator's account: the work of
 // the orchestrations, never a teammate's. Their labels say what rests on him (`Ready`, `On Hold`).
 export function forgeArgv(repo: string): string[] {
-  return ['gh', 'pr', 'list', '-R', repo, '--state', 'open', '--author', '@me', '--limit', String(FORGE_LIMIT), '--json', 'number,createdAt,labels']
+  return ['gh', 'pr', 'list', '-R', repo, '--state', 'open', '--author', '@me', '--limit', String(FORGE_LIMIT), '--json', 'number,createdAt,labels,mergeable']
 }
 
 // The forge's answer read, or null when it is no list of pull requests.
@@ -42,10 +42,10 @@ export function parseOpenPrs(repo: string, stdout: string): OpenPr[] | null {
   }
   if (!Array.isArray(value)) return null
   return value.flatMap(item => {
-    const { number, createdAt, labels } = (item ?? {}) as { number?: unknown; createdAt?: unknown; labels?: unknown }
+    const { number, createdAt, labels, mergeable } = (item ?? {}) as { number?: unknown; createdAt?: unknown; labels?: unknown; mergeable?: unknown }
     const names = Array.isArray(labels) ? labels.flatMap(label => (typeof (label as { name?: unknown } | null)?.name === 'string' ? [(label as { name: string }).name] : [])) : []
     return typeof number === 'number' && Number.isInteger(number) && number > 0
-      ? [{ repo, pr: number, createdAt: typeof createdAt === 'string' ? createdAt : null, labels: names }]
+      ? [{ repo, pr: number, createdAt: typeof createdAt === 'string' ? createdAt : null, labels: names, ...(typeof mergeable === 'string' ? { mergeable } : {}) }]
       : []
   })
 }

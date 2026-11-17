@@ -316,6 +316,20 @@ describe('what waits on the operator, and what is in anomaly', () => {
     assert.equal(isFreshWait(line(), NOW), false)
   })
 
+  it('says a pull request the forge reads in conflict to be in anomaly, whatever it waits on; mergeable and unknown count nothing', () => {
+    const state = (pr: number, mergeable: string, labels: string[] = ['Not Ready']) => ({ ...open(pr, labels), mergeable })
+    for (const labels of [['Not Ready'], ['Ready'], ['On Hold']]) {
+      assert.deepEqual(read({ open: [state(9, 'CONFLICTING', labels)] }), [{ repo: 'acme/app', pr: 9, since: '2026-11-13T09:00:00Z', conflict: true }], labels.join())
+    }
+    assert.equal(unattendedLine(read({ open: [state(9, 'CONFLICTING', ['Ready'])] }), []), 'En anomalie : acme/app#9 (en conflit)')
+    assert.equal(read({ open: [state(9, 'MERGEABLE', ['Ready'])] })[0]?.waits?.why, 'ready')
+    assert.equal(read({ open: [state(9, 'UNKNOWN', ['Ready'])] })[0]?.waits?.why, 'ready')
+    assert.equal(read({ open: [state(9, 'UNKNOWN')] })[0]?.conflict, undefined)
+    // An agent on it, or the operator's parking, still leaves it out.
+    assert.deepEqual(read({ open: [state(7, 'CONFLICTING')], lines: [line()], live: ['Agent: seven'] }), [])
+    assert.deepEqual(read({ open: [state(7, 'CONFLICTING')], claimed: ['acme/app#7'] }), [])
+  })
+
   it('says what waits on him on one line and the anomalies on another, an empty one left out', () => {
     const list = [
       { repo: 'acme/app', pr: 4, since: AT, waits: { why: 'ready' as const } },

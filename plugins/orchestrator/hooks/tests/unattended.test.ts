@@ -90,9 +90,10 @@ function world(answers: Answers = {}) {
 }
 
 test('the forge is asked for the open pull requests opened under the operator\'s account, and its answer read', () => {
-  expect(forgeArgv('acme/app')).toEqual(['gh', 'pr', 'list', '-R', 'acme/app', '--state', 'open', '--author', '@me', '--limit', '200', '--json', 'number,createdAt,labels'])
+  expect(forgeArgv('acme/app')).toEqual(['gh', 'pr', 'list', '-R', 'acme/app', '--state', 'open', '--author', '@me', '--limit', '200', '--json', 'number,createdAt,labels,mergeable'])
   expect(parseOpenPrs('acme/app', '[{"number":3,"createdAt":"t","labels":[{"name":"Ready"},{"name":7},{}]},{"number":0},{"number":"4"},{}]')).toEqual([{ repo: 'acme/app', pr: 3, createdAt: 't', labels: ['Ready'] }])
   expect(parseOpenPrs('acme/app', '[{"number":5,"createdAt":"t"},{"number":6,"labels":"Ready"}]')).toEqual([{ repo: 'acme/app', pr: 5, createdAt: 't', labels: [] }, { repo: 'acme/app', pr: 6, createdAt: null, labels: [] }])
+  expect(parseOpenPrs('acme/app', '[{"number":3,"mergeable":"CONFLICTING"},{"number":4,"mergeable":7}]')).toEqual([{ repo: 'acme/app', pr: 3, createdAt: null, labels: [], mergeable: 'CONFLICTING' }, { repo: 'acme/app', pr: 4, createdAt: null, labels: [] }])
   expect(parseOpenPrs('acme/app', '{}')).toBe(null)
   expect(parseOpenPrs('acme/app', 'not json')).toBe(null)
 })
@@ -116,6 +117,16 @@ test('a pull request no agent holds is told apart: Ready and On Hold wait on the
   expect(reading?.line).toBe([
     'Attend ton geste : acme/app#8 (en pause), acme/app#9 (Ready)',
     'En anomalie : acme/app#11 (sans agent depuis 2026-11-11T08:00Z)',
+  ].join('\n'))
+})
+
+test('a pull request the forge reads in conflict is in anomaly « en conflit », Ready or not; mergeable and unknown are left as they were', async () => {
+  const listed = (state: Record<number, string>) => ({ 'acme/app': JSON.stringify([8, 9, 11].map(n => ({ number: n, createdAt: '2026-11-11T08:00:00Z', labels: [{ name: 'Ready' }], mergeable: state[n] }))) })
+  const { dollar } = world({ forge: listed({ 8: 'CONFLICTING', 9: 'MERGEABLE', 11: 'UNKNOWN' }) })
+  const reading = await readUnattended(dollar, 's-orch', NOW)
+  expect(reading?.line).toBe([
+    'Attend ton geste : acme/app#9 (Ready), acme/app#11 (Ready)',
+    'En anomalie : acme/app#8 (en conflit)',
   ].join('\n'))
 })
 
