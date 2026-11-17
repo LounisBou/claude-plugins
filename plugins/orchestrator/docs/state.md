@@ -22,6 +22,7 @@ Python launcher.
 | `chains/<tty>.jsonl` | every launcher process (spawn, close, move, takeover) | read-modify-write under the chain's lock (`chain_change`), a unique temporary name |
 | `round-woken.json` | the coordinator's hooks (two at a succession) | ids added under the file's lock, the list read again first |
 | `store/coordinator-learnt` | every orchestrator's hooks | replaced whole, one rename: the last coordinator learnt |
+| `pane-open-<name>` | the session's own hooks, on his word (the command, the tool, his ✕): present while the role's supervision pane is open, `<name>` the session name without its reference; read by the successor's first turn start | one rename; removed by his close |
 | `deck.json` | every session | a view of the store, written only when it differs from the file or the file's stamp is a minute old (`DECK_REFRESH_MS`); format fixed by `hooks/tests/golden-deck.ts` |
 | `sleeping.json`, `coordinator.json` | the coordinator's scripts | under the coordinator's lock |
 | dispatch records, `records/<session>` | `dispatch-record.ts` | under core's lock |

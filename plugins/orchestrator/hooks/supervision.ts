@@ -3,10 +3,10 @@
 // the name the walk read, the repository of the working directory — written by
 // this file's own session.measure handler and removed by its session.end, one
 // file per key under the module's state root. The supervision pane below reads
-// the same rows, opened on the person's word alone (/orchestrator-supervision or the
-// supervision tool's `open`) — never by the module itself, on a start, a turn, a wake or a
-// succession: what he closed stays closed, there being nothing that opens it again. In a
-// coordinator session it lists the orchestrators, and under them
+// the same rows, opened on the person's word (/orchestrator-supervision or the supervision
+// tool's `open`) and left as he left it: the role keeps whether its pane is open (paneStatePath),
+// so a successor puts it as it was — open stays open, what he closed stays closed — and nothing
+// else opens it, on a start, a turn or a wake. In a coordinator session it lists the orchestrators, and under them
 // the first question of its round (round.ts); in an orchestrator session,
 // that orchestrator's own agents, read from the launcher's chain and the host's
 // session records; in any other role it opens nothing. The commands hold no $ of
@@ -50,7 +50,8 @@ import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './m
 import { ANOMALY_HEAD, unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ROUND_DIR } from '../core/orchestration.ts'
-import { messageOf, type Host, type On, type SessionSendResult, type Timer, type UiOpenResult } from './host.ts'
+import { orchForm } from '../core/names.ts'
+import { fieldsOf, messageOf, type Host, type On, type SessionSendResult, type Timer, type UiOpenResult } from './host.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
 import type { DeclaredWait } from './stop-gate.ts'
 
@@ -924,7 +925,7 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
 // the entry whose « Other answer » was picked, its text field drawn until the ring leaves it, and
 // the text typed in each field, which the pane draws again whole under it.
 export type PaneMemory = {
-  opened: { role: 'coordinator' | 'orchestrator'; tty: string | null } | null
+  opened: { role: 'coordinator' | 'orchestrator'; tty: string | null; name: string } | null
   ticker: { cancel(): void } | null
   other: Set<string>
   writing: string | null
@@ -938,12 +939,15 @@ export type PaneMemory = {
   ticksSinceDraw?: number
   roundSeen?: number | null
   measure?: { contentRows: number; drawn: string }
+  // The role's pane put as it was left, once per module life (restorePane).
+  restored?: boolean
 }
 
-// The pane opened, by the command or by the module: the role it lists, its title, its clock,
-// and, for a coordinator's, its record.
-async function openPane($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory, role: 'coordinator' | 'orchestrator', tty: string | null, pid: string | null): Promise<UiOpenResult | undefined> {
-  pane.opened = { role, tty }
+// The pane opened, by his word or to put it as its role left it: the role it lists, its title, its
+// clock, the role's state and, for a coordinator's, its record.
+async function openPane($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory, role: 'coordinator' | 'orchestrator', tty: string | null, pid: string | null, name: string): Promise<UiOpenResult | undefined> {
+  pane.opened = { role, tty, name }
+  await keepPaneState($, name, true)
   // With the keys, so the picker answers at once: the host grants them only over an empty
   // prompt, never taking text the operator is typing.
   const placed = await $.ui.open({ id: PANE_ID, title: PANE_TITLES[role], focus: true })
@@ -989,11 +993,49 @@ async function paneShown($: Host<'ui'>): Promise<boolean> {
   return panes.some(open => open.id === PANE_ID)
 }
 
-async function closeShown($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory): Promise<void> {
+async function closeShown($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory, name: string): Promise<void> {
   pane.ticker?.cancel()
   pane.ticker = null
+  await keepPaneState($, name, false)
   await $.ui.close({ id: PANE_ID })
   await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
+}
+
+// Whether a role's pane is open is the role's, not the session's: `<state>/pane-open-<name>`, the
+// name without its reference, which a successor carries, is there while the pane is open and gone
+// once he closed it. The host's panes end with the session that drew them; this file is what lets
+// the successor's first turn put the pane as it was (restorePane). Only his word writes it — the
+// command, the tool, his ✕ — never the close the host makes when a session ends.
+function paneStatePath(state: string, name: string): string {
+  return `${state}/pane-open-${orchForm(name).replace(/[^A-Za-z0-9._-]/g, '_')}`
+}
+
+async function keepPaneState($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, name: string, open: boolean): Promise<void> {
+  const path = paneStatePath(await stateDir($), name)
+  try {
+    if (open) await writeAtomic($, path, 'open\n')
+    else {
+      const done = await $.process.run(removeArgv(path), { timeoutMs: 5000 })
+      if (done.exitCode !== 0) throw new Error(`${path} was not removed`)
+    }
+  } catch (err) {
+    await logLine($, 'supervision', `pane: the pane's state could not be kept: ${messageOf(err)}`)
+  }
+}
+
+// The pane put as its role left it, at the first turn start of a session whose role has one: open
+// when the state says open and the host shows no pane. A session that is neither coordinator nor
+// orchestrator, and a role whose pane he closed, are left as they are.
+async function restorePane($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory): Promise<void> {
+  if (pane.restored) return
+  const { tty, name, pid } = await walkWithinBound($, await $.session.id())
+  // A walk that did not answer is tried again at the next turn's start.
+  if (name === null) return
+  pane.restored = true
+  const role = roleOf(name)
+  if (role !== 'coordinator' && role !== 'orchestrator') return
+  if (!(await $.fs.exists(paneStatePath(await stateDir($), name))) || await paneShown($)) return
+  await openPane($, pane, role, tty, pid, name)
 }
 
 // The coordinator's pane as `coordinator.sh round` reads it, `<state>/pane.json`: the session
@@ -1426,8 +1468,8 @@ async function withdrawOlder($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
   }
 }
 
-// The pane is never opened here: it opens on his word alone (the command, the tool). What the end
-// of a turn does for a coordinator is check the pane's record against the host (reconcilePaneRecord)
+// The pane is never opened here: it opens on his word (the command, the tool) or as its role left
+// it (restorePane, at a turn's start). What the end of a turn does for a coordinator is check the pane's record against the host (reconcilePaneRecord)
 // and report whether the session is the recorded coordinator's, which arms its round's wake.
 async function atTurnEnd($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>): Promise<boolean> {
   const self = await recordedCoordinator($)
@@ -1731,6 +1773,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     // The model's turn may run `coordinator.sh round`, which reads the pane's record: a record of a
     // pane that is gone is dropped before it does.
     if (!e.agentId) await reconcilePaneRecord($).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
+    // A successor's first turn puts the pane as its role left it.
+    if (!e.agentId) {
+      const restored = await withDeadline(restorePane($, pane), RELAY_BOUND_MS).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
+      if (isDegradedPass(restored)) await logLine($, 'supervision', `pane: did not finish within ${RELAY_BOUND_MS} ms`)
+    }
     try {
       const sessionId = await $.session.id()
       const wait = await readWait($, sessionId)
@@ -1831,16 +1878,16 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     }
     const { tty, name, pid } = await walkWithinBound($, await $.session.id())
     const role = roleOf(name)
-    if (role !== 'coordinator' && role !== 'orchestrator') {
+    if (name === null || (role !== 'coordinator' && role !== 'orchestrator')) {
       return { text: 'The supervision pane opens in a coordinator session (« Coord: … »), listing the orchestrators, or in an orchestrator session (« Orch: … »), listing its agents; /orchestrator:status lists the sessions here.' }
     }
     // A toggle: the same command closes the pane it opened (Escape does not —
     // the pane holds no focus), beside the pane's own ✕.
     if (await paneShown($)) {
-      await closeShown($, pane)
+      await closeShown($, pane, name)
       return { text: 'Supervision pane closed.' }
     }
-    await openPane($, pane, role, tty, pid)
+    await openPane($, pane, role, tty, pid, name)
     return { text: 'Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.' }
   }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
@@ -1855,13 +1902,15 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     if (action !== 'open' && action !== 'close') return { result: 'action is "open" or "close"', isError: true }
     const { tty, name, pid } = await walkWithinBound($, await $.session.id())
     const role = roleOf(name)
-    if (role !== 'coordinator' && role !== 'orchestrator') return { result: PANE_ROLES_ONLY, isError: true }
+    if (name === null || (role !== 'coordinator' && role !== 'orchestrator')) return { result: PANE_ROLES_ONLY, isError: true }
     const shown = await paneShown($)
     if (action === 'close') {
-      if (shown) await closeShown($, pane)
+      // His word is kept even when the pane was already gone (his ✕ before it).
+      if (shown) await closeShown($, pane, name)
+      else await keepPaneState($, name!, false)
       return { result: shown ? 'Supervision pane closed.' : 'The supervision pane is not open.' }
     }
-    const placed = shown ? undefined : await openPane($, pane, role, tty, pid)
+    const placed = shown ? undefined : await openPane($, pane, role, tty, pid, name)
     if (shown) return { result: 'The supervision pane is already open.' }
     if (placed && placed.isPlaced === false) return { result: `Supervision pane opened, not drawn yet: ${placed.reason ?? 'no reason given'}.` }
     return { result: 'Supervision pane opened.' }
@@ -1870,11 +1919,16 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     return { result: "the supervision pane could not be opened or closed; the module's log says why", isError: true }
   })
 
-  // The pane closed, by its ✕ or its key or by the module: its clock stops with it and its record
-  // goes. Nothing is kept of who closed it: no later start opens it again.
+  // The pane closed, by its ✕ or its key or by the module or the host: its clock stops with it and
+  // its record goes. His ✕ is his word and the role keeps it closed; the close the host makes when
+  // a session ends is not, and leaves the role's state for the successor.
   on('ui.close', { id: PANE_ID }, async ($, e, next) => {
     stopTicker()
     await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
+    if (fieldsOf(fieldsOf(e)?.['origin'])?.['kind'] === 'person') {
+      const name = pane.opened?.name ?? (await walkWithinBound($, await $.session.id())).name
+      if (name !== null) await keepPaneState($, name, false)
+    }
     return next(e)
   }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)

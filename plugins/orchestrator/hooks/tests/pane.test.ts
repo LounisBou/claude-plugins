@@ -4,7 +4,8 @@
 // fill against the gate, the reading's age) the commands print, and the wiring
 // over a faked $ — no pane opened on any start, the pane opened by the
 // command in a coordinator session (the orchestrators) or an orchestrator
-// session (its own agents) alone, never by itself, and a coordinator's round's
+// session (its own agents) alone, or put as its role left it at a successor's
+// first turn, never by itself, and a coordinator's round's
 // first question drawn under its rows, the
 // measure's side reads bounded so a walk that cannot answer in time costs the row
 // its name, never the measure.
@@ -766,7 +767,7 @@ test('a round directory that cannot be listed is one log line and no entry; one 
   expect(fx.written.filter(l => l.includes(`round: cannot list ${ROUND}: EACCES: permission denied`)).length).toBe(1)
 })
 
-// --- the pane opens on his word alone ------------------------------------------------------------
+// --- the pane opens on his word, and as its role left it ------------------------------------------------------------
 
 const firstTurn = { answer: 'Registered.', reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' }
 
@@ -842,14 +843,93 @@ test('a pane he closed, by the command, the tool or his ✕, stays closed throug
   }
 })
 
-test('a pane the command opened is his: the successor, which he has not told, does not open it', async () => {
+// The pane's host side ends with the session that drew it: the host closes it, with no word of his.
+async function endedByHost(fx: Fx, handlers: Handlers): Promise<void> {
+  await fx.dollar.ui.close({ id: 'supervision' })
+  await handlers['ui.close'](fx.dollar, { id: 'supervision', origin: { kind: 'host' } }, (x: unknown) => x)
+  await handlers['session.end'](fx.dollar, endEvent, (x: unknown) => x)
+}
+
+// A session of `launchName`'s role over the machine's files as its predecessor left them, its
+// host state its own, its first turn started by a fresh module.
+async function successorStart(predecessor: Fx, launchName: string): Promise<Fx> {
+  const successor = fakeDollar({ launchName })
+  for (const [path, text] of predecessor.files) successor.files.set(path, text)
+  await mounted(registerSupervision).handlers['turn.start'](successor.dollar, { turnId: 't' }, (x: unknown) => x)
+  return successor
+}
+
+const ROLES_WITH_A_PANE = [['Coord: main', 'Orchestrators'], ['Orch: belt', 'Agents']] as const
+
+test('a pane open when its session ends is open in the successor, the coordinator\'s and the orchestrator\'s', async () => {
+  for (const [launchName, title] of ROLES_WITH_A_PANE) {
+    const { handlers } = mounted(registerSupervision)
+    const fx = fakeDollar({ launchName })
+    await handlers['command.run'](fx.dollar, supervisionRun)
+    await endedByHost(fx, handlers)
+    const successor = await successorStart(fx, launchName)
+    expect(successor.opened).toEqual([{ id: 'supervision', title, focus: true }])
+    expect(successor.timers.map(t => t.ms)).toEqual([2000])
+  }
+})
+
+test('the successor carries its predecessor\'s name without the host\'s reference, and a role\'s pane is its own', async () => {
   const { handlers } = mounted(registerSupervision)
-  const fx = coordinatorSession()
+  const fx = fakeDollar({ launchName: 'Orch: belt [a1b2c3]' })
   await handlers['command.run'](fx.dollar, supervisionRun)
-  await handlers['tool.call'](fx.dollar, toolCall('open'))
-  const successor = successorOf(fx)
-  await everyTrigger(successor)
-  expect(successor.opened).toEqual([])
+  await endedByHost(fx, handlers)
+  expect((await successorStart(fx, 'Orch: belt [zzzzzz]')).opened.length).toBe(1)
+  expect((await successorStart(fx, 'Orch: other')).opened).toEqual([])
+  expect((await successorStart(fx, 'Coord: main')).opened).toEqual([])
+  expect((await successorStart(fx, 'Agent: belt-p3')).opened).toEqual([])
+})
+
+test('a pane closed by his word, the command, the tool or his ✕, is closed in the successor, the orchestrator\'s too', async () => {
+  const closers: [string, (fx: Fx, handlers: Handlers) => Promise<unknown>][] = [
+    ['the command', (fx, handlers) => handlers['command.run'](fx.dollar, supervisionRun)],
+    ['the tool', (fx, handlers) => handlers['tool.call'](fx.dollar, toolCall('close'))],
+    ['his ✕', async (fx, handlers) => { await fx.dollar.ui.close({ id: 'supervision' }); return handlers['ui.close'](fx.dollar, { id: 'supervision', origin: { kind: 'person' } }, (x: unknown) => x) }],
+  ]
+  for (const [launchName] of ROLES_WITH_A_PANE) {
+    for (const [, close] of closers) {
+      const { handlers } = mounted(registerSupervision)
+      const fx = fakeDollar({ launchName })
+      await handlers['command.run'](fx.dollar, supervisionRun)
+      await close(fx, handlers)
+      await endedByHost(fx, handlers)
+      const successor = await successorStart(fx, launchName)
+      expect(successor.opened).toEqual([])
+      expect(successor.timers).toEqual([])
+    }
+  }
+})
+
+test('his close by the tool, the pane being gone already, is kept: the successor leaves it closed', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  await fx.dollar.ui.close({ id: 'supervision' })
+  expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'The supervision pane is not open.' })
+  expect((await successorStart(fx, 'Coord: main')).opened).toEqual([])
+})
+
+test('the pane is put as it was once per module: a pane the host closes again is not reopened by the next turn', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const fx = fakeDollar({ launchName: 'Orch: belt' })
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  await endedByHost(fx, handlers)
+  const fresh = mounted(registerSupervision).handlers
+  const successor = fakeDollar({ launchName: 'Orch: belt' })
+  for (const [path, text] of fx.files) successor.files.set(path, text)
+  await fresh['turn.start'](successor.dollar, { turnId: 't' }, (x: unknown) => x)
+  expect(successor.opened.length).toBe(1)
+  await successor.dollar.ui.close({ id: 'supervision' })
+  await fresh['turn.start'](successor.dollar, { turnId: 't2' }, (x: unknown) => x)
+  expect(successor.opened.length).toBe(1)
+  // His ✕ in the successor is his word: the role's state goes, whatever the host's walk answers later.
+  await fresh['command.run'](successor.dollar, supervisionRun)
+  await fresh['ui.close'](successor.dollar, { id: 'supervision', origin: { kind: 'person' } }, (x: unknown) => x)
+  expect((await successorStart(successor, 'Orch: belt')).opened).toEqual([])
 })
 
 test('a pane the module has no word about, with no close of his on record, is not opened: a missing, torn or foreign choice file opens nothing', async () => {
@@ -861,7 +941,7 @@ test('a pane the module has no word about, with no close of his on record, is no
   }
 })
 
-test('the command and the tool answer as before in an orchestrator and a coordinator, and keep nothing between sessions', async () => {
+test('the command and the tool answer as before in an orchestrator and a coordinator', async () => {
   const { handlers } = mounted(registerSupervision)
   const orch = fakeDollar({ launchName: 'Orch: belt' })
   orch.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: belt' })) + '\n')
