@@ -88,8 +88,10 @@ test('the window is the answer when the session carries the mark, else none', ()
 })
 
 test('a turn ends on the wait it wrote, else the gate, else idle', () => {
-  expect(stateAfterTurn('operator', false)).toBe('asks')
-  expect(stateAfterTurn('operator', false)).toBe('asks')
+  // An operator wait shows ✋ only while the round holds an open entry of the session; with none, it is at rest.
+  expect(stateAfterTurn('operator', false, true)).toBe('asks')
+  expect(stateAfterTurn('operator', false, false)).toBe('idle')
+  expect(stateAfterTurn('operator', true, false)).toBe('gate')
   expect(stateAfterTurn('question', true)).toBe('held')
   expect(stateAfterTurn('blocked', false)).toBe('held')
   // An orchestrator's own done wait names no pull request: at rest, never ✓ (done is the Ready read's alone).
@@ -355,7 +357,8 @@ test('a state whose write failed leaves nothing remembered, so the last one is w
 })
 
 test('held for a wait on the orchestrator, asks stays the operator\'s alone', () => {
-  expect(stateAfterTurn('operator', false)).toBe('asks')
+  expect(stateAfterTurn('operator', false, true)).toBe('asks')
+  expect(stateAfterTurn('operator', false, false)).toBe('idle')
   expect(stateAfterTurn('blocked', false)).toBe('held')
   expect(stateAfterTurn('question', false)).toBe('held')
   expect(stateAfterTurn('waiting', true)).toBe('held')
@@ -367,4 +370,22 @@ test('held when a wait on the orchestrator is written, and asks is not shown for
   await drive(chains, 'turn.start', fx.dollar, {})
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Waiting on the rebase.\n\nstatus: blocked — PR 12 rebase'))
   expect(fx.states()).toEqual(['busy', 'held'])
+})
+
+// A question `ask` stores: the Asked v2 shape of a live file in the round, its sender's session the one that holds it.
+const askedFile = (session: string, status: string) => JSON.stringify({
+  v: 2, id: `q-${session}-1`, sender: { session, name: 'Orch: belt', role: 'orchestrator', machine: 'LounisBou' },
+  subject: 'Which one', context: 'what is known', ask: 'Which one?', choices: [], recommended: null, why: null,
+  blocks: 'G1', status, at: '2026-11-17T09:00:00.000Z', answer: null, seq: 1,
+})
+
+test('a turn ends with ✋ while a question its session asked is open, whatever its wait, and at rest once none is', async () => {
+  for (const [status, shown] of [['open', 'asks'], ['answered', 'idle']] as const) {
+    const chains = mounted()
+    const fx = fake({ pane: '%31' })
+    fx.files.set(`${STATE}/round/q-s-one-1.json`, askedFile('s-one', status))
+    await drive(chains, 'turn.start', fx.dollar, {})
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd('Which one?'))
+    expect(fx.states().at(-1)).toBe(shown)
+  }
 })
