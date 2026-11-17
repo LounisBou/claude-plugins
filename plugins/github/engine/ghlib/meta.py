@@ -67,9 +67,8 @@ def pr_ready(args):
 
 def pr_draft(args):
     owner, name = repo.owner_repo()
-    result = http.graphql(_DRAFT, {"id": _node_id(owner, name, args.pr)})
-    follow_readiness(owner, name, args.pr, "not-ready")
-    return result
+    # Draft is the operator's gesture, independent of Ready: the labels stay as the records at the head make them.
+    return http.graphql(_DRAFT, {"id": _node_id(owner, name, args.pr)})
 
 
 def label_add(args):

@@ -287,8 +287,8 @@ github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>
 
 A pull request opened out of draft is not gated, only observed (`github.draft.open-out`), and a
 readiness GitHub did not answer is refused with `github: readiness of <owner/name>#<n> unverified: <error>`. Going back to
-draft always passes, and `gh pr create --draft` and `gh pr ready --undo` put
-`Not Ready` on, as the tool does. A merge or an undraft in the
+draft always passes and moves no label (`pr-draft`, `gh pr ready --undo`): Ready follows the records at the
+head, never the draft state; `gh pr create --draft` puts `Not Ready` on the new pull request. A merge or an undraft in the
 shell names its repository, else it is refused with `github: <command> refused: name
 the repository with -R owner/name.`; a GraphQL merge or undraft names none and is
 always refused, with the tool call to run instead.

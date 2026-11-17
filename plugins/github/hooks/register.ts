@@ -1561,14 +1561,8 @@ async function bashReady($: Mod, act: Act, after: Array<(result: unknown) => Pro
     })
     return undefined
   }
-  if (act.kind === 'redraft') {
-    after.push(async () => {
-      const pr = act.repo ? act.pr ?? await prOfBranch($, act.repo, act.branch) : undefined
-      if (act.repo && pr !== undefined) await labelNotReady($, act.repo, pr)
-      else note($, 'github: the pull request back in draft keeps its labels: name it with -R owner/name and its number')
-    })
-    return undefined
-  }
+  // Back to draft moves no label: Ready follows the records at the head, not the draft state.
+  if (act.kind === 'redraft') return undefined
   if (act.opaque) {
     // An unread query may leave draft or merge: refused outside auto-merge, read as an
     // unverified readiness inside it. gh api names the origin's repository, or GH_REPO's.
