@@ -38,6 +38,7 @@ import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '..
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED, showPrStates } from './supervision.ts'
+import { pullRequestsRead } from './tab-state.ts'
 import { askedThisTurn, readAsked } from './question.ts'
 import { fieldsOf, messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
 import { asksTheMode } from './mode-dialog.ts'
@@ -616,20 +617,38 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         }
         return readyOnce
       }
+      // The ledger lines of this orchestration's records, read once and only when an idle agent needs them.
+      let ledgerOnce: ReturnType<typeof ledgerLines> | undefined
+      const ledgerOf = async () => {
+        if (ledgerOnce !== undefined) return ledgerOnce
+        try {
+          const records = await ownRecords($, await registeredRecords($, state, sessionId, until), orchestrationOf(name), until)
+          ledgerOnce = (await readRecords($, records, until)).flatMap(text => ledgerLines(text))
+        } catch (err) {
+          await logLine($, 'guards', `stop gate: ledger unread: ${reasonOf(err)}`)
+          ledgerOnce = []
+        }
+        return ledgerOnce
+      }
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const { agents, resident } = ownAgents(rows, entries, owner, hostStatus)
       // An idle agent whose pull request merged is delivered; one whose pull request is open
       // lives until the merge, the kept findings its own to correct, and is never asked to stand down.
       const delivered: string[] = []
       const awaitingMerge: string[] = []
-      // What each pull request read says its agent's window should show (merged or closed: over; Ready: done).
+      // What the pull requests read of each idle agent say its window should show (over, or Ready: done).
       const read: { tty: string; pr: { state: string; ready?: boolean | undefined } }[] = []
       for (const agent of agents) {
         if (agent.state !== 'idle') continue
         const pr = await pullRequestRead($, agent.tty, until)
         if (pr?.state === 'MERGED') delivered.push(`${agent.label} (pull request #${pr.number}, ${pr.state})`)
         if (pr?.state === 'OPEN') awaitingMerge.push(agent.label)
-        if (pr) read.push({ tty: agent.tty, pr })
+        if (!pr) continue
+        // Every pull request the dispatch record entrusts to the agent counts, the branch's among them.
+        const others = (await ledgerOf()).filter(line => line.status === 'working' && line.agent === agent.label
+          && !(line.pr === Number(pr.number) && (pr.repo === undefined || pr.repo.toLowerCase() === line.repo.toLowerCase())))
+        const together = pullRequestsRead([pr, ...await Promise.all(others.map(line => otherPullRequestRead($, line.repo, line.pr, until)))])
+        if (together) read.push({ tty: agent.tty, pr: together })
       }
       await inTime($, () => showPrStates($, read), until)
       // The process table, read once for both checks: the commands and monitors this
@@ -938,7 +957,7 @@ async function mustReadText($: Held, path: string, what: string, until: number):
 // run in that checkout — the only network the gate pays, for an idle agent alone. Any
 // read that fails, or cannot answer in time, is no pull request: the refusal simply does
 // not name the agent, never a stop held on it.
-async function pullRequestRead($: Held, tty: string, until: number): Promise<{ number: string; state: string; ready?: boolean } | null> {
+async function pullRequestRead($: Held, tty: string, until: number): Promise<{ number: string; state: string; ready?: boolean; repo?: string } | null> {
   const left = () => Math.max(1, until - Date.now())
   const config = await configDir($)
   const host = await inTime($, () => hostOn(
@@ -958,9 +977,18 @@ async function pullRequestRead($: Held, tty: string, until: number): Promise<{ n
   // One --json argument, the fields comma-joined: gh reads a second word as a second
   // positional and refuses the call. Run in the agent's checkout, the repository its
   // branch is pushed to.
-  const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', branch, '--json', 'number,state,labels'], until, cwd), until)
+  const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', branch, '--json', 'number,state,labels,url'], until, cwd), until)
   if (!gh || gh.exitCode !== 0) return null
   return pullRequestOf(branch, String(gh.stdout ?? ''))
+}
+
+// Another pull request entrusted to an agent, read by its repository and number: its state and
+// whether it carries Ready. A read that fails or cannot answer in time is none.
+async function otherPullRequestRead($: Held, repo: string, pr: number, until: number): Promise<{ state: string; ready?: boolean } | null> {
+  const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', String(pr), '-R', repo, '--json', 'number,state,labels'], until), until)
+  if (!gh || gh.exitCode !== 0) return null
+  const read = pullRequestOf(String(pr), String(gh.stdout ?? ''))
+  return read === null ? null : { state: read.state, ...(read.ready === undefined ? {} : { ready: read.ready }) }
 }
 
 // The project's root (project_checkouts' first half): git's answer, or the cwd itself

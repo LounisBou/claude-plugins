@@ -295,6 +295,8 @@ test('a pull request is read from the branch and the answer, or not at all', () 
   expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","labels":[{"name":"Ready"}]}')).toEqual({ number: '160', state: 'OPEN', ready: true })
   expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","labels":[{"name":"ready-ish"}]}')).toEqual({ number: '160', state: 'OPEN', ready: false })
   expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","labels":[]}')).toEqual({ number: '160', state: 'OPEN', ready: false })
+  // The repository comes from the address the answer carries.
+  expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","url":"https://github.com/acme/app/pull/160"}')).toEqual({ number: '160', state: 'OPEN', repo: 'acme/app' })
   expect(pullRequestOf('feat/belt', null)).toBeNull()
   expect(pullRequestOf('feat/belt', 'not json')).toBeNull()
 })
@@ -552,6 +554,8 @@ type Setup = {
   hangHeadsWrite?: boolean
   hostRecord?: string
   agentRow?: string
+  // The answer of `gh pr view <ref>` by its first argument (a branch, or the number of another pull request), over prAnswer.
+  prByRef?: Record<string, string>
   // The panes the home server lists (`<tty> <pane id> <state>` a line), read by the tab-state write.
   panes?: string
   selfBin?: string
@@ -690,6 +694,10 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
             : { exitCode: 128, stdout: '', stderr: '' }
         }
         if (argv[0] === 'gh') {
+          const byRef = setup.prByRef?.[argv[3] ?? '']
+          if (byRef !== undefined) return { exitCode: 0, stdout: byRef, stderr: '' }
+          // Another pull request, asked by its number in its repository, has only the answer given for it.
+          if (argv[4] === '-R') return { exitCode: 1, stdout: '', stderr: 'no answer' }
           return setup.prAnswer ? { exitCode: 0, stdout: setup.prAnswer, stderr: '' } : { exitCode: 1, stdout: '', stderr: 'no answer' }
         }
         if (argv[0] === 'bash' && argv[1] === LAUNCHER) {
@@ -919,6 +927,45 @@ test('the window of a delivery moves between review and done by the Ready label 
   expect(await stopOn(ready, '/dev/ttys003 %9 idle\n')).toEqual([])
   expect(await stopOn(ready, '/dev/ttys003 %9 done\n')).toEqual([])
   expect(await stopOn('{"number":160,"state":"OPEN"}', '/dev/ttys003 %9 review\n')).toEqual([])
+})
+
+// An agent holding several pull requests is ready only when each open one carries Ready: the branch's
+// own, and the others the dispatch record entrusts to it (its `working` lines).
+const LEDGER = (...prs: number[]) => prs.map(pr => JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr, status: 'working', agent: 'Agent: idle-p3', since: '2026-11-15T07:00:00Z', updated: '2026-11-15T07:00:00Z' })).join('\n') + '\n'
+const branchPr = (state: string, ready: boolean) => `{"number":160,"state":"${state}","url":"https://github.com/acme/app/pull/160","labels":[${ready ? '{"name":"Ready"}' : ''}]}`
+const otherPr = (state: string, ready: boolean) => `{"number":9,"state":"${state}","labels":[${ready ? '{"name":"Ready"}' : ''}]}`
+async function stopWithTwo(branch: string, other: string | undefined, shown: string) {
+  const { handlers } = mounted()
+  const fx = fakeDollar({
+    listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: branch,
+    prByRef: other === undefined ? {} : { '9': other }, records: [LEDGER(160, 9)], panes: `/dev/ttys003 %9 ${shown}\n`, env: HOME_ENV,
+  })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  return { writes: stateWrites(fx.ran), read9: fx.ran.some(c => c.startsWith('gh pr view 9 -R acme/app')), read160: fx.ran.some(c => c.startsWith('gh pr view 160')) }
+}
+
+test('an agent with two pull requests shows ready only when both carry Ready, merged ones set aside', async () => {
+  const toReview = ['tmux -S /tmp/home.sock set-option -w -t %9 @state review']
+  const toDone = ['tmux -S /tmp/home.sock set-option -w -t %9 @state done']
+  const toOver = ['tmux -S /tmp/home.sock set-option -w -t %9 @state over']
+  // One Ready and one not: not ready, so a window that shows ✓ goes back under review, and one under review stays.
+  const mixed = await stopWithTwo(branchPr('OPEN', true), otherPr('OPEN', false), 'done')
+  expect(mixed.writes).toEqual(toReview)
+  expect(mixed.read9).toBe(true)
+  // The branch's own pull request is read once, never again for its ledger line.
+  expect(mixed.read160).toBe(false)
+  expect((await stopWithTwo(branchPr('OPEN', true), otherPr('OPEN', false), 'review')).writes).toEqual([])
+  expect((await stopWithTwo(branchPr('OPEN', false), otherPr('OPEN', true), 'done')).writes).toEqual(toReview)
+  // Both Ready: ready.
+  expect((await stopWithTwo(branchPr('OPEN', true), otherPr('OPEN', true), 'review')).writes).toEqual(toDone)
+  // One merged and the other open and not Ready: not over, not ready. Open and Ready: ready.
+  expect((await stopWithTwo(branchPr('MERGED', true), otherPr('OPEN', false), 'done')).writes).toEqual(toReview)
+  expect((await stopWithTwo(branchPr('MERGED', false), otherPr('OPEN', true), 'review')).writes).toEqual(toDone)
+  // Everything merged or closed: over.
+  expect((await stopWithTwo(branchPr('MERGED', true), otherPr('CLOSED', false), 'done')).writes).toEqual(toOver)
+  // The other one cannot be read: nothing is known, so nothing moves.
+  expect((await stopWithTwo(branchPr('OPEN', true), undefined, 'review')).writes).toEqual([])
+  expect((await stopWithTwo(branchPr('MERGED', true), undefined, 'done')).writes).toEqual([])
 })
 
 test('a tmux that fails, or a pane the server does not list, never fails the stop: said once in the log, nothing written', async () => {
@@ -1394,7 +1441,7 @@ test("the idle agent's pull request is read with one --json argument, in the age
     agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}',
   })
   await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
-  const gh = 'gh pr view feat/belt --json number,state,labels'
+  const gh = 'gh pr view feat/belt --json number,state,labels,url'
   expect(fx.ran).toContain(gh)
   expect(fx.inits[gh]?.cwd).toBe('/tmp/h/work/belt')
   expect(fx.inits[gh]?.timeoutMs).toBeGreaterThan(0)

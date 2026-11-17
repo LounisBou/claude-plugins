@@ -3,7 +3,7 @@
 // (tab-state.ts, wired in supervision.ts): one word per state, written only when it changes,
 // only inside a home session, and a failing tmux call never fails the hook.
 import { expect, test } from 'claude-code/testing'
-import { homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, targetOf } from '../tab-state.ts'
+import { homeArgv, stateArgv, windowOf, panesArgv, panesOf, pullRequestsRead, stateAfterPr, stateAfterTurn, stateAfterMeasure, targetOf } from '../tab-state.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
@@ -59,6 +59,26 @@ test('a merged or closed pull request puts its agent over, once; an open one mov
   expect(stateAfterPr('review', { state: 'OPEN', ready: false })).toBeNull()
   expect(stateAfterPr('review', { state: 'OPEN' })).toBeNull()
   expect(stateAfterPr('review', { state: 'DRAFT' })).toBeNull()
+})
+
+test('the pull requests of one agent are read together: ready only when every open one is, over only when none is open', () => {
+  const open = (ready?: boolean) => ({ state: 'OPEN', ...(ready === undefined ? {} : { ready }) })
+  expect(pullRequestsRead([open(true)])).toEqual({ state: 'OPEN', ready: true })
+  expect(pullRequestsRead([open(true), open(true)])).toEqual({ state: 'OPEN', ready: true })
+  expect(pullRequestsRead([open(true), open(false)])).toEqual({ state: 'OPEN', ready: false })
+  expect(pullRequestsRead([open(), open(false)])).toEqual({ state: 'OPEN', ready: false })
+  // A label or a pull request that was not read leaves it unknown, unless another is known not Ready.
+  expect(pullRequestsRead([open(true), open()])).toEqual({ state: 'OPEN' })
+  expect(pullRequestsRead([open(true), null])).toEqual({ state: 'OPEN' })
+  expect(pullRequestsRead([open(false), null])).toEqual({ state: 'OPEN', ready: false })
+  // A merged or closed one is set aside while another is open.
+  expect(pullRequestsRead([{ state: 'MERGED' }, open(true)])).toEqual({ state: 'OPEN', ready: true })
+  expect(pullRequestsRead([{ state: 'CLOSED' }, open(false)])).toEqual({ state: 'OPEN', ready: false })
+  // None open: merged when one merged, else closed, unknown when a read is missing.
+  expect(pullRequestsRead([{ state: 'CLOSED' }, { state: 'MERGED' }])).toEqual({ state: 'MERGED' })
+  expect(pullRequestsRead([{ state: 'CLOSED' }])).toEqual({ state: 'CLOSED' })
+  expect(pullRequestsRead([{ state: 'MERGED' }, null])).toBeNull()
+  expect(pullRequestsRead([])).toBeNull()
 })
 
 test('the window is the answer when the session carries the mark, else none', () => {

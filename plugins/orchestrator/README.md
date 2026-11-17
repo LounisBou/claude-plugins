@@ -206,15 +206,16 @@ tab, where it is drawn in a small dark block.
 | ● | at rest | The agent is idle and waits for its orchestrator's next order; nothing to do. | blue |
 | ✋ | question | The agent asks you something and waits for your answer: answer it. | orange |
 | ⏸ | waits on its orchestrator | The agent waits for a decision or an event only its orchestrator gives; nothing to do. | grey |
-| ⧖ | delivered, under review | The agent delivered, but its pull request does not carry `Ready` yet (review, correction or draft); nothing to do, the orchestrator reviews. | lilac |
-| ✓ | delivered, waits for the merge | The agent delivered and its pull request carries `Ready`: merge it, or let the orchestrator merge it. | pale green |
+| ⧖ | delivered, under review | The agent delivered, but a pull request entrusted to it does not carry `Ready` yet (review or correction, draft or not); nothing to do, the orchestrator reviews. | lilac |
+| ✓ | delivered, waits for the merge | The agent delivered and every open pull request entrusted to it carries `Ready`: merge them, or let the orchestrator merge them. | pale green |
 | ⏹ | over, to close | The pull request is merged or closed: the agent's work is over and its orchestrator owes its close. | red |
 | ⚠ | past the context gate | The agent's context is past its gate: it finishes its unit and stops, and is replaced by a fresh one. | pink |
 
 The module writes the state on each window when a turn starts or ends. The
 orchestrator's stop reads the pull request of each idle agent, the read it
-already makes, and writes ⏹ when it is merged or closed, and moves a delivery
-between ⧖ and ✓ by its `Ready` label.
+already makes, with each other one the dispatch record entrusts to it, and writes
+⏹ when all are merged or closed, and moves a delivery between ⧖ and ✓ by the
+`Ready` label of its open ones.
 
 Outside a home session an agent is an iTerm2 tab, and the orchestrator's tab
 sits immediately left of its implementer's tab. A plain `spawn` appends at the

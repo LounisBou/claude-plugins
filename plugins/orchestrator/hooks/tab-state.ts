@@ -73,6 +73,21 @@ export function panesOf(stdout: string): PaneShown[] {
 // that began since the read (`busy`), nor `over` itself.
 const SETTLED = new Set(['', 'idle', 'held', 'review', 'done', 'gate'])
 
+// What every pull request entrusted to one agent says together, from what was read of each (null:
+// a read that failed). Any open one makes it open, and Ready only when each open one carries the
+// label: one that does not makes it not Ready, one whose label was not read leaves it unknown. With
+// none open it is merged when one merged, else closed, and unknown while any read is missing. A draft
+// counts like any open one: leaving draft is the operator's own gesture.
+export function pullRequestsRead(reads: readonly ({ state: string; ready?: boolean | undefined } | null)[]): { state: string; ready?: boolean | undefined } | null {
+  const open = reads.filter(read => read?.state === 'OPEN')
+  if (open.length > 0) {
+    if (open.some(read => read?.ready === false)) return { state: 'OPEN', ready: false }
+    return !reads.includes(null) && open.every(read => read?.ready === true) ? { state: 'OPEN', ready: true } : { state: 'OPEN' }
+  }
+  if (reads.length === 0 || reads.some(read => read === null)) return null
+  return { state: reads.some(read => read?.state === 'MERGED') ? 'MERGED' : 'CLOSED' }
+}
+
 // What the pull request of an idle agent says its window should show, or null to leave it. A
 // merged or closed one: the work is over (over), from a window in a settled state. An open one changes only a window that shows a
 // delivery: the Ready label turns « under review » into « done », and a pull request that lost it
