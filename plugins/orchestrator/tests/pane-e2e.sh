@@ -456,7 +456,7 @@ check "every choice's whole text is drawn above the picker" "1" "$(flat | grep -
 check "each choice's text is drawn once, the picker's options their letter" "1|1" "$(pane | grep -c 'close it — the work is dropped')|$(pane | grep -c '^C$')"
 check "the questions are drawn above the orchestrators, counted once in their title" "1|1" "$([ "$(line_of 'Questions for you — 2 pending')" -lt "$(line_of 'Orchestrators')" ] && echo 1)|$(pane | grep -c 'pending')"
 check "each asker named once above its questions, in no card" "Orch: alpha · orchestrator · e2e-box|1|0" "$(pane | grep -m1 '^Orch: alpha')|$(pane | grep -c '^Orch: alpha')|$(screen | grep -c '╭─')"
-check "the question's fields in order: subject, context, question, choices, recommendation, blocks, picker" "1" "$(ordered 'Question 1 of 1: the release' 'The changelog is written' 'Merge the release branch now?' '[A] merge it now' '[B] wait for' '[C] close it' '★ Recommendation' 'Blocks: phase 3' 'Choose: ')"
+check "the question's fields in order: subject, context, question, choices, recommendation, blocks, picker" "1" "$(ordered 'Orch: alpha' 'the release' 'The changelog is written' 'Merge the release branch now?' '[A] merge it now' '[B] wait for' '[C] close it' '★ Recommendation' 'Blocks: phase 3' 'Choose: ')"
 check "the recommendation starred, what the question blocks named, nothing of the asker's turn drawn" "1|1|0" "$(pane | grep -c '^★ Recommendation: B — one more pair of eyes')|$(pane | grep -c '^Blocks: phase 3')|$(pane | grep -c 'You decide')"
 check "each choice behind its badge, the recommended one starred" "1|1" "$(pane | grep -c '^\[C\] *close it')|$(pane | grep -c '^\[B\] *wait for the next review — a day lost *★')"
 check "the picker follows the question's last line" "Blocks: phase 3" "$(rawpane | grep -B1 '^Choose: ' | sed -n 1p)"
@@ -565,13 +565,13 @@ check "the section holds no question left, and still says who waits" "1|0|1" "$(
 echo "== an orchestrator that asks two questions (160x50)"
 start 50 pair
 record "drawn"
-check "the asker once, the first question with its picker, the second drawn under it" "1|Question 1 of 2: the version number|1|1" "$(pane | grep -c '^Orch: alpha')|$(pane | grep -m1 '^Question 1 of 2')|$(pane | grep -c '^Question 2 of 2: the release rhythm')|$(pane | grep -c '^Choose: ')"
-check "the picker is drawn under the first question, before the second" "1" "$(ordered 'Question 1 of 2' 'Choose: ' 'Question 2 of 2')"
+check "the asker once, the first question with its picker, the second not drawn" "1|1|0|1" "$(pane | grep -c '^Orch: alpha')|$(pane | grep -c '^the version number')|$(pane | grep -c '^the release rhythm')|$(pane | grep -c '^Choose: ')"
+check "the picker is drawn under the first question" "1" "$(ordered 'the version number' 'Choose: ')"
 check "the count is the questions left" "1" "$(pane | grep -c '^Questions for you — 2 pending')"
 check "the glued pull requests read as written, each a link of its own" "1|2" "$([ "$(pane | grep -c 'infra#195/infra#196')" -ge 1 ] && echo 1)|$(tm capture-pane -e -p -t "$SESSION" | grep -o $'\x1b\\]8;[^\x1b]*pull/19[56]' | sort -u | wc -l | tr -d ' ')"
 press Enter
-check "the first answer is its own: sent, the second question takes the picker" "answered|A : 1.15.0 — no break for the applications|open|1|Question 1 of 1: the release rhythm" \
-  "$(jq -r .status "$SANDBOX/state/round/s-alpha-p1.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-p1.json")|$(jq -r .status "$SANDBOX/state/round/s-alpha-p2.json")|$(pane | grep -c '^Questions for you — 1 pending')|$(pane | grep -m1 '^Question 1 of')"
+check "the first answer is its own: sent, the second question is drawn and takes the picker" "answered|A : 1.15.0 — no break for the applications|open|1|1" \
+  "$(jq -r .status "$SANDBOX/state/round/s-alpha-p1.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-p1.json")|$(jq -r .status "$SANDBOX/state/round/s-alpha-p2.json")|$(pane | grep -c '^Questions for you — 1 pending')|$(pane | grep -c '^the release rhythm')"
 press Down Enter
 check "the last answer is its own, after its question" "B : one at the end — one upgrade per application" "$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-p2.json")"
 

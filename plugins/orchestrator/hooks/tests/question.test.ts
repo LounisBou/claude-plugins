@@ -598,23 +598,35 @@ test('the open questions are grouped by asker, the askers with an urgent one fir
   ])
 })
 
-test('the pane draws each asker once, then each question\'s fields, the recommended choice marked', () => {
+test('the pane draws one question only, the first in its order: its asker once, then its fields, the recommended choice marked, no numbering', () => {
   const lines = askedLines([
     asked('s1', 'Orch: one', '2026-11-14T10:00:00Z'),
     asked('s1', 'Orch: one', '2026-11-14T10:02:00Z', { choices: [], recommended: null, why: null, urgent: true }),
   ])
   expect(lines).toEqual([
     { text: 'Orch: one · orchestrator · box-1', look: 'asker', indent: 0 },
-    { text: 'Urgent — Question 1 of 2: subject of 2026-11-14T10:02:00Z', look: 'subject', indent: 2 },
+    { text: 'Urgent — subject of 2026-11-14T10:02:00Z', look: 'subject', indent: 2 },
     { text: 'what is known', look: 'context', indent: 4 },
     { text: 'Which?', look: 'question', indent: 4 },
     { text: 'Blocks: acme/app#1', look: 'label', indent: 4 },
-    { text: 'Question 2 of 2: subject of 2026-11-14T10:00:00Z', look: 'subject', indent: 2 },
-    { text: 'what is known', look: 'context', indent: 4 },
-    { text: 'Which?', look: 'question', indent: 4 },
+  ])
+  expect(askedLines([asked('s1', 'Orch: one', '2026-11-14T10:00:00Z')]).slice(4)).toEqual([
     { text: '[A] one', look: 'choice', indent: 4 },
     { text: '[B] two  ★', look: 'recommended', indent: 4 },
     { text: '★ Recommendation: B — cheaper', look: 'plain', indent: 4 },
     { text: 'Blocks: acme/app#1', look: 'label', indent: 4 },
   ])
+  expect(askedLines([])).toEqual([])
+})
+
+test('of three open questions from two askers, the later asker\'s one urgent, the pane draws the urgent one, then the earliest of the rest once it is closed', () => {
+  const entries = [
+    asked('s1', 'Orch: one', '2026-11-14T10:00:00Z'),
+    asked('s1', 'Orch: one', '2026-11-14T10:02:00Z'),
+    asked('s2', 'Orch: two', '2026-11-14T10:03:00Z', { urgent: true }),
+  ]
+  const drawn = (list: readonly Asked[]) => askedLines(list).filter(line => line.look === 'subject' || line.look === 'asker').map(line => line.text)
+  expect(drawn(entries)).toEqual(['Orch: two · orchestrator · box-1', 'Urgent — subject of 2026-11-14T10:03:00Z'])
+  const settled = entries.map(entry => (entry.urgent ? { ...entry, status: 'answered' as const } : entry))
+  expect(drawn(settled)).toEqual(['Orch: one · orchestrator · box-1', 'subject of 2026-11-14T10:00:00Z'])
 })

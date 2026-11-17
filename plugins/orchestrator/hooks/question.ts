@@ -471,26 +471,26 @@ export function askedGroups(entries: readonly Asked[]): Asked[][] {
 export type AskedLine = { text: string; look: 'asker' | 'label' | 'subject' | 'context' | 'question' | 'choice' | 'recommended' | 'plain'; indent: number }
 
 /**
- * What the pane draws of the open questions asked with `ask`, read from their fields, never from a
- * text: each asker once, its name, role and machine, then each of its questions — subject, context,
- * question, the lettered choices with the recommended one marked, the recommendation, what it blocks.
+ * What the pane draws of the open questions asked with `ask`: the first one only, in the pane's
+ * order, read from its fields, never from a text — its asker's name, role and machine, then its
+ * subject, context, question, the lettered choices with the recommended one marked, the
+ * recommendation, what it blocks. The others stay stored; the next is drawn once this one is closed.
  */
 export function askedLines(entries: readonly Asked[]): AskedLine[] {
-  return askedGroups(entries).flatMap(group => {
-    const sender = group[0]?.sender
-    if (sender === undefined) return []
-    const head: AskedLine = { text: `${sender.name} · ${sender.role} · ${sender.machine}`, look: 'asker', indent: 0 }
-    return [head, ...group.flatMap((entry, k): AskedLine[] => [
-      { text: `${entry.urgent ? 'Urgent — ' : ''}Question ${k + 1} of ${group.length}: ${entry.subject}`, look: 'subject', indent: 2 },
-      { text: entry.context, look: 'context', indent: 4 },
-      { text: entry.ask, look: 'question', indent: 4 },
-      ...entry.choices.map((choice): AskedLine => choice.letter === entry.recommended
-        ? { text: `[${choice.letter}] ${choice.text}  ★`, look: 'recommended', indent: 4 }
-        : { text: `[${choice.letter}] ${choice.text}`, look: 'choice', indent: 4 }),
-      ...(entry.why !== null ? [{ text: `★ Recommendation: ${entry.recommended !== null ? `${entry.recommended} — ` : ''}${entry.why}`, look: 'plain' as const, indent: 4 }] : []),
-      { text: `Blocks: ${entry.blocks}`, look: 'label', indent: 4 },
-    ])]
-  })
+  const entry = askedGroups(entries).flat()[0]
+  if (entry === undefined) return []
+  const { sender } = entry
+  return [
+    { text: `${sender.name} · ${sender.role} · ${sender.machine}`, look: 'asker', indent: 0 },
+    { text: `${entry.urgent ? 'Urgent — ' : ''}${entry.subject}`, look: 'subject', indent: 2 },
+    { text: entry.context, look: 'context', indent: 4 },
+    { text: entry.ask, look: 'question', indent: 4 },
+    ...entry.choices.map((choice): AskedLine => choice.letter === entry.recommended
+      ? { text: `[${choice.letter}] ${choice.text}  ★`, look: 'recommended', indent: 4 }
+      : { text: `[${choice.letter}] ${choice.text}`, look: 'choice', indent: 4 }),
+    ...(entry.why !== null ? [{ text: `★ Recommendation: ${entry.recommended !== null ? `${entry.recommended} — ` : ''}${entry.why}`, look: 'plain' as const, indent: 4 }] : []),
+    { text: `Blocks: ${entry.blocks}`, look: 'label', indent: 4 },
+  ]
 }
 
 /** How the pane styles each kind of line: the asker and the question bold, the context dim, the recommended choice bold in `success`. */
