@@ -9991,8 +9991,8 @@ check "a pull request file whose last refresh failed is said, and exit 2" \
   "$(CSTATE="$CF/state-down" cfacts facts 2>/dev/null | grep '^unread forge github.com/o/app')|$(CSTATE="$CF/state-down" cfacts_status facts)|$(CSTATE="$CF/state-down" cfacts_status owners)"
 check "and the rest is still printed" "1" \
   "$(CSTATE="$CF/state-down" cfacts facts 2>/dev/null | grep -c '^collision checkouts ')"
-check "facts asks the file for each GitHub repository it reads, and calls no forge" "o/app|o/lone|o/other" \
-  "$(cut -d' ' -f1 "$CS/prs.wanted" | sort | paste -sd'|' -)"
+check "facts writes no wanted list beside the file" "absent" \
+  "$([ -e "$CS/prs.wanted" ] && echo present || echo absent)"
 check "a process table that cannot be read is said, and exit 2" "unread processes: $CF/no-ps cannot be read|exit 2" \
   "$(COORDINATOR_PS_TABLE="$CF/no-ps" cfacts facts 2>/dev/null | grep '^unread ')|$(COORDINATOR_PS_TABLE="$CF/no-ps" cfacts_status facts)"
 # A session or a heavy run whose directory was not read is on no branch, so it would drop

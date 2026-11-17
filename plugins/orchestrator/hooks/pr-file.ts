@@ -1,7 +1,7 @@
 // hooks/pr-file.ts
 // The machine's one pull request file: `<state>/prs.json`, every pull request the dispatch records on
 // the machine name (their ledger lines), every open one of their repositories and of those the
-// checkouts want (`prs.wanted`), and those seen merged or closed within ENDED_KEPT_MS, with its state,
+// workspace checkouts are clones of (`prs.wanted`, the sweep's), and those seen merged or closed within ENDED_KEPT_MS, with its state,
 // draft, head, labels, mergeable, fork and one CI word, beside `<state>/prs.log`, one line
 // per change. No daemon refreshes it: a reader that finds it older than PR_FILE_INTERVAL_MS refreshes
 // it, under the file's lock, in one forge call for every repository (one GraphQL query), so the
@@ -176,20 +176,15 @@ export async function trackedPrs($: Host<'fs'>, state: string): Promise<Map<stri
   return tracked
 }
 
-/** Whether a reader asks the file to hold a repository or a pull request at `now` (`prs.wanted`). */
+/** Whether the sweep asks the file to hold a repository at `now` (`prs.wanted`). */
 export async function fileWanted($: Host<'fs'>, state: string, now: number): Promise<boolean> {
   return wantedRepos(await readOr($, prWantedPath(state)), now).length > 0
 }
 
-/** The repositories to read: those the records name, with their numbers, and those the readers want, with theirs. */
+/** The repositories to read: those the records name, with their numbers, and those the sweep wants. */
 export async function reposToRead($: Host<'fs'>, state: string, now: number): Promise<Map<string, number[]>> {
   const tracked = await trackedPrs($, state)
-  for (const wanted of wantedRepos(await readOr($, prWantedPath(state)), now)) {
-    const [repo = '', pr] = wanted.split('#')
-    const numbers = tracked.get(repo) ?? []
-    if (pr !== undefined && !numbers.includes(Number(pr))) numbers.push(Number(pr))
-    tracked.set(repo, numbers)
-  }
+  for (const repo of wantedRepos(await readOr($, prWantedPath(state)), now)) if (!tracked.has(repo)) tracked.set(repo, [])
   return tracked
 }
 

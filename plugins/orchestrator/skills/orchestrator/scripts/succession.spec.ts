@@ -703,6 +703,16 @@ test('a takeover in a worktree names its project by origin, prints the not-insta
   assert.match(out.join(''), /- Row owners: 1 READY NOT STARTED\n/)
 })
 
+test('a takeover that finds its pull requests missing from the machine\'s file says them unread and writes nothing beside the file', () => {
+  const rows = [JSON.stringify({ id: 1, label: 'FIX flow#30 tokens', state: 'open' }), ledger('acme/flow', 30, 'Agent: tokens')].join('\n') + '\n'
+  const w = world({ rows, deck: deckOf([orchestrator(NAME, 'acme/flow')]), round: [], todo: '' })
+  const out: string[] = []
+  const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
+  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW }), 0)
+  assert.match(out.join(''), /acme\/flow open pull requests unread/)
+  assert.ok(!existsSync(join(w.state, 'prs.wanted')))
+})
+
 /** The record of an orchestration that predates `dispatch-record.sh pr`: its open row names no pull request, only the heads its review recorded; the ledger is empty and the owner file names no orchestration. */
 function flowWorld() {
   const head = 'b'.repeat(40)
@@ -940,8 +950,6 @@ test('the takeover reads pull requests in the machine\'s pull request file, neve
   assert.equal(read.state('acme/lib', 9), undefined)
   assert.deepEqual(read.open('acme/app'), [{ repo: 'acme/app', pr: 7, head: '7777777' }])
   assert.equal(read.open('acme/lib'), undefined)
-  // A pull request of a repository read that the file does not hold is asked by its number.
-  assert.deepEqual([...read.missed], ['acme/app#99', 'acme/lib'])
   writeFileSync(join(state, 'prs.json'), JSON.stringify({ ...file, error: 'HTTP 502' }))
   assert.equal(filePrs({ ORCHESTRATOR_STATE_DIR: state }, NOW.getTime()).open('acme/app'), undefined)
   rmSync(state, { recursive: true, force: true })
