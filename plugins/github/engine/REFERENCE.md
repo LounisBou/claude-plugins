@@ -39,8 +39,10 @@ below, and the `args` object holds the subcommand's arguments.
 
 `pr-gate` reads the PR, then at its head the statuses, check runs and Actions runs; `state` is
 `open`, `closed` or `merged`, `head` the full sha. `ci.total`: statuses and each check's latest
-run (a skipped or neutral one of an older run of its workflow left out), plus each required check
-not yet reported (running). `ci.result`: `FAILURE` if one failed (`ci.failed`), `PENDING` if one
+run (a skipped or neutral one of an older run of its workflow left out, and a cancelled one of an older run
+of its workflow, which that run replaced; every run newer than the workflow's last settled success, still going,
+cancelled or skipped, left out, so a rerun a label write fires never moves a green head; a workflow run going
+with no check run yet counts as running), plus each required check not yet reported (running). `ci.result`: `FAILURE` if one failed (`ci.failed`), `PENDING` if one
 runs (`ci.running`) or proved nothing (`ci.skipped`: `skipped`, or `neutral` on a draft, of a check the
 base requires, or of any check when none at the head passed; a skipped check the base does not require, such as a path-filtered job, beside a check that passed holds nothing back), else
 `SUCCESS`; no check at all is `PENDING`, or `NONE` when the repository has no CI (no active
