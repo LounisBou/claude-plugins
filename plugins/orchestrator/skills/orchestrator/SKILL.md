@@ -59,8 +59,8 @@ words.
    an arbitration, through `orchestrator:decide`; a report to him is a few lines unless he asks more.
 6. **Read how an agent works, not only what it says.** The module relays its questions,
    blockers, deliveries and gate crossings: act on each; one that needs no action gets no reply. An agent's question or stop is
-   yours to answer; only the operator's own goes to him. An agent reporting « waiting »
-   has stalled: read its tree. Real load on a shared machine is stopped at once. Once a pull request merges, tell each agent whose brief waits on it, in the same turn: the merge's answer names the open rows whose blocker or note names it.
+   yours to answer; only the operator's own goes to him. An agent the module says is busy past
+   its bound: read its tree and judge it — progress or churn, how near its gate, the work queued behind it. Real load on a shared machine is stopped at once. Once a pull request merges, tell each agent whose brief waits on it, in the same turn: the merge's answer names the open rows whose blocker or note names it.
 7. **The fill is measured, never estimated.** Read `/orchestrator:status` before you
    dispatch. An agent past the gate gets no new phase: rotate it.
 8. **Kill what you start, delete what you build**; what the launcher did not close is proved with `ps` and `ls`. No date or hour is typed from memory: paste

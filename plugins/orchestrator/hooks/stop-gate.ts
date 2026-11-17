@@ -31,25 +31,6 @@ export function refuse(reason: string): { block: string } {
   return { block: reason }
 }
 
-// The wake decision at the summary level, the composition the done branch of
-// check 1 makes when the facts disagree with the message. A busy own agent and
-// a declared blocking question both RELEASE the stop — the agent's idle notice
-// and the answer are what wake the orchestrator next (stop_gate.py:363-364;
-// its wrapper's header names the busy agent first among the releases).
-export function wakeDecision(summary: {
-  busyOwnAgents: readonly string[]
-  blockingQuestion: string | null
-  openRows: readonly string[]
-  leftBehind?: readonly string[]
-}): { decision: 'pass' } | { decision: 'block'; reason: string } {
-  if (summary.busyOwnAgents.length > 0) return { decision: 'pass' }
-  if (summary.blockingQuestion !== null) return { decision: 'pass' }
-  const left = summary.leftBehind ?? []
-  const deferred = summary.openRows
-  if (left.length === 0 && deferred.length === 0) return { decision: 'pass' }
-  return { decision: 'block', reason: notDoneReasons(left, deferred).join(' ') }
-}
-
 // One race, the whole gate's own law: stop_gate.py runs under a single deadline
 // checked between its external calls, and a read that cannot answer in time
 // lets the stop pass. The degraded answer is a value told apart from the work's
@@ -564,7 +545,9 @@ export function checkWake(facts: {
 // How long a subscription to a peer's idle notice counts as something that will wake the
 // session: a notice that never comes (a peer that crashed past the host's own exit notice,
 // a lost delivery) must not hold the gate open for ever. Two hours covers a takeover's
-// verification and an agent's long turn.
+// verification and an agent's long turn. The same bound holds for a busy own agent, which
+// releases the stop: past it in one turn, the agent's measure wakes its orchestrator
+// (supervision.ts reportBusy), once per bound.
 export const NOTICE_TTL_MS = 2 * 60 * 60 * 1000
 
 // Whether a subscription still stands at `now`: the ones past their time-to-live are

@@ -24,13 +24,13 @@ import {
   roleOf, walkName, hostBasenames, hostRecordOf, blockArgv, bytesOfBase64,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, hostTasks } from './stop-gate.ts'
+import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, hostTasks, NOTICE_TTL_MS } from './stop-gate.ts'
 import { moduleDirOf } from './module-log.ts'
 import { answersChoice, namesOtherSubject, opensChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  declaredWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, gateText, gateSelfText, noStatusText, noStatusKey, heldReport, readDeliveryFacts, factsLine, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
+  declaredWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, gateText, busyText, gateSelfText, noStatusText, noStatusKey, heldReport, readDeliveryFacts, factsLine, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
   hostStopOf, stopInTail, stopKey, stopText, type HostStop, type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
@@ -1653,10 +1653,12 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         }
         // The window's tab shows the gate crossed, or left.
         await showGate($, reading)
-        // An agent's measure past its gate: its orchestrator told once per crossing.
+        // An agent's measure past its gate, or past the bound in one busy turn: its orchestrator told once per crossing.
         if (walked.known && walked.tty && roleOf(walked.name) === 'agent') {
           const done = await withDeadline(reportGate($, sessionId, walked.name!, walked.tty, reading), RELAY_BOUND_MS)
           if (isDegradedPass(done)) await logLine($, 'supervision', `gate: did not finish within ${RELAY_BOUND_MS} ms`)
+          const busy = walked.pid ? await withDeadline(reportBusy($, sessionId, walked.name!, walked.tty, walked.pid, reading), RELAY_BOUND_MS) : null
+          if (isDegradedPass(busy)) await logLine($, 'supervision', `busy: did not finish within ${RELAY_BOUND_MS} ms`)
         }
       }
     } catch (err) {
@@ -3488,21 +3490,38 @@ export async function reportGate($: Host<'env' | 'fs' | 'plugin' | 'process' | '
     told = !(taken && typeof taken === 'object' && 'drop' in taken && taken.drop)
     if (!told) await logLine($, 'supervision', `gate: the host dropped ${name}'s own line: ${String((taken as { drop: unknown }).drop)}`)
   }
-  if (!sent) sent = await sendGate($, tty, name, reading)
+  if (!sent) sent = await sendOrchestrator($, tty, name, 'gate', gateText(name, reading.context_tokens, reading.context_percent))
   const next = told && sent ? 'reported' : told ? 'told' : sent ? 'sent' : ''
   if (next !== mark) await $.fs.write(path, next === '' ? '' : `${next}\n`)
 }
 
-// The orchestrator's line of an agent's gate crossing; whether it was delivered.
-async function sendGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>, tty: string, name: string,
-  reading: { context_tokens: number; context_percent: number }): Promise<boolean> {
-  const to = await orchestratorOn($, tty, name, 'gate')
+/*
+ * An agent busy in one turn past the bound (NOTICE_TTL_MS, the time a subscription to its idle
+ * notice counts as a wake), read on the host's record of its session: its orchestrator, released
+ * by the stop gate on that busy agent, is sent one line per bound crossed, which wakes it to read
+ * the agent's tree. The mark (`gates/<id>.busy`: the turn's start and the bounds told) is written
+ * once the line is delivered, so a line not delivered is tried again at the next measure.
+ */
+export async function reportBusy($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, name: string, tty: string, pid: string,
+  reading: { context_tokens: number; context_percent: number }): Promise<void> {
+  const record = hostRecordOf(String(await $.fs.read(`${await configDir($)}/sessions/${pid}.json`).catch(() => '')))
+  if (record?.status !== 'busy' || record.since === undefined) return
+  const busy = Date.now() - record.since
+  const mark = `${record.since} ${Math.floor(busy / NOTICE_TTL_MS)}`
+  const path = `${await storeOf($)}/${gateKey(sessionId)}.busy`
+  if (busy < NOTICE_TTL_MS || String(await $.fs.read(path).catch(() => '')).trim() === mark) return
+  if (await sendOrchestrator($, tty, name, 'busy', busyText(name, busy, reading.context_tokens, reading.context_percent))) await $.fs.write(path, `${mark}\n`)
+}
+
+// One line of an agent's to its orchestrator (`what`: gate, busy); whether it was delivered.
+async function sendOrchestrator($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>, tty: string, name: string, what: string, text: string): Promise<boolean> {
+  const to = await orchestratorOn($, tty, name, what)
   if (!to) {
-    await logLine($, 'supervision', `gate: no orchestrator found for ${name} on ${tty}`)
+    await logLine($, 'supervision', `${what}: no orchestrator found for ${name} on ${tty}`)
     return false
   }
-  const sent = await $.session.send({ to, text: gateText(name, reading.context_tokens, reading.context_percent) })
-  if (!sent?.isDelivered) await logLine($, 'supervision', `gate: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+  const sent = await $.session.send({ to, text })
+  if (!sent?.isDelivered) await logLine($, 'supervision', `${what}: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
   return sent?.isDelivered === true
 }
 

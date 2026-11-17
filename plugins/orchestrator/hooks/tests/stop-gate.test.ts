@@ -1,5 +1,5 @@
 // hooks/tests/stop-gate.test.ts
-// The stop gate's boundaries: the decision shapes (the summary-level wake decision, the deadline
+// The stop gate's boundaries: the decision shapes (the deadline
 // race), the ported checks
 // (the wake walk, the once-per-tell CI read over ci-watch's precomputed logs), and the
 // wiring over a faked $ — every field the classic.Stop event really carries pinned by a
@@ -8,7 +8,7 @@
 // where the data source did not change beneath them.
 import { expect, test } from 'claude-code/testing'
 import {
-  wakeDecision, withDeadline, isDegradedPass,
+  withDeadline, isDegradedPass,
   deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
@@ -49,10 +49,6 @@ const ASKED_HERE = askedHere()
 
 
 // --- the decision shapes -----------------------------------------------------------------
-
-test('a summary with nothing holding the stop passes', () => {
-  expect(wakeDecision({ busyOwnAgents: [], blockingQuestion: null, openRows: [] })).toEqual({ decision: 'pass' })
-})
 
 // Program goal 9: a turn that declared no wait gets the decision of one whose last line says nothing.
 test('a turn with no declare_wait and a `waiting:` line gets the same decision as one without the line', async () => {
@@ -293,27 +289,6 @@ test('the blocks-nothing refusal says what the operator wait is for in one claus
   const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'the report\n\nwaiting: operator — blocks: nothing' }))
   expect(refused.observed).toContain('Your wait on the operator blocks nothing: that wait is for a question he must answer.')
   expect(refused.observed).not.toContain('the coordinator would put it to him')
-})
-
-test('a busy own agent releases the stop — its idle notice will wake the orchestrator', () => {
-  // Declared deviation from the brief's sketch, which expected 'block': stop_gate.py:363-364
-  // returns the moment one of its own agents is busy, the shell wrapper's own header names
-  // the busy agent first among the things that release the hold, and the design doc lists
-  // it among the wake conditions. Inverting it here would refuse every stop an agent
-  // survives — the opposite of the ported gate.
-  expect(wakeDecision({ busyOwnAgents: ['Agent: belt-p3'], blockingQuestion: null, openRows: [] })).toEqual({ decision: 'pass' })
-})
-
-test('a blocking question declared on the last line releases the stop', () => {
-  expect(wakeDecision({ busyOwnAgents: [], blockingQuestion: 'the operator', openRows: [] }).decision).toBe('pass')
-})
-
-test('an open dispatch row holds the stop and names the row', () => {
-  const d = wakeDecision({ busyOwnAgents: [], blockingQuestion: null, openRows: ['r-12 (the report row)'] })
-  expect(d.decision).toBe('block')
-  expect((d as { reason: string }).reason).toBe('Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it'
-    + ' — or, if the operator deferred it, set its revisit date (dispatch-record.sh blocker <record> <id> "until <ISO UTC time>"), record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
-    + 'and declare a deferred wait.')
 })
 
 test('a CI read that exceeds its time bound degrades to pass-and-log', async () => {

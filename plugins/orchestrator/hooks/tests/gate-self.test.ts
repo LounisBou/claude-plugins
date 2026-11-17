@@ -1,10 +1,12 @@
 // hooks/tests/gate-self.test.ts
 // An agent crossing its context gate is told in its own session (relay.ts gateSelfText, sent by
 // supervision.ts reportGate), once per crossing, whether or not its orchestrator is reached; the
-// orchestrator still gets its own line once.
+// orchestrator still gets its own line once. An agent busy past the bound in one turn wakes its
+// orchestrator the same way (supervision.ts reportBusy), once per bound.
 import { expect, test } from 'claude-code/testing'
-import { gateSelfText } from '../relay.ts'
-import { reportGate } from '../supervision.ts'
+import { busyText, gateSelfText } from '../relay.ts'
+import { reportBusy, reportGate } from '../supervision.ts'
+import { NOTICE_TTL_MS } from '../stop-gate.ts'
 import { logLineOf } from './fakes.ts'
 
 const HOME = '/tmp/gs'
@@ -101,4 +103,33 @@ test('a line the host drops is tried again at the next measure', async () => {
 
 test('the line tells the agent what to do at its gate', () => {
   expect(gateSelfText(311645, 31).startsWith('[module] Your context is 311,645 (31%)')).toBe(true)
+})
+
+// The agent's own host record (pid 777): busy since `since`, the turn's start.
+const busyFor = (fx: ReturnType<typeof fake>, ms: number, status = 'busy') =>
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-one', name: AGENT, status, statusUpdatedAt: Date.now() - ms }))
+const busy = (fx: ReturnType<typeof fake>) => reportBusy(fx.dollar as never, 's-one', AGENT, '/dev/ttys005', '777', reading(193000))
+
+test('an agent busy past the bound in one turn wakes its orchestrator once per bound, naming it, its time and its fill', async () => {
+  const fx = fake()
+  busyFor(fx, NOTICE_TTL_MS + 5 * 60_000)
+  await busy(fx)
+  await busy(fx)
+  expect(fx.sent).toEqual([{ to: { sessionId: 's-orch' }, text: busyText(AGENT, NOTICE_TTL_MS + 5 * 60_000, 193000, 19) }])
+  expect(fx.sent[0]!.text).toBe(`[module] ${AGENT} busy 2h05 in one turn, context 193,000 (19%) — read its tree`)
+  // The same turn past the next bound: told again, once.
+  const since = JSON.parse(fx.files.get(`${HOME}/.claude/sessions/777.json`)!).statusUpdatedAt as number
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, status: 'busy', statusUpdatedAt: since - NOTICE_TTL_MS }))
+  await busy(fx)
+  await busy(fx)
+  expect(fx.sent.length).toBe(2)
+})
+
+test('an agent busy under the bound, or idle, wakes nothing', async () => {
+  const fx = fake()
+  busyFor(fx, NOTICE_TTL_MS - 60_000)
+  await busy(fx)
+  busyFor(fx, 3 * NOTICE_TTL_MS, 'idle')
+  await busy(fx)
+  expect(fx.sent).toEqual([])
 })
