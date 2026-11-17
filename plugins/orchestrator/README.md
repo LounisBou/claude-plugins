@@ -189,7 +189,7 @@ next read. A new `at` alone is no reason to write the file again.
 An orchestrator's tab is a real terminal holding a tmux session of its own, its
 home session: the orchestrator runs in window 0 and every agent it spawns is a
 window after it, shown in a tab bar with one block per window and a state icon
-after its name (busy ●, idle ○, asks ✋, done ✓, gate ⚠). There is nothing to
+after its name (busy ●, idle ○, asks ✋, held ⏸, done ✓, gate ⚠). There is nothing to
 type for it: the orchestrator command moves its own tab into the home session
 by itself. Click a block, or press `C-b n` / `C-b p`, to switch; `C-b C-b`
 sends a Ctrl-B to the program in the pane. Closing the tab ends the server,
