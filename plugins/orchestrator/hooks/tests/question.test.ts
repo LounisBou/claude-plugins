@@ -187,15 +187,63 @@ test('the block is the method\'s shape, from the fields alone', () => {
   ].join('\n'))
 })
 
-test('several calls in one turn make several objects, each its own id, numbered among the asker\'s open questions', async () => {
+test('a turn asks one question: a second call in it is refused and stores nothing, the first block stays the only one', async () => {
   const { dollar, files } = world()
-  const answers = [(await ask(dollar, FULL)).result, (await ask(dollar, { ...FULL, subject: 'a second matter', urgent: undefined }, new Date(NOW.getTime() + 1))).result]
-  const entries = stored(files)
-  expect(entries.length).toBe(2)
-  expect(new Set(entries.map(entry => entry.id)).size).toBe(2)
-  expect(entries.every(entry => entry.status === 'open' && entry.seq === 1)).toBe(true)
-  expect(answers[0]).toContain(`Question 1 of 1** (${entries[0]?.id})`)
-  expect(answers[1]).toContain(`Question 2 of 2** (${entries[1]?.id})`)
+  const first = await ask(dollar, FULL)
+  const second = await ask(dollar, { ...FULL, subject: 'a second matter', urgent: undefined }, new Date(NOW.getTime() + 1))
+  const [only, ...rest] = stored(files)
+  expect(rest).toEqual([])
+  expect([only?.status, only?.seq]).toEqual(['open', 1])
+  expect(first.result).toContain(`Question 1 of 1** (${only?.id})`)
+  expect(second.isError).toBe(true)
+  expect(second.result).toContain(`this turn already asked ${only?.id}: one question per turn`)
+  expect(second.result).not.toContain('Question 1 of 1')
+})
+
+test('the same question asked again in the turn is answered by its open twin, not refused', async () => {
+  const { dollar, files } = world()
+  const first = await ask(dollar, FULL)
+  const again = await ask(dollar, FULL, new Date(NOW.getTime() + 1))
+  expect(again.isError).toBeUndefined()
+  expect(again.result).toContain(`already open as ${stored(files)[0]?.id}`)
+  expect(first.result).toContain('Write this block in your message as it stands')
+  expect(stored(files).length).toBe(1)
+})
+
+test('two calls made together in one turn store one: the place is taken before any write is awaited', async () => {
+  const { dollar, files } = world()
+  const calls = await Promise.all([ask(dollar, FULL), ask(dollar, { ...FULL, subject: 'a second matter' }, new Date(NOW.getTime() + 1))])
+  expect(stored(files).length).toBe(1)
+  expect(calls.map(call => call.isError === true).sort()).toEqual([false, true])
+})
+
+test('a call that stores nothing leaves the turn its question: a refused field or a failed write', async () => {
+  const { dollar, files } = world()
+  expect((await ask(dollar, { ...FULL, question: 'no question mark' })).isError).toBe(true)
+  const write = dollar.process.run
+  dollar.process.run = async (argv: readonly string[]) => (argv[0] === 'mv' ? { exitCode: 1, stdout: '', stderr: 'refused' } : write(argv))
+  expect((await ask(dollar, FULL)).isError).toBe(true)
+  dollar.process.run = write
+  expect(stored(files)).toEqual([])
+  const made = await ask(dollar, FULL)
+  expect(made.isError).toBeUndefined()
+  expect(made.result).toContain('Write this block in your message as it stands')
+})
+
+test('a later turn asks again, the first still open: each turn\'s block reads 1 of 1', async () => {
+  const { dollar, files } = world()
+  const heads: string[] = []
+  const head = (answer: { readonly result: string }) => heads.push(String(/Question \d+ of \d+/.exec(String(answer.result))?.[0]))
+  head(await ask(dollar, FULL))
+  await mounted()['turn.start'](dollar, {}, async () => undefined)
+  head(await ask(dollar, { ...FULL, subject: 'a later matter' }, new Date(NOW.getTime() + 1)))
+  const [first, second] = pair(stored(files).sort((a, b) => (a.at < b.at ? -1 : 1)))
+  expect([first.status, second.status]).toEqual(['open', 'open'])
+  expect(heads).toEqual(['Question 1 of 1', 'Question 1 of 1'])
+  // A subagent's turn is not the main thread's: it starts no new place.
+  await mounted()['turn.start'](dollar, { agentId: 'a-1' }, async () => undefined)
+  expect((await ask(dollar, { ...FULL, subject: 'a third matter' }, new Date(NOW.getTime() + 2))).isError).toBe(true)
+  expect(stored(files).length).toBe(2)
 })
 
 test('an object ask stored is no entry of the relay\'s, and an entry of the relay\'s is no object of ask\'s', async () => {
@@ -286,23 +334,6 @@ test('an orchestrator asks as well, its question stored and shown', async () => 
   expect(answer.result).toContain(`Question 1 of 1** (${stored(files)[0]?.id})`)
 })
 
-test('« Question i of N » counts this turn\'s questions only: one asked in a later turn reads 1 of 1, whatever stays open', async () => {
-  const { dollar, files } = world()
-  const heads: string[] = []
-  const head = (answer: { readonly result: string }) => heads.push(String(/Question \d+ of \d+/.exec(String(answer.result))?.[0]))
-  head(await ask(dollar, FULL))
-  await mounted()['turn.start'](dollar, {}, async () => undefined)
-  head(await ask(dollar, { ...FULL, subject: 'a later matter' }, new Date(NOW.getTime() + 1)))
-  const [first, second] = pair(stored(files).sort((a, b) => (a.at < b.at ? -1 : 1)))
-  expect([first.status, second.status]).toEqual(['open', 'open'])
-  expect(heads).toEqual(['Question 1 of 1', 'Question 1 of 1'])
-  // A subagent's turn is not the main thread's: it starts no count.
-  head(await ask(dollar, { ...FULL, subject: 'a third matter' }, new Date(NOW.getTime() + 2)))
-  await mounted()['turn.start'](dollar, { agentId: 'a-1' }, async () => undefined)
-  head(await ask(dollar, { ...FULL, subject: 'a fourth matter' }, new Date(NOW.getTime() + 3)))
-  expect(heads.slice(2)).toEqual(['Question 2 of 2', 'Question 3 of 3'])
-})
-
 // The operator's answer already recorded (§ 4.7 d): a question of the same project asking the same,
 // answered by him in a tab, the pane or through the coordinator, is answered from it and not asked again.
 test('a question its project already had answered is answered from the newest record, not asked again; a message or a withdrawal is no record', async () => {
@@ -349,7 +380,7 @@ test('a question identical to one still open stores nothing: the open entry\'s i
   expect(again.result).toContain(questionBlock(open, { i: 1, n: 1 }))
   expect(again.result).not.toContain('Write this block in your message as it stands')
   expect(shown).toEqual([])
-  // The same session asking twice in one turn is no other.
+  // The same session asking it again, in a later turn, is no other.
   const twice = await ask(dollar, fields, new Date(NOW.getTime() + 1))
   expect(stored(files).length).toBe(1)
   expect(twice.result).toContain(`already open as ${open.id}`)
@@ -375,7 +406,8 @@ test('a question that differs by one field, or whose twin is withdrawn or answer
   const same = await ask(dollar, fields)
   expect(same.result).toContain('Write this block in your message as it stands')
   expect(stored(files).filter(entry => entry.sender.session === 's-me').map(entry => entry.status)).toEqual(['open'])
-  // A different key, now that an open entry exists: another entry, not the first's.
+  // A different key, now that an open entry exists, asked in a later turn: another entry, not the first's.
+  askTurnStarted()
   const other = await ask(dollar, { ...fields, question: 'Which one merges last?' }, new Date(NOW.getTime() + 1))
   expect(other.result).toContain('Write this block in your message as it stands')
   expect(stored(files).filter(entry => entry.sender.session === 's-me').length).toBe(2)
@@ -420,6 +452,7 @@ test('words typed in a tab are a record only when they name one choice: free pro
 test('a prompt he types claims the asker\'s open questions; the turn\'s end answers them with his words, but those its wait keeps', async () => {
   const { dollar, files } = world()
   await ask(dollar, { ...FULL, urgent: undefined })
+  askTurnStarted()
   await ask(dollar, { ...FULL, urgent: undefined, subject: 'tag order' })
   const [first, second] = pair(stored(files).sort((a, b) => (a.subject < b.subject ? -1 : 1)))
   // A model's own prompt, or a command, claims nothing.

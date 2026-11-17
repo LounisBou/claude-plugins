@@ -9,7 +9,7 @@ import { declaredWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLab
 import { roundEntry, type RoundEntry } from '../round.ts'
 import { settledText, successorText, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
-import { answerAskedFromPane, callAsk, settle } from '../question.ts'
+import { answerAskedFromPane, askTurnStarted, callAsk, settle } from '../question.ts'
 import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
 import { parseConsentRecord } from '../../core/consent-record.ts'
 import { DECLARATIONS } from '../wait.ts'
@@ -1312,6 +1312,7 @@ async function askedRemotely(fields: Record<string, string> = ASKED_FIELDS) {
   const sender = fake({ remote: true })
   sender.dollar.ui.log = () => undefined
   const coordinator = coordinatorMachine()
+  askTurnStarted()
   const asked = await callAsk(sender.dollar, { tool: 'mcp__orchestrator__ask', ...fields })
   const id = /Asked as (q-\S+?):/.exec(asked.result)![1]!
   // The coordinator's address, taught by a message of its own: the only one its replies and acks come from.
@@ -1508,7 +1509,8 @@ test('a push sent after the timer was armed is sent again 30 s on: the tick that
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(pushes(sender)).text))
   await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', only(qAcks(coordinator, 'asked')).text))
   expect(objectAt(sender, id).replica.state).toBe('acked')
-  // A second question, pushed while the first push's timer is still armed: no timer of its own.
+  // A second question, of a later turn, pushed while the first push's timer is still armed: no timer of its own.
+  askTurnStarted()
   const asked = await callAsk(sender.dollar, { tool: 'mcp__orchestrator__ask', ...ASKED_FIELDS, subject: 'release order', blocks: 'acme/app#3' })
   const second = /Asked as (q-\S+?):/.exec(asked.result)![1]!
   expect(sender.later.filter(t => t.ms > 30_000).length).toBe(1)
