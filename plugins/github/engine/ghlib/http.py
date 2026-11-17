@@ -115,7 +115,7 @@ def _reset_message(headers):
     """Why a spent primary quota will not be asked again: when it resets, in Paris and UTC."""
     try:
         stamp = datetime.fromtimestamp(int(headers.get("x-ratelimit-reset")), timezone.utc)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError, OSError):
         return "reset time unknown"
     text = stamp.strftime("%H:%M UTC")
     try:
@@ -139,7 +139,7 @@ def _request(method, url, body, headers):
             raise errors.RateLimited("%s: the quota %s" % (message, _reset_message(received)))
         if attempt < _MAX_RETRIES - 1:
             try:
-                wait = min(int(received.get("retry-after")), _MAX_WAIT)
+                wait = max(0, min(int(received.get("retry-after")), _MAX_WAIT))
             except (TypeError, ValueError):
                 wait = 2 ** attempt
             time.sleep(wait)

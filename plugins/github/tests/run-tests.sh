@@ -237,7 +237,8 @@ check "transport survives non-JSON response" "ok" "$result"
 # A refusal of the rate limit: a spent primary quota fails at once with its reset time, a
 # secondary limit waits Retry-After, a request that is no rate limit is asked once.
 cat > "$WORK/ratelimit_case.py" <<'EOF'
-import io, sys, urllib.error
+import email.message, io, sys, urllib.error
+from zoneinfo import ZoneInfo
 from unittest.mock import patch
 sys.path.insert(0, sys.argv[1])
 from ghlib import errors, http
@@ -247,7 +248,10 @@ RESET = "1798974300"  # 2027-01-03 11:05:00 UTC, 12:05 in Paris
 
 def refusal(code, message, **headers):
     body = ('{"message": "%s"}' % message).encode()
-    return urllib.error.HTTPError("http://x", code, "x", headers, io.BytesIO(body))
+    received = email.message.Message()  # what a real response carries: names are case-insensitive
+    for name, value in headers.items():
+        received[name] = value
+    return urllib.error.HTTPError("http://x", code, "x", received, io.BytesIO(body))
 
 
 class Ok(io.BytesIO):
@@ -279,14 +283,27 @@ def run(answers, api="rest"):
     return result, len(calls), sleeps
 
 
-spent = {"x-ratelimit-remaining": "0", "x-ratelimit-reset": RESET}
+spent = {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": RESET}
 case = sys.argv[2]
 if case == "spent":
     result, calls, sleeps = run([refusal(403, "API rate limit exceeded", **spent), Ok(b"{}")])
-    print(result[0], calls, sleeps, "12:05 Paris" in result[1] and "11:05 UTC" in result[1])
+    try:
+        ZoneInfo("Europe/Paris")
+        paris = "12:05 Paris" in result[1]
+    except KeyError:  # a machine with no tz database reports the UTC time alone
+        paris = True
+    print(result[0], calls, sleeps, paris and "11:05 UTC" in result[1])
 elif case == "spent-no-reset":
     result, calls, sleeps = run([refusal(429, "slow down", **{"x-ratelimit-remaining": "0"}), Ok(b"{}")])
     print(result[0], calls, sleeps, "unknown" in result[1])
+elif case == "spent-bad-reset":
+    for reset in ("abc", "99999999999999999999"):
+        headers = {"x-ratelimit-remaining": "0", "x-ratelimit-reset": reset}
+        result, calls, sleeps = run([refusal(403, "API rate limit exceeded", **headers), Ok(b"{}")])
+        print(result[0], calls, sleeps, "unknown" in result[1])
+elif case == "retry-after-odd":
+    for value in ("-5", "Wed, 21 Oct 2026 07:28:00 GMT"):
+        print(run([refusal(429, "wait", **{"retry-after": value}), Ok(b'{"ok": 1}')])[2])
 elif case == "spent-graphql":
     result, calls, sleeps = run([refusal(403, "API rate limit exceeded", **spent), Ok(b"{}")], "graphql")
     print(result[0], calls, sleeps)
@@ -306,6 +323,8 @@ EOF
 rl() { python3 "$WORK/ratelimit_case.py" "$GHDIR" "$1" 2>&1; }
 check "a spent primary quota fails at once, reset in Paris and UTC, no retry" "5 1 [] True" "$(rl spent)"
 check "a spent primary quota with no reset header still fails at once" "5 1 [] True" "$(rl spent-no-reset)"
+check "an unreadable reset header still fails at once" "$(printf '5 1 [] True\n5 1 [] True')" "$(rl spent-bad-reset)"
+check "a negative or non-numeric Retry-After never breaks the wait" "$(printf '[0]\n[1]')" "$(rl retry-after-odd)"
 check "graphql fails at once on a spent primary quota too" "5 1 []" "$(rl spent-graphql)"
 check "a secondary limit waits Retry-After, then asks again" "{'ok': 1} 2 [7]" "$(rl secondary)"
 check "a Retry-After beyond a minute waits a minute" "{'ok': 1} 2 [60]" "$(rl secondary-capped)"
