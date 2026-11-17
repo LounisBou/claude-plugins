@@ -79,6 +79,20 @@ export const EVENT_SCHEMA = {
       field('turn_cost_usd', 'number', 'This turn\'s own cost: `cost_usd` less the previous turn\'s (the first turn: its whole value). Sum this one across events.', 'usd'),
     ],
   },
+  api_call: {
+    summary: 'One API call of the session\'s own loop, as its transcript records it: the facts whole and raw, nothing derived (turns, idle gaps and cold rewrites are computed from them, in the report).',
+    writers: ['the writer, from the transcript, when it appends a session\'s own-loop `turn_end`: the calls of the turn that ended', '`telemetry.ts backfill --calls <transcript>`: every call of a past transcript'],
+    fields: [
+      field('prompt', 'string', 'The host\'s `promptId`: the calls under one are one turn.'),
+      field('message', 'string', 'The API message id of the response: a call is recorded once however often it is read.'),
+      field('request', 'string', 'The API request id, when the transcript holds it.'),
+      field('model', 'string', 'The model that answered.'),
+      field('stop_reason', 'string', 'Why the model stopped (`end_turn`, `tool_use`, …).'),
+      field('end', 'string', 'When the call\'s last entry was written; `ts` is its first\'s.', 'ISO 8601 UTC'),
+      field('usage', 'object', 'The `usage` object of the response exactly as the host wrote it, every field it holds: token counts, `cache_creation` by TTL, `iterations`, service tier, speed, … Fields the host adds later are kept.'),
+      field('tools', 'string[]', 'The names of the tools the call used, in order; no input and no output.'),
+    ],
+  },
   tool_call: {
     summary: 'A tool call, its outcome and who refused it.',
     writers: ['hooks `tool.call` around `next`, and `tool.check` when the decision is not `allow`', 'hook `turn.complete`, for the plugin and MCP calls a plugin answered in place of `next` (the `tool.call` hook beneath never runs): read back from the transcript once answered, with no `duration_ms` and no `check`, and the turn\'s end as `ts`'],

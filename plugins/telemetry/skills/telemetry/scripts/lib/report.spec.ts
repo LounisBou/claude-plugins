@@ -665,3 +665,67 @@ test('the three lines come after the nine figures, and the scripts run in the re
     assert.ok(out.findIndex(l => l.startsWith('9 main green')) < out.indexOf(lineOf(out, 'prompt budgets')))
   })
 })
+
+const MIN = 60_000
+const usageOf = (cache_read_input_tokens: number, cache_creation_input_tokens: number): Record<string, unknown> => ({ input_tokens: 2, output_tokens: 9, cache_read_input_tokens, cache_creation_input_tokens })
+/** An api_call at `ts`, ending a second later. */
+const apiCall = (session: string, ts: string, prompt: string, message: string, usage: Record<string, unknown>, extra: Record<string, unknown> = {}): Record<string, unknown> =>
+  ev(ts, 'api_call', session, { prompt, message, end: new Date(Date.parse(ts) + 1000).toISOString(), usage, ...extra })
+
+test('cold rewrites: computed from the calls\' times, per role, by the idle gap\'s bucket; a session\'s first call, a warm one and a small write are not cold', () => {
+  // Each turn is one call lasting a second; the gaps run from a call's end to the next one's start.
+  const gaps = [20, 54, 55, 65, 66, 120]
+  const writes = [300, 41_000, 42_000, 43_000, 44_000, 5_000]
+  let start = Date.parse('2026-11-09T09:00:00Z')
+  const events: Record<string, unknown>[] = [apiCall(S(1), new Date(start).toISOString(), 'p0', 'm0', usageOf(0, 40_000), { role: 'orchestrator' })]
+  gaps.forEach((gap, i) => {
+    start += 1000 + gap * MIN
+    events.push(apiCall(S(1), new Date(start).toISOString(), `p${i + 1}`, `m${i + 1}`, usageOf(i === 0 ? 40_000 : 0, writes[i] ?? 0)))
+  })
+  events.push(apiCall(S(2), '2026-11-10T09:00:00.000Z', 'q1', 'n1', usageOf(0, 20_000), { role: 'agent' }), apiCall(S(2), '2026-11-10T10:30:00.000Z', 'q2', 'n2', usageOf(0, 20_000)))
+  // Before the week: not counted.
+  events.push(apiCall(S(3), '2026-11-02T09:00:00.000Z', 'r1', 'k1', usageOf(0, 99_000), { role: 'agent' }), apiCall(S(3), '2026-11-02T11:00:00.000Z', 'r2', 'k2', usageOf(0, 99_000)))
+  scratch({ events }, config => {
+    const line = find(lines(config), 'cold rewrites: ').split(' — ')[0]
+    assert.equal(line, 'cold rewrites: agent 1 of 1 (20k written; <55 min 0 (0k), 55-65 min 0 (0k), >65 min 1 (20k)); orchestrator 4 of 6 (170k written; <55 min 1 (41k), 55-65 min 2 (85k), >65 min 1 (44k))')
+  })
+})
+
+test('cold rewrites: a call read by the live writer and again by a backfill is one; several calls under one prompt are one turn; n/a when no turn follows another', () => {
+  const live = apiCall(S(1), '2026-11-09T09:00:00.000Z', 'p1', 'm1', usageOf(0, 30_000), { role: 'agent' })
+  const second = apiCall(S(1), '2026-11-09T11:00:00.000Z', 'p2', 'm2', usageOf(0, 30_000))
+  const within = apiCall(S(1), '2026-11-09T11:00:30.000Z', 'p2', 'm3', usageOf(0, 30_000))
+  scratch({ events: [live, live, second, second, within] }, config => {
+    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: agent 1 of 1 \(30k written; <55 min 0 \(0k\), 55-65 min 0 \(0k\), >65 min 1 \(30k\)\)/)
+  })
+  scratch({ events: [live] }, config => {
+    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: n\/a — /)
+  })
+})
+
+test('cold rewrites: the write floor is inclusive, a write not above the read is warm, a session with no role is other, a first call after the week is not counted', () => {
+  const events = [
+    apiCall(S(1), '2026-11-09T09:00:00.000Z', 'p0', 'm0', usageOf(0, 1)),
+    // Exactly the floor, more than it read: cold.
+    apiCall(S(1), '2026-11-09T11:00:00.000Z', 'p1', 'm1', usageOf(9_999, 10_000)),
+    // One token under the floor: not cold.
+    apiCall(S(1), '2026-11-09T13:00:00.000Z', 'p2', 'm2', usageOf(0, 9_999)),
+    // Above the floor but not above what it read: warm.
+    apiCall(S(1), '2026-11-09T15:00:00.000Z', 'p3', 'm3', usageOf(50_000, 50_000)),
+    // After the week's end: not counted.
+    apiCall(S(1), '2026-11-20T09:00:00.000Z', 'p4', 'm4', usageOf(0, 90_000)),
+  ]
+  scratch({ events }, config => {
+    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: other 1 of 3 \(10k written; <55 min 0 \(0k\), 55-65 min 0 \(0k\), >65 min 1 \(10k\)\)/)
+  })
+})
+
+test('api_call events enter no cost, context or token figure of the report', () => {
+  const events = [
+    ev('2026-11-09T09:00:00Z', 'turn_end', S(1), { cost_usd: 5, turn_cost_usd: 5, context_tokens: 300_000 }),
+    apiCall(S(1), '2026-11-09T09:30:00.000Z', 'p1', 'm1', usageOf(0, 30_000)),
+  ]
+  scratch({ events }, config => {
+    assert.match(find(lines(config), '3 context height'), /^3 context height: 1 of 1 turns above 200k/)
+  })
+})

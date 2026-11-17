@@ -322,3 +322,54 @@ test('report: the checkout\'s figures reach the report through the dependency, r
     assert.ok(deps.outs.includes('rules held by prose alone: 0 of 1 (held by code 1, named by an eval 0)'))
   })
 })
+
+/** A transcript of two turns: a cold start, then a turn 70 minutes later with two calls. */
+const CALL_LINES = [
+  { type: 'user', timestamp: '2026-11-17T10:00:00.000Z', promptId: 'p1', message: { content: 'never kept' } },
+  { type: 'assistant', timestamp: '2026-11-17T10:00:02.000Z', requestId: 'req_1', message: { id: 'm1', model: 'claude-opus-5-5', content: [], stop_reason: 'end_turn', usage: { input_tokens: 2, output_tokens: 9, cache_read_input_tokens: 0, cache_creation_input_tokens: 30000 } } },
+  { type: 'user', timestamp: '2026-11-17T11:10:00.000Z', promptId: 'p2', message: { content: 'never kept' } },
+  { type: 'assistant', timestamp: '2026-11-17T11:10:02.000Z', message: { id: 'm2', model: 'claude-opus-5-5', content: [{ type: 'tool_use', name: 'Bash', input: { command: 'never kept' } }], stop_reason: 'tool_use', usage: { input_tokens: 3, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 31000, new_field: 7 } } },
+  { type: 'assistant', timestamp: '2026-11-17T11:10:09.000Z', message: { id: 'm3', model: 'claude-opus-5-5', content: [], stop_reason: 'end_turn', usage: { input_tokens: 3, output_tokens: 5, cache_read_input_tokens: 31000, cache_creation_input_tokens: 200 } } },
+].map(l => JSON.stringify(l)).join('\n')
+const turnEndLine = (extra: Record<string, unknown> = {}): string => JSON.stringify({ v: 1, ts: '2026-11-17T11:10:10.000Z', event: 'turn_end', session: S, turn: 'host-turn', title: 'Agent: x', role: 'agent', ...extra })
+
+test('append: a turn_end of the session\'s own loop is followed by the api_call lines of its turn, raw; a subagent\'s, one the transcript does not hold, one with no turn are as they came', () => {
+  harness((config, deps, setStdin) => {
+    mkdirSync(join(config, 'projects', '-w'), { recursive: true })
+    writeFileSync(join(config, 'projects', '-w', `${S}.jsonl`), `${CALL_LINES}\n`)
+    const child = turnEndLine({ agent: 'a1' })
+    const early = turnEndLine({ ts: '2026-11-17T10:30:00.000Z' })
+    const noCall = turnEndLine({ ts: '2026-11-17T11:10:40.000Z', duration_ms: 5_000 })
+    for (const line of [child, early, noCall]) assert.equal(enrich(line, config), line)
+    const ghost = turnEndLine({ session: '00000000-0000-0000-0000-000000000000' })
+    assert.equal(enrich(ghost, config), ghost)
+    const broken = '11111111-1111-1111-1111-111111111111'
+    mkdirSync(join(config, 'projects', '-w', `${broken}.jsonl`), { recursive: true })
+    const unreadable = turnEndLine({ session: broken })
+    assert.equal(enrich(unreadable, config), unreadable)
+    setStdin(`${turnEndLine({ duration_ms: 20_000 })}\n`)
+    assert.equal(run(['append', '--config', config], deps), 0)
+    const lines = readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    assert.deepEqual(lines.map(l => l['event']), ['turn_end', 'api_call', 'api_call'])
+    const [, first, second] = lines
+    assert.deepEqual([first?.['ts'], first?.['end'], first?.['message'], first?.['prompt'], first?.['stop_reason'], first?.['tools'], first?.['title'], first?.['role']], ['2026-11-17T11:10:02.000Z', '2026-11-17T11:10:02.000Z', 'm2', 'p2', 'tool_use', ['Bash'], 'Agent: x', 'agent'])
+    assert.deepEqual(first?.['usage'], { input_tokens: 3, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 31000, new_field: 7 })
+    assert.equal(second?.['message'], 'm3')
+    assert.ok(!JSON.stringify(lines).includes('never kept'))
+  })
+})
+
+test('backfill --calls: one api_call per call of the transcript beside the summary, none without the flag', () => {
+  harness((config, deps) => {
+    const path = join(config, `${S}.jsonl`)
+    mkdirSync(config, { recursive: true })
+    writeFileSync(path, `${CALL_LINES}\n`)
+    assert.equal(run(['backfill', '--config', config, path], deps), 0)
+    assert.deepEqual(deps.outs, ['backfill: 1 session(s) summarized'])
+    assert.equal(run(['backfill', '--calls', '--config', config, path, '/x/notes.jsonl'], deps), 0)
+    assert.equal(deps.outs.at(-1), 'backfill: 1 session(s) summarized, 3 API call(s) read back')
+    const events = readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    assert.deepEqual(events.filter(e => e['event'] === 'api_call').map(e => [e['message'], e['request']]), [['m1', 'req_1'], ['m2', undefined], ['m3', undefined]])
+    assert.equal(events.filter(e => e['event'] === 'session_summary').length, 2)
+  })
+})
