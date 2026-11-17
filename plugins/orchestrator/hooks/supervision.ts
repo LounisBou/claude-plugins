@@ -3595,15 +3595,18 @@ async function openOperatorKeys($: Host<'env' | 'fs' | 'plugin' | 'process'>): P
   return keys
 }
 
-// The store key of each session row, by its tty.
+// The store key of the session row of each tty. A tty two rows name (a row left by an earlier session on
+// that pane) is no key: which one is live is not known here, so its window is left as it is.
 async function sessionKeysByTty($: Host<'env' | 'fs' | 'plugin' | 'process'>): Promise<Map<string, string>> {
-  const keys = new Map<string, string>()
+  const claims = new Map<string, string[]>()
   const dir = `${await storeOf($)}/sessions`
   for (const file of await $.fs.list(dir).catch(() => [])) {
     if (file.kind !== 'file') continue
     const row = parseSessionRow(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
-    if (row?.tty) keys.set(row.tty, `sessions/${file.name}`)
+    if (row?.tty) claims.set(row.tty, [...claims.get(row.tty) ?? [], `sessions/${file.name}`])
   }
+  const keys = new Map<string, string>()
+  for (const [tty, named] of claims) if (named.length === 1) keys.set(tty, named[0]!)
   return keys
 }
 

@@ -1093,6 +1093,8 @@ test('an idle agent window showing ✋ is set at rest once its question is close
   const idle = 'tmux -S /tmp/home.sock set-option -w -t %9 @state idle'
   expect(await stopAsking({ 's-idle': AGENT_ROW }, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'answered') }, '/dev/ttys003 %9 asks\n')).toEqual([idle])
   expect(await stopAsking({ 's-idle': AGENT_ROW }, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'open') }, '/dev/ttys003 %9 asks\n')).toEqual([])
+  // Two rows naming one tty: which is live is not known, so the window is left as it is.
+  expect(await stopAsking({ 's-idle': AGENT_ROW, 's-old': AGENT_ROW }, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'answered') }, '/dev/ttys003 %9 asks\n')).toEqual([])
   // A window with no session row on its tty is not judged: its ✋ stays, as said in the log.
   expect(await stopAsking({}, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'answered') }, '/dev/ttys003 %9 asks\n')).toEqual([])
 })
