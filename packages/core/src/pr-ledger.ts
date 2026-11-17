@@ -64,7 +64,7 @@ export interface WaitsOnOperator {
 }
 
 /**
- * An open pull request no agent holds, and since when: its line's last setting, else its opening (a wait on the operator: since the wait began). With
+ * An open pull request of the orchestration's own lines no agent holds, and since when: its line's last setting (a wait on the operator: since the wait began). With
  * `waits` it rests on the operator's gesture; without, it is in anomaly (Not Ready, no agent, no wait, or in conflict: `conflict`).
  */
 export interface Unattended {
@@ -213,10 +213,10 @@ export function isFreshWait(line: LedgerLine, now: number): boolean {
 }
 
 /**
- * The open pull requests no agent holds: no live agent on it and no wait set again within
- * UNATTENDED_AFTER_MS, and not parked by the operator. One in no record is listed outright; one
- * another orchestration records (`claimed`, by prKey) is that orchestration's to attend. Each is
- * told apart: one that rests on the operator (carrying `Ready` or `On Hold`, or whose line waits on
+ * The open pull requests of the orchestration's own lines that no agent holds: no live agent on it
+ * and no wait set again within UNATTENDED_AFTER_MS, and not parked by the operator. An open pull
+ * request no line holds is nobody's and is left out: it is drawn under no orchestrator. Each is told
+ * apart: one that rests on the operator (carrying `Ready` or `On Hold`, or whose line waits on
  * him, even freshly) comes with `waits`; the rest, Not Ready with no agent and no recorded wait, are in anomaly.
  * One the forge reads `CONFLICTING` (`UNKNOWN`, computed late, counts nothing) is in anomaly whatever it waits on: `conflict`.
  */
@@ -225,27 +225,24 @@ export function unattended(input: {
   readonly lines: readonly LedgerLine[]
   readonly live: ReadonlySet<string>
   readonly now: number
-  readonly claimed?: ReadonlySet<string>
 }): Unattended[] {
   const byKey = new Map(input.lines.map(line => [prKey(line.repo, line.pr), line]))
   const left: Unattended[] = []
   for (const open of input.open) {
     const key = prKey(open.repo, open.pr)
     const line = byKey.get(key)
-    if (line === undefined && input.claimed?.has(key)) continue
-    if (line?.status === 'parked') continue
-    const onHim = line?.status === 'waiting' && waitsOnOperator(line.on)
-    if (line !== undefined && !onHim) {
+    if (line === undefined || line.status === 'parked') continue
+    const onHim = line.status === 'waiting' && waitsOnOperator(line.on)
+    if (!onHim) {
       if (line.status === 'working' && input.live.has(line.agent ?? '')) continue
       if (isFreshWait(line, input.now)) continue
     }
-    const since = line === undefined ? open.createdAt : line.updated
     const conflict = open.mergeable === 'CONFLICTING'
-    const why: WaitsOnOperator | undefined = conflict ? undefined : onHim ? { why: 'record', ...(line?.on === undefined ? {} : { on: line.on }) }
+    const why: WaitsOnOperator | undefined = conflict ? undefined : onHim ? { why: 'record', ...(line.on === undefined ? {} : { on: line.on }) }
       : hasLabel(open, HOLD_LABEL) ? { why: 'hold' }
         : hasLabel(open, READY_LABEL) ? { why: 'ready' }
           : undefined
-    left.push({ repo: open.repo, pr: open.pr, since: onHim && line !== undefined ? line.since : since, ...(why === undefined ? {} : { waits: why }), ...(conflict ? { conflict } : {}) })
+    left.push({ repo: open.repo, pr: open.pr, since: onHim ? line.since : line.updated, ...(why === undefined ? {} : { waits: why }), ...(conflict ? { conflict } : {}) })
   }
   return left
 }
@@ -260,11 +257,16 @@ export interface UnattendedPart {
   readonly text: string
 }
 
-function waitsText(u: Unattended, at: (iso: string | null) => string): string {
-  const name = prKey(u.repo, u.pr)
-  if (u.waits?.why === 'ready') return `${name} (Ready)`
-  if (u.waits?.why === 'hold') return `${name} (en pause)`
-  return `${name} (attend ${(u.waits?.on ?? '?').replace(/\s+/g, ' ').trim()} depuis ${at(u.since)})`
+/** What a pull request that rests on the operator waits for, short: `Ready`, `en pause`, `attend <on> depuis <t>`. */
+function waitsState(u: Unattended, at: (iso: string | null) => string): string {
+  if (u.waits?.why === 'ready') return 'Ready'
+  if (u.waits?.why === 'hold') return 'en pause'
+  return `attend ${(u.waits?.on ?? '?').replace(/\s+/g, ' ').trim()} depuis ${at(u.since)}`
+}
+
+/** What is wrong with a pull request in anomaly, short: `en conflit`, `sans agent depuis <t>`. */
+function anomalyState(u: Unattended, at: (iso: string | null) => string): string {
+  return u.conflict ? 'en conflit' : `sans agent depuis ${at(u.since)}`
 }
 
 /**
@@ -277,11 +279,38 @@ export function unattendedParts(list: readonly Unattended[], unread: readonly st
   const waits = list.filter(u => u.waits !== undefined)
   const anomalies = list.filter(u => u.waits === undefined)
   const alarm: string[] = []
-  if (anomalies.length > 0) alarm.push(anomalies.map(u => `${prKey(u.repo, u.pr)} (${u.conflict ? 'en conflit' : `sans agent depuis ${at(u.since)}`})`).join(', '))
+  if (anomalies.length > 0) alarm.push(anomalies.map(u => `${prKey(u.repo, u.pr)} (${anomalyState(u, at)})`).join(', '))
   if (unread.length > 0) alarm.push(`inconnues pour ${unread.join(', ')} (forge illisible)`)
   return [
-    ...(waits.length === 0 ? [] : [{ anomaly: false, text: `${WAITS_HEAD} : ${waits.map(u => waitsText(u, at)).join(', ')}` }]),
+    ...(waits.length === 0 ? [] : [{ anomaly: false, text: `${WAITS_HEAD} : ${waits.map(u => `${prKey(u.repo, u.pr)} (${waitsState(u, at)})`).join(', ')}` }]),
     ...(alarm.length === 0 ? [] : [{ anomaly: true, text: `${ANOMALY_HEAD} : ${alarm.join(' ; ')}` }]),
+  ]
+}
+
+/** A line of the reading as the pane draws it: its head, or one pull request under it, indented. `anomaly` alarms. */
+export interface UnattendedPaneLine {
+  readonly anomaly: boolean
+  readonly text: string
+}
+
+/**
+ * The reading as the pane draws it, one pull request to a line: the head « Attend ton geste : » on its own
+ * line, then `  <repo>#<n>  <state>` for each pull request that rests on the operator (`Ready`, `en pause`,
+ * `attend <on> depuis <t>`); « En anomalie : » and its own lines (`sans agent depuis <t>`, `en conflit`),
+ * then the repositories the forge did not list, said unknown. None for what is empty. The caller cuts a
+ * line to its room: a long `on` never wraps over several lines.
+ */
+export function unattendedPaneLines(list: readonly Unattended[], unread: readonly string[], at: (iso: string | null) => string = minuteOf): UnattendedPaneLine[] {
+  const waits = list.filter(u => u.waits !== undefined)
+  const anomalies = list.filter(u => u.waits === undefined)
+  const item = (anomaly: boolean, text: string): UnattendedPaneLine => ({ anomaly, text: `  ${text}` })
+  return [
+    ...(waits.length === 0 ? [] : [{ anomaly: false, text: `${WAITS_HEAD} :` }, ...waits.map(u => item(false, `${prKey(u.repo, u.pr)}  ${waitsState(u, at)}`))]),
+    ...(anomalies.length + unread.length === 0 ? [] : [
+      { anomaly: true, text: `${ANOMALY_HEAD} :` },
+      ...anomalies.map(u => item(true, `${prKey(u.repo, u.pr)}  ${anomalyState(u, at)}`)),
+      ...(unread.length === 0 ? [] : [item(true, `inconnues pour ${unread.join(', ')} (forge illisible)`)]),
+    ]),
   ]
 }
 

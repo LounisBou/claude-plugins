@@ -208,9 +208,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   const lines: string[] = []
   // What is told now: the anomalies and the ended pull requests, the latter keyed apart so an
   // archive that failed is not told again at every tick; what is no longer either is dropped.
-  // Only the orchestration's own: a pull request no record names is said at its turn end, never woken on.
-  const own = new Set(reading.kept.map(line => prKey(line.repo, line.pr)))
-  const anomalies = reading.list.filter(u => u.waits === undefined && own.has(prKey(u.repo, u.pr)))
+  // The reading holds only the orchestration's own pull requests: one no record names is nobody's.
+  const anomalies = reading.list.filter(u => u.waits === undefined)
   const current = new Set([...anomalies.map(u => prKey(u.repo, u.pr)), ...reading.ended.map(e => `${prKey(e.line.repo, e.line.pr)} ended`)])
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))

@@ -1,7 +1,7 @@
 // hooks/tests/unattended.test.ts
 // The pull requests nobody attends, over a faked $: the machine file's open pull requests against the
-// session's ledger, the agents the launcher lists running, the other orchestrators' claims; the lines
-// of the pull requests merged or closed read apart; the line the turn end leaves for the next
+// session's own ledger lines (a pull request no line of its record names is nobody's), the agents the
+// launcher lists running; the lines of the pull requests merged or closed read apart; the line the turn end leaves for the next
 // prompt's context and the session's row; and the one refusal of a done or a deferred wait.
 import { expect, test } from 'claude-code/testing'
 import { readUnattended, register as registerUnattended, unattendedRefusal } from '../unattended.ts'
@@ -26,7 +26,11 @@ const line = (pr: number, status: string, detail: Record<string, string>, update
 const row = (role: string, name: string, repo: string | null = 'acme/app', extra: Record<string, unknown> = {}) =>
   JSON.stringify({ role, name, repo, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString(), ...extra })
 
-type Answers = { forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null | undefined }
+// `extra`: lines of the session's own record beside the ones it has (pull requests 7, 8, 5, 6 and 9).
+type Answers = { forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null | undefined; extra?: string[] }
+
+// Pull request 11, an agent that does not run on it, last set well before.
+const ELEVEN = line(11, 'working', { agent: 'Agent: eleven' }, '2026-11-11T08:00:00Z')
 
 function world(answers: Answers = {}) {
   const files = new Map<string, string>([
@@ -39,6 +43,8 @@ function world(answers: Answers = {}) {
       line(8, 'waiting', { on: 'la CI' }, '2026-11-14T10:00:00Z'),
       line(5, 'working', { agent: 'Agent: five' }),
       line(6, 'parked', { ruling: 'plus tard, 2026-11-14' }),
+      line(9, 'working', { agent: 'Agent: nine' }),
+      ...(answers.extra ?? []),
     ].join('\n') + '\n'],
     [`${MODULE}/store/sessions/s-other`, row('orchestrator', 'Orch: web')],
     [`${MODULE}/records/s-other`, `${OTHER_RECORD}\n`],
@@ -87,12 +93,12 @@ function world(answers: Answers = {}) {
   return { dollar, files, logs, runs }
 }
 
-test('an open pull request with no live agent, a stale wait or no line is unattended; a parked one, one another orchestrator records, or one whose agent runs is not', async () => {
+test('an open pull request of the record with no live agent or a stale wait is unattended; a parked one, one whose agent runs, or one no line of the record names is not', async () => {
   const { dollar } = world()
   const reading = await readUnattended(dollar, 's-orch', NOW)
   expect(reading?.list.map(u => u.pr)).toEqual([8, 9])
   expect(reading?.unread).toEqual([])
-  expect(reading?.line).toBe('En anomalie : acme/app#8 (sans agent depuis 2026-11-14T10:00Z), acme/app#9 (sans agent depuis 2026-11-19T08:00Z)')
+  expect(reading?.line).toBe('En anomalie : acme/app#8 (sans agent depuis 2026-11-14T10:00Z), acme/app#9 (sans agent depuis 2026-11-14T10:50Z)')
 })
 
 // The forge's list of the world's pull requests, each with the labels given (Not Ready unless said).
@@ -100,7 +106,7 @@ const labelled = (labels: Record<number, string[]>, numbers: number[] = [7, 8, 6
   ({ 'acme/app': JSON.stringify(numbers.map(n => ({ number: n, createdAt: `2026-11-1${n % 10}T08:00:00Z`, labels: (labels[n] ?? ['Not Ready']).map(name => ({ name })) }))) })
 
 test('a pull request no agent holds is told apart: Ready and On Hold wait on the operator, only Not Ready with no agent and no wait is in anomaly', async () => {
-  const { dollar } = world({ forge: labelled({ 8: ['On Hold'], 9: ['Ready'], 11: ['Not Ready'] }, [7, 8, 6, 9, 10, 11]) })
+  const { dollar } = world({ forge: labelled({ 8: ['On Hold'], 9: ['Ready'], 11: ['Not Ready'] }, [7, 8, 6, 9, 10, 11]), extra: [ELEVEN] })
   const reading = await readUnattended(dollar, 's-orch', NOW)
   expect(reading?.list.map(u => [u.pr, u.waits?.why])).toEqual([[8, 'hold'], [9, 'ready'], [11, undefined]])
   expect(reading?.line).toBe([
@@ -111,7 +117,7 @@ test('a pull request no agent holds is told apart: Ready and On Hold wait on the
 
 test('a pull request the forge reads in conflict is in anomaly « en conflit », Ready or not; mergeable and unknown are left as they were', async () => {
   const listed = (state: Record<number, string>) => ({ 'acme/app': JSON.stringify([8, 9, 11].map(n => ({ number: n, createdAt: '2026-11-11T08:00:00Z', labels: [{ name: 'Ready' }], mergeable: state[n] }))) })
-  const { dollar } = world({ forge: listed({ 8: 'CONFLICTING', 9: 'MERGEABLE', 11: 'UNKNOWN' }) })
+  const { dollar } = world({ forge: listed({ 8: 'CONFLICTING', 9: 'MERGEABLE', 11: 'UNKNOWN' }), extra: [ELEVEN] })
   const reading = await readUnattended(dollar, 's-orch', NOW)
   expect(reading?.line).toBe([
     'Attend ton geste : acme/app#9 (Ready), acme/app#11 (Ready)',
@@ -139,7 +145,7 @@ test('the turn end says both lines, publishes the kind of each pull request, and
   waitsOnly.files.set(RECORD, (waitsOnly.files.get(RECORD) ?? '').replace('"state":"open"', '"state":"closed"'))
   expect((await declare(waitsOnly.dollar, { kind: 'done' })).isError).toBe(undefined)
   // The same with one pull request in anomaly: the refusal names it alone.
-  const withAnomaly = world({ forge: labelled({ 8: ['On Hold'], 9: ['Ready'] }, [7, 8, 6, 9, 10, 11]) })
+  const withAnomaly = world({ forge: labelled({ 8: ['On Hold'], 9: ['Ready'] }, [7, 8, 6, 9, 10, 11]), extra: [ELEVEN] })
   withAnomaly.files.set(RECORD, (withAnomaly.files.get(RECORD) ?? '').replace('"state":"open"', '"state":"closed"'))
   const refused = await declare(withAnomaly.dollar, { kind: 'done' })
   expect(refused.isError).toBe(true)
@@ -148,28 +154,21 @@ test('the turn end says both lines, publishes the kind of each pull request, and
   expect(refused.result).not.toContain('acme/app#9')
 })
 
-test('another orchestrator\'s line claims a pull request only while that claim is alive: its session is live, or its line a wait set again within 30 minutes', async () => {
-  // Its row, no pid, last measured over an hour before: a session gone (the store's own rule).
-  const gone = row('orchestrator', 'Orch: web', 'acme/app', { updated_at: '2026-11-14T08:00:00Z' })
-  const fresh = line(10, 'waiting', { on: 'la CI' }, '2026-11-14T10:45:00Z')
-  const stale = line(10, 'waiting', { on: 'la CI' }, '2026-11-14T10:29:59Z')
-  const unattendedWith = async (otherRow: string, otherLine: string, ps?: string) => {
-    const { dollar, files } = world({ ps })
-    files.set(`${MODULE}/store/sessions/s-other`, otherRow)
-    files.set(OTHER_RECORD, `${otherLine}\n`)
-    return (await readUnattended(dollar, 's-orch', NOW))?.list.map(u => u.pr)
-  }
-  // The live session claims whatever its line says; the record of a dead one claims only a fresh wait.
-  expect(await unattendedWith(row('orchestrator', 'Orch: web'), line(10, 'working', { agent: 'Agent: ten' }))).toEqual([8, 9])
-  expect(await unattendedWith(gone, line(10, 'working', { agent: 'Agent: ten' }))).toEqual([8, 9, 10])
-  expect(await unattendedWith(gone, line(10, 'parked', { ruling: 'plus tard, 2026-11-14' }))).toEqual([8, 9, 10])
-  expect(await unattendedWith(gone, stale)).toEqual([8, 9, 10])
-  expect(await unattendedWith(gone, fresh)).toEqual([8, 9])
-  // A row naming a pid is gone with it, as the pane judges it; a process table that cannot be read knows no death.
-  const pid = row('orchestrator', 'Orch: web', 'acme/app', { pid: '4242' })
-  expect(await unattendedWith(pid, line(10, 'working', { agent: 'Agent: ten' }), '  999 Ss ttys001\n')).toEqual([8, 9, 10])
-  expect(await unattendedWith(pid, line(10, 'working', { agent: 'Agent: ten' }), ' 4242 Ss ttys001\n')).toEqual([8, 9])
-  expect(await unattendedWith(pid, line(10, 'working', { agent: 'Agent: ten' }))).toEqual([8, 9])
+test('only the pull requests its own record has a line for are its: one another orchestrator records, or none does, is nobody\'s here', async () => {
+  // 10 is recorded by a live orchestrator, 12 by none; both are open and Ready, neither is drawn.
+  const forge = labelled({ 10: ['Ready'], 12: ['Ready'] }, [7, 8, 6, 9, 10, 12])
+  const { dollar, files } = world({ forge })
+  expect((await readUnattended(dollar, 's-orch', NOW))?.list.map(u => u.pr)).toEqual([8, 9])
+  // The other orchestrator gone, its line stale: still not this one's.
+  files.set(`${MODULE}/store/sessions/s-other`, row('orchestrator', 'Orch: web', 'acme/app', { updated_at: '2026-11-14T08:00:00Z' }))
+  files.set(OTHER_RECORD, line(10, 'working', { agent: 'Agent: ten' }) + '\n')
+  expect((await readUnattended(dollar, 's-orch', NOW))?.list.map(u => u.pr)).toEqual([8, 9])
+  // A record with lines for 4 and 5, the file listing 4, 5 and 6 open: 4 and 5 only.
+  const own = world({ forge: labelled({}, [4, 5, 6]) })
+  own.files.set(RECORD, [line(4, 'working', { agent: 'Agent: four' }), line(5, 'working', { agent: 'Agent: five' })].join('\n') + '\n')
+  const reading = await readUnattended(own.dollar, 's-orch', NOW)
+  expect(reading?.list.map(u => u.pr)).toEqual([4, 5])
+  expect(reading?.line).toBe('En anomalie : acme/app#4 (sans agent depuis 2026-11-14T10:50Z), acme/app#5 (sans agent depuis 2026-11-14T10:50Z)')
 })
 
 test('only the repositories of the session\'s dispatch record are read, never its checkout\'s own', async () => {
@@ -193,7 +192,7 @@ test('the line of a pull request the file reads merged or closed has ended: read
   const { dollar, files } = world()
   const reading = await readUnattended(dollar, 's-orch', NOW)
   expect(reading?.ended.map(e => [e.line.pr, e.state, e.path])).toEqual([[5, 'MERGED', RECORD]])
-  expect(reading?.kept.map(l => l.pr)).toEqual([7, 8, 6])
+  expect(reading?.kept.map(l => l.pr)).toEqual([7, 8, 6, 9])
   expect(files.has('/briefs/app/dispatch-record.archive.jsonl')).toBe(false)
 })
 
@@ -218,7 +217,7 @@ test('a file whose last refresh failed says its repositories unknown, even after
 
 test('a launcher listing that cannot be read takes every agent a line names for running', async () => {
   const { dollar } = world({ launcher: null })
-  expect((await readUnattended(dollar, 's-orch', NOW))?.list.map(u => u.pr)).toEqual([8, 9])
+  expect((await readUnattended(dollar, 's-orch', NOW))?.list.map(u => u.pr)).toEqual([8])
   const { dollar: other } = world({ launcher: '' })
   expect((await readUnattended(other, 's-orch', NOW))?.list.map(u => u.pr)).toEqual([7, 8, 9])
 })
@@ -284,7 +283,8 @@ test('a launcher listing that cannot be read names no row ready, and a record wi
 
 test('the turn end leaves the ready rows beside the unattended pull requests for the next prompt, once', async () => {
   const { dollar, files } = world()
-  files.set(RECORD, readyRecord(READY_ROWS.slice(0, 1)))
+  // Beside the ready row, the record's line of pull request 8: its wait is stale, no agent is on it.
+  files.set(RECORD, `${readyRecord(READY_ROWS.slice(0, 1))}${line(8, 'waiting', { on: 'la CI' }, '2026-11-14T10:00:00Z')}\n`)
   const handlers = mounted()
   await handlers['turn.complete'](dollar, { reason: 'answer' })
   const first = await handlers['prompt.submit'](dollar, { text: 'go', context: ['before'] })
@@ -300,12 +300,12 @@ test('the turn end leaves the ready rows beside the unattended pull requests for
 
 test('a change of one of the two lines says that line alone at the next prompt', async () => {
   const handlers = mounted()
-  const first = world({ forge: labelled({ 9: ['Ready'] }, [7, 8, 6, 9, 10, 11]) })
+  const first = world({ forge: labelled({ 9: ['Ready'] }, [7, 8, 6, 9, 10, 11]), extra: [ELEVEN] })
   await handlers['turn.complete'](first.dollar, { reason: 'answer' })
   const said = (await handlers['prompt.submit'](first.dollar, { text: 'go' })).context
   expect(said).toEqual(['Attend ton geste : acme/app#9 (Ready)', 'En anomalie : acme/app#8 (sans agent depuis 2026-11-14T10:00Z), acme/app#11 (sans agent depuis 2026-11-11T08:00Z)'])
   // A new Ready pull request: the anomaly line, unchanged, is not told again.
-  const next = world({ forge: labelled({ 9: ['Ready'], 12: ['Ready'] }, [7, 8, 6, 9, 10, 11, 12]) })
+  const next = world({ forge: labelled({ 9: ['Ready'], 12: ['Ready'] }, [7, 8, 6, 9, 10, 11, 12]), extra: [ELEVEN, line(12, 'working', { agent: 'Agent: twelve' })] })
   await handlers['turn.complete'](next.dollar, { reason: 'answer' })
   const then = (await handlers['prompt.submit'](next.dollar, { text: 'go' })).context
   expect(then).toEqual(['Attend ton geste : acme/app#9 (Ready), acme/app#12 (Ready)'])
@@ -368,7 +368,7 @@ test('a line already said at the previous turn end is not said again, until it c
   expect(await said(dollar)).toBe(undefined)
   expect(await said(dollar)).toBe(undefined)
   // One more pull request left unattended: the line is said again, whole.
-  const { dollar: more } = world({ forge: { 'acme/app': JSON.stringify([7, 8, 6, 9, 10, 11].map(n => ({ number: n, createdAt: '2026-11-11T08:00:00Z' }))) } })
+  const { dollar: more } = world({ forge: { 'acme/app': JSON.stringify([7, 8, 6, 9, 10, 11].map(n => ({ number: n, createdAt: '2026-11-11T08:00:00Z' }))) }, extra: [ELEVEN] })
   expect((await said(more))?.[0]).toContain('acme/app#11')
   // Nothing unattended any more, then the same line back: said again, it is news.
   const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })

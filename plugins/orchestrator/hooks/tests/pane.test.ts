@@ -2571,15 +2571,20 @@ test('an origin read that timed out is read again at the next render, one that a
 const UNATTENDED = { at: SINCE, line: 'En anomalie : acme/app#8 (sans agent depuis 2026-10-19T08:05Z)', prs: [{ repo: 'acme/app', pr: 8, since: SINCE }], unread: ['acme/lib'] }
 const local = (iso: string) => { const at = new Date(iso); return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` }
 
-test('an orchestrator with pull requests nobody attends draws them under its block, in local time, the unread repositories said unknown', async () => {
+test('an orchestrator with pull requests nobody attends draws them under its block, one to a line, in local time, the unread repositories said unknown', async () => {
   const rows = paneRows({ 'sessions/u': orch('Orch: u', { unattended: UNATTENDED }), 'sessions/c': orch('Orch: c') })
-  const said = `En anomalie : acme/app#8 (sans agent depuis ${local(SINCE)}) ; inconnues pour acme/lib (forge illisible)`
+  const said = [
+    { anomaly: true, text: 'En anomalie :' },
+    { anomaly: true, text: `  acme/app#8  sans agent depuis ${local(SINCE)}` },
+    { anomaly: true, text: '  inconnues pour acme/lib (forge illisible)' },
+  ]
   expect(rows.map(r => [r.name, r.unattended])).toEqual([['Orch: u', said], ['Orch: c', null]])
   const tree = await paneTree({ u: orch('Orch: u', { unattended: UNATTENDED }) })
   const block = elAt(tree, 2)
   expect(kidsOf(block).length).toBe(2)
-  expect(text(pieces(elAt(block, 1)))).toBe(said)
-  expect(pieces(elAt(block, 1))[0]?.color).toBe('warning')
+  const lines = kidsOf(elAt(block, 1))
+  expect(lines.map(node => text(pieces(node)))).toEqual(said.map(line => line.text))
+  expect(lines.map(node => pieces(node)[0]?.color)).toEqual(['warning', 'warning', 'warning'])
   const none = await paneTree({ c: orch('Orch: c', { unattended: { at: SINCE, line: null, prs: [], unread: [] } }) })
   expect(kidsOf(elAt(none, 2)).length).toBe(1)
 })
@@ -2594,16 +2599,16 @@ const SPLIT = {
   ],
   unread: [],
 }
+const SPLIT_LINES = ['Attend ton geste :', '  acme/app#4  Ready', '  acme/app#5  en pause', 'En anomalie :', `  acme/app#8  sans agent depuis ${local(SINCE)}`]
 
-test('what waits on the operator and what is in anomaly are two lines, only the anomaly in the warning colour', async () => {
-  const said = [`Attend ton geste : acme/app#4 (Ready), acme/app#5 (en pause)`, `En anomalie : acme/app#8 (sans agent depuis ${local(SINCE)})`]
-  expect(paneRows({ 'sessions/s': orch('Orch: s', { unattended: SPLIT as never }) })[0]?.unattended).toBe(said.join('\n'))
+test('what waits on the operator and what is in anomaly are two heads each with its pull requests one to a line, only the anomaly in the warning colour', async () => {
+  expect(paneRows({ 'sessions/s': orch('Orch: s', { unattended: SPLIT as never }) })[0]?.unattended?.map(l => l.text)).toEqual(SPLIT_LINES)
   const tree = await paneTree({ s: orch('Orch: s', { unattended: SPLIT as never }) })
   const lines = kidsOf(elAt(elAt(tree, 2), 1))
-  expect(lines.map(node => text(pieces(node)))).toEqual(said)
-  expect(lines.map(node => pieces(node)[0]?.color)).toEqual([undefined, 'warning'])
+  expect(lines.map(node => text(pieces(node)))).toEqual(SPLIT_LINES)
+  expect(lines.map(node => pieces(node)[0]?.color)).toEqual([undefined, undefined, undefined, 'warning', 'warning'])
   // Only what waits on him: no line in the warning colour.
-  const waits = { ...SPLIT, line: said[0], prs: SPLIT.prs.slice(0, 2) }
+  const waits = { ...SPLIT, prs: SPLIT.prs.slice(0, 2) }
   const calm = await paneTree({ s: orch('Orch: s', { unattended: waits as never }) })
   expect(JSON.stringify(calm)).not.toContain('warning')
 })
@@ -2616,26 +2621,59 @@ test('a published row\'s unattended view is read with its kinds; a malformed kin
   expect(parseSessionRow(stored(undefined))?.unattended?.prs[0]?.waits).toBe(undefined)
 })
 
-test('an orchestrator\'s own pane draws the two lines above its agents, the anomaly alone in warning', async () => {
-  const fx = fakeDollar({ launchName: 'Orch: phase-3' })
-  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: phase-3' })) + '\n')
-  const { handlers } = mounted(registerSupervision)
-  await coordinatorRender(fx, handlers)
-  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: phase-3' }), unattended: SPLIT }) + '\n')
-  const tree = drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
-  expect([0, 1].map(i => text(pieces(elAt(tree, i))))).toEqual(['Attend ton geste : acme/app#4 (Ready), acme/app#5 (en pause)', `En anomalie : acme/app#8 (sans agent depuis ${local(SINCE)})`])
-  expect([0, 1].map(i => pieces(elAt(tree, i))[0]?.color)).toEqual([undefined, 'warning'])
-})
-
-test('an orchestrator\'s own pane draws its pull requests nobody attends above its agents', async () => {
+test('an orchestrator\'s own pane draws the heads and their pull requests one to a line above its agents, the anomaly alone in warning', async () => {
   const fx = fakeDollar({ launchName: 'Orch: phase-3' })
   fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: phase-3' })) + '\n')
   const { handlers } = mounted(registerSupervision)
   const bare = await coordinatorRender(fx, handlers)
   expect(JSON.stringify(bare)).not.toContain('En anomalie')
-  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: phase-3' }), unattended: UNATTENDED }) + '\n')
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: phase-3' }), unattended: SPLIT }) + '\n')
   const tree = drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
-  expect(pieces(elAt(tree, 0))).toEqual([{ text: `En anomalie : acme/app#8 (sans agent depuis ${local(SINCE)}) ; inconnues pour acme/lib (forge illisible)`, color: 'warning', bold: false }])
+  expect(SPLIT_LINES.map((_, i) => text(pieces(elAt(tree, i))))).toEqual(SPLIT_LINES)
+  expect(SPLIT_LINES.map((_, i) => pieces(elAt(tree, i))[0]?.color)).toEqual([undefined, undefined, undefined, 'warning', 'warning'])
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: phase-3' }), unattended: UNATTENDED }) + '\n')
+  const alone = drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
+  expect(pieces(elAt(alone, 0))).toEqual([{ text: 'En anomalie :', color: 'warning', bold: false }])
+})
+
+// The pull request a record names, its wait on the operator in words far wider than the pane.
+const LONG_ON = `le merge de l'opérateur, ${'après la relecture de toutes les pièces jointes, '.repeat(4)}puis le déploiement`
+const LONG = {
+  at: SINCE,
+  line: null,
+  prs: [{ repo: 'acme/app', pr: 4, since: SINCE, waits: { why: 'record', on: LONG_ON } }, { repo: 'acme/app', pr: 5, since: SINCE, waits: { why: 'ready' } }],
+  unread: [],
+}
+
+test('a wait of 200 characters is cut to the pane\'s width on one line, never wrapped, and the rows counted are the rows drawn', async () => {
+  expect(LONG_ON.length).toBeGreaterThan(200)
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: long', updated_at: AGO() }), unattended: LONG }) + '\n')
+  const { handlers } = mounted(registerSupervision)
+  await coordinatorRender(fx, handlers)
+  const render = async (props: object = {}) => drawnTree(await handlers['ui.render'](fx.dollar, { ...renderEvent, props }, (x: unknown) => ({ passed: x })))
+  for (const columns of [60, 200]) {
+    const lines = drawScreen(await render({ bodyColumns: columns }), columns - 2).map(line => line.replace(/^[│ ]+|[│ ]+$/g, ''))
+    const at = lines.findIndex(line => line.startsWith('acme/app#4'))
+    expect(at, lines.join('\n')).toBeGreaterThan(0)
+    // The head above it, the next pull request right under it: one line, whatever the width.
+    expect(lines[at - 1]).toBe('Attend ton geste :')
+    expect(lines[at + 1]).toBe('acme/app#5  Ready')
+    expect(lines[at]!.length).toBeLessThanOrEqual(columns - 2)
+  }
+  const narrow = (await render({ bodyColumns: 60 }))
+  const cut = text(pieces(kidsOf(elAt(elAt(narrow, 2), 1))[1]))
+  expect(cut.endsWith('…')).toBe(true)
+  expect(cut.length).toBe(58 - 2)
+  expect(await countedRows(render)).toBe(drawScreen(await render({ bodyColumns: 200 }), 198).length)
+  // The orchestrator's own pane, cut at its edge too.
+  const own = mounted(registerSupervision)
+  const ownFx = fakeDollar({ launchName: 'Orch: phase-3' })
+  ownFx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: phase-3' }), unattended: LONG }) + '\n')
+  await coordinatorRender(ownFx, own.handlers)
+  const drawn = drawnTree(await own.handlers['ui.render'](ownFx.dollar, { ...renderEvent, props: { bodyColumns: 50 } }, (x: unknown) => ({ passed: x })))
+  expect(text(pieces(elAt(drawn, 1)))).toBe(`  acme/app#4  attend ${LONG_ON}`.slice(0, 49) + '…')
+  expect(elAt(drawn, 1).props['wrap']).toBe('truncate-end')
 })
 
 // --- a consent question worded with unlettered choices draws them once ----------------------------

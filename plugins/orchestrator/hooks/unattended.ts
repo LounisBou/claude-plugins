@@ -1,18 +1,18 @@
 // hooks/unattended.ts
-// The pull requests nobody attends (core's pr-ledger.ts, docs/contracts.md): read against the
+// The pull requests of an orchestration's own record that nobody attends (core's pr-ledger.ts, docs/contracts.md): read against the
 // machine's pull request file (pr-file.ts) at each orchestrator turn end, said in its next turn's
 // context, published on its row for the pane and the coordinator's facts, and read again when it
 // declares itself done or deferred, the one refusal they make, and by the module's tick, which wakes
 // the orchestrator on a pull request merged, closed or entering the anomaly. Every read is bounded;
 // one that fails is said, never a refusal.
 import {
-  archiveOf, isFreshWait, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
+  archiveOf, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
 import { launcherOf, recordsRegistryPath } from '../core/orchestration.ts'
 import { isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, ownerOf, withDeadline, type DeclaredWait } from './stop-gate.ts'
-import { isStale, livePids, livePidsArgv, parseSessionRow, publishUnattended, sessionKey, storeOf, type ProcessTable, type SessionRow } from './supervision.ts'
+import { parseSessionRow, publishUnattended, sessionKey, storeOf } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { readPrFile, refreshPrFile, type PrFile } from './pr-file.ts'
@@ -31,8 +31,8 @@ export type Reading = {
 }
 export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
 
-// The open pull requests of a repository as the machine's file holds them: those the operator opened
-// and those a record names. Their labels say what rests on him (`Ready`, `On Hold`).
+// The open pull requests of a repository as the machine's file holds them, all of them: the reading
+// keeps those its own lines name (core's `unattended`). Their labels say what rests on him (`Ready`, `On Hold`).
 export function openOf(file: PrFile, repo: string): OpenPr[] {
   return file.prs.filter(pr => pr.repo === repo && pr.state === 'OPEN').map(pr => ({
     repo, pr: pr.pr, createdAt: pr.createdAt, labels: pr.labels, ...(pr.mergeable === null ? {} : { mergeable: pr.mergeable }),
@@ -58,44 +58,14 @@ export async function registered($: Host<'fs'>, state: string, sessionId: string
 
 // The lines of the records a session registered, each with its record and its text; `own` keeps only
 // those its orchestration owns, as the stop gate reads them.
-async function linesOf($: Host<'fs'>, records: readonly string[], own?: string | null): Promise<{ path: string; text: string; lines: LedgerLine[] }[]> {
+async function linesOf($: Host<'fs'>, records: readonly string[], own: string | null): Promise<{ path: string; text: string; lines: LedgerLine[] }[]> {
   const read: { path: string; text: string; lines: LedgerLine[] }[] = []
   for (const path of records) {
-    if (own !== undefined && !isOwnRecord(ownerOf(await readOr($, `${path}.owner`)), own)) continue
+    if (!isOwnRecord(ownerOf(await readOr($, `${path}.owner`)), own)) continue
     const text = await readOr($, path)
     read.push({ path, text, lines: ledgerLines(text) })
   }
   return read
-}
-
-// Whether another orchestrator's line still claims its pull request: its session is live (the store's
-// own rule, isStale), or the line is a wait set again within the age the module reads for its own
-// lines (isFreshWait). A dead session's stale line claims nothing.
-function claims(line: LedgerLine, sessionLive: boolean, now: number): boolean {
-  if (sessionLive) return true
-  return isFreshWait(line, now)
-}
-
-// The pull requests the other orchestrators on this machine record, while their claim is alive: theirs to attend.
-async function othersClaims($: Held, state: string, sessionId: string, now: number): Promise<Set<string>> {
-  const store = await storeOf($)
-  const entries: { name: string; kind: string }[] = await $.fs.list(`${store}/sessions`).catch(() => [])
-  const others: { name: string; row: SessionRow }[] = []
-  for (const entry of entries) {
-    if (entry.kind !== 'file' || entry.name.includes('.tmp-') || entry.name === safe(sessionId)) continue
-    const row = parseSessionRow(await readOr($, `${store}/sessions/${entry.name}`))
-    if (row?.role === 'orchestrator') others.push({ name: entry.name, row })
-  }
-  // One process listing for every row, as the store's reader takes it; one that failed knows no death.
-  const argv = livePidsArgv(others.map(({ row }) => String(row.pid ?? '')))
-  const ps = argv ? await $.process.run(argv, { timeoutMs: UNATTENDED_BOUND_MS }).catch(() => null) : null
-  const alive: ProcessTable | null = argv ? livePids(ps) : new Map()
-  const claimed = new Set<string>()
-  for (const { name, row } of others) {
-    const live = !isStale(row, now, alive)
-    for (const { lines } of await linesOf($, await registered($, state, name))) for (const line of lines) if (claims(line, live, now)) claimed.add(prKey(line.repo, line.pr))
-  }
-  return claimed
 }
 
 // Moves lines to the archive beside their record: the archive written first, so a move cut short
@@ -113,8 +83,8 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   const state = await stateDir($)
   const own = await linesOf($, await registered($, state, sessionId), orchestrationOf(row.name))
   // Only the repositories the session's dispatch record names, read in the machine's file, refreshed
-  // first when it is older than its interval: the checkout's own repository holds pull requests of the
-  // operator's that no orchestration of his records.
+  // first when it is older than its interval; of their open pull requests, only those the session's
+  // own lines name are its (core's `unattended`): any other is nobody's, drawn under no orchestrator.
   const repos = [...new Set(own.flatMap(record => record.lines.map(line => line.repo)))]
   if (repos.length > 0) await refreshPrFile($, now)
   const file = repos.length > 0 ? await readPrFile($) : undefined
@@ -151,7 +121,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   }
   const named = new Set(kept.flatMap(line => (line.status === 'working' && line.agent ? [line.agent] : [])))
   const live = named.size > 0 ? await running() ?? named : named
-  const list = unattended({ open, lines: kept, live, now, claimed: await othersClaims($, state, sessionId, now) })
+  const list = unattended({ open, lines: kept, live, now })
   const texts = own.map(record => record.text)
   let ready: ReadyRow[] = []
   if (readyRows({ texts, lines: kept, live: new Set(), now }).length > 0) {
