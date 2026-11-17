@@ -70,10 +70,14 @@ type Setup = {
   installed?: string
   // What `diff -rq` over two installed commits answers; by default a runtime file changed.
   diff?: { exitCode: number; stdout: string }
+  // What the installed launcher's home-reload answers; by default it succeeds.
+  reload?: { exitCode: number; stdout: string; stderr: string }
 }
 
-function fakeDollar(setup: Setup): { dollar: World; written: string[] } {
+function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: string[][] } {
   const written: string[] = []
+  // Every other command the hooks ran, as argv.
+  const ran: string[][] = []
   const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: '/usr/local/bin/host', ...(setup.env ?? {}) }
   const dollar = hostOf({
     session: {
@@ -127,6 +131,8 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[] } {
           return { exitCode: 0, stdout: setup.noLaunchName ? '  501 host\n' : `  501 host --name ${setup.launchName ?? 'Agent: belt'}\n`, stderr: '' }
         }
         if (argv[0] === 'ps') return { exitCode: 0, stdout: '1 ??\n', stderr: '' }
+        ran.push([...argv].map(String))
+        if (argv.at(-1) === 'home-reload' && setup.reload !== undefined) return setup.reload
         if (argv[0] === 'diff') {
           const own = String(argv.at(-2))
           return { stderr: '', ...(setup.diff ?? { exitCode: 1, stdout: `Files ${own}/orchestrator/hooks/guards.ts and ${String(argv.at(-1))}/orchestrator/hooks/guards.ts differ\n` }) }
@@ -135,7 +141,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[] } {
       },
     },
   })
-  return { dollar, written }
+  return { dollar, written, ran }
 }
 
 // The hooks the guards register; their .catch nets are kept apart — the body's own catch is what
@@ -292,6 +298,33 @@ test('an orchestrator and a coordinator are told of a newer installed commit onc
     setup.installed = installedState(next, INSTALLED, RUNNING)
     expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: next, ...DIRS_OF(next) }, role, role === 'coordinator' ? DEPLOYED : '')])
   }
+})
+
+// The home servers read the installed commit's tmux conf when a session is told of it: the installed
+// commit's own launcher reloads them, the session's older one would read its own conf again.
+const RELOAD = (installed: string) => [`/cfg/deploys/lounisbou/${installed}/plugins/orchestrator/skills/iterm-agents/scripts/iterm-agent.sh`, 'home-reload']
+
+test('the session told of a newer commit has every home server reload that commit\'s conf, once', async () => {
+  const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt' }
+  const { dollar, ran } = fakeDollar(setup)
+  const handlers = mounted()
+  await submit(handlers, dollar)
+  expect(ran.filter(argv => argv.at(-1) === 'home-reload')).toEqual([RELOAD(INSTALLED)])
+  await submit(handlers, dollar)
+  expect(ran.filter(argv => argv.at(-1) === 'home-reload')).toHaveLength(1)
+})
+
+test('a reload that fails is said in the log, and the notice is given all the same', async () => {
+  const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt', reload: { exitCode: 1, stdout: 'home-reload: orch-x not reloaded: no server running\n', stderr: '' } }
+  const { dollar, written } = fakeDollar(setup)
+  expect((await submit(mounted(), dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED, ...DIRS_OF(INSTALLED) }, 'coordinator', DEPLOYED)])
+  expect(written.some(line => line.includes(`the home servers did not all reload ${INSTALLED.slice(0, 7)}'s conf: home-reload: orch-x not reloaded: no server running`))).toBe(true)
+})
+
+test('a session not told of the newer commit reloads no home server', async () => {
+  const { dollar, ran } = fakeDollar({ root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt', measure: YOUNG })
+  await submit(mounted(), dollar)
+  expect(ran.filter(argv => argv.at(-1) === 'home-reload')).toEqual([])
 })
 
 test('a newer commit that changes no runtime file of a loaded plugin is not told, the next one that does is', async () => {

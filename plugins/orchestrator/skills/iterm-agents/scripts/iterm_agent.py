@@ -3246,7 +3246,7 @@ HOME_ENV_KEPT = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "LC_ALL", "
 HOME_ENV_DROPPED = ("ORCHESTRATOR_DRY_RUN", "ORCHESTRATOR_SELF_TTY", "ORCHESTRATOR_SELF_ID",
                     "ORCHESTRATOR_PS_TABLE", "ORCHESTRATOR_CWD_TABLE", "ORCHESTRATOR_HOST_ARGV",
                     "ORCHESTRATOR_HOME_NO_TAB", "ORCHESTRATOR_NEW_SESSION_ID",
-                    "ORCHESTRATOR_TEST_RUN")
+                    "ORCHESTRATOR_TEST_RUN", "ORCHESTRATOR_HOST_ENV")
 # Set by the suite and by the live test script, never by a launch: ORCHESTRATOR_HOME_NO_TAB
 # is honoured only beside it. Left in a shell alone, it would move an orchestrator into a
 # server no tab shows.
@@ -3388,7 +3388,24 @@ def host_argv(pid):
     stand_in = os.environ.get("ORCHESTRATOR_HOST_ARGV")
     if stand_in:
         return json.loads(stand_in)
-    if sys.platform != "darwin":
+    found = process_args(pid)
+    return found[0] if found else None
+
+
+def host_env(pid):
+    """The environment the process `pid` was started with, as a dict, or None.
+    ORCHESTRATOR_HOST_ENV, a JSON object, stands in for the suite."""
+    stand_in = os.environ.get("ORCHESTRATOR_HOST_ENV")
+    if stand_in:
+        return json.loads(stand_in)
+    found = process_args(pid)
+    return found[1] if found else None
+
+
+def process_args(pid):
+    """`(words, environment)` the process `pid` was started with, read from the kernel, or
+    None: on macOS alone, and for a process of the caller's own user."""
+    if sys.platform != "darwin" or not str(pid).isdigit():
         return None
     import ctypes
     import ctypes.util
@@ -3406,10 +3423,20 @@ def host_argv(pid):
         return None
     raw = buf.raw[:size.value]
     argc = int.from_bytes(raw[:4], sys.byteorder)
-    # The executable's path, its padding, then the words.
+    # The executable's path, its padding, the words, then the environment up to an empty entry.
     _, _, rest = raw[4:].partition(b"\0")
-    words = rest.lstrip(b"\0").split(b"\0")[:argc]
-    return [w.decode("utf-8", "replace") for w in words] if len(words) == argc else None
+    parts = rest.lstrip(b"\0").split(b"\0")
+    words = parts[:argc]
+    if len(words) != argc:
+        return None
+    env = {}
+    for entry in parts[argc:]:
+        if not entry:
+            break
+        key, eq, value = entry.partition(b"=")
+        if eq:
+            env[key.decode("utf-8", "replace")] = value.decode("utf-8", "replace")
+    return [w.decode("utf-8", "replace") for w in words], env
 
 
 def session_record(session_id):
@@ -3969,9 +3996,15 @@ def cmd_home(args):
         print("stay: only an orchestrator moves into a home session, and this session is "
               "named '%s'" % args.name[:40])
         return
+    # A home session started from another deploy's conf is left for a server of this one: the
+    # agents of the old server follow at their turns' ends (home-follow).
+    old_home = ""
     if in_home_session():
-        print("stay: this session already runs in a home session")
-        return
+        conf = server_conf()
+        if not conf or same_file(conf, HOME_CONF):
+            print("stay: this session already runs in a home session")
+            return
+        old_home = os.path.basename(os.environ.get("TMUX", "").split(",")[0])
     pid, record = session_record(args.session)
     if not pid:
         die("home: no running process of session %s is in the host's registry; the session "
@@ -4005,7 +4038,7 @@ def cmd_home(args):
     # The old tab's own session id, read before anything is made: once the session ends, its
     # title is the shell's, and the id is what names that tab and no other.
     old_id = ""
-    if not no_tab and not DRY_RUN:
+    if not no_tab and not DRY_RUN and not old_home:
         try:
             old_id, _ = ITERM.identity(own)
         except Exception as exc:
@@ -4014,7 +4047,7 @@ def cmd_home(args):
         if not old_id:
             die("home: this session is not a tab of iTerm2's (%s), so no tab can take its "
                 "place; the session stays where it is" % own)
-    if DRY_RUN and not no_tab:
+    if DRY_RUN and not no_tab and not old_home:
         old_id = "<old-tab-session-id>"
     resume_line = " ".join(shlex.quote(w) for w in [cli] + resume)
     # The old tab is released by a watcher of the launcher, started beside the resume and
@@ -4024,29 +4057,44 @@ def cmd_home(args):
                "--resumed %s >> %s 2>&1 & watcher=$!; "
                % (shq(LAUNCHER_SH), shq(own), shq(old_id), shq(args.session),
                   shq(os.path.join(STATE_DIR, "home-release.log")))) if old_id else ""
-    launch = ("cd %s && i=0 && while kill -0 %s 2>/dev/null; do "
-              "if [ $i -ge %d ]; then echo 'the session did not end in its old place: it "
-              "goes on there'; sleep 10; exit 1; fi; sleep 0.2; i=$((i+1)); done; "
-              "%s%s; rc=$?; [ $rc -eq 0 ] && exit 0; %sprintf 'the resume of session %%s failed "
-              "(exit %%s); resume it by hand: %%s\\n' %s \"$rc\" %s; "
-              "exec \"${SHELL:-/bin/sh}\" -l"
-              % (shq(cwd), pid, HOME_WAIT * 5, release, resume_line,
-                 "kill $watcher 2>/dev/null; " if old_id else "", shq(args.session),
-                 shq("cd %s && %s" % (shq(cwd), resume_line))))
+    launch = resume_program(cwd, pid, resume_line, args.session, release,
+                            "kill $watcher 2>/dev/null; " if old_id else "")
+    # The new tab goes right of the tab that shows the old server: this session's pane is none.
+    anchor = server_client() if old_home else own
     if DRY_RUN:
         print("home_server=%s" % socket)
         print("home_conf=%s" % plugin_path(HOME_CONF))
         print("home_window0=%s" % args.name)
         print("home_launch=%s" % launch)
-        print("home_tab=%s" % ("none" if no_tab else "right of %s" % own))
+        print("home_tab=%s" % ("none" if no_tab else "right of %s" % (anchor or "nothing")))
+        if old_home:
+            print("home_follow=%s" % old_home)
         return
     program = "%s -l %s" % (LOGIN_SHELL, write_launch_script(launch, args.name, "home"))
     make_home(socket, args.name, cwd, program, "home")
+    if old_home:
+        start_home_follow(old_home, socket, own, tmux_owner(), args.session)
     if no_tab:
         print("moved: %s (no tab: attach with %s -L %s attach)" % (socket, TMUX_BIN, socket))
         return
-    tty, _ = open_home_tab(socket, args.name, own, "home")
+    tty, _ = open_home_tab(socket, args.name, anchor, "home")
     print("moved: %s, shown on %s" % (socket, tty))
+
+
+def resume_program(cwd, pid, resume_line, session_id, release="", unwatch="", exports=None):
+    """What a window that resumes `session_id` runs: in `cwd`, `exports` set, it waits for the
+    process `pid` to end in its old place, starts `release` beside the resume, runs the resume,
+    and on a failure (`unwatch` first) says how to resume by hand and keeps a shell open."""
+    exported = "".join("export %s=%s && " % (key, shq(value))
+                       for key, value in sorted((exports or {}).items()))
+    return ("cd %s && %si=0 && while kill -0 %s 2>/dev/null; do "
+            "if [ $i -ge %d ]; then echo 'the session did not end in its old place: it "
+            "goes on there'; sleep 10; exit 1; fi; sleep 0.2; i=$((i+1)); done; "
+            "%s%s; rc=$?; [ $rc -eq 0 ] && exit 0; %sprintf 'the resume of session %%s failed "
+            "(exit %%s); resume it by hand: %%s\\n' %s \"$rc\" %s; "
+            "exec \"${SHELL:-/bin/sh}\" -l"
+            % (shq(cwd), exported, pid, HOME_WAIT * 5, release, resume_line, unwatch,
+               shq(session_id), shq("cd %s && %s" % (shq(cwd), resume_line))))
 
 
 def resumed_host_running(pane_tty, session_id):
@@ -4090,6 +4138,329 @@ def cmd_home_release(args):
             "open" % (args.tty, args.session_id))
     print("home-release: the tab on %s was %s" % (args.tty, "already closed" if said == "gone"
                                                   else "closed"))
+
+
+# --- a new deploy: the home servers follow it ---------------------------------------
+#
+# A deploy installs a new commit of the plugins in a directory of its own, and a running session
+# keeps the commit it started on. The session the hooks module tells of the newer install runs that
+# commit's `home-reload`: every live home server reads the new conf, with no restart. Its
+# orchestrator's successor, started on the new commit, leaves the old server for one of its own
+# (`home`), and the agents of the old server follow it one by one, each resumed between two of its
+# turns (`home-follow`); the old server ends once no session runs in it, and its tab closes.
+
+# How often the follower reads the old server, and how long an agent stays at rest before it moves.
+FOLLOW_POLL = float(os.environ.get("ORCHESTRATOR_HOME_FOLLOW_POLL", "3"))
+FOLLOW_QUIET = float(os.environ.get("ORCHESTRATOR_HOME_FOLLOW_QUIET", "5"))
+
+
+def server_conf():
+    """The conf file the caller's own home server was started with (its `-f`), read on the
+    server's process, whose id is the second field of $TMUX; "" when it cannot be read."""
+    fields = os.environ.get("TMUX", "").split(",")
+    found = process_args(fields[1]) if len(fields) > 1 else None
+    words = found[0] if found else []
+    for i, word in enumerate(words[:-1]):
+        if word == "-f":
+            return words[i + 1]
+    return ""
+
+
+def same_file(a, b):
+    """Whether two paths name one file, links followed."""
+    return os.path.realpath(a) == os.path.realpath(b)
+
+
+def server_clients(socket=""):
+    """The ttys of the clients of a home server, the caller's own without `socket`: the tabs
+    that show it. Empty when none is attached or tmux cannot say."""
+    try:
+        done = tmux_call((["-L", socket] if socket else []) +
+                         ["list-clients", "-F", "#{client_tty}"])
+    except TmuxError:
+        return []
+    return done.stdout.split() if done.returncode == 0 else []
+
+
+def server_client():
+    """The tab that shows the caller's own home server, or ""."""
+    clients = server_clients()
+    return clients[0] if clients else ""
+
+
+def socket_tab_id(socket, window):
+    """A window's id in a chain: qualified by its server's socket as tmux spells it in $TMUX."""
+    return "tmux:%s:%s" % (os.path.realpath(home_socket_path(socket)), window)
+
+
+def start_home_follow(old, new, tty, owner, session_id):
+    """Start the follower that moves the sessions of the home server `old` into `new`: it
+    outlives this command and the session that ran it. What it does goes to close.log."""
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(os.path.join(STATE_DIR, "home-follow.log"), "a") as log:
+            subprocess.Popen([sys.executable, os.path.abspath(__file__), "--request",
+                              json.dumps(request_of("home-follow", from_=old, to=new, tty=tty,
+                                                    owner=owner, session=session_id))],
+                             stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                             start_new_session=True)
+    except OSError as exc:
+        print("home: the agents of %s will not follow: %s" % (old, exc), file=sys.stderr)
+
+
+def follow_line(line):
+    """One dated line of the follower in close.log, and on its own log."""
+    close_log("home-follow", line)
+
+
+# The window states (hooks/tab-state.ts) of an agent whose work is delivered: its pull request
+# carries Ready and waits for the merge, or is merged or closed. Such an agent is closed at a deploy,
+# not moved (the operator's ruling, 2026-11-17): its session id stays in close.log for a resume.
+DELIVERED_STATES = ("done", "over")
+
+
+def follow_panes(socket):
+    """`[(window id, window name, tty, window state)]` of every pane of the server `socket`, or
+    None when it cannot be listed."""
+    try:
+        done = tmux_call(["-L", socket, "list-panes", "-a", "-F",
+                          "#{window_id}\t#{window_name}\t#{pane_tty}\t#{@state}"])
+    except TmuxError:
+        return None
+    if done.returncode != 0:
+        return None
+    return [tuple(l.split("\t", 3)) for l in done.stdout.splitlines() if l.count("\t") >= 3]
+
+
+def window0_pane(socket):
+    """`(pane id, tty)` of window 0 of the home server `socket`, or None."""
+    try:
+        done = tmux_call(["-L", socket, "display-message", "-p", "-t", HOME_SESSION + ":0",
+                          "#{pane_id} #{pane_tty}"])
+    except TmuxError:
+        return None
+    fields = done.stdout.split() if done.returncode == 0 else []
+    return tuple(fields) if len(fields) == 2 else None
+
+
+def session_on(tty):
+    """The session id the host on `tty` registered, or ""."""
+    pid = cli_pid_on_tty(tty)
+    record = host_registry(pid) if pid else None
+    return (record or {}).get("sessionId") or ""
+
+
+def at_rest(record, now=None):
+    """Whether a host's registry record says its session is between two turns, and has been
+    for FOLLOW_QUIET seconds: idle since that long (idle alone when it says no time)."""
+    if not record or record.get("status") != "idle":
+        return False
+    since = record.get("statusUpdatedAt")
+    if not isinstance(since, (int, float)) or isinstance(since, bool):
+        return True
+    return (time.time() if now is None else now) * 1000 - since >= FOLLOW_QUIET * 1000
+
+
+def follow_launch(pid, record, name):
+    """`(program, "")` that resumes in a new window the session the record of the host `pid`
+    names, under `name`, with its launch's options, its current pair and the ORCHESTRATOR_
+    variables it was started with; `(None, why)` when it cannot be resumed."""
+    import shlex
+    import shutil
+    sid = record.get("sessionId") or ""
+    cwd = record.get("cwd") or ""
+    if not sid:
+        return None, "the host's record names no session"
+    if not transcript_of_session(sid):
+        return None, ""  # no turn written yet: nothing to resume, it moves once one is
+    if not os.path.isdir(cwd):
+        return None, "its directory '%s' is not there" % cwd
+    words = host_argv(pid)
+    if not words:
+        return None, "its launch cannot be read"
+    try:
+        resume = resume_words(words[1:], sid, name, "")
+    except ValueError as exc:
+        return None, str(exc)
+    try:
+        model, effort = caller_pair(sid)
+        resume = with_pair(resume, model, effort)
+    except PairUnreadable:
+        pass  # the pair its launch asked for
+    exports = {k: v for k, v in (host_env(pid) or {}).items()
+               if k.startswith("ORCHESTRATOR_") and k not in HOME_ENV_DROPPED}
+    cli = shutil.which(HOST_CLI) or HOST_CLI
+    line = " ".join(shlex.quote(w) for w in [cli] + resume)
+    return resume_program(cwd, pid, line, sid, exports=exports), ""
+
+
+def follow_one(old, new, window, window_name, tty, pid, record, refused):
+    """Move one session at rest from the server `old` into `new`: its window there made first,
+    resuming once the old process is gone, then its old window killed and the process proved
+    ended, and its orchestrator's chain pointed at the new window. True once moved; a session
+    whose launch cannot be resumed is put in `refused` and stays where it is."""
+    name = current_name(record.get("name") or window_name)
+    launch, why = follow_launch(pid, record, name)
+    if launch is None:
+        if why:
+            refused[pid] = why
+            follow_line("%s stays in %s: %s" % (name, old, why))
+        return False
+    host = host_identity(tty)
+    # Read again right before the move: a turn that began since is never cut.
+    if not host or str(host[0]) != str(pid) or not at_rest(host_registry(pid)):
+        return False
+    program = "%s -l %s" % (LOGIN_SHELL, write_launch_script(launch, name, "follow"))
+    try:
+        done = tmux_call(["-L", new, "new-window", "-d", "-t", HOME_SESSION + ":", "-n",
+                          window_name, "-P", "-F", "#{window_id} #{pane_tty}", program])
+    except TmuxError as exc:
+        follow_line("%s: no window in %s (%s); it stays in %s" % (name, new, exc, old))
+        return False
+    fields = done.stdout.split() if done.returncode == 0 else []
+    if len(fields) != 2:
+        follow_line("%s: no window in %s (%s); it stays in %s"
+                    % (name, new, tmux_refusal(done) if done.returncode else done.stdout.strip(),
+                       old))
+        return False
+    new_window, new_tty = fields
+    try:
+        tmux_call(["-L", old, "kill-window", "-t", window])
+    except TmuxError:
+        pass  # the end of the process below is the proof
+    if not end_host(host[0], host[1], tty, "home-follow"):
+        follow_line("%s: the process %s still runs on %s %s; its window in %s waits for it, "
+                    "then gives up" % (name, pid, tty, end_failure(pid, tty), new))
+        return False
+    try:
+        chain_repoint_tab(socket_tab_id(old, window), socket_tab_id(new, new_window), new_tty)
+    except Exception as exc:
+        follow_line("%s: its chain entry was not pointed at %s (%s)" % (name, new_window, exc))
+    follow_line("%s (session %s) moved from %s on %s to %s on %s"
+                % (name, record.get("sessionId"), old, tty, new, new_tty))
+    return True
+
+
+def close_delivered(old, window, window_name, tty, pid, record):
+    """Close an agent at rest whose work is delivered instead of moving it: its window killed and
+    its process proved ended, its session id said for a later resume. True once closed."""
+    name = current_name(record.get("name") or window_name)
+    host = host_identity(tty)
+    if not host or str(host[0]) != str(pid) or not at_rest(host_registry(pid)):
+        return False
+    try:
+        tmux_call(["-L", old, "kill-window", "-t", window])
+    except TmuxError:
+        pass  # the end of the process below is the proof
+    if not end_host(host[0], host[1], tty, "home-follow"):
+        follow_line("%s: the process %s still runs on %s %s" % (name, pid, tty, end_failure(pid, tty)))
+        return False
+    try:
+        chain_drop_tab(socket_tab_id(old, window))
+    except Exception as exc:
+        follow_line("%s: its chain entry was not dropped (%s)" % (name, exc))
+    follow_line("%s (session %s) closed, not moved: its work is delivered; resume it with "
+                "--resume %s" % (name, record.get("sessionId"), record.get("sessionId")))
+    return True
+
+
+def end_followed(old, new, refused, clients):
+    """The old server once no session is left to move: ended, traced, and its tab closed. A
+    server that keeps a session the move cannot resume is left running."""
+    if refused:
+        follow_line("%s keeps %d session(s) the move cannot resume; it is left running"
+                    % (old, len(refused)))
+        return
+    if home_answers(old) and kill_watched_home(old):
+        trace_home(old, "server", "redeploy (its sessions moved to %s)" % new,
+                   clients[0] if clients else "")
+    if home_no_tab():
+        return
+    for tty in clients:
+        deadline = time.time() + CLOSE_TIMEOUT
+        while ITERM.find(tty):
+            if time.time() >= deadline:
+                ITERM.close(tty, "")
+                break
+            time.sleep(0.3)
+
+
+def cmd_home_follow(args):
+    """Move every session of the home server `--from` into `--to`, each between two of its
+    turns: started by `home` when an orchestrator left a server of another deploy, never by
+    hand. Nothing moves before the orchestrator (`--session`) is proved resumed in window 0
+    of the new server; its chain (`--tty`, `--owner`: its pane in the old server) follows it
+    there. The old server ends once no session runs in it."""
+    if not args.from_ or not args.to or not args.session:
+        die("home-follow: --from, --to and --session are required")
+    old, new = args.from_, args.to
+    deadline = time.time() + HOME_WAIT + SPAWN_TIMEOUT
+    while True:
+        zero = window0_pane(new)
+        if zero and session_on(zero[1]) == args.session:
+            break
+        if time.time() >= deadline:
+            follow_line("the orchestrator %s never resumed in %s: the sessions of %s stay there"
+                        % (args.session, new, old))
+            return
+        time.sleep(FOLLOW_POLL)
+    if args.tty and args.owner:
+        try:
+            chain_transfer(args.tty, args.owner, zero[1],
+                           "tmux:%s:%s" % (os.path.realpath(home_socket_path(new)), zero[0]),
+                           merge=True)
+        except Exception as exc:
+            follow_line("the chain of %s was not handed to %s: %s" % (args.tty, zero[1], exc))
+    refused, clients = {}, []
+    while home_answers(old):
+        clients = server_clients(old) or clients
+        panes = follow_panes(old) or []
+        waiting = 0
+        for window, window_name, tty, state in panes:
+            pid = cli_pid_on_tty(tty)
+            if not pid or not str(pid).isdigit() or pid in refused:
+                continue
+            record = host_registry(pid) or {}
+            if record.get("sessionId") != args.session and at_rest(record):
+                if state in DELIVERED_STATES:
+                    if close_delivered(old, window, window_name, tty, pid, record):
+                        continue
+                elif follow_one(old, new, window, window_name, tty, pid, record, refused):
+                    continue
+            if pid not in refused:
+                waiting += 1
+        if not waiting:
+            break
+        time.sleep(FOLLOW_POLL)
+    end_followed(old, new, refused, clients)
+
+
+def cmd_home_reload(_args):
+    """Every live home server reads this commit's conf again, with no restart: run by the
+    hooks module of a session told that this commit was installed over its own. One line per
+    server; exit 1 when one was not reloaded."""
+    folder = os.path.dirname(home_socket_path(HOME_SOCKET_PREFIX))
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.startswith(HOME_SOCKET_PREFIX))
+    except OSError:
+        names = []
+    failed = 0
+    for socket in names:
+        if not home_answers(socket):
+            continue
+        try:
+            done = tmux_call(["-L", socket, "source-file", HOME_CONF])
+        except TmuxError as exc:
+            print("home-reload: %s not reloaded: %s" % (socket, exc))
+            failed += 1
+            continue
+        if done.returncode != 0:
+            print("home-reload: %s not reloaded: %s" % (socket, tmux_refusal(done)))
+            failed += 1
+            continue
+        print("home-reload: %s reloaded %s" % (socket, HOME_CONF))
+    if failed:
+        sys.exit(1)
 
 
 # --- subcommands -----------------------------------------------------------------
@@ -6616,6 +6987,7 @@ COMMANDS = {
     "screen": cmd_screen, "trust": cmd_trust, "tools": cmd_tools,
     "home": cmd_home, "home-release": cmd_home_release, "takeover": cmd_takeover,
     "home-watch": cmd_home_watch, "pair": cmd_pair, "bench-open": cmd_bench_open,
+    "home-follow": cmd_home_follow, "home-reload": cmd_home_reload,
 }
 
 

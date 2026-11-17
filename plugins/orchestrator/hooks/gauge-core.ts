@@ -2,7 +2,7 @@
 // The measurement rules, pure, with no host API in reach so the boundaries stay testable. The
 // measure file's shape and path and the gate are core's (orchestration.ts), read here.
 import { deployedAt, installedOver, parseDeployState } from '../core/deploy-state.ts'
-import type { MeasureStart } from '../core/orchestration.ts'
+import { launcherOf, type MeasureStart } from '../core/orchestration.ts'
 
 export { hasFigures, measureFilePath, parseMeasure, tripGate, type MeasureReading, type MeasureStart } from '../core/orchestration.ts'
 
@@ -62,6 +62,14 @@ export async function newerInstalled(
   } catch {
     return null
   }
+}
+
+/*
+ * The installed commit's own launcher, asked to have every live home server read that commit's tmux
+ * conf: the session's older launcher would read its own conf again.
+ */
+export function homeReloadArgv(newer: Newer): string[] {
+  return [launcherOf(`${newer.installedDir}/plugins/orchestrator`), 'home-reload']
 }
 
 // The directories of a plugin that run in a session; a path under `tests`, `docs`, `ci` or `evals`
