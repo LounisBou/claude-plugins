@@ -5173,11 +5173,11 @@ print('%s|%d' % ([r for r in rows if 'ttys801' in r][0], len([r for r in rows if
 printf '/dev/ttys811 /opt/homebrew/bin/tmux -u -L orch-abcdef12 attach -t home\n' > "$WORK/ps-client.txt"
 printf '/dev/ttys812 tmux -u -L work attach -t work\n' >> "$WORK/ps-client.txt"
 check "a tab running a tmux client of a home server is listed once, as that client, with no window title" \
-  "w1/t1 | /dev/ttys811 | tmux client | tmux client of home (orch-abcdef12) — displays its windows|0" \
+  "w1/t1 | /dev/ttys811 | tmux client | tmux client of home (orch-abcdef12) — displays its windows|1|0" \
   "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-client.txt" "$py" -c "$STUB
 c=S('C','/dev/ttys811','✳ Orch: Claude plugins')
 rows=asyncio.run(ia.list_rows(App([W([T('1',[c],[])])])))
-print('%s|%d' % (rows[0], len([r for r in rows if 'Orch: Claude plugins' in r or '(host default)' in r])))" "$ROOT/skills/iterm-agents/scripts")"
+print('%s|%d|%d' % (rows[0], len(rows), len([r for r in rows if 'Orch: Claude plugins' in r or '(host default)' in r])))" "$ROOT/skills/iterm-agents/scripts")"
 check "a tmux client of a server that is not a home session is listed as an ordinary tab" \
   "w1/t1 | /dev/ttys812 | ✳ Work | (host default)" \
   "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-client.txt" "$py" -c "$STUB

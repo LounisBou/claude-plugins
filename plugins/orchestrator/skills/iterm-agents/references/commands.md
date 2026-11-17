@@ -18,9 +18,9 @@ $SCRIPT list
     # w1/t5 | /dev/ttys007 | ◐ Chat | (host default) | hidden   ← behind a maximized sibling pane
     # w1/t6 | /dev/ttys011 | tmux client | tmux client of home (orch-…) — displays its windows
     # tab title, then the session's NAME (the host registry's, else its --name; `(host
-    # default)` when neither gives one), then `self` on YOUR OWN tab. A tab whose only process
-    # is the tmux client of a home server is one line like the last: it displays that server's
-    # windows, each listed as a session of its own, and is no session.
+    # default)` when neither gives one), then `self` on YOUR OWN tab. A tab running the tmux
+    # client of a home server gets one line like the last: it displays that server's windows,
+    # each listed as a session of its own, and is no session.
 
 $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --effort <low|medium|high|xhigh|max> | --inherit-model) [--permission-mode auto] \
     --title "Agent: <subject>" --brief <brief-path> --orchestrator "<name [ref]>" [--right-of self | --successor] [--mcp <name>] [--gate-tokens <N>] \
