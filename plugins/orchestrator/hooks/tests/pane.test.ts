@@ -2571,44 +2571,63 @@ test('an origin read that timed out is read again at the next render, one that a
 const UNATTENDED = { at: SINCE, line: 'En anomalie : acme/app#8 (sans agent depuis 2026-10-19T08:05Z)', prs: [{ repo: 'acme/app', pr: 8, since: SINCE }], unread: ['acme/lib'] }
 const local = (iso: string) => { const at = new Date(iso); return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}` }
 
-test('an orchestrator with pull requests nobody attends draws them under its block, one to a line, in local time, the unread repositories said unknown', async () => {
+// A row of the unattended lines as the screen draws it: its words, the label column's padding squeezed.
+const said = (tree: El, label: string) => shown(tree).filter(line => line.startsWith(label)).map(line => line.replace(/\s+/g, ' '))
+
+test('an orchestrator with pull requests nobody attends draws them under its block, grouped by state under a label, the repository without its owner, in local time, the unread repositories said unknown', async () => {
   const rows = paneRows({ 'sessions/u': orch('Orch: u', { unattended: UNATTENDED }), 'sessions/c': orch('Orch: c') })
-  const said = [
-    { anomaly: true, text: 'En anomalie :' },
-    { anomaly: true, text: `  acme/app#8  sans agent depuis ${local(SINCE)}` },
-    { anomaly: true, text: '  inconnues pour acme/lib (forge illisible)' },
+  const lines = [
+    { anomaly: true, label: 'Sans agent', text: 'app#8', wraps: false, time: local(SINCE) },
+    { anomaly: true, label: 'Inconnues', text: 'acme/lib (forge illisible)', wraps: true },
   ]
-  expect(rows.map(r => [r.name, r.unattended])).toEqual([['Orch: u', said], ['Orch: c', null]])
+  expect(rows.map(r => [r.name, r.unattended])).toEqual([['Orch: u', lines], ['Orch: c', null]])
   const tree = await paneTree({ u: orch('Orch: u', { unattended: UNATTENDED }) })
   const block = elAt(tree, 2)
   expect(kidsOf(block).length).toBe(2)
-  const lines = kidsOf(elAt(block, 1))
-  expect(lines.map(node => text(pieces(node)))).toEqual(said.map(line => line.text))
-  expect(lines.map(node => pieces(node)[0]?.color)).toEqual(['warning', 'warning', 'warning'])
+  const drawn = kidsOf(elAt(block, 1))
+  expect(drawn.map(node => pieces(node).map(piece => piece.text)).map(([label, ...words]) => [label, words.join('')])).toEqual([['Sans agent', `app#8 · ${local(SINCE)}`], ['Inconnues', 'acme/lib (forge illisible)']])
+  // The label and the words carry the colour; a link is the host's to colour.
+  expect(drawn.map(node => [pieces(node)[0]?.color, pieces(node).at(-1)?.color])).toEqual([['warning', 'warning'], ['warning', 'warning']])
   const none = await paneTree({ c: orch('Orch: c', { unattended: { at: SINCE, line: null, prs: [], unread: [] } }) })
   expect(kidsOf(elAt(none, 2)).length).toBe(1)
 })
 
 const SPLIT = {
   at: SINCE,
-  line: 'Attend ton geste : acme/app#4 (Ready), acme/app#5 (en pause)\nEn anomalie : acme/app#8 (sans agent depuis 2026-10-19T08:05Z)',
+  line: null,
   prs: [
     { repo: 'acme/app', pr: 4, since: SINCE, waits: { why: 'ready' } },
     { repo: 'acme/app', pr: 5, since: SINCE, waits: { why: 'hold' } },
+    { repo: 'acme/lib', pr: 6, since: SINCE, waits: { why: 'hold' } },
+    { repo: 'acme/app', pr: 7, since: SINCE, waits: { why: 'record', on: 'ton merge' } },
+    { repo: 'acme/app', pr: 9, since: SINCE, waits: { why: 'record', on: 'la livraison' } },
     { repo: 'acme/app', pr: 8, since: SINCE },
+    { repo: 'acme/app', pr: 10, since: SINCE, conflict: true },
   ],
   unread: [],
 }
-const SPLIT_LINES = ['Attend ton geste :', '  acme/app#4  Ready', '  acme/app#5  en pause', 'En anomalie :', `  acme/app#8  sans agent depuis ${local(SINCE)}`]
+const SPLIT_SAID = [
+  'Ready app#4',
+  'En pause app#5 · lib#6',
+  `Attend app#7 ton merge · ${local(SINCE)}`,
+  `app#9 la livraison · ${local(SINCE)}`,
+  'En conflit app#10',
+  `Sans agent app#8 · ${local(SINCE)}`,
+]
 
-test('what waits on the operator and what is in anomaly are two heads each with its pull requests one to a line, only the anomaly in the warning colour', async () => {
-  expect(paneRows({ 'sessions/s': orch('Orch: s', { unattended: SPLIT as never }) })[0]?.unattended?.map(l => l.text)).toEqual(SPLIT_LINES)
+test('what waits on the operator and what is in anomaly are groups under a label: Ready and En pause on one line each, each Attend and Sans agent on a line of its own with its time last, only the anomaly in the warning colour', async () => {
   const tree = await paneTree({ s: orch('Orch: s', { unattended: SPLIT as never }) })
-  const lines = kidsOf(elAt(elAt(tree, 2), 1))
-  expect(lines.map(node => text(pieces(node)))).toEqual(SPLIT_LINES)
-  expect(lines.map(node => pieces(node)[0]?.color)).toEqual([undefined, undefined, undefined, 'warning', 'warning'])
+  const lines = shown(tree).map(line => line.replace(/\s+/g, ' '))
+  const at = lines.indexOf(SPLIT_SAID[0]!)
+  expect(at).toBeGreaterThan(0)
+  expect(lines.slice(at, at + SPLIT_SAID.length)).toEqual(SPLIT_SAID)
+  // The label column: the continuation of Attend is blank under its label, the words start in one column.
+  const raw = drawScreen(tree, 200).map(line => line.replace(/^[│ ]*?(?=Ready|En pause|Attend|app#9|En conflit|Sans agent)/, ''))
+  expect(raw.filter(line => /^(Ready|En pause|Attend|En conflit|Sans agent| {11}app#9)/.test(line)).map(line => line.search(/app#|lib#/)).every(column => column === 11)).toBe(true)
+  const colours = kidsOf(elAt(elAt(tree, 2), 1)).map(node => pieces(node)[0]?.color)
+  expect(colours).toEqual([undefined, undefined, undefined, undefined, 'warning', 'warning'])
   // Only what waits on him: no line in the warning colour.
-  const waits = { ...SPLIT, prs: SPLIT.prs.slice(0, 2) }
+  const waits = { ...SPLIT, prs: SPLIT.prs.slice(0, 5) }
   const calm = await paneTree({ s: orch('Orch: s', { unattended: waits as never }) })
   expect(JSON.stringify(calm)).not.toContain('warning')
 })
@@ -2621,19 +2640,17 @@ test('a published row\'s unattended view is read with its kinds; a malformed kin
   expect(parseSessionRow(stored(undefined))?.unattended?.prs[0]?.waits).toBe(undefined)
 })
 
-test('an orchestrator\'s own pane draws the heads and their pull requests one to a line above its agents, the anomaly alone in warning', async () => {
+test('an orchestrator\'s own pane draws the same groups above its agents, the anomaly alone in warning', async () => {
   const fx = fakeDollar({ launchName: 'Orch: phase-3' })
   fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: phase-3' })) + '\n')
   const { handlers } = mounted(registerSupervision)
   const bare = await coordinatorRender(fx, handlers)
-  expect(JSON.stringify(bare)).not.toContain('En anomalie')
+  expect(JSON.stringify(bare)).not.toContain('Sans agent')
   fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: phase-3' }), unattended: SPLIT }) + '\n')
   const tree = drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
-  expect(SPLIT_LINES.map((_, i) => text(pieces(elAt(tree, i))))).toEqual(SPLIT_LINES)
-  expect(SPLIT_LINES.map((_, i) => pieces(elAt(tree, i))[0]?.color)).toEqual([undefined, undefined, undefined, 'warning', 'warning'])
-  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: phase-3' }), unattended: UNATTENDED }) + '\n')
-  const alone = drawnTree(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
-  expect(pieces(elAt(alone, 0))).toEqual([{ text: 'En anomalie :', color: 'warning', bold: false }])
+  const lines = SPLIT_SAID.map((_, i) => pieces(elAt(tree, i)))
+  expect(lines.map(line => line.map(piece => piece.text).join(' ').replace(/\s+/g, ' ').trim())).toEqual(SPLIT_SAID.map(line => line.replace(/^(Attend|Ready|En pause|En conflit|Sans agent) /, '$1 ')))
+  expect(lines.map(line => line[0]?.color)).toEqual([undefined, undefined, undefined, undefined, 'warning', 'warning'])
 })
 
 // The pull request a record names, its wait on the operator in words far wider than the pane.
@@ -2645,7 +2662,7 @@ const LONG = {
   unread: [],
 }
 
-test('a wait of 200 characters is cut to the pane\'s width on one line, never wrapped, and the rows counted are the rows drawn', async () => {
+test('a wait of 200 characters is cut to the pane\'s width on one line, its time last, never wrapped; the pull request stays a link, and the rows counted are the rows drawn', async () => {
   expect(LONG_ON.length).toBeGreaterThan(200)
   const fx = fakeDollar({ launchName: 'Coord: main' })
   fx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: long', updated_at: AGO(), repo: 'acme/app' }), unattended: LONG }) + '\n')
@@ -2654,22 +2671,19 @@ test('a wait of 200 characters is cut to the pane\'s width on one line, never wr
   const render = async (props: object = {}) => drawnTree(await handlers['ui.render'](fx.dollar, { ...renderEvent, props }, (x: unknown) => ({ passed: x })))
   for (const columns of [60, 200]) {
     const lines = drawScreen(await render({ bodyColumns: columns }), columns - 2).map(line => line.replace(/^[│ ]+|[│ ]+$/g, ''))
-    const at = lines.findIndex(line => line.startsWith('acme/app#4'))
+    const at = lines.findIndex(line => line.startsWith('Attend'))
     expect(at, lines.join('\n')).toBeGreaterThan(0)
-    // The head above it, the next pull request right under it: one line, whatever the width.
-    expect(lines[at - 1]).toBe('Attend ton geste :')
-    expect(lines[at + 1]).toBe('acme/app#5  Ready')
+    // Its group above it, one line, its time last, whatever the width.
+    expect(lines[at - 1]).toMatch(/^Ready +app#5$/)
+    expect(lines[at]).toMatch(/^Attend +app#4 {2}le merge de l'opérateur.*… · \d\d:\d\d$/)
+    expect(lines[at]!.endsWith(` · ${local(SINCE)}`)).toBe(true)
     expect(lines[at]!.length).toBeLessThanOrEqual(columns - 2)
   }
-  const narrow = (await render({ bodyColumns: 60 }))
-  const cut = text(pieces(kidsOf(elAt(elAt(narrow, 2), 1))[1]))
-  expect(cut.endsWith('…')).toBe(true)
-  expect(cut.length).toBe(58 - 2)
-  // The pull request stays a link on its line, the lines are cut by the host too, and the indent under the head is kept.
-  expect(links(narrow)).toEqual([['acme/app#4', 'https://github.com/acme/app/pull/4'], ['acme/app#5', 'https://github.com/acme/app/pull/5']])
-  expect(kidsOf(elAt(elAt(narrow, 2), 1)).map(node => node.props['wrap'])).toEqual(['truncate-end', 'truncate-end', 'truncate-end'])
-  const screen = drawScreen(narrow, 58)
-  expect(screen.filter(line => /^ {2}Attend ton geste :$|^ {4}acme\/app#[45]  /.test(line)).length).toBe(3)
+  const narrow = await render({ bodyColumns: 60 })
+  expect(links(narrow)).toEqual([['app#5', 'https://github.com/acme/app/pull/5'], ['app#4', 'https://github.com/acme/app/pull/4']])
+  // The line of the wait is cut by the host too; the group above it, which wraps, is not.
+  const truncated = findAll(narrow, n => n.props?.['wrap'] === 'truncate-end').map(n => pieces(n).map(piece => piece.text).join(''))
+  expect(truncated.filter(words => words.includes('app#'))).toEqual([expect.stringContaining('app#4')])
   expect(await countedRows(render)).toBe(drawScreen(await render({ bodyColumns: 200 }), 198).length)
   expect(await countedRows(render, 60)).toBe(drawScreen(narrow, 58).length)
   // The orchestrator's own pane, cut at its edge too.
@@ -2678,8 +2692,11 @@ test('a wait of 200 characters is cut to the pane\'s width on one line, never wr
   ownFx.files.set(`${SESSIONS}/s-one`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: phase-3' }), unattended: LONG }) + '\n')
   await coordinatorRender(ownFx, own.handlers)
   const drawn = drawnTree(await own.handlers['ui.render'](ownFx.dollar, { ...renderEvent, props: { bodyColumns: 50 } }, (x: unknown) => ({ passed: x })))
-  expect(text(pieces(elAt(drawn, 1)))).toBe(`  acme/app#4  attend ${LONG_ON}`.slice(0, 49) + '…')
-  expect(elAt(drawn, 1).props['wrap']).toBe('truncate-end')
+  const attend = pieces(elAt(drawn, 1)).map(piece => piece.text)
+  expect(attend[0]).toBe('Attend')
+  expect(attend[1]!.length).toBe(50 - 2 - 11)
+  expect(attend[1]!.endsWith(` · ${local(SINCE)}`)).toBe(true)
+  expect(findAll(drawn, n => n.props?.['wrap'] === 'truncate-end').length).toBe(1)
 })
 
 // --- a consent question worded with unlettered choices draws them once ----------------------------

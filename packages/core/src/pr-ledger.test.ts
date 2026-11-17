@@ -353,26 +353,30 @@ describe('what waits on the operator, and what is in anomaly', () => {
     assert.deepEqual(unattendedParts(list.slice(3), []).map(part => part.anomaly), [true])
   })
 
-  it('says each pull request on a line of its own under its head for the pane, an empty head left out', () => {
+  it('groups the reading by state for the pane: Ready and En pause on one line each, Attend and Sans agent one pull request to a line with its time, the repository without its owner', () => {
     const list = [
       { repo: 'acme/app', pr: 4, since: AT, waits: { why: 'ready' as const } },
-      { repo: 'acme/app', pr: 5, since: AT, waits: { why: 'hold' as const } },
-      { repo: 'acme/app', pr: 6, since: AT, waits: { why: 'record' as const, on: 'ton merge\nde  la  PR' } },
-      { repo: 'acme/app', pr: 7, since: AT },
-      { repo: 'acme/app', pr: 8, since: AT, conflict: true as const },
+      { repo: 'acme/lib', pr: 5, since: AT, waits: { why: 'ready' as const } },
+      { repo: 'acme/app', pr: 6, since: AT, waits: { why: 'hold' as const } },
+      { repo: 'acme/app', pr: 7, since: AT, waits: { why: 'record' as const, on: 'ton merge\nde  la  PR' } },
+      { repo: 'acme/app', pr: 8, since: AT, waits: { why: 'record' as const } },
+      { repo: 'acme/app', pr: 9, since: AT },
+      { repo: 'acme/app', pr: 10, since: AT },
+      { repo: 'acme/app', pr: 11, since: AT, conflict: true as const },
+      { repo: 'acme/app', pr: 12, since: AT, conflict: true as const },
     ]
-    assert.deepEqual(unattendedPaneLines(list, ['acme/lib'], () => '11:00'), [
-      { anomaly: false, text: 'Attend ton geste :' },
-      { anomaly: false, text: '  acme/app#4  Ready' },
-      { anomaly: false, text: '  acme/app#5  en pause' },
-      { anomaly: false, text: '  acme/app#6  attend ton merge de la PR depuis 11:00' },
-      { anomaly: true, text: 'En anomalie :' },
-      { anomaly: true, text: '  acme/app#7  sans agent depuis 11:00' },
-      { anomaly: true, text: '  acme/app#8  en conflit' },
-      { anomaly: true, text: '  inconnues pour acme/lib (forge illisible)' },
+    assert.deepEqual(unattendedPaneLines(list, ['acme/web'], () => '11:00'), [
+      { anomaly: false, label: 'Ready', text: 'app#4 · lib#5', wraps: true },
+      { anomaly: false, label: 'En pause', text: 'app#6', wraps: true },
+      { anomaly: false, label: 'Attend', text: 'app#7', wraps: false, on: 'ton merge de la PR', time: '11:00' },
+      { anomaly: false, label: '', text: 'app#8', wraps: false, on: '?', time: '11:00' },
+      { anomaly: true, label: 'En conflit', text: 'app#11 · app#12', wraps: true },
+      { anomaly: true, label: 'Sans agent', text: 'app#9', wraps: false, time: '11:00' },
+      { anomaly: true, label: '', text: 'app#10', wraps: false, time: '11:00' },
+      { anomaly: true, label: 'Inconnues', text: 'acme/web (forge illisible)', wraps: true },
     ])
-    assert.deepEqual(unattendedPaneLines(list.slice(0, 1), []).map(l => l.text), ['Attend ton geste :', '  acme/app#4  Ready'])
-    assert.deepEqual(unattendedPaneLines([], ['acme/lib']).map(l => l.text), ['En anomalie :', '  inconnues pour acme/lib (forge illisible)'])
+    assert.deepEqual(unattendedPaneLines(list.slice(0, 1), []).map(l => l.label), ['Ready'])
+    assert.deepEqual(unattendedPaneLines([], ['acme/lib']).map(l => l.label), ['Inconnues'])
     assert.deepEqual(unattendedPaneLines([], []), [])
   })
 })

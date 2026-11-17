@@ -753,6 +753,19 @@ export function cutLine(text: string, room: number): string {
   return room > 0 && text.length > room ? `${text.slice(0, room - 1)}…` : text
 }
 
+// The width of the label column of the unattended lines (the longest label, « En conflit », and a gap).
+const UNATTENDED_LABEL_COLUMN = 11
+
+// A line's words as drawn in `room` cells: a group of pull requests as it is, for the host to wrap; one
+// pull request with what it waits on cut to the room left, so that its time, last, stays whole.
+export function unattendedText(line: UnattendedPaneLine, room: number): string {
+  if (line.wraps) return line.text
+  const tail = line.time === undefined ? '' : ` · ${line.time}`
+  const left = room - line.text.length - tail.length - 2
+  const on = line.on === undefined ? '' : room <= 0 ? `  ${line.on}` : left < 1 ? '' : `  ${cutLine(line.on, left)}`
+  return `${line.text}${on}${tail}`
+}
+
 // The pane's rows, the store read end to end and sorted by rotation urgency:
 // the sessions past the gate first (they are the rotation's next moves), then
 // the rest, each side by fill descending. The label carries what the design
@@ -1990,7 +2003,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         blocks = paneRows(Object.fromEntries(Object.entries(merged).filter(([, row]) => row.role === 'orchestrator')))
         const repo = await (ownRepo ??= repoRead($))
         if (repo === undefined) ownRepo = null
-        owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : [])])])
+        owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : []), ...(row.unattended?.prs.map(u => u.repo) ?? [])])])
         none = WORDS.noOrchestrator
         // Stat before the read: a write landing between the two is seen by the next tick.
         pane.roundSeen = await roundMtime($)
@@ -2020,16 +2033,25 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         ownUnattended = own ? unattendedOfRow(own) : null
       }
       const el = $.ui.resolve(e)
+      const columns: number = e.props?.bodyColumns ?? 0
+      // One line of the unattended reading: its label in a column of its own, its words beside it, a
+      // group wrapping under its first character and one pull request cut to the line, never wrapped.
+      // `used`: the columns the line's container takes before it, beside the scroll track.
+      const unattendedRow = (line: UnattendedPaneLine, used: number, say: (words: string, style: object, outer: object) => unknown): unknown => {
+        const tint = line.anomaly ? { color: 'warning' } : {}
+        return el.Box({
+          flexDirection: 'row',
+          children: [
+            el.Box({ width: UNATTENDED_LABEL_COLUMN, flexShrink: 0, children: [el.Text({ ...tint, children: line.label })] }),
+            el.Box({ flexGrow: 1, flexShrink: 1, children: [say(unattendedText(line, columns > 0 ? columns - TRACK_COLUMNS - used - UNATTENDED_LABEL_COLUMN : 0), tint, line.wraps ? {} : { wrap: 'truncate-end' })] }),
+          ],
+        })
+      }
       if (!coordinator) {
         return el.Box({
           flexDirection: 'column',
           children: [
-            // One pull request to a line, cut at the pane's edge, never wrapped.
-            ...(ownUnattended !== null ? ownUnattended.map(said => el.Text({
-              ...(said.anomaly ? { color: 'warning' } : {}),
-              wrap: 'truncate-end',
-              children: cutLine(said.text, e.props?.bodyColumns ?? 0),
-            })) : []),
+            ...(ownUnattended !== null ? ownUnattended.map(said => unattendedRow(said, 0, (words, style, outer) => el.Text({ ...style, ...outer, children: words }))) : []),
             ...(rows.length === 0
               ? [el.Text({ children: none })]
               // The default text colour with the name bold; a row past the gate is warning, each
@@ -2046,7 +2068,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // move measured this very content, the count is the module's, and it is the drawn rows'
       // sum — the card's border, padding, indents and blank lines counted as drawn.
       const scroll: { offset: number; bodyRows: number } | undefined = e.props?.scroll
-      const columns: number = e.props?.bodyColumns ?? 0
       const width = columns - TRACK_COLUMNS
       const rowsOf = (text: string, at: number) => width > 0 ? text.split('\n').reduce((sum, line) => sum + wrapWords(line, Math.max(1, at)).length, 0) : 0
       type Drawn = { node: unknown; rows: number }
@@ -2093,6 +2114,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           ],
         })
         const textWidth = width - 2 - WAIT_LABEL_COLUMN
+        const unattendedWidth = width - 2 - UNATTENDED_LABEL_COLUMN
         return {
           node: el.Box({
             flexDirection: 'column',
@@ -2101,14 +2123,14 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
               line,
               ...(row.status !== null ? [labelled(WORDS.status, el.Text({ color: state, children: row.status }))] : []),
               ...(row.blocked !== null ? [labelled(WORDS.blocks, rich(row.blocked))] : []),
-              ...(row.unattended !== null ? [el.Box({ paddingLeft: 2, flexDirection: 'column', children: row.unattended.map(said => rich(cutLine(said.text, width - 2), said.anomaly ? { color: 'warning' } : {}, { wrap: 'truncate-end' })) })] : []),
+              ...(row.unattended !== null ? [el.Box({ paddingLeft: 2, flexDirection: 'column', children: row.unattended.map(said => unattendedRow(said, 2, rich)) })] : []),
             ],
           }),
           rows: (i > 0 ? 1 : 0)
             + rowsOf(`● ${row.name} · ${row.head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
             + (row.status !== null ? rowsOf(row.status, textWidth) : 0)
             + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0)
-            + (row.unattended !== null && width > 0 ? row.unattended.length : 0),
+            + (row.unattended ?? []).reduce((sum, said) => sum + (said.wraps ? rowsOf(takesRows(said.text), unattendedWidth) : width > 0 ? 1 : 0), 0),
         }
       }
       const listed: Drawn[] = blocks.length === 0 ? [{ node: el.Text({ children: none }), rows: rowsOf(none, width) }] : blocks.map(block)

@@ -285,30 +285,47 @@ export function unattendedParts(list: readonly Unattended[], unread: readonly st
   ]
 }
 
-/** A line of the reading as the pane draws it: its head, or one pull request under it, indented. `anomaly` alarms. */
+/**
+ * A line of the reading as the pane draws it, under the label of its group (`label` is empty after the
+ * group's first line). `anomaly` alarms. `text` is the words of the line: the pull requests of a group
+ * (`wraps`: a line too long for its room wraps), or the one pull request of a line (not `wraps`: the
+ * caller cuts `on`, what it waits on, to the room left, so `time`, last, always shows).
+ */
 export interface UnattendedPaneLine {
   readonly anomaly: boolean
+  readonly label: string
   readonly text: string
+  readonly wraps: boolean
+  readonly on?: string
+  readonly time?: string
 }
 
+/** A pull request as the pane names it, its repository without its owner: `back-office#817`. */
+const shortRef = (u: Unattended): string => `${u.repo.slice(u.repo.lastIndexOf('/') + 1)}#${u.pr}`
+
 /**
- * The reading as the pane draws it, one pull request to a line: the head « Attend ton geste : » on its own
- * line, then `  <repo>#<n>  <state>` for each pull request that rests on the operator (`Ready`, `en pause`,
- * `attend <on> depuis <t>`); « En anomalie : » and its own lines (`sans agent depuis <t>`, `en conflit`),
- * then the repositories the forge did not list, said unknown. None for what is empty. The caller cuts a
- * line to its room: a long `on` never wraps over several lines.
+ * The reading as the pane draws it, grouped by state, each group under its label: `Ready` and `En pause`
+ * each name their pull requests on one line, `Attend` one pull request to a line with what it waits on
+ * and the time last; then, alarmed, `En conflit` (one line), `Sans agent` (one pull request to a line,
+ * the time last) and `Inconnues`, the repositories the forge did not list. None for what is empty.
  */
 export function unattendedPaneLines(list: readonly Unattended[], unread: readonly string[], at: (iso: string | null) => string = minuteOf): UnattendedPaneLine[] {
-  const waits = list.filter(u => u.waits !== undefined)
-  const anomalies = list.filter(u => u.waits === undefined)
-  const item = (anomaly: boolean, text: string): UnattendedPaneLine => ({ anomaly, text: `  ${text}` })
+  const by = (pick: (u: Unattended) => boolean): Unattended[] => list.filter(pick)
+  const group = (anomaly: boolean, label: string, members: readonly Unattended[]): UnattendedPaneLine[] =>
+    members.length === 0 ? [] : [{ anomaly, label, text: members.map(shortRef).join(' · '), wraps: true }]
+  const each = (anomaly: boolean, label: string, members: readonly Unattended[], on: (u: Unattended) => string | undefined): UnattendedPaneLine[] =>
+    members.map((u, i) => {
+      const what = on(u)?.replace(/\s+/g, ' ').trim()
+      return { anomaly, label: i === 0 ? label : '', text: shortRef(u), wraps: false, ...(what ? { on: what } : {}), time: at(u.since) }
+    })
+  const anomalies = by(u => u.waits === undefined)
   return [
-    ...(waits.length === 0 ? [] : [{ anomaly: false, text: `${WAITS_HEAD} :` }, ...waits.map(u => item(false, `${prKey(u.repo, u.pr)}  ${waitsState(u, at)}`))]),
-    ...(anomalies.length + unread.length === 0 ? [] : [
-      { anomaly: true, text: `${ANOMALY_HEAD} :` },
-      ...anomalies.map(u => item(true, `${prKey(u.repo, u.pr)}  ${anomalyState(u, at)}`)),
-      ...(unread.length === 0 ? [] : [item(true, `inconnues pour ${unread.join(', ')} (forge illisible)`)]),
-    ]),
+    ...group(false, 'Ready', by(u => u.waits?.why === 'ready')),
+    ...group(false, 'En pause', by(u => u.waits?.why === 'hold')),
+    ...each(false, 'Attend', by(u => u.waits?.why === 'record'), u => u.waits?.on ?? '?'),
+    ...group(true, 'En conflit', anomalies.filter(u => u.conflict)),
+    ...each(true, 'Sans agent', anomalies.filter(u => !u.conflict), () => undefined),
+    ...(unread.length === 0 ? [] : [{ anomaly: true, label: 'Inconnues', text: `${unread.join(', ')} (forge illisible)`, wraps: true }]),
   ]
 }
 
