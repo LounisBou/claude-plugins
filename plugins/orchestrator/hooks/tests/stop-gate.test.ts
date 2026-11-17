@@ -17,7 +17,7 @@ import {
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
 import { askTurnStarted, askedInTurn, parseAsked, questionBlock } from '../question.ts'
-import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration } from '../wait.ts'
+import { register as registerWait, AGENT_OPERATOR, ASK_FIRST, Declarations, parseDeclaration } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf } from './fakes.ts'
 import { capture, hookOf, hostOf } from '../../core/capture.ts'
@@ -2613,6 +2613,13 @@ test('an operator wait waits on the questions asked with ask: their blocks unles
   const none = parseDeclaration({ kind: 'operator', blocks: 'G1' }, [])
   expect('error' in none && none.error).toBe(ASK_FIRST)
   expect('error' in parseDeclaration({ kind: 'tool' }, asked)).toBe(true)
+})
+
+test('an agent declares no operator wait, even with a question of its session open: its wait is its orchestrator\'s', async () => {
+  const wait = waitMounted()
+  const fx = fakeDollar({ launchName: 'Agent: belt', round: { 'q-a1b2c3-1.json': ASKED_HERE } })
+  const refused = await declare(wait, fx.dollar, { kind: 'operator' })
+  expect(refused).toEqual({ result: AGENT_OPERATOR, isError: true })
 })
 
 test('a turn that asked with ask and declared its wait without question passes the stop, first stop and re-fired alike', async () => {

@@ -3550,13 +3550,17 @@ async function windowAddress($: Host<'env' | 'plugin' | 'process'>): Promise<str
   }
 }
 
-// A turn ended: the wait it left in the session's wait file, else the gate, else rest.
+// A turn ended: the wait it left in the session's wait file, else the gate, else rest. The operator's
+// question shows only while the round holds an open entry of this session.
 async function showTurnEnd($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>): Promise<void> {
   try {
     const tab = await tabOf($)
     if (!tab) return
-    const wait = await readWait($, await $.session.id())
-    await showTabState($, stateAfterTurn(wait?.waiting, tab.memory.past))
+    const sessionId = await $.session.id()
+    const wait = await readWait($, sessionId)
+    const asked = wait?.waiting === 'operator'
+      && (await readRound($)).some(({ entry }) => entry.session === sessionId && entry.status === 'open' && entry.kind === 'operator')
+    await showTabState($, stateAfterTurn(wait?.waiting, tab.memory.past, asked))
   } catch (err) {
     await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)
   }
