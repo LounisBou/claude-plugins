@@ -145,7 +145,7 @@ export function waitingRows(text: string, merged: { repo: string | null; pr: num
     if (typeof id !== 'number' || state !== 'open' || (typeof deferred === 'string' && deferred.trim() !== '')) continue
     const said = [blocker, note].filter((part): part is string => typeof part === 'string').join(' ')
     if (!prRefsOf(said).some(ref => namesMerged(ref, merged))) continue
-    const agent = typeof note === 'string' ? /\bAgent: [^,;()«»]+/.exec(note)?.[0].trim() ?? null : null
+    const agent = typeof note === 'string' ? /\bAgent ?: [^,;()«»]+/i.exec(note)?.[0].trim() ?? null : null
     found.push({ id, label: typeof label === 'string' ? label : '', agent })
   }
   return found
@@ -180,6 +180,12 @@ const net: CatchHook<Held, Call> = async ($, e, next) => {
 export function register(on: On<Held>, now: () => Date = () => new Date(), bound: number = LEDGER_BOUND_MS): void {
   on('tool.call', { tool: 'mcp__github__gh' }, async ($, e, next) => afterCall($, e, next, now, bound)).catch(net)
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => afterCall($, e, next, now, bound)).catch(net)
+}
+
+// Whether a row's `Agent: …` text (a row's note, which may run on past the name) names the agent of a ledger line, by whole name, case apart.
+function namesAgent(text: string | null, agent: string): boolean {
+  const [held, name] = [(text ?? '').toLowerCase(), agent.toLowerCase()]
+  return held.startsWith(name) && !/[a-z0-9_-]/.test(held.charAt(name.length))
 }
 
 // The line a pull request of the orchestration merged or closed wakes it with: its agent to close when it
@@ -219,21 +225,24 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
+  // The rows waiting on each merged pull request, read once; an agent holds the rows waiting on any merge of this tick.
+  const waitingOn = (ended: (typeof reading.ended)[number]) => ended.state === 'MERGED'
+    ? reading.texts.flatMap(text => waitingRows(text, { repo: ended.line.repo.toLowerCase(), pr: ended.line.pr }))
+    : []
+  const mergedRows = new Map(reading.ended.flatMap(waitingOn).map(row => [row.id, row]))
   for (const ended of reading.ended) {
     const key = `${prKey(ended.line.repo, ended.line.pr)} ended`
     if (told.has(key)) continue
     told.add(key)
     const { repo, pr, agent } = ended.line
-    // The rows waiting on a merged pull request: relayed below, and held by their agent.
-    const waiting = ended.state === 'MERGED' ? reading.texts.flatMap(text => waitingRows(text, { repo: repo.toLowerCase(), pr })) : []
     // Its agent is named only while it runs (the launcher's listing, where the close command ends it) and holds nothing else.
     const named = ended.line.status === 'working' && agent !== undefined && reading.live.has(agent) ? agent : undefined
     const holds = named === undefined ? [] : [
-      ...waiting.filter(row => row.agent === named).map(row => `row ${row.id}`),
+      ...[...mergedRows.values()].filter(row => namesAgent(row.agent, named)).map(row => `row ${row.id}`),
       ...reading.kept.filter(line => line.status === 'working' && line.agent === named).map(line => prKey(line.repo, line.pr)),
     ]
     lines.push(endedLine({ repo, pr, state: ended.state, agent: named, holds }))
-    const relay = mergeRelayLine({ repo, pr }, waiting)
+    const relay = mergeRelayLine({ repo, pr }, waitingOn(ended))
     if (relay !== null) lines.push(relay)
   }
   for (const u of anomalies) {

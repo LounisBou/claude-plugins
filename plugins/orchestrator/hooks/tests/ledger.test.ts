@@ -35,8 +35,8 @@ type Over = {
   // The forge's open pull requests by repository (prQueryRun), and those asked by number it reads closed.
   forge?: Record<string, string>
   closed?: Record<string, Record<number, 'MERGED' | 'CLOSED'>>
-  // What the launcher's `list` prints: the agents running. Empty when none is given.
-  launcher?: string
+  // What the launcher's `list` prints: the agents running (empty when none is given); null when it cannot be read.
+  launcher?: string | null
 }
 
 // The orchestrator s-orch (its record registered, owned), the agent s-agent on /dev/ttys005 launched for it.
@@ -79,7 +79,7 @@ function fake(over: Over = {}) {
         runs.push([...argv])
         const lock = lockRun(argv, files)
         if (lock !== null) return lock
-        if (argv[0] === 'bash' && argv[2] === 'list') return { exitCode: 0, stdout: over.launcher ?? '', stderr: '' }
+        if (argv[0] === 'bash' && argv[2] === 'list') return over.launcher === null ? { exitCode: 1, stdout: '', stderr: 'no terminal' } : { exitCode: 0, stdout: over.launcher ?? '', stderr: '' }
         if (argv[0] === 'mv') { files.set(argv[3]!, files.get(argv[2]!)!); files.delete(argv[2]!) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
         const asked = prQueryRun(argv, repo => over.forge?.[repo] ?? null, over.closed)
@@ -382,6 +382,30 @@ test('a merge says its agent still holds the open row that waits on it, or anoth
   const woke = await prWake(world.dollar, new Set())
   expect(woke.lines[0]).toBe('[module] acme/app#17 merged: its agent Agent: p17 still holds row 8, acme/lib#21; tell it, do not close it.')
   expect(woke.lines.join('\n')).not.toContain('is done with it, close it')
+})
+
+test('a merge says close it when the launcher cannot be read, as every agent a line names is then taken for running', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n` }, forge: { 'acme/app': '[]' }, launcher: null })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 is done with it, close it.'])
+})
+
+test('what holds the agent: a row\'s note running on past its name, a row waiting on another merge of the same tick; a line parked or waiting holds nothing', async () => {
+  const rows = [
+    JSON.stringify({ id: 8, state: 'open', label: 'next', blocker: 'PR acme/app#18 merged', note: 'Dispatched: AGENT: p17 on feat/next' }),
+    ledgerLine(17, 'working', { agent: 'Agent: p17' }),
+    ledgerLine(18, 'working', { agent: 'Agent: p18' }),
+    ledgerLine(19, 'parked', { ruling: 'later, 2026-11-15' }, 'acme/lib').replace('"ruling"', '"agent":"Agent: p17","ruling"'),
+  ].join('\n') + '\n'
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows }, forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 19, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17', 'Agent: p18') })
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines[0]).toBe('[module] acme/app#17 merged: its agent Agent: p17 still holds row 8; tell it, do not close it.')
+  expect(woke.lines[1]).toBe('[module] acme/app#18 merged: its agent Agent: p18 is done with it, close it.')
+})
+
+test('a pull request closed unmerged whose agent works another line is told as holding it', async () => {
+  const rows = `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n${ledgerLine(21, 'working', { agent: 'Agent: p17' }, 'acme/lib')}\n`
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows }, forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, closed: { 'acme/app': { 17: 'CLOSED' } }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 closed unmerged: its agent Agent: p17 still holds acme/lib#21; tell it, do not close it.'])
 })
 
 test('the tick keeps watching while a reader wants the file, its own lines all ended', async () => {
