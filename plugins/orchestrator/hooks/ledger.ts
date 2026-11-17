@@ -17,6 +17,7 @@ import { isDegradedPass, orchestrationOf, ownerOf, withDeadline } from './stop-g
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
 import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
+import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
 import { archive, boundedReading, readOr, registered } from './unattended.ts'
 
 // The nouns a write holds.
@@ -145,7 +146,7 @@ export function waitingRows(text: string, merged: { repo: string | null; pr: num
     if (typeof id !== 'number' || state !== 'open' || (typeof deferred === 'string' && deferred.trim() !== '')) continue
     const said = [blocker, note].filter((part): part is string => typeof part === 'string').join(' ')
     if (!prRefsOf(said).some(ref => namesMerged(ref, merged))) continue
-    const agent = typeof note === 'string' ? /\bAgent ?: [^,;()«»]+/i.exec(note)?.[0].trim() ?? null : null
+    const agent = typeof note === 'string' ? /\bAgent: [^,;()«»]+/.exec(note)?.[0].trim() ?? null : null
     found.push({ id, label: typeof label === 'string' ? label : '', agent })
   }
   return found
@@ -182,10 +183,14 @@ export function register(on: On<Held>, now: () => Date = () => new Date(), bound
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => afterCall($, e, next, now, bound)).catch(net)
 }
 
-// Whether a row's `Agent: …` text (a row's note, which may run on past the name) names the agent of a ledger line, by whole name, case apart.
-function namesAgent(text: string | null, agent: string): boolean {
-  const [held, name] = [(text ?? '').toLowerCase(), agent.toLowerCase()]
-  return held.startsWith(name) && !/[a-z0-9_-]/.test(held.charAt(name.length))
+// The open rows an agent owns in any record of the orchestration, as the takeover reads them: the row its
+// launch brief was printed for, in the record beside that brief, else the rows whose note names it.
+async function rowsHeldBy($: Held, agent: string, records: readonly RecordText[]): Promise<HeldRow[]> {
+  const dir = `${await stateDir($)}/prompts`
+  const launch = newestLaunch((await $.fs.list(dir).catch((): FsEntry[] => [])).map(entry => entry.name), agent)
+  const brief = launch === undefined ? undefined : briefOfLaunch(await readOr($, `${dir}/${launch}`))
+  const row = brief === undefined ? undefined : rowOfBrief(await readOr($, brief))
+  return rowsOwnedBy(agent, brief === undefined || row === undefined ? undefined : { row: Number(row), dir: dirOf(brief) }, records)
 }
 
 // The line a pull request of the orchestration merged or closed wakes it with: its agent to close when it
@@ -225,11 +230,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
-  // The rows waiting on each merged pull request, read once; an agent holds the rows waiting on any merge of this tick.
   const waitingOn = (ended: (typeof reading.ended)[number]) => ended.state === 'MERGED'
-    ? reading.texts.flatMap(text => waitingRows(text, { repo: ended.line.repo.toLowerCase(), pr: ended.line.pr }))
+    ? reading.records.flatMap(record => waitingRows(record.text, { repo: ended.line.repo.toLowerCase(), pr: ended.line.pr }))
     : []
-  const mergedRows = new Map(reading.ended.flatMap(waitingOn).map(row => [row.id, row]))
   for (const ended of reading.ended) {
     const key = `${prKey(ended.line.repo, ended.line.pr)} ended`
     if (told.has(key)) continue
@@ -238,7 +241,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     // Its agent is named only while it runs (the launcher's listing, where the close command ends it) and holds nothing else.
     const named = ended.line.status === 'working' && agent !== undefined && reading.live.has(agent) ? agent : undefined
     const holds = named === undefined ? [] : [
-      ...[...mergedRows.values()].filter(row => namesAgent(row.agent, named)).map(row => `row ${row.id}`),
+      ...(await rowsHeldBy($, named, reading.records)).map(row => `row ${row.id} (${dirOf(row.path).split('/').pop()})`),
       ...reading.kept.filter(line => line.status === 'working' && line.agent === named).map(line => prKey(line.repo, line.pr)),
     ]
     lines.push(endedLine({ repo, pr, state: ended.state, agent: named, holds }))
