@@ -47,7 +47,7 @@ import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfter
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
 import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
-import { ANOMALY_HEAD, unattendedLine, type Unattended } from '../core/pr-ledger.ts'
+import { unattendedPaneLines, type Unattended, type UnattendedPaneLine } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ROUND_DIR } from '../core/orchestration.ts'
 import { orchForm } from '../core/names.ts'
@@ -737,19 +737,35 @@ export type PaneRow = {
   status: string | null
   blocked: string | null
   waiting: WaitKind | null
-  // The pull requests nobody attends its last turn end read, in local time; null when none.
-  unattended: string | null
+  // The pull requests nobody attends its last turn end read, in local time, one to a line; null when none.
+  unattended: UnattendedPaneLine[] | null
 }
 
-// Only the anomaly line alarms: what waits on the operator is drawn in the plain colour.
-const alarmOf = (said: string): object => (said.startsWith(`${ANOMALY_HEAD} :`) ? { color: 'warning' } : {})
-
-// A row's unattended pull requests as the pane says them: the lines its context reads, in local time,
-// « Attend ton geste » and « En anomalie » one to a line.
-export function unattendedOfRow(row: SessionRow): string | null {
-  const view = row.unattended
-  return view ? unattendedLine(view.prs, view.unread, localMinute) : null
+// A row's unattended pull requests as the pane says them, in local time: the head « Attend ton geste » on
+// its own line, then one pull request to a line, « En anomalie » and its own after; only the anomaly alarms.
+export function unattendedOfRow(row: SessionRow): UnattendedPaneLine[] | null {
+  const lines = row.unattended ? unattendedPaneLines(row.unattended.prs, row.unattended.unread, localMinute) : []
+  return lines.length === 0 ? null : lines
 }
+
+// A line cut to `room` cells with an ellipsis, never wrapped; whole when the room is not told.
+export function cutLine(text: string, room: number): string {
+  return room > 0 && text.length > room ? `${text.slice(0, room - 1)}…` : text
+}
+
+// The width of the label column of the unattended lines (the longest label, « En conflit », and a gap).
+const UNATTENDED_LABEL_COLUMN = 11
+
+// A line's words as drawn in `room` cells: a group of pull requests as it is, for the host to wrap; one
+// pull request with what it waits on cut to the room left, so that its time, last, stays whole.
+export function unattendedText(line: UnattendedPaneLine, room: number): string {
+  if (line.wraps) return line.text
+  const tail = line.time === undefined ? '' : ` · ${line.time}`
+  const left = room - line.text.length - tail.length - 2
+  const on = line.on === undefined ? '' : room <= 0 ? `  ${line.on}` : left < 1 ? '' : `  ${cutLine(line.on, left)}`
+  return `${line.text}${on}${tail}`
+}
+
 // The pane's rows, the store read end to end and sorted by rotation urgency:
 // the sessions past the gate first (they are the rotation's next moves), then
 // the rest, each side by fill descending. The label carries what the design
@@ -1978,7 +1994,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       let asked: Asked[] = []
       let owners = new Map<string, string>()
       let none = 'type /orchestrator-supervision to open the pane again'
-      let ownUnattended: string | null = null
+      let ownUnattended: UnattendedPaneLine[] | null = null
       const coordinator = pane.opened?.role === 'coordinator'
       if (coordinator) {
         const store = await readStore($)
@@ -1987,7 +2003,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         blocks = paneRows(Object.fromEntries(Object.entries(merged).filter(([, row]) => row.role === 'orchestrator')))
         const repo = await (ownRepo ??= repoRead($))
         if (repo === undefined) ownRepo = null
-        owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : [])])])
+        owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : []), ...(row.unattended?.prs.map(u => u.repo) ?? [])])])
         none = WORDS.noOrchestrator
         // Stat before the read: a write landing between the two is seen by the next tick.
         pane.roundSeen = await roundMtime($)
@@ -2017,11 +2033,25 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         ownUnattended = own ? unattendedOfRow(own) : null
       }
       const el = $.ui.resolve(e)
+      const columns: number = e.props?.bodyColumns ?? 0
+      // One line of the unattended reading: its label in a column of its own, its words beside it, a
+      // group wrapping under its first character and one pull request cut to the line, never wrapped.
+      // `used`: the columns the line's container takes before it, beside the scroll track.
+      const unattendedRow = (line: UnattendedPaneLine, used: number, say: (words: string, style: object, outer: object) => unknown): unknown => {
+        const tint = line.anomaly ? { color: 'warning' } : {}
+        return el.Box({
+          flexDirection: 'row',
+          children: [
+            el.Box({ width: UNATTENDED_LABEL_COLUMN, flexShrink: 0, children: [el.Text({ ...tint, children: line.label })] }),
+            el.Box({ flexGrow: 1, flexShrink: 1, children: [say(unattendedText(line, columns > 0 ? columns - TRACK_COLUMNS - used - UNATTENDED_LABEL_COLUMN : 0), tint, line.wraps ? {} : { wrap: 'truncate-end' })] }),
+          ],
+        })
+      }
       if (!coordinator) {
         return el.Box({
           flexDirection: 'column',
           children: [
-            ...(ownUnattended !== null ? ownUnattended.split('\n').map(said => el.Text({ ...alarmOf(said), children: said })) : []),
+            ...(ownUnattended !== null ? ownUnattended.map(said => unattendedRow(said, 0, (words, style, outer) => el.Text({ ...style, ...outer, children: words }))) : []),
             ...(rows.length === 0
               ? [el.Text({ children: none })]
               // The default text colour with the name bold; a row past the gate is warning, each
@@ -2038,13 +2068,12 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // move measured this very content, the count is the module's, and it is the drawn rows'
       // sum — the card's border, padding, indents and blank lines counted as drawn.
       const scroll: { offset: number; bodyRows: number } | undefined = e.props?.scroll
-      const columns: number = e.props?.bodyColumns ?? 0
       const width = columns - TRACK_COLUMNS
       const rowsOf = (text: string, at: number) => width > 0 ? text.split('\n').reduce((sum, line) => sum + wrapWords(line, Math.max(1, at)).length, 0) : 0
       type Drawn = { node: unknown; rows: number }
       // A text drawn with the marks it carried — inline code in its colour, bold, italic — and each
-      // pull request it names a link of its own, `style` the whole text's.
-      const rich = (text: string, style: object = {}) => el.Text({ children: textSpans(text).flatMap(span => linked(span.text).map(piece => el.Text({
+      // pull request it names a link of its own, `style` the whole text's, `outer` the props of the line itself.
+      const rich = (text: string, style: object = {}, outer: object = {}) => el.Text({ ...outer, children: textSpans(text).flatMap(span => linked(span.text).map(piece => el.Text({
         ...style,
         ...(span.code ? { color: CODE_COLOR } : {}),
         ...(span.bold ? { bold: true } : {}),
@@ -2085,6 +2114,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           ],
         })
         const textWidth = width - 2 - WAIT_LABEL_COLUMN
+        const unattendedWidth = width - 2 - UNATTENDED_LABEL_COLUMN
         return {
           node: el.Box({
             flexDirection: 'column',
@@ -2093,14 +2123,14 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
               line,
               ...(row.status !== null ? [labelled(WORDS.status, el.Text({ color: state, children: row.status }))] : []),
               ...(row.blocked !== null ? [labelled(WORDS.blocks, rich(row.blocked))] : []),
-              ...(row.unattended !== null ? [el.Box({ paddingLeft: 2, flexDirection: 'column', children: row.unattended.split('\n').map(said => rich(said, alarmOf(said))) })] : []),
+              ...(row.unattended !== null ? [el.Box({ paddingLeft: 2, flexDirection: 'column', children: row.unattended.map(said => unattendedRow(said, 2, rich)) })] : []),
             ],
           }),
           rows: (i > 0 ? 1 : 0)
             + rowsOf(`● ${row.name} · ${row.head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
             + (row.status !== null ? rowsOf(row.status, textWidth) : 0)
             + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0)
-            + (row.unattended !== null ? rowsOf(takesRows(row.unattended), width - 2) : 0),
+            + (row.unattended ?? []).reduce((sum, said) => sum + (said.wraps ? rowsOf(takesRows(said.text), unattendedWidth) : width > 0 ? 1 : 0), 0),
         }
       }
       const listed: Drawn[] = blocks.length === 0 ? [{ node: el.Text({ children: none }), rows: rowsOf(none, width) }] : blocks.map(block)

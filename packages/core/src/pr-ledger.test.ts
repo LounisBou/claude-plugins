@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   archiveOf, endedLines, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
-  blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, unattended, unattendedLine, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutLines, type LedgerLine,
+  blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, unattended, unattendedLine, unattendedPaneLines, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutLines, type LedgerLine,
 } from './pr-ledger.ts'
 
 const AT = '2026-11-14T10:00:00Z'
@@ -93,10 +93,13 @@ describe('the pull request ledger', () => {
 })
 
 describe('an unattended pull request', () => {
-  const open = (pr: number, createdAt: string | null = '2026-11-13T09:00:00Z', labels?: string[]) => ({ repo: 'acme/app', pr, createdAt, ...(labels === undefined ? {} : { labels }) })
+  const open = (pr: number, labels?: string[]) => ({ repo: 'acme/app', pr, ...(labels === undefined ? {} : { labels }) })
 
-  it('is an open pull request in no record, since it was opened', () => {
-    assert.deepEqual(unattended({ open: [open(9)], lines: [], live: new Set(), now: NOW }), [{ repo: 'acme/app', pr: 9, since: '2026-11-13T09:00:00Z' }])
+  it('is never an open pull request no line holds: it is nobody\'s, drawn under no orchestration', () => {
+    assert.deepEqual(unattended({ open: [open(9)], lines: [], live: new Set(), now: NOW }), [])
+    // Of three open, the two the lines name.
+    const lines = [line({ pr: 4 }), line({ pr: 5 })]
+    assert.deepEqual(unattended({ open: [open(4), open(5), open(6)], lines, live: new Set(), now: NOW }).map(u => u.pr), [4, 5])
   })
 
   it('is one whose agent no longer runs, since its line was last set', () => {
@@ -113,10 +116,9 @@ describe('an unattended pull request', () => {
     assert.deepEqual(unattended({ open: [open(7)], lines: [unreadable], live: new Set(), now: NOW }).length, 1)
   })
 
-  it('is never one the operator parked, nor one another orchestration records', () => {
+  it('is never one the operator parked', () => {
     const parked = line({ status: 'parked', ruling: 'later', agent: undefined, updated: '2026-01-01T00:00:00Z' })
     assert.deepEqual(unattended({ open: [open(7)], lines: [parked], live: new Set(), now: NOW }), [])
-    assert.deepEqual(unattended({ open: [open(9)], lines: [], live: new Set(), now: NOW, claimed: new Set(['acme/app#9']) }), [])
   })
 
   it('is said on the anomaly line, absent when there is none, and the repositories the forge did not answer are said unknown', () => {
@@ -262,12 +264,13 @@ describe('an unattended pull request', () => {
 })
 
 describe('what waits on the operator, and what is in anomaly', () => {
-  const open = (pr: number, labels: string[] = ['Not Ready']) => ({ repo: 'acme/app', pr, createdAt: '2026-11-13T09:00:00Z', labels })
-  const read = (input: { open: ReturnType<typeof open>[]; lines?: LedgerLine[]; live?: string[]; claimed?: string[] }) =>
-    unattended({ open: input.open, lines: input.lines ?? [], live: new Set(input.live ?? []), now: NOW, claimed: new Set(input.claimed ?? []) })
+  const open = (pr: number, labels: string[] = ['Not Ready']) => ({ repo: 'acme/app', pr, labels })
+  // Each pull request has its line, an agent that no longer runs on it unless the test gives its own.
+  const read = (input: { open: ReturnType<typeof open>[]; lines?: LedgerLine[]; live?: string[] }) =>
+    unattended({ open: input.open, lines: input.lines ?? input.open.map(o => line({ pr: o.pr, agent: 'Agent: gone' })), live: new Set(input.live ?? []), now: NOW })
 
-  it('puts a Ready pull request with no agent on the operator, in a record or in none', () => {
-    assert.deepEqual(read({ open: [open(9, ['Ready'])] }), [{ repo: 'acme/app', pr: 9, since: '2026-11-13T09:00:00Z', waits: { why: 'ready' } }])
+  it('puts a Ready pull request with no agent on the operator', () => {
+    assert.deepEqual(read({ open: [open(9, ['Ready'])] }), [{ repo: 'acme/app', pr: 9, since: AT, waits: { why: 'ready' } }])
     // A Ready pull request whose agent no longer runs is no abandoned one: it waits on his merge.
     assert.deepEqual(read({ open: [open(7, ['Ready'])], lines: [line()] }), [{ repo: 'acme/app', pr: 7, since: AT, waits: { why: 'ready' } }])
     // The label is read whatever its case.
@@ -280,7 +283,7 @@ describe('what waits on the operator, and what is in anomaly', () => {
   })
 
   it('puts an On Hold pull request on the operator as his own pause', () => {
-    assert.deepEqual(read({ open: [open(9, ['On Hold'])] }), [{ repo: 'acme/app', pr: 9, since: '2026-11-13T09:00:00Z', waits: { why: 'hold' } }])
+    assert.deepEqual(read({ open: [open(9, ['On Hold'])] }), [{ repo: 'acme/app', pr: 9, since: AT, waits: { why: 'hold' } }])
     assert.equal(read({ open: [open(9, ['Not Ready', 'on hold'])] })[0]?.waits?.why, 'hold')
     // His pause is said even when Ready is there too.
     assert.equal(read({ open: [open(9, ['Ready', 'On Hold'])] })[0]?.waits?.why, 'hold')
@@ -297,10 +300,11 @@ describe('what waits on the operator, and what is in anomaly', () => {
     assert.equal(read({ open: [open(7)], lines: [{ ...ci, updated: stale.updated }] })[0]?.waits, undefined)
   })
 
-  it('leaves out what an agent holds, the operator parked or another orchestration records, whatever the label', () => {
+  it('leaves out what an agent holds or the operator parked, whatever the label', () => {
     assert.deepEqual(read({ open: [open(7, ['Ready'])], lines: [line()], live: ['Agent: seven'] }), [])
     assert.deepEqual(read({ open: [open(7, ['Ready'])], lines: [line({ status: 'parked', ruling: 'later', agent: undefined })] }), [])
-    assert.deepEqual(read({ open: [open(9, ['Ready'])], claimed: ['acme/app#9'] }), [])
+    // An open pull request no line holds is nobody\'s, Ready or not.
+    assert.deepEqual(read({ open: [open(9, ['Ready'])], lines: [] }), [])
   })
 
   it('leaves out a Ready or On Hold pull request while a wait on something else is fresh, an agent being on it in all but name', () => {
@@ -319,7 +323,7 @@ describe('what waits on the operator, and what is in anomaly', () => {
   it('says a pull request the forge reads in conflict to be in anomaly, whatever it waits on; mergeable and unknown count nothing', () => {
     const state = (pr: number, mergeable: string, labels: string[] = ['Not Ready']) => ({ ...open(pr, labels), mergeable })
     for (const labels of [['Not Ready'], ['Ready'], ['On Hold']]) {
-      assert.deepEqual(read({ open: [state(9, 'CONFLICTING', labels)] }), [{ repo: 'acme/app', pr: 9, since: '2026-11-13T09:00:00Z', conflict: true }], labels.join())
+      assert.deepEqual(read({ open: [state(9, 'CONFLICTING', labels)] }), [{ repo: 'acme/app', pr: 9, since: AT, conflict: true }], labels.join())
     }
     assert.equal(unattendedLine(read({ open: [state(9, 'CONFLICTING', ['Ready'])] }), []), 'En anomalie : acme/app#9 (en conflit)')
     assert.equal(read({ open: [state(9, 'MERGEABLE', ['Ready'])] })[0]?.waits?.why, 'ready')
@@ -327,7 +331,7 @@ describe('what waits on the operator, and what is in anomaly', () => {
     assert.equal(read({ open: [state(9, 'UNKNOWN')] })[0]?.conflict, undefined)
     // An agent on it, or the operator's parking, still leaves it out.
     assert.deepEqual(read({ open: [state(7, 'CONFLICTING')], lines: [line()], live: ['Agent: seven'] }), [])
-    assert.deepEqual(read({ open: [state(7, 'CONFLICTING')], claimed: ['acme/app#7'] }), [])
+    assert.deepEqual(read({ open: [state(7, 'CONFLICTING')], lines: [] }), [])
   })
 
   it('says what waits on him on one line and the anomalies on another, an empty one left out', () => {
@@ -347,5 +351,32 @@ describe('what waits on the operator, and what is in anomaly', () => {
     assert.deepEqual(unattendedParts(list.slice(0, 2), []).map(part => part.anomaly), [false])
     assert.equal(unattendedLine(list.slice(0, 2), []), 'Attend ton geste : acme/app#4 (Ready), acme/app#5 (en pause)')
     assert.deepEqual(unattendedParts(list.slice(3), []).map(part => part.anomaly), [true])
+  })
+
+  it('groups the reading by state for the pane: Ready and En pause on one line each, Attend and Sans agent one pull request to a line with its time, the repository without its owner', () => {
+    const list = [
+      { repo: 'acme/app', pr: 4, since: AT, waits: { why: 'ready' as const } },
+      { repo: 'acme/lib', pr: 5, since: AT, waits: { why: 'ready' as const } },
+      { repo: 'acme/app', pr: 6, since: AT, waits: { why: 'hold' as const } },
+      { repo: 'acme/app', pr: 7, since: AT, waits: { why: 'record' as const, on: 'ton merge\nde  la  PR' } },
+      { repo: 'acme/app', pr: 8, since: AT, waits: { why: 'record' as const } },
+      { repo: 'acme/app', pr: 9, since: AT },
+      { repo: 'acme/app', pr: 10, since: AT },
+      { repo: 'acme/app', pr: 11, since: AT, conflict: true as const },
+      { repo: 'acme/app', pr: 12, since: AT, conflict: true as const },
+    ]
+    assert.deepEqual(unattendedPaneLines(list, ['acme/web'], () => '11:00'), [
+      { anomaly: false, label: 'Ready', text: 'app#4 · lib#5', wraps: true },
+      { anomaly: false, label: 'En pause', text: 'app#6', wraps: true },
+      { anomaly: false, label: 'Attend', text: 'app#7', wraps: false, on: 'ton merge de la PR', time: '11:00' },
+      { anomaly: false, label: '', text: 'app#8', wraps: false, on: '?', time: '11:00' },
+      { anomaly: true, label: 'En conflit', text: 'app#11 · app#12', wraps: true },
+      { anomaly: true, label: 'Sans agent', text: 'app#9', wraps: false, time: '11:00' },
+      { anomaly: true, label: '', text: 'app#10', wraps: false, time: '11:00' },
+      { anomaly: true, label: 'Inconnues', text: 'acme/web (forge illisible)', wraps: true },
+    ])
+    assert.deepEqual(unattendedPaneLines(list.slice(0, 1), []).map(l => l.label), ['Ready'])
+    assert.deepEqual(unattendedPaneLines([], ['acme/lib']).map(l => l.label), ['Inconnues'])
+    assert.deepEqual(unattendedPaneLines([], []), [])
   })
 })
