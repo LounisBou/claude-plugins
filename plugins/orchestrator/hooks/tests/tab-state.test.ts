@@ -67,8 +67,9 @@ test('the window is the answer when the session carries the mark, else none', ()
 
 test('a turn ends on the wait it wrote, else the gate, else idle', () => {
   expect(stateAfterTurn('operator', false)).toBe('asks')
-  expect(stateAfterTurn('question', true)).toBe('asks')
-  expect(stateAfterTurn('blocked', false)).toBe('asks')
+  expect(stateAfterTurn('operator', false)).toBe('asks')
+  expect(stateAfterTurn('question', true)).toBe('held')
+  expect(stateAfterTurn('blocked', false)).toBe('held')
   expect(stateAfterTurn('done', true)).toBe('done')
   // A delivery is under review until the orchestrator's read of its pull request finds it Ready.
   expect(stateAfterTurn('delivered', false)).toBe('review')
@@ -82,7 +83,7 @@ test('a measure moves only a window at rest, onto the gate and back', () => {
   expect(stateAfterMeasure('gate', true)).toBeNull()
   expect(stateAfterMeasure('gate', false)).toBe('idle')
   expect(stateAfterMeasure('idle', false)).toBeNull()
-  for (const held of ['busy', 'asks', 'review', 'done', 'over'] as const) {
+  for (const held of ['busy', 'asks', 'held', 'review', 'done', 'over'] as const) {
     expect(stateAfterMeasure(held, true)).toBeNull()
     expect(stateAfterMeasure(held, false)).toBeNull()
   }
@@ -189,12 +190,12 @@ test('busy when a turn starts, idle when it ends with nothing pending', async ()
   expect(fx.states()).toEqual(['busy', 'idle'])
 })
 
-test('asks when a wait for the operator is written', async () => {
+test('held when a wait on the orchestrator is written, not asks', async () => {
   const chains = mounted()
   const fx = fake({ pane: '%12' })
   await drive(chains, 'turn.start', fx.dollar, {})
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Merge first or rebase?\n\nstatus: question — merge order'))
-  expect(fx.states()).toEqual(['busy', 'asks'])
+  expect(fx.states()).toEqual(['busy', 'held'])
 })
 
 test('review when a delivery is written: done only once its pull request is read Ready', async () => {
@@ -323,4 +324,19 @@ test('a state whose write failed leaves nothing remembered, so the last one is w
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Done.'))
   await drive(chains, 'turn.start', fx.dollar, {})
   expect(fx.states()).toEqual(['busy', 'idle', 'busy'])
+})
+
+test('held for a wait on the orchestrator, asks stays the operator\'s alone', () => {
+  expect(stateAfterTurn('operator', false)).toBe('asks')
+  expect(stateAfterTurn('blocked', false)).toBe('held')
+  expect(stateAfterTurn('question', false)).toBe('held')
+  expect(stateAfterTurn('waiting', true)).toBe('held')
+})
+
+test('held when a wait on the orchestrator is written, and asks is not shown for it', async () => {
+  const chains = mounted()
+  const fx = fake({ pane: '%27' })
+  await drive(chains, 'turn.start', fx.dollar, {})
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Waiting on the rebase.\n\nstatus: blocked — PR 12 rebase'))
+  expect(fx.states()).toEqual(['busy', 'held'])
 })

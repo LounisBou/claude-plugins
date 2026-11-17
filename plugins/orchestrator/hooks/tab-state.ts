@@ -6,10 +6,12 @@
 import type { WaitKind } from './relay.ts'
 
 // One word each: a turn started, a turn ended with nothing pending, a wait on the operator
-// written, a delivery whose pull request is not known Ready (under review), a delivery whose pull
-// request carries Ready (done: it waits for the merge), the delivered pull request merged or
-// closed (the agent's work is over and its orchestrator owes its close), the context past its gate.
-export type TabState = 'busy' | 'idle' | 'asks' | 'review' | 'done' | 'over' | 'gate'
+// written, a wait on the orchestrator written (held), a delivery whose pull request is not known
+// Ready (under review), a delivery whose pull request carries Ready (done: it waits for the
+// merge), the delivered pull request merged or closed (the agent's work is over and its
+// orchestrator owes its close), the context past its gate. `asks` is the operator's alone: a
+// window that waits on its orchestrator is `held`.
+export type TabState = 'busy' | 'idle' | 'asks' | 'held' | 'review' | 'done' | 'over' | 'gate'
 
 // The session option the home command's conf sets on every session it makes: an agent is a
 // window of a session that carries it.
@@ -78,13 +80,14 @@ export function stateAfterPr(shown: string, pr: { state: string; ready?: boolean
   return null
 }
 
-// What a turn's end leaves on the window: the wait its session wrote (the operator is asked
-// something, or a delivery is in: under review until the orchestrator's read of the pull request
-// finds it Ready), else the gate, else nothing pending.
+// What a turn's end leaves on the window: the wait its session wrote (a delivery is in, under
+// review until the orchestrator's read of its pull request finds it Ready; the operator is asked
+// something; or the session waits on its orchestrator), else the gate, else nothing pending.
 export function stateAfterTurn(waiting: WaitKind | null | undefined, pastGate: boolean): TabState {
   if (waiting === 'delivered') return 'review'
   if (waiting === 'done') return 'done'
-  if (waiting) return 'asks'
+  if (waiting === 'operator') return 'asks'
+  if (waiting) return 'held'
   return pastGate ? 'gate' : 'idle'
 }
 

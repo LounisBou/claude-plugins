@@ -8261,7 +8261,7 @@ def icons(text, tab_bg):
 inactive = icons(formats('window-status-format'), '#303030')
 current = icons(formats('window-status-current-format'), '#ffd75f')
 bad = []
-if set(inactive) != {'busy', 'idle', 'asks', 'review', 'done', 'over', 'gate'}: bad.append('states %s' % sorted(inactive))
+if set(inactive) != {'busy', 'idle', 'asks', 'held', 'review', 'done', 'over', 'gate'}: bad.append('states %s' % sorted(inactive))
 for state in inactive:
     if inactive[state] != current.get(state): bad.append('%s differs between tabs: %s / %s' % (state, inactive[state], current.get(state)))
     fg, bg, _ = inactive[state]
@@ -8271,6 +8271,11 @@ if greens[0] == greens[1] or abs(lum(greens[0]) - lum(greens[1])) < 0.2: bad.app
 print('ok' if not bad else '; '.join(bad))
 PY
 )"
+  # The held state, a wait on the orchestrator, shows its own pause icon in both blocks, never the
+  # operator's hand.
+  tmux -L "$CONFSRV" set -w -t home:1 @state held 2>/dev/null
+  check "the held state renders the pause icon in both blocks, not the operator's hand" " ⏸ | ⏸ " \
+    "$(tmux -u -L "$CONFSRV" display -p -t home:1 '#{E:window-status-format}|#{E:window-status-current-format}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/second//g; s/  */ /g')"
   check "the status line shows no session name" "" "$(tmux -L "$CONFSRV" display -p -t home:0 '#{E:status-left}' 2>/dev/null)"
   check "the status line shows nothing on its right: no pane title, no clock" "" "$(tmux -L "$CONFSRV" display -p -t home:0 '#{E:status-right}' 2>/dev/null)"
   check "the current window's format is bold" "1" \
