@@ -46,8 +46,10 @@
 #   waiting <orchestrator> | done since <UTC time>
 #     (an orchestrator whose last turn ended on its machine line, read from the wait file the
 #     hooks module keeps for its live session; the module also enters that wait in the round once)
-#   unattended <orchestrator> | PR délaissées : <repository>#<n> (sans agent depuis <UTC minute>), ...
-#     (the open pull requests nobody attends, as the hooks module of a live orchestrator read them
+#   unattended <orchestrator> | Attend ton geste : <repository>#<n> (Ready | en pause | attend <what> depuis <UTC minute>), ...
+#   unattended <orchestrator> | En anomalie : <repository>#<n> (sans agent depuis <UTC minute>), ...
+#     (the open pull requests no agent holds, those resting on the operator and those in anomaly
+#     each on a line of its own, as the hooks module of a live orchestrator read them
 #     against the forge at its last turn end and wrote them on its row; « unattended » is core's
 #     pr-ledger.ts, docs/contracts.md; a repository the forge did not list is said unknown)
 #   remote <orchestrator> | on <machine> | updated <UTC time> | context <tokens> (<percent>%) | repository <owner/name or none> | prs <owner/name#n>, ... or none | <wait>

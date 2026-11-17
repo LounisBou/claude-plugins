@@ -47,7 +47,7 @@ import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfter
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
 import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
-import { unattendedLine, type Unattended } from '../core/pr-ledger.ts'
+import { ANOMALY_HEAD, unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ROUND_DIR } from '../core/orchestration.ts'
 import { messageOf, type Host, type On, type SessionSendResult, type Timer, type UiOpenResult } from './host.ts'
@@ -381,7 +381,8 @@ export function parseSessionRow(text: string): SessionRow | null {
     return check(value) ? { [key]: value } : {}
   }
   const isUnattended = (value: unknown): value is UnattendedView | null => value === null || (isRecord(value) && isText(value['at']) && isTextOrNull(value['line'])
-    && Array.isArray(value['prs']) && value['prs'].every(pr => isRecord(pr) && isText(pr['repo']) && isFigure(pr['pr']) && isTextOrNull(pr['since']))
+    && Array.isArray(value['prs']) && value['prs'].every(pr => isRecord(pr) && isText(pr['repo']) && isFigure(pr['pr']) && isTextOrNull(pr['since'])
+      && (pr['waits'] === undefined || (isRecord(pr['waits']) && ['ready', 'hold', 'record'].includes(String(pr['waits']['why'])) && (pr['waits']['on'] === undefined || isText(pr['waits']['on'])))))
     && Array.isArray(value['unread']) && value['unread'].every(isText))
   return {
     role: field('role', isRole, null),
@@ -739,7 +740,11 @@ export type PaneRow = {
   unattended: string | null
 }
 
-// A row's unattended pull requests as the pane says them: the same line its context reads, in local time.
+// Only the anomaly line alarms: what waits on the operator is drawn in the plain colour.
+const alarmOf = (said: string): object => (said.startsWith(`${ANOMALY_HEAD} :`) ? { color: 'warning' } : {})
+
+// A row's unattended pull requests as the pane says them: the lines its context reads, in local time,
+// « Attend ton geste » and « En anomalie » one to a line.
 export function unattendedOfRow(row: SessionRow): string | null {
   const view = row.unattended
   return view ? unattendedLine(view.prs, view.unread, localMinute) : null
@@ -1962,7 +1967,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         return el.Box({
           flexDirection: 'column',
           children: [
-            ...(ownUnattended !== null ? [el.Text({ color: 'warning', children: ownUnattended })] : []),
+            ...(ownUnattended !== null ? ownUnattended.split('\n').map(said => el.Text({ ...alarmOf(said), children: said })) : []),
             ...(rows.length === 0
               ? [el.Text({ children: none })]
               // The default text colour with the name bold; a row past the gate is warning, each
@@ -2034,7 +2039,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
               line,
               ...(row.status !== null ? [labelled(WORDS.status, el.Text({ color: state, children: row.status }))] : []),
               ...(row.blocked !== null ? [labelled(WORDS.blocks, rich(row.blocked))] : []),
-              ...(row.unattended !== null ? [el.Box({ paddingLeft: 2, children: [rich(row.unattended, { color: 'warning' })] })] : []),
+              ...(row.unattended !== null ? [el.Box({ paddingLeft: 2, flexDirection: 'column', children: row.unattended.split('\n').map(said => rich(said, alarmOf(said))) })] : []),
             ],
           }),
           rows: (i > 0 ? 1 : 0)
