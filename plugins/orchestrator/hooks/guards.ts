@@ -563,17 +563,22 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // A question asked with `ask` still open stays in the round until he answers it, its answer
       // waking the session; unless the session handed over: its successor holds the questions.
       let opened: { id: string; ask: string }[] = []
+      // Whether the round was read: a read that threw or did not answer in time says nothing about what is open.
+      let roundRead = true
       if ((role === 'orchestrator' || role === 'auditor') && sessionId !== '' && handedOverIn !== sessionId && !isEnding()) {
-        opened = await quietly($, async () => (await readAsked($)).filter(entry => entry.status === 'open' && entry.sender.session === sessionId), until, [])
+        const read = await inTime($, async () => (await readAsked($)).filter(entry => entry.status === 'open' && entry.sender.session === sessionId), until)
+        if (read === null) roundRead = false
+        else opened = read
       }
       // The one check of the gate that refuses (the others observe, the operator's ruling of 2026-11-15
       // limiting refusals to the irreversible; his ruling of 2026-11-17 on this one: « ça ne devrait pas
       // être possible »): a choice put to him in prose with no question of the session open in the round
       // is shown nowhere, and nothing brings his answer back. The coordinator is left out: its decision
-      // round presents the other sessions' questions in prose by design. The host re-fires a refused stop
+      // round presents the other sessions' questions in prose by design. A round that could not be read
+      // refuses nothing: the gate stands down on a read it could not make. The host re-fires a refused stop
       // with `stop_hook_active`, which the gate lets pass at its first line, so it refuses once per turn.
       if ((role === 'orchestrator' || role === 'auditor') && sessionId !== '' && handedOverIn !== sessionId && !isEnding()
-        && opened.length === 0 && putsChoiceToOperator(String(e.last_assistant_message ?? ''))) {
+        && roundRead && opened.length === 0 && putsChoiceToOperator(String(e.last_assistant_message ?? ''))) {
         await logLine($, 'guards', `stop gate: refused: a choice put to the operator in prose, no question of ${name} open in the round`)
         await refused($, PROSE_CHOICE_CODE)
         return refuse(PROSE_CHOICE_REASON)

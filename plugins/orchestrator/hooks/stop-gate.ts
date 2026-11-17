@@ -402,30 +402,39 @@ export const restatedReason = (ids: readonly string[]): string =>
 // A choice or a decision put to the operator in the turn's final message, in prose. The one check of
 // the gate that refuses: a question asked this way is shown nowhere (no ✋, no counter) and nothing
 // carries his answer back, so letting the turn end on it leaves him with a question he cannot see.
-// It reads the message's tail only, outside fenced code and quotes, and wants two things together:
-// the shape of a question (at least two lettered options, or a last line that ends on « ? ») and a
-// word that asks him to rule (« que je recommande », « dès que vous aurez tranché », « should I »).
-// A report that names choices already made carries the first and not the second, and passes.
-const TAIL_PARAGRAPHS = 2
+// The refusal is the gate's only one, so it is held to precision over reach: it reads the message's
+// tail only, outside fenced code and quotes and without its `waiting:` line, and wants a question's
+// structure and a request to rule together, each in the forward or imperative form. Either is
+// (1) at least two lettered options (`(A`, `A)`, `**A**`, `option A`) and a request to rule
+// (« dès que vous aurez tranché », « please choose », a recommendation inside an option's
+// parentheses, or a last line that asks which), or (2) a last line that asks him « should I »,
+// « voulez-vous », and the like. A report that names choices already made carries a structure and
+// no request (« tranché », « chose », « recommended » alone ask nothing), and passes.
+const TAIL_PARAGRAPHS = 3
 const OPTION_LABELS = [
-  /\(([A-D])(?=[,)\s:.])/g,
+  /\(([A-D])(?=[,):.])/g,
   /(?:^|\s)([A-D])\)(?=\s)/g,
   /\*\*([A-D])\*\*/g,
-  /\b(?:option|choice|variante|choix)\s+([A-D])\b/gi,
+  /\b(?:[Oo]ption|[Cc]hoice|[Vv]ariante)\s+([A-D])\b/g,
   /^\s*(?:[-*]\s*)?([A-D])[.:](?=\s)/gm,
 ]
 const RULING_CUE = new RegExp([
-  'que je recommande', 'ma recommandation', 'je recommande', 'i recommend', 'my recommendation',
-  'tranch(?:er|ez|é la)', 'dès que vous', 'as soon as you', 'once you (?:decide|choose|rule|pick)',
-  'until you (?:decide|choose|rule|pick)', "jusqu'à ce que vous", 'your (?:call|choice|decision|pick)',
-  'votre (?:choix|décision|arbitrage)', 'à vous de', 'dites-moi', 'let me know', 'tell me (?:which|whether|if)',
-  'which (?:one|option)', 'lequel', 'laquelle', 'please (?:choose|decide|pick|confirm)', 'choisissez', 'choose\\b',
-  'decide\\b', 'décidez',
+  'aurez (?:tranché|décidé|choisi)', '(?:once|when|until) you (?:have )?(?:decide|choose|rule|pick|confirm)',
+  "jusqu'à ce que vous (?:ayez )?(?:tranch|décid|chois)", 'tranchez\\b', 'choisissez\\b', 'décidez\\b',
+  'please (?:choose|decide|pick|confirm)', 'à vous de (?:trancher|choisir|décider)',
+  'tell me (?:which|whether)', 'dites-moi (?:lequel|laquelle|si)',
+  '(?:waiting (?:for|on)|en attente de) (?:your|votre) (?:choice|decision|choix|décision)',
 ].join('|'), 'i')
-const DECISION_QUESTION = /\b(?:should i|shall i|do you want|would you like|do you prefer|want me to|which|dois-je|voulez-vous|souhaitez-vous|préférez-vous|veux-tu|faut-il|lequel|laquelle)\b/i
+// A recommendation written inside an option's own parentheses: « (A, que je recommande) ».
+const OPTION_RECOMMENDED = /\(([A-D])\b[^)]*\b(?:que je recommande|je recommande|i recommend|which i recommend)\b/
+const WHICH_QUESTION = /\b(?:which (?:one|option)|lequel|laquelle|votre choix|your choice|your call)\b/i
+const ASKS_HIM = /\b(?:should i|shall i|do you want|would you like|do you prefer|want me to|dois-je|voulez-vous|souhaitez-vous|préférez-vous|veux-tu)\b/i
+// A last line that reports a question someone else asked is no question of the session's own.
+const REPORTED = /\b(?:asked|asks|demandé|demandait|said|dit|wrote|écrit)\b/i
 
 function tailOf(message: string): string {
-  const kept = message.replace(/```[\s\S]*?(?:```|$)/g, '').split('\n').filter(line => !/^\s*>/.test(line)).join('\n')
+  const kept = message.replace(/```[\s\S]*?(?:```|$)/g, '').split('\n')
+    .filter(line => !/^\s*>/.test(line) && !/^\s*waiting:/i.test(line)).join('\n')
   return kept.trim().split(/\n\s*\n/).slice(-TAIL_PARAGRAPHS).join('\n\n')
 }
 
@@ -434,9 +443,10 @@ export function putsChoiceToOperator(message: string): boolean {
   if (tail === '') return false
   const last = tail.split('\n').filter(line => line.trim() !== '').pop() ?? ''
   const asking = /\?[\s"'»)*_]*$/.test(last)
-  if (asking && DECISION_QUESTION.test(last)) return true
+  if (asking && ASKS_HIM.test(last) && !REPORTED.test(last)) return true
   const labels = new Set(OPTION_LABELS.flatMap(pattern => [...tail.matchAll(pattern)].map(found => found[1] ?? '')))
-  return labels.size >= 2 && (asking || RULING_CUE.test(tail))
+  if (labels.size < 2) return false
+  return RULING_CUE.test(tail) || OPTION_RECOMMENDED.test(tail) || (asking && WHICH_QUESTION.test(last))
 }
 
 export const PROSE_CHOICE_REASON = 'Your message puts a choice or a decision to the operator in prose, and no question of yours is open in the round: '

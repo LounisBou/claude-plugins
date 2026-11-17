@@ -181,6 +181,22 @@ test('a final message that puts a choice or a decision to the operator in prose 
   expect(putsChoiceToOperator('Le choix (A) a été appliqué, (B) écarté, et (C) reste ouvert côté code. Tout est mergé.')).toBe(false)
   expect(putsChoiceToOperator('Plan:\nA. the parser\nB. the gate\nC. the tests\n\nAll three are merged.')).toBe(false)
   expect(putsChoiceToOperator('Did the build pass? Yes, all of it.')).toBe(false)
+  // The words of a request, used for something else or in the past, with lettered parts or none.
+  for (const report of [
+    'Étapes A) et B) terminées. Je recommande de passer à la phase suivante.',
+    'Lots livrés: A) parser B) gate.\n\nLet me know when you want the next phase.',
+    'Option A livrée; option B écartée. Je recommande de vérifier les logs.',
+    'Vous avez tranché la question : (A) appliqué, (B) écarté. Tout est mergé.',
+    'Ma recommandation (A) a été suivie, (B) écarté. Phase livrée.',
+    "Le choix d'architecture est fait (A, que je recommandais) ; (A cause du timeout) reste le lot.",
+    'Done: (A) parser, (B) gate merged. Anything else?',
+    'Merged. The agent asked: should I rebase?',
+    'The CI shows which job failed?',
+  ]) expect(putsChoiceToOperator(report)).toBe(false)
+  // The wait line the refusal itself teaches does not hide the question above it; options split by paragraphs are read.
+  expect(putsChoiceToOperator(`${BLITZ}\n\nwaiting: operator — blocks: S1`)).toBe(true)
+  expect(putsChoiceToOperator('Dès que vous aurez tranché :\n\nA. corriger\n\nB. laisser')).toBe(true)
+  expect(putsChoiceToOperator('The report says nothing on which tests failed?')).toBe(false)
   expect(putsChoiceToOperator('')).toBe(false)
   // A question block copied inside a fence or a quote is a quotation, not the turn's own question.
   expect(putsChoiceToOperator(`Done.\n\n\`\`\`\n${BLITZ}\n\`\`\``)).toBe(false)
@@ -212,7 +228,7 @@ test('the same message passes when a question of the session is open, when the s
   const e = stopEvent({ last_assistant_message: BLITZ })
   const open = await stop(handlers['classic.Stop'], fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } }).dollar, e)
   expect(fieldsIn(open.answer).block).toBeUndefined()
-  expect(open.observed).not.toBe(PROSE_CHOICE_REASON)
+  expect(open.answer).toBe(open.passed)
   // A question settled or another session's leaves none open: refused.
   const settled = askedHere({ status: 'answered', answer: { text: 'A', by: 'pane', at: '2026-11-14T10:05:00Z' } })
   expect((await refusedStop(handlers['classic.Stop'], fakeDollar({ round: { 'q-a1b2c3-1.json': settled } }).dollar, e)).answer.block).toBe(PROSE_CHOICE_REASON)
@@ -223,6 +239,24 @@ test('the same message passes when a question of the session is open, when the s
   const report = await refusedStop(handlers['classic.Stop'], fakeDollar({}).dollar, stopEvent({ last_assistant_message: 'He chose option A over B. The phase is merged.' }))
   expect(report.answer.block).toBeUndefined()
   expect(report.journal).not.toContain('refusal orchestrator.stop-gate.prose-choice')
+})
+
+test('a round that cannot be read refuses nothing, and neither does a session that handed over', async () => {
+  const { handlers } = mounted()
+  const e = stopEvent({ last_assistant_message: BLITZ })
+  for (const hang of ['list', 'read'] as const) {
+    const fx = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE }, roundHang: hang, env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.2' } })
+    const unread = await refusedStop(handlers['classic.Stop'], fx.dollar, e)
+    expect(unread.answer.block).toBeUndefined()
+    expect(unread.passed).not.toBeNull()
+    expect(unread.journal).toEqual([])
+  }
+  // The successor's spawn, run through Bash without error, is the hand-over: its successor holds the questions.
+  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
+  await handlers['tool.call'](fakeDollar({}).dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
+  const handed = await refusedStop(handlers['classic.Stop'], fakeDollar({}).dollar, e)
+  expect(handed.answer.block).toBeUndefined()
+  expect(handed.passed).not.toBeNull()
 })
 
 test('an auditor is refused the same way; the coordinator, whose decision round presents questions in prose, is not', async () => {
