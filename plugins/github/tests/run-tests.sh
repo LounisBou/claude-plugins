@@ -2573,6 +2573,19 @@ check "#907 sequence: a failure is not hidden by a run going after it" "FAILURE 
 seq8 new-head "$(job 11 guards 100 completed '"cancelled"'),$(job 21 changes 200 completed '"success"'),$(job 22 lint 200 in_progress null)" \
   "$(WF 10 completed '"cancelled"' 100 1),$(WF 20 in_progress null 200 1)"
 check "#907 sequence: a head no run succeeded at is not green" "PENDING   2" "$(ci8)"
+# A run started again keeps its run id and goes: what its earlier attempt did was not a success.
+seq8 rerun "$PASSED,$(job 31 changes 300 completed '"success"'),$(job 32 lint 300 in_progress null)" \
+  "$PASSEDWF,$(WF 30 in_progress null 300 1 | sed 's/"conclusion"/"run_attempt":2,"conclusion"/')"
+check "#907 sequence: a failed run started again holds the head while it goes" "PENDING   4" "$(ci8)"
+# A run that ended with no check run to name it (the workflow file refused, a startup failure) is a failure.
+seq8 startup "$PASSED" "$PASSEDWF,$(WF 30 completed '"startup_failure"' 300 1)"
+check "#907 sequence: a run after the success that ended with no check run is a failure" "FAILURE workflow run (startup_failure)  3" "$(ci8)"
+# A run whose state the Actions runs do not give proves nothing and hides nothing behind a success.
+seq8 unknown "$PASSED,$(job 31 lint 300 completed '"failure"')" "$PASSEDWF,{\"id\":30,\"check_suite_id\":300,\"workflow_id\":1}"
+check "#907 sequence: a run of unknown state hides its failure from no success" "FAILURE lint  4" "$(ci8)"
+# A workflow run waiting for its first check run, with no older run, holds the head.
+seq8 lone-queued "" "$(WF 30 queued null 300 1)"
+check "#907 sequence: a lone run that has not started holds the head" "PENDING   0" "$(ci8)"
 seq8 other-workflow "$PASSED,$(job 21 harness 210 in_progress null)" "$PASSEDWF,$(WF 21 in_progress null 210 2)"
 check "#907 sequence: a run going after a success holds nothing back, its workflow's success speaks" "SUCCESS   3" "$(ci8)"
 seq8 never "$(job 21 harness 210 in_progress null),$(job 1 changes 50 completed '"success"')" "$(WF 5 completed '"success"' 50 1),$(WF 21 in_progress null 210 2)"

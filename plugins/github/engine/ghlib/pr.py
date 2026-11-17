@@ -153,10 +153,21 @@ def pr_status(args):
     return {"pull": pull, "ci": _gate_ci(owner, name, pull, sha, statuses, (runs or {}).get("check_runs") or [])}
 
 
+def _run_state(run):
+    """A workflow run's conclusion once it finished, else its status; "rerun" while a run started
+    again goes (its run id is kept, its earlier attempt may have failed)."""
+    if run.get("status") == "completed":
+        return run.get("conclusion")
+    attempt = run.get("run_attempt")
+    if run.get("status") in fmt.ACTIVE and isinstance(attempt, int) and not isinstance(attempt, bool) and attempt > 1:
+        return fmt.RERUN
+    return run.get("status")
+
+
 def _suite_workflows(owner, name, sha):
     """The workflow of each check suite at a head, {suite id as a string: workflow
     id}, its workflow run, {suite id as a string: run id}, and that run's state,
-    {suite id as a string: its conclusion once finished, else its status}, from the Actions
+    {suite id as a string: its conclusion once finished, else its status (_run_state)}, from the Actions
     runs. (None, None, None) when the call fails: the gate then counts every run rather
     than guess which belong together."""
     try:
@@ -174,10 +185,7 @@ def _suite_workflows(owner, name, sha):
     ]
     workflows = {str(run["check_suite_id"]): run["workflow_id"] for run in placed}
     suite_runs = {str(run["check_suite_id"]): run.get("id") for run in placed}
-    states = {
-        str(run["check_suite_id"]): (run.get("conclusion") if run.get("status") == "completed" else run.get("status"))
-        for run in placed
-    }
+    states = {str(run["check_suite_id"]): _run_state(run) for run in placed}
     return workflows, suite_runs, states
 
 

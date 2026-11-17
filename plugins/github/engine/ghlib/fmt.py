@@ -74,9 +74,14 @@ def _stale_suites(workflows, suite_runs, runs):
 
 
 # The states of a workflow run that has not finished, as GitHub names its status.
-_ACTIVE = ("queued", "in_progress", "waiting", "requested", "pending")
+ACTIVE = ("queued", "in_progress", "waiting", "requested", "pending")
 # What a finished run did not decide: a run cancelled or skipped proved nothing.
 _UNSETTLED = ("cancelled", "skipped")
+# A run started again (a re-run keeps its run id): it goes, but what its earlier attempt did may have failed.
+RERUN = "rerun"
+# A finished run that passed at the workflow level.
+_PASSED = ("success", "neutral")
+_GOING = ACTIVE + (RERUN,)
 
 
 def _placed(workflows, suite_runs):
@@ -97,12 +102,13 @@ def _after_success(placed, states):
     when that run succeeded: a run still going, cancelled or skipped after a success at the same
     head (a label write fires one, and a workflow that cancels its in-progress run cancels the
     one before) decides nothing, the success speaks for the workflow. A settled run that failed,
-    or one whose state is unknown, hides nothing: a failure is real, and an unknown proves nothing."""
+    a run started again (its earlier attempt may have failed) and one whose state is unknown hide
+    nothing: a failure is real, and the others prove nothing."""
     hidden = set()
     for entries in placed.values():
         for index, (_, suite) in enumerate(entries):
             state = states.get(suite)
-            if state is None or state in _ACTIVE or state in _UNSETTLED:
+            if state in ACTIVE or state in _UNSETTLED:
                 continue
             if state == "success":
                 hidden.update(newer for _, newer in entries[:index])
@@ -110,8 +116,26 @@ def _after_success(placed, states):
     return hidden
 
 
+def _unreported(placed, states, runs):
+    """The workflow runs that ended without a check run to show for it (a startup failure, a
+    workflow file GitHub refused), each named by its state: the latest settled run of a workflow,
+    when it did not pass and no check run belongs to it, is a failure no check names."""
+    checked = {str((run.get("check_suite") or {}).get("id")) for run in runs}
+    failed = []
+    for entries in placed.values():
+        for _, suite in entries:
+            state = states.get(suite)
+            if state in ACTIVE or state in _UNSETTLED:
+                continue
+            if state is not None and state != RERUN and state not in _PASSED and suite not in checked:
+                failed.append("workflow run (%s)" % state)
+            break
+    return failed
+
+
 def _latest_runs(runs, workflows, suite_runs=None, states=None):
-    """(the latest run of each check, the workflow runs still going that no check run speaks for).
+    """(the latest run of each check, the workflow runs still going that no check run speaks for,
+    the failures no check run names).
     A check is its name, its app (app.id, or
     app.slug when that is all the payload carries; no app, the name alone) and
     its workflow: every Actions run shares one app, so a job of one workflow
@@ -134,7 +158,7 @@ def _latest_runs(runs, workflows, suite_runs=None, states=None):
     newer than the latest settled run of a workflow, when it succeeded, are left
     out altogether (_after_success). Every other conclusion of an older run counts."""
     if workflows is None:
-        return list(runs), 0
+        return list(runs), 0, []
     states = states or {}
     placed = _placed(workflows, suite_runs)
     hidden = _after_success(placed, states)
@@ -146,10 +170,10 @@ def _latest_runs(runs, workflows, suite_runs=None, states=None):
     # The workflows whose latest run still goes: it replaces every older run that was cancelled.
     going = {}
     for entries in placed.values():
-        if states.get(entries[0][1]) in _ACTIVE:
+        if states.get(entries[0][1]) in _GOING:
             going.update({suite: entries[0][1] for _, suite in entries[1:]})
     incomplete = {str((run.get("check_suite") or {}).get("id")) for run in runs if run.get("status") != "completed"}
-    waiting = sum(1 for entries in placed.values() if states.get(entries[0][1]) in _ACTIVE and entries[0][1] not in incomplete)
+    waiting = sum(1 for entries in placed.values() if states.get(entries[0][1]) in _GOING and entries[0][1] not in incomplete)
     kept = []
     groups = {}
     for run in runs:
@@ -170,7 +194,7 @@ def _latest_runs(runs, workflows, suite_runs=None, states=None):
     for group in groups.values():
         newest = max(run["id"] for run in group)
         kept.extend(run for run in group if run["id"] == newest)
-    return kept, waiting
+    return kept, waiting, _unreported(placed, states, runs)
 
 
 def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=None, unverified=None, no_ci=False, states=None):
@@ -192,13 +216,13 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=Non
     (unverified: what it read and why) leaves the result at best PENDING: a check the
     base requires may be missing from the runs, so green cannot be told."""
     commit_statuses = (statuses or {}).get("statuses") or []
-    runs, waiting = _latest_runs(runs, workflows, suite_runs, states)
+    runs, waiting, unreported_runs = _latest_runs(runs, workflows, suite_runs, states)
     passing = ("success",) if draft else ("success", "neutral")
     unproven = ("skipped", "neutral") if draft else ("skipped",)
     completed = [run for run in runs if run.get("status") == "completed"]
     failed = [
         run.get("name", "?") for run in completed if run.get("conclusion") not in passing + unproven
-    ] + [status.get("context", "?") for status in commit_statuses if status.get("state") in ("failure", "error")]
+    ] + unreported_runs + [status.get("context", "?") for status in commit_statuses if status.get("state") in ("failure", "error")]
     running = [run for run in runs if run.get("status") != "completed"] + [
         status for status in commit_statuses if status.get("state") == "pending"
     ] + ["workflow run"] * waiting
