@@ -1096,62 +1096,6 @@ async function carriedRecords($: Mod, gate: Gate, files: RecordFile[]): Promise<
   }))
 }
 
-/*
- * The CI undrafts the plugin made itself, kept in the data directory: the same account takes a pull
- * request out of draft for the operator, so GitHub cannot say which one this was. The gate puts a
- * pull request back to draft only when one is marked, and a mark is written only for a pull request
- * that was in draft when the plugin took it out of it. The mark covers the pull request across pushes
- * for as long as the gate reads it open and out of draft; it is spent (rewritten with no head) when
- * the gate redrafts, and when it reads the pull request in draft or closed. One small file per pull
- * request, replaced whole, so no write reads another's. The head in it is the one the undraft was made at.
- */
-export const CI_UNDRAFT_PREFIX = 'ci-undraft.'
-
-// The mark's file: the repository (lowercase, encoded) and the pull request number.
-async function ciUndraftPath($: Mod, repo: string, pr: number): Promise<string | undefined> {
-  const dir = await dataDir($)
-  return dir ? dir + '/' + CI_UNDRAFT_PREFIX + encodeURIComponent(repo.toLowerCase()) + '.' + pr + '.json' : undefined
-}
-
-// The head the pull request was undrafted at for CI, or '' when it was not or the mark is spent or unreadable.
-async function ciUndraftHead($: Mod, repo: string, pr: number): Promise<string> {
-  try {
-    const path = await ciUndraftPath($, repo, pr)
-    if (!path || !(await $.fs.exists(path))) return ''
-    const mark: unknown = JSON.parse(String(await $.fs.read(path)))
-    const head = isRecord(mark) ? mark['head'] : undefined
-    return typeof head === 'string' ? head : ''
-  } catch {
-    return ''
-  }
-}
-
-async function writeCiUndraft($: Mod, repo: string, pr: number, head: string): Promise<void> {
-  const path = await ciUndraftPath($, repo, pr)
-  if (!path) throw new Error('the plugin has no data directory: neither CLAUDE_PLUGIN_DATA nor HOME is set')
-  await $.fs.write(path, JSON.stringify({ v: 1, repo: repo.toLowerCase(), pr, head }) + '\n')
-}
-
-async function ciUndraftMarked($: Mod, repo: string, pr: number): Promise<boolean> {
-  return await ciUndraftHead($, repo, pr) !== ''
-}
-
-// Spends the mark, written only when there is one.
-async function dropCiUndraft($: Mod, repo: string, pr: number): Promise<void> {
-  if (await ciUndraftHead($, repo, pr) !== '') await writeCiUndraft($, repo, pr, '')
-}
-
-// A mark that cannot be kept only means the gate will not redraft: said in one line.
-async function noteCiUndraft($: Mod, repo: string, pr: number, head: string | undefined): Promise<void> {
-  note($, ciUndraftLine(repo, pr))
-  if (!head) return
-  try {
-    await writeCiUndraft($, repo, pr, head)
-  } catch (err: unknown) {
-    note($, 'github: ' + repo + '#' + pr + ' out of draft to run CI is not marked, the gate will leave it out of draft: ' + reasonOf(err).trim())
-  }
-}
-
 // ---- E2E a pull request does not need (e2e-scope.ts) ----
 
 // The files of a pull request, or a throw: never read as none.
@@ -1277,8 +1221,8 @@ async function readiness($: Mod, repo: string, pr: number, sha?: string): Promis
  * The Ready label follows the gate: whenever the module learns something that can complete or
  * break readiness (a record written, the gate or the checks read through the tool), it reads the
  * three at the head and puts Ready, or Not Ready back on a pull request carrying Ready. The head is
- * read again just before the write, and a head that moved meanwhile gets no label. Outside
- * auto-merge Ready lands on a draft: a pull request the plugin took out of draft for its CI goes back first. The
+ * read again just before the write, and a head that moved meanwhile gets no label. The draft
+ * state is left as it is, never put back. The
  * labels the gate leaves (labels, draft) when it wrote, and the line it says, or none: always
  * names what is missing too. It never fails the call it follows.
  */
@@ -1303,8 +1247,6 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
   } catch (err: unknown) {
     return { line: gateLeftLine(repo, pr, reasonOf(err).trim()) }
   }
-  // A pull request in draft or closed is no CI undraft any more: its mark is dropped.
-  if (gate.draft || gate.state !== 'open') await dropCiUndraft($, repo, pr).catch(() => undefined)
   const move = labelMove(gate, missing)
   if (!move) {
     if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted, carried), missing }
@@ -1317,20 +1259,14 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
     return { line: gateLeftLine(repo, pr, reasonOf(err).trim()) }
   }
   if (now.head !== gate.head) return { line: gateMovedLine(repo, pr, gate.head, now.head) }
-  const redraft = move === 'ready' && !now.draft && !(await autoMergeRepos($)).has(repo.toLowerCase())
-    && await ciUndraftMarked($, repo, pr)
   try {
-    if (redraft) {
-      await runGh($, 'pr-draft', { pr }, repo)
-      await dropCiUndraft($, repo, pr).catch(() => undefined)
-    }
     await runGh($, 'pr-readiness', { pr, state: move }, repo)
   } catch (err: unknown) {
     return { line: gateUnwrittenLine(repo, pr, reasonOf(err).trim()) }
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
-  const draft = redraft || now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, accepted, excused, carried, ciText), labels, draft, missing }
+  const draft = now.draft
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, accepted, excused, carried, ciText), labels, draft, missing }
   return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft, missing }
 }
 
@@ -1536,8 +1472,7 @@ function toolReady($: Mod, e: GhCall, act: Act) {
     async ran(): Promise<void> {
       if (!forCi) return
       const { repo, pr } = await repoPr()
-      // Marked only when the gate read it in draft: out of draft already, it was not the plugin's undraft.
-      if (repo && pr !== undefined) await noteCiUndraft($, repo, pr, read?.gate?.draft ? read.gate.head : undefined)
+      if (repo && pr !== undefined) note($, ciUndraftLine(repo, pr))
     },
   }
 }
@@ -1597,8 +1532,7 @@ async function bashReady($: Mod, act: Act, after: Array<(result: unknown) => Pro
     // The engine leaves draft for CI only when told to (--for-ci): without it, it puts Ready on.
     if (r.gate && ciUndraft(r.gate) && pr !== undefined && act.forCi !== false) {
       const n = pr
-      const head = r.gate.draft ? r.gate.head : undefined
-      after.push(() => noteCiUndraft($, repo, n, head))
+      after.push(async () => note($, ciUndraftLine(repo, n)))
       return undefined
     }
     leaving = !listed

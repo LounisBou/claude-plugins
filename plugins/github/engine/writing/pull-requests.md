@@ -91,8 +91,8 @@ dependency. `**Related PRs:**` lists the PRs truly linked to this work: part of 
 batch, the origin of the bug, or a link of that strength. A follow-up PR, one that must come
 after this one, is never listed
 in Related PRs. Two PRs never depend on each other. English always, with no
-semicolon. No workflow vocabulary. Every PR is opened as a draft, and leaves draft only
-once it is ready. Outside auto-merge, leaving draft (a CI undraft aside) is the operator's,
+semicolon. No workflow vocabulary. Every PR is opened as a draft, is never put back to draft, and leaves
+draft only for its CI to run or to be merged. Outside auto-merge, leaving draft (a CI undraft aside) is the operator's,
 on GitHub after their review, and a merge needs their explicit word, given through this tool.
 A deployment needs its repository listed for its environment (`auto-deploy-set`).
 Reviewers are requested only when the operator asks, and never on a draft.

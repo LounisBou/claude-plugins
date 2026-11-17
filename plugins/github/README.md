@@ -218,11 +218,9 @@ orchestrator makes one when its CI watch says green, the call printed on its
 green line.
 
 When the CI does not run on a draft, the pull request leaves draft for it,
-still `Not Ready`, as long as no check of its head has passed. Outside
-auto-merge, once it is ready the gate puts back to draft only a pull request
-the plugin itself took out of draft for its CI (a mark kept in the data directory),
-then puts `Ready`; one the operator took out of draft keeps its place. That undraft
-runs in every repository, with one transcript line:
+still `Not Ready`, as long as no check of its head has passed. The gate never puts
+a pull request back to draft: once out of draft, for its CI or by the operator, it stays out, and
+`Ready` lands on it as it stands. That undraft runs in every repository, with one transcript line:
 
 ```
 github: <owner/name>#<n> out of draft to run CI, still Not Ready
@@ -287,7 +285,7 @@ github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>
 
 A pull request opened out of draft is not gated, only observed (`github.draft.open-out`), and a
 readiness GitHub did not answer is refused with `github: readiness of <owner/name>#<n> unverified: <error>`. Going back to
-draft always passes and moves no label (`pr-draft`, `gh pr ready --undo`): Ready follows the records at the
+draft (`pr-draft`, `gh pr ready --undo`) always passes and moves no label, and the gate never does it: Ready follows the records at the
 head, never the draft state; `gh pr create --draft` puts `Not Ready` on the new pull request. A merge or an undraft in the
 shell names its repository, else it is refused with `github: <command> refused: name
 the repository with -R owner/name.`; a GraphQL merge or undraft names none and is

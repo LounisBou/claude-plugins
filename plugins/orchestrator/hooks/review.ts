@@ -49,7 +49,7 @@ const ECHOED_DETAIL = 'the detail sent'
 // Missing: <what> » without the review's own words, which the orchestrator wrote and knows. A line
 // of another shape is left whole.
 export function gateWords(line: string): string {
-  const ready = /^github: \S+ ((?:back to draft, then )?Ready at \w+)(?::|$)/.exec(line)
+  const ready = /^github: \S+ (Ready at \w+)(?::|$)/.exec(line)
   if (ready?.[1] !== undefined) {
     // What the gate carried from an earlier head, or the operator waived, is not the orchestrator's own review: said.
     const carried = /\((?:[^()]|\([^()]*\))*(?:carried from|waived by the operator)(?:[^()]|\([^()]*\))*\)\.$/.exec(line)?.[0]

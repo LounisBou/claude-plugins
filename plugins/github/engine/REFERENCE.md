@@ -305,8 +305,8 @@ question, naming what is missing. Refused too: a shell merge or undraft naming n
 
 **The gate puts `Ready`.** After a record is written, or a `pr-gate` or `pr-checks` read through
 the tool, the module reads readiness at the open PR's head, rereading it just before writing, and
-puts `Ready` when nothing is missing, `Not Ready` back otherwise. Outside auto-merge one the plugin
-undrafted for CI goes back to draft first.
+puts `Ready` when nothing is missing, `Not Ready` back otherwise. It never touches the draft state:
+a PR out of draft, for its CI or by the operator, stays out.
 
 A PR carrying `Not Ready` with no passed check at its head may leave draft for its CI, unasked:
 `pr-ready --for-ci` or `gh pr ready`, still `Not Ready`. Back to draft (`pr-draft`, `gh pr ready
