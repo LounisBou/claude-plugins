@@ -1505,7 +1505,11 @@ def as_list():
             continue
         wi, ti, tty = parts[:3]
         title = parts[3] if len(parts) > 3 else ""
-        lines.append(row_for(int(wi), int(ti), tty, title, session_name_on(tty), False, False))
+        socket = tmux_client_socket(tty)
+        if socket:
+            lines.append(client_row(int(wi), int(ti), tty, socket, False, False))
+        else:
+            lines.append(row_for(int(wi), int(ti), tty, title, session_name_on(tty), False, False))
     return lines
 
 
@@ -4094,6 +4098,16 @@ def cmd_home_release(args):
 
 # --- subcommands -----------------------------------------------------------------
 
+def row_with_flags(row, is_self, hidden):
+    """A listing row with its trailing marks: `self` for the caller's own, `hidden` for a pane
+    behind a maximized sibling."""
+    if is_self:
+        row += " | self"
+    if hidden:
+        row += " | hidden"
+    return row
+
+
 def row_for(w, t, tty, title, name, is_self, hidden):
     """One listing row, formatted and nothing else, so its shape is read without an app.
 
@@ -4105,12 +4119,35 @@ def row_for(w, t, tty, title, name, is_self, hidden):
         shown = "(name unreadable)"
     else:
         shown = name or "(host default)"
-    row = "w%d/t%d | %s | %s | %s" % (w, t, tty, title, shown)
-    if is_self:
-        row += " | self"
-    if hidden:
-        row += " | hidden"
-    return row
+    return row_with_flags("w%d/t%d | %s | %s | %s" % (w, t, tty, title, shown), is_self, hidden)
+
+
+def tmux_client_socket(tty):
+    """The home server whose tmux client runs on a tty, or "" when no such client does.
+
+    A home session's tab runs `tmux -L orch-<id> attach -t home` and nothing else: it displays
+    the server's windows, and its host is in window 0 of that server, not on this tty. Read
+    from the process table, so a listing never takes it for a session."""
+    if not tty:
+        return ""
+    client = os.path.basename(TMUX_BIN)
+    for _, command in ps_rows(tty):
+        words = command.split()
+        if len(words) < 2 or os.path.basename(words[0]) != client or "attach" not in words:
+            continue
+        if "-L" in words and words.index("-L") + 1 < len(words):
+            socket = words[words.index("-L") + 1]
+            if socket.startswith(HOME_SOCKET_PREFIX):
+                return socket
+    return ""
+
+
+def client_row(w, t, tty, socket, is_self, hidden):
+    """The listing row of a tab that shows a home server's windows: the tab is named as the
+    client it is, and carries neither the title of the window it shows nor a host's name, so
+    no reader takes it for a session of its own."""
+    return row_with_flags("w%d/t%d | %s | tmux client | tmux client of home (%s) — displays "
+                          "its windows" % (w, t, tty, socket), is_self, hidden)
 
 
 def chain_holders():
@@ -4165,8 +4202,13 @@ async def list_rows(app):
             for s in t.all_sessions:
                 tty = await s.async_get_variable("tty")
                 title = await s.async_get_variable("autoName") or ""
-                lines.append(row_for(wi, ti, tty, title, session_name_on(tty),
-                                     bool(own) and tty == own, s.session_id not in visible))
+                is_self, hidden = bool(own) and tty == own, s.session_id not in visible
+                socket = tmux_client_socket(tty)
+                if socket:
+                    lines.append(client_row(wi, ti, tty, socket, is_self, hidden))
+                else:
+                    lines.append(row_for(wi, ti, tty, title, session_name_on(tty),
+                                         is_self, hidden))
                 listed.append(("w%d/t%d" % (wi, ti), tty, t.tab_id))
     lines += orphan_lines(listed)
     return lines
