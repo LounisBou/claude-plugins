@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import type { RunOptions, RunResult } from './context.ts'
@@ -357,7 +357,7 @@ describe('facts', () => {
     assert.ok(noPs.out.some(l => l.startsWith("unread sessions: the host's name is unknown")))
   })
 
-  it('reads the open pull requests in the machine\'s file, never the forge, and asks the file for each repository it reads', () => {
+  it('reads the open pull requests in the machine\'s file, never the forge, and writes nothing beside it', () => {
     const calls: string[] = []
     const { f, dir } = setup(d => ({
       world: { repos: { [d('r')]: { branch: 'feat/a', origin: 'git@github.com:o/r.git' } }, workspace: '', forge: { 'o/r': '5 feat/a same\n' } },
@@ -367,7 +367,7 @@ describe('facts', () => {
     assert.equal(run(spy, 'owners'), 0)
     assert.deepEqual(spy.out, [`pr github.com/o/r#5 | feat/a | Orch: r | session 7 in ${dir('r')}`])
     assert.ok(!calls.includes('gh'))
-    assert.match(readFileSync(join(f.state, 'prs.wanted'), 'utf8'), /^o\/r \S+\n$/)
+    assert.ok(!existsSync(join(f.state, 'prs.wanted')))
   })
 
   it('shows the live waits, the unattended lines and the fresh remote rows', () => {

@@ -147,7 +147,7 @@
 # (`lsof`, or COORDINATOR_CWDS, lines `<pid> <path>`), the checkouts (`workspace.sh list`),
 # the open pull requests (the machine's pull request file `<state>/prs.json`, which the hooks
 # module refreshes in one forge call a minute for the whole machine; a GitHub repository it holds
-# no current reading of is unread, and asked for in `<state>/prs.wanted`), and the
+# no current reading of is unread), and the
 # remote rows (`store/remote` under the module's directory, MODULE below: one JSON row per file,
 # written by the hooks module as it receives them from orchestrators on other machines; read
 # here, never written).
