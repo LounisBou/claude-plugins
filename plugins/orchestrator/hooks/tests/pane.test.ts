@@ -4,7 +4,8 @@
 // fill against the gate, the reading's age) the commands print, and the wiring
 // over a faked $ — no pane opened on any start, the pane opened by the
 // command in a coordinator session (the orchestrators) or an orchestrator
-// session (its own agents) alone, never by itself, and a coordinator's round's
+// session (its own agents) alone, or put as its role left it at a successor's
+// first turn, never by itself, and a coordinator's round's
 // first question drawn under its rows, the
 // measure's side reads bounded so a walk that cannot answer in time costs the row
 // its name, never the measure.
@@ -766,7 +767,7 @@ test('a round directory that cannot be listed is one log line and no entry; one 
   expect(fx.written.filter(l => l.includes(`round: cannot list ${ROUND}: EACCES: permission denied`)).length).toBe(1)
 })
 
-// --- the pane opens on his word alone ------------------------------------------------------------
+// --- the pane opens on his word, and as its role left it ------------------------------------------------------------
 
 const firstTurn = { answer: 'Registered.', reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' }
 
@@ -903,7 +904,16 @@ test('a pane closed by his word, the command, the tool or his ✕, is closed in 
   }
 })
 
-test('the pane is put as it was once per module: a pane he closes in the successor is not reopened by its next turn', async () => {
+test('his close by the tool, the pane being gone already, is kept: the successor leaves it closed', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  await fx.dollar.ui.close({ id: 'supervision' })
+  expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'The supervision pane is not open.' })
+  expect((await successorStart(fx, 'Coord: main')).opened).toEqual([])
+})
+
+test('the pane is put as it was once per module: a pane the host closes again is not reopened by the next turn', async () => {
   const { handlers } = mounted(registerSupervision)
   const fx = fakeDollar({ launchName: 'Orch: belt' })
   await handlers['command.run'](fx.dollar, supervisionRun)
@@ -913,9 +923,12 @@ test('the pane is put as it was once per module: a pane he closes in the success
   for (const [path, text] of fx.files) successor.files.set(path, text)
   await fresh['turn.start'](successor.dollar, { turnId: 't' }, (x: unknown) => x)
   expect(successor.opened.length).toBe(1)
-  await fresh['command.run'](successor.dollar, supervisionRun)
+  await successor.dollar.ui.close({ id: 'supervision' })
   await fresh['turn.start'](successor.dollar, { turnId: 't2' }, (x: unknown) => x)
   expect(successor.opened.length).toBe(1)
+  // His ✕ in the successor is his word: the role's state goes, whatever the host's walk answers later.
+  await fresh['command.run'](successor.dollar, supervisionRun)
+  await fresh['ui.close'](successor.dollar, { id: 'supervision', origin: { kind: 'person' } }, (x: unknown) => x)
   expect((await successorStart(successor, 'Orch: belt')).opened).toEqual([])
 })
 

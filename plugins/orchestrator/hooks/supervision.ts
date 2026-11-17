@@ -925,7 +925,7 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
 // the entry whose « Other answer » was picked, its text field drawn until the ring leaves it, and
 // the text typed in each field, which the pane draws again whole under it.
 export type PaneMemory = {
-  opened: { role: 'coordinator' | 'orchestrator'; tty: string | null } | null
+  opened: { role: 'coordinator' | 'orchestrator'; tty: string | null; name: string } | null
   ticker: { cancel(): void } | null
   other: Set<string>
   writing: string | null
@@ -946,7 +946,7 @@ export type PaneMemory = {
 // The pane opened, by his word or to put it as its role left it: the role it lists, its title, its
 // clock, the role's state and, for a coordinator's, its record.
 async function openPane($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory, role: 'coordinator' | 'orchestrator', tty: string | null, pid: string | null, name: string): Promise<UiOpenResult | undefined> {
-  pane.opened = { role, tty }
+  pane.opened = { role, tty, name }
   await keepPaneState($, name, true)
   // With the keys, so the picker answers at once: the host grants them only over an empty
   // prompt, never taking text the operator is typing.
@@ -996,9 +996,9 @@ async function paneShown($: Host<'ui'>): Promise<boolean> {
 async function closeShown($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory, name: string): Promise<void> {
   pane.ticker?.cancel()
   pane.ticker = null
+  await keepPaneState($, name, false)
   await $.ui.close({ id: PANE_ID })
   await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
-  await keepPaneState($, name, false)
 }
 
 // Whether a role's pane is open is the role's, not the session's: `<state>/pane-open-<name>`, the
@@ -1014,7 +1014,10 @@ async function keepPaneState($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
   const path = paneStatePath(await stateDir($), name)
   try {
     if (open) await writeAtomic($, path, 'open\n')
-    else await $.process.run(removeArgv(path), { timeoutMs: 5000 })
+    else {
+      const done = await $.process.run(removeArgv(path), { timeoutMs: 5000 })
+      if (done.exitCode !== 0) throw new Error(`${path} was not removed`)
+    }
   } catch (err) {
     await logLine($, 'supervision', `pane: the pane's state could not be kept: ${messageOf(err)}`)
   }
@@ -1025,10 +1028,12 @@ async function keepPaneState($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
 // orchestrator, and a role whose pane he closed, are left as they are.
 async function restorePane($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory): Promise<void> {
   if (pane.restored) return
-  pane.restored = true
   const { tty, name, pid } = await walkWithinBound($, await $.session.id())
+  // A walk that did not answer is tried again at the next turn's start.
+  if (name === null) return
+  pane.restored = true
   const role = roleOf(name)
-  if (name === null || (role !== 'coordinator' && role !== 'orchestrator')) return
+  if (role !== 'coordinator' && role !== 'orchestrator') return
   if (!(await $.fs.exists(paneStatePath(await stateDir($), name))) || await paneShown($)) return
   await openPane($, pane, role, tty, pid, name)
 }
@@ -1921,7 +1926,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     stopTicker()
     await recordPaneClosed($).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
     if (fieldsOf(fieldsOf(e)?.['origin'])?.['kind'] === 'person') {
-      const { name } = await walkWithinBound($, await $.session.id())
+      const name = pane.opened?.name ?? (await walkWithinBound($, await $.session.id())).name
       if (name !== null) await keepPaneState($, name, false)
     }
     return next(e)
