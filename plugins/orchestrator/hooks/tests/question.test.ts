@@ -436,6 +436,33 @@ test('a prompt he types claims the asker\'s open questions; the turn\'s end answ
   expect(after.get(second.id)!.claimed).toBeUndefined()
 })
 
+// 2026-11-17, Orch: Blitz: he typed a question back in the tab, the turn's end closed the question
+// as answered with it, and the orchestrator then restated the choice in prose: no ✋, no counter.
+test('words he types that ask something back and name no choice leave a question with choices open, with no claim', async () => {
+  const { dollar, files } = world()
+  await ask(dollar, { ...FULL, urgent: undefined })
+  const entry = stored(files)[0]!
+  await claimAsked(dollar, 'composer', 'Mon précédent message a-t-il été pris en compte ?', NOW)
+  await settleClaimed(dollar, [], new Date('2026-11-14T15:01:00Z'))
+  expect(stored(files)[0]).toMatchObject({ id: entry.id, status: 'open' })
+  expect(stored(files)[0]?.claimed).toBeUndefined()
+  expect(askedGroups(stored(files)).flat().map(open => open.id)).toEqual([entry.id])
+})
+
+test('words that end with a question mark still answer when they name a choice, or when the question has no choices', async () => {
+  const answered = async (fields: Record<string, unknown>, typed: string) => {
+    const { dollar, files } = world()
+    await ask(dollar, { ...FULL, urgent: undefined, ...fields })
+    await claimAsked(dollar, 'composer', typed, NOW)
+    await settleClaimed(dollar, [], NOW)
+    return stored(files)[0]?.status
+  }
+  expect(await answered({}, 'B')).toBe('answered')
+  expect(await answered({}, 'let me think, go on')).toBe('answered')
+  expect(await answered({ choice_a: 'Go on ?' }, 'go on ?')).toBe('answered')
+  expect(await answered({ choice_a: undefined, choice_b: undefined, choice_c: undefined, recommended: undefined }, 'which one do you mean ?')).toBe('answered')
+})
+
 // The kept question's reopening is written first; when that write fails it stays claimed, and the
 // close that follows still leaves it: the wait keeps it, his words answer it at no turn's end.
 test('a question the wait keeps whose reopening cannot be written is never answered by the turn\'s end', async () => {

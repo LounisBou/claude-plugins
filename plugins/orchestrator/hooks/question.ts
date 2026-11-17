@@ -388,20 +388,30 @@ export async function claimAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pr
   return claimed.map(entry => entry.id)
 }
 
+// Words typed in the asker's tab that end with a question mark and name none of the choices of a
+// question that has some are a question back, never his choice: closing it on them left the asker
+// to restate the choice in prose, with no ✋ and no counter (2026-11-17).
+function asksBack(entry: Asked): boolean {
+  const typed = entry.claimed?.typed.trimEnd() ?? ''
+  return entry.choices.length > 0 && /[?？]$/.test(typed) && answersChoice(typed, entry.choices) === undefined
+}
+
 /**
  * The asker's turn ended: each question claimed in it is answered in its tab with his words, its
  * consent recorded when they name « Accorder » alone (in the coordinator's tab, when they open with it), unless the turn's operator wait keeps it
- * (`kept`): then it is open again, drawn again.
+ * (`kept`), or the words ask something back and name none of its choices (`asksBack`): then it is
+ * open again, drawn again.
  */
 export async function settleClaimed($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, kept: readonly string[], now: Date = new Date()): Promise<void> {
   const at = now.toISOString()
   const session = await $.session.id()
+  const keeps = (entry: Asked) => kept.includes(entry.id) || asksBack(entry)
   await changeOpenAsked($, session, entry => {
-    if (!entry.claimed || !kept.includes(entry.id)) return null
+    if (!entry.claimed || !keeps(entry)) return null
     const { claimed: _claimed, ...rest } = entry
     return { ...rest, seq: entry.seq + 1 }
   })
-  const takes = (entry: Asked) => entry.sender.session === session && !!entry.claimed && !kept.includes(entry.id)
+  const takes = (entry: Asked) => entry.sender.session === session && !!entry.claimed && !keeps(entry)
   // In the coordinator's own tab every order of his counts: words that open with a choice answer it.
   const coordinator = await sessionRole($, session) === 'coordinator'
   for (const id of await openAskedIds($, takes)) {
