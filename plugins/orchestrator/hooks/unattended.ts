@@ -188,7 +188,7 @@ export async function boundedReading($: Held, sessionId: string): Promise<Readin
 }
 
 // What the declared wait asks before it takes a done or a deferred: the refusal while a pull request
-// is in anomaly (no agent, not Ready, no wait of its own), else null: what rests on the operator
+// is in anomaly (no agent, not Ready, no wait of its own, or in conflict), else null: what rests on the operator
 // holds nothing. Handed to wait.ts by register.ts.
 export async function holdsDone($: Held, wait: DeclaredWait): Promise<string | null> {
   if (wait.kind !== 'done' && wait.kind !== 'deferred') return null
