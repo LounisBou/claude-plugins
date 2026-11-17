@@ -504,18 +504,22 @@ async function machineOf($: Host<'process'>): Promise<string> {
   return machine
 }
 
-// The questions asked in the main thread's current turn, by id: what « Question i of N » counts. A
-// turn's start empties it (registerQuestion's turn.start).
+// The questions asked in the main thread's current turn, by id: a turn asks one (callAsk refuses a second,
+// so the operator is never given two blocks at once). A turn's start empties it (registerQuestion's turn.start).
 const thisTurn: string[] = []
 
-/** The main thread's turn started: the questions it asks next are numbered from one. */
+// Held by the `ask` call that is storing this turn's question, from the check to the end: two calls made
+// together find the place taken, whatever order their awaits finish in.
+let asking = false
+
+/** The main thread's turn started: it may ask one question again. */
 export function askTurnStarted(): void {
   thisTurn.length = 0
 }
 
-/** A question was asked in this turn: its place among the turn's questions, from one. */
-export function askedInTurn(id: string): number {
-  return thisTurn.push(id)
+/** A question was asked in this turn: the turn has asked its one. */
+export function askedInTurn(id: string): void {
+  thisTurn.push(id)
 }
 
 /** The ids of the questions asked in the main thread's current turn. */
@@ -553,13 +557,28 @@ export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   if (e['agentId']) return refuse('a subagent asks its session, in its answer: only the main thread asks the operator.')
   const parsed = parseAsk(e)
   if ('error' in parsed) return refuse(parsed.error)
+  // One question per turn, by construction: a second is not stored, so no turn can hand him two blocks. What
+  // else waits goes in `blocks`, and is asked after his answer, which wakes the session.
+  if (asking || thisTurn.length > 0) {
+    return refuse(`this turn already asked ${thisTurn[0] ?? 'a question'}: one question per turn. Ask this one after his answer (it wakes you), and say in the first question's blocks what waits on the others.`)
+  }
+  asking = true
+  try {
+    return await askOne($, parsed.fields, now)
+  } finally {
+    asking = false
+  }
+}
+
+// The one question of this turn, validated: stored in the round, or answered from its record or its open twin.
+async function askOne($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'tool'>, fields: AskFields, now: Date): Promise<Answer> {
   const me = await whoAmI($)
   if (me === null) {
     return refuse('Only an orchestrator, a coordinator or an auditor asks with `ask`, once the host names it; an agent asks the session that launched it, by message.')
   }
   const sessionId = await $.session.id()
   const sender = { session: sessionId, name: me.name, role: me.role, machine: await machineOf($) }
-  const made = askedEntry(parsed.fields, sender, askId(sessionId, now), now)
+  const made = askedEntry(fields, sender, askId(sessionId, now), now)
   // A question its project already had him answer is answered from that record, and not put to him again.
   const record = await recordedAsked($, made).catch(() => null)
   const entry: Asked = record?.answer
@@ -599,10 +618,9 @@ export async function callAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   if (record?.answer) {
     return { result: `Answered from the record, not asked again: the operator answered this question on ${record.answer.at} by ${record.answer.by} — ${record.answer.text} (question ${record.id}). Stored as ${entry.id}, answered.` }
   }
-  // Numbered among the questions asked in this turn: several asked in one turn read 1 of 1, then 2 of 2;
-  // one asked in a later turn reads 1 of 1 again, whatever stays open from before.
-  const asked = askedInTurn(entry.id)
-  const block = questionBlock(entry, { i: asked, n: asked })
+  // The turn's one question: « Question 1 of 1 », whatever stays open from an earlier turn.
+  askedInTurn(entry.id)
+  const block = questionBlock(entry, { i: 1, n: 1 })
   // The block goes in the asker's own message: a line of the host's log does not reach the operator's chat.
   return { result: `Asked as ${entry.id}: stored in the round. Write this block in your message as it stands, once:\n\n${block}` }
 }
@@ -852,7 +870,7 @@ export function register(on: On<Held>): void {
         name: ASK_TOOL,
         isDeferred: false,
         description: 'Asks the operator one question, in the method\'s format: the module stores it in the round, where the pane draws it, and answers its block, which you write in your message as it stands. '
-          + 'One call per question; several calls make several questions, each answered on its own. '
+          + 'One question per turn: a second call in the same turn is refused, ask it after his answer. '
           + 'subject (a few words), context (two to six sentences: the stake, what is known), question (one sentence ending in « ? »), '
           + 'choice_a to choice_e (none, or two to five, each a different piece of work with its cost and gain), recommended (the letter) and why (its argument against the others), '
           + 'blocks (what waits on the answer), urgent (true to have it presented at once). '

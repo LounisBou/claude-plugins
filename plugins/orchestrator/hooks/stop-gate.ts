@@ -459,15 +459,6 @@ export const PROSE_CHOICE_REASON = 'Your message puts a choice or a decision to 
   + 'Ask it with `mcp__orchestrator__ask` (its choices, your recommendation), then declare an operator wait on it. '
   + 'If it asks him nothing, end the message without the question.'
 
-// How many question blocks a turn's final text puts to the operator: the lines that open one
-// (`**Question i of N**`, a bullet, heading or numbered form too), a quoted line not counted.
-export function questionBlocks(message: string): number {
-  return message.split('\n').filter(line => /^(?:[-+]\s+|#+\s+|\d+\.\s+)?\**Question \d+ of \d+\b/.test(line.trim())).length
-}
-
-export const manyQuestionsReason = (blocks: number): string =>
-  `${blocks} questions in one message: present the first, the rest after his answer, one per message.`
-
 export type Held = { case: string; reason: string }
 
 // check_wake()'s first half: everything decidable before the facts of a done message
