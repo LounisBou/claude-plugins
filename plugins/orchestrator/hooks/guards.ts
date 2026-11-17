@@ -52,6 +52,8 @@ import {
   MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, PROSE_CHOICE_CODE, refused, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
 } from './observe.ts'
 import { todoName } from './todo-format.ts'
+import { prWake } from './ledger.ts'
+import { PR_FILE_INTERVAL_MS } from './pr-file.ts'
 
 // The nouns the guards hold.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'prompt' | 'session' | 'tool' | 'clock' | 'ui' | 'settings'>
@@ -287,9 +289,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // The last prompt the operator typed in this session, keyed by its id like the memos
   // above: the tier map's guard stands aside when it names the map or a tier.
   let lastTyped: { sessionId: string; text: string; at: string } | null = null
-  // The wake on this session's busy agents (busyWake): armed by a stop a busy agent released, it
-  // stands across the turns until a later stop arms it again, with the bounds told per agent turn.
-  const busy: BusyMemory = { timer: null, told: new Map(), own: null }
+  // The module's tick (moduleTick): armed by a stop a busy agent released or that leaves a pull
+  // request of the orchestration open, it stands across the turns until a later stop arms it again.
+  const tick: TickMemory = { timer: null, told: new Map(), own: null, busy: [], busyAt: null, watch: false, anomalies: new Set() }
   on('prompt.submit', async ($, e, next) => {
     if (typedByOperator(String(e.origin?.kind ?? ''))) {
       try {
@@ -653,11 +655,16 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       }
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const { agents, resident } = ownAgents(rows, entries, owner, hostStatus)
-      // A busy agent releases the stop below; past the bound in one turn, this timer wakes the session.
-      if (agents.some(agent => agent.state === 'busy')) {
-        busy.own = pid
-        armBusy($, busy, agents.filter(agent => agent.state === 'busy'), 0)
+      // A busy agent releases the stop below; past the bound in one turn, the tick wakes the session,
+      // as it does on a pull request of the orchestration merged, closed or entering the anomaly.
+      const busyNow = agents.filter(agent => agent.state === 'busy')
+      tick.own = pid
+      if (busyNow.length > 0) {
+        tick.busy = busyNow
+        tick.busyAt = 0
       }
+      tick.watch = (await ledgerOf()).length > 0
+      if (busyNow.length > 0 || tick.watch) armTick($, tick, 0)
       // An idle agent whose pull request merged is delivered; one whose pull request is open
       // lives until the merge, the kept findings its own to correct, and is never asked to stand down.
       const delivered: string[] = []
@@ -916,21 +923,30 @@ async function inTime<T>($: Held, work: () => Promise<T>, until: number): Promis
   }
 }
 
-// The busy wake's module memory: its armed timer, the bounds told per agent turn, and this
-// session's own host pid, whose record says whether it is between turns.
-type BusyMemory = { timer: { cancel(): void } | null; told: Map<string, number>; own: string | null }
+/*
+ * The module's tick and its memory: one timer, armed by a stop while an agent is busy or a pull
+ * request of the orchestration is open, standing across the turns. `own`: this session's host pid,
+ * whose record says whether it is between turns; `busy` and `busyAt`: the busy agents and the instant
+ * their next bound falls (busyWake), null when none is; `told`, the bounds told per agent turn;
+ * `watch`, whether its pull requests are read at each tick (prWake, every PR_FILE_INTERVAL_MS);
+ * `anomalies`, those told in anomaly.
+ */
+type TickMemory = {
+  timer: { cancel(): void } | null; told: Map<string, number>; own: string | null
+  busy: readonly OwnAgent[]; busyAt: number | null; watch: boolean; anomalies: Set<string>
+}
 
-// The busy wake armed `delay` ms from now over `agents`, any timer before it cancelled; a timer no
-// longer the one armed reads nothing. A clock that arms nothing is one log line, never a held stop.
-function armBusy($: Held, memory: BusyMemory, agents: readonly OwnAgent[], delay: number): void {
+// The tick armed `delay` ms from now, any timer before it cancelled; a timer no longer the one armed
+// reads nothing. A clock that arms nothing is one log line, never a held stop.
+function armTick($: Held, memory: TickMemory, delay: number): void {
   memory.timer?.cancel()
   memory.timer = null
   let timer: { cancel(): void } = { cancel: () => undefined }
   let armed: unknown
   try {
-    armed = $.clock.after(Math.max(0, delay), () => busyTick($, memory, agents, timer))
+    armed = $.clock.after(Math.max(0, delay), () => moduleTick($, memory, timer))
   } catch (err) {
-    void logLine($, 'guards', `busy wake: not armed: ${reasonOf(err)}`)
+    void logLine($, 'guards', `module tick: not armed: ${reasonOf(err)}`)
     return
   }
   const cancel = typeof armed === 'object' && armed !== null ? (armed as { cancel?: unknown }).cancel : undefined
@@ -938,31 +954,52 @@ function armBusy($: Held, memory: BusyMemory, agents: readonly OwnAgent[], delay
   memory.timer = timer
 }
 
-// One reading of the busy agents' host records: a line each for those past a bound not told yet,
-// submitted as one wake, then the timer armed again at the next bound of those still busy. A
-// session in a turn of its own is read again a minute later, its wake kept for the turn's end; a
-// wake the host drops or refuses is told nothing: the bounds are restored and tried again a minute later.
-async function busyTick($: Held, memory: BusyMemory, agents: readonly OwnAgent[], timer: unknown): Promise<void> {
+/*
+ * One tick: the busy agents' host records read when their bound is due, a line each for those past a
+ * bound not told yet; the pull requests read in the machine's file while watched, a line each for one
+ * merged, closed or entering the anomaly. The lines go as one wake, then the ended pull requests'
+ * lines are archived and the timer armed again at the next bound or interval. A session in a turn of
+ * its own is read again a minute later, its wake kept for the turn's end; a wake the host drops or
+ * refuses is told nothing: what it told is restored and tried again a minute later.
+ */
+async function moduleTick($: Held, memory: TickMemory, timer: unknown): Promise<void> {
   if (memory.timer !== timer) return
   memory.timer = null
-  const was = new Map(memory.told)
+  const was = { told: new Map(memory.told), busyAt: memory.busyAt, watch: memory.watch, anomalies: new Set(memory.anomalies) }
   try {
     const config = await configDir($)
     if (memory.own && hostRecordOf(String(await $.fs.read(`${config}/sessions/${memory.own}.json`).catch(() => '')))?.status === 'busy') {
-      armBusy($, memory, agents, BUSY_RETRY_MS)
+      armTick($, memory, TICK_RETRY_MS)
       return
     }
     const now = Date.now()
-    const { lines, next } = busyWake(await busyAgents($, agents), memory.told, now)
+    const lines: string[] = []
+    if (memory.busyAt !== null && memory.busyAt <= now) {
+      const busy = busyWake(await busyAgents($, memory.busy), memory.told, now)
+      lines.push(...busy.lines)
+      memory.busyAt = busy.next
+    }
+    let settle = async (): Promise<void> => undefined
+    if (memory.watch) {
+      const prs = await prWake($, memory.anomalies, now)
+      lines.push(...prs.lines)
+      memory.watch = prs.watching
+      settle = prs.settle
+    }
     if (lines.length > 0) {
       const taken: unknown = await $.prompt.submit({ text: lines.join('\n') })
       if (typeof taken === 'object' && taken !== null && 'drop' in taken && taken.drop) throw new Error(`the host dropped the wake: ${String(taken.drop)}`)
     }
-    if (next !== null && memory.timer === null) armBusy($, memory, agents, next - now)
+    await settle()
+    const next = Math.min(memory.busyAt ?? Infinity, memory.watch ? now + PR_FILE_INTERVAL_MS : Infinity)
+    if (next !== Infinity && memory.timer === null) armTick($, memory, next - now)
   } catch (err) {
-    memory.told = was
-    await logLine($, 'guards', `busy wake: ${reasonOf(err)}`)
-    if (memory.timer === null) armBusy($, memory, agents, BUSY_RETRY_MS)
+    memory.told = was.told
+    memory.busyAt = was.busyAt
+    memory.watch = was.watch
+    memory.anomalies = was.anomalies
+    await logLine($, 'guards', `module tick: ${reasonOf(err)}`)
+    if (memory.timer === null) armTick($, memory, TICK_RETRY_MS)
   }
 }
 
@@ -985,7 +1022,7 @@ async function busyAgents($: Held, agents: readonly OwnAgent[]): Promise<BusyAge
   return found
 }
 const BUSY_READ_MS = 2000
-const BUSY_RETRY_MS = 60_000
+const TICK_RETRY_MS = 60_000
 
 // The host's status of each tty's session: the processes on the tty, each one's host
 // record read under the config dir. A tty no record answers for is left out, and its
