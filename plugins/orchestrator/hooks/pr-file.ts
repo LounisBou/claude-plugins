@@ -6,9 +6,10 @@
 // it, under the file's lock, in one forge call for every repository (one GraphQL query), so the
 // machine pays one call per interval whatever the number of orchestrators or pull requests. A call
 // that fails keeps the pull requests read before and says so on the log; the next try waits a whole
-// interval, never a loop.
+// interval, never a loop: the try is written to the file before the call, and a file that cannot be
+// written makes no call.
 import { ledgerLines, prKey } from '../core/pr-ledger.ts'
-import { withLockOver } from '../core/store-io.ts'
+import { lockOf, withLockOver } from '../core/store-io.ts'
 import { RECORDS_DIR } from '../core/orchestration.ts'
 import { messageOf, type Host } from './host.ts'
 import { logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
@@ -106,7 +107,7 @@ const literal = (value: string): string => JSON.stringify(value)
 const FIELDS = `number state isDraft createdAt headRefName headRefOid mergeable author{login} labels(first:${LABELS_PAGE}){nodes{name}}`
 
 /**
- * The one query: per repository, its open pull requests (one page of OPEN_PAGE) and each pull
+ * The one query: per repository, its open pull requests (one page of OPEN_PAGE, the newest) and each pull
  * request the records name, by its number, with its head's check rollup; the viewer, to keep the
  * open ones the operator opened; the call's cost, said on the log.
  */
@@ -114,7 +115,7 @@ export function prQuery(tracked: ReadonlyMap<string, readonly number[]>): string
   const parts = [...tracked].map(([repo, numbers], i) => {
     const [owner = '', name = ''] = repo.split('/')
     const named = numbers.map(n => `n${n}:pullRequest(number:${n}){${FIELDS} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}`).join(' ')
-    return `r${i}:repository(owner:${literal(owner)},name:${literal(name)}){open:pullRequests(states:OPEN,first:${OPEN_PAGE}){pageInfo{hasNextPage} nodes{${FIELDS}}} ${named}}`
+    return `r${i}:repository(owner:${literal(owner)},name:${literal(name)}){open:pullRequests(states:OPEN,first:${OPEN_PAGE},orderBy:{field:CREATED_AT,direction:DESC}){pageInfo{hasNextPage} nodes{${FIELDS}}} ${named}}`
   })
   return `query{viewer{login} rateLimit{cost remaining} ${parts.join(' ')}}`
 }
@@ -266,8 +267,17 @@ export async function refreshPrFile($: Held, now: number = Date.now()): Promise<
       await refreshUnder($, state, before, now)
     }, { tries: 0 })
   } catch (err) {
-    if (!/stayed locked/.test(messageOf(err))) await logLine($, 'prs', `refresh failed: ${messageOf(err)}`)
+    // A lock that stays because another session holds it is that session's refresh; one that was
+    // never taken (no lock there) is a lock this machine cannot make, said once per process.
+    if (/stayed locked/.test(messageOf(err)) && (lockUnmade || await lockHeld($))) return
+    if (/stayed locked/.test(messageOf(err))) lockUnmade = true
+    await logLine($, 'prs', `refresh failed: ${messageOf(err)}`)
   }
+}
+
+let lockUnmade = false
+async function lockHeld($: Held): Promise<boolean> {
+  return $.fs.stat(lockOf(prFilePath(await stateDir($)))).then(() => true, () => false)
 }
 
 async function refreshUnder($: Held, state: string, before: PrFile | undefined, now: number): Promise<void> {
@@ -277,6 +287,9 @@ async function refreshUnder($: Held, state: string, before: PrFile | undefined, 
   let answer: PrAnswer | undefined
   let failure = ''
   if (tracked.size > 0) {
+    // The try is on the file before the call: a reader of any session waits the interval even when
+    // the file cannot be written after it, and a file that cannot be written now makes no call.
+    await writeAtomic($, prFilePath(state), `${JSON.stringify(before === undefined ? { v: VERSION, ...kept, tried: at } : { ...before, tried: at })}\n`)
     const ran = await $.process.run(prQueryArgv(tracked), { timeoutMs: PR_FILE_CALL_MS }).catch((err: unknown) => {
       failure = messageOf(err)
       return null
@@ -288,6 +301,7 @@ async function refreshUnder($: Held, state: string, before: PrFile | undefined, 
     else if (ran !== null && answer === undefined) failure = 'the answer holds no data'
   }
   const partial = answer !== undefined && failure !== '' ? failure : undefined
+  const truncated = answer?.truncated ?? []
   const file: PrFile = answer === undefined
     ? { v: VERSION, ...kept, tried: at, ...(tracked.size > 0 ? { error: failure } : { repos: [], unread: [], prs: [] }) }
     : {
@@ -297,7 +311,8 @@ async function refreshUnder($: Held, state: string, before: PrFile | undefined, 
   const lines = answer === undefined
     ? (tracked.size > 0 ? [`${at} refresh failed: ${failure}`] : [])
     : [
-        ...changeLines(before, answer.prs, answer.repos, at), ...answer.truncated.map(repo => `${at} ${repo} open past ${OPEN_PAGE}: the rest unread`),
+        // A repository whose open list ran past its page is not read whole: no pull request is said gone from it.
+        ...changeLines(before, answer.prs, answer.repos.filter(repo => !truncated.includes(repo)), at), ...answer.truncated.map(repo => `${at} ${repo} open past ${OPEN_PAGE}: the rest unread`),
         ...(partial !== undefined && partial !== before?.partial ? [`${at} read in part: ${partial}`] : []),
       ]
   await writeAtomic($, prFilePath(state), `${JSON.stringify(file)}\n`)
