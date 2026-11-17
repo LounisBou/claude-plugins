@@ -118,8 +118,9 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=Non
     check counts, and none skipped or neutral in an older workflow run. A completed check passes
     on success, and on neutral out of draft. A skipped one, and on a draft a
     neutral one, did not prove anything: not green when the base branch requires that check
-    (required), since its skip proves nothing the base asks; a check the base does not require
-    and its own workflow skipped (a path-filtered job) holds nothing back. Any other conclusion is a
+    (required), since its skip proves nothing the base asks, or when nothing else at the head
+    passed; a check the base does not require and its own workflow skipped (a path-filtered
+    job), beside a check that passed, holds nothing back. Any other conclusion is a
     failure, named by its check. A check still running is not green. No check
     at all is not green either: CI has not started on that head, so the result
     is PENDING, unless the repository has no CI configured (no_ci, read by the caller: no
@@ -140,12 +141,17 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=Non
     running = [run for run in runs if run.get("status") != "completed"] + [
         status for status in commit_statuses if status.get("state") == "pending"
     ]
+    required_names = set(required or ())
+    proved = any(run.get("conclusion") in passing for run in completed) or any(
+        status.get("state") == "success" for status in commit_statuses
+    )
+    # A skipped check holds the result when the base requires it, or when nothing at the head proved anything.
     skipped = [
         run.get("name", "?") for run in completed
-        if run.get("conclusion") in unproven and run.get("name") in set(required or ())
+        if run.get("conclusion") in unproven and (run.get("name") in required_names or not proved)
     ]
     reported = {run.get("name") for run in runs} | {status.get("context") for status in commit_statuses}
-    unreported = sorted(set(required or ()) - reported)
+    unreported = sorted(required_names - reported)
     running += unreported
     if failed:
         result = "FAILURE"
@@ -382,6 +388,9 @@ def _checks_summary(obj):
         bool(obj.get("draft")),
         obj.get("workflows"),
         obj.get("workflow_runs"),
+        obj.get("required"),
+        obj.get("unverified"),
+        bool(obj.get("no_ci")),
     )
     lines = ["checks: %s (%d total, %d running, %d failed, %d skipped)" % (
         ci["result"], ci["total"], ci["running"], len(ci["failed"]), len(ci["skipped"]))]

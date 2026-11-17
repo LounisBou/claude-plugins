@@ -42,7 +42,7 @@ below, and the `args` object holds the subcommand's arguments.
 run (a skipped or neutral one of an older run of its workflow left out), plus each required check
 not yet reported (running). `ci.result`: `FAILURE` if one failed (`ci.failed`), `PENDING` if one
 runs (`ci.running`) or proved nothing (`ci.skipped`: `skipped`, or `neutral` on a draft, of a check the
-base requires; one the base does not require, such as a path-filtered job its workflow skipped, holds nothing back), else
+base requires, or of any check when none at the head passed; a skipped check the base does not require, such as a path-filtered job, beside a check that passed holds nothing back), else
 `SUCCESS`; no check at all is `PENDING`, or `NONE` when the repository has no CI (no active
 workflow, required check, or check on the default branch): no CI to wait for. `gh run rerun` of a
 draft-time run skips its jobs again: push a new commit.

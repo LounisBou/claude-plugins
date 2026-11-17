@@ -385,9 +385,9 @@ check "checks-status names the failing legacy status" "ci/legacy" \
   "$(render checks-status '{"check_runs":[{"name":"build","status":"completed","conclusion":"success"}],"statuses":{"state":"failure","statuses":[{"state":"failure","context":"ci/legacy"}]}}' \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["failed_checks"][0])')"
 # checks-status gives the ready guard's verdict, the one pr-gate reads: a
-# skipped check the base does not require holds nothing back, and any
-# conclusion but success, neutral or skipped is a failure.
-check "checks-status reads a skipped check the base does not require as green" "SUCCESS" \
+# skipped check proves nothing, and any conclusion but success, neutral or
+# skipped is a failure.
+check "checks-status never reads a skipped check as green" "PENDING" \
   "$(render checks-status '{"check_runs":[{"name":"test","status":"completed","conclusion":"skipped"}],"statuses":{"statuses":[]}}' \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
 check "checks-status names a check that failed to start" "FAILURE build" \
@@ -2309,7 +2309,7 @@ gate8 running "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status"
 check "pr-gate reads a running check as pending" "PENDING   1" "$(ci8)"
 
 gate8 skipped "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"skipped"},{"name":"lint","status":"completed","conclusion":"success"}]}'
-check "pr-gate reads a skipped check the base does not require as green" "SUCCESS   2" "$(ci8)"
+check "pr-gate reads a skipped check the base does not require as green, beside a check that passed" "SUCCESS   2" "$(ci8)"
 
 # The base requires the check its workflow skipped: the skip proves nothing the base asks, Ready stays held.
 STACKREQ8='{"number":12,"state":"open","draft":false,"commits":3,"head":{"sha":"'$GATEHEAD'","ref":"feat-b"},"base":{"ref":"feat-a","repo":{"default_branch":"main"}},"labels":[]}'
@@ -2318,6 +2318,8 @@ printf '%s' '[{"number":11,"head":{"ref":"feat-a"}}]' > "$F8/GET_repos_acme_thin
 printf '%s' '{"name":"feat-a","protected":false}' > "$F8/GET_repos_acme_thing_branches_feat-a.json"
 printf '%s' '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test"}]}}]' > "$F8/GET_repos_acme_thing_rules_branches_feat-a__per_page=100.json"
 check "pr-gate never reads a skipped check the base requires as green" "PENDING  test 2" "$(ci8)"
+check "pr-checks prints the verdict of pr-gate for a skipped check the base requires" "checks: PENDING (2 total, 0 running, 0 failed, 1 skipped)" \
+  "$(gh8 pr-checks 12 | head -1)"
 # The torrent-mate case (torrent-mate#907): a path-filtered matrix job skipped on a backend pull request, the
 # base requiring another check that passed.
 gate8 skipped-path-filtered "$STACKREQ8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"success"},{"name":"harness-full (shard ${{ matrix.shard }}/4)","status":"completed","conclusion":"skipped"}]}'
@@ -2330,7 +2332,7 @@ gate8 neutral-open "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"scan","st
 check "pr-gate reads a neutral check out of draft as green" "SUCCESS   1" "$(ci8)"
 
 gate8 neutral-draft "$(printf '%s' "$PULL8" | sed 's/"draft":false/"draft":true/')" '{"statuses":[]}' '{"check_runs":[{"name":"scan","status":"completed","conclusion":"neutral"}]}'
-check "pr-gate reads a neutral check on a draft the base does not require as green" "SUCCESS   1" "$(ci8)"
+check "pr-gate never reads a neutral check on a draft as green" "PENDING  scan 1" "$(ci8)"
 
 gate8 startup "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"build","status":"completed","conclusion":"startup_failure"},{"name":"lint","status":"completed","conclusion":"success"}]}'
 check "pr-gate reads a check that failed to start as failed" "FAILURE build  2" "$(ci8)"
@@ -2338,7 +2340,7 @@ check "pr-gate reads a check that failed to start as failed" "FAILURE build  2" 
 gate8 checks-draft "$(printf '%s' "$PULL8" | sed 's/"draft":false/"draft":true/')" '{"statuses":[]}' '{"check_runs":[]}'
 printf '%s' '{"check_runs":[{"name":"scan","status":"completed","conclusion":"neutral"}]}' > "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_check-runs.json"
 cp "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_check-runs.json" "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_check-runs__per_page=100.json"
-check "pr-checks reads a neutral check on a draft the base does not require as pr-gate does" "SUCCESS" \
+check "pr-checks reads a neutral check on a draft as pr-gate does" "PENDING" \
   "$(gh8 pr-checks 12 --format checks-status | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
 
 gate8 checks-page "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
@@ -2489,7 +2491,7 @@ check "pr-gate reads a re-run of the latest workflow run as that run" "SUCCESS  
 # proves nothing: the older run of its workflow keeps every check.
 RUNS7='{"check_runs":[{"id":1,"name":"wip-check","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":2,"name":"build","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"skipped"}]}'
 gate8 wf-unchecked "$PULL8" '{"statuses":[]}' "$RUNS7" '{"workflow_runs":[{"id":20,"check_suite_id":200,"workflow_id":1,"status":"queued"},{"id":10,"check_suite_id":100,"workflow_id":1}]}'
-check "pr-gate hides nothing behind a latest workflow run with no check run" "FAILURE wip-check  2" "$(ci8)"
+check "pr-gate hides nothing behind a latest workflow run with no check run" "FAILURE wip-check build 2" "$(ci8)"
 # A newer run of the workflow on another event only hides what the older run
 # skipped: its failed job still counts.
 RUNS8='{"check_runs":[{"id":1,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":11,"name":"test (8.4)","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
