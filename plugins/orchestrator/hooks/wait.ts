@@ -258,7 +258,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   on('tool.call', { tool: `mcp__orchestrator__${WAIT_TOOL}` }, async ($, e) => {
     // A subagent's turn is not the session's: its end wakes the session, not a wait of its own.
     if (e.agentId) return { result: `${WAIT_TOOL} is the main session's: a subagent ends its turn by answering.`, isError: true }
-    if (e['kind'] === 'operator' && await sessionRole($, await $.session.id()) === 'agent') return { result: AGENT_OPERATOR, isError: true }
+    // Fails closed: an operator wait is refused unless the session's role is known to ask the operator.
+    if (e['kind'] === 'operator') {
+      const role = await sessionRole($, await $.session.id())
+      if (role === null || role === 'agent') return { result: AGENT_OPERATOR, isError: true }
+    }
     const parsed = parseDeclaration(e, await openAsked($))
     if ('error' in parsed) return { result: parsed.error, isError: true }
     // A done or a deferred wait is held while a pull request is unattended (unattended.ts).
