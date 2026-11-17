@@ -24,6 +24,9 @@ export const IDENTIFIERS: Readonly<Record<string, RegExp>> = {
   child: /^[A-Za-z0-9_@.-]{1,80}$/,
   turn: /^[A-Za-z0-9_-]{1,80}$/,
   tool_use_id: /^[A-Za-z0-9_-]{1,80}$/,
+  message: /^[A-Za-z0-9_-]{1,80}$/,
+  request: /^[A-Za-z0-9_-]{1,80}$/,
+  prompt: /^[A-Za-z0-9_-]{1,80}$/,
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i

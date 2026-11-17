@@ -10,9 +10,9 @@ repository.
 
 Session start and end (role from the title, model, effort, launch latency, time to the first
 turn, duration, cost, context), each turn's end (duration, tokens, context, the session's
-cumulative cost and the turn's own; for the session's own loop the turn's first API call on its own,
-with its cache writes by TTL, and the idle gap before it, read from the transcript, and whether the
-turn began a resumed process), each tool call (tool, MCP server, outcome, who refused it,
+cumulative cost and the turn's own), each API call of the session's own loop (raw, from the transcript:
+ids, model, stop reason, the `usage` object as the host wrote it, the names of the tools it used and its
+times; no derived value), each tool call (tool, MCP server, outcome, who refused it,
 duration, a redacted Bash line), subagents (each of their runs) and launched sessions spawned and closed, questions put
 to the operator and the letters chosen (the orchestrator's round questions with their id and asker, read once settled), and the dispatch record's writes (read from the events its script publishes in the orchestrator's journal). Every line names the session that acted (`title` and `role`, once the
 module has learned them; `parent` and `launch_tier` in a session the orchestrator's launcher spawned for an orchestrator, on a tier) and each GitHub act the repository, pull request and head it names
@@ -43,10 +43,9 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   exported, removed from this machine and kept.
 - `telemetry.ts export --auto [--foreground] --config <dir>`: the automatic export.
 - `telemetry.ts check --config <dir>`: the scan of the day files, alone (the export scans the archive's files).
-- `telemetry.ts backfill [--turns] --config <dir> <transcript.jsonl>...`: one `session_summary` per past
-  transcript; with `--turns`, also one `turn_end` per turn (`source: transcript`) carrying its first API
-  call's cache figures and the idle gap before it, for a week the live events do not cover. Like the
-  summaries, a transcript backfilled twice is written twice.
+- `telemetry.ts backfill [--calls] --config <dir> <transcript.jsonl>...`: one `session_summary` per past
+  transcript; with `--calls`, also one `api_call` per API call of the transcript, for a week the live events
+  do not cover. A transcript backfilled twice is written twice; the report counts a call once, by its message id.
 - `telemetry.ts sweep [--auto] --config <dir>`: over the last seven day files, one
   `session_summary` (`source: sweep`) per session idle for a day that never reached its end, and one
   `question` event per settled question of the orchestrator's round, and one `dispatch` event per
@@ -59,7 +58,7 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   (`gh`) and the cost of the sessions that name only it, questions and refusals per day (the round
   files, the events), the week's refusals per guard source (plugin and guard code, from the learning
   journals, which are where the code is kept, with a coverage line: its count against the role table's and the plugins that refused with no journal) and per role (orchestrator, coordinator, auditor, agent,
-  other, from the role a session's events carry, a session of another role or of none counted as other), a line of cold rewrites per role (first calls after an idle gap that wrote more than they read, counted and in tokens written by gap: under 55 minutes, 55 to 65, over 65), and the nine figures of the target: those no source holds (agents on every
+  other, from the role a session's events carry, a session of another role or of none counted as other), a line of cold rewrites per role, computed from the `api_call` times (a turn's first call after an idle gap that wrote more than it read, counted and in tokens written by gap: under 55 minutes, 55 to 65, over 65), and the nine figures of the target: those no source holds (agents on every
   runnable line, merge to service, code per release) print `n/a` and why, never an estimate. The tool
   is the repository of the working directory unless `--tool` names it. It reads the orchestrator's
   record registry, round and measure files and the learning journals (`docs/contracts.md`, « Weekly report reads »). Three lines

@@ -196,3 +196,13 @@ test('redactValue: identifiers held to their shape, every other string scanned, 
   })
   assert.deepEqual(hits, ['identifier', 'entropy', 'entropy'])
 })
+
+test('redactValue: the ids of an API call (message, request, prompt) are random by nature and kept, held to their shape; a token in one is redacted', () => {
+  const ids = { message: 'msg_011Ch9Es93SpXusjSjN2z4sa', request: 'req_011Ch9Es8qYCGYKBz92ALbJh', prompt: '0dabbd84-0845-49a7-aaf7-5a1ce0b31ee4' }
+  const event = { v: 1, ts: '2026-11-13T20:00:00.000Z', event: 'api_call', session: '60ed5626-9879-4041-892a-5db0ff0bad69', ...ids }
+  assert.deepEqual(redactValue(event, new Map()).value, event)
+  const token = join('gh', 'p_', RANDOM, 'abcd')
+  const redacted = redactValue({ ...event, message: token, request: 'not an id!' }, new Map())
+  assert.ok(!JSON.stringify(redacted.value).includes(token))
+  assert.equal((redacted.value as Record<string, unknown>)['request'], '[REDACTED:identifier]')
+})

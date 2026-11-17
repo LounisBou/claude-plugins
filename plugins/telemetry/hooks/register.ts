@@ -131,9 +131,7 @@ export function mount(on: On, collector: Collector): void {
     })
     // A resumed session, or a reloaded module, holds calls an earlier run already wrote: they are not written again.
     await quietly($, 'session.start calls', async () => {
-      const messages = await $.session.messages()
-      for (const id of transcriptCallIds(messages)) collector.claim(id)
-      if (Array.isArray(messages) && messages.length > 0) collector.markResumed()
+      for (const id of transcriptCallIds(await $.session.messages())) collector.claim(id)
     })
     return result
   })
@@ -166,8 +164,8 @@ export function mount(on: On, collector: Collector): void {
       const session = await $.session.id()
       if (e['agentId'] === undefined) await readTitle($, collector)
       const usage = usageFacts(await $.session.usage())
+      const events = [turnEnd(at, session, e, usage, collector.turnCost(usage.costUsd))]
       const child = typeof e['agentId'] === 'string' ? e['agentId'] : undefined
-      const events = [turnEnd(at, session, e, usage, collector.turnCost(usage.costUsd), child === undefined && collector.takeResumed())]
       if (child !== undefined) events.push(agentClosed(at, session, child, collector.closing(child), e))
       if (child === undefined) collector.turns++
       collector.push(...events)
