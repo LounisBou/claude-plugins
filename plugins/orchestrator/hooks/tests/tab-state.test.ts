@@ -3,7 +3,7 @@
 // (tab-state.ts, wired in supervision.ts): one word per state, written only when it changes,
 // only inside a home session, and a failing tmux call never fails the hook.
 import { expect, test } from 'claude-code/testing'
-import { homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, targetOf } from '../tab-state.ts'
+import { homeArgv, stateArgv, windowOf, panesArgv, panesOf, pullRequestsRead, stateAfterPr, stateAfterTurn, stateAfterMeasure, targetOf } from '../tab-state.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
@@ -30,6 +30,57 @@ test('the argv of the mark read and of the state write', () => {
   expect(stateArgv('tmux', target, 'busy')).toEqual(['tmux', '-S', SOCKET, 'set-option', '-w', '-t', '%3', '@state', 'busy'])
 })
 
+test('the panes of the server are listed with their ttys and the state each window shows', () => {
+  expect(panesArgv('tmux', SOCKET)).toEqual(['tmux', '-S', SOCKET, 'list-panes', '-a', '-F', '#{pane_tty} #{pane_id} #{@state}'])
+  expect(panesOf('/dev/ttys003 %4 done\n/dev/ttys004 %5 \n/dev/ttys005 %6\n\nnot a pane\n')).toEqual([
+    { tty: '/dev/ttys003', pane: '%4', shown: 'done' },
+    { tty: '/dev/ttys004', pane: '%5', shown: '' },
+    { tty: '/dev/ttys005', pane: '%6', shown: '' },
+    { tty: 'not', pane: 'a', shown: 'pane' },
+  ])
+  expect(panesOf('')).toEqual([])
+})
+
+test('a merged or closed pull request puts its agent over, once; an open one moves only a delivery, by its Ready label', () => {
+  for (const state of ['MERGED', 'CLOSED']) {
+    for (const shown of ['', 'idle', 'held', 'review', 'done', 'gate']) expect(stateAfterPr(shown, { state, ready: true })).toBe('over')
+    // The operator's pending question stays visible, and a turn begun since the read is left alone.
+    for (const shown of ['asks', 'busy']) expect(stateAfterPr(shown, { state })).toBeNull()
+    expect(stateAfterPr('over', { state })).toBeNull()
+  }
+  expect(stateAfterPr('review', { state: 'OPEN', ready: true })).toBe('done')
+  expect(stateAfterPr('done', { state: 'OPEN', ready: false })).toBe('review')
+  // Nothing moves a window that shows no delivery, one already right, or one whose labels were not read.
+  for (const shown of ['', 'idle', 'busy', 'asks', 'gate', 'over']) {
+    expect(stateAfterPr(shown, { state: 'OPEN', ready: true })).toBeNull()
+    expect(stateAfterPr(shown, { state: 'OPEN', ready: false })).toBeNull()
+  }
+  expect(stateAfterPr('done', { state: 'OPEN', ready: true })).toBeNull()
+  expect(stateAfterPr('review', { state: 'OPEN', ready: false })).toBeNull()
+  expect(stateAfterPr('review', { state: 'OPEN' })).toBeNull()
+  expect(stateAfterPr('review', { state: 'DRAFT' })).toBeNull()
+})
+
+test('the pull requests of one agent are read together: ready only when every open one is, over only when none is open', () => {
+  const open = (ready?: boolean) => ({ state: 'OPEN', ...(ready === undefined ? {} : { ready }) })
+  expect(pullRequestsRead([open(true)])).toEqual({ state: 'OPEN', ready: true })
+  expect(pullRequestsRead([open(true), open(true)])).toEqual({ state: 'OPEN', ready: true })
+  expect(pullRequestsRead([open(true), open(false)])).toEqual({ state: 'OPEN', ready: false })
+  expect(pullRequestsRead([open(), open(false)])).toEqual({ state: 'OPEN', ready: false })
+  // A label or a pull request that was not read leaves it unknown, unless another is known not Ready.
+  expect(pullRequestsRead([open(true), open()])).toEqual({ state: 'OPEN' })
+  expect(pullRequestsRead([open(true), null])).toEqual({ state: 'OPEN' })
+  expect(pullRequestsRead([open(false), null])).toEqual({ state: 'OPEN', ready: false })
+  // A merged or closed one is set aside while another is open.
+  expect(pullRequestsRead([{ state: 'MERGED' }, open(true)])).toEqual({ state: 'OPEN', ready: true })
+  expect(pullRequestsRead([{ state: 'CLOSED' }, open(false)])).toEqual({ state: 'OPEN', ready: false })
+  // None open: merged when one merged, else closed, unknown when a read is missing.
+  expect(pullRequestsRead([{ state: 'CLOSED' }, { state: 'MERGED' }])).toEqual({ state: 'MERGED' })
+  expect(pullRequestsRead([{ state: 'CLOSED' }])).toEqual({ state: 'CLOSED' })
+  expect(pullRequestsRead([{ state: 'MERGED' }, null])).toBeNull()
+  expect(pullRequestsRead([])).toBeNull()
+})
+
 test('the window is the answer when the session carries the mark, else none', () => {
   expect(windowOf('1|home:@3.%7\n')).toBe('home:@3.%7')
   expect(windowOf('|home:@3.%7\n')).toBeNull()
@@ -41,8 +92,15 @@ test('a turn ends on the wait it wrote, else the gate, else idle', () => {
   expect(stateAfterTurn('operator', false)).toBe('asks')
   expect(stateAfterTurn('question', true)).toBe('held')
   expect(stateAfterTurn('blocked', false)).toBe('held')
-  expect(stateAfterTurn('done', true)).toBe('done')
-  expect(stateAfterTurn('delivered', false)).toBe('done')
+  // An orchestrator's own done wait names no pull request: at rest, never ✓ (done is the Ready read's alone).
+  expect(stateAfterTurn('done', true)).toBe('gate')
+  expect(stateAfterTurn('done', false)).toBe('idle')
+  for (const waiting of ['operator', 'question', 'blocked', 'waiting', 'delivered', 'done', null] as const) {
+    expect(stateAfterTurn(waiting, false)).not.toBe('done')
+    expect(stateAfterTurn(waiting, true)).not.toBe('done')
+  }
+  // A delivery is under review until the orchestrator's read of its pull request finds it Ready.
+  expect(stateAfterTurn('delivered', false)).toBe('review')
   expect(stateAfterTurn(null, true)).toBe('gate')
   expect(stateAfterTurn(null, false)).toBe('idle')
 })
@@ -53,7 +111,7 @@ test('a measure moves only a window at rest, onto the gate and back', () => {
   expect(stateAfterMeasure('gate', true)).toBeNull()
   expect(stateAfterMeasure('gate', false)).toBe('idle')
   expect(stateAfterMeasure('idle', false)).toBeNull()
-  for (const held of ['busy', 'asks', 'done'] as const) {
+  for (const held of ['busy', 'asks', 'held', 'review', 'done', 'over'] as const) {
     expect(stateAfterMeasure(held, true)).toBeNull()
     expect(stateAfterMeasure(held, false)).toBeNull()
   }
@@ -168,12 +226,12 @@ test('held when a wait on the orchestrator is written, not asks', async () => {
   expect(fx.states()).toEqual(['busy', 'held'])
 })
 
-test('done when a delivery is written', async () => {
+test('review when a delivery is written: done only once its pull request is read Ready', async () => {
   const chains = mounted()
   const fx = fake({ pane: '%13' })
   await drive(chains, 'turn.start', fx.dollar, {})
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('PR opened, 40 passed.\nstatus: done — PR 12'))
-  expect(fx.states()).toEqual(['busy', 'done'])
+  expect(fx.states()).toEqual(['busy', 'review'])
 })
 
 test('gate when a measure puts a window at rest past its gate, idle when it is back under', async () => {

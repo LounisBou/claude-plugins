@@ -189,13 +189,33 @@ next read. A new `at` alone is no reason to write the file again.
 An orchestrator's tab is a real terminal holding a tmux session of its own, its
 home session: the orchestrator runs in window 0 and every agent it spawns is a
 window after it, shown in a tab bar with one block per window and a state icon
-after its name (busy ●, idle ○, asks ✋, held ⏸, done ✓, gate ⚠). There is nothing to
+after its name (the legend below). There is nothing to
 type for it: the orchestrator command moves its own tab into the home session
 by itself. Click a block, or press `C-b n` / `C-b p`, to switch; `C-b C-b`
 sends a Ctrl-B to the program in the pane. Closing the tab ends the server,
 the orchestrator and every agent, once the tab's client is attached; a successor a
 takeover moved into window 0 ends the same way. The
 auditor and the coordinator stay iTerm2 tabs.
+
+The tab bar's legend, one row per state. The icon keeps its colour on the selected
+tab, where it is drawn in a small dark block.
+
+| Icon | State | Who waits on whom, and what you do | Colour |
+|---|---|---|---|
+| ▶ | working | The agent is in a turn; nothing to do. | green |
+| ● | at rest | The agent is idle and waits for its orchestrator's next order; nothing to do. | blue |
+| ✋ | question | The agent asks you something and waits for your answer: answer it. | orange |
+| ⏸ | waits on its orchestrator | The agent waits for a decision or an event only its orchestrator gives; nothing to do. | grey |
+| ⧖ | delivered, under review | The agent delivered, but a pull request entrusted to it does not carry `Ready` yet (review or correction, draft or not); nothing to do, the orchestrator reviews. | lilac |
+| ✓ | delivered, waits for the merge | The agent delivered and every open pull request entrusted to it carries `Ready`: merge them, or let the orchestrator merge them. | pale green |
+| ⏹ | over, to close | The pull request is merged or closed: the agent's work is over and its orchestrator owes its close. | red |
+| ⚠ | past the context gate | The agent's context is past its gate: it finishes its unit and stops, and is replaced by a fresh one. | pink |
+
+The module writes the state on each window when a turn starts or ends. The
+orchestrator's stop reads the pull request of each idle agent, the read it
+already makes, with each other one the dispatch record entrusts to it, and writes
+⏹ when all are merged or closed, and moves a delivery between ⧖ and ✓ by the
+`Ready` label of its open ones.
 
 Outside a home session an agent is an iTerm2 tab, and the orchestrator's tab
 sits immediately left of its implementer's tab. A plain `spawn` appends at the

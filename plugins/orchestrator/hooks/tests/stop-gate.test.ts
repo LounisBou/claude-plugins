@@ -291,6 +291,12 @@ test("the host's session record is read for its status alone", () => {
 test('a pull request is read from the branch and the answer, or not at all', () => {
   expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN"}')).toEqual({ number: '160', state: 'OPEN' })
   expect(pullRequestOf(null, '{"number":160,"state":"OPEN"}')).toBeNull()
+  // Ready is the label of that name; an answer with no labels says nothing of it.
+  expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","labels":[{"name":"Ready"}]}')).toEqual({ number: '160', state: 'OPEN', ready: true })
+  expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","labels":[{"name":"ready-ish"}]}')).toEqual({ number: '160', state: 'OPEN', ready: false })
+  expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","labels":[]}')).toEqual({ number: '160', state: 'OPEN', ready: false })
+  // The repository comes from the address the answer carries.
+  expect(pullRequestOf('feat/belt', '{"number":160,"state":"OPEN","url":"https://github.com/acme/app/pull/160"}')).toEqual({ number: '160', state: 'OPEN', repo: 'acme/app' })
   expect(pullRequestOf('feat/belt', null)).toBeNull()
   expect(pullRequestOf('feat/belt', 'not json')).toBeNull()
 })
@@ -548,6 +554,10 @@ type Setup = {
   hangHeadsWrite?: boolean
   hostRecord?: string
   agentRow?: string
+  // The answer of `gh pr view <ref>` by its first argument (a branch, or the number of another pull request), over prAnswer.
+  prByRef?: Record<string, string>
+  // The panes the home server lists (`<tty> <pane id> <state>` a line), read by the tab-state write.
+  panes?: string
   selfBin?: string
   goals?: { exitCode: number; stdout: string } | 'hang'
   goalsShown?: string
@@ -652,6 +662,10 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         const block = blockOf(argv, () => setup.transcript ?? '')
         if (block !== null) return { exitCode: 0, stdout: block, stderr: '' }
         ran.push(argv.join(' '))
+        if (argv[0] === 'tmux') {
+          const answer = argv[3] === 'display-message' ? '1|home:@3.%7\n' : argv[3] === 'list-panes' ? setup.panes ?? '' : ''
+          return { exitCode: 0, stdout: answer, stderr: '' }
+        }
         if (argv[0] === 'sh') {
           return { exitCode: 0, stdout: '123 ttys001\n', stderr: '' }
         }
@@ -680,6 +694,10 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
             : { exitCode: 128, stdout: '', stderr: '' }
         }
         if (argv[0] === 'gh') {
+          const byRef = setup.prByRef?.[argv[3] ?? '']
+          if (byRef !== undefined) return { exitCode: 0, stdout: byRef, stderr: '' }
+          // Another pull request, asked by its number in its repository, has only the answer given for it.
+          if (argv[4] === '-R') return { exitCode: 1, stdout: '', stderr: 'no answer' }
           return setup.prAnswer ? { exitCode: 0, stdout: setup.prAnswer, stderr: '' } : { exitCode: 1, stdout: '', stderr: 'no answer' }
         }
         if (argv[0] === 'bash' && argv[1] === LAUNCHER) {
@@ -875,6 +893,101 @@ test('an idle agent delivered of its merged pull request is not refused: the log
     agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"MERGED"}',
   })
   await warnsNotRefuses(handlers, fx, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, MERGED)')
+})
+
+// The stop's read of an idle agent's pull request moves the agent's window in the home session: over
+// when the pull request is merged or closed, done or review by its Ready label for a delivery.
+const HOME_ENV = { TMUX: '/tmp/home.sock,4242,0', TMUX_PANE: '%1' }
+// In a home session the owner of a chain entry is the pane (`tmux:<socket>:<pane id>`), not the iTerm2 tab.
+const HOME_CHAIN = '{"tab_id":"T1","tty":"/dev/ttys003","owner":"tmux:/tmp/home.sock:%1"}\n'
+const AGENT_CHAIN = '{"tab_id":"T1","tty":"/dev/ttys003","owner":"17"}\n'
+const stateWrites = (ran: readonly string[]) => ran.filter(c => c.startsWith('tmux ') && c.includes(' set-option '))
+async function stopOn(prAnswer: string, panes: string, env: Record<string, string> = HOME_ENV) {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: env === HOME_ENV ? HOME_CHAIN : AGENT_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer, panes, env })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  return stateWrites(fx.ran)
+}
+
+test('the window of an idle agent whose pull request is merged or closed shows over, once', async () => {
+  const over = ['tmux -S /tmp/home.sock set-option -w -t %9 @state over']
+  expect(await stopOn('{"number":160,"state":"MERGED","labels":[]}', '/dev/ttys002 %8 idle\n/dev/ttys003 %9 done\n')).toEqual(over)
+  expect(await stopOn('{"number":160,"state":"CLOSED","labels":[]}', '/dev/ttys003 %9 review\n')).toEqual(over)
+  expect(await stopOn('{"number":160,"state":"MERGED"}', '/dev/ttys003 %9 over\n')).toEqual([])
+})
+
+test('the window of a delivery moves between review and done by the Ready label of its open pull request', async () => {
+  const ready = '{"number":160,"state":"OPEN","labels":[{"name":"enhancement"},{"name":"Ready"}]}'
+  const notReady = '{"number":160,"state":"OPEN","labels":[{"name":"enhancement"}]}'
+  expect(await stopOn(ready, '/dev/ttys003 %9 review\n')).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state done'])
+  expect(await stopOn(notReady, '/dev/ttys003 %9 done\n')).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state review'])
+  // An agent at rest on no delivery, a window already right, and an answer with no labels stay as they are.
+  // The label's case does not matter, as at the github ready gate.
+  expect(await stopOn('{"number":160,"state":"OPEN","labels":[{"name":"ready"}]}', '/dev/ttys003 %9 review\n')).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state done'])
+  expect(await stopOn(ready, '/dev/ttys003 %9 idle\n')).toEqual([])
+  expect(await stopOn(ready, '/dev/ttys003 %9 done\n')).toEqual([])
+  expect(await stopOn('{"number":160,"state":"OPEN"}', '/dev/ttys003 %9 review\n')).toEqual([])
+})
+
+// An agent holding several pull requests is ready only when each open one carries Ready: the branch's
+// own, and the others the dispatch record entrusts to it (its `working` lines).
+const LEDGER = (...prs: number[]) => prs.map(pr => JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr, status: 'working', agent: 'Agent: idle-p3', since: '2026-11-15T07:00:00Z', updated: '2026-11-15T07:00:00Z' })).join('\n') + '\n'
+const branchPr = (state: string, ready: boolean) => `{"number":160,"state":"${state}","url":"https://github.com/acme/app/pull/160","labels":[${ready ? '{"name":"Ready"}' : ''}]}`
+const otherPr = (state: string, ready: boolean) => `{"number":9,"state":"${state}","labels":[${ready ? '{"name":"Ready"}' : ''}]}`
+async function stopWithTwo(branch: string, other: string | undefined, shown: string) {
+  const { handlers } = mounted()
+  const fx = fakeDollar({
+    listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: branch,
+    prByRef: other === undefined ? {} : { '9': other }, records: [LEDGER(160, 9)], panes: `/dev/ttys003 %9 ${shown}\n`, env: HOME_ENV,
+  })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  return { writes: stateWrites(fx.ran), read9: fx.ran.some(c => c.startsWith('gh pr view 9 -R acme/app')), read160: fx.ran.some(c => c.startsWith('gh pr view 160')) }
+}
+
+test('an agent with two pull requests shows ready only when both carry Ready, merged ones set aside', async () => {
+  const toReview = ['tmux -S /tmp/home.sock set-option -w -t %9 @state review']
+  const toDone = ['tmux -S /tmp/home.sock set-option -w -t %9 @state done']
+  const toOver = ['tmux -S /tmp/home.sock set-option -w -t %9 @state over']
+  // One Ready and one not: not ready, so a window that shows ✓ goes back under review, and one under review stays.
+  const mixed = await stopWithTwo(branchPr('OPEN', true), otherPr('OPEN', false), 'done')
+  expect(mixed.writes).toEqual(toReview)
+  expect(mixed.read9).toBe(true)
+  // The branch's own pull request is read once, never again for its ledger line.
+  expect(mixed.read160).toBe(false)
+  expect((await stopWithTwo(branchPr('OPEN', true), otherPr('OPEN', false), 'review')).writes).toEqual([])
+  expect((await stopWithTwo(branchPr('OPEN', false), otherPr('OPEN', true), 'done')).writes).toEqual(toReview)
+  // Both Ready: ready.
+  expect((await stopWithTwo(branchPr('OPEN', true), otherPr('OPEN', true), 'review')).writes).toEqual(toDone)
+  // One merged and the other open and not Ready: not over, not ready. Open and Ready: ready.
+  expect((await stopWithTwo(branchPr('MERGED', true), otherPr('OPEN', false), 'done')).writes).toEqual(toReview)
+  expect((await stopWithTwo(branchPr('MERGED', false), otherPr('OPEN', true), 'review')).writes).toEqual(toDone)
+  // Everything merged or closed: over.
+  expect((await stopWithTwo(branchPr('MERGED', true), otherPr('CLOSED', false), 'done')).writes).toEqual(toOver)
+  // The other one cannot be read: nothing is known, so nothing moves.
+  expect((await stopWithTwo(branchPr('OPEN', true), undefined, 'review')).writes).toEqual([])
+  expect((await stopWithTwo(branchPr('MERGED', true), undefined, 'done')).writes).toEqual([])
+})
+
+test('a tmux that fails, or a pane the server does not list, never fails the stop: said once in the log, nothing written', async () => {
+  const merged = '{"number":160,"state":"MERGED","labels":[]}'
+  // The agent's tty is not among the panes: nothing is written.
+  expect(await stopOn(merged, '/dev/ttys009 %3 done\n')).toEqual([])
+  // The pane list fails: the stop passes, the log says so.
+  const { handlers } = mounted()
+  const down = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: merged, panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
+  const failing = { ...down.dollar, process: { ...down.dollar.process, run: async (argv: readonly string[], init?: ProcessRunInit) =>
+    argv[0] === 'tmux' && argv[3] === 'list-panes' ? { exitCode: 1, stdout: '', stderr: 'no server' } : init === undefined ? down.dollar.process.run(argv) : down.dollar.process.run(argv, init) } }
+  const out = await stop(handlers['classic.Stop'], failing as World, stopEvent({}))
+  expect(out.answer).toBe(out.passed)
+  expect(down.written.filter(l => l.includes('tab-state: tmux exited 1 listing the panes')).length).toBe(1)
+  expect(stateWrites(down.ran)).toEqual([])
+})
+
+test('outside a home session the stop writes no window state, and no tmux is called', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: AGENT_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"MERGED","labels":[]}', panes: '/dev/ttys003 %9 done\n' })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  expect(fx.ran.filter(c => c.startsWith('tmux '))).toEqual([])
 })
 
 test('the transcript is read from the event, not by hunting the projects directory', async () => {
@@ -1328,7 +1441,7 @@ test("the idle agent's pull request is read with one --json argument, in the age
     agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}',
   })
   await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
-  const gh = 'gh pr view feat/belt --json number,state'
+  const gh = 'gh pr view feat/belt --json number,state,labels,url'
   expect(fx.ran).toContain(gh)
   expect(fx.inits[gh]?.cwd).toBe('/tmp/h/work/belt')
   expect(fx.inits[gh]?.timeoutMs).toBeGreaterThan(0)
