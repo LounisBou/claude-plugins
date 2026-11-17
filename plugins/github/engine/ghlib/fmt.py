@@ -82,6 +82,8 @@ RERUN = "rerun"
 # A finished run that passed at the workflow level.
 _PASSED = ("success", "neutral")
 _GOING = ACTIVE + (RERUN,)
+# What a finished check run can have concluded without having failed.
+_NOT_FAILED = ("success", "neutral", "skipped", "cancelled")
 
 
 def _placed(workflows, suite_runs):
@@ -156,12 +158,18 @@ def _latest_runs(runs, workflows, suite_runs=None, states=None):
     workflow run's conclusion, or its status while it goes): that run, whose jobs
     are not all created yet, counts as running through the second value. The runs
     newer than the latest settled run of a workflow, when it succeeded, are left
-    out altogether (_after_success). Every other conclusion of an older run counts."""
+    out altogether (_after_success), those holding a failed job excepted. Every other conclusion of an older run counts."""
     if workflows is None:
         return list(runs), 0, []
     states = states or {}
     placed = _placed(workflows, suite_runs)
     hidden = _after_success(placed, states)
+    # A job that failed in a run newer than the success is a failure, whatever its run goes on to do.
+    hidden -= {
+        str((run.get("check_suite") or {}).get("id"))
+        for run in runs
+        if run.get("status") == "completed" and run.get("conclusion") not in _NOT_FAILED
+    }
     if hidden:
         runs = [run for run in runs if str((run.get("check_suite") or {}).get("id")) not in hidden]
         suite_runs = {suite: run_id for suite, run_id in suite_runs.items() if suite not in hidden}

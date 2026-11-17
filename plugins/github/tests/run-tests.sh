@@ -2586,6 +2586,26 @@ check "#907 sequence: a run of unknown state hides its failure from no success" 
 # A workflow run waiting for its first check run, with no older run, holds the head.
 seq8 lone-queued "" "$(WF 30 queued null 300 1)"
 check "#907 sequence: a lone run that has not started holds the head" "PENDING   0" "$(ci8)"
+# A job that failed in a run newer than the success blocks at once, the run going on or cancelled after it.
+seq8 failed-job-going "$PASSED,$(job 31 test 300 completed '"failure"'),$(job 32 lint 300 in_progress null)" "$PASSEDWF,$(WF 30 in_progress null 300 1)"
+check "#907 sequence: a failed job of a run going after the success is a failure" "FAILURE test  5" "$(ci8)"
+seq8 failed-job-cancelled "$PASSED,$(job 31 test 300 completed '"failure"')" "$PASSEDWF,$(WF 30 completed '"cancelled"' 300 1)"
+check "#907 sequence: a failed job of a run cancelled after the success is a failure" "FAILURE test  4" "$(ci8)"
+# The check runs of a head are read in full: the success run sits on the second page once the label-fired
+# runs fill the first, and the gate does not read PENDING for want of it.
+pages8() {
+  gate8 "seq-pages" "$PULL8" '{"statuses":[]}' "$(python3 -c '
+import json
+runs = [{"id": 1000 + i, "name": "job%d" % i, "app": {"id": 15368}, "check_suite": {"id": 200}, "status": "completed", "conclusion": "cancelled"} for i in range(100)]
+print(json.dumps({"total_count": 103, "check_runs": runs}))')" '{"workflow_runs":['"$PASSEDWF,$(WF 20 in_progress null 200 1)"']}'
+  printf '{"total_count":103,"check_runs":['"$PASSED"']}' > "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_check-runs__per_page=100&page=2.json"
+}
+pages8
+check "#907 sequence: the success run on the second page of check runs keeps the head green" "SUCCESS   3" "$(ci8)"
+check "pr-gate reads the second page of check runs" "yes" \
+  "$(grep -q 'check-runs?per_page=100&page=2' "$F8/sent.jsonl" && echo yes || echo no)"
+check "pr-checks reads the second page of check runs" "SUCCESS" \
+  "$(gh8 pr-checks 12 --format checks-status | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
 seq8 other-workflow "$PASSED,$(job 21 harness 210 in_progress null)" "$PASSEDWF,$(WF 21 in_progress null 210 2)"
 check "#907 sequence: a run going after a success holds nothing back, its workflow's success speaks" "SUCCESS   3" "$(ci8)"
 seq8 never "$(job 21 harness 210 in_progress null),$(job 1 changes 50 completed '"success"')" "$(WF 5 completed '"success"' 50 1),$(WF 21 in_progress null 210 2)"
@@ -2607,6 +2627,8 @@ console.log((labelMove(gate, missing) ?? "stays") + " " + missing.join("; "))
   check "#907 sequence: Ready stays on the flip's runs, one cancelled and one going" "stays " "$(moves8)"
   seq8 failed "$PASSED,$(job 31 changes 300 completed '"success"'),$(job 32 lint 300 completed '"failure"')" "$PASSEDWF,$(WF 30 completed '"failure"' 300 1)"
   check "#907 sequence: Ready goes back to Not Ready on a settled failure" "not-ready CI failed: lint" "$(moves8)"
+  seq8 failed-job-going "$PASSED,$(job 31 test 300 completed '"failure"'),$(job 32 lint 300 in_progress null)" "$PASSEDWF,$(WF 30 in_progress null 300 1)"
+  check "#907 sequence: Ready goes back to Not Ready on a failed job of a run going" "not-ready CI failed: test" "$(moves8)"
   seq8 new-head "$(job 11 guards 100 completed '"cancelled"'),$(job 22 lint 200 in_progress null)" "$(WF 10 completed '"cancelled"' 100 1),$(WF 20 in_progress null 200 1)"
   check "#907 sequence: Ready goes back to Not Ready on a head no run succeeded at" "not-ready CI still running" "$(moves8)"
 fi

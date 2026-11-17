@@ -148,9 +148,39 @@ def pr_status(args):
     # The few lines by default; the full pull request with --json, or under a --format that reads it.
     sha = (pull.get("head") or {}).get("sha") or ""
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
-    runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
+    runs = _check_runs(owner, name, sha)
     args.format = "pr-summary"
     return {"pull": pull, "ci": _gate_ci(owner, name, pull, sha, statuses, (runs or {}).get("check_runs") or [])}
+
+
+# GitHub's page size for the check runs of a commit, and the pages read before the gate refuses to guess.
+_CHECK_RUNS_PAGE = 100
+_CHECK_RUNS_PAGES = 30
+
+
+def _check_runs(owner, name, sha):
+    """Every check run at a head, newest suite first, as one answer ({"check_runs": [...], ...}): a head
+    that a label write reruns again and again holds far more than one page, and the success the gate
+    reads rests on the older ones. A read that would pass _CHECK_RUNS_PAGES pages fails, so that the
+    gate never decides on a part of the runs."""
+    path = "/repos/%s/%s/commits/%s/check-runs?per_page=%d" % (owner, name, sha, _CHECK_RUNS_PAGE)
+    answer = http.rest("GET", path)
+    runs = list(answer.get("check_runs") or [])
+    total = answer.get("total_count")
+    page = 1
+    chunk = len(runs)
+    while chunk == _CHECK_RUNS_PAGE and not (_is_count(total) and len(runs) >= total):
+        if page >= _CHECK_RUNS_PAGES:
+            raise errors.ApiError("more than %d check runs at %s" % (_CHECK_RUNS_PAGE * _CHECK_RUNS_PAGES, sha))
+        page += 1
+        more = (http.rest("GET", "%s&page=%d" % (path, page)).get("check_runs")) or []
+        runs.extend(more)
+        chunk = len(more)
+    return dict(answer, check_runs=runs)
+
+
+def _is_count(value):
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _run_state(run):
@@ -316,7 +346,7 @@ def pr_checks(args):
     pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, args.pr))
     sha = (pull.get("head") or {}).get("sha", "")
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
-    runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
+    runs = _check_runs(owner, name, sha)
     workflows, suite_runs, states = _suite_workflows(owner, name, sha)
     required, unverified = _required_checks(owner, name, _base(pull))
     check_runs = runs.get("check_runs", [])
@@ -354,7 +384,7 @@ def pr_gate(args):
     if args.head_only:
         return gate
     statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
-    runs = http.rest("GET", "/repos/%s/%s/commits/%s/check-runs?per_page=100" % (owner, name, sha))
+    runs = _check_runs(owner, name, sha)
     reads = {}
     gate.update(
         {
