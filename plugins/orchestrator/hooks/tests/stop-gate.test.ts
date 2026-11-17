@@ -3,7 +3,7 @@
 // race), the ported checks
 // (the wake walk, the once-per-tell CI read over ci-watch's precomputed logs), and the
 // wiring over a faked $ — every field the classic.Stop event really carries pinned by a
-// test that fails under the wrong spelling. The gate observes, never refuses: what it once held a
+// test that fails under the wrong spelling. The gate observes, and refuses a choice put to the operator in prose alone: what it once held a
 // stop for is its log line, and one escape in the journal; the texts are stop_gate.py's, verbatim
 // where the data source did not change beneath them.
 import { expect, test } from 'claude-code/testing'
@@ -12,7 +12,7 @@ import {
   deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
-  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions,
+  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, restatedQuestions, putsChoiceToOperator, PROSE_CHOICE_REASON,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait, type Heads,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
@@ -164,6 +164,76 @@ test('a question answered or withdrawn may be written again, as one by its subje
   const other = fakeDollar({ round: { 'q-ffffff-1.json': askedHere({ id: 'q-ffffff-1', sender: { session: 'ffffff', name: 'Orch: other', role: 'orchestrator', machine: 'box-1' } }) } })
   const elsewhere = await stop(handlers['classic.Stop'], other.dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))
   expect(elsewhere.observed).toBeUndefined()
+})
+
+// 2026-11-17, Orch: Blitz: its question settled as answered with his question back, the turn then ended on
+// this message: the choice restated in prose, with no entry open in the round, so no ✋ and no counter.
+const BLITZ = 'Le point 2 est corrigé. S1 sera déclarée prête dès que vous aurez tranché la question : '
+  + 'corriger les points 3 et 4 (A, que je recommande), ou la laisser telle quelle (C).'
+
+test('a final message that puts a choice or a decision to the operator in prose is told apart from a report', () => {
+  expect(putsChoiceToOperator(BLITZ)).toBe(true)
+  expect(putsChoiceToOperator('Two ways to go: A) cut the scope, B) move the date. I recommend A. Which one do you want?')).toBe(true)
+  expect(putsChoiceToOperator('The tests pass.\n\nShould I merge it now?')).toBe(true)
+  expect(putsChoiceToOperator('The tests pass.\n\nVoulez-vous que je fusionne maintenant ?')).toBe(true)
+  // A report that names choices already made, or lists lettered parts, asks him nothing.
+  expect(putsChoiceToOperator('He chose option A over B, so the scope was cut. The phase is done and merged.')).toBe(false)
+  expect(putsChoiceToOperator('Le choix (A) a été appliqué, (B) écarté, et (C) reste ouvert côté code. Tout est mergé.')).toBe(false)
+  expect(putsChoiceToOperator('Plan:\nA. the parser\nB. the gate\nC. the tests\n\nAll three are merged.')).toBe(false)
+  expect(putsChoiceToOperator('Did the build pass? Yes, all of it.')).toBe(false)
+  expect(putsChoiceToOperator('')).toBe(false)
+  // A question block copied inside a fence or a quote is a quotation, not the turn's own question.
+  expect(putsChoiceToOperator(`Done.\n\n\`\`\`\n${BLITZ}\n\`\`\``)).toBe(false)
+  expect(putsChoiceToOperator(`Done.\n\n> ${BLITZ}`)).toBe(false)
+})
+
+// The one check of the gate that refuses; the others observe.
+async function refusedStop(handler: Guards['classic.Stop'], dollar: World, e: StopEvent) {
+  const fx = journalled(dollar)
+  let passed: unknown = null
+  const answer = await handler(fx.dollar, e, async (x: unknown) => { passed = x; return x })
+  return { answer: fieldsIn(answer), passed, journal: fx.journal() }
+}
+
+test('a turn that ends on a choice put to the operator in prose, with no question open in the round, is refused', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({})
+  const refused = await refusedStop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: BLITZ }))
+  expect(refused.answer.block).toBe(PROSE_CHOICE_REASON)
+  expect(refused.passed).toBeNull()
+  expect(refused.journal).toEqual(['refusal orchestrator.stop-gate.prose-choice'])
+  // The reason names the tool that asks, and the wait that follows.
+  expect(PROSE_CHOICE_REASON).toContain('mcp__orchestrator__ask')
+  expect(PROSE_CHOICE_REASON).toContain('operator wait')
+})
+
+test('the same message passes when a question of the session is open, when the stop is a re-fire, or when it is a report', async () => {
+  const { handlers } = mounted()
+  const e = stopEvent({ last_assistant_message: BLITZ })
+  const open = await stop(handlers['classic.Stop'], fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } }).dollar, e)
+  expect(fieldsIn(open.answer).block).toBeUndefined()
+  expect(open.observed).not.toBe(PROSE_CHOICE_REASON)
+  // A question settled or another session's leaves none open: refused.
+  const settled = askedHere({ status: 'answered', answer: { text: 'A', by: 'pane', at: '2026-11-14T10:05:00Z' } })
+  expect((await refusedStop(handlers['classic.Stop'], fakeDollar({ round: { 'q-a1b2c3-1.json': settled } }).dollar, e)).answer.block).toBe(PROSE_CHOICE_REASON)
+  // The host re-fires a refused stop with `stop_hook_active`: it passes, so a turn is refused once.
+  const again = await refusedStop(handlers['classic.Stop'], fakeDollar({}).dollar, stopEvent({ last_assistant_message: BLITZ, stop_hook_active: true }))
+  expect(again.answer.block).toBeUndefined()
+  expect(again.passed).not.toBeNull()
+  const report = await refusedStop(handlers['classic.Stop'], fakeDollar({}).dollar, stopEvent({ last_assistant_message: 'He chose option A over B. The phase is merged.' }))
+  expect(report.answer.block).toBeUndefined()
+  expect(report.journal).not.toContain('refusal orchestrator.stop-gate.prose-choice')
+})
+
+test('an auditor is refused the same way; the coordinator, whose decision round presents questions in prose, is not', async () => {
+  const { handlers } = mounted()
+  const e = stopEvent({ last_assistant_message: BLITZ })
+  const auditor = await refusedStop(handlers['classic.Stop'], fakeDollar({ launchName: 'Audit: belt' }).dollar, e)
+  expect(auditor.answer.block).toBe(PROSE_CHOICE_REASON)
+  const coordinator = await refusedStop(handlers['classic.Stop'], fakeDollar({ launchName: 'Coord: machine' }).dollar, e)
+  expect(coordinator.answer.block).toBeUndefined()
+  const agent = await refusedStop(handlers['classic.Stop'], fakeDollar({ launchName: 'Agent: belt' }).dollar, e)
+  expect(agent.answer.block).toBeUndefined()
 })
 
 test('an orchestrator ending on an operator wait that blocks nothing gets the blocks-nothing refusal, not the no-question one', async () => {

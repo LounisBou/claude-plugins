@@ -24,6 +24,13 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 
 // --- the decision shapes -----------------------------------------------------------------
 
+// The classic decision `{"decision":"block","reason":…}` answers through the module's own field:
+// `block` carries the reason text (the shipped types' ClassicResult documents exactly this mapping,
+// and a field of the wrong shape fails the hook, which is skipped: the stop would pass untold).
+export function refuse(reason: string): { block: string } {
+  return { block: reason }
+}
+
 // The wake decision at the summary level, the composition the done branch of
 // check 1 makes when the facts disagree with the message. A busy own agent and
 // a declared blocking question both RELEASE the stop — the agent's idle notice
@@ -391,6 +398,51 @@ export function restatedQuestions(message: string, open: readonly { id: string; 
 
 export const restatedReason = (ids: readonly string[]): string =>
   `Already in the round (${ids.join(', ')}): name it by its subject, do not copy it.`
+
+// A choice or a decision put to the operator in the turn's final message, in prose. The one check of
+// the gate that refuses: a question asked this way is shown nowhere (no ✋, no counter) and nothing
+// carries his answer back, so letting the turn end on it leaves him with a question he cannot see.
+// It reads the message's tail only, outside fenced code and quotes, and wants two things together:
+// the shape of a question (at least two lettered options, or a last line that ends on « ? ») and a
+// word that asks him to rule (« que je recommande », « dès que vous aurez tranché », « should I »).
+// A report that names choices already made carries the first and not the second, and passes.
+const TAIL_PARAGRAPHS = 2
+const OPTION_LABELS = [
+  /\(([A-D])(?=[,)\s:.])/g,
+  /(?:^|\s)([A-D])\)(?=\s)/g,
+  /\*\*([A-D])\*\*/g,
+  /\b(?:option|choice|variante|choix)\s+([A-D])\b/gi,
+  /^\s*(?:[-*]\s*)?([A-D])[.:](?=\s)/gm,
+]
+const RULING_CUE = new RegExp([
+  'que je recommande', 'ma recommandation', 'je recommande', 'i recommend', 'my recommendation',
+  'tranch(?:er|ez|é la)', 'dès que vous', 'as soon as you', 'once you (?:decide|choose|rule|pick)',
+  'until you (?:decide|choose|rule|pick)', "jusqu'à ce que vous", 'your (?:call|choice|decision|pick)',
+  'votre (?:choix|décision|arbitrage)', 'à vous de', 'dites-moi', 'let me know', 'tell me (?:which|whether|if)',
+  'which (?:one|option)', 'lequel', 'laquelle', 'please (?:choose|decide|pick|confirm)', 'choisissez', 'choose\\b',
+  'decide\\b', 'décidez',
+].join('|'), 'i')
+const DECISION_QUESTION = /\b(?:should i|shall i|do you want|would you like|do you prefer|want me to|which|dois-je|voulez-vous|souhaitez-vous|préférez-vous|veux-tu|faut-il|lequel|laquelle)\b/i
+
+function tailOf(message: string): string {
+  const kept = message.replace(/```[\s\S]*?(?:```|$)/g, '').split('\n').filter(line => !/^\s*>/.test(line)).join('\n')
+  return kept.trim().split(/\n\s*\n/).slice(-TAIL_PARAGRAPHS).join('\n\n')
+}
+
+export function putsChoiceToOperator(message: string): boolean {
+  const tail = tailOf(message)
+  if (tail === '') return false
+  const last = tail.split('\n').filter(line => line.trim() !== '').pop() ?? ''
+  const asking = /\?[\s"'»)*_]*$/.test(last)
+  if (asking && DECISION_QUESTION.test(last)) return true
+  const labels = new Set(OPTION_LABELS.flatMap(pattern => [...tail.matchAll(pattern)].map(found => found[1] ?? '')))
+  return labels.size >= 2 && (asking || RULING_CUE.test(tail))
+}
+
+export const PROSE_CHOICE_REASON = 'Your message puts a choice or a decision to the operator in prose, and no question of yours is open in the round: '
+  + 'he is shown nothing (no ✋, no counter) and nothing will carry his answer back to you. '
+  + 'Ask it with `mcp__orchestrator__ask` (its choices, your recommendation), then declare an operator wait on it. '
+  + 'If it asks him nothing, end the message without the question.'
 
 export type Held = { case: string; reason: string }
 
