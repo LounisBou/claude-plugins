@@ -43,7 +43,9 @@ test('the panes of the server are listed with their ttys and the state each wind
 
 test('a merged or closed pull request puts its agent over, once; an open one moves only a delivery, by its Ready label', () => {
   for (const state of ['MERGED', 'CLOSED']) {
-    for (const shown of ['', 'idle', 'review', 'done']) expect(stateAfterPr(shown, { state, ready: true })).toBe('over')
+    for (const shown of ['', 'idle', 'held', 'review', 'done', 'gate']) expect(stateAfterPr(shown, { state, ready: true })).toBe('over')
+    // The operator's pending question stays visible, and a turn begun since the read is left alone.
+    for (const shown of ['asks', 'busy']) expect(stateAfterPr(shown, { state })).toBeNull()
     expect(stateAfterPr('over', { state })).toBeNull()
   }
   expect(stateAfterPr('review', { state: 'OPEN', ready: true })).toBe('done')

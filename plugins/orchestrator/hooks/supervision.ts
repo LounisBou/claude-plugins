@@ -3512,7 +3512,8 @@ async function showTabState($: Host<'env' | 'plugin' | 'process'>, state: TabSta
 // orchestrator's stop gate, which already reads each idle agent's pull request: no poller of its
 // own. The agents are named by the ttys of their panes, found on the server this session runs in;
 // each state stands until the window's own session writes its next. A session outside a home
-// session shows nothing; a failure is said once and the gate goes on.
+// session shows nothing; a failure is said once (until a write of this session's own succeeds) and
+// the gate goes on.
 export async function showPrStates($: Host<'env' | 'plugin' | 'process'>, reads: readonly { tty: string; pr: { state: string; ready?: boolean | undefined } }[]): Promise<void> {
   if (reads.length === 0) return
   try {
@@ -3525,11 +3526,18 @@ export async function showPrStates($: Host<'env' | 'plugin' | 'process'>, reads:
       const window = panes.find(pane => pane.tty === tty)
       const next = window ? stateAfterPr(window.shown, pr) : null
       if (!window || !next) continue
-      const set = await $.process.run(stateArgv(tab.bin, { socket: tab.target.socket, pane: window.pane }, next), { timeoutMs: TMUX_TIMEOUT_MS })
-      if (!set || set.exitCode !== 0) throw new Error(`tmux exited ${set?.exitCode ?? 'without answer'} writing ${next} on ${window.pane}`)
+      // One window that cannot be written (its pane closed since the list) leaves the others to be.
+      try {
+        const set = await $.process.run(stateArgv(tab.bin, { socket: tab.target.socket, pane: window.pane }, next), { timeoutMs: TMUX_TIMEOUT_MS })
+        if (!set || set.exitCode !== 0) throw new Error(`tmux exited ${set?.exitCode ?? 'without answer'} writing ${next} on ${window.pane}`)
+      } catch (err) {
+        await tabFailure($, tab.memory, messageOf(err))
+      }
     }
   } catch (err) {
-    await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)
+    const tab = await tabOf($).catch(() => null)
+    if (tab) await tabFailure($, tab.memory, messageOf(err))
+    else await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)
   }
 }
 

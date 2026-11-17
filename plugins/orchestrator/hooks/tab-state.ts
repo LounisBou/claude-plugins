@@ -68,12 +68,17 @@ export function panesOf(stdout: string): PaneShown[] {
   return panes
 }
 
+// The states a window may leave for `over`: at rest, waiting on its orchestrator, delivered, past
+// its gate, or none. Never the operator's question (`asks`), which stays until answered, nor a turn
+// that began since the read (`busy`), nor `over` itself.
+const SETTLED = new Set(['', 'idle', 'held', 'review', 'done', 'gate'])
+
 // What the pull request of an idle agent says its window should show, or null to leave it. A
-// merged or closed one: the work is over (over). An open one changes only a window that shows a
+// merged or closed one: the work is over (over), from a window in a settled state. An open one changes only a window that shows a
 // delivery: the Ready label turns « under review » into « done », and a pull request that lost it
 // (a new head voids it) turns « done » back. An agent at rest on no delivery keeps its own state.
 export function stateAfterPr(shown: string, pr: { state: string; ready?: boolean | undefined }): TabState | null {
-  if (pr.state === 'MERGED' || pr.state === 'CLOSED') return shown === 'over' ? null : 'over'
+  if (pr.state === 'MERGED' || pr.state === 'CLOSED') return SETTLED.has(shown) ? 'over' : null
   if (pr.state !== 'OPEN' || pr.ready === undefined) return null
   if (pr.ready && shown === 'review') return 'done'
   if (!pr.ready && shown === 'done') return 'review'

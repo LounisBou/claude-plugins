@@ -914,9 +914,26 @@ test('the window of a delivery moves between review and done by the Ready label 
   expect(await stopOn(ready, '/dev/ttys003 %9 review\n')).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state done'])
   expect(await stopOn(notReady, '/dev/ttys003 %9 done\n')).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state review'])
   // An agent at rest on no delivery, a window already right, and an answer with no labels stay as they are.
+  // The label's case does not matter, as at the github ready gate.
+  expect(await stopOn('{"number":160,"state":"OPEN","labels":[{"name":"ready"}]}', '/dev/ttys003 %9 review\n')).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state done'])
   expect(await stopOn(ready, '/dev/ttys003 %9 idle\n')).toEqual([])
   expect(await stopOn(ready, '/dev/ttys003 %9 done\n')).toEqual([])
   expect(await stopOn('{"number":160,"state":"OPEN"}', '/dev/ttys003 %9 review\n')).toEqual([])
+})
+
+test('a tmux that fails, or a pane the server does not list, never fails the stop: said once in the log, nothing written', async () => {
+  const merged = '{"number":160,"state":"MERGED","labels":[]}'
+  // The agent's tty is not among the panes: nothing is written.
+  expect(await stopOn(merged, '/dev/ttys009 %3 done\n')).toEqual([])
+  // The pane list fails: the stop passes, the log says so.
+  const { handlers } = mounted()
+  const down = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: merged, panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
+  const failing = { ...down.dollar, process: { ...down.dollar.process, run: async (argv: readonly string[], init?: ProcessRunInit) =>
+    argv[0] === 'tmux' && argv[3] === 'list-panes' ? { exitCode: 1, stdout: '', stderr: 'no server' } : init === undefined ? down.dollar.process.run(argv) : down.dollar.process.run(argv, init) } }
+  const out = await stop(handlers['classic.Stop'], failing as World, stopEvent({}))
+  expect(out.answer).toBe(out.passed)
+  expect(down.written.filter(l => l.includes('tab-state: tmux exited 1 listing the panes')).length).toBe(1)
+  expect(stateWrites(down.ran)).toEqual([])
 })
 
 test('outside a home session the stop writes no window state, and no tmux is called', async () => {

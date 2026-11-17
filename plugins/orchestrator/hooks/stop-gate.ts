@@ -296,9 +296,9 @@ export function pullRequestOf(branch: string | null, answer: string | null): { n
   try {
     const pr: unknown = JSON.parse(answer)
     if (!isObject(pr) || pr['number'] === undefined || pr['state'] === undefined) return null
-    // Ready is the label the github ready gate puts at the head; an answer with no labels says nothing of it.
+    // Ready is the label the github ready gate puts at the head (its own test ignores the case); an answer with no labels says nothing of it.
     const labels = pr['labels']
-    const ready = Array.isArray(labels) ? labels.some(label => isObject(label) && label['name'] === 'Ready') : undefined
+    const ready = Array.isArray(labels) ? labels.some(label => isObject(label) && String(label['name']).toLowerCase() === 'ready') : undefined
     return { number: String(pr['number']), state: String(pr['state']), ...(ready === undefined ? {} : { ready }) }
   } catch {
     return null

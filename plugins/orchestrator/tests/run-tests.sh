@@ -8266,6 +8266,8 @@ for state in inactive:
     if inactive[state] != current.get(state): bad.append('%s differs between tabs: %s / %s' % (state, inactive[state], current.get(state)))
     fg, bg, _ = inactive[state]
     if ratio(fg, bg) < 7: bad.append('%s %.1f' % (state, ratio(fg, bg)))
+looks = [inactive[s][:2] for s in inactive]
+if len(set(looks)) != len(looks): bad.append('two states look alike')
 greens = [inactive[s][0] for s in ('busy', 'done')]
 if greens[0] == greens[1] or abs(lum(greens[0]) - lum(greens[1])) < 0.2: bad.append('the two greens are not apart')
 print('ok' if not bad else '; '.join(bad))
