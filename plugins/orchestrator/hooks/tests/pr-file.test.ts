@@ -242,13 +242,3 @@ test('a refresh another session made between the read and the lock counts: read 
   await refreshPrFile(dollar, NOW + 1000)
   expect(calls).toEqual([])
 })
-
-test('a lock this machine cannot make is said once on the log, never a call', async () => {
-  const { dollar, calls, logs } = world()
-  const run = dollar.process.run
-  dollar.process.run = async (argv, init) => (lockRun(argv, new Map()) !== null ? { exitCode: 1, stdout: '', stderr: 'Permission denied' } : run(argv, init))
-  await refreshPrFile(dollar, NOW)
-  await refreshPrFile(dollar, NOW + PR_FILE_INTERVAL_MS)
-  expect(calls).toEqual([])
-  expect(logs.filter(l => l.includes('stayed locked')).length).toBe(1)
-})

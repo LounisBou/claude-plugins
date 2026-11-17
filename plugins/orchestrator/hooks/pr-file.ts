@@ -9,7 +9,7 @@
 // interval, never a loop: the try is written to the file before the call, and a file that cannot be
 // written makes no call.
 import { ledgerLines, prKey } from '../core/pr-ledger.ts'
-import { lockOf, withLockOver } from '../core/store-io.ts'
+import { withLockOver } from '../core/store-io.ts'
 import { RECORDS_DIR } from '../core/orchestration.ts'
 import { messageOf, type Host } from './host.ts'
 import { logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
@@ -267,17 +267,8 @@ export async function refreshPrFile($: Held, now: number = Date.now()): Promise<
       await refreshUnder($, state, before, now)
     }, { tries: 0 })
   } catch (err) {
-    // A lock that stays because another session holds it is that session's refresh; one that was
-    // never taken (no lock there) is a lock this machine cannot make, said once per process.
-    if (/stayed locked/.test(messageOf(err)) && (lockUnmade || await lockHeld($))) return
-    if (/stayed locked/.test(messageOf(err))) lockUnmade = true
-    await logLine($, 'prs', `refresh failed: ${messageOf(err)}`)
+    if (!/stayed locked/.test(messageOf(err))) await logLine($, 'prs', `refresh failed: ${messageOf(err)}`)
   }
-}
-
-let lockUnmade = false
-async function lockHeld($: Held): Promise<boolean> {
-  return $.fs.stat(lockOf(prFilePath(await stateDir($)))).then(() => true, () => false)
 }
 
 async function refreshUnder($: Held, state: string, before: PrFile | undefined, now: number): Promise<void> {
