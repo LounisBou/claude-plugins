@@ -1628,10 +1628,18 @@ test('a question asked with ask reaches a coordinator whose learnt address went 
   const sender = fake({ remote: true, staleAt: STALE_AT })
   sender.dollar.ui.log = () => undefined
   const coordinator = coordinatorMachine()
+  // The address is forgotten before the send by name: an acknowledgment landing as that send returns teaches the new one.
+  const send = sender.dollar.session.send
+  const forgottenAtSend: unknown[] = []
+  sender.dollar.session.send = async args => {
+    if (args.to === 'Coord: ops [abc]') forgottenAtSend.push(learntFrom(sender))
+    return send(args)
+  }
   askTurnStarted()
   const asked = await callAsk(sender.dollar, { tool: 'mcp__orchestrator__ask', ...ASKED_FIELDS })
   const id = /Asked as (q-\S+?):/.exec(asked.result)![1]!
   expect(pushes(sender).map(s => s.to)).toEqual(['Coord: ops [abc]'])
+  expect(forgottenAtSend).toEqual([null])
   expect(learntFrom(sender)).toBeNull()
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(pushes(sender)).text))
   expect(objectAt(coordinator, id)).toMatchObject({ id, status: 'open', seq: 1 })

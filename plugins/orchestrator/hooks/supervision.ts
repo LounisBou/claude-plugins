@@ -2862,17 +2862,24 @@ async function registeredSession($: Host<'env' | 'fs'>, name: string, recordText
 }
 
 // A send to the coordinator. An address a peer delivery taught that refuses — a bridge whose
-// session ended when the coordinator handed over to a successor of its name — is forgotten once
-// the name delivers, its next delivery teaching the new one (learnCoordinator): the name alone is
-// the coordinator, whatever session holds it now.
+// session ended when the coordinator handed over to a successor of its name — is forgotten before
+// the same text goes to the name, so the acknowledgment that answers it teaches the new address
+// (learnCoordinator): the name alone is the coordinator, whatever session holds it now.
 export type Coordinator = { to: CoordinatorTo; name: string; local: boolean }
 export async function sendToCoordinator($: Host<'clock' | 'env' | 'fs' | 'process' | 'session'>, coordinator: Coordinator, text: string): Promise<SessionSendResult> {
   const sent = await sendTo($, coordinator.to, text)
   if (sent?.isDelivered || coordinator.local || coordinator.to === coordinator.name) return sent
+  await forgetAddress($, coordinator)
   const named = await sendTo($, coordinator.name, text)
-  if (!named?.isDelivered) return { isDelivered: false, reason: `${sent?.reason ?? 'no answer'}; by its name: ${named?.reason ?? 'no answer'}` }
-  await learnCoordinator($, { name: coordinator.name, from: null, at: new Date().toISOString() })
-  return named
+  return named?.isDelivered ? named : { isDelivered: false, reason: `${sent?.reason ?? 'no answer'}; by its name: ${named?.reason ?? 'no answer'}` }
+}
+
+// The learnt address forgotten while the file still holds that very one: an address learnt since stays.
+async function forgetAddress($: Host<'clock' | 'env' | 'fs' | 'process'>, coordinator: Coordinator): Promise<void> {
+  const path = `${await storeOf($)}/coordinator-learnt`
+  const known = parseLearnt(String(await $.fs.read(path).catch(() => '')))
+  if (!known || known.name !== coordinator.name || known.from === null || known.from !== coordinator.to) return
+  await writeAtomic($, path, JSON.stringify({ ...known, from: null, at: new Date().toISOString() }) + '\n')
 }
 
 // A name the host refuses as several sessions' is sent once more to the one the refusal places on
