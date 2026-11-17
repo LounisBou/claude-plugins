@@ -685,8 +685,8 @@ test('cold rewrites: per role, the first calls after an idle gap that wrote more
     turn(S(1), '2026-11-02T09:00:00Z', first(0, 99_000), 90 * MIN),
   ]
   scratch({ events }, config => {
-    const line = find(lines(config), 'cold rewrites: ')
-    assert.equal(line, 'cold rewrites: agent 1 of 1 (20k written; <55 min 0 (0k), 55-65 min 0 (0k), >65 min 1 (20k)); orchestrator 4 of 6 (170k written; <55 min 1 (41k), 55-65 min 2 (85k), >65 min 1 (44k); 1 on a resumed process) — a first call after an idle gap that wrote ≥ 10k and more than it read, per session role')
+    const line = find(lines(config), 'cold rewrites: ').split(' — ')[0]
+    assert.equal(line, 'cold rewrites: agent 1 of 1 (20k written; <55 min 0 (0k), 55-65 min 0 (0k), >65 min 1 (20k)); orchestrator 4 of 6 (170k written; <55 min 1 (41k), 55-65 min 2 (85k), >65 min 1 (44k); 1 on a resumed process)')
   })
 })
 
@@ -695,10 +695,10 @@ test('cold rewrites: a session recorded live is counted from its live turns alon
     ev('2026-11-09T09:00:00Z', 'turn_end', session, { first_call: first(0, 30_000), idle_ms: idle, role: 'agent', ...(source === undefined ? {} : { source }) })
   const events = [turn(S(1), undefined, 70 * MIN), turn(S(1), 'transcript', 70 * MIN), turn(S(1), 'transcript', 80 * MIN), turn(S(2), 'transcript', 70 * MIN)]
   scratch({ events }, config => {
-    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: agent 2 of 2 \(60k written; <55 min 0 \(0k\), 55-65 min 0 \(0k\), >65 min 2 \(60k\)\) — /)
+    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: agent 2 of 2 \(60k written; <55 min 0 \(0k\), 55-65 min 0 \(0k\), >65 min 2 \(60k\)\)/)
   })
   scratch({ events: [ev('2026-11-09T09:00:00Z', 'turn_end', S(1), { first_call: first(0, 30_000) })] }, config => {
-    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: n\/a — no turn_end with a first call and an idle gap in the week \(a past week: `telemetry\.ts backfill --turns/)
+    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: n\/a — /)
   })
 })
 

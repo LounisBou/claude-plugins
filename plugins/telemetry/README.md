@@ -45,7 +45,8 @@ session's transcript, which holds them, is exported beside them, redacted (see C
 - `telemetry.ts check --config <dir>`: the scan of the day files, alone (the export scans the archive's files).
 - `telemetry.ts backfill [--turns] --config <dir> <transcript.jsonl>...`: one `session_summary` per past
   transcript; with `--turns`, also one `turn_end` per turn (`source: transcript`) carrying its first API
-  call's cache figures and the idle gap before it, for a week the live events do not cover.
+  call's cache figures and the idle gap before it, for a week the live events do not cover. Like the
+  summaries, a transcript backfilled twice is written twice.
 - `telemetry.ts sweep [--auto] --config <dir>`: over the last seven day files, one
   `session_summary` (`source: sweep`) per session idle for a day that never reached its end, and one
   `question` event per settled question of the orchestrator's round, and one `dispatch` event per

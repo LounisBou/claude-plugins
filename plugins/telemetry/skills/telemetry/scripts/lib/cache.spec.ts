@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cacheFields, cacheTurns, lastTurn, TAIL_START_BYTES } from './cache.ts'
+import { cacheFields, cacheTurns, END_SLACK_AFTER_MS, END_SLACK_BEFORE_MS, lastTurn, TAIL_START_BYTES } from './cache.ts'
 
 const T = (hhmmss: string): string => `2026-11-17T${hhmmss}.000Z`
 const user = (at: string, promptId: string): string => JSON.stringify({ type: 'user', timestamp: T(at), promptId, message: { role: 'user', content: 'never kept' } })
@@ -101,5 +101,34 @@ test('lastTurn: a session\'s first turn has no idle gap, and a window cut inside
     const turn = lastTurn(path, Date.parse(T('10:00:03')))
     assert.equal(turn?.idleMs, undefined)
     assert.equal(turn?.first.cache_write, 100)
+  })
+})
+
+test('lastTurn: the turn is taken from 120 s before to 5 s after the event, edges included', () => {
+  withFile(`${LINES}\n`, path => {
+    const ended = Date.parse(T('11:15:04'))
+    assert.equal(lastTurn(path, ended + END_SLACK_BEFORE_MS)?.prompt, 'p3')
+    assert.equal(lastTurn(path, ended + END_SLACK_BEFORE_MS + 1), undefined)
+    assert.equal(lastTurn(path, ended - END_SLACK_AFTER_MS)?.prompt, 'p3')
+    assert.equal(lastTurn(path, ended - END_SLACK_AFTER_MS - 1), undefined)
+  })
+})
+
+test('lastTurn: a turn that does not fit the byte cap is not read; a call stamped before the previous one ended has a zero gap', () => {
+  const blob = JSON.stringify({ type: 'api-request-blob', message: 'x'.repeat(TAIL_START_BYTES) })
+  const body = [user('10:00:00', 'p1'), call('10:00:02', 'm1', usage(0, 100)), blob, blob, user('10:10:00', 'p2'), call('10:10:02', 'm2', usage(100, 5))].join('\n')
+  withFile(`${body}\n`, path => {
+    assert.equal(lastTurn(path, Date.parse(T('10:10:03')), { maxBytes: TAIL_START_BYTES })?.prompt, undefined)
+    assert.equal(lastTurn(path, Date.parse(T('10:10:03')))?.prompt, 'p2')
+  })
+  const [, second] = cacheTurns([user('10:00:00', 'p1'), call('10:00:09', 'm1', usage(0, 100)), user('10:00:01', 'p2'), call('10:00:05', 'm2', usage(0, 100))].join('\n'))
+  assert.equal(second?.idleMs, 0)
+})
+
+test('lastTurn: with the turn\'s start known, a previous turn that ended just before it is not taken for a turn that made no call', () => {
+  withFile(`${LINES}\n`, path => {
+    const ended = Date.parse(T('11:15:30'))
+    assert.equal(lastTurn(path, ended, { startedAt: ended - 1_000 }), undefined)
+    assert.equal(lastTurn(path, ended, { startedAt: ended - 30_000 })?.prompt, 'p3')
   })
 })

@@ -107,9 +107,10 @@ export const END_SLACK_AFTER_MS = 5_000
  * The turn of the transcript at `path` that ended at `endedAt` (the `turn_end`'s time), read from the
  * end of the file: it widens its window until it holds the turn's first call and the call before it,
  * or the file's start. A last turn that did not end near `endedAt` (the host had not written it yet,
- * or the turn made no call) is not the turn asked for: undefined.
+ * or the turn made no call), or, when `startedAt` is given, that began before the turn did, is not
+ * the turn asked for: undefined.
  */
-export function lastTurn(path: string, endedAt: number): CacheTurn | undefined {
+export function lastTurn(path: string, endedAt: number, { startedAt, maxBytes = TAIL_MAX_BYTES }: { startedAt?: number | undefined; maxBytes?: number } = {}): CacheTurn | undefined {
   const fd = openSync(path, 'r')
   try {
     const size = fstatSync(fd).size
@@ -125,9 +126,11 @@ export function lastTurn(path: string, endedAt: number): CacheTurn | undefined {
       const last = turns.at(-1)
       // A first turn of the window is cut unless the window is the whole file; its idle gap needs the call before it.
       const complete = whole || turns.length >= 2
-      if (complete || window >= TAIL_MAX_BYTES) {
+      if (complete || window >= maxBytes) {
         if (!complete || last === undefined) return undefined
         const delta = endedAt - last.end
+        // With the turn's own start known, a last turn whose first call came before it is the previous turn: this one made no call.
+        if (startedAt !== undefined && last.first.start < startedAt - END_SLACK_AFTER_MS) return undefined
         return delta >= -END_SLACK_AFTER_MS && delta <= END_SLACK_BEFORE_MS ? last : undefined
       }
     }

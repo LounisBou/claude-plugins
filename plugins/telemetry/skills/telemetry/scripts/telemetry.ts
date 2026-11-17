@@ -98,7 +98,9 @@ function enrichTurn(line: string, event: Event, config: string): string {
   const path = transcriptOf(config, event.session)
   if (path === undefined) return line
   try {
-    const turn = lastTurn(path, Date.parse(event.ts))
+    const ended = Date.parse(event.ts)
+    const duration = event['duration_ms']
+    const turn = lastTurn(path, ended, { startedAt: typeof duration === 'number' ? ended - duration : undefined })
     return turn === undefined ? line : JSON.stringify({ ...event, ...cacheFields(turn) })
   } catch {
     return line
@@ -200,11 +202,15 @@ export function run(args: readonly string[], deps: Deps): number {
     }
     case 'backfill': {
       const events: string[] = []
+      let summaries = 0
       let turns = 0
       for (const path of operands.filter(operand => operand !== '--turns')) {
         const event = backfillEvent(path, deps.now())
         if (event === undefined) deps.err(`backfill: ${basename(path)} is not a session transcript, skipped`)
-        else events.push(JSON.stringify(event))
+        else {
+          events.push(JSON.stringify(event))
+          summaries++
+        }
         if (event !== undefined && operands.includes('--turns')) {
           const found = backfillTurns(path)
           turns += found.length
@@ -212,7 +218,7 @@ export function run(args: readonly string[], deps: Deps): number {
         }
       }
       const { written } = append(eventsDir(stateDir), events.join('\n'), secrets)
-      deps.out(`backfill: ${written - turns} session(s) summarized${operands.includes('--turns') ? `, ${turns} turn(s) read back` : ''}`)
+      deps.out(operands.includes('--turns') ? `backfill: ${summaries} session(s) summarized, ${turns} turn(s) read back` : `backfill: ${written} session(s) summarized`)
       return 0
     }
     case 'sweep': {
