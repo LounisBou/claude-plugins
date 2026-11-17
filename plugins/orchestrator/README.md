@@ -182,7 +182,7 @@ next read. A new `at` alone is no reason to write the file again.
 2. Every brief is a file the fresh session can open, with contracts verbatim, a non-goals list ending in "STOP and ask", and state-verification commands.
 3. Review on evidence: diff it yourself, re-run the one command that decides the verdict, treat every claim — cleanup claims included — as a claim. Heavy reading goes to a review session spawned for the round (its readers sized by you, from its own reading to several lenses, and it reports once); the verdict stays with you, and the session is closed when the round is judged.
 4. Context is a gate at the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000: never dispatch a phase to an agent past it, and an agent crossing it mid-work finishes the unit and stops. Rotation is a resume brief for a fresh session.
-5. Succession is the orchestrator's to trigger, at a quiet moment, with a standing pointer-based brief; the successor verifies the state on the artifacts, re-identifies itself to the agents, confirms the takeover, then closes the predecessor's tab (in a home session, takes its window 0).
+5. Succession is the orchestrator's to trigger, at a quiet moment, with a standing pointer-based brief; the successor verifies the state on the artifacts, re-identifies itself to the agents, confirms the takeover, then closes the predecessor's tab (in a home session, takes its window 0; after a deploy, it then moves into a home server of the new version and its agents follow it, each between two turns).
 
 ## Where agents run
 

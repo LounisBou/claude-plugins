@@ -21,7 +21,7 @@ import {
   roleOf, walkName, hostOn, scanTail, hostBasenames, blockArgv, bytesOfBase64, hostRecordOf,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { tripGate, parseMeasure, measureFilePath, newerInstalled, generationLived, runtimeChanges, runtimeDiffArgv, type Newer } from './gauge-core.ts'
+import { tripGate, parseMeasure, measureFilePath, newerInstalled, generationLived, runtimeChanges, runtimeDiffArgv, homeReloadArgv, type Newer } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
@@ -240,6 +240,8 @@ async function transcriptPathOf($: Held, sessionId: string): Promise<string> {
 
 // The bound of the comparison of two installed commits.
 const RUNTIME_DIFF_MS = 5000
+// The bound of the home servers' reload: one tmux round trip per server.
+const HOME_RELOAD_MS = 10_000
 const MARKETPLACE_SUFFIX = '@lounisbou'
 
 // The plugins of the deploy's marketplace this session enabled, or null when the settings cannot be
@@ -252,6 +254,13 @@ async function loadedPlugins($: Held): Promise<ReadonlySet<string> | null> {
   } catch {
     return null
   }
+}
+
+// Every live home server reads the installed commit's tmux conf, with no restart; a reload that fails is
+// said in the log and changes nothing else.
+async function reloadHomes($: Held, newer: Newer): Promise<void> {
+  const run = await $.process.run(homeReloadArgv(newer), { timeoutMs: HOME_RELOAD_MS }).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: messageOf(err) }))
+  if (run.exitCode !== 0) await logLine($, 'guards', `the home servers did not all reload ${newer.installed.slice(0, 7)}'s conf: ${String(run.stderr || run.stdout || `exit ${run.exitCode}`).trim().split('\n').pop()}`)
 }
 
 // Whether the installed commit changes a runtime file of a plugin the session loaded. A comparison
@@ -340,6 +349,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         if (newer && await changesRuntime($, newer)) {
           memo.announced = true
           blocks.push(versionAnnouncement(newer, role, root))
+          await reloadHomes($, newer)
         }
         if (newer) memo.toldCommit = newer.installed
       }
