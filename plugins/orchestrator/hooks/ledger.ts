@@ -182,11 +182,14 @@ export function register(on: On<Held>, now: () => Date = () => new Date(), bound
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => afterCall($, e, next, now, bound)).catch(net)
 }
 
-// The line a pull request of the orchestration merged or closed wakes it with: its agent to close.
-export function endedLine(ended: { repo: string; pr: number; state: 'MERGED' | 'CLOSED'; agent?: string | undefined }): string {
+// The line a pull request of the orchestration merged or closed wakes it with: its agent to close when it
+// runs and holds nothing else; when it still holds something (`holds`: rows, other pull requests), to be told.
+export function endedLine(ended: { repo: string; pr: number; state: 'MERGED' | 'CLOSED'; agent?: string | undefined; holds?: readonly string[] }): string {
   const key = prKey(ended.repo, ended.pr)
   const what = ended.state === 'MERGED' ? 'merged' : 'closed unmerged'
-  return `[module] ${key} ${what}${ended.agent === undefined ? '' : `: its agent ${ended.agent} is done with it, close it`}.`
+  if (ended.agent === undefined) return `[module] ${key} ${what}.`
+  const holds = ended.holds ?? []
+  return `[module] ${key} ${what}: its agent ${ended.agent} ${holds.length > 0 ? `still holds ${holds.join(', ')}; tell it, do not close it` : 'is done with it, close it'}.`
 }
 
 // The line a pull request entering the anomaly wakes its orchestrator with.
@@ -221,11 +224,17 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     if (told.has(key)) continue
     told.add(key)
     const { repo, pr, agent } = ended.line
-    lines.push(endedLine({ repo, pr, state: ended.state, agent: ended.line.status === 'working' ? agent : undefined }))
-    if (ended.state === 'MERGED') {
-      const relay = mergeRelayLine({ repo, pr }, reading.texts.flatMap(text => waitingRows(text, { repo: repo.toLowerCase(), pr })))
-      if (relay !== null) lines.push(relay)
-    }
+    // The rows waiting on a merged pull request: relayed below, and held by their agent.
+    const waiting = ended.state === 'MERGED' ? reading.texts.flatMap(text => waitingRows(text, { repo: repo.toLowerCase(), pr })) : []
+    // Its agent is named only while it runs (the launcher's listing, where the close command ends it) and holds nothing else.
+    const named = ended.line.status === 'working' && agent !== undefined && reading.live.has(agent) ? agent : undefined
+    const holds = named === undefined ? [] : [
+      ...waiting.filter(row => row.agent === named).map(row => `row ${row.id}`),
+      ...reading.kept.filter(line => line.status === 'working' && line.agent === named).map(line => prKey(line.repo, line.pr)),
+    ]
+    lines.push(endedLine({ repo, pr, state: ended.state, agent: named, holds }))
+    const relay = mergeRelayLine({ repo, pr }, waiting)
+    if (relay !== null) lines.push(relay)
   }
   for (const u of anomalies) {
     if (told.has(prKey(u.repo, u.pr))) continue
