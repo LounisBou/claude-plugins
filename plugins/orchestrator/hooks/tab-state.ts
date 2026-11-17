@@ -115,6 +115,12 @@ export function stateAfterTurn(waiting: WaitKind | null | undefined, pastGate: b
   return pastGate ? 'gate' : 'idle'
 }
 
+// What the owner's sweep says of an idle agent's window that shows ✋: it is at rest once no operator
+// entry of its session is open, the question having been closed elsewhere with no turn to clear it.
+export function stateAfterRound(shown: string, open: boolean): TabState | null {
+  return shown === 'asks' && !open ? 'idle' : null
+}
+
 // What a measure changes: only a window at rest takes the gate on, and leaves it when the
 // context is back under. A working window or one that waits keeps its state; the turn's end
 // reads the gate from memory.

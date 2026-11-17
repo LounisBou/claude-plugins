@@ -38,7 +38,7 @@ import {
 import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
-import { coordinatorAddress, REFERENCED, showPrStates } from './supervision.ts'
+import { coordinatorAddress, REFERENCED, showAskStates, showPrStates } from './supervision.ts'
 import { pullRequestsRead } from './tab-state.ts'
 import { askedThisTurn, readAsked } from './question.ts'
 import { fieldsOf, messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
@@ -678,6 +678,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         if (together) read.push({ tty: agent.tty, pr: together })
       }
       await inTime($, () => showPrStates($, read), until)
+      // The windows of idle agents still showing ✋ whose question closed elsewhere are set at rest.
+      await inTime($, () => showAskStates($, agents.filter(agent => agent.state === 'idle').map(agent => agent.tty)), until)
       // The process table, read once for both checks: the commands and monitors this
       // session started in the background (check 1: one still running will wake it, and
       // names the line that fits) and the ci-watches alive at all (check 2: a head waited

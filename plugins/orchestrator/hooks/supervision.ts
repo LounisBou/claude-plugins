@@ -43,7 +43,7 @@ import {
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck, type QEvent } from './remote-round.ts'
-import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
+import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterRound, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
 import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
@@ -2624,8 +2624,17 @@ export async function readRound($: Host<'env' | 'fs' | 'plugin' | 'process'>): P
   const read: { path: string; entry: RoundEntry }[] = []
   for (const file of listed) {
     if (!file || file.kind !== 'file' || !file.name.endsWith('.json') || isTemporary(file.name)) continue
-    const entry = parseRoundEntry(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
-    if (entry) read.push({ path: `${dir}/${file.name}`, entry })
+    const path = `${dir}/${file.name}`
+    let text: string
+    try {
+      text = String(await $.fs.read(path))
+    } catch (err) {
+      await logLine($, 'supervision', `round: cannot read ${path}: ${messageOf(err)}`)
+      continue
+    }
+    const entry = parseRoundEntry(text)
+    if (entry) read.push({ path, entry })
+    else await logLine($, 'supervision', `round: ${path} is no round entry`)
   }
   return read
 }
@@ -3541,6 +3550,63 @@ export async function showPrStates($: Host<'env' | 'plugin' | 'process'>, reads:
   }
 }
 
+// The windows of the owner's idle agents that show ✋ with no operator entry of their session open:
+// an entry closed elsewhere (answered, withdrawn) leaves its window at rest with no turn end of its
+// own to clear it. Asked by the owner's stop gate, which already names its agents by their ttys.
+export async function showAskStates($: Host<'env' | 'fs' | 'plugin' | 'process'>, ttys: readonly string[]): Promise<void> {
+  if (ttys.length === 0) return
+  try {
+    const tab = await tabOf($)
+    if (!tab) return
+    const listed = await $.process.run(panesArgv(tab.bin, tab.target.socket), { timeoutMs: TMUX_TIMEOUT_MS })
+    if (!listed || listed.exitCode !== 0) throw new Error(`tmux exited ${listed?.exitCode ?? 'without answer'} listing the panes`)
+    const asking = panesOf(String(listed.stdout ?? '')).filter(pane => ttys.includes(pane.tty) && pane.shown === 'asks')
+    if (asking.length === 0) return
+    const open = await openOperatorKeys($)
+    const keys = await sessionKeysByTty($)
+    for (const pane of asking) {
+      const key = keys.get(pane.tty)
+      if (key === undefined) {
+        await logLine($, 'supervision', `tab-state: no session row on ${pane.tty}: its ✋ is left as it is`)
+        continue
+      }
+      const next = stateAfterRound(pane.shown, open.has(key))
+      if (!next) continue
+      try {
+        const set = await $.process.run(stateArgv(tab.bin, { socket: tab.target.socket, pane: pane.pane }, next), { timeoutMs: TMUX_TIMEOUT_MS })
+        if (!set || set.exitCode !== 0) throw new Error(`tmux exited ${set?.exitCode ?? 'without answer'} writing ${next} on ${pane.pane}`)
+      } catch (err) {
+        await tabFailure($, tab.memory, messageOf(err))
+      }
+    }
+  } catch (err) {
+    const tab = await tabOf($).catch(() => null)
+    if (tab) await tabFailure($, tab.memory, messageOf(err))
+    else await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)
+  }
+}
+
+// The store keys of the sessions with an open operator entry in the round.
+async function openOperatorKeys($: Host<'env' | 'fs' | 'plugin' | 'process'>): Promise<Set<string>> {
+  const keys = new Set<string>()
+  for (const { entry } of await readRound($)) {
+    if (entry.status === 'open' && entry.kind === 'operator') keys.add(sessionKey(entry.session))
+  }
+  return keys
+}
+
+// The store key of each session row, by its tty.
+async function sessionKeysByTty($: Host<'env' | 'fs' | 'plugin' | 'process'>): Promise<Map<string, string>> {
+  const keys = new Map<string, string>()
+  const dir = `${await storeOf($)}/sessions`
+  for (const file of await $.fs.list(dir).catch(() => [])) {
+    if (file.kind !== 'file') continue
+    const row = parseSessionRow(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
+    if (row?.tty) keys.set(row.tty, `sessions/${file.name}`)
+  }
+  return keys
+}
+
 // The address of this session's window when it runs in a home session, else null.
 async function windowAddress($: Host<'env' | 'plugin' | 'process'>): Promise<string | null> {
   try {
@@ -3548,6 +3614,11 @@ async function windowAddress($: Host<'env' | 'plugin' | 'process'>): Promise<str
   } catch {
     return null
   }
+}
+
+// Whether the round holds an open operator entry of the session: the question its operator wait waits on.
+export function holdsOpenOperator(read: readonly { entry: RoundEntry }[], sessionId: string): boolean {
+  return read.some(({ entry }) => entry.session === sessionId && entry.status === 'open' && entry.kind === 'operator')
 }
 
 // A turn ended: the wait it left in the session's wait file, else the gate, else rest. The operator's
@@ -3559,7 +3630,7 @@ async function showTurnEnd($: Host<'env' | 'fs' | 'plugin' | 'process' | 'sessio
     const sessionId = await $.session.id()
     const wait = await readWait($, sessionId)
     const asked = wait?.waiting === 'operator'
-      && (await readRound($)).some(({ entry }) => entry.session === sessionId && entry.status === 'open' && entry.kind === 'operator')
+      && holdsOpenOperator(await readRound($), sessionId)
     await showTabState($, stateAfterTurn(wait?.waiting, tab.memory.past, asked))
   } catch (err) {
     await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)

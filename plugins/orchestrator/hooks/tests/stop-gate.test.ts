@@ -708,6 +708,8 @@ type Setup = {
   goals?: { exitCode: number; stdout: string } | 'hang'
   goalsShown?: string
   round?: Record<string, string>
+  // The session rows of the store (store/sessions/<name>), by file name.
+  sessions?: Record<string, string>
   roundHang?: 'list' | 'read'
   // The to-do list of the session (todo.ts), read from the module's todo directory.
   todos?: string
@@ -756,6 +758,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         }
         if (p === `${HOME}/.claude/sessions/77.json` && setup.hostRecord !== undefined) return setup.hostRecord
         if (p === `${S.root}/stop-gate/a1b2c3.goals` && setup.goalsShown !== undefined) return setup.goalsShown
+        if (p.startsWith(`${S.root}/store/sessions/`) && setup.sessions?.[p.slice(`${S.root}/store/sessions/`.length)] !== undefined) return setup.sessions[p.slice(`${S.root}/store/sessions/`.length)]!
         if (setup.roundHang === 'read' && (p.startsWith(`${S.root}/round/`))) return new Promise(() => undefined)
         const asked = p.startsWith(`${S.root}/round/`) ? setup.round?.[p.slice(S.root.length + 7)] : undefined
         if (asked !== undefined) return asked
@@ -788,6 +791,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
           ))
         }
         if (p === PROJECTS) return []
+        if (p === `${S.root}/store/sessions`) return Object.keys(setup.sessions ?? {}).map(name => ({ name, kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }))
         if (p === `${S.root}/round`) {
           if (setup.roundHang === 'list') return new Promise(() => undefined)
           return Object.entries(setup.round ?? {}).map(([name, text]) => ({ name, kind: 'file', size: text.length, mtimeMs: 0, isLink: false }))
@@ -1073,6 +1077,24 @@ test('the window of a delivery moves between review and done by the Ready label 
   expect(await stopOn(ready, '/dev/ttys003 %9 idle\n')).toEqual([])
   expect(await stopOn(ready, '/dev/ttys003 %9 done\n')).toEqual([])
   expect(await stopOn('{"number":160,"state":"OPEN"}', '/dev/ttys003 %9 review\n')).toEqual([])
+})
+
+// The owner's stop sweeps the ✋ of its idle agents whose question closed elsewhere: at rest, with no turn of theirs to clear it.
+const AGENT_ROW = JSON.stringify({ role: 'agent', name: 'Agent: idle', pid: '501', tty: '/dev/ttys003', repo: null, context_percent: 12, context_tokens: 120000, window: 1000000, model: 'm', busy: false, updated_at: '2026-11-17T09:00:00.000Z' })
+const OPERATOR_ENTRY = (session: string, status: string) => JSON.stringify({ id: `q-${session}-1`, from: 'Agent: idle', session, kind: 'operator', since: '2026-11-17T09:00:00.000Z', blocks: 'G1', question: 'Which one?', choices: [], recommendation: null, status, at: '2026-11-17T09:00:00.000Z', answer: null })
+async function stopAsking(sessions: Record<string, string>, round: Record<string, string>, panes: string) {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN","labels":[]}', panes, env: HOME_ENV, sessions, round })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  return stateWrites(fx.ran)
+}
+
+test('an idle agent window showing ✋ is set at rest once its question is closed elsewhere, and kept while one is open', async () => {
+  const idle = 'tmux -S /tmp/home.sock set-option -w -t %9 @state idle'
+  expect(await stopAsking({ 's-idle': AGENT_ROW }, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'answered') }, '/dev/ttys003 %9 asks\n')).toEqual([idle])
+  expect(await stopAsking({ 's-idle': AGENT_ROW }, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'open') }, '/dev/ttys003 %9 asks\n')).toEqual([])
+  // A window with no session row on its tty is not judged: its ✋ stays, as said in the log.
+  expect(await stopAsking({}, { 'q-s-idle-1.json': OPERATOR_ENTRY('s-idle', 'answered') }, '/dev/ttys003 %9 asks\n')).toEqual([])
 })
 
 // An agent holding several pull requests is ready only when each open one carries Ready: the branch's
