@@ -33,11 +33,13 @@ import {
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, type GoalsReading,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames, restatedQuestions, restatedReason,
+  putsChoiceToOperator, refuse, PROSE_CHOICE_REASON, questionBlocks, manyQuestionsReason,
 } from './stop-gate.ts'
 import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
-import { coordinatorAddress, REFERENCED } from './supervision.ts'
+import { coordinatorAddress, REFERENCED, showPrStates } from './supervision.ts'
+import { pullRequestsRead } from './tab-state.ts'
 import { askedThisTurn, readAsked } from './question.ts'
 import { fieldsOf, messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
 import { asksTheMode } from './mode-dialog.ts'
@@ -47,7 +49,7 @@ import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashW
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
 import { openFor } from './todo.ts'
 import {
-  MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
+  MAP_WRITE_CODE, MODE_DIALOG_CODE, MANY_QUESTIONS_CODE, observed, PROSE_CHOICE_CODE, refused, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
 } from './observe.ts'
 import { todoName } from './todo-format.ts'
 
@@ -506,8 +508,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // classic events carry the settings payload's own fields — the shipped types give
   // classic.Stop the transcript path, the cwd and the last assistant message beside the
   // module's — so the scope and the message are read off the event itself. Since the
-  // operator's ruling of 2026-11-15 the gate refuses nothing: each stop it would have held
-  // passes, with one `let through` log line and one escape in the journal. The shell gate
+  // operator's ruling of 2026-11-15 the gate refuses nothing but one stop (a choice put to him in prose, below):
+  // each other stop it would have held passes, with one `let through` log line and one escape in the journal. The shell gate
   // that once answered the same stops is gone with the cutover — this handler is the only
   // stop gate.
   on('classic.Stop', async ($, e, next) => {
@@ -559,6 +561,29 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         }
         return next(e)
       }
+      // A question asked with `ask` still open stays in the round until he answers it, its answer
+      // waking the session; unless the session handed over: its successor holds the questions.
+      let opened: { id: string; ask: string }[] = []
+      // Whether the round was read: a read that threw or did not answer in time says nothing about what is open.
+      let roundRead = true
+      if ((role === 'orchestrator' || role === 'auditor') && sessionId !== '' && handedOverIn !== sessionId && !isEnding()) {
+        const read = await inTime($, async () => (await readAsked($)).filter(entry => entry.status === 'open' && entry.sender.session === sessionId), until)
+        if (read === null) roundRead = false
+        else opened = read
+      }
+      // The one check of the gate that refuses (the others observe, the operator's ruling of 2026-11-15
+      // limiting refusals to the irreversible; his ruling of 2026-11-17 on this one: « ça ne devrait pas
+      // être possible »): a choice put to him in prose with no question of the session open in the round
+      // is shown nowhere, and nothing brings his answer back. The coordinator is left out: its decision
+      // round presents the other sessions' questions in prose by design. A round that could not be read
+      // refuses nothing: the gate stands down on a read it could not make. The host re-fires a refused stop
+      // with `stop_hook_active`, which the gate lets pass at its first line, so it refuses once per turn.
+      if ((role === 'orchestrator' || role === 'auditor') && sessionId !== '' && handedOverIn !== sessionId && !isEnding()
+        && roundRead && opened.length === 0 && putsChoiceToOperator(String(e.last_assistant_message ?? ''))) {
+        await logLine($, 'guards', `stop gate: refused: a choice put to the operator in prose, no question of ${name} open in the round`)
+        await refused($, PROSE_CHOICE_CODE)
+        return refuse(PROSE_CHOICE_REASON)
+      }
       if (role === 'auditor') {
         // An auditor ends on no gate of its own, except its list: an item still open and no wait declared is refused once.
         const owed = await quietly($, () => openFor($, name), until, { pending: [], deferred: [] })
@@ -570,12 +595,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
       if (role === 'coordinator') return next(e)
       const state = await stateDir($)
-      // A question asked with `ask` still open stays in the round until he answers it, its answer
-      // waking the session; unless the session handed over: its successor holds the questions.
-      let opened: { id: string; ask: string }[] = []
-      if (sessionId !== '' && handedOverIn !== sessionId && !isEnding()) {
-        opened = await quietly($, async () => (await readAsked($)).filter(entry => entry.status === 'open' && entry.sender.session === sessionId), until, [])
-      }
       const questionOpen = opened.length > 0
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
       let swept = false
@@ -590,6 +609,15 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       if (restated.length > 0) {
         await logLine($, 'guards', `stop gate: restated question ${restated.join(', ')}`)
         return await letThrough(restatedReason(restated))
+      }
+      // A turn puts one question to the operator: the blocks after the first wait for his answer. A refusal, the
+      // operator's rule being one question at a time; the re-fired stop (`stop_hook_active`) passes at the first
+      // line, so it refuses once per turn.
+      const blocks = questionBlocks(String(e.last_assistant_message ?? ''))
+      if (blocks > 1) {
+        await logLine($, 'guards', `stop gate: refused: ${blocks} question blocks in one message`)
+        await refused($, MANY_QUESTIONS_CODE)
+        return refuse(manyQuestionsReason(blocks))
       }
       // Check 1, what will wake you. The agents of this orchestrator are the chain
       // entries its own session wrote, still running one by the listing's glyph.
@@ -616,18 +644,40 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         }
         return readyOnce
       }
+      // The ledger lines of this orchestration's records, read once and only when an idle agent needs them.
+      let ledgerOnce: ReturnType<typeof ledgerLines> | undefined
+      const ledgerOf = async () => {
+        if (ledgerOnce !== undefined) return ledgerOnce
+        try {
+          const records = await ownRecords($, await registeredRecords($, state, sessionId, until), orchestrationOf(name), until)
+          ledgerOnce = (await readRecords($, records, until)).flatMap(text => ledgerLines(text))
+        } catch (err) {
+          await logLine($, 'guards', `stop gate: ledger unread: ${reasonOf(err)}`)
+          ledgerOnce = []
+        }
+        return ledgerOnce
+      }
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const { agents, resident } = ownAgents(rows, entries, owner, hostStatus)
       // An idle agent whose pull request merged is delivered; one whose pull request is open
       // lives until the merge, the kept findings its own to correct, and is never asked to stand down.
       const delivered: string[] = []
       const awaitingMerge: string[] = []
+      // What the pull requests read of each idle agent say its window should show (over, or Ready: done).
+      const read: { tty: string; pr: { state: string; ready?: boolean | undefined } }[] = []
       for (const agent of agents) {
         if (agent.state !== 'idle') continue
         const pr = await pullRequestRead($, agent.tty, until)
         if (pr?.state === 'MERGED') delivered.push(`${agent.label} (pull request #${pr.number}, ${pr.state})`)
         if (pr?.state === 'OPEN') awaitingMerge.push(agent.label)
+        if (!pr) continue
+        // Every pull request the dispatch record entrusts to the agent counts, the branch's among them.
+        const others = (await ledgerOf()).filter(line => line.status === 'working' && line.agent === agent.label
+          && !(line.pr === Number(pr.number) && (pr.repo === undefined || pr.repo.toLowerCase() === line.repo.toLowerCase())))
+        const together = pullRequestsRead([pr, ...await Promise.all(others.map(line => otherPullRequestRead($, line.repo, line.pr, until)))])
+        if (together) read.push({ tty: agent.tty, pr: together })
       }
+      await inTime($, () => showPrStates($, read), until)
       // The process table, read once for both checks: the commands and monitors this
       // session started in the background (check 1: one still running will wake it, and
       // names the line that fits) and the ci-watches alive at all (check 2: a head waited
@@ -934,7 +984,7 @@ async function mustReadText($: Held, path: string, what: string, until: number):
 // run in that checkout — the only network the gate pays, for an idle agent alone. Any
 // read that fails, or cannot answer in time, is no pull request: the refusal simply does
 // not name the agent, never a stop held on it.
-async function pullRequestRead($: Held, tty: string, until: number): Promise<{ number: string; state: string } | null> {
+async function pullRequestRead($: Held, tty: string, until: number): Promise<{ number: string; state: string; ready?: boolean; repo?: string } | null> {
   const left = () => Math.max(1, until - Date.now())
   const config = await configDir($)
   const host = await inTime($, () => hostOn(
@@ -954,9 +1004,18 @@ async function pullRequestRead($: Held, tty: string, until: number): Promise<{ n
   // One --json argument, the fields comma-joined: gh reads a second word as a second
   // positional and refuses the call. Run in the agent's checkout, the repository its
   // branch is pushed to.
-  const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', branch, '--json', 'number,state'], until, cwd), until)
+  const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', branch, '--json', 'number,state,labels,url'], until, cwd), until)
   if (!gh || gh.exitCode !== 0) return null
   return pullRequestOf(branch, String(gh.stdout ?? ''))
+}
+
+// Another pull request entrusted to an agent, read by its repository and number: its state and
+// whether it carries Ready. A read that fails or cannot answer in time is none.
+async function otherPullRequestRead($: Held, repo: string, pr: number, until: number): Promise<{ state: string; ready?: boolean } | null> {
+  const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', String(pr), '-R', repo, '--json', 'number,state,labels'], until), until)
+  if (!gh || gh.exitCode !== 0) return null
+  const read = pullRequestOf(String(pr), String(gh.stdout ?? ''))
+  return read === null ? null : { state: read.state, ...(read.ready === undefined ? {} : { ready: read.ready }) }
 }
 
 // The project's root (project_checkouts' first half): git's answer, or the cwd itself
