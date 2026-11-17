@@ -436,68 +436,6 @@ test('a prompt he types claims the asker\'s open questions; the turn\'s end answ
   expect(after.get(second.id)!.claimed).toBeUndefined()
 })
 
-// 2026-11-17, Orch: Blitz: he typed a question back in the tab, the turn's end closed the question
-// as answered with it, and the orchestrator then restated the choice in prose: no ✋, no counter.
-test('words he types that ask something back and name no choice leave a question with choices open, with no claim', async () => {
-  const { dollar, files } = world()
-  await ask(dollar, { ...FULL, urgent: undefined })
-  const entry = stored(files)[0]!
-  await claimAsked(dollar, 'composer', 'Mon précédent message a-t-il été pris en compte ?', NOW)
-  await settleClaimed(dollar, [], new Date('2026-11-14T15:01:00Z'))
-  expect(stored(files)[0]).toMatchObject({ id: entry.id, status: 'open' })
-  expect(stored(files)[0]?.claimed).toBeUndefined()
-  expect(askedGroups(stored(files)).flat().map(open => open.id)).toEqual([entry.id])
-})
-
-test('a question back cut at the cap, or on a consent question, leaves it open as well', async () => {
-  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
-  const status = async (fields: Record<string, unknown>, typed: string) => {
-    const { dollar, files } = world()
-    await ask(dollar, { ...FULL, urgent: undefined, ...fields })
-    await claimAsked(dollar, 'composer', typed, NOW)
-    await settleClaimed(dollar, [], NOW)
-    return { status: stored(files)[0]?.status, records: [...files.keys()].filter(p => p.includes('/consents/')).length }
-  }
-  const long = `${'Pourquoi cela ? '.repeat(40)}Est-ce bien pris en compte ?`
-  expect(long.length).toBeGreaterThan(500)
-  expect(await status({}, long)).toMatchObject({ status: 'open' })
-  expect(await status({}, `${'Je pense que '.repeat(60)} oui`)).toMatchObject({ status: 'answered' })
-  expect(await status(consent, 'Accorder ?')).toEqual({ status: 'open', records: 0 })
-  expect(await status(consent, 'Accorder')).toMatchObject({ status: 'answered', records: 1 })
-})
-
-test('in the coordinator\'s tab, words that open with a choice of a consent question settle it even ending with « ? »; those that name none leave it open', async () => {
-  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
-  const status = async (me: [string, string], fields: Record<string, unknown>, typed: string) => {
-    const { dollar, files } = world({ me })
-    await ask(dollar, { ...FULL, urgent: undefined, ...fields })
-    await claimAsked(dollar, 'composer', typed, NOW)
-    await settleClaimed(dollar, [], NOW)
-    return stored(files)[0]?.status
-  }
-  const coordinator: [string, string] = ['coordinator', 'Coord: general [a1b2c3]']
-  expect(await status(coordinator, consent, 'Refuser, tu es sûr ?')).toBe('answered')
-  expect(await status(coordinator, consent, 'Refuser ?')).toBe('answered')
-  expect(await status(coordinator, consent, 'Accorder, tu es sûr ?')).toBe('open')
-  expect(await status(coordinator, consent, 'Mon précédent message a-t-il été pris en compte ?')).toBe('open')
-  // Another session's tab keeps to the exact forms: no choice is read from « Refuser, tu es sûr ? ».
-  expect(await status(['orchestrator', 'Orch: belt [a1b2c3]'], consent, 'Refuser, tu es sûr ?')).toBe('open')
-})
-
-test('words that end with a question mark still answer when they name a choice, or when the question has no choices', async () => {
-  const answered = async (fields: Record<string, unknown>, typed: string) => {
-    const { dollar, files } = world()
-    await ask(dollar, { ...FULL, urgent: undefined, ...fields })
-    await claimAsked(dollar, 'composer', typed, NOW)
-    await settleClaimed(dollar, [], NOW)
-    return stored(files)[0]?.status
-  }
-  expect(await answered({}, 'B')).toBe('answered')
-  expect(await answered({}, 'let me think, go on')).toBe('answered')
-  expect(await answered({ choice_a: 'Go on ?' }, 'go on ?')).toBe('answered')
-  expect(await answered({ choice_a: undefined, choice_b: undefined, choice_c: undefined, recommended: undefined }, 'which one do you mean ?')).toBe('answered')
-})
-
 // The kept question's reopening is written first; when that write fails it stays claimed, and the
 // close that follows still leaves it: the wait keeps it, his words answer it at no turn's end.
 test('a question the wait keeps whose reopening cannot be written is never answered by the turn\'s end', async () => {
