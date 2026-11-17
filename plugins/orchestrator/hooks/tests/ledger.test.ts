@@ -4,8 +4,8 @@
 // orchestration the creating session belongs to — an agent's, its orchestrator's — once; a session of
 // no orchestration writes nothing, and a write that fails changes nothing of the tool's answer.
 import { expect, test } from 'claude-code/testing'
-import { createdPr, register } from '../ledger.ts'
-import { logLineOf, lockRun } from './fakes.ts'
+import { createdPr, prWake, register } from '../ledger.ts'
+import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
 import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
 import type { CatchHook, Events, Hook, Host, Noun } from '../../core/host.ts'
 
@@ -31,6 +31,9 @@ type Over = {
   readOnly?: boolean
   // A line another writer sets after the record was first read.
   race?: string
+  // The forge's open pull requests by repository (prQueryRun), and those asked by number it reads closed.
+  forge?: Record<string, string>
+  closed?: Record<string, Record<number, 'MERGED' | 'CLOSED'>>
 }
 
 // The orchestrator s-orch (its record registered, owned), the agent s-agent on /dev/ttys005 launched for it.
@@ -75,6 +78,8 @@ function fake(over: Over = {}) {
         if (lock !== null) return lock
         if (argv[0] === 'mv') { files.set(argv[3]!, files.get(argv[2]!)!); files.delete(argv[2]!) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
+        const asked = prQueryRun(argv, repo => over.forge?.[repo] ?? null, over.closed)
+        if (asked !== null) return asked
         return { exitCode: argv[0] === 'ps' ? 1 : 0, stdout: '', stderr: '' }
       },
     },
@@ -329,7 +334,7 @@ test('an orchestrator whose name names no orchestration owns no record, an unown
   expect(world.files.get(loose)).toBe(ROWS)
 })
 
-// A merge the orchestrator runs through the github tool, and the open rows of its record that wait on it.
+// A pull request of the orchestration, merged or closed wherever it was, and the open rows of its record that wait on it.
 const WAITERS = [
   JSON.stringify({ id: 2, state: 'open', label: 'P17 scraper', note: 'Dispatched 2026-11-15: Agent: p17' }),
   JSON.stringify({ id: 3, state: 'open', label: 'P18 cache', blocker: 'PR acme/app#17 merged', note: 'Dispatched 2026-11-15: Agent: p18' }),
@@ -339,29 +344,46 @@ const WAITERS = [
   JSON.stringify({ id: 7, state: 'open', label: 'other repo', blocker: 'PR acme/lib#17 merged' }),
   ledgerLine(17, 'working', { agent: 'Agent: p17' }),
 ].join('\n') + '\n'
-const merge = (extra: object = {}) => ({ tool: 'mcp__github__gh', command: 'pr-merge', repo: 'acme/app', args: { pr: 17 }, ...extra })
-const MERGED = { result: 'merged 0123abc' }
 
-test('a merge the orchestrator runs names, in its answer, the open rows that wait on it by their blocker or their note', async () => {
-  const { dollar } = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS } })
-  expect(await call(mounted(), dollar, merge(), MERGED)).toEqual({
-    result: 'merged 0123abc\n[module] acme/app#17 merged; open rows waiting on it: row 3 « P18 cache » (Agent: p18), row 4 « P19 ui ». Tell each one\'s agent now.',
-  })
+test('a pull request merged outside the session wakes its orchestrator with its agent to close and the open rows waiting on it; its line archived once told', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS }, forge: { 'acme/app': '[]' } })
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual([
+    '[module] acme/app#17 merged: its agent Agent: p17 is done with it, close it.',
+    '[module] acme/app#17 merged; open rows waiting on it: row 3 « P18 cache » (Agent: p18), row 4 « P19 ui ». Tell each one\'s agent now.',
+  ])
+  expect(woke.watching).toBe(false)
+  expect(world.files.get(RECORD)).toContain('"pr":17')
+  await woke.settle()
+  expect(world.files.get(RECORD)).not.toContain('"pr":17')
+  expect(world.files.get('/briefs/app/dispatch-record.archive.jsonl')).toContain('"pr":17')
+  // Told and archived: the next tick has nothing to say.
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([])
 })
 
-test('a merge naming no repository takes the one the record\'s ledger holds for its number', async () => {
-  const { dollar } = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS } })
-  const out = await call(mounted(), dollar, merge({ repo: undefined }), MERGED) as { result: string }
-  expect(out.result).toContain('[module] acme/app#17 merged; open rows waiting on it: row 3')
-  expect(out.result).not.toContain('row 7')
+test('a pull request closed unmerged wakes its orchestrator with its agent to close, no row relayed', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS }, forge: { 'acme/app': '[]' }, closed: { 'acme/app': { 17: 'CLOSED' } } })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 closed unmerged: its agent Agent: p17 is done with it, close it.'])
 })
 
-test('a merge nothing waits on, an agent\'s merge, a failed merge and another command leave the answer as it came', async () => {
-  const handlers = mounted()
-  const orch = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS } })
-  expect(await call(handlers, orch.dollar, merge({ args: { pr: 99 } }), MERGED)).toEqual(MERGED)
-  expect(await call(handlers, orch.dollar, merge(), { result: 'HTTP 405', isError: true })).toEqual({ result: 'HTTP 405', isError: true })
-  expect(await call(handlers, orch.dollar, merge({ command: 'pr-get' }), MERGED)).toEqual(MERGED)
-  const agent = fake({ rows: { [RECORD]: WAITERS } })
-  expect(await call(handlers, agent.dollar, merge(), MERGED)).toEqual(MERGED)
+test('a pull request entering the anomaly wakes its orchestrator once, again only after it leaves and re-enters; nothing changed wakes nothing', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, forge: { 'acme/app': JSON.stringify([{ number: 7, createdAt: '2026-11-14T08:00:00Z' }]) } })
+  const told = new Set<string>()
+  const first = await prWake(world.dollar, told)
+  expect(first.lines).toEqual(['[module] acme/app#7 en anomalie (sans agent depuis 2026-11-14T09:30Z) — reattach an agent, refresh its wait, or ask'])
+  expect(first.watching).toBe(true)
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
+  // Parked by the operator: it leaves the anomaly; back in it, it is told again.
+  world.files.set(RECORD, `${world.files.get(RECORD)}${ledgerLine(7, 'parked', { ruling: 'plus tard, 2026-11-14' })}\n`)
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
+  expect(told.size).toBe(0)
+  world.files.set(RECORD, ROWS)
+  expect((await prWake(world.dollar, told)).lines.length).toBe(1)
+})
+
+test('a reading that fails tells nothing and keeps watching', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null })
+  world.files.delete(`${STATE}/store/sessions/s-orch`)
+  const woke = await prWake(world.dollar, new Set())
+  expect([woke.lines, woke.watching]).toEqual([[], true])
 })

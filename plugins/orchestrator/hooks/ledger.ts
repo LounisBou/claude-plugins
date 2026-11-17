@@ -5,11 +5,11 @@
 // creating session belongs to: the session's own when it is an orchestrator's, its orchestrator's
 // when it is an agent's (orchestratorOn, the one mapping the relay uses). No model, no refusal, no
 // gate: the call has already succeeded, so a write that fails is one log line and the answer goes on.
-// A pull request an orchestrator merges through the github tool (`pr-merge`) is read against the
-// open rows of its own records: those whose blocker or note names it wait on it, and the answer
-// carries one line naming them, so the orchestrator relays the merge to their agents.
+// A pull request of the orchestration merged or closed, wherever it was (the machine's pull request
+// file, pr-file.ts), and one entering the anomaly, wake the orchestrator once each: the module's tick
+// (guards.ts) submits the lines prWake gives, the ended lines then archived.
 import { prRefsOf } from '../core/learning.ts'
-import { isLedgerMarked, ledgerLineOf, ledgerLines, withLine } from '../core/pr-ledger.ts'
+import { isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
 import { simpleCommands, unwrapPath } from '../core/shell.ts'
 import { updateOver } from '../core/store-io.ts'
 import { answerText, PULL_URL } from './audit-events.ts'
@@ -17,7 +17,7 @@ import { isDegradedPass, orchestrationOf, ownerOf, withDeadline } from './stop-g
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
 import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
-import { readOr, registered } from './unattended.ts'
+import { archive, boundedReading, readOr, registered } from './unattended.ts'
 
 // The nouns a write holds.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
@@ -120,16 +120,6 @@ export async function writeLine($: Held, pr: { repo: string; pr: number }, now: 
     current === undefined || held(current) ? undefined : withLine(current, ledgerLineOf({ repo: pr.repo, pr: pr.pr, status: 'working', agent }, now)))
 }
 
-// The pull request a merge through the github tool merged: its number, and its repository when the
-// call names one; null for any other call or a merge that did not go through.
-export function mergedPr(e: Readonly<Record<string, unknown>>, result: unknown): { repo: string | null; pr: number } | null {
-  if (e['tool'] !== 'mcp__github__gh' || e['command'] !== 'pr-merge' || answerText(result) === null) return null
-  const args = typeof e['args'] === 'object' && e['args'] !== null ? e['args'] as Record<string, unknown> : {}
-  const pr = Number(String(args['pr'] ?? '').replace('#', ''))
-  const repo = typeof e['repo'] === 'string' && e['repo'].includes('/') ? e['repo'].trim().toLowerCase() : null
-  return Number.isInteger(pr) && pr >= 1 ? { repo, pr } : null
-}
-
 // Whether a reference (`name#7`, `owner/name#7`) names the merged pull request; with no repository
 // known, its number alone decides.
 function namesMerged(ref: string, merged: { repo: string | null; pr: number }): boolean {
@@ -168,51 +158,9 @@ export function mergeRelayLine(merged: { repo: string | null; pr: number }, rows
   return `[module] ${merged.repo ?? ''}#${merged.pr} merged; open rows waiting on it: ${named.join(', ')}. Tell each one's agent now.`
 }
 
-// The open rows of the orchestrator's own records that wait on the merged pull request; none in a
-// session that is no orchestrator's. A merge that names no repository takes the one the records'
-// ledger holds for that number, when only one does.
-async function waitingOnMerge($: Held, merged: { repo: string | null; pr: number }): Promise<{ merged: { repo: string | null; pr: number }; rows: { id: number; label: string; agent: string | null }[] }> {
-  const sessionId = await $.session.id()
-  const row = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`))
-  if (row?.role !== 'orchestrator') return { merged, rows: [] }
-  const texts: string[] = []
-  for (const path of await ownRecords($, await stateDir($), sessionId, row.name)) texts.push(await readOr($, path))
-  const repos = new Set(texts.flatMap(text => ledgerLines(text)).filter(line => line.pr === merged.pr).map(line => line.repo.toLowerCase()))
-  const known = merged.repo === null && repos.size === 1 ? { repo: [...repos][0] ?? null, pr: merged.pr } : merged
-  return { merged: known, rows: texts.flatMap(text => waitingRows(text, known)) }
-}
-
-// The answer with one more line: after a text, or as one more text part.
-function withRelay(result: unknown, line: string): unknown {
-  if (typeof result !== 'object' || result === null || Array.isArray(result)) return result
-  const r = result as Record<string, unknown>
-  if (typeof r['result'] === 'string') return { ...r, result: `${r['result']}\n${line}` }
-  if (Array.isArray(r['result'])) return { ...r, result: [...r['result'], { type: 'text', text: line }] }
-  return result
-}
-
-// A merge read against the rows that wait on it, within the bound; the answer as it came when none does.
-async function afterMerge($: Held, merged: { repo: string | null; pr: number }, result: unknown, bound: number): Promise<unknown> {
-  try {
-    const found = await withDeadline(() => waitingOnMerge($, merged), bound)
-    if (isDegradedPass(found)) {
-      await logLine($, 'ledger', `the rows waiting on #${merged.pr} were not read within ${bound} ms`)
-      return result
-    }
-    const line = mergeRelayLine(found.merged, found.rows)
-    return line === null ? result : withRelay(result, line)
-  } catch (err) {
-    await logLine($, 'ledger', `the rows waiting on #${merged.pr} not read: ${messageOf(err)}`)
-    return result
-  }
-}
-
-// The call goes through; its answer is read for a creation and the line written within the bound,
-// or for a merge and the rows waiting on it named.
+// The call goes through; its answer is read for a creation and the line written within the bound.
 async function afterCall($: Held, e: Call, next: Next<Call>, now: () => Date, bound: number): Promise<unknown> {
   const result = await next(e)
-  const merged = mergedPr(e, result)
-  if (merged !== null) return afterMerge($, merged, result, bound)
   const created = createdPr(e, result)
   if (created === null) return result
   try {
@@ -232,4 +180,58 @@ const net: CatchHook<Held, Call> = async ($, e, next) => {
 export function register(on: On<Held>, now: () => Date = () => new Date(), bound: number = LEDGER_BOUND_MS): void {
   on('tool.call', { tool: 'mcp__github__gh' }, async ($, e, next) => afterCall($, e, next, now, bound)).catch(net)
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => afterCall($, e, next, now, bound)).catch(net)
+}
+
+// The line a pull request of the orchestration merged or closed wakes it with: its agent to close.
+export function endedLine(ended: { repo: string; pr: number; state: 'MERGED' | 'CLOSED'; agent?: string | undefined }): string {
+  const key = prKey(ended.repo, ended.pr)
+  const what = ended.state === 'MERGED' ? 'merged' : 'closed unmerged'
+  return `[module] ${key} ${what}${ended.agent === undefined ? '' : `: its agent ${ended.agent} is done with it, close it`}.`
+}
+
+// The line a pull request entering the anomaly wakes its orchestrator with.
+export function anomalyLine(u: Unattended): string {
+  return `[module] ${prKey(u.repo, u.pr)} en anomalie (${u.conflict ? 'en conflit' : `sans agent depuis ${minuteOf(u.since)}`}) — reattach an agent, refresh its wait, or ask`
+}
+
+/*
+ * The orchestrator's wake on its pull requests, read in the machine's file (no forge call of its own
+ * beyond the file's refresh): a line for each pull request merged or closed, with the open rows waiting
+ * on a merged one (mergeRelayLine), and one for each entering the anomaly not told yet (`told`, the
+ * anomalies told, updated here: one that leaves it is dropped, so a re-entry is told again). `settle`
+ * archives the ended lines once their wake is delivered; `watching`, whether a line is still open.
+ * A reading that failed tells nothing and keeps watching.
+ */
+export async function prWake($: Held, told: Set<string>): Promise<{ lines: string[]; watching: boolean; settle: () => Promise<void> }> {
+  const reading = await boundedReading($, await $.session.id())
+  if (reading === null) return { lines: [], watching: true, settle: async () => undefined }
+  const lines: string[] = []
+  for (const ended of reading.ended) {
+    const { repo, pr, agent } = ended.line
+    lines.push(endedLine({ repo, pr, state: ended.state, agent: ended.line.status === 'working' ? agent : undefined }))
+    if (ended.state === 'MERGED') {
+      const relay = mergeRelayLine({ repo, pr }, waitingRows(ended.text, { repo: repo.toLowerCase(), pr }))
+      if (relay !== null) lines.push(relay)
+    }
+  }
+  const anomalies = reading.list.filter(u => u.waits === undefined)
+  const now = new Set(anomalies.map(u => prKey(u.repo, u.pr)))
+  for (const key of [...told]) if (!now.has(key)) told.delete(key)
+  for (const u of anomalies) {
+    if (told.has(prKey(u.repo, u.pr))) continue
+    told.add(prKey(u.repo, u.pr))
+    lines.push(anomalyLine(u))
+  }
+  const settle = async (): Promise<void> => {
+    const byRecord = new Map<string, LedgerLine[]>()
+    for (const ended of reading.ended) byRecord.set(ended.path, [...(byRecord.get(ended.path) ?? []), ended.line])
+    for (const [path, ended] of byRecord) {
+      try {
+        await archive($, path, ended)
+      } catch (err) {
+        await logLine($, 'ledger', `archive of ${path} failed: ${messageOf(err)}`)
+      }
+    }
+  }
+  return { lines, watching: reading.watched > 0, settle }
 }

@@ -19,7 +19,7 @@ import { register as registerGuards } from '../guards.ts'
 import { askTurnStarted, askedInTurn, parseAsked, questionBlock } from '../question.ts'
 import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
-import { journalled, logLineOf, blockOf } from './fakes.ts'
+import { journalled, logLineOf, blockOf, prQueryRun } from './fakes.ts'
 import { capture, hookOf, hostOf } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Hook, type Host, type Matcher, type Noun, type ProcessRunInit, type ToolSpec } from '../../core/host.ts'
 
@@ -661,6 +661,9 @@ type Setup = {
   // The busy agent's host process on ttys002 (its pid), and further files read by path.
   busyAgentPid?: string
   files?: Record<string, string>
+  // The forge's open pull requests by repository, answering the machine file's query (prQueryRun): the
+  // records registry then lists this session's register, and the file written is read back.
+  forge?: Record<string, string>
 }
 
 function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: string[]; wrote: Record<string, string>; stamp: { atRun?: string | undefined }; inits: Record<string, ProcessRunInit | undefined> } {
@@ -702,6 +705,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         }
         if (p === `${HOME}/.claude/sessions/77.json` && setup.hostRecord !== undefined) return setup.hostRecord
         if (setup.files?.[p] !== undefined) return setup.files[p]
+        if (setup.forge !== undefined && wrote[p] !== undefined) return wrote[p]!
         if (p === `${S.root}/stop-gate/a1b2c3.goals` && setup.goalsShown !== undefined) return setup.goalsShown
         if (p.startsWith(`${S.root}/store/sessions/`) && setup.sessions?.[p.slice(`${S.root}/store/sessions/`.length)] !== undefined) return setup.sessions[p.slice(`${S.root}/store/sessions/`.length)]!
         if (setup.roundHang === 'read' && (p.startsWith(`${S.root}/round/`))) return new Promise(() => undefined)
@@ -736,6 +740,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
           ))
         }
         if (p === PROJECTS) return []
+        if (p === `${S.root}/records` && setup.forge !== undefined) return [{ name: 'a1b2c3', kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }]
         if (p === `${S.root}/store/sessions`) return Object.keys(setup.sessions ?? {}).map(name => ({ name, kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }))
         if (p === `${S.root}/round`) {
           if (setup.roundHang === 'list') return new Promise(() => undefined)
@@ -757,6 +762,12 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         const block = blockOf(argv, () => setup.transcript ?? '')
         if (block !== null) return { exitCode: 0, stdout: block, stderr: '' }
         ran.push(argv.join(' '))
+        if (setup.forge !== undefined) {
+          const asked = prQueryRun(argv, repo => setup.forge?.[repo] ?? null)
+          if (asked !== null) return asked
+          if (argv[0] === 'mv') { wrote[argv[3]!] = wrote[argv[2]!]!; return { exitCode: 0, stdout: '', stderr: '' } }
+          if (argv[0] === 'sh' && String(argv[2] ?? '').includes('set -C')) return { exitCode: 0, stdout: '', stderr: '' }
+        }
         if (argv[0] === 'tmux') {
           const answer = argv[3] === 'display-message' ? '1|home:@3.%7\n' : argv[3] === 'list-panes' ? setup.panes ?? '' : ''
           return { exitCode: 0, stdout: answer, stderr: '' }
@@ -1003,6 +1014,53 @@ test('a busy wake the host drops is tried again a minute later, its bound still 
   expect(w.timers.map(t => t.ms)).toEqual([60_000])
   await w.timers.shift()!.fire()
   expect(w.submitted.length).toBe(1)
+})
+
+// An orchestrator whose record holds the line of acme/app#9, the forge answering the machine file's query.
+function prWorld(open: number[]) {
+  const fx = fakeDollar({
+    records: [OPEN_PR_LINE('Agent: nine')], recordOwner: 'Orch: belt',
+    sessions: { a1b2c3: JSON.stringify({ role: 'orchestrator', name: 'Orch: belt', repo: 'acme/app', context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString() }) },
+    forge: { 'acme/app': JSON.stringify(open.map(number => ({ number, createdAt: '2026-11-15T06:00:00Z' }))) },
+  })
+  const timers: { ms: number; fire: () => unknown; cancelled: boolean }[] = []
+  const submitted: string[] = []
+  const dollar = {
+    ...fx.dollar,
+    clock: { ...fx.dollar.clock, after: (ms: number, fire: () => unknown) => {
+      const timer = { ms, fire, cancelled: false }
+      timers.push(timer)
+      return { cancel: () => { timer.cancelled = true } }
+    } },
+    prompt: { ...fx.dollar.prompt, submit: async ({ text }: { text: string }) => { submitted.push(text); return undefined } },
+  } as unknown as World
+  return { dollar, timers, submitted, ran: fx.ran, wrote: fx.wrote }
+}
+
+test('a pull request of the orchestration merged outside the session wakes it at the tick, with its agent to close, the line archived', async () => {
+  const { handlers } = mounted()
+  const w = prWorld([])
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  expect(w.timers.map(t => t.ms)).toEqual([0])
+  await w.timers.shift()!.fire()
+  expect(w.submitted).toEqual(['[module] acme/app#9 merged: its agent Agent: nine is done with it, close it.'])
+  expect(w.ran.filter(l => l.startsWith('gh api graphql')).length).toBe(1)
+  expect(w.wrote[`${RECORD.replace(/\.jsonl$/, '')}.archive.jsonl`]).toContain('"pr":9')
+  // Nothing open left to watch: the tick is not armed again.
+  expect(w.timers).toEqual([])
+})
+
+test('an open pull request entering the anomaly wakes the orchestrator once; nothing changed wakes nothing, read again an interval later', async () => {
+  const { handlers } = mounted()
+  const w = prWorld([9])
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  await w.timers.shift()!.fire()
+  // Agent: nine is no running agent: the pull request is in anomaly, told once.
+  expect(w.submitted).toEqual(['[module] acme/app#9 en anomalie (sans agent depuis 2026-11-15T07:00Z) — reattach an agent, refresh its wait, or ask'])
+  expect(w.timers.map(t => t.ms)).toEqual([60_000])
+  await w.timers.shift()!.fire()
+  expect(w.submitted.length).toBe(1)
+  expect(w.timers.map(t => t.ms)).toEqual([60_000])
 })
 
 test('the busy wake tells each bound of a turn once, and a new turn afresh', () => {

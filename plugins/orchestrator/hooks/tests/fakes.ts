@@ -100,3 +100,35 @@ export function journalled<D extends Journalled>(dollar: D): { dollar: D; journa
   }
   return { dollar: wrapped as D, journal: () => [...events] }
 }
+
+// The forge's answer to the machine file's one query (pr-file.ts prQuery), built from each
+// repository's open pull requests as `gh pr list` listed them (null: the forge cannot be read, the
+// call exits 1). Every repository the query names is answered, its open ones opened by the viewer;
+// a pull request asked by its number and not listed open reads `closed[n]` of the repository, merged
+// when none is given. Null for a run that is no such query.
+export function prQueryRun(
+  argv: readonly string[], open: (repo: string) => string | null | undefined, closed: Record<string, Record<number, 'MERGED' | 'CLOSED'>> = {},
+): { exitCode: number; stdout: string; stderr: string } | null {
+  if (argv[0] !== 'gh' || argv[1] !== 'api' || argv[2] !== 'graphql') return null
+  const query = String(argv[4] ?? '').replace(/^query=/, '')
+  const data: Record<string, unknown> = { viewer: { login: 'me' }, rateLimit: { cost: 1, remaining: 4999 } }
+  for (const part of query.split(/(?=\br\d+:repository\()/).slice(1)) {
+    const [, alias = '', owner = '', name = ''] = /^(r\d+):repository\(owner:"([^"]*)",name:"([^"]*)"\)/.exec(part) ?? []
+    const repo = `${owner}/${name}`
+    const listed = open(repo)
+    if (listed === null) return { exitCode: 1, stdout: '', stderr: 'HTTP 502' }
+    if (listed === undefined) { data[alias] = null; continue }
+    const items = JSON.parse(listed) as { number: number; createdAt?: string; labels?: { name: string }[]; mergeable?: string }[]
+    const node = (item: { number: number; createdAt?: string; labels?: { name: string }[]; mergeable?: string }, state = 'OPEN') => ({
+      number: item.number, state, isDraft: false, createdAt: item.createdAt ?? null, headRefName: `b${item.number}`, headRefOid: 'a'.repeat(40),
+      mergeable: item.mergeable ?? null, author: { login: 'me' }, labels: { nodes: item.labels ?? [] }, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
+    })
+    const answer: Record<string, unknown> = { open: { pageInfo: { hasNextPage: false }, nodes: items.map(item => node(item)) } }
+    for (const [, n = ''] of part.matchAll(/\bn(\d+):pullRequest/g)) {
+      const item = items.find(i => i.number === Number(n))
+      answer[`n${n}`] = item === undefined ? node({ number: Number(n) }, closed[repo]?.[Number(n)] ?? 'MERGED') : node(item)
+    }
+    data[alias] = answer
+  }
+  return { exitCode: 0, stdout: JSON.stringify({ data }), stderr: '' }
+}

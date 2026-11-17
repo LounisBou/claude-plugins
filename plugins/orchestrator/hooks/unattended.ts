@@ -1,11 +1,12 @@
 // hooks/unattended.ts
-// The pull requests nobody attends (core's pr-ledger.ts, docs/contracts.md): read against the forge
-// at each orchestrator turn end, said in its next turn's context, published on its row for the pane
-// and the coordinator's facts, and read again when it declares itself done or deferred, the one
-// refusal they make. The lines of the pull requests the forge no longer lists open go to the archive
-// beside their record as they are met. Every read is bounded; one that fails is said, never a refusal.
+// The pull requests nobody attends (core's pr-ledger.ts, docs/contracts.md): read against the
+// machine's pull request file (pr-file.ts) at each orchestrator turn end, said in its next turn's
+// context, published on its row for the pane and the coordinator's facts, and read again when it
+// declares itself done or deferred, the one refusal they make, and by the module's tick, which wakes
+// the orchestrator on a pull request merged, closed or entering the anomaly. Every read is bounded;
+// one that fails is said, never a refusal.
 import {
-  archiveOf, endedLines, isFreshWait, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
+  archiveOf, isFreshWait, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
@@ -14,40 +15,28 @@ import { isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, owner
 import { isStale, livePids, livePidsArgv, parseSessionRow, publishUnattended, sessionKey, storeOf, type ProcessTable, type SessionRow } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
+import { readPrFile, refreshPrFile, type PrFile } from './pr-file.ts'
 
 // The nouns a reading holds.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
 
-// The bound of one reading: the forge's lists, the launcher's, the records and the archive writes.
+// The bound of one reading: the machine file's refresh, the launcher's list, the records and the archive writes.
 export const UNATTENDED_BOUND_MS = 20_000
-// The open pull requests read per repository: more than one orchestration ever holds open.
-export const FORGE_LIMIT = 200
 
 // `ready`: the open rows whose blocker has fallen (`none`, or an `until` past) that no live agent and no open pull request holds; `readyLine` says them.
-export type Reading = { list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null }
-
-// The forge's open pull requests of a repository opened under the operator's account: the work of
-// the orchestrations, never a teammate's. Their labels say what rests on him (`Ready`, `On Hold`).
-export function forgeArgv(repo: string): string[] {
-  return ['gh', 'pr', 'list', '-R', repo, '--state', 'open', '--author', '@me', '--limit', String(FORGE_LIMIT), '--json', 'number,createdAt,labels,mergeable']
+// `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `watched`: its lines still open.
+export type Reading = {
+  list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
+  ended: Ended[]; watched: number
 }
+export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string; text: string }
 
-// The forge's answer read, or null when it is no list of pull requests.
-export function parseOpenPrs(repo: string, stdout: string): OpenPr[] | null {
-  let value: unknown
-  try {
-    value = JSON.parse(stdout)
-  } catch {
-    return null
-  }
-  if (!Array.isArray(value)) return null
-  return value.flatMap(item => {
-    const { number, createdAt, labels, mergeable } = (item ?? {}) as { number?: unknown; createdAt?: unknown; labels?: unknown; mergeable?: unknown }
-    const names = Array.isArray(labels) ? labels.flatMap(label => (typeof (label as { name?: unknown } | null)?.name === 'string' ? [(label as { name: string }).name] : [])) : []
-    return typeof number === 'number' && Number.isInteger(number) && number > 0
-      ? [{ repo, pr: number, createdAt: typeof createdAt === 'string' ? createdAt : null, labels: names, ...(typeof mergeable === 'string' ? { mergeable } : {}) }]
-      : []
-  })
+// The open pull requests of a repository as the machine's file holds them: those the operator opened
+// and those a record names. Their labels say what rests on him (`Ready`, `On Hold`).
+export function openOf(file: PrFile, repo: string): OpenPr[] {
+  return file.prs.filter(pr => pr.repo === repo && pr.state === 'OPEN').map(pr => ({
+    repo, pr: pr.pr, createdAt: pr.createdAt, labels: pr.labels, ...(pr.mergeable === null ? {} : { mergeable: pr.mergeable }),
+  }))
 }
 
 // The refusal of a done or deferred wait while a pull request is in anomaly: what to do instead.
@@ -111,7 +100,7 @@ async function othersClaims($: Held, state: string, sessionId: string, now: numb
 
 // Moves lines to the archive beside their record: the archive written first, so a move cut short
 // leaves the line in both, never in neither.
-async function archive($: Held, path: string, lines: readonly LedgerLine[]): Promise<void> {
+export async function archive($: Held, path: string, lines: readonly LedgerLine[]): Promise<void> {
   const io = storeIo($)
   await updateOver(io, archiveOf(path), current => withArchived(current ?? '', lines, new Date()))
   await updateOver(io, path, current => withoutLines(current ?? '', lines.map(line => prKey(line.repo, line.pr))))
@@ -123,34 +112,29 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   if (row?.role !== 'orchestrator' || !row.name) return null
   const state = await stateDir($)
   const own = await linesOf($, await registered($, state, sessionId), orchestrationOf(row.name))
-  // Only the repositories the session's dispatch record names: the checkout's own repository holds
-  // pull requests of the operator's that no orchestration of his records.
+  // Only the repositories the session's dispatch record names, read in the machine's file, refreshed
+  // first when it is older than its interval: the checkout's own repository holds pull requests of the
+  // operator's that no orchestration of his records.
   const repos = [...new Set(own.flatMap(record => record.lines.map(line => line.repo)))]
+  if (repos.length > 0) await refreshPrFile($, now)
+  const file = repos.length > 0 ? await readPrFile($) : undefined
   const open: OpenPr[] = []
   const unread: string[] = []
-  const listed = new Map<string, number[]>()
   for (const repo of repos) {
-    const answer = await $.process.run(forgeArgv(repo), { timeoutMs: UNATTENDED_BOUND_MS }).catch(() => null)
-    const prs = answer && answer.exitCode === 0 ? parseOpenPrs(repo, String(answer.stdout ?? '')) : null
-    if (prs === null) {
-      unread.push(repo)
-      await logLine($, 'unattended', `forge unread for ${repo}: ${answer ? `gh exited ${answer.exitCode}: ${String(answer.stderr ?? '').trim()}` : 'gh did not answer'}`)
-      continue
-    }
-    open.push(...prs)
-    listed.set(repo, prs.map(pr => pr.pr))
+    if (file === undefined || !file.repos.includes(repo)) unread.push(repo)
+    else open.push(...openOf(file, repo))
   }
+  if (unread.length > 0) await logLine($, 'unattended', `pull requests unread for ${unread.join(', ')}: ${file?.error ?? 'not in the machine\'s file yet'}`)
+  // A line whose pull request the file reads merged or closed has ended: told and archived by the module's tick.
+  const states = new Map((file?.prs ?? []).map(pr => [prKey(pr.repo, pr.pr), pr.state]))
+  const ended: Ended[] = []
   const kept: LedgerLine[] = []
   for (const record of own) {
-    const ended = endedLines(record.lines, listed)
-    if (ended.length > 0) {
-      try {
-        await archive($, record.path, ended)
-      } catch (err) {
-        await logLine($, 'unattended', `archive of ${record.path} failed: ${messageOf(err)}`)
-      }
+    for (const line of record.lines) {
+      const state = states.get(prKey(line.repo, line.pr))
+      if (state === 'MERGED' || state === 'CLOSED') ended.push({ line, state, path: record.path, text: record.text })
+      else kept.push(line)
     }
-    kept.push(...record.lines.filter(line => !ended.includes(line)))
   }
   // The launcher's listing names the agents running, read once and only when a line names one or a
   // row is ready; one that cannot be read takes every agent a line names for running, so no pull
@@ -172,7 +156,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
     const agents = await running()
     if (agents !== null) ready = readyRows({ texts, lines: kept, live: agents, now })
   }
-  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready) }
+  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, watched: kept.length }
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.

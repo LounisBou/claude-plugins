@@ -1,14 +1,14 @@
 // hooks/tests/unattended.test.ts
-// The pull requests nobody attends, over a faked $: the forge's open list against the session's
-// ledger, the agents the launcher lists running, the other orchestrators' claims; the lines of the
-// pull requests no longer open moved to the archive; the line the turn end leaves for the next
+// The pull requests nobody attends, over a faked $: the machine file's open pull requests against the
+// session's ledger, the agents the launcher lists running, the other orchestrators' claims; the lines
+// of the pull requests merged or closed read apart; the line the turn end leaves for the next
 // prompt's context and the session's row; and the one refusal of a done or a deferred wait.
 import { expect, test } from 'claude-code/testing'
-import { forgeArgv, parseOpenPrs, readUnattended, register as registerUnattended, unattendedRefusal } from '../unattended.ts'
+import { readUnattended, register as registerUnattended, unattendedRefusal } from '../unattended.ts'
 import { readOr, safe } from '../unattended.ts'
 import { register as registerWait, Declarations } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
-import { logLineOf, lockRun } from './fakes.ts'
+import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
 import type { Reply } from 'claude-code/testing'
 import { capture, hookOf, hooksOn, hostOf } from '../../core/capture.ts'
 import type { Events, Host, Noun, On } from '../../core/host.ts'
@@ -70,10 +70,8 @@ function world(answers: Answers = {}) {
         const [verb, , from = '', to = ''] = argv
         if (verb === 'mv') { files.set(to, files.get(from)!); files.delete(from); return { exitCode: 0, stdout: '', stderr: '' } }
         if (argv[0] === 'rm') { for (const p of argv.slice(2)) files.delete(p); return { exitCode: 0, stdout: '', stderr: '' } }
-        if (argv[0] === 'gh') {
-          const answer = forge[String(argv[4])]
-          return answer === null || answer === undefined ? { exitCode: 1, stdout: '', stderr: 'HTTP 502' } : { exitCode: 0, stdout: answer, stderr: '' }
-        }
+        const asked = prQueryRun(argv, repo => forge[repo] ?? null)
+        if (asked !== null) return asked
         if (argv[0] === 'ps') {
           return answers.ps === undefined || answers.ps === null ? { exitCode: 1, stdout: '', stderr: '' } : { exitCode: 0, stdout: answers.ps, stderr: '' }
         }
@@ -88,15 +86,6 @@ function world(answers: Answers = {}) {
   })
   return { dollar, files, logs, runs }
 }
-
-test('the forge is asked for the open pull requests opened under the operator\'s account, and its answer read', () => {
-  expect(forgeArgv('acme/app')).toEqual(['gh', 'pr', 'list', '-R', 'acme/app', '--state', 'open', '--author', '@me', '--limit', '200', '--json', 'number,createdAt,labels,mergeable'])
-  expect(parseOpenPrs('acme/app', '[{"number":3,"createdAt":"t","labels":[{"name":"Ready"},{"name":7},{}]},{"number":0},{"number":"4"},{}]')).toEqual([{ repo: 'acme/app', pr: 3, createdAt: 't', labels: ['Ready'] }])
-  expect(parseOpenPrs('acme/app', '[{"number":5,"createdAt":"t"},{"number":6,"labels":"Ready"}]')).toEqual([{ repo: 'acme/app', pr: 5, createdAt: 't', labels: [] }, { repo: 'acme/app', pr: 6, createdAt: null, labels: [] }])
-  expect(parseOpenPrs('acme/app', '[{"number":3,"mergeable":"CONFLICTING"},{"number":4,"mergeable":7}]')).toEqual([{ repo: 'acme/app', pr: 3, createdAt: null, labels: [], mergeable: 'CONFLICTING' }, { repo: 'acme/app', pr: 4, createdAt: null, labels: [] }])
-  expect(parseOpenPrs('acme/app', '{}')).toBe(null)
-  expect(parseOpenPrs('acme/app', 'not json')).toBe(null)
-})
 
 test('an open pull request with no live agent, a stale wait or no line is unattended; a parked one, one another orchestrator records, or one whose agent runs is not', async () => {
   const { dollar } = world()
@@ -187,7 +176,10 @@ test('only the repositories of the session\'s dispatch record are read, never it
   const { dollar, files, runs } = world({ forge: { 'acme/app': '[]', 'acme/home': JSON.stringify([{ number: 45, createdAt: '2026-11-13T08:00:00Z' }]) } })
   files.set(`${MODULE}/store/sessions/s-orch`, row('orchestrator', 'Orch: app', 'acme/home'))
   const reading = await readUnattended(dollar, 's-orch', NOW)
-  expect(runs.filter(argv => argv[0] === 'gh').map(argv => argv[4])).toEqual(['acme/app'])
+  const queries = runs.filter(argv => argv[0] === 'gh').map(argv => String(argv[4]))
+  expect(queries.length).toBe(1)
+  expect(queries[0]).toContain('repository(owner:"acme",name:"app")')
+  expect(queries[0]).not.toContain('"home"')
   expect(reading?.line).toBe(null)
   // A record with no pull request line asks the forge nothing.
   const empty = world({ forge: { 'acme/home': JSON.stringify([{ number: 45, createdAt: '2026-11-13T08:00:00Z' }]) } })
@@ -197,13 +189,12 @@ test('only the repositories of the session\'s dispatch record are read, never it
   expect(empty.runs.filter(argv => argv[0] === 'gh')).toEqual([])
 })
 
-test('the line of a pull request the forge no longer lists open moves to the archive beside its record', async () => {
+test('the line of a pull request the file reads merged or closed has ended: read apart, left for the tick to tell and archive', async () => {
   const { dollar, files } = world()
-  await readUnattended(dollar, 's-orch', NOW)
-  const archived = (files.get('/briefs/app/dispatch-record.archive.jsonl') ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l))
-  expect(archived.map(l => [l.pr, l.status, typeof l.archived])).toEqual([[5, 'working', 'string']])
-  const left = (files.get(RECORD) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l))
-  expect(left.map(l => l.pr ?? `row ${l.id}`)).toEqual(['row 1', 7, 8, 6])
+  const reading = await readUnattended(dollar, 's-orch', NOW)
+  expect(reading?.ended.map(e => [e.line.pr, e.state, e.path])).toEqual([[5, 'MERGED', RECORD]])
+  expect(reading?.watched).toBe(3)
+  expect(files.has('/briefs/app/dispatch-record.archive.jsonl')).toBe(false)
 })
 
 test('a repository the forge did not list is said unknown, never « none », and nothing of it is archived', async () => {
@@ -212,7 +203,7 @@ test('a repository the forge did not list is said unknown, never « none », and
   expect(reading?.list).toEqual([])
   expect(reading?.line).toBe('En anomalie : inconnues pour acme/app (forge illisible)')
   expect(files.has('/briefs/app/dispatch-record.archive.jsonl')).toBe(false)
-  expect(logs.some(l => l.includes('forge unread for acme/app: gh exited 1: HTTP 502'))).toBe(true)
+  expect(logs.some(l => l.includes('pull requests unread for acme/app: gh exited 1: HTTP 502'))).toBe(true)
 })
 
 test('a launcher listing that cannot be read takes every agent a line names for running', async () => {
