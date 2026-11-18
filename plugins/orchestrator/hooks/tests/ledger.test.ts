@@ -44,6 +44,8 @@ type Over = {
   // What `git status --porcelain` prints in an agent's checkout, and how many commits `git rev-list` counts unpushed.
   dirty?: string
   unpushed?: number
+  // The agents' ttys in the orchestrator's own chain (ttys000 and ttys001 when not given).
+  ownChain?: string[]
 }
 
 // The orchestrator s-orch (its record registered, owned), the agent s-agent on /dev/ttys005 launched for it.
@@ -56,7 +58,10 @@ function fake(over: Over = {}) {
     [RECORD, ROWS],
     [`${HOME}/.claude/sessions/400.json`, JSON.stringify({ pid: 400, sessionId: 's-orch', name: ORCH, startedAt: 1 })],
   ])
-  if (over.chain) files.set(`${STATE}/chains/ttys001.jsonl`, `${JSON.stringify({ tab_id: 'tab-a', tty: '/dev/ttys005', owner: 'own' })}\n`)
+  // The orchestrator's chain (its owner `own`): the agents the launcher lists on ttys000 and ttys001 are its own, unless `ownChain` says
+  // otherwise; with `chain`, the agent s-agent on ttys005 too.
+  const chained = [...(over.ownChain ?? ['/dev/ttys000', '/dev/ttys001']), ...(over.chain ? ['/dev/ttys005'] : [])]
+  if (over.chain || chained.length > 0) files.set(`${STATE}/chains/ttys001.jsonl`, chained.map((tty, n) => `${JSON.stringify({ tab_id: `tab-${n}`, tty, owner: 'own' })}\n`).join(''))
   for (const [path, text] of Object.entries(over.rows ?? {})) files.set(path, text)
   const logged: string[] = []
   const runs: string[][] = []
@@ -64,7 +69,7 @@ function fake(over: Over = {}) {
   let listed = over.launcher
   const dollar = hostOf({
     plugin: { root: '/plugins/orch' },
-    env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'ORCHESTRATOR_REPORTS_TO' ? reportsTo ?? undefined : undefined) },
+    env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'ORCHESTRATOR_REPORTS_TO' ? reportsTo ?? undefined : name === 'ITERM_SESSION_ID' ? 'w0t0p0:own' : undefined) },
     session: { id: async () => over.session ?? 's-agent' },
     clock: { sleep: async () => undefined },
     fs: {
@@ -412,7 +417,7 @@ test('a merge says nothing of closing an agent the close command already closed:
 test('a merge says its agent still holds the open row that waits on it, or another pull request of its own, and closes nothing', async () => {
   const other = ledgerLine(21, 'working', { agent: 'Agent: p17' }, 'acme/lib')
   const holds = JSON.stringify({ id: 8, state: 'open', label: 'P17 follow-up', blocker: 'PR acme/app#17 merged', note: 'Dispatched 2026-11-15: Agent: p17' })
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${holds}\n${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n${other}\n` }, forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${holds}\n${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n${other}\n`, ...launched('/briefs/app', 'Agent: p17', 2) }, forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
   const woke = await prWake(world.dollar, new Set())
   expect(woke.lines[0]).toBe('[module] acme/app#17 merged: its agent Agent: p17 still holds row 8 (app), acme/lib#21; tell it.')
   expect(closes(world.runs)).toEqual([])
@@ -495,6 +500,60 @@ test('a close is made only once its wake is delivered: a wake the host drops lea
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
   await prWake(world.dollar, new Set())
   expect(closes(world.runs)).toEqual([])
+})
+
+test('an agent that took a message between its wake and the close is left open, told at the next tick, and closed once done again', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  const told = new Set<string>()
+  const woke = await prWake(world.dollar, told)
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  // A message arrives before the wake is delivered: its turn starts, its host busy.
+  const host = `${HOME}/.claude/sessions/417.json`
+  world.files.set(host, world.files.get(host)!.replace('"idle"', '"busy"'))
+  await woke.settle()
+  expect(closes(world.runs)).toEqual([])
+  const next = await prWake(world.dollar, told)
+  expect(next.lines).toEqual(['[module] Agent: p17 (acme/app#17): left open: its host is busy.'])
+  await next.settle()
+  // Done again: the same Ready head closes it.
+  world.files.set(host, world.files.get(host)!.replace('"busy"', '"idle"'))
+  const then = await prWake(world.dollar, told)
+  expect(then.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  await then.settle()
+  expect(closes(world.runs)).toHaveLength(1)
+})
+
+test('a merge whose agent turned busy before the close keeps its line until the agent is closed', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${mergedLine}\n`, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  const told = new Set<string>()
+  const woke = await prWake(world.dollar, told)
+  world.files.delete(`${STATE}/store/waits/s-p17`)
+  await woke.settle()
+  expect([closes(world.runs), world.files.get(RECORD)]).toEqual([[], `${mergedLine}\n`])
+  world.files.set(`${STATE}/store/waits/s-p17`, P17_DONE[`${STATE}/store/waits/s-p17`]!)
+  const next = await prWake(world.dollar, told)
+  // Done again by the next tick: what kept it open, then the close.
+  expect(next.lines).toEqual(['[module] Agent: p17 (acme/app#17): left open: its last turn did not end on done: no status.', closedLine('acme/app#17', 'merged')])
+  await next.settle()
+  expect(closes(world.runs)).toHaveLength(1)
+  expect(world.files.get(RECORD)).not.toContain('"pr":17')
+})
+
+test('an agent is closed on the tab of this orchestration\'s chain: another orchestration\'s tab of the same name is never closed', async () => {
+  const foreign = 'w2/t7 | /dev/ttys007 | ✳ Agent: p17 | Agent: p17'
+  const rows = { [RECORD]: `${P17_LINE}\n`, ...P17_DONE, [`${STATE}/store/sessions/s-x17`]: row('agent', 'Agent: p17 [ffffff]', '/dev/ttys007') }
+  const both = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: `${running('Agent: p17')}\n${foreign}` })
+  const woke = await prWake(both.dollar, new Set())
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  await woke.settle()
+  expect(closes(both.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
+  // Only the other orchestration's tab idle: nothing closed, told once.
+  const alone = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: foreign })
+  const told = new Set<string>()
+  const said = await prWake(alone.dollar, told)
+  await said.settle()
+  expect([said.lines, closes(alone.runs)]).toEqual([['[module] acme/app#17 is Ready: its agent Agent: p17 left open: its tab on /dev/ttys007 is on no chain of this orchestration.'], []])
+  expect((await prWake(alone.dollar, told)).lines).toEqual([])
 })
 
 test('an agent whose host is busy, whose host record is missing, or whose session row is on another tty is not closed: tried again later', async () => {
@@ -722,7 +781,7 @@ const second = (text: string): Record<string, string> => ({ [`${STATE}/records/s
 const rowOf = (id: number, state: string, extra: object = {}) => JSON.stringify({ id, state, label: `row ${id}`, ...extra })
 const mergedLine = ledgerLine(17, 'working', { agent: 'Agent: p17' })
 
-test('a row the agent\'s brief names holds it, in the record beside that brief: the same id in another record is not its row', async () => {
+test('the row an agent\'s brief names is its own, in the record beside that brief: the same id in another record is not its row', async () => {
   const files = { ...launched('/briefs/web', 'Agent: p17', 8), ...second(`${rowOf(8, 'closed')}\n${rowOf(9, 'open', { note: 'Dispatched: Agent: someone' })}\n`) }
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'open')}\n${mergedLine}\n`, ...files, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
   // Row 8 of web is closed, row 9 of web is another agent's and row 8 of app, open, is no row of its brief: nothing holds p17.
@@ -731,19 +790,42 @@ test('a row the agent\'s brief names holds it, in the record beside that brief: 
   expect(woke.lines).toEqual([closedLine('acme/app#17', 'merged')])
   await woke.settle()
   expect(world.runs.filter(argv => argv[2] === 'cost').map(argv => argv.slice(3, 5))).toEqual([[OTHER, '8']])
-  const held = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'closed')}\n${mergedLine}\n`, ...launched('/briefs/web', 'Agent: p17', 8), ...second(`${rowOf(8, 'open', { note: 'no agent here' })}\n`) }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
-  expect((await prWake(held.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 8 (web); tell it.'])
+  // Its own row still open at the merge, the agent left open at Ready, holds nothing: closed at the merge.
+  const brief = { ...launched('/briefs/web', 'Agent: p17', 8), ...P17_DONE }
+  const own = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'closed')}\n${mergedLine}\n`, ...brief, ...second(`${rowOf(8, 'open', { note: 'Held by Agent: p17' })}\n`) }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  const merged = await prWake(own.dollar, new Set())
+  expect(merged.lines).toEqual([closedLine('acme/app#17', 'merged')])
+  await merged.settle()
+  expect(closes(own.runs)).toHaveLength(1)
+  // Another row of web its note names holds it.
+  const held = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'closed')}\n${mergedLine}\n`, ...brief, ...second(`${rowOf(8, 'open', { note: 'Held by Agent: p17' })}\n${rowOf(9, 'open', { note: 'Held by Agent: p17' })}\n`) }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  expect((await prWake(held.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 9 (web); tell it.'])
+})
+
+test('an agent whose brief names no row owns the one row its note names: at Ready it is closed; of two rows, it is told', async () => {
+  const one = `${rowOf(333, 'open', { note: 'Held by Agent: p17 (ttys000)' })}\n${P17_LINE}\n`
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: one, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  const two = `${rowOf(338, 'open', { note: 'Held by Agent: p17' })}\n${one}`
+  const held = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: two, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  expect((await prWake(held.dollar, new Set())).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 still holds row 338 (app), row 333 (app); tell it.'])
+})
+
+test('an agent whose brief sits beside no record owns that row in the records of the orchestration: at Ready it is closed', async () => {
+  const rows = `${rowOf(333, 'open', { note: 'Held by Agent: p17' })}\n${P17_LINE}\n`
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows, ...P17_DONE, ...launched('/briefs/elsewhere', 'Agent: p17', 333) }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
 })
 
 test('a row open in any record of the orchestration holds the agent, whether or not it waits on a merge, and a deferred or closed one holds nothing', async () => {
   const rows = [rowOf(3, 'open', { note: 'Dispatched: Agent: p17' }), rowOf(4, 'open', { note: 'Dispatched: Agent: p17', deferred: 'later, 2026-11-15' }), rowOf(5, 'closed', { note: 'Dispatched: Agent: p17' }), mergedLine].join('\n') + '\n'
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows, ...launched('/briefs/app', 'Agent: p17', 2) }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
   expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 3 (app); tell it.'])
 })
 
 test('a note names an agent by its whole name: a row of Agent: p17 does not hold Agent: p1', async () => {
   const rows = [rowOf(3, 'open', { note: 'Dispatched: Agent: p17 on feat/next' }), ledgerLine(1, 'working', { agent: 'Agent: p1' }), mergedLine].join('\n') + '\n'
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows, ...doneAgent('s-p1', 'Agent: p1', 401) }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p1', 'Agent: p17') })
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows, ...doneAgent('s-p1', 'Agent: p1', 401), ...launched('/briefs/app', 'Agent: p17', 2) }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p1', 'Agent: p17') })
   expect((await prWake(world.dollar, new Set())).lines).toEqual([
     closedLine('acme/app#1', 'merged', 'Agent: p1', 's-p1'),
     '[module] acme/app#17 merged: its agent Agent: p17 still holds row 3 (app); tell it.',

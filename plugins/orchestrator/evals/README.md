@@ -22,7 +22,7 @@ evals/
 ```
 
 A case id is a short kebab-case phrase saying the decision it stages and grades (for
-example `commits-or-drops-before-closing`). A rule whose decision has two branches is
+example `closes-by-fresh-tty-and-title-words`). A rule whose decision has two branches is
 staged by one case per branch, the id suffixed with the branch (`answers-the-third-ask-missed`,
 `answers-the-third-ask-unanswered`).
 

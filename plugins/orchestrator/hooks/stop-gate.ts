@@ -213,9 +213,12 @@ export function liveNames(rows: readonly Row[]): Set<string> {
   return new Set(rows.filter(row => activity(row.title) !== null).map(labelOf))
 }
 
-// The tty of each session the listing shows idle, by its label: where the module closes an agent done with its work.
-export function idleTtys(rows: readonly Row[]): Map<string, string> {
-  return new Map(rows.filter(row => activity(row.title) === 'idle').map(row => [labelOf(row), row.tty]))
+// The ttys of the sessions the listing shows idle, by their label: where the module closes an agent done with its work.
+// The listing is the machine's: a label may sit on several ttys, each orchestration's own (the caller keeps its chain's).
+export function idleTtys(rows: readonly Row[]): Map<string, string[]> {
+  const idle = new Map<string, string[]>()
+  for (const row of rows) if (activity(row.title) === 'idle') idle.set(labelOf(row), [...(idle.get(labelOf(row)) ?? []), row.tty])
+  return idle
 }
 
 // --- the orchestrator's own agents (stop_gate.py:224-247) --------------------------------

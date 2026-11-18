@@ -29,14 +29,14 @@ export const UNATTENDED_BOUND_MS = 20_000
 // `ready`: the open rows whose blocker has fallen (`none`, or an `until` past) that no live agent and no open pull request holds; `readyLine` says them.
 // `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `kept`: its lines still open; `records`: its records, each with its path and its text.
 // `live`: the names of the agents the launcher lists running, among those a line names (every one when its listing could not be read);
-// `idle`: the tty of each it lists idle, by name (none when its listing was not read or could not be).
+// `idle`: the ttys of each it lists idle, by name, on the whole machine (none when its listing was not read or could not be).
 // `wanted`: whether the sweep asks the file to hold a repository (`prs.wanted`).
 // `openKeys`: the session's lines still open on the forge as `owner/name#n`, attended or not: the deck lists them.
 // `atReady`: the lines still open whose pull request carries Ready and whose agent, put on it last or before, the launcher lists running: the module closes that agent once it is done (close-agent.ts). `readyHeads`: the head each open pull request carries Ready at.
 // `forge`: the file's current reading of each of the session's lines still open, by `owner/name#n`: its head, its base and its `mergeable`.
 export type Reading = {
   list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
-  ended: Ended[]; kept: LedgerLine[]; atReady: LedgerLine[]; readyHeads: ReadonlyMap<string, string>; records: RecordText[]; live: ReadonlySet<string>; idle: ReadonlyMap<string, string>; wanted: boolean
+  ended: Ended[]; kept: LedgerLine[]; atReady: LedgerLine[]; readyHeads: ReadonlyMap<string, string>; records: RecordText[]; live: ReadonlySet<string>; idle: ReadonlyMap<string, readonly string[]>; wanted: boolean
   openKeys: string[]; forge: ReadonlyMap<string, FilePr>
 }
 export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
@@ -145,7 +145,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   // row is ready; one that cannot be read takes every agent a line names for running, so no pull
   // request is called unattended on a read that failed, and names no row ready.
   let seen: ReadonlySet<string> | null | undefined
-  let idle: ReadonlyMap<string, string> = new Map()
+  let idle: ReadonlyMap<string, readonly string[]> = new Map()
   const running = async (): Promise<ReadonlySet<string> | null> => {
     if (seen !== undefined) return seen
     const launched = await $.process.run(['bash', launcherOf($.plugin.root), 'list'], { timeoutMs: UNATTENDED_BOUND_MS }).catch(() => null)
