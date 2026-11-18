@@ -181,7 +181,9 @@ export function joinLines(lines: readonly string[]): string {
 
 export function splitLines(body: string): string[] | null {
   const lines = body.trim().split('\n')
-  return lines.length > 1 && lines.every(line => line.startsWith(ROW_MARKER) || line.startsWith(Q_MARKER)) ? lines : null
+  // Only what a turn's end sends: rows and the owner's questions. A reply or an answer is read alone, its readable part passed on.
+  const sendable = (line: string) => line.startsWith(ROW_MARKER) || (line.startsWith(Q_MARKER) && ['ask', 'asked'].includes(parseQ(line)?.event.kind ?? ''))
+  return lines.length > 1 && lines.every(sendable) ? lines : null
 }
 
 export function isQ(body: string): boolean {

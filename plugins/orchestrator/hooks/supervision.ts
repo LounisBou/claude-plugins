@@ -1743,6 +1743,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     return next(e)
   })
   on('turn.complete', {}, async ($, e, next) => {
+    // What this turn's end has to tell a coordinator on another machine goes in one message,
+    // sent whatever the reads before it did.
+    const outbox: Outgoing[] = []
     try {
       // A turn the person interrupted is his; any other end is read, a stop the host wrote included.
       if (!e.agentId && e.reason !== 'aborted' && e.isAborted !== true) {
@@ -1750,18 +1753,20 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         inFlightAtStop = null
         const sessionId = await $.session.id()
         const declared = { wait: declarations.current(), handedOver: declarations.handedOver(sessionId) }
-        // What this turn's end has to tell a coordinator on another machine goes in one message.
-        const outbox: Outgoing[] = []
         const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight, e.reason ?? 'answer', declared, outbox), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
-        const queued = await withDeadline(sendRow($, sessionId, outbox).catch((err: unknown) => logLine($, 'supervision', `row: ${messageOf(err)}`)), RELAY_BOUND_MS)
+        const queued = await withDeadline(sendRow($, sessionId, outbox), RELAY_BOUND_MS)
         if (isDegradedPass(queued)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
-        const sent = await withDeadline(flushOutbox($, outbox), RELAY_BOUND_MS)
-        if (isDegradedPass(sent)) await logLine($, 'supervision', `send: did not finish within ${RELAY_BOUND_MS} ms`)
       }
     } catch (err) {
       await logLine($, 'supervision', `relay: ${messageOf(err)}`)
+    }
+    try {
+      const sent = await withDeadline(flushOutbox($, outbox), RELAY_BOUND_MS)
+      if (isDegradedPass(sent)) await logLine($, 'supervision', `send: did not finish within ${RELAY_BOUND_MS} ms`)
+    } catch (err) {
+      await logLine($, 'supervision', `send: ${messageOf(err)}`)
     }
     // The wait the relay just wrote, or none, is what the window's tab shows.
     if (!e.agentId) await showTurnEnd($)
@@ -2355,7 +2360,7 @@ export function entersRound(role: string | null): boolean {
 // read on the answer, else on the transcript's tail) is sent as one stop line (relayStop), work in
 // flight or not: nothing resumes it. Any other end that is no answer is read for that alone.
 export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer',
-  declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }, outbox?: Outgoing[]): Promise<void> {
+  declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }, outbox: Outgoing[] = []): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2439,8 +2444,7 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
         if (now && now.pending === entry.id) await writeWait($, sessionId, { ...now, pending: null, pending_key: null })
       },
     }
-    if (outbox) outbox.push(item)
-    else await flushOutbox($, [item])
+    outbox.push(item)
     return
   }
   /*
@@ -2967,7 +2971,8 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const prs = await prsOf($, sessionId, read.repo)
   const waitText = String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => ''))
   const fill = await hostFill($)
-  const measured = fill ? { ...read, context_tokens: fill.tokens, context_percent: fill.percent, window: fill.window } : read
+  // The reading is the one of this instant: its stamp is now, not the last measure's.
+  const measured = { ...read, updated_at: new Date().toISOString(), ...(fill ? { context_tokens: fill.tokens, context_percent: fill.percent, window: fill.window } : {}) }
   const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)))
   if (!row) return
   const now = Date.now()
@@ -3000,11 +3005,12 @@ async function hostFill($: Host<'session'>): Promise<{ tokens: number; percent: 
 // (remote-round.ts splitLines), so the coordinator's phone shows one delivery for it.
 export type Outgoing = { to: Coordinator; line: string; settle: (sent: SessionSendResult) => Promise<void> }
 
-export async function flushOutbox($: Host<'clock' | 'env' | 'fs' | 'process' | 'session'>, outbox: readonly Outgoing[]): Promise<void> {
+export async function flushOutbox($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, outbox: readonly Outgoing[]): Promise<void> {
   const [first] = outbox
   if (!first) return
   const sent = await sendToCoordinator($, first.to, joinLines(outbox.map(item => item.line))).catch((err: unknown): SessionSendResult => ({ isDelivered: false, reason: messageOf(err) }))
-  for (const item of outbox) await item.settle(sent)
+  // One item's settling that throws leaves the others' to run: a delivered row is still recorded.
+  for (const item of outbox) await item.settle(sent).catch((err: unknown) => logLine($, 'supervision', `send: ${messageOf(err)}`))
 }
 
 // A remote orchestrator's ask (remote-round.ts), consumed whatever it holds. In the coordinator's
