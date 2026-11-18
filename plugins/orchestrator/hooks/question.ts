@@ -384,6 +384,8 @@ export async function nameMovedAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' |
 
 // What the operator typed, as an answer keeps it: past this many characters it is cut, the cut said.
 const TYPED_CAP = 500
+// The note a cut answer ends with: the words past the cap were never read, so a cut answer grants nothing.
+const CUT_NOTE = /\n\[cut at \d+ of \d+ characters\]$/
 
 /**
  * A prompt the operator typed in the asker's own tab (never the model's, never a command): its open
@@ -418,7 +420,7 @@ export async function settleClaimed($: Host<'clock' | 'env' | 'fs' | 'plugin' | 
     const shown = await closesItself($, id)
     const done = await closeOwnAsked($, id, takes, at, asked => {
       const typed = asked.claimed?.typed ?? ''
-      const chosen = asked.consent ? answersChoice(typed, asked.choices) ?? leadingChoice(typed, asked.choices, asked.consent, asked.ask) : null
+      const chosen = asked.consent ? (CUT_NOTE.test(typed) ? undefined : answersChoice(typed, asked.choices) ?? leadingChoice(typed, asked.choices, asked.consent, asked.ask)) : null
       refused = !!asked.consent && (!chosen || !grants(chosen.text))
       return planClaimed(asked, chosen && !refused ? `${chosen.letter} : ${chosen.text}` : null, at, shown)
     })

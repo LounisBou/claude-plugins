@@ -242,12 +242,12 @@ export const apart = (pattern: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}]
  * Fail-closed: the asker asks again, with the limit or the condition in the question. It is read on
  * words folded to lower case with the plain apostrophe.
  */
-export const HEDGED = apart("pas|non|jamais|sauf|mais|attend\\p{L}*|wait|not|don't|dont|no|never|refus\\p{L}*|annul\\p{L}*|cancel|stop|si|if|unless|only|seulement|uniquement|plut[oô]t|rather|avant|before|apr[eè]s|after|sinon|otherwise|r[eé]voqu\\p{L}*|retir\\p{L}*|revok\\p{L}*|quand|lorsque?|when|whenever|condition\\p{L}*|provided|tant|as long|sans|without|except\\p{L}*|hors|exclu\\p{L}*|exclud\\p{L}*|ne|n(?=')|plus|moins|tard|later|laisse\\p{L}*|tomb\\p{L}*|hold|undo|d[eé]sactiv\\p{L}*|disabl\\p{L}*|off|supprim\\p{L}*|delet\\p{L}*|remov\\p{L}*|turn|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|monday|tuesday|wednesday|thursday|friday|saturday|sunday")
+export const HEDGED = apart("pas|non|jamais|sauf|mais|attend\\p{L}*|wait|not|don't|dont|no|never|refus\\p{L}*|annul\\p{L}*|cancel|stop|si|if|unless|only|seulement|uniquement|plut[oô]t|rather|avant|before|apr[eè]s|after|sinon|otherwise|r[eé]voqu\\p{L}*|retir\\p{L}*|revok\\p{L}*|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|monday|tuesday|wednesday|thursday|friday|saturday|sunday")
 
 /** A limit left in words: a date, an hour, a duration, a period, a moment, a zone, any way of limiting a consent. Read on words folded to lower case. */
 export const LIMIT_LEFT = new RegExp(
   "jusqu|until|ce soir|tonight|expir|valable|demain|tomorrow|aujourd'hui|today|\\d{1,2}/\\d{1,2}|\\d{4}-\\d{2}-\\d{2}|(?<![\\p{L}\\p{N}])\\d{1,2}\\s?h(?:\\d{2})?(?![\\p{L}\\p{N}])"
-  + "|(?<![\\p{L}\\p{N}])(?:pendant|durant|during|for|semaines?|weeks?|week-?end|jours?|journ[eé]es?|days?|heures?|hours?|minutes?|mois|months?|ans|ann[eé]es?|years?|temporair\\p{L}*|provisoire\\p{L}*|temporar\\p{L}*|moment|fois|once|sessions?|soir|matin|nuit|night|morning|evening|am|pm|pst|cst|cet|cest|bst|gmt|utc|locale|local)(?![\\p{L}\\p{N}])"
+  + "|(?<![\\p{L}\\p{N}])(?:pendant|durant|during|for|semaines?|weeks?|week-?end|jours?|journ[eé]es?|days?|heures?|hours?|minutes?|mois|months?|ans|ann[eé]es?|years?|temporair\\p{L}*|provisoire\\p{L}*|temporar\\p{L}*|moment|fois|once|am|pm|pst|cst|cet|cest|bst|gmt|utc|locale|local)(?![\\p{L}\\p{N}])"
   + "|(?<![\\p{L}\\p{N}])[+-]\\s?\\d",
   'u',
 )
@@ -300,6 +300,7 @@ const PULL_REF = /#\s?(\d+)(?!\d)|(?<![\p{L}\p{N}])(?:prs?|pull requests?|pull)\
 // Whether words name a repository other than the subject's, token by token (`acme/app-evil` is not `acme/app`), or a pull request other than its own.
 function namesAnother(said: string, subject: ConsentSubject): boolean {
   const repo = subject.repo.toLowerCase()
+  if (SLASHED.test(said.split(repo).join(' '))) return true
   for (const token of said.split(/[\s,;:!?()"«»]+/)) {
     if (!token.includes('/') || !/\p{L}/u.test(token)) continue
     // The elision before the name (« d'acme/app »), the pull request after it (`#7`) and the closing dot are no part of it.
@@ -309,15 +310,35 @@ function namesAnother(said: string, subject: ConsentSubject): boolean {
   return numbers.some(number => !('pr' in subject) || number !== subject.pr)
 }
 
+// What no separate instruction holds: a negation, a veto, a withdrawal, a condition, a time, a scope, a widening, an exception, a reversal, an obligation.
+const NOT_PLAIN = apart(
+  "ne|n(?=')|pas|non|nope|nah|jamais|rien|nothing|aucun\\p{L}*|none|no|not|never|plus|moins|sans|without|oubli\\p{L}*|forget|ignor\\p{L}*|arr[eê]t\\p{L}*|stop|pause|block\\p{L}*|bloqu\\p{L}*|interdi\\p{L}*|forbid\\p{L}*|veto|abort\\p{L}*|reject\\p{L}*|rejet\\p{L}*|den\\p{L}*|d[eé]ni\\p{L}*|withdraw\\p{L}*|freeze|g[eè]le\\p{L}*|suspen\\p{L}*|kill|halt|laisse\\p{L}*|tomb\\p{L}*|hold|undo|d[eé]sactiv\\p{L}*|disabl\\p{L}*|off|supprim\\p{L}*|delet\\p{L}*|remov\\p{L}*|turn|cancel|annul\\p{L}*|silence|absent\\p{L}*|vaut"
+  + "|si|if|unless|quand|lorsque?|when|whenever|d[eè]s|once|pourvu|cas|condition\\p{L}*|provided|tant|long|apr[eè]s|after|avant|before|puisque|since|until|jusqu\\p{L}*|needs?|besoin|faut|doit|doivent|must|should|devrai\\p{L}*|require\\p{L}*|exig\\p{L}*"
+  + "|pour|for|sur|on|dans|in|sous|under|avec|with|vers|to|par|by|juste|just|seul\\p{L}*|uniq\\p{L}*|only|m[eê]me|same|tous|toutes|all|every|chaque|autres?|other\\p{L}*|reste|rest|else|aussi|also|encore|too|max|min|limit\\p{L}*|d[eé]faut|default|instant|sprint|session\\p{L}*|soir|matin|nuit|night|morning|evening|tard|later|maintenant\\s+que|temp\\p{L}*"
+  + "|sauf|except\\p{L}*|hormis|hors|aside|apart|exclu\\p{L}*|exclud\\p{L}*|toutefois|however|instead|cependant|pourtant|mais|but|yet|although|sinon|otherwise|or|ou|ni|either",
+)
+
+// A sentence or a line of an instruction opens with one of these verbs, or with a word of courtesy.
+const OPENING = new RegExp(
+  "^(?:(?:et|puis|and|then|ok|okay|oui|yes|please|svp|s'il te pla[iî]t|maintenant|now|bon|alors|donc)[\\s,]+)*"
+  + "(?:lance\\p{L}*|relance\\p{L}*|push\\p{L}*|pousse\\p{L}*|merge\\p{L}*|fusionne\\p{L}*|continue\\p{L}*|poursui\\p{L}*|d[eé]marre\\p{L}*|commence\\p{L}*|start\\p{L}*|run|launch\\p{L}*|d[eé]ploie\\p{L}*|deploy\\p{L}*|rebase\\p{L}*|force\\p{L}*|vas-y|allez-y|go|passe\\p{L}*|proc[eè]de\\p{L}*|proceed|ship|fais|faites|do|termine\\p{L}*|finis\\p{L}*|encha[iî]ne\\p{L}*|merci|thanks?|thank you|parfait|super|bien|top|nickel)(?![\\p{L}\\p{N}])",
+  'u',
+)
+
+// A slash with a letter on each side, spaces around it or not: a repository or a path, never a date.
+const SLASHED = /\p{L}[\p{L}\p{N}._-]*\s*\/\s*\p{L}/u
+
 /**
- * Whether the words that follow a grant are a separate plain instruction, which the grant does not
- * void: no question, no condition, exception, refusal or limit (the lists HEDGED and LIMIT_LEFT),
- * no other repository, pull request or, for an auto-deploy, environment than the subject's. Read
- * fail-closed on those lists; the instruction itself is not read.
+ * Whether the words that follow a grant are a separate positive instruction, which the grant does
+ * not void. Read fail-closed: every sentence or line opens with a verb of action or a word of
+ * courtesy (OPENING), and the words hold no negation, condition, time, scope, widening, exception or
+ * reversal (NOT_PLAIN), no question, no limit, no other repository, pull request or environment than
+ * the subject's. Any other text is no instruction the grant survives, and the answer records nothing.
  */
 export function plainInstruction(following: string, subject: ConsentSubject): boolean {
   const said = spaced(following).normalize('NFKC').toLowerCase().replace(/[’‘]/g, "'")
-  if (QUESTION.test(said) || HEDGED.test(said) || LIMIT_LEFT.test(said) || namesAnother(said, subject)) return false
+  if (said === '' || QUESTION.test(said) || HEDGED.test(said) || LIMIT_LEFT.test(said) || NOT_PLAIN.test(said) || namesAnother(said, subject)) return false
+  if (following.normalize('NFKC').split(/[\n.!]+/).map(part => spaced(part).toLowerCase().replace(/[’‘]/g, "'")).filter(part => part !== '').some(part => !OPENING.test(part))) return false
   return !('env' in subject) || [...said.matchAll(ENV_NAME)].every(match => ENV_WORDS[match[0]] === subject.env)
 }
 

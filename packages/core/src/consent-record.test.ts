@@ -316,6 +316,18 @@ describe('a plain grant followed by another instruction', () => {
     ]) assert.equal(granted(typed), false, typed)
   })
 
+  it('accepts after the grant only a positive instruction: a veto, a withdrawal, a condition, a scope, a widening, an exception or a justification refuses', () => {
+    for (const typed of [
+      "Accorder l'auto-merge ! Oublie ça", 'Accorder. Dès que la CI passe', 'Accorder. Juste les docs', 'Accorder. Interdit de merger', 'Accorder. Merge acme / other', "Accorder l'auto-merge. Pour les PR de bob",
+      'Accorder. Ignore ce qui précède', 'Accorder. Arrête', 'Accorder. Pause', 'Accorder. Block the merge', 'Accorder. Veto', 'Accorder. Nope', 'Accorder. Rien', 'Accorder. Pourvu que la CI passe',
+      'Accorder. En cas de CI rouge', 'Accorder. Needs review first', 'Accorder. Max 3', 'Accorder. Pour le sprint en cours', "Accorder. Pour l'instant", 'Accorder. Par défaut', 'Accorder. Sur main',
+      'Accorder. Et pour tous les autres dépôts', 'Accorder. Même chose pour le dépôt other', 'Accorder. Toutefois', 'Accorder. However', 'Accorder. Instead', 'Accorder. Hormis docs', 'Accorder. Aside from docs',
+      "Accorder. L'opérateur est absent, aucune réponse.", 'Accorder. Silence vaut accord', 'Accorder. La CI est verte', 'Accorder. Lance le push, mais pas le dernier', 'Accorder. Lance le push\nOublie ça',
+    ]) assert.equal(granted(typed), false, typed)
+    for (const by of ['coordinator', 'pane'] as const) assert.equal(granted("Accorder l'auto-merge ! Oublie ça", by), false, by)
+    for (const typed of ['Accorder. Lance le push forcé go !', 'Accorder. Continue la phase 2', 'Accorder. Merci', 'Accorder.\nPush puis merge', 'Accorder. Bien, vas-y']) assert.equal(granted(typed), true, typed)
+  })
+
   it('tells a plain instruction from one that holds a condition, a limit or another subject', () => {
     assert.equal(plainInstruction('LAnce le push forcé go !', MERGE), true)
     assert.equal(plainInstruction('Lance le push de geonativefr/beltv5_fw_legacy#1', MERGE), false)
