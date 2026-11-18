@@ -98,13 +98,14 @@ Reviewers are requested only when the operator asks, and never on a draft.
 The description of the operator's own draft PR is published and edited without asking.
 A colleague's PR and any review comment are proposed first.
 
-A paragraph stating the ship order is always added to a description, without asking:
-add, re-read, report in one line. It names no pull request, it points to the sections
-(« Ships with or after the PRs in PRs Dependency », « Ships in any order with the Related
-PRs »), and every pull request goes in `PRs Dependency` or `Related PRs` as its full
-URL. Every URL written in those sections comes from that pull request's own files and
-body, never by eye. A TODO goes only on the PR that enables its
-step: it runs when that PR ships.
+A paragraph stating the ship order is added to a description without asking, and only for
+the sections that list a pull request: « Ships with or after the PRs in PRs Dependency »
+when PRs Dependency lists one, « Ships in any order with the Related PRs » when Related PRs
+lists one, both sentences when both do, and no paragraph when both are `none`. Add,
+re-read, report in one line. The paragraph names no pull request: the pull requests the
+sections list go in `PRs Dependency` or `Related PRs` as their full URL, taken from that
+pull request's own files and body, never by eye. A TODO goes only on the PR that
+enables its step: it runs when that PR ships.
 
 A pull request that changes an interface carries screenshots of what it changes,
 desktop AND mobile on a project with a mobile version. They sit above the four
