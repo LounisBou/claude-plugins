@@ -4,9 +4,10 @@
 // runs elsewhere never showed. Its module sends the row as one marked line, and the
 // coordinator's module takes that line out of the delivery before any model reads it:
 // the row lands in the coordinator's store (`remote/<name>`), and no turn on either side
-// spends a token on it. Sent only when what the pane shows changes — the wait, the fill
-// crossing a band — plus one refresh per bound so the age stays honest. Pure on purpose:
-// the handlers hold the $ (supervision.ts) and pass their reads in here.
+// spends a token on it. Sent at a turn's end alone, and only when what the pane shows changed
+// since the last send — the wait, the fill crossing a band, the pull requests, the questions held —
+// in the one message that turn's end sends (remote-round.ts joinLines). Pure on purpose: the
+// handlers hold the $ (supervision.ts) and pass their reads in here.
 import { roleOf } from './session-name.ts'
 import { watchNumberOf } from '../core/orchestration.ts'
 import type { SessionRow } from './supervision.ts'
@@ -25,9 +26,10 @@ export const ROW_BAND_PERCENT = 5
 // The pane's age says how old the reading is.
 export const REMOTE_STALE_AFTER_MS = 24 * 60 * 60 * 1000
 
-// At most one send per this bound while nothing changes: the pane draws the row's age,
-// and a row the sender stopped refreshing must age into the stale bound.
-export const ROW_REFRESH_MS = 10 * 60 * 1000
+// A row whose content did not change is sent again, at a turn's end, only once its last send is
+// half the stale bound old: a live orchestrator whose state holds still is never dropped as stale,
+// and none sends a message that tells the coordinator nothing new within hours.
+export const ROW_REFRESH_MS = REMOTE_STALE_AFTER_MS / 2
 
 // The receiver's caps: a line past them is refused whole, never cut.
 export const ROW_TEXT_CAP = 2048

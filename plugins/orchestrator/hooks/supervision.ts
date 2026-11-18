@@ -42,7 +42,7 @@ import {
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
-import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, seqOf, type QAck, type QEvent } from './remote-round.ts'
+import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLines, splitLines, seqOf, type QAck, type QEvent } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
@@ -51,7 +51,7 @@ import { unattendedPaneLines, type Unattended, type UnattendedPaneLine } from '.
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ROUND_DIR } from '../core/orchestration.ts'
 import { orchForm } from '../core/names.ts'
-import { fieldsOf, messageOf, type Host, type On, type SessionSendResult, type Timer, type UiOpenResult } from './host.ts'
+import { fieldsOf, messageOf, type Events, type Host, type On, type SessionSendResult, type Timer, type UiOpenResult } from './host.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
 import type { DeclaredWait } from './stop-gate.ts'
 
@@ -1662,11 +1662,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           busy: false,
           updated_at: reading.updated_at,
         })
-        // An orchestrator's row to a coordinator on another machine, when it is news.
-        if (walked.known && roleOf(walked.name) === 'orchestrator') {
-          const sent = await withDeadline(sendRow($, sessionId), RELAY_BOUND_MS)
-          if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
-        }
         // The window's tab shows the gate crossed, or left.
         await showGate($, reading)
         // An agent's measure past its gate: its orchestrator told once per crossing.
@@ -1748,6 +1743,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     return next(e)
   })
   on('turn.complete', {}, async ($, e, next) => {
+    // What this turn's end has to tell a coordinator on another machine goes in one message,
+    // sent whatever the reads before it did.
+    const outbox: Outgoing[] = []
     try {
       // A turn the person interrupted is his; any other end is read, a stop the host wrote included.
       if (!e.agentId && e.reason !== 'aborted' && e.isAborted !== true) {
@@ -1755,14 +1753,20 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         inFlightAtStop = null
         const sessionId = await $.session.id()
         const declared = { wait: declarations.current(), handedOver: declarations.handedOver(sessionId) }
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight, e.reason ?? 'answer', declared), RELAY_BOUND_MS)
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight, e.reason ?? 'answer', declared, outbox), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
-        const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
-        if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
+        const queued = await withDeadline(sendRow($, sessionId, outbox), RELAY_BOUND_MS)
+        if (isDegradedPass(queued)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
       }
     } catch (err) {
       await logLine($, 'supervision', `relay: ${messageOf(err)}`)
+    }
+    try {
+      const sent = await withDeadline(flushOutbox($, outbox), RELAY_BOUND_MS)
+      if (isDegradedPass(sent)) await logLine($, 'supervision', `send: did not finish within ${RELAY_BOUND_MS} ms`)
+    } catch (err) {
+      await logLine($, 'supervision', `send: ${messageOf(err)}`)
     }
     // The wait the relay just wrote, or none, is what the window's tab shows.
     if (!e.agentId) await showTurnEnd($)
@@ -1817,67 +1821,22 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // teaches this machine its address, for the relay and the row when the coordinator runs
   // elsewhere; a successor's « takeover confirmed » teaches an orchestrator who holds its open
   // questions once it hands over or ends. Anything else passes through untouched.
+  // A message of several marked lines (a remote orchestrator's turn end, flushOutbox) is read line
+  // by line, each as a delivery of its own: every one of them is the module's, consumed, and what
+  // a line would pass on to a model is dropped.
   on('session.receive', {}, async ($, e, next) => {
-    let passed = e
-    try {
-      if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
-        const delivery = deliveryOf(e.text)
-        const learnt = learntOf(delivery, Date.now())
-        // A write that fails here is one log line: the marked lines below are still consumed.
-        if (learnt) await learnCoordinator($, learnt, true).catch((err: unknown) => logLine($, 'supervision', `receive: ${messageOf(err)}`))
-        if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body), peerAddress(delivery))
-        const q = isQ(delivery.body) ? parseQ(delivery.body) : null
-        // A question asked with `ask` crossing machines (remote-asked.ts): its owner's push, taken
-        // by the coordinator alone, and the reply given on its replica, which its asker's model reads.
-        if (q?.event.kind === 'asked' || q?.event.kind === 'reply') {
-          const from = peerAddress(delivery)
-          if (!from) {
-            await logLine($, 'supervision', `receive: a remote ${q.event.kind} of ${q.id} came with no sender address, refused`)
-            return { consumed: `orchestrator: a remote ${q.event.kind} with no sender address, refused` }
-          }
-          if (q.event.kind === 'asked') {
-            if (await ownRole($) === 'coordinator') return await receiveAsked($, from, q.event.object)
-            await logLine($, 'supervision', `receive: a remote question asked with ask reached a session that is no coordinator: ${q.id}`)
-            return { consumed: 'orchestrator: a remote question asked with ask for no coordinator, dropped' }
-          }
-          const received = await receiveReply($, from, q.id, q.seq, q.event.reply)
-          if ('consumed' in received) return received
-          const at = e.text.indexOf(delivery.body)
-          passed = { ...e, text: at < 0 ? received.readable : e.text.slice(0, at) + received.readable + e.text.slice(at + delivery.body.length) }
-        } else if (q?.event.kind === 'answer') {
-          const received = await receiveAnswer($, delivery, { id: q.id, ...q.event })
-          if ('consumed' in received) return received
-          // The marked first line out, the readable answer in its place, the envelope kept.
-          const at = e.text.indexOf(delivery.body)
-          passed = { ...e, text: at < 0 ? received.readable : e.text.slice(0, at) + received.readable + e.text.slice(at + delivery.body.length) }
-        } else if (isQ(delivery.body)) {
-          return await receiveAsk($, delivery, q && q.event.kind === 'ask' ? { entry: q.event.entry, machine: q.event.machine } : null)
-        }
-        const withdrawal = parseWithdrawal(delivery.body)
-        if (withdrawal) {
-          const received = await receiveWithdrawal($, withdrawal, peerAddress(delivery))
-          if (received) return received
-        }
-        if (isMarked(delivery.body)) {
-          const received = await receiveRow($, delivery.body)
-          // A remote orchestrator's row is one of the deck's keys.
-          await refreshDeck($)
-          return received
-        }
-        if (learnt) await learnCoordinator($, learnt)
-        const successor = successorOf(delivery, Date.now())
-        const taken = successor ? await learnSuccessor($, successor) : null
-        if (taken) {
-          const sessionId = await $.session.id()
-          await tellAgentsSuccessor($, sessionId, taken)
-          // A session that spawned this successor hands it the work and the questions now.
-          if (declarations.handedOver(sessionId)) await handOver($, sessionId, taken)
-        }
-      }
-    } catch (err) {
-      await logLine($, 'supervision', `receive: ${messageOf(err)}`)
+    const delivery = !e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string' ? deliveryOf(e.text) : null
+    const lines = delivery ? splitLines(delivery.body) : null
+    if (!delivery || !lines) {
+      const read = await readDelivery($, e, declarations)
+      return isPassed(read) ? next(read.passed) : read
     }
-    return next(passed)
+    for (const line of lines) {
+      // A line that is not consumed reaches no model.
+      const read = await readDelivery($, { ...e, text: e.text.replace(delivery.body, () => line) }, declarations)
+      if (isPassed(read)) await logLine($, 'supervision', `receive: a line of a message of several was not the module's, dropped (${line.length} characters)`)
+    }
+    return { consumed: 'orchestrator: a message of several marked lines, read' }
   }).catch(async ($, e, next) => {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
@@ -2401,7 +2360,7 @@ export function entersRound(role: string | null): boolean {
 // read on the answer, else on the transcript's tail) is sent as one stop line (relayStop), work in
 // flight or not: nothing resumes it. Any other end that is no answer is read for that alone.
 export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer',
-  declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }): Promise<void> {
+  declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }, outbox: Outgoing[] = []): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2476,11 +2435,16 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   if (orchestrating && wait && patch) {
     const entry = roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString())
     await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, pending: entry.id, pending_key: key, name, pid })
-    const sent = await sendToCoordinator($, coordinator!, qAskLine(entry, await machineOf($)))
-    if (sent?.isDelivered) return
-    await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
-    const now = await readWait($, sessionId)
-    if (now && now.pending === entry.id) await writeWait($, sessionId, { ...now, pending: null, pending_key: null })
+    const item: Outgoing = {
+      to: coordinator!, line: qAskLine(entry, await machineOf($)),
+      settle: async sent => {
+        if (sent?.isDelivered) return
+        await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+        const now = await readWait($, sessionId)
+        if (now && now.pending === entry.id) await writeWait($, sessionId, { ...now, pending: null, pending_key: null })
+      },
+    }
+    outbox.push(item)
     return
   }
   /*
@@ -2993,11 +2957,12 @@ async function prsOf($: Host<'env' | 'fs'>, sessionId: string, repo: string | nu
   return prsInFlight(names, owners, sessionId, repo)
 }
 
-// An orchestrator's row, sent to a coordinator on another machine when it is news
+// An orchestrator's row, for a coordinator on another machine when it is news
 // (remote-row.ts): a coordinator on this machine reads the store itself, and none known
-// is nobody to send to. What was sent is kept only once delivered; a failure is one log
-// line, tried again at the next measure or turn end.
-export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string): Promise<void> {
+// is nobody to send to. It is sent at a turn's end alone, with the figures the host has at that
+// instant, in the turn's one message (flushOutbox); what was sent is kept only once delivered, a
+// failure is one log line, and the next turn's end sends it again.
+export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, outbox?: Outgoing[]): Promise<void> {
   const store = await storeOf($)
   const read = parseSessionRow(String(await $.fs.read(`${store}/${sessionKey(sessionId)}`).catch(() => '')))
   if (read?.role !== 'orchestrator') return
@@ -3005,14 +2970,47 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   if (!to || to.local) return
   const prs = await prsOf($, sessionId, read.repo)
   const waitText = String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => ''))
-  const row = remoteRowOf(withWait(read, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)))
+  const fill = await hostFill($)
+  // The reading is the one of this instant: its stamp is now, not the last measure's.
+  const measured = { ...read, updated_at: new Date().toISOString(), ...(fill ? { context_tokens: fill.tokens, context_percent: fill.percent, window: fill.window } : {}) }
+  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)))
   if (!row) return
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`
   if (!rowIsNews(row, parseRowSent(String(await $.fs.read(path).catch(() => ''))), now)) return
-  const sent = await sendToCoordinator($, to, rowText(row))
-  if (sent?.isDelivered) await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
-  else await logLine($, 'supervision', `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
+  const item: Outgoing = {
+    to, line: rowText(row),
+    settle: async sent => {
+      if (sent?.isDelivered) await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
+      else await logLine($, 'supervision', `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
+    },
+  }
+  if (outbox) outbox.push(item)
+  else await flushOutbox($, [item])
+}
+
+// The context fill as the host states it at this instant, none when it states none.
+async function hostFill($: Host<'session'>): Promise<{ tokens: number; percent: number; window: number } | null> {
+  try {
+    const { context } = await $.session.usage()
+    const { tokens, percent, window } = context ?? {}
+    return typeof tokens === 'number' && tokens > 0 && typeof percent === 'number' && typeof window === 'number' && window > 0 ? { tokens, percent, window } : null
+  } catch {
+    return null
+  }
+}
+
+// What a turn's end has to tell the coordinator on another machine: each line, the coordinator it
+// goes to, and what is done once the send answered. One turn is one message, its lines in order
+// (remote-round.ts splitLines), so the coordinator's phone shows one delivery for it.
+export type Outgoing = { to: Coordinator; line: string; settle: (sent: SessionSendResult) => Promise<void> }
+
+export async function flushOutbox($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, outbox: readonly Outgoing[]): Promise<void> {
+  const [first] = outbox
+  if (!first) return
+  const sent = await sendToCoordinator($, first.to, joinLines(outbox.map(item => item.line))).catch((err: unknown): SessionSendResult => ({ isDelivered: false, reason: messageOf(err) }))
+  // One item's settling that throws leaves the others' to run: a delivered row is still recorded.
+  for (const item of outbox) await item.settle(sent).catch((err: unknown) => logLine($, 'supervision', `send: ${messageOf(err)}`))
 }
 
 // A remote orchestrator's ask (remote-round.ts), consumed whatever it holds. In the coordinator's
@@ -3747,4 +3745,73 @@ async function repoRead($: Host<'process'>): Promise<string | null | undefined> 
   } catch {
     return undefined
   }
+}
+
+// A peer's delivery as the module reads it (the session.receive handler of `register`): the result
+// of a line the module consumes, or `{ passed }` with the event a model is to read.
+async function readDelivery($: Held, e: Events['session.receive'], declarations: Declarations): Promise<unknown> {
+  let passed = e
+  try {
+    if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
+      const delivery = deliveryOf(e.text)
+      const learnt = learntOf(delivery, Date.now())
+      // A write that fails here is one log line: the marked lines below are still consumed.
+      if (learnt) await learnCoordinator($, learnt, true).catch((err: unknown) => logLine($, 'supervision', `receive: ${messageOf(err)}`))
+      if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body), peerAddress(delivery))
+      const q = isQ(delivery.body) ? parseQ(delivery.body) : null
+      // A question asked with `ask` crossing machines (remote-asked.ts): its owner's push, taken
+      // by the coordinator alone, and the reply given on its replica, which its asker's model reads.
+      if (q?.event.kind === 'asked' || q?.event.kind === 'reply') {
+        const from = peerAddress(delivery)
+        if (!from) {
+          await logLine($, 'supervision', `receive: a remote ${q.event.kind} of ${q.id} came with no sender address, refused`)
+          return { consumed: `orchestrator: a remote ${q.event.kind} with no sender address, refused` }
+        }
+        if (q.event.kind === 'asked') {
+          if (await ownRole($) === 'coordinator') return await receiveAsked($, from, q.event.object)
+          await logLine($, 'supervision', `receive: a remote question asked with ask reached a session that is no coordinator: ${q.id}`)
+          return { consumed: 'orchestrator: a remote question asked with ask for no coordinator, dropped' }
+        }
+        const received = await receiveReply($, from, q.id, q.seq, q.event.reply)
+        if ('consumed' in received) return received
+        const at = e.text.indexOf(delivery.body)
+        passed = { ...e, text: at < 0 ? received.readable : e.text.slice(0, at) + received.readable + e.text.slice(at + delivery.body.length) }
+      } else if (q?.event.kind === 'answer') {
+        const received = await receiveAnswer($, delivery, { id: q.id, ...q.event })
+        if ('consumed' in received) return received
+        // The marked first line out, the readable answer in its place, the envelope kept.
+        const at = e.text.indexOf(delivery.body)
+        passed = { ...e, text: at < 0 ? received.readable : e.text.slice(0, at) + received.readable + e.text.slice(at + delivery.body.length) }
+      } else if (isQ(delivery.body)) {
+        return await receiveAsk($, delivery, q && q.event.kind === 'ask' ? { entry: q.event.entry, machine: q.event.machine } : null)
+      }
+      const withdrawal = parseWithdrawal(delivery.body)
+      if (withdrawal) {
+        const received = await receiveWithdrawal($, withdrawal, peerAddress(delivery))
+        if (received) return received
+      }
+      if (isMarked(delivery.body)) {
+        const received = await receiveRow($, delivery.body)
+        // A remote orchestrator's row is one of the deck's keys.
+        await refreshDeck($)
+        return received
+      }
+      if (learnt) await learnCoordinator($, learnt)
+      const successor = successorOf(delivery, Date.now())
+      const taken = successor ? await learnSuccessor($, successor) : null
+      if (taken) {
+        const sessionId = await $.session.id()
+        await tellAgentsSuccessor($, sessionId, taken)
+        // A session that spawned this successor hands it the work and the questions now.
+        if (declarations.handedOver(sessionId)) await handOver($, sessionId, taken)
+      }
+    }
+  } catch (err) {
+    await logLine($, 'supervision', `receive: ${messageOf(err)}`)
+  }
+  return { passed }
+}
+
+function isPassed(read: unknown): read is { passed: Events['session.receive'] } {
+  return typeof read === 'object' && read !== null && 'passed' in read
 }

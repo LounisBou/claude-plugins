@@ -7,7 +7,7 @@
 // acknowledgment, `[module-q-ack]`, by id, seq and the event it takes.
 import { expect, test } from 'claude-code/testing'
 import {
-  ASK_CAP, ANSWER_CAP, CONSENT_REPO_CAP, Q_LINE_CAP, Q_MARKER, Q_ACK_MARKER, qAskLine, qAnswerLine, parseQ, qAckLine, parseQAck, seqOf, isQ, isQAck,
+  ASK_CAP, ANSWER_CAP, CONSENT_REPO_CAP, Q_LINE_CAP, Q_MARKER, Q_ACK_MARKER, qAskLine, qAnswerLine, parseQ, qAckLine, joinLines, splitLines, parseQAck, seqOf, isQ, isQAck,
 } from '../remote-round.ts'
 import { roundEntry, type RoundEntry } from '../round.ts'
 import { RELAY_CAP, cutQuestion } from '../relay.ts'
@@ -247,4 +247,14 @@ test('the old acknowledgment lines are no event acknowledgment', () => {
   for (const old of [`[module-ack] {"id":"${id}","since":"${since}"}`, `[module-ack-answer] {"id":"${id}","since":"${since}"}`]) {
     expect([old, parseQAck(old), parseQ(old), isQAck(old), isQ(old)]).toEqual([old, null, null, false, false])
   }
+})
+
+test('the lines a turn end sends are joined and split back; a lone line, another marker or any other text is no batch', () => {
+  const entry = asked()
+  const ask = qAskLine(entry, 'far')
+  const row = '[module-row] {"name":"Orch: far"}'
+  expect(splitLines(joinLines([ask, row]))).toEqual([ask, row])
+  expect(splitLines(ask)).toBeNull()
+  expect(splitLines(`${ask}\nplease read`)).toBeNull()
+  expect(splitLines(`${row}\n${qAckLine({ id: entry.id, seq: 1, of: 'ask' })}`)).toBeNull()
 })
