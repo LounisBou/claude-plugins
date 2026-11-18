@@ -423,6 +423,21 @@ test('writeDeck leaves out a question asked with ask that his prompt in its aske
   expect([deck.round.open, deck.round.urgent]).toEqual([1, 0])
 })
 
+// A successor owns none of its predecessor's ci-watch files: the open pull requests its dispatch
+// record holds (the row's `unattended.open`, read at its turn end) are listed beside the watched ones.
+test('writeDeck lists the open pull requests of the orchestrator\'s record beside those its watches cover', async () => {
+  const fx = fake()
+  fx.files.set(`${STORE}/sessions/s-orch`, JSON.stringify(row({
+    updated_at: new Date().toISOString(),
+    unattended: { at: AT, line: null, prs: [], unread: [], open: ['acme/app#9', 'acme/web#2', 'acme/app#9', 'not a pull request'] },
+  })) + '\n')
+  fx.files.set(`${STATE}/ci-watch/acme_app-pr12.log`, '')
+  fx.files.set(`${STATE}/ci-watch/acme_app-pr12.log.session`, 's-orch\n')
+  await writeDeck(fx.dollar)
+  const deck: Deck = JSON.parse(fx.files.get(DECK)!)
+  expect(deck.orchestrators.find(o => o.name === 'Orch: belt')?.prs).toEqual(['acme/app#12', 'acme/app#9', 'acme/web#2'])
+})
+
 test('writeDeck writes nothing when the deck is not news', async () => {
   const fx = fake()
   await writeDeck(fx.dollar)

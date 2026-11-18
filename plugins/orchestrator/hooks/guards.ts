@@ -38,7 +38,7 @@ import {
 import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
-import { coordinatorAddress, REFERENCED, showPrStates } from './supervision.ts'
+import { coordinatorAddress, REFERENCED, refreshRowAndDeck, showPrStates } from './supervision.ts'
 import { pullRequestsRead } from './tab-state.ts'
 import { askedThisTurn, readAsked } from './question.ts'
 import { fieldsOf, messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
@@ -996,6 +996,8 @@ async function moduleTick($: Held, memory: TickMemory, timer: unknown): Promise<
       lines.push(...prs.lines)
       memory.watch = prs.watching
       settle = prs.settle
+      // The row took new pull requests while no turn ended: the deck and the remote coordinator's row say them now.
+      if (prs.moved) await refreshRowAndDeck($, await $.session.id())
     }
     if (lines.length > 0) {
       const taken: unknown = await $.prompt.submit({ text: lines.join('\n') })

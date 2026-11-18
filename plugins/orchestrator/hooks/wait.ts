@@ -16,7 +16,8 @@ import { fieldsOf, messageOf, type Host, type On } from './host.ts'
 import { configDir, logLine, stateDir } from './module-io.ts'
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { RETROSPECTIVE_CONTRACT, retrospectiveStartArgv } from '../core/learning.ts'
-import { holdsDone } from './unattended.ts'
+import { holdsDone, mergeWaits } from './unattended.ts'
+import { prKey, unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 import { holdsTodos, openFor, whoAmI } from './todo.ts'
 import { todoName } from './todo-format.ts'
 import { readAsked } from './question.ts'
@@ -26,6 +27,10 @@ type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clo
 
 // Why an operator wait is refused with no question of the session's open.
 export const ASK_FIRST = 'An operator wait waits on the questions this session asked with `ask`, and none is open: ask the question first with `ask`, then declare the wait. If you ask him nothing, declare another kind.'
+
+// Whether blocks names a pull request, as `owner/name#n` or `name#n`, not followed by another digit.
+const namesPr = (blocks: string, u: Unattended): boolean =>
+  [prKey(u.repo, u.pr), `${u.repo.slice(u.repo.indexOf('/') + 1)}#${u.pr}`].some(ref => new RegExp(`(?<![\\w./-])${ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\d)`, 'i').test(blocks))
 
 // What `blocks` may hold: one line, short enough to be a reason and not a report.
 export const BLOCKS_MAX = 300
@@ -38,8 +43,9 @@ const KIND_NEEDS: Record<WaitKind, string> = {
 
 // The tool's input, validated: the declaration, or why it is none. `asked` holds the session's own
 // open questions asked with `ask` (question.ts): an operator wait waits on them, its blocks theirs
-// when it names none, and is refused with none open.
-export function parseDeclaration(input: unknown, asked: readonly { id: string; blocks: string }[] = []): { wait: DeclaredWait } | { error: string } {
+// when it names none, and is refused with none open, unless pull requests of the record wait on his merge
+// (`merging`): the wait then names them, in blocks or, when it names none, by itself.
+export function parseDeclaration(input: unknown, asked: readonly { id: string; blocks: string }[] = [], merging: readonly Unattended[] = []): { wait: DeclaredWait } | { error: string } {
   const e = (input ?? {}) as { kind?: unknown; blocks?: unknown; urgent?: unknown; consent_kind?: unknown; consent_repo?: unknown; consent_pr?: unknown; consent_env?: unknown }
   if (typeof e.kind !== 'string' || !(WAIT_KINDS as readonly string[]).includes(e.kind)) {
     return { error: `kind is one of ${WAIT_KINDS.join(', ')}` }
@@ -55,9 +61,15 @@ export function parseDeclaration(input: unknown, asked: readonly { id: string; b
   if (asksConsent && consent === undefined) {
     return { error: `consent is consent_kind with consent_repo (owner/name): "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env (${DEPLOY_ENVS.join(', ')})` }
   }
-  if (kind === 'operator' && asked.length === 0) return { error: ASK_FIRST }
+  if (kind === 'operator' && asked.length === 0 && merging.length === 0) return { error: ASK_FIRST }
   const named = String(e.blocks ?? '').replace(/\s+/g, ' ').trim()
-  const blocks = named === '' && kind === 'operator' ? asked.map(question => question.blocks).join('; ').slice(0, BLOCKS_MAX) : named
+  // With no question of the session's open, an operator wait waits on the pull requests that wait on his merge: it names every one, or none and says them itself.
+  const unnamed = named === '' ? [] : merging.filter(u => !namesPr(named, u))
+  if (kind === 'operator' && asked.length === 0 && unnamed.length > 0) {
+    return { error: `An operator wait with no question of yours open names in blocks every pull request waiting on his merge: ${unattendedLine(unnamed, []) ?? ''}` }
+  }
+  const standing = kind === 'operator' && asked.length === 0 && named === '' ? (unattendedLine(merging, []) ?? '').slice(0, BLOCKS_MAX) : ''
+  const blocks = named === '' && kind === 'operator' ? standing || asked.map(question => question.blocks).join('; ').slice(0, BLOCKS_MAX) : named
   if (kind === 'done') return { wait: { kind, blocks: '' } }
   if (blocks === '') return { error: `a ${kind} wait names in blocks ${KIND_NEEDS[kind]}` }
   if (blocks.length > BLOCKS_MAX) return { error: `blocks holds at most ${BLOCKS_MAX} characters` }
@@ -253,7 +265,10 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   on('tool.call', { tool: `mcp__orchestrator__${WAIT_TOOL}` }, async ($, e) => {
     // A subagent's turn is not the session's: its end wakes the session, not a wait of its own.
     if (e.agentId) return { result: `${WAIT_TOOL} is the main session's: a subagent ends its turn by answering.`, isError: true }
-    const parsed = parseDeclaration(e, await openAsked($))
+    const asked = await openAsked($)
+    // With no question of its own open, an operator wait may wait on the pull requests that wait on his merge.
+    const merging = e['kind'] === 'operator' && asked.length === 0 ? await mergeWaits($) : []
+    const parsed = parseDeclaration(e, asked, merging)
     if ('error' in parsed) return { result: parsed.error, isError: true }
     // A done or a deferred wait is held while a pull request is unattended (unattended.ts).
     // The pull requests are the successor's once the session handed over: it is not held on them.

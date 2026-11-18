@@ -19,7 +19,7 @@ import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type N
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
 import { holdsOf, readyAgentLine } from './ready-agent.ts'
-import { archive, boundedReading, readOr, registered } from './unattended.ts'
+import { archive, boundedReading, readOr, registered, republish } from './unattended.ts'
 
 // The nouns a write holds.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
@@ -228,12 +228,15 @@ export function anomalyLine(u: Unattended): string {
  * on a merged one (mergeRelayLine), and one for each entering the anomaly, each once (`told`, what
  * was told, updated here: one that leaves the anomaly is dropped, so a re-entry is told again). `settle`
  * archives the ended lines once their wake is delivered; `watching`, whether a line is still open or
- * a reader wants the file: the tick keeps it current while either holds.
+ * a reader wants the file: the tick keeps it current while either holds; `moved`, whether the session's row
+ * took new pull requests from this reading, which the deck and the remote row are then told (guards.ts).
  * A reading that failed tells nothing and keeps watching.
  */
-export async function prWake($: Held, told: Set<string>, now: number = Date.now()): Promise<{ lines: string[]; watching: boolean; settle: () => Promise<void> }> {
+export async function prWake($: Held, told: Set<string>, now: number = Date.now()): Promise<{ lines: string[]; watching: boolean; moved: boolean; settle: () => Promise<void> }> {
   const reading = await boundedReading($, await $.session.id(), now)
-  if (reading === null) return { lines: [], watching: true, settle: async () => undefined }
+  if (reading === null) return { lines: [], watching: true, moved: false, settle: async () => undefined }
+  // The row's pull requests follow the forge between turn ends: a session waiting on the operator's merge takes no turn.
+  const moved = await republish($, await $.session.id(), reading).catch(async err => { await logLine($, 'ledger', `row not republished: ${messageOf(err)}`); return false })
   const lines: string[] = []
   // What is told now: the anomalies and the ended pull requests, the latter keyed apart so an
   // archive that failed is not told again at every tick; what is no longer either is dropped.
@@ -287,5 +290,5 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
       }
     }
   }
-  return { lines, watching: reading.kept.length > 0 || reading.wanted, settle }
+  return { lines, watching: reading.kept.length > 0 || reading.wanted, moved, settle }
 }

@@ -5,8 +5,8 @@
 // prompt's context and the session's row; and the one refusal of a done or a deferred wait.
 import { expect, test } from 'claude-code/testing'
 import { readUnattended, register as registerUnattended, unattendedRefusal } from '../unattended.ts'
-import { openOf, readOr } from '../unattended.ts'
-import { register as registerWait, Declarations } from '../wait.ts'
+import { openOf, readOr, republish } from '../unattended.ts'
+import { register as registerWait, Declarations, ASK_FIRST, BLOCKS_MAX, parseDeclaration } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
 import type { Reply } from 'claude-code/testing'
@@ -27,7 +27,7 @@ const row = (role: string, name: string, repo: string | null = 'acme/app', extra
   JSON.stringify({ role, name, repo, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString(), ...extra })
 
 // `extra`: lines of the session's own record beside the ones it has (pull requests 7, 8, 5, 6 and 9).
-type Answers = { forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null | undefined; extra?: string[] }
+type Answers = { forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null | undefined; extra?: string[]; session?: string }
 
 // Pull request 11, an agent that does not run on it, last set well before.
 const ELEVEN = line(11, 'working', { agent: 'Agent: eleven' }, '2026-11-11T08:00:00Z')
@@ -46,6 +46,8 @@ function world(answers: Answers = {}) {
       line(9, 'working', { agent: 'Agent: nine' }),
       ...(answers.extra ?? []),
     ].join('\n') + '\n'],
+    // A successor of the same orchestration: it has registered no record.
+    [`${MODULE}/store/sessions/s-fresh`, row('orchestrator', 'Orch: app')],
     [`${MODULE}/store/sessions/s-other`, row('orchestrator', 'Orch: web')],
     [`${MODULE}/records/s-other`, `${OTHER_RECORD}\n`],
     [OTHER_RECORD, line(10, 'working', { agent: 'Agent: ten' }) + '\n'],
@@ -56,7 +58,7 @@ function world(answers: Answers = {}) {
   const dollar = hostOf({
     plugin: { root: '/plugins/orch' },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : undefined) },
-    session: { id: async () => 's-orch' },
+    session: { id: async () => answers.session ?? 's-orch' },
     clock: { sleep: async () => undefined },
     fs: {
       read: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
@@ -140,10 +142,15 @@ test('the turn end says both lines, publishes the kind of each pull request, and
   expect(published.prs.map((u: { pr: number; waits?: { why: string } }) => [u.pr, u.waits?.why])).toEqual([[8, 'hold'], [9, 'ready']])
   expect(published.line).toBe('Attend ton geste : acme/app#8 (en pause), acme/app#9 (Ready)')
   expect((await handlers['prompt.submit'](waitsOnly.dollar, { text: 'go' })).context).toEqual([published.line])
-  // Rows closed, only what rests on the operator left: nothing alarms, the done is taken.
+  // Rows closed, only what rests on the operator left: nothing alarms, but a done is refused while a Ready pull
+  // request waits on his merge (the one On Hold is his own pause, not named); an operator wait naming it is taken.
   const declare = declaring(new Declarations())
   waitsOnly.files.set(RECORD, (waitsOnly.files.get(RECORD) ?? '').replace('"state":"open"', '"state":"closed"'))
-  expect((await declare(waitsOnly.dollar, { kind: 'done' })).isError).toBe(undefined)
+  const pending = await declare(waitsOnly.dollar, { kind: 'done' })
+  expect(pending.isError).toBe(true)
+  expect(pending.result).toContain('Not done: Attend ton geste : acme/app#9 (Ready)')
+  expect(pending.result).not.toContain('acme/app#8')
+  expect((await declare(waitsOnly.dollar, { kind: 'operator', blocks: 'acme/app#9' })).isError).toBe(undefined)
   // The same with one pull request in anomaly: the refusal names it alone.
   const withAnomaly = world({ forge: labelled({ 8: ['On Hold'], 9: ['Ready'] }, [7, 8, 6, 9, 10, 11]), extra: [ELEVEN] })
   withAnomaly.files.set(RECORD, (withAnomaly.files.get(RECORD) ?? '').replace('"state":"open"', '"state":"closed"'))
@@ -466,6 +473,117 @@ test('declare_wait refuses done and deferred while a pull request is unattended,
   closed(unreadFiles)
   expect((await declare(unread, { kind: 'done' })).isError).toBe(undefined)
   expect(unattendedRefusal('En anomalie : x#1 (sans agent depuis ?)')).toContain('dispatch-record.sh pr <record>')
+})
+
+const closedRows = (files: Map<string, string>) => files.set(RECORD, (files.get(RECORD) ?? '').replace('"state":"open"', '"state":"closed"'))
+
+test('declare_wait refuses a done while a Ready pull request or a wait on the operator is left, saying both ways out; one On Hold is not left', async () => {
+  const declare = declaring(new Declarations())
+  const ready = world({ forge: labelled({ 8: ['On Hold'], 9: ['Ready'] }) })
+  closedRows(ready.files)
+  const refused = await declare(ready.dollar, { kind: 'done' })
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toContain('acme/app#9 (Ready)')
+  expect(refused.result).toContain('in auto-merge')
+  expect(refused.result).toContain('operator wait')
+  // A line of the record that waits on him, set a moment ago, is a merge waiting too.
+  const waiting = world({ forge: labelled({}, [8]) })
+  closedRows(waiting.files)
+  waiting.files.set(RECORD, [JSON.stringify({ id: 1, state: 'closed', label: 'a row' }), line(8, 'waiting', { on: 'le merge de l\'opérateur' }, '2026-11-14T10:59:00Z')].join('\n') + '\n')
+  expect((await declare(waiting.dollar, { kind: 'done' })).result).toContain('acme/app#8 (attend le merge de l\'opérateur')
+  // On Hold alone: his own pause, nothing waits on his merge; and a deferred wait is the done's alone to be held.
+  const paused = world({ forge: labelled({ 8: ['On Hold'], 9: ['On Hold'] }) })
+  closedRows(paused.files)
+  expect((await declare(paused.dollar, { kind: 'done' })).isError).toBe(undefined)
+  expect((await declare(ready.dollar, { kind: 'deferred', blocks: '1 items' })).isError).toBe(true)  // the deferred wait is refused for its own reason: nothing the operator put off
+  expect((await declare(ready.dollar, { kind: 'deferred', blocks: '1 items' })).result).not.toContain('Attend ton geste')
+})
+
+test('an operator wait with no question asked is taken when its blocks name every pull request waiting on his merge, and says them itself when it names none', async () => {
+  const declarations = new Declarations()
+  const declare = declaring(declarations)
+  const { dollar, files } = world({ forge: labelled({ 8: ['Ready'], 9: ['Ready'] }) })
+  closedRows(files)
+  // No pull request named: refused, with the ones that wait.
+  const none = await declare(dollar, { kind: 'operator', blocks: 'the schema' })
+  expect(none.isError).toBe(true)
+  expect(none.result).toContain('acme/app#8 (Ready), acme/app#9 (Ready)')
+  expect(declarations.current()).toBe(null)
+  // One of two named: refused, naming the other; a number another pull request starts with names none.
+  const one = await declare(dollar, { kind: 'operator', blocks: 'merge app#9 please' })
+  expect(one.isError).toBe(true)
+  expect(one.result).toContain('acme/app#8')
+  expect(one.result).not.toContain('acme/app#9')
+  expect((await declare(dollar, { kind: 'operator', blocks: 'acme/app#80, acme/app#90' })).isError).toBe(true)
+  // Another owner's `app#9`, or a word that ends like the name, is not the name.
+  expect((await declare(dollar, { kind: 'operator', blocks: 'other/app#9 and xapp#8' })).isError).toBe(true)
+  // Every one named, by its full name or its short one; its wait carries no question, and his urgency stays.
+  expect((await declare(dollar, { kind: 'operator', blocks: 'merge app#9 and acme/app#8, ACME/APP#9', urgent: true })).isError).toBe(undefined)
+  expect(declarations.current()).toEqual({ kind: 'operator', blocks: 'merge app#9 and acme/app#8, ACME/APP#9', urgent: true, asked: [] })
+  // Blocks left out: the wait is the pull requests' line.
+  expect((await declare(dollar, { kind: 'operator' })).isError).toBe(undefined)
+  expect(declarations.current()?.blocks).toBe('Attend ton geste : acme/app#8 (Ready), acme/app#9 (Ready)')
+  // Blocks past their bound are refused as every operator wait's are.
+  expect((await declare(dollar, { kind: 'operator', blocks: `acme/app#8 acme/app#9 ${'x'.repeat(BLOCKS_MAX)}` })).result).toBe(`blocks holds at most ${BLOCKS_MAX} characters`)
+  // Nothing waits on his merge (Not Ready): an operator wait still needs a question asked with `ask`.
+  const idle = world()
+  closedRows(idle.files)
+  expect((await declare(idle.dollar, { kind: 'operator', blocks: 'acme/app#9' })).result).toBe(ASK_FIRST)
+  // The same where the forge cannot be read: nothing is known to wait, the question comes first.
+  const unreadable = world({ forge: { 'acme/app': null } })
+  closedRows(unreadable.files)
+  expect((await declare(unreadable.dollar, { kind: 'operator', blocks: 'acme/app#9' })).result).toBe(ASK_FIRST)
+})
+
+test('parseDeclaration takes the pull requests waiting on his merge beside a question already asked: the question\'s wait is the one it was', () => {
+  const merging = [{ repo: 'acme/app', pr: 9, since: null, waits: { why: 'ready' as const } }]
+  const asked = [{ id: 'q-1', blocks: 'the schema' }]
+  expect(parseDeclaration({ kind: 'operator' }, asked, merging)).toEqual({ wait: { kind: 'operator', blocks: 'the schema', asked: ['q-1'] } })
+  expect(parseDeclaration({ kind: 'operator', blocks: 'the schema' }, asked, merging)).toEqual({ wait: { kind: 'operator', blocks: 'the schema', asked: ['q-1'] } })
+})
+
+test('the turn end publishes the pull requests of the record that the forge reads open, attended or not', async () => {
+  const handlers = mounted()
+  const { dollar, files } = world({ forge: labelled({ 9: ['Ready'] }) })
+  await handlers['turn.complete'](dollar, { reason: 'answer' })
+  // Each line whose pull request the forge lists (7 has its agent, 8 waits on the CI, 6 is parked); 5 is not listed.
+  expect(JSON.parse(files.get(`${MODULE}/store/sessions/s-orch`) ?? '{}').unattended.open).toEqual(['acme/app#7', 'acme/app#8', 'acme/app#6', 'acme/app#9'])
+})
+
+test('a forge that could not be read leaves the record\'s lines of its repository listed open, never dropped', async () => {
+  const { dollar } = world({ forge: { 'acme/app': null } })
+  const reading = await readUnattended(dollar, 's-orch', NOW)
+  expect(reading?.unread).toEqual(['acme/app'])
+  expect(reading?.openKeys).toEqual(['acme/app#7', 'acme/app#8', 'acme/app#5', 'acme/app#6', 'acme/app#9'])
+})
+
+test('the tick republishes the row\'s pull requests once, and leaves the row alone when the reading did not change', async () => {
+  const { dollar, files } = world({ forge: labelled({ 9: ['Ready'] }) })
+  const path = `${MODULE}/store/sessions/s-orch`
+  const read = async () => readUnattended(dollar, 's-orch', NOW)
+  expect(await republish(dollar, 's-orch', (await read())!)).toBe(true)
+  const first = files.get(path)
+  expect(JSON.parse(first ?? '{}').unattended.open).toEqual(['acme/app#7', 'acme/app#8', 'acme/app#6', 'acme/app#9'])
+  // The same reading again writes nothing, not even a newer stamp.
+  await new Promise(done => setTimeout(done, 5))
+  expect(await republish(dollar, 's-orch', (await read())!)).toBe(false)
+  expect(files.get(path)).toBe(first)
+})
+
+test('a successor that never read or wrote the record, a session id it has registered nothing under, answers for the project\'s pull requests all the same', async () => {
+  const declare = declaring(new Declarations())
+  const { dollar, files } = world({ session: 's-fresh', forge: labelled({ 8: ['On Hold'], 9: ['Ready'] }) })
+  closedRows(files)
+  expect(files.has(`${MODULE}/records/s-fresh`)).toBe(false)
+  const reading = await readUnattended(dollar, 's-fresh', NOW)
+  expect(reading?.list.map(u => [u.pr, u.waits?.why])).toEqual([[8, 'hold'], [9, 'ready']])
+  expect(reading?.openKeys).toEqual(['acme/app#7', 'acme/app#8', 'acme/app#6', 'acme/app#9'])
+  const refused = await declare(dollar, { kind: 'done' })
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toContain('acme/app#9 (Ready)')
+  expect((await declare(dollar, { kind: 'operator', blocks: 'acme/app#9' })).isError).toBe(undefined)
+  // Another orchestration's record, or one no owner file names, is not the project's: pull request 10 is nobody's here.
+  expect(reading?.list.some(u => u.pr === 10)).toBe(false)
 })
 
 test('declare_wait takes a done from a session that handed over: the unattended pull requests are its successor\'s', async () => {
