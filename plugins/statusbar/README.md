@@ -10,6 +10,11 @@ ctx: 26% │ 5h: 47% ▓▓▓▓▓░░░░░ → 2h13 │ 7d: 50% ▓▓�
 
 **Line 1** — current directory · enriched git branch · open PR · model · session name · open questions
 **Line 2** — context consumed · 5-hour quota · 7-day quota · lines added/removed
+**Line 3** — only while a quota window, at its pace so far, is used up before it resets, in red:
+`⚠ at this rate the 5h window is exhausted before its reset (at 14:30)`. It reads the `rate_limits`
+the host already sends (the percentage used and the reset; the window is 5 hours or 7 days long) and
+nothing else: no call, no file. A window says nothing during its first tenth. It follows `SHOW_USAGE`
+and, for the 7-day window, `SHOW_SEVEN_DAY`.
 
 ## Install
 

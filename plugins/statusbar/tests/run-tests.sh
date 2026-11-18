@@ -31,10 +31,15 @@ config_with() {
   printf '%s' "$f"
 }
 
+# The pace line (« at this rate … exhausted before its reset ») is the third line, drawn only while a
+# window runs out at its pace so far; the cases of the first two lines carry quotas that do, so `check`
+# drops it and the section « the pace of a quota window » reads it with `check_all_lines`.
+PACE_LINE='^⚠ at this rate the '
+
 # check <name> <config> <payload> <expected multi-line output>
 check() {
   local name="$1" config="$2" payload="$3" expected="$4" actual
-  actual=$(printf '%s' "$payload" | STATUSBAR_CONFIG="$config" bash "$SCRIPT" | strip_ansi)
+  actual=$(printf '%s' "$payload" | STATUSBAR_CONFIG="$config" bash "$SCRIPT" | strip_ansi | grep -v "$PACE_LINE")
   if [ "$actual" = "$expected" ]; then
     printf '  ok   %s\n' "$name"
     pass=$((pass + 1))
@@ -42,6 +47,19 @@ check() {
     printf '  FAIL %s\n' "$name"
     printf '       expected: %s\n' "$(printf '%s' "$expected" | tr '\n' '⏎')"
     printf '       actual:   %s\n' "$(printf '%s' "$actual"   | tr '\n' '⏎')"
+    fail=$((fail + 1))
+  fi
+}
+
+# check_all_lines <name> <config> <payload> <expected output, every line>
+check_all_lines() {
+  local name="$1" config="$2" payload="$3" expected="$4" actual
+  actual=$(printf '%s' "$payload" | STATUSBAR_CONFIG="$config" bash "$SCRIPT" | strip_ansi)
+  if [ "$actual" = "$expected" ]; then
+    printf '  ok   %s\n' "$name"; pass=$((pass + 1))
+  else
+    printf '  FAIL %s\n       expected: %s\n       actual:   %s\n' "$name" \
+      "$(printf '%s' "$expected" | tr '\n' '⏎')" "$(printf '%s' "$actual" | tr '\n' '⏎')"
     fail=$((fail + 1))
   fi
 }
@@ -541,6 +559,64 @@ check "empty stdin does not crash" "$ALL_ON" "" \
 
 check "invalid JSON does not crash" "$ALL_ON" "not json at all" \
 "Usage: ~"
+
+echo "== the pace of a quota window =="
+
+# A window's length and the reset the host sends give its start; the pace so far gives the end.
+# Reset times print as the status line does, so the expectation reads the platform's date.
+reset_clock() {
+  if [ "$(defaults read -g AppleICUForce24HourTime 2>/dev/null)" = "1" ]; then date -r "$1" +%H:%M 2>/dev/null || date -d "@$1" +%H:%M
+  else LC_ALL=C date -r "$1" "+%I:%M %p" 2>/dev/null || LC_ALL=C date -d "@$1" "+%I:%M %p"
+  fi
+}
+H5="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"rate_limits\":{\"five_hour\":"
+CLOCK_2H=$(reset_clock "$IN_2H")
+# 2h13 left: 2h47 of 5h gone. 80 % used at that pace is 143 % at the reset.
+check_all_lines "5h over its pace says it runs out before its reset" "$ALL_ON" \
+  "${H5}{\"used_percentage\":80,\"resets_at\":$IN_2H}}}" \
+"plain
+⚠ 5h: 80% ▓▓▓▓▓▓▓▓░░ → 2h13
+⚠ at this rate the 5h window is exhausted before its reset (at $CLOCK_2H)"
+# 55 % at 56 % of the window is 99 % at the reset: no line.
+check_all_lines "5h within its pace shows no third line" "$ALL_ON" \
+  "${H5}{\"used_percentage\":55,\"resets_at\":$IN_2H}}}" \
+"plain
+5h: 55% ▓▓▓▓▓▓░░░░ → 2h13"
+# Under a tenth of the window gone, the pace says nothing: 9 % in the first 20 minutes.
+check_all_lines "the first tenth of a window says nothing" "$ALL_ON" \
+  "${H5}{\"used_percentage\":9,\"resets_at\":$((NOW + 16830))}}}" \
+"plain
+5h: 9% ▓░░░░░░░░░ → 4h40"
+# A reset in the past or beyond the window's length is no window.
+check_all_lines "a reset already past gives no line" "$ALL_ON" \
+  "${H5}{\"used_percentage\":90,\"resets_at\":$((NOW - 60))}}}" \
+"plain
+⚠ 5h: 90% ▓▓▓▓▓▓▓▓▓░"
+check_all_lines "a reset beyond the window's length gives no line" "$ALL_ON" \
+  "${H5}{\"used_percentage\":90,\"resets_at\":$((NOW + 20010))}}}" \
+"plain
+⚠ 5h: 90% ▓▓▓▓▓▓▓▓▓░ → 5h33"
+# No rate_limits, no line.
+check_all_lines "without rate_limits there is no third line" "$ALL_ON" \
+  "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"}}" \
+"plain
+Usage: ~"
+# The 7-day window is named when the 5-hour one is fine: 3d left of 7d, 75 % used = 131 %.
+D7="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":10,\"resets_at\":$IN_2H},\"seven_day\":"
+check_all_lines "7d over its pace is named with its reset date" "$ALL_ON" \
+  "${D7}{\"used_percentage\":75,\"resets_at\":$IN_3D}}}" \
+"plain
+5h: 10% ▓░░░░░░░░░ → 2h13 │ 7d: 75% ▓▓▓▓▓▓▓▓░░ → 3d
+⚠ at this rate the 7d window is exhausted before its reset (at $(LC_ALL=C date -r "$IN_3D" +%d/%m 2>/dev/null || date -d "@$IN_3D" +%d/%m))"
+# The line is red, and the quota setting hides it with the quotas.
+RED_LINE=$(printf '%s' "${H5}{\"used_percentage\":80,\"resets_at\":$IN_2H}}}" | STATUSBAR_CONFIG="$ALL_ON" bash "$SCRIPT" | sed -n 3p)
+case "$RED_LINE" in
+  "${ESC}[0;31m⚠ at this rate"*"${ESC}[0m") printf '  ok   the pace line is red\n'; pass=$((pass + 1)) ;;
+  *) printf '  FAIL the pace line is red\n       actual: %q\n' "$RED_LINE"; fail=$((fail + 1)) ;;
+esac
+check_all_lines "SHOW_USAGE=0 hides the pace line with the quotas" "$(config_with SHOW_USAGE=0 SHOW_DIRECTORY=1)" \
+  "${H5}{\"used_percentage\":80,\"resets_at\":$IN_2H}}}" \
+"plain"
 
 echo "== settings are data, dates are portable, git takes no lock =="
 
