@@ -38,80 +38,24 @@ $ARGUMENTS
 
 ### Automatic mode
 
-The check runs in **automatic mode** when the arguments contain `mode=auto`, or when the `<norms-scope>` block carries a `mode: automatic` line (`ORCHESTRATOR_SPAWNED` is set and not empty). Without a block, `mode=auto` in the arguments or a non-empty `ORCHESTRATOR_SPAWNED` in the environment is enough. Otherwise the check is interactive and Steps 6 to 8 apply as written.
+The check runs in **automatic mode** when the arguments contain `mode=auto`, or when the `<norms-scope>` block carries a `mode: automatic` line (`ORCHESTRATOR_SPAWNED` is set and not empty). Otherwise the check is interactive and Steps 6 to 8 apply as written.
 
 In automatic mode nobody types in this session, so nothing waits for an answer:
 
 1. Run Steps 0 to 5 as usual.
 2. Ask no question (no `AskUserQuestion`), wait for no one, edit no code, make no commit. Skip Steps 6 to 8.
 3. Report every finding in one table: severity, agent, `file:line`, issue, proposed fix.
-4. Call the record tool (`check_done`) with `{open, fixed: 0, passed, auto: true}`: `open` is the number of ERROR findings, `passed` the number of WARNING and INFO findings (they are passed automatically as non-blocking). An ERROR the brief sets aside goes in `setAside`, with its `reason`, not in `open`.
+4. Call the record tool (`check_done`) with `{open: 0, fixed: 0, passed: 0, auto: true}`: the tool counts the findings the agents reported itself and reads no other figure. An ERROR the brief sets aside goes in `setAside`, with its `reason`.
 5. Print the line it answers (`record: …`), verbatim, as the last line of the report, before any status line. When the tool is not in the tool list, print nothing.
 
 ### Step 0: Precomputed Scope
 
-When the arguments above end with a `<norms-scope>` block, the plugin has already run Steps 1 to 3 for this run: the base commit, the changed files and their classes, the project type, the CONTRIBUTING.md status, the applicable and skipped agents, the agents the words request and the validated reference paths. Use those values as given and go to Step 4. The user's own words are the text before the block.
+The arguments end with a `<norms-scope>` block, computed by the plugin before this command runs: the base commit, the changed files and their classes, the project type, the CONTRIBUTING.md status, the applicable and skipped agents, the agents the words request and the validated reference paths. Use those values as given. The user's own words are the text before the block.
 
-Run Steps 1 to 3 yourself only when the block is absent.
+A block with a `refused:` line: print that line to the user as it is, and stop. No block at all (the plugin's hooks did not run): say so and stop.
 
-### Step 1: Detect Project Type
+When the block says `requested agents: named inside free text`, pick the agents from the words with these shortcuts, among the block's `applicable agents` only:
 
-Check for project type indicators:
-
-| Indicator File | Project Type |
-|----------------|--------------|
-| `package.json` | JavaScript/TypeScript |
-| `composer.json` | PHP |
-| `requirements.txt` / `pyproject.toml` | Python |
-| `Cargo.toml` | Rust |
-| `go.mod` | Go |
-| `Gemfile` | Ruby |
-| `pom.xml` / `build.gradle` | Java/Kotlin |
-| `*.csproj` / `*.sln` | C#/.NET |
-
-### Step 1.5: Detect Project Norms
-
-Check if `CONTRIBUTING.md` exists at the project root:
-
-```bash
-ls CONTRIBUTING.md 2>/dev/null
-```
-
-- If found: note "Project norms: CONTRIBUTING.md found (agents will apply project-specific rules)"
-- If not found: note "Project norms: no CONTRIBUTING.md (agents will discover conventions from codebase)"
-
-Include this status in the summary report.
-
-### Step 2: Get Changed Files
-
-```bash
-BASE=$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve_base.sh" [<base>]) || exit 1
-git diff --name-only "$BASE"...HEAD
-```
-
-`<base>` is the optional `base=<branch>` token of the arguments (for example `/norms:check base=develop`). Without it the script uses the remote default branch, then `main`, and says so on stderr: tell the user. Pass `$BASE` to every agent that needs the diff.
-
-Classify each file into categories:
-- **source**: Application code files
-- **test**: Test files (`*.test.*`, `*.spec.*`, `*_test.*`, `*/tests/*`, `*/test/*`)
-- **config**: Configuration files (`*.json`, `*.yml`, `*.yaml`, `*.toml`, `*.xml`, `*.env*`)
-
-### Step 3: Determine Applicable Agents
-
-| Agent | Condition | Skip reason |
-|-------|-----------|-------------|
-| `norms-pattern-conformity` | Any source file changed | No source files |
-| `norms-variable-naming` | Any source file changed | No source files |
-| `norms-test-structure` | Any test file changed | No test files |
-| `norms-diff-scope` | Always | Never skipped |
-| `norms-import-organization` | Source files changed (not config-only) | Config-only changes |
-| `norms-magic-values` | Source files changed (not config-only) | Config-only changes |
-| `norms-documentation` | Source files changed (not test-only or config-only) | Test-only or config-only |
-| `norms-test-coverage` | Tests directory exists in project | No test infrastructure |
-
-If user specified agents via arguments, only run those (e.g., `/norms:check naming tests`).
-
-Available agent shortcuts:
 - `pattern` or `conformity` → norms-pattern-conformity
 - `naming` or `variables` → norms-variable-naming
 - `tests` or `test-structure` → norms-test-structure
@@ -120,23 +64,8 @@ Available agent shortcuts:
 - `magic` → norms-magic-values
 - `docs` or `documentation` → norms-documentation
 - `coverage` → norms-test-coverage
-- `all` → run all applicable (default)
 
-### External Reference Paths
-
-The user can specify external codebases as pattern references in natural language. Parse `$ARGUMENTS` for path references.
-
-**Examples:**
-- `/norms:check use also ../project1/src as pattern reference`
-- `/norms:check check patterns against ~/dev/api-gateway/src`
-- `/norms:check pattern ref ../project1/src ../project2/src`
-- `/norms:check use ../backend and ../shared-lib as references`
-
-**How to parse:**
-1. Look for filesystem paths in the arguments (anything starting with `/`, `../`, `./`, `~/`, or looking like a relative path)
-2. Verify each path exists using `ls`
-3. If paths are found, pass them to the `norms-pattern-conformity` agent as `external_references`
-4. External references are **additional** — the agent still searches the current project first, then also looks in external paths for reference files of the same type
+The block's `external references (validated)` go to `norms-pattern-conformity` as `external_references`, in addition to the current project it searches first; tell the user the ones the block says were not found.
 
 ### Step 4: Launch Agents in Parallel
 
@@ -156,9 +85,9 @@ The user can specify external codebases as pattern references in natural languag
 Each agent prompt MUST include:
 1. Project type and framework
 2. List of changed files relevant to that agent
-3. The full diff for those files (from `git diff "$BASE"...HEAD -- <files>`), **unless** the `<norms-scope>` block is present: then do not paste any diff. The plugin appends each agent's diff and its CONTRIBUTING.md sections to the agent's prompt when it starts.
-4. Branch name and the base commit `$BASE` (for diff-scope agent)
-5. **External reference paths** (for pattern-conformity agent only): If the user specified external codebases, include the validated paths so the agent can search them for reference files
+3. No diff: the plugin appends each agent's diff and its CONTRIBUTING.md sections to the agent's prompt when it starts.
+4. Branch name and the base commit of the block (for diff-scope agent)
+5. **External reference paths** (for pattern-conformity agent only): the block's validated paths, so the agent can search them for reference files
 
 ### Step 5: Present Summary Report
 

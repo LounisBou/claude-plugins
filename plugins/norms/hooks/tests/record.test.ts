@@ -1,9 +1,9 @@
 // hooks/tests/record.test.ts
 // The norms record: mcp__norms__check_done leaves one record through the
-// github plugin's record tool, once /norms:check computed its scope.
+// github plugin's record tool, at the head of the repository the check read.
 import { expect, test } from 'claude-code/testing'
 import { register as registerCheck, resetCache, SKILL_MATCHER } from '../check.ts'
-import { register as registerRecord, repoOf, asMark, repositoryDir } from '../record.ts'
+import { register as registerRecord, repoOf, asMark, markedDir, repositoryDir } from '../record.ts'
 import { register as registerGuards } from '../guards.ts'
 import { REPORT_REQUEST, agentText, reportOf } from '../findings.ts'
 import { mount, hook, nextOf, fakeDollar, gitRuns, HEAD, type FakeSetup, type World, type Call, type Hook, hooksOn } from './fakes.ts'
@@ -90,13 +90,12 @@ const endSession = async (hooks: Hook[], $: World) => {
   return handed
 }
 
-test('without a scope computed in this session, the record is refused and nothing is written', async () => {
+test('without a scope computed in this session, the record is written for the session\'s repository', async () => {
   const calls: Call[] = []
   const { $ } = setup({}, {}, calls)
-  const out = await mounted().done($, { open: 0, fixed: 1, passed: 0 })
-  expect(fieldsOf(out)?.['result']).toContain('norms: run /norms:check first: the record follows its own scope')
-  expect(fieldsOf(out)?.['isError']).toBe(true)
-  expect(calls).toEqual([])
+  const out = await mounted().done($, { open: 0, fixed: 0, passed: 2 })
+  expect(fieldsOf(out)?.['result']).toBe('record: ' + WRITTEN)
+  expect(recordCalls(calls).map(c => [c['pr'], c['repo'], c['result'], c['detail'], c['dir']])).toEqual([[12, 'Owner/Repo', 'pass', '0 fixed, 2 passed, 0 open', '/repo']])
 })
 
 test('no open finding records a pass with its detail', async () => {
@@ -261,6 +260,7 @@ test('the head is read at the call: a commit made after the scope does not refus
   const m = mounted()
   await m.scope($)
   const afterScope = argvs.filter(a => a === 'git rev-parse HEAD').length
+  const ranAtScope = argvs.length
   // The fix commit of check.md 7.4 lands between the scope and the record.
   ;($).process.run = async (argv: readonly string[]) => {
     const key = argv.join(' ')
@@ -269,11 +269,12 @@ test('the head is read at the call: a commit made after the scope does not refus
     if (key === 'git status --porcelain -uno') return { exitCode: 0, stdout: '', stderr: '' }
     if (key === 'git remote get-url origin') return { exitCode: 0, stdout: 'https://github.com/o/r.git\n', stderr: '' }
     if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'feature\n', stderr: '' }
-    if (key === `git diff --name-only ${HEAD} ${NEW_HEAD}`) return { exitCode: 0, stdout: 'src/a.ts\n', stderr: '' }
     return { exitCode: 1, stdout: '', stderr: 'unexpected run: ' + key }
   }
   const out = await m.done($, { open: 0, fixed: 1, passed: 0 })
   expect(argvs.filter(a => a === 'git rev-parse HEAD').length).toBe(afterScope + 1)
+  // The files the commits touched are not consulted: the record is written at the head of the call.
+  expect(argvs.slice(ranAtScope).filter(a => a.startsWith('git diff'))).toEqual([])
   expect(fieldsOf(out)?.['result']).toBe('record: ' + WRITTEN)
   // The finding said fixed has its commit: it counts as fixed.
   expect(recordCalls(calls).map(c => [c['result'], c['detail']])).toEqual([['pass', '1 fixed, 0 passed, 0 open']])
@@ -289,22 +290,11 @@ test('a finding said fixed with no commit since the check is open: the record fa
   expect(recordCalls(calls).map(c => [c['result'], c['detail']])).toEqual([['fail', '0 fixed, 1 passed, 2 open (2 said fixed with no commit since the check)']])
 })
 
-test('a commit after the scope that touches a file the check did not read refuses the record', async () => {
-  resetCache()
+test('without a scope, findings said fixed are recorded as given: no head to compare them with', async () => {
   const calls: Call[] = []
   const { $ } = setup({}, {}, calls)
-  const m = mounted()
-  await m.scope($)
-  ;($).process.run = async (argv: readonly string[]) => {
-    const key = argv.join(' ')
-    if (key === 'git rev-parse HEAD') return { exitCode: 0, stdout: NEW_HEAD + '\n', stderr: '' }
-    if (key === 'git status --porcelain -uno') return { exitCode: 0, stdout: '', stderr: '' }
-    if (key === `git diff --name-only ${HEAD} ${NEW_HEAD}`) return { exitCode: 0, stdout: 'src/a.ts\nsrc/unread.ts\n', stderr: '' }
-    return { exitCode: 1, stdout: '', stderr: 'unexpected run: ' + key }
-  }
-  const out = await m.done($, { open: 0, fixed: 1, passed: 0 })
-  expect(fieldsOf(out)?.['result']).toBe('record: none — commits since the check touch files it did not read (src/unread.ts): run /norms:check again')
-  expect(recordCalls(calls)).toEqual([])
+  await mounted().done($, { open: 0, fixed: 1, passed: 0 })
+  expect(recordCalls(calls).map(c => [c['result'], c['detail']])).toEqual([['pass', '1 fixed, 0 passed, 0 open']])
 })
 
 test('counts that are not whole numbers are refused', async () => {
@@ -417,7 +407,7 @@ test('the Skill hook matches the check alone, with or without its slash', () => 
   expect(SKILL_MATCHER.skill.test('norms:checkout')).toBe(false)
 })
 
-test('a scope that fails on a Skill run passes the call on unchanged and marks nothing', async () => {
+test('a scope that fails on a Skill run hands the call a refusal block and marks nothing', async () => {
   resetCache()
   const calls: Call[] = []
   const { $ } = setup({}, { 'git rev-parse HEAD': { exitCode: 128, stderr: 'fatal: not a git repository' } }, calls)
@@ -425,13 +415,13 @@ test('a scope that fails on a Skill run passes the call on unchanged and marks n
   const h = skillHook(m.hooks)
   const e = { tool: 'Skill', skill: 'norms:check', args: '' }
   const { next, seen } = nextOf()
-  await h.handler($, e, next).catch(() => h.net?.($, e, next))
-  expect(seen[seen.length - 1]).toBe(e)
+  await h.handler($, e, next).catch((err: Error) => h.net?.($, e, Object.assign(next, { error: { message: err.message } })))
+  expect(String(fieldsOf(seen[seen.length - 1])?.['args'])).toMatch(/^<norms-scope>\nrefused: the scope could not be computed \(.*not a git repository.*\)\n/)
+  expect(await markedDir($)).toBeUndefined()
   const out = await m.done($, { open: 0, fixed: 0, passed: 0 })
-  expect(fieldsOf(out)?.['isError']).toBe(true)
+  expect(String(fieldsOf(out)?.['result'])).toMatch(/^record: none — /)
+  expect(recordCalls(calls)).toEqual([])
 })
-
-const REFUSED = 'norms: run /norms:check first: the record follows its own scope'
 
 // The git and github answers of a clean checkout at HEAD whose pull request is 12.
 const recordRuns = () => ({
@@ -450,7 +440,7 @@ test('the scope mark lives in $.state, so a module that restarted still records'
   await skillHook(m.hooks).handler(first.$, { tool: 'Skill', skill: 'norms:check', args: '' }, nextOf().next)
   const kept = first.state.get('norms/scopeMark')
   expect(fieldsOf(kept)?.['head']).toBe(HEAD)
-  expect(fieldsOf(kept)?.['files']).toEqual(['src/a.ts'])
+  expect(fieldsOf(kept)?.['dir']).toBe('/repo')
 
   // After a restart the module remembers nothing: the host's state carries the mark.
   const restarted = fakeDollar({ state: { 'norms/scopeMark': kept }, runs: recordRuns(), tool: recordTool() })
@@ -458,12 +448,13 @@ test('the scope mark lives in $.state, so a module that restarted still records'
   expect(fieldsOf(out)?.['result']).toBe('record: ' + WRITTEN)
 })
 
-test('a value in the state that is not a mark is no mark: check_done refuses', async () => {
-  for (const value of [null, 'x', { head: 'main', at: 1, files: [] }, { head: HEAD, at: 1 }, { head: HEAD, at: 1, files: [3] }]) {
+test('a value in the state that is not a mark is no mark: check_done reads the session\'s repository', async () => {
+  for (const value of [null, 'x', { head: 'main' }, { head: HEAD, dir: 'relative' }]) {
     expect(asMark(value)).toBeUndefined()
     const { $ } = fakeDollar({ state: { 'norms/scopeMark': value }, runs: recordRuns(), tool: recordTool() })
+    expect(await markedDir($)).toBeUndefined()
     const out = await mounted().done($, { open: 0, fixed: 0, passed: 0 })
-    expect(fieldsOf(out)?.['result']).toBe(REFUSED)
+    expect(fieldsOf(out)?.['result']).toBe('record: ' + WRITTEN)
   }
 })
 
@@ -480,28 +471,29 @@ test('a state that cannot be set keeps the mark in memory and writes one warn li
     expect(broken.logs[0]).toContain('state is read-only')
     expect(fieldsOf((await m.done(broken.$, { open: 0, fixed: 0, passed: 0 })))?.['result']).toBe('record: ' + WRITTEN)
 
+    // The memory copy is the mark: it names the repository the check read.
+    expect(await markedDir(broken.$)).toBe('/repo')
     // A later mark kept in the host's state drops the memory copy.
     await m.scope(setup().$)
-    expect(fieldsOf((await m.done(setup().$, { open: 0, fixed: 0, passed: 0 })))?.['isError']).toBe(true)
+    expect(await markedDir(broken.$)).toBeUndefined()
   } finally {
     // The memory copy of the mark is module state: a failure above must not leave it to the next test.
     await endSession(m.hooks, setup().$)
   }
 })
 
-test('at session.end the mark is cleared from the state, so check_done refuses again', async () => {
+test('at session.end the mark is cleared from the state: no repository is marked any more', async () => {
   resetCache()
   const calls: Call[] = []
   const one = setup({}, {}, calls)
   const m = mounted()
   await m.scope(one.$)
   expect(one.state.has('norms/scopeMark')).toBe(true)
+  expect(await markedDir(one.$)).toBe('/repo')
   calls.length = 0
   const handed = await endSession(m.hooks, one.$)
   expect(one.state.get('norms/scopeMark')).toBeNull()
-  const out = await m.done(one.$, { open: 0, fixed: 0, passed: 0 })
-  expect(fieldsOf(out)?.['result']).toBe(REFUSED)
-  expect(fieldsOf(out)?.['isError']).toBe(true)
+  expect(await markedDir(one.$)).toBeUndefined()
   expect(calls).toEqual([])
   // The event goes on to the hook beneath.
   expect(handed.length).toBe(1)
@@ -514,8 +506,9 @@ test('at session.end the memory copy of the mark is dropped even when the state 
   await skillHook(m.hooks).handler(broken.$, { tool: 'Skill', skill: 'norms:check', args: '' }, nextOf().next)
   // Kept in memory: the state refused it.
   expect(broken.logs.length).toBe(1)
+  expect(await markedDir(broken.$)).toBe('/repo')
   await endSession(m.hooks, broken.$)
-  expect(fieldsOf((await m.done(broken.$, { open: 0, fixed: 0, passed: 0 })))?.['result']).toBe(REFUSED)
+  expect(await markedDir(broken.$)).toBeUndefined()
 })
 
 test('a ui.log that returns a rejected promise has its rejection caught, and the mark is kept in memory', async () => {
@@ -672,7 +665,7 @@ test('a branch with no pull request does not take the open pull request at its h
 // A detached review checkout at HEAD, whose pull request list the github tool answers with `pulls`.
 function detached(pulls: (input: Call) => any, calls: Call[] = []) {
   return fakeDollar({
-    state: { 'norms/scopeMark': { head: HEAD, at: 1, files: ['src/a.ts'], dir: '/repo' } },
+    state: { 'norms/scopeMark': { head: HEAD, dir: '/repo' } },
     runs: {
       ...gitRuns(['src/a.ts'], ['src/a.ts']),
       'git rev-parse --abbrev-ref HEAD': { stdout: 'HEAD\n' },
@@ -1054,7 +1047,7 @@ test('the end of the session forgets the reports', async () => {
   await m.agent($, NAMING, reply([]))
   await endSession(m.hooks, $)
   // A mark again, with no scope computed: only the reports tell whether the agents ran.
-  state.set('norms/scopeMark', { head: HEAD, at: 1, files: [] })
+  state.set('norms/scopeMark', { head: HEAD })
   expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 0 })))?.['result']).toContain('no norms agent has reported')
 })
 
