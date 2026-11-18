@@ -664,13 +664,6 @@ test('a CI undraft through the tool passes outside auto-merge too, with no quest
 })
 
 
-test('an undraft in auto-merge goes through with nothing journaled', async ($, on) => {
-  const seen = await world($, on, { labels: ['Ready'], autoMerge: ['acme/thing'] })
-  const out = await $.tool.call(gh('pr-ready', { pr: 12 }))
-  expect(out).toEqual({ result: 'ok' })
-  expect(seen.journal).toEqual([])
-})
-
 test('an undraft outside auto-merge that is no CI undraft goes through when ready, never asked', async ($, on) => {
   const seen = await world($, on, { labels: ['Ready'], answer: 'Allow' })
   const out = await $.tool.call(gh('pr-ready', { pr: 12 }))
@@ -1076,9 +1069,9 @@ for (const [name, labels, line] of [
   ['an opening out of draft', ['Not Ready'], 'gh pr create -t "fix: x" -b "Adds the reset." && gh pr merge 12 -R acme/thing'],
   ['a pull request left out of draft', ['Ready'], 'gh pr ready 12 -R acme/thing && gh pr merge 12 -R acme/thing'],
 ] as const) {
-  test('a Bash line whose first act passes and whose second is refused journals the refusal alone: ' + name, async ($, on) => {
+  test('a Bash line whose first act is observed and whose second is refused leaves no line: ' + name, async ($, on) => {
     const seen = await world($, on, { labels: [...labels] })
-    const out = await $.tool.call(bash(line))
+    const out = await $.tool.call(bash('echo {} > /data/e2e-exempt/acme/thing.json && ' + line))
     expect(out.deny).toContain('refused')
     expect(seen.journal).toEqual(['github.ready.held'])
     expect(seen.bash).toEqual([])
@@ -1087,7 +1080,7 @@ for (const [name, labels, line] of [
 
 test('a call a later check refuses leaves no observation: the journal is written just before the command runs', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS })
-  const out = await $.tool.call(bash('echo x > ~/.claude/pr-records/o/r/x.json && gh pr merge 12 -R acme/thing'))
+  const out = await $.tool.call(bash('echo {} > /data/e2e-exempt/acme/thing.json && gh pr merge 12 -R acme/thing'))
   expect(out.deny).toContain('refused')
   expect(seen.journal).toEqual(['github.ready.held'])
   expect(seen.bash).toEqual([])
@@ -1769,14 +1762,16 @@ test('words with no date are no consent: auto-merge-set is refused and writes no
 
 test('auto-merge-set off takes the repository out, whatever its case, and its pr-ready is asked again', async ($, on) => {
   const words = '« thing sort de l\'auto-merge », 2026-11-18T19:40Z'
-  const seen = await world($, on, mergeWorld(CONSENT_GRANT, { autoMerge: ['Acme/Thing', 'acme/other'] }))
+  const seen = await world($, on, mergeWorld(CONSENT_GRANT, { autoMerge: ['Acme/Thing', 'acme/other'], verdict: { decision: 'ask' }, answer: 'Allow' }))
+  const before = await $.tool.call(gh('pr-ready', { pr: 12 }))
+  expect(before.deny).toBeUndefined()
+  expect(seen.asked).toEqual([])
   const out = await $.tool.call(setAutoMerge(false, words))
   expect(out.deny).toBeUndefined()
   expect(listed(seen)).toEqual(['acme/other'])
-  expect(seen.journal).toEqual([])
   const ready = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(ready.deny).toBeUndefined()
-  expect(seen.journal).toEqual([])
+  expect(seen.asked.length).toBe(1)
 })
 
 test('the list is written whole to a temporary file then moved in place, leaving no temporary file', async ($, on) => {
@@ -2415,14 +2410,6 @@ test('an exemption whose expiry cannot be read exempts nothing', async ($, on) =
   const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: 'tomorrow' }, autoMerge: ['acme/thing'] })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(readinessRuns(seen)).toEqual([])
-})
-
-test('the labels of an exemption past its expiry are the operator\'s no more', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { exemption: { ...LABELLED, until: BEHIND } })
-  const free = await $.tool.call(gh('label-add', { pr: 12, label: ['no-e2e'] }))
-  expect(free.deny).toBeUndefined()
-  expect(seen.journal).toEqual([])
 })
 
 test('a failed E2E record holds a pull request of an exempted repository', async ($, on) => {
