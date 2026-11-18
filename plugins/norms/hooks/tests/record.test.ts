@@ -3,8 +3,8 @@
 // github plugin's record tool, once /norms:check computed its scope.
 import { expect, test } from 'claude-code/testing'
 import { register as registerCheck, resetCache, SKILL_MATCHER } from '../check.ts'
-import { register as registerRecord, repoOf, asMark, repositoryDir } from '../record.ts'
-import { register as registerGuards } from '../guards.ts'
+import { register as registerAll } from '../register.ts'
+import { register as registerRecord, repoOf, asMark, repositoryDir, markScope } from '../record.ts'
 import { REPORT_REQUEST, agentText, reportOf } from '../findings.ts'
 import { mount, hook, nextOf, fakeDollar, gitRuns, HEAD, type FakeSetup, type World, type Call, type Hook, hooksOn } from './fakes.ts'
 import { fieldsOf, listOf } from '../../core/host.ts'
@@ -56,8 +56,6 @@ function mounted() {
   const hooks = mount(on => {
     registerCheck(on)
     registerRecord(on)
-    // The module's one session.end hook, which clears the mark, is the guards'.
-    registerGuards(on)
   })
   // An agent's answer through the Agent tool's hook, as the host hands it back.
   const agent = (d: World, name: string, answer: unknown) =>
@@ -1108,4 +1106,34 @@ test('an agent\'s text is its completed record\'s content or hand-back report, n
   expect(agentText({ result: { ...done, handback: 'send', handbackReport: { text: 'delivered' } } })).toBe('delivered')
   expect(agentText({ result: { ...done, handback: 'withheld' } })).toBe('')
   expect(agentText({ result: { status: 'async_launched', agentId: 'a' } })).toBe('')
+})
+
+test('norms hooks only its own commands, so no other command\'s run passes through it', () => {
+  const hooks = mount(registerAll)
+  const runs = hooks.filter(h => h.event === 'command.run')
+  expect(runs.length).toBeGreaterThan(0)
+  for (const h of runs) {
+    expect(h.matcher).toBeDefined()
+    expect(String(h.matcher!['command']).startsWith('norms:')).toBe(true)
+  }
+  // What the host does for /orchestrator:supervision: only hooks whose matcher names it run.
+  const reached = runs.filter(h => h.matcher!['command'] === 'orchestrator:supervision')
+  expect(reached.length).toBe(0)
+})
+
+test('the module registers one session.end hook, which the host would refuse twice without a matcher', () => {
+  const ends = mount(registerAll).filter(h => h.event === 'session.end')
+  expect(ends.length).toBe(1)
+  expect(ends[0]?.matcher).toBeUndefined()
+})
+
+test('one session.end clears the scope mark and lets the event go on', async () => {
+  const hooks = mount(registerAll)
+  const { $, state } = fakeDollar({})
+  await markScope($, HEAD)
+  expect(state.has('norms/scopeMark')).toBe(true)
+  const { next, seen } = nextOf()
+  await hook(hooks, 'session.end').handler($, { sessionId: 'sess-1' }, next)
+  expect(state.get('norms/scopeMark')).toBeNull()
+  expect(seen.length).toBe(1)
 })

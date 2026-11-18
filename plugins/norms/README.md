@@ -68,29 +68,6 @@ mechanical work the markdown would otherwise hand the model:
   pointers. No reviewer's word is kept or handed to a model. The distiller counts
   these lines (core's `countsInCluster`). A thread whose author's association the
   `github` plugin does not hand counts as one whose author cannot write.
-- The walkthrough rules are watched: no code edit on the report turn or after a
-  "pass" or "discuss" answer, no CONTRIBUTING.md edit before "add" or after
-  "skip", under `/norms:check` no commit message naming the check or its
-  tooling, no plain `git push`, and a subagent's shell line that only reads. A call
-  made against one goes through, and the journal (`<config>/norms/journal/`) keeps one
-  `escape` line under the rule's code (`norms.edit.ungranted`,
-  `norms.contributing.ungranted`, `norms.commit.message`, `norms.push.ungranted`,
-  `norms.agent.write`). Only the irreversible stays held: a forced or deleting
-  `git push` asks the user through the host's dialog, where only their Allow lets
-  it through and nobody there to answer refuses it; their Allow or Deny is kept in the
-  journal as one `answer` line (`norms.answer.push.granted`, `norms.answer.push.refused`) (a push whose line does not show it
-  whole, with a variable set before it, behind `env`, a substitution or xargs, or
-  with `-c`, is read as forced); words in a prompt grant nothing. A subagent's
-  `rm`, `rmdir`, `unlink` or `find -delete` (or `find -exec` of one), and a shell line the reader
-  cannot read are refused, which includes a shell fed by a program (`cat f | sh`) and a command
-  named by an expansion (`$x f`); what a shell is fed in the line itself (`echo 'rm x' | sh`) is read. The rules read the line,
-  not the repository: a push whose words are plain but whose git configuration forces it (a
-  `remote.<name>.push` refspec set in an earlier call) is noted, not asked.
-- The walkthrough is armed by the typed command or by the main loop's Skill tool
-  call that runs it; a Skill-armed check ends at its `check_done` once its record
-  is written. A spawned session (`ORCHESTRATOR_SPAWNED`) has nobody to walk
-  through, so its Skill call arms nothing. Any other words the user types, an
-  interrupted turn, `/clear` and any other command release the guards.
 - `/norms:check` leaves a norms record at its end, through the `check_done` tool
   and the `github` plugin's record tool (0.12.0 or later), for the `github`
   plugin's ready guard: `pass` when no finding is left open, `fail` otherwise,
@@ -114,7 +91,6 @@ mechanical work the markdown would otherwise hand the model:
 
 Every hook that fails passes the event on unchanged, and the markdown keeps
 its own instructions for each step, so a host without modules runs as before.
-The push question is the exception: when nobody can be asked, a forced push is refused.
 
 ## CONTRIBUTING.md stays with the project
 

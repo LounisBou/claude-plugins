@@ -9,7 +9,7 @@
 // The same call leaves the check's findings in the module's journal (hooks/observe.ts), one event
 // per finding an agent reported, once the pull request they belong to is read.
 import type { NormsScopeMark } from '../types/index.d.ts'
-import { endSkillCheck, spawned } from './guards.ts'
+import { isSpawned } from '../core/env.ts'
 import { answerOf, fieldsOf, reasonOf, type Host, type Events, type On } from '../core/host.ts'
 import { findingEvent } from '../core/learning.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
@@ -103,7 +103,13 @@ export async function markScope($: RecordHost, head: string, files: readonly str
   }
 }
 
-// Called from the module's one session.end hook, in guards.ts: the host refuses a second
+// Whether the session was spawned, so nobody types in it. An unreadable variable is no variable.
+async function spawned($: Host<'env'>): Promise<boolean> {
+  const value: unknown = await Promise.resolve().then(() => $.env.get('ORCHESTRATOR_SPAWNED')).catch(() => undefined)
+  return isSpawned(typeof value === 'string' ? value : undefined)
+}
+
+// Called from the module's one session.end hook, below: the host refuses a second
 // session.end hook without a matcher.
 export async function clearMark($: Host<'state'>): Promise<void> {
   fallback = undefined
@@ -231,8 +237,6 @@ const count = (v: unknown): number | undefined => (typeof v === 'number' && Numb
 const NONE = 'record: none — '
 const none = (why: string) => NONE + why
 
-// Whether an answer of checkDone is a record written, not a refusal or a `none`.
-const wroteRecord = (answer: { result: string; isError?: boolean }) => !answer.isError && !answer.result.startsWith(NONE)
 
 // The answer of a tool called through $.tool.call, as text, or the reason it
 // gave none.
@@ -410,12 +414,12 @@ export function register(on: On<RecordHost>): void {
     return answer
   }).catch(async (_$, e, next) => next(e))
 
-  on('tool.call', { tool: CHECK_DONE_TOOL }, async ($, e) => {
-    const answer = await checkDone($, e)
-    // The main loop's call only (a subagent's is not the walkthrough's), and only once the
-    // record is written: a refused call leaves the guards armed.
-    if (!e['agentId'] && wroteRecord(answer)) endSkillCheck()
-    return answer
-  })
+  on('tool.call', { tool: CHECK_DONE_TOOL }, async ($, e) => checkDone($, e))
     .catch(async () => ({ result: none('the norms module failed'), isError: false }))
+
+  // The module's one session.end hook: the host refuses a second one without a matcher.
+  on('session.end', async ($, e, next) => {
+    await clearMark($)
+    return next(e)
+  }).catch(async (_$, e, next) => next(e))
 }
