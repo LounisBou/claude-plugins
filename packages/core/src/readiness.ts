@@ -8,10 +8,11 @@ import { accepts, KINDS, PR_RECORD_CONTRACT, type Kind, type PrRecord } from './
 
 export const READINESS_CONTRACT = {
   version: 1,
-  // A pull request is ready at its head when every condition holds there. Each is held by the one
-  // that refuses a merge without it: the github ready gate reads the records at the head, GitHub
-  // itself requires the workflow's aggregator job, the status check named here. The Ready label,
-  // which the gate puts and a merge needs, takes every condition, whoever holds it.
+  // A pull request is ready at its head when every condition holds there. The Ready label, which
+  // the gate puts, takes every condition, whoever holds it: the github ready gate reads the records
+  // at the head, GitHub itself requires the workflow's aggregator job, the status check named here.
+  // A merge or leaving draft does not need the label: the gate lets it through when only records
+  // are absent at the head, and refuses it on CI or on a record that failed there.
   conditions: {
     review: { holder: 'gate', means: 'a review record that passes: no blocking finding, or the orchestrator\'s acceptance of its set-asides, unless the check plan excuses it' },
     e2e: { holder: 'gate', means: 'passed, waived by the operator or not applicable, unless the check plan or an exemption excuses it' },
@@ -148,7 +149,7 @@ export function missingEvidence(evidence: HeadEvidence): Missing[] {
   return missing
 }
 
-/** The conditions a holder refuses a merge on. */
+/** The conditions a holder holds. */
 export function heldBy(missing: readonly Missing[], holder: Holder): Missing[] {
   return missing.filter((item) => item.holder === holder)
 }

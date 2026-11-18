@@ -319,7 +319,7 @@ describe('round questions: the orchestrator settles, core reads', () => {
     assert.deepEqual([parseRoundQuestion(asked)?.status, parseRoundQuestion(relayed)?.kind], ['open', 'done'])
     const closes: [unknown, string, string, boolean, string | null][] = [
       [written(planPane(asked, 'Ship it now', coordinator, AT)), 'answered', 'pane', false, 'A'],
-      [written(planClaimed({ ...asked, claimed: { typed: 'b', at: AT } }, 'Wait for the review', AT)), 'answered', 'tab', false, 'B'],
+      [written(planClaimed({ ...asked, claimed: { typed: 'b', at: AT } }, AT)), 'answered', 'tab', false, 'B'],
       [written(planAsked(asked, { id: String(asked['id']), outcome: 'answered-here', text: 'something else', author: null, work: null }, asker, AT)), 'answered', 'tab', false, null],
       [written(planAsked(asked, { id: String(asked['id']), outcome: 'answered-by-message', text: 'A', author: 'Coord: machine', work: null }, asker, AT)), 'answered', 'message', false, 'A'],
       [written(planAsked(asked, { id: String(asked['id']), outcome: 'withdrawn', text: 'moot', author: null, work: null }, coordinator, AT)), 'withdrawn', 'coordinator', true, null],

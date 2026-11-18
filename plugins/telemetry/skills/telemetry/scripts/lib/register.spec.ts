@@ -49,6 +49,7 @@ function host(options: { costs?: number[]; exitCode?: number; failUsage?: boolea
       },
     },
     ui: { log: text => logs.push(text) },
+    tool: { register: async () => undefined },
   }
   return { $, runs, logs }
 }

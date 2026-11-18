@@ -644,18 +644,6 @@ export function durableWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[
   return newest?.record.result === 'waived' ? { kind, from: newest.from } : undefined
 }
 
-// The operator's answer to the waiver question of a kind, granted at `at` (ISO) and recorded by `by`, standing
-// for that kind at every head that has no record of it, unless a run failed after it at an earlier head, or a
-// record file there that may be that failure does not parse.
-export function consentWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[]>, at: string, by: string, kind: Kind): Carried | undefined {
-  for (const [head, files] of found) {
-    if (unreadableRecords(files).some((file) => file.kinds.includes(kind))) return undefined
-    const failed = [...headRecordsRead(gate, files, head.toLowerCase()).read.values()].some((r) => r.kind === kind && r.result === 'fail' && r.at > at)
-    if (failed) return undefined
-  }
-  return { kind, from: '', waived: by + ', ' + at }
-}
-
 // What a pull request misses to be ready at its head, as core's readiness contract defines it
 // (readiness.ts), and before that an act that cannot be ready at all (closed, moved head).
 // excused: the kinds its check plan or the operator's exemption excuses, each standing for its record unless a run failed.

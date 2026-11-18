@@ -48,7 +48,17 @@ caller's own pair no `launch_tier`: the parent's `agent_spawned`, by title, is t
 **A subagent's later runs.** Each end of a run of a subagent is an `agent_closed`, with `run`, its
 rank from the spawn: the first is timed from the spawn, a later one (the child was sent a message
 and ran again) from its own first turn. A child whose spawn the module did not see (a resumed
-session) closes with no rank.
+session) closes with no rank. The writer reads the child's own transcript
+(`<session>/subagents/agent-<id>.jsonl`, and its `.meta.json`) and adds to the event what the run
+cost: its type and task (a review reader's lens), the models that answered, its last effort, its API
+calls and their token sums (`totals`), counted over the calls that began within the run's
+`duration_ms`. A transcript that cannot be read leaves the event as it came.
+
+**Self-review outcomes.** The module lists one tool of its own, `self_review`, at the session's
+start. An implementer calls it once its self-review is done, with each finding's lens, file, line,
+severity and outcome (`fixed`, or `answered` with its reason) and the pull request; each finding is a
+`self_review` event, written at once with what the session had buffered. A call with no finding, a
+finding with no lens or outcome, or an answered one with no reason records nothing and says why.
 
 **The daily sweep.** `telemetry.ts sweep` reads what no hook hands the writer. When the writer
 stores a `session_end` and no sweep was started that UTC day (`<config>/telemetry/sweep.json`),

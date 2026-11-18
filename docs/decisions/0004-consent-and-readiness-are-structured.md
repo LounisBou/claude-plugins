@@ -16,3 +16,8 @@ kept until the new one has shipped and the prompts teach only it.
 record: they rest on the operator's words quoted with their date in the record's `detail`. The
 quote is visible, not judged; no forged waiver was observed, and the recorded route cost more than
 it caught. Auto-merge and auto-deploy keep the recorded consent.
+
+**Amended 2026-11-18.** Auto-merge and auto-deploy rest on the operator's words quoted with their
+date too, in `words`: the consent record, its writers and its readers are gone, with the parsers
+that read a grant in free words and the stop gate's guards on the turn's prose. No forged consent
+was observed; the record and its keyword guards cost about fifteen fixes and caught nothing.

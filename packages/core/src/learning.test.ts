@@ -542,12 +542,6 @@ describe('the operator\'s answer as an event', () => {
   const consent = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
   const choices = [{ letter: 'A', text: 'split the pull request' }, { letter: 'B', text: 'keep it whole' }]
 
-  it('reads a consent\'s answer as its kind, granted or refused', () => {
-    assert.deepEqual(answerGiven('A : Accorder', { consent: { kind: 'e2e-waiver' }, choices: consent }), { asked: 'e2e-waiver', granted: true })
-    assert.deepEqual(answerGiven('Refuser', { consent: { kind: 'e2e-waiver' }, choices: consent }), { asked: 'e2e-waiver', granted: false })
-    assert.deepEqual(answerGiven('do as you see fit', { consent: { kind: 'auto-merge' }, choices: consent }), { asked: 'auto-merge', granted: false })
-  })
-
   it('reads any other answer as the letter it opens with, beside the recommended one', () => {
     assert.deepEqual(answerGiven('b — keep it whole', { choices, recommended: 'A' }), { letter: 'B', recommended: 'A' })
     assert.deepEqual(answerGiven('neither, drop it', { choices, recommended: 'A' }), { letter: null, recommended: 'A' })

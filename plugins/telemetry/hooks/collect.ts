@@ -26,7 +26,7 @@ export const HEADER_MAX = 12
  * redacts each whole value first and cuts after (`cutFields`), so a secret straddling a limit is
  * never left half-matched and half-kept.
  */
-export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX }
+export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX, reason: TEXT_MAX }
 /** Past this many buffered events the module writes without waiting for the turn's end. */
 export const FLUSH_AT = 100
 

@@ -19,7 +19,6 @@ export const OBSERVED = {
   draftOpen: 'github.draft.open-out',
   draftLeave: 'github.draft.leave',
   writing: 'github.writing.rule',
-  noRecord: 'github.ready.no-record',
   // An E2E pass or fail written with no run the record tool performed or observed: recorded as stated.
   e2eStated: 'github.record.e2e-stated',
 } as const

@@ -611,12 +611,12 @@ test('a withdrawal made in the asker\'s tab is the operator\'s answer, with the 
   assert.equal(roundSettled(texts(storedAsk('q-8', 'withdrawn', { answer: { text: '', by: 'sender', at: '2026-11-15T09:00:00.000Z', settler: NAME } })), [], NAME, SESSION).reask[0]?.said, '')
 })
 
-test('an entry `ask` stored malformed is ignored, and a consent asked keys the question apart', () => {
+test('an entry `ask` stored malformed is ignored, and a consent subject an older entry carries keys nothing', () => {
   const none = { answered: [], reask: [] }
-  assert.deepEqual(roundSettled(texts(storedAsk('q-1', 'withdrawn', { choices: [{ letter: 'A' }] }), storedAsk('q-2', 'withdrawn', { why: 3 }), storedAsk('q-3', 'withdrawn', { sender: 'x' }), storedAsk('q-4', 'withdrawn', { consent: { kind: 'nope' } })), [], NAME, SESSION), none)
+  assert.deepEqual(roundSettled(texts(storedAsk('q-1', 'withdrawn', { choices: [{ letter: 'A' }] }), storedAsk('q-2', 'withdrawn', { why: 3 }), storedAsk('q-3', 'withdrawn', { sender: 'x' })), [], NAME, SESSION), none)
   const consent = { kind: 'auto-merge', repo: 'acme/app' }
   const asked = roundSettled(texts(storedAsk('q-5', 'withdrawn', { consent }), storedAsk('q-6', 'open')), [], NAME, SESSION)
-  assert.deepEqual(asked.reask.map(q => q.id), ['q-5'])
+  assert.deepEqual(asked.reask.map(q => q.id), [])
 })
 
 test('the relay\'s entries follow the same rule: answered or closed is applied, a withdrawn one asked again unless its question is open or answered', () => {

@@ -11,7 +11,7 @@ decision that shaped this file, with its reason, is under `decisions/`.
 packages/core/                    the shared library: paths, store, deadlines, session names, the shell
                                   reader, shared environment names, the plugin locator, the pinned
                                   Playwright's install, and the typed contracts (the method's
-                                  formats, PR records, consent records, readiness, the orchestration's
+                                  formats, PR records, readiness, the orchestration's
                                   measure file, gate, launcher line and ListAgents reading)
 plugins/<name>/                   one installable plugin per directory, named as its manifest
 scripts/                          the repository's own tooling, strict TypeScript, tested

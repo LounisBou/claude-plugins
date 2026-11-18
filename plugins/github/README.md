@@ -85,10 +85,10 @@ it. `/github:doctor` then confirms everything is ready.
   ready, through the check `pr-ready` and `pr-merge` run, and otherwise answers, with no error,
   the label the pull request carries and what is missing.
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
-  takes it out, on the operator's recorded answer, and `auto-merge-list`
+  takes it out, on the operator's quoted, dated words, and `auto-merge-list`
   prints the list (below).
 - **Deploy list** — `auto-deploy-set` grants a repository's deploy to one environment or
-  withdraws it, on the operator's recorded answer, and `auto-deploy-list` prints
+  withdraws it, on the operator's quoted, dated words, and `auto-deploy-list` prints
   the list (« Repositories in auto-deploy »).
 - **`/checks [pr]`** — combined CI status of a PR, with the failed checks
   named, defaulting to the current branch's. It is the ready guard's verdict
@@ -147,11 +147,9 @@ lists no repository; an unreadable or malformed one lists none either and
 says so in one transcript line.
 
 The list changes only through the tool, on the operator's word:
-`auto-merge-set {"repo": "owner/name", "on": true|false, "words": "<their recorded answer>"}`
-adds or removes a repository, under a lock on the file, when `words` names auto-merge (« auto-merge », « auto
-merge » or « automerge ») and quotes their answer in a consent record of auto-merge on that
-repository; `on: true` needs that answer to be « Accorder » (never « Refuser » or prose) (core's `consent-record.ts`; the orchestrator writes them under
-`<config dir>/consents/`), and `auto-merge-list` prints it. A Write, an Edit or a shell command
+`auto-merge-set {"repo": "owner/name", "on": true|false, "words": "« <his words> », <their date>"}`
+adds or removes a repository, under a lock on the file, when `words` quote the operator with their
+date, as a waiver's `detail` does, and `auto-merge-list` prints it. A Write, an Edit or a shell command
 on the file is refused.
 
 ## Repositories in auto-deploy
@@ -184,15 +182,10 @@ still meets the host's permission decision. An absent file grants nothing, and a
 malformed one declares nothing and says so in one transcript line.
 
 The file changes only through the tool, on the operator's word:
-`auto-deploy-set {"repo": "owner/name", "env": "dev|staging|prod", "on": true|false, "words": "<their recorded answer>", "commands": [...]}`
-grants or withdraws one environment under a lock on the file. `on: true` rests on the consent
-record of auto-deploy on that repository and environment (core's `consent-record.ts`): it passes
-when their newest recorded answer is « Accorder », whatever `words` says. `on: false` needs `words`
-to name auto-deploy (« auto-deploy », « auto deploy », « autodeploy », « auto-déploiement »,
-« déploiement automatique » or « déploiement continu ») and to quote their answer in such a record.
-`commands` adds declarations for the repository (`repo` implied) and needs what the call's `on` needs (the newest « Accorder » for `true`, the words and the quote for `false`); the
-tool never removes one. A withdrawal writes no consent record: the answer « Accorder » stays the newest
-until the operator answers « Refuser », and a later `on: true` passes on it. `auto-deploy-list` prints
+`auto-deploy-set {"repo": "owner/name", "env": "dev|staging|prod", "on": true|false, "words": "« <his words> », <their date>", "commands": [...]}`
+grants or withdraws one environment under a lock on the file, when `words` quote the operator with
+their date. `commands` adds declarations for the repository (`repo` implied); the tool never removes
+one. `auto-deploy-list` prints
 each granted environment. A Write, an Edit or a shell command on the file is refused.
 
 ## Ready pull requests
@@ -271,7 +264,7 @@ branch requires that has not reported at the head yet is not green), through the
 shell (`gh pr ready`, `gh pr merge`, `gh api` on a pull request's merge, and the
 engine's own subcommands, `python3 engine/gh.py pr-merge 12 --repo owner/name`).
 An act that misses only records absent at the head (`<kind>: no record at <head7>`) goes through
-without `Ready`, observed (`github.ready.no-record`). On anything else missing (CI not green, a
+without `Ready`. On anything else missing (CI not green, a
 record that failed at the head) the act is refused before anyone is asked, and a pull request still carrying
 `Ready` goes back to `Not Ready`:
 
@@ -334,7 +327,6 @@ written is one line in the transcript, and the call still goes through.
 | `github.draft.open-out` | opens a pull request out of draft |
 | `github.draft.leave` | takes a pull request out of draft outside auto-merge, once the gate lets it |
 | `github.writing.rule` | carries a text that breaks a writing rule |
-| `github.ready.no-record` | merges or takes out of draft a pull request that misses only records absent at its head |
 | `github.record.e2e-stated` | records an E2E pass or fail with no run the tool performed or observed |
 
 A refusal that protects something writes one refusal event too, under its own code (`REFUSED` in
