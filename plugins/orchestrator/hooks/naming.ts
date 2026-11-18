@@ -13,7 +13,6 @@ import { answerOf, messageOf, reasonOf, type Host, type On } from './host.ts'
 import { currentSessionName, parseSessionName } from '../core/names.ts'
 import { logLine } from './module-io.ts'
 import { sessionRole } from './supervision.ts'
-import { observed, RENAME_PENDING_CODE } from './observe.ts'
 
 // The nouns naming holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'session' | 'tool' | 'command' | 'prompt' | 'fs' | 'clock'>
@@ -40,42 +39,6 @@ const SELF_ROLES: ReadonlySet<string> = new Set(['orchestrator', 'coordinator'])
 // loop's. A review subagent once renamed its own session; the env marker that keeps
 // the launcher's sessions out is the parent's, shared by every subagent it starts.
 export const MAIN_THREAD_ONLY = "only the session's main thread names or ends it"
-
-// A call that hands an agent this session's address: the launcher's spawn or rotate
-// (its script or the python beneath it) — the brief it writes names the orchestrator —
-// and a SendMessage, which the peer reads its sender's name off. Made in the turn
-// that renamed, it carries the name the session is about to lose. The launcher is
-// often named in a variable or wrapped in a function and called on another line,
-// after a `;` or a `&&`, or past a line continuation: a spawn or a rotate is held after
-// the launcher's path on its line, after a variable given that path, or after a function
-// that calls either, its subcommand quoted or not.
-const LAUNCHER_PATH = String.raw`iterm[-_]agent\.(?:sh|py)`
-const ON_ITS_LINE = new RegExp(String.raw`\b${LAUNCHER_PATH}\b[^\n]*?\s(?:spawn|rotate)(?:\s|$)`, 'm')
-const SEPARATOR = String.raw`(?:[ \t]|\\\n)+`
-const SUBCOMMAND = String.raw`["']?(?:spawn|rotate)["']?(?=\s|$|[;&|)])`
-const AFTER_PATH = new RegExp(String.raw`\b${LAUNCHER_PATH}["']?${SEPARATOR}${SUBCOMMAND}`)
-const ASSIGNED = new RegExp(String.raw`(?:^|[\s;&|(])(\w+)=["']?[^\s;&|]*${LAUNCHER_PATH}`, 'gm')
-const FUNCTION = /(\w+)\s*\(\)\s*\{([^}]*)\}/g
-
-function launcherCalled(command: string): boolean {
-  if (ON_ITS_LINE.test(command) || AFTER_PATH.test(command)) return true
-  const variables = [...command.matchAll(ASSIGNED)].map(m => m[1]!)
-  const names = (body: string) => new RegExp(LAUNCHER_PATH).test(body)
-    || variables.some(v => new RegExp(String.raw`\$\{?${v}\}?(?!\w)`).test(body))
-  const functions = [...command.matchAll(FUNCTION)].filter(m => names(m[2]!)).map(m => m[1]!)
-  return variables.some(v => new RegExp(String.raw`\$\{?${v}\}?["']?${SEPARATOR}${SUBCOMMAND}`).test(command))
-    || functions.some(f => new RegExp(String.raw`(?:^|[\s;&|(])${f}${SEPARATOR}${SUBCOMMAND}`, 'm').test(command))
-}
-
-export function addressesAnAgent(tool: string, command: string): boolean {
-  if (tool === 'SendMessage') return true
-  return tool === 'Bash' && launcherCalled(command)
-}
-
-// The refusal while a rename waits for the turn's end: prose told the model to end the
-// turn and it kept going; the module holds the turn's end instead, and resumes it.
-export const heldForName = (name: string) =>
-  `your name "${name}" is taken when this turn ends: end the turn now; the module resumes you under it`
 
 // The prompt that resumes a session once its name is taken, so an unattended start never
 // waits on the operator for its next turn.
@@ -168,22 +131,6 @@ export function register(on: On<Held>): void {
     await logLine($, 'naming', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the rename could not be recorded; hand the operator the /rename line instead', isError: true }
   })
-
-  // While a rename waits for the turn's end, a call that would hand an agent the old
-  // name is observed: the main thread's own, the one the rename was asked from, goes
-  // through with one line in the log and one escape in the journal.
-  for (const tool of ['Bash', 'SendMessage']) {
-    on('tool.call', { tool }, async ($, e, next) => {
-      if (pending !== null && !e.agentId && addressesAnAgent(tool, String(e['command'] ?? ''))) {
-        await logLine($, 'naming', `let through: ${heldForName(pending)}`)
-        await observed($, RENAME_PENDING_CODE)
-      }
-      return next(e)
-    }).catch(async ($, e, next) => {
-      await logLine($, 'naming', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-      return next(e)
-    })
-  }
 
   // A takeover that ran: its turn's end moves the session into its home session. A successor
   // orchestrator's alone: an agent or a reviewer runs the script in its checkout (its tests, a
