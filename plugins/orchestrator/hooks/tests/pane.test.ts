@@ -2229,6 +2229,9 @@ test('a replica of a question asked with ask on another machine is drawn only wh
   expect(await drawnNow()).toContain('not delivered: already answered in its own tab — the answer to Orch: belt on far (blocks: acme/app#1)')  // Withdrawn by its sender afterwards: nobody waits for that answer any more, so no notice stays drawn.
   fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...replica, status: 'withdrawn', answer: { text: 'merged it myself', by: 'sender', at: '2026-10-30T10:06:00.000Z', settler: 'Orch: belt' }, delivery: { state: 'failed', at: '2026-10-30T10:05:00.000Z', attempts: 1, reason: 'already answered in its own tab' } }) + '\n')
   expect((await drawnNow()).some(t => t.startsWith('not delivered:'))).toBe(false)
+  // Withdrawn here by the coordinator, its withdrawal never acknowledged: its asker still waits, so it stays drawn.
+  fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...replica, status: 'withdrawn', answer: { text: 'moot', by: 'coordinator', at: '2026-10-30T10:06:00.000Z', settler: 'Coord: main' }, delivery: { state: 'failed', at: '2026-10-30T10:06:00.000Z', attempts: 3, reason: 'no acknowledgment after 3 sends' } }) + '\n')
+  expect(await drawnNow()).toContain('not delivered: no acknowledgment after 3 sends — the answer to Orch: belt on far (blocks: acme/app#1)')
 })
 
 // --- a remote orchestrator's open questions, reconciled with its latest row --------------------

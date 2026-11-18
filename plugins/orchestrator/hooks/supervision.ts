@@ -2022,8 +2022,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         asked = askedGroups(localAsked).flat()
         pending = asked.length
         // An answer to a question asked with `ask` not delivered, while its asker has a row here;
-        // none for an entry its sender withdrew, whose answer nobody waits for any more.
-        failed = localAsked.filter(entry => entry.status !== 'withdrawn' && (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed')
+        // none for an entry its sender withdrew, whose answer nobody waits for any more (a
+        // withdrawal by the coordinator not delivered stays drawn: its asker still waits).
+        failed = localAsked.filter(entry => !(entry.status === 'withdrawn' && entry.answer?.by === 'sender') && (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed')
           .map(entry => ({ entry: askedAsEntry(entry), reason: entry.delivery!.reason ?? 'no answer' }))
         // A replica's answer on its way to its owner's machine, until the owner acknowledges it.
         delivering = localAsked.filter(entry => entry.origin !== undefined && (entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')).map(askedAsEntry)
@@ -2221,7 +2222,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           const done = await answerAskedFromPane($, id, text)
           if (done === null || done.answer === null) return
           forgetDraft(pane, id)
-          if (shown && done.sender.session !== await $.session.id()) await $.prompt.submit({ text: settledText(askedAsEntry(done), { text: done.answer.text, by: 'pane', at: done.answer.at }) })
+          const own = done.sender.session !== '' && done.sender.session === await $.session.id()
+          if (shown && !own) await $.prompt.submit({ text: settledText(askedAsEntry(done), { text: done.answer.text, by: 'pane', at: done.answer.at }) })
         })()
           .catch(err => logLine($, 'supervision', `round: ${messageOf(err)}`))
           .finally(() => {

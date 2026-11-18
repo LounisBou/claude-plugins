@@ -798,7 +798,8 @@ function consentEntryOf(entry: Fields): ConsentEntry | null {
  * typed in its asker's tab, its session's end: the entry read again and written under its lock as
  * `decide` plans it (null leaves it), `written` run once it is, then its consent recorded, the
  * relay's fingerprint forgotten, the coordinator here told, the answer sent to its asker or to its
- * owner's machine, and the object pushed to a coordinator on another machine. Answers the plan and
+ * owner's machine (an answer to the closing session's own question, `own`, is its caller's to
+ * submit: answerAskedFromPane), and the object pushed to a coordinator on another machine. Answers the plan and
  * what its steps said, the refusal, or null; a write that fails throws.
  */
 export async function closeRound(
