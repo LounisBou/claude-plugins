@@ -372,9 +372,12 @@ typeahead() {
 # and (b) a question answered in the orchestrator's own tab, then (f) a question the coordinator
 # asked itself answered in its own pane. The orchestrator's turns are its
 # model's: each is a project command asking it to reply with a fixed text, so its machine line is
-# known, and a slash command is no prompt the operator typed. `round` is run as the coordinator
-# runs it at each turn, which records the entries it was shown: the module closes such an entry
-# itself once it is settled, and tells the coordinator in one line with nothing to run. The time
+# known, and a slash command is no prompt the operator typed. The pane is open and its questions
+# are not urgent, so a plain `round` would print each as its header alone, the pane's, and record
+# none as shown: `round-listed.json` would stay empty. `round --by-urgency` is run instead, as the
+# coordinator runs it when the operator asks for the questions: every question's text is printed
+# and the entries it was shown are recorded. The module closes such an entry itself once it is
+# settled, and tells the coordinator in one line with nothing to run. The time
 # is stamped once, the moment the answer is given, and both delays are measured from that stamp
 # — the question leaving the pane and the notice reaching the coordinator's tab —, polled in one
 # loop; (b)'s include the sender's model turn, whose end settles the entry, and the time after that
@@ -655,7 +658,7 @@ check "after /coordinator, one name per row and one row per description" "rows|0
 
 echo "== (a) answered in the pane, (c) answered in the coordinator's tab (160x50)"
 start 50
-coordround round >/dev/null
+coordround round --by-urgency >/dev/null
 check "round recorded the two entries it printed" "s-alpha-q1,s-beta-q2" "$(jq -r 'sort | join(",")' "$SANDBOX/state/round-listed.json")"
 tm send-keys -t "$SESSION" Enter
 stamp=$(ms)
@@ -676,7 +679,7 @@ check "(c) answered in the tab: gone from the pane within seconds, no notice sen
 
 echo "== (e) a question without choices answered from its field (160x50)"
 start 50 report
-coordround round >/dev/null
+coordround round --by-urgency >/dev/null
 # The field is given the keys by a click, as in the section above.
 drawn=$(wait_for 'Which page goes first, and why?' 25 && echo drawn || echo missing)
 check "(e) the question without choices is drawn with its field" "drawn" "$drawn"
@@ -736,7 +739,7 @@ else
   check "(d) the orchestrator's question is asked with the ask tool and drawn" "yes|drawn" "$([ "$asked" != never ] && echo yes)|$(wait_for 'Which page goes first?' 25 && echo drawn || echo missing)"
   first=$(flow_id 'the pages')
   cp "$SANDBOX/state/round/$first.json" "$SANDBOX/first.json"
-  coordround round >/dev/null
+  coordround round --by-urgency >/dev/null
   orch_type '/flow-report'
   # The turn's reply is on the orchestrator's screen once the turn is over, then one tick of the pane's 2 s clock.
   ended=$(until_ms 120 orch_shows 'The pages are drafted')
@@ -759,7 +762,7 @@ else
   until_ms 120 flow_open_with 'the tag' >/dev/null
   tag=$(flow_id 'the tag')
   check "(b) the question to answer in the tab is drawn" "drawn" "$(wait_for 'Tag the release?' 25 && echo drawn || echo missing)"
-  coordround round >/dev/null
+  coordround round --by-urgency >/dev/null
   orch_type 'B, wait. Reply with exactly the two lines « Noted. » and « waiting: done », with no tool.'
   stamp=$(ms)
   # The question is settled only when the sender's turn ends, its model's reply included: what
