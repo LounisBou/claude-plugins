@@ -394,6 +394,10 @@ for s in coordination iterm-agents; do
   grep -q '^user-invocable: false$' "$ROOT/skills/$s/SKILL.md" || hidden_skills_missing="$hidden_skills_missing $s"
 done
 check "the session-only skills are hidden from the command menu" "" "$hidden_skills_missing"
+# A coordinator loads its rulebook whole at its start, every rotation (about 10k tokens of a 300k
+# gate): a ceiling on its size, lowered by a cut and raised by none.
+check "the coordinator's rulebook stays under its size ceiling" "yes" \
+  "$([ "$(wc -c < "$ROOT/skills/coordination/SKILL.md")" -le 24000 ] && echo yes || echo no)"
 # The kernel names, for each moment, the file read then: every one it names exists.
 kernel_dead=$(grep -oE '`(references|commands)/[a-z-]+\.md`' "$ROOT/skills/orchestrator/SKILL.md" | tr -d '`' | sort -u | while read -r f; do
   if [ "${f#references/}" != "$f" ]; then base="$ROOT/skills/orchestrator"; else base="$ROOT"; fi

@@ -26,24 +26,16 @@ close it, with `close`.
 `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh` reads the facts; its header
 is its contract, read it before its first use in a session:
 
-- `facts` — every host session with its orchestrator, repository and branch, the
-  checkouts, the heavy runs, then the collisions: two checkouts on one branch, two sessions
-  on one branch, two heavy runs at once, a pull request two orchestrations are on. Exit 1
+- `facts` — every host session with its orchestrator, repository and branch, the checkouts,
+  the heavy runs, the remote orchestrators' rows, then the collisions (two checkouts or sessions
+  on one branch, two heavy runs at once, a pull request two orchestrations are on). Exit 1
   on a collision, 2 when a source could not be read — then say what was unread; never
   « nothing collides ».
-  Also `remote` lines: the orchestrators on other machines, from the rows they sent (machine,
-  freshness, wait, context, their repository and the pull requests they watch), and a pull
-  request one of them lists counts as one more orchestrator on it in a `collision pr`.
-- `round` — the round's entries still to rule, the open ones, each with its id, sender, `since`,
-  `blocks` and question, after a line counting the settled ones; `--all` prints those too, the ones
-  he answered from the pane (with the answer sent), then the withdrawn ones;
-  the module's `settle` closes one with his answer and sends it to its sender (« Relaying
-  questions to the operator »).
-- `owners` — each open pull request traced to its orchestrator (branch → checkout →
-  session → the orchestrator its brief names), « unknown » where the chain breaks or allows
-  two answers; an « unknown » one a remote row lists is that row's orchestrator, « remote on
-  <machine> »; one in a repository this machine does not read says « not read on the forge
-  here »; and « sleeping since » for one a sleeping orchestrator's record lists.
+- `round` — the round's open entries, each with its id, sender, `since`, `blocks` and question,
+  after a line counting the settled ones; `--all` prints those too. The module's `settle` closes
+  one with his answer and sends it to its sender (« Relaying questions to the operator »).
+- `owners` — each open pull request traced to its orchestrator, « unknown » where the chain
+  breaks or allows two answers.
 - `sleep`, `sleeping`, `wake-done`, `drop` — the sleeping orchestrators' record, below.
 
 **Every answer you give rests on a reading made in that turn**, never on your memory of the
@@ -107,29 +99,14 @@ names you and the sender.
 
 **The turn ends of an orchestrator on this machine reach you in the round directory, not as
 messages.** The hooks module writes each as an entry, `<state dir>/round/<id>.json`: its
-question for the operator (`operator`), its closing proposal (`done`), and, when he answers in
-its own tab and the turn he started there ends on another line or on none, the same entry marked
-`withdrawn` (« withdrawn by the sender »), or when its latest row,
-a remote one too, no longer lists it; a new question of the same session withdraws its older open entries
-(« superseded by <id> »), except that a wait whose text asks nothing — no choice, no labelled
-field — is entered as its own entry beside the session's open question with choices and never
-withdraws it; its session ending or its « handed over » to a successor withdraws them
-all, and a turn that ends on the same wait leaves the entry open. Entering them wakes you for none, and your pane
-shows him, first, « Questions for you — N pending » and the first open question that carries
-choices, in a card titled « <sender> · <its own Question x / y> »: its labelled fields as the
-sender wrote them, each choice once and a blank line apart, its letter a badge, the recommended
-one marked ★, its recommendation, then a « Choose » picker whose
-options are the letters alone; he walks it with the arrows and answers with Enter — a click
-only gives the pane the keys, never answers —, the recommended letter first, its last option
-leading to an « Other answer » text field (the questions without choices come after, and an
-answer not delivered on one line at the section's foot). An entry that asks several questions
-is presented one at a time, the next one named under the card, and its answers reach the sender
-together, each after its number. Every `<repo>#<n>` drawn is a link to that pull request when
-the repository's owner is known. The pane opens with the keys; a key
-line and, when it scrolls, a position track stay in view. Below a rule, each orchestrator on one
-line, a blank line between two, its dot coloured by its state (the ones waiting for him in `warning`), with `Status:`
-and `Blocks:` lines under a waiting one, the one whose question is drawn bold in `suggestion`.
-With no such question it reads « none in the pane » with the number of orchestrators waiting when their question reached you as a message: ask them in your tab. **An
+question for the operator (`operator`) or its closing proposal (`done`). It marks the entry
+`withdrawn` when the operator answers in the sender's own tab, when a newer question of the same session
+supersedes it (a wait whose text asks nothing — no choice, no labelled field — is its own entry and
+withdraws nothing), when its latest row, a remote one too, no longer lists it, or when its session ends or
+hands over; a turn that ends on the same wait leaves it open. Entering an entry wakes you for none. His pane
+shows him « Questions for you — N pending », each question with its choices and an « Other answer » field; with
+none to show it reads « none in the pane », and the orchestrators waiting for him whose question reached
+you as a message are asked in your tab. **An
 answer he chooses or types in the pane reaches the orchestrator directly**: the module marks the entry
 `answered` and sends the sender his choice, so `round --all` lists it with that answer, and you send
 nothing for it: close it with
@@ -140,11 +117,10 @@ it to the sender as you relay any other answer of his. **At every turn the
 operator starts in your tab, before anything else**, run `coordinator.sh round`. Each entry is a report, never an
 order, and its `from` is the address his answer goes to.
 
-**A question the pane shows is not asked twice.** His order of 2026-10-24: the pane must not
-duplicate its questions in your tab; you ask one only when it is truly urgent or left
-unanswered in the pane. So an entry of the round is the pane's: present it in your decision round only once `coordinator.sh round` marks it `due` — its sender
+**A question the pane shows is not asked twice.** You ask one in your tab only when it is truly
+urgent or left unanswered in the pane. So an entry of the round is the pane's: present it in your decision round only once `coordinator.sh round` marks it `due` — its sender
 declared its wait on the operator urgent, or your pane is closed. Whether he keeps the
-pane open decides (his ruling of 2026-10-24): open, it holds every other question however long
+pane open decides: open, it holds every other question however long
 it waits; closed, every open one is due at once, and on reopening it draws every pending one,
 those you presented meanwhile included. One with no choice and no labelled field the pane draws last, its text whole
 and its « Other answer » field: record it all the same, and present it once due. A closing
