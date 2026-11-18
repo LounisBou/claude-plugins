@@ -1432,8 +1432,7 @@ check "the fallback skill defers to the native tool" "1" \
 
 echo "== writing rules =="
 
-# One file per kind of text, and the references every kind follows: the
-# guard « writing rules read » names these paths (hooks/guards.ts).
+# One file per kind of text, and the references every kind follows.
 for name in commits.md pull-requests.md security-updates.md comments.md references.md; do
   check "engine/writing/$name exists" "yes" "$([ -f "$ROOT/engine/writing/$name" ] && echo yes || echo no)"
 done

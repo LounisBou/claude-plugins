@@ -1,5 +1,5 @@
 {
-  "$comment": "The phrasings that say what a pull request does not do, refused in a description's summary and in an image title (hooks/writing.ts reads them for the first, engine/ghlib/assets.py for the second). Matched whole-word and case-insensitively. The list lives here only.",
+  "$comment": "The phrasings that say what a pull request does not do, refused in a description's summary and in an image title (engine/ghlib/writing.py reads them for both). Matched whole-word and case-insensitively. The list lives here only.",
   "phrases": [
     "unchanged",
     "no dependency",
