@@ -85,21 +85,36 @@ test('/norms:check gets the precomputed scope appended, with the resolver\'s bas
   expect(argvs).toContain('bash /plugin/scripts/resolve_base.sh develop')
 })
 
-test('a scope that cannot be computed passes the command on unchanged', async () => {
+test('a scope that cannot be computed hands the command a refusal block naming the failure', async () => {
   resetCache()
   const hooks = mount(register)
   const { $ } = fakeDollar({ runs: { 'bash /plugin/scripts/resolve_base.sh': { exitCode: 1, stderr: 'error: base branch' } } })
   const h = hook(hooks, 'command.run', { command: 'norms:check' })
   const e = { command: 'norms:check', args: 'naming' }
   const { next, seen } = nextOf()
-  let failed = false
+  let failed: unknown
   try {
     await h.handler($, e, next)
-  } catch {
-    failed = true
+  } catch (err) {
+    failed = err
   }
-  expect(failed).toBe(true)
-  await h.net!($, e, next)
+  expect(failed instanceof Error).toBe(true)
+  expect(seen).toEqual([])
+  // The host hands the failure to the net: the command runs with a block that refuses it.
+  const caught = Object.assign(next, { error: { message: (failed as Error).message } })
+  await h.net!($, e, caught)
+  const refused = String(fieldsOf(seen[0])?.['args'])
+  expect(refused).toMatch(/^naming\n\n<norms-scope>\nrefused: the scope could not be computed \(.*unexpected run.*\)\n/)
+  expect(refused.endsWith(REFUSAL_TAIL)).toBe(true)
+})
+
+test('a command that already ran when the hook failed is not run again with a refusal', async () => {
+  const hooks = mount(register)
+  const { $ } = fakeDollar({})
+  const h = hook(hooks, 'command.run', { command: 'norms:check' })
+  const e = { command: 'norms:check', args: 'naming' }
+  const { next, seen } = nextOf()
+  await h.net!($, e, Object.assign(next, { called: true, error: { message: 'late failure' } }))
   expect(seen).toEqual([e])
 })
 
@@ -338,7 +353,7 @@ test('agents spawned after a shell cd into another repository get the diff of th
   const hooks = mount(register)
   const { $, argvs } = fakeDollar({
     cwd: '/other',
-    state: { 'norms/scopeMark': { head: HEAD, at: 1, files: ['src/a.ts'], dir: '/repo' } },
+    state: { 'norms/scopeMark': { head: HEAD, dir: '/repo' } },
     runs: {
       // The session's directory is now another repository.
       'git rev-parse --show-toplevel': { stdout: '/other\n' },
@@ -357,7 +372,7 @@ test('agents spawned after a shell cd into another repository get the diff of th
 test('the scope cached for the agents is reused in its own repository only', async () => {
   resetCache()
   const hooks = mount(register)
-  const marked = (dir: string) => ({ head: HEAD, at: 1, files: ['src/a.ts'], dir })
+  const marked = (dir: string) => ({ head: HEAD, dir })
   const { $, argvs, state } = fakeDollar({
     cwd: '/tmp',
     root: '/a',

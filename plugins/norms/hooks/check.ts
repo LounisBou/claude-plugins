@@ -7,14 +7,14 @@
 // N2: every norms agent spawned gets the diff of its own files and its own
 // CONTRIBUTING.md sections appended to its prompt, written once here rather
 // than pasted by the model into each Task call.
-// Either hook that fails passes the event on unchanged: the command then has no scope block
-// and stops, and an agent works from its own instructions.
+// A scope that fails reaches the command as a refusal block naming the failure; the agent hook that
+// fails passes the event on unchanged, and the agent works from its own instructions.
 import {
   classifyAll, projectTypes, parseCheckArgs, scopeBlock, filesFor, contextBlock,
   DIFF_INLINE_MAX, type Scope, type ReferencePaths,
 } from './scope.ts'
 import { isSpawned } from '../core/env.ts'
-import type { Host, On } from '../core/host.ts'
+import type { Caught, Host, On } from '../core/host.ts'
 import { REPORT_REQUEST } from './findings.ts'
 import { branchPull, markScope, markedDir, openPullAt, repositoryDir, repositoryOf, type Lookup, type RecordHost } from './record.ts'
 
@@ -153,21 +153,29 @@ async function withScope($: CheckHost, words: string): Promise<string> {
   const spawned: unknown = await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)
   const block = scopeBlock(scope, args, refs, args.auto === true || isSpawned(typeof spawned === 'string' ? spawned : undefined))
   // Last, so the mark means the block is delivered.
-  await markScope($, scope.head, Object.values(scope.files).flat(), dir)
+  await markScope($, scope.head, dir)
   return (typed ? typed + '\n\n' : '') + block
+}
+
+// The words of a check whose scope could not be computed, with the block that refuses it and says
+// why: the command is never run without a scope.
+function refused(words: string, caught: Caught): string {
+  const reason = (caught.error?.message ?? 'unknown failure').replace(/\s+/g, ' ').trim()
+  const typed = words.trim()
+  return (typed ? typed + '\n\n' : '') + refusalBlock(`the scope could not be computed (${reason})`)
 }
 
 export function register(on: On<CheckHost>): void {
   // Typed by the person: the host runs command.run.
   on('command.run', { command: 'norms:check' }, async ($, e, next) => {
     return next({ ...e, args: await withScope($, String(e.args ?? '')) })
-  }).catch((_$, e, next) => next(e))
+  }).catch((_$, e, next) => (next.called ? next(e) : next({ ...e, args: refused(String(e.args ?? ''), next) })))
 
   // Run by a session through the Skill tool: the host runs no command.run, so
   // the same steps run at the tool call, its args carrying the block.
   on('tool.call', SKILL_MATCHER, async ($, e, next) => {
     return next({ ...e, args: await withScope($, String(e['args'] ?? '')) })
-  }).catch((_$, e, next) => next(e))
+  }).catch((_$, e, next) => (next.called ? next(e) : next({ ...e, args: refused(String(e['args'] ?? ''), next) })))
 
   on('agent.spawn', async ($, e, next) => {
     const type = String(e.subagentType ?? '')

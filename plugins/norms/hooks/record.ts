@@ -44,9 +44,9 @@ export const CHECK_DONE_SCHEMA = {
   required: ['open', 'fixed', 'passed'],
 }
 
-// The scope /norms:check computed in this session: its head, the time, the files the check read and
-// the repository it read. The record is written at the head of the call, which a fix commit of
-// check.md 7.4 moves past the head the check read.
+// The scope /norms:check computed in this session: its head and the repository it read. The record
+// is written at the head of the call, which a fix commit of check.md 7.4 moves past the head the
+// check read.
 // Kept in the host's $.state, which outlives the module's own variables, so a restart of the
 // hooks worker does not lose it; cleared at session.end, since the state's scope is not known
 // to be the session's. The module variable holds the mark only when $.state refused it, so the
@@ -66,9 +66,8 @@ export function asMark(value: unknown): Mark | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const v = value as Record<string, unknown>
   if (typeof v['head'] !== 'string' || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(v['head'])) return undefined
-  if (typeof v['at'] !== 'number' || !Array.isArray(v['files']) || !v['files'].every(f => typeof f === 'string')) return undefined
   if (v['dir'] !== undefined && (typeof v['dir'] !== 'string' || !v['dir'].startsWith('/'))) return undefined
-  return { head: v['head'], at: v['at'], files: v['files'] as string[], ...(typeof v['dir'] === 'string' ? { dir: v['dir'] } : {}) }
+  return { head: v['head'], ...(typeof v['dir'] === 'string' ? { dir: v['dir'] } : {}) }
 }
 
 // One line in the session's log. A log that throws or rejects draws nothing: what the line
@@ -83,8 +82,8 @@ function warn($: Host<'ui'>, line: string): void {
 
 // `dir`: the repository the check read, so that a later shell `cd` into another repository is not
 // taken for the reviewed one.
-export async function markScope($: RecordHost, head: string, files: readonly string[] = [], dir?: string): Promise<void> {
-  const mark: Mark = { head, at: Date.now(), files: [...files], ...(dir ? { dir } : {}) }
+export async function markScope($: RecordHost, head: string, dir?: string): Promise<void> {
+  const mark: Mark = { head, ...(dir ? { dir } : {}) }
   // A new check starts from no findings: the agents it runs report them again.
   resetReports()
   isJournaled = false

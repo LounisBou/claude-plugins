@@ -511,7 +511,7 @@ const noFindings = (hooks: Hook[], $: World) => hook(hooks, 'tool.call', { tool:
 // checkout is clean, unless `dirty` says otherwise.
 function recordable(over: { dirty?: boolean } = {}) {
   return fakeDollar({
-    state: { 'norms/scopeMark': { head: HEAD, at: 1, files: [] } },
+    state: { 'norms/scopeMark': { head: HEAD } },
     runs: {
       'git rev-parse HEAD': { stdout: HEAD + '\n' },
       'git status --porcelain -uno': { stdout: over.dirty ? ' M src/a.ts\n' : '' },
