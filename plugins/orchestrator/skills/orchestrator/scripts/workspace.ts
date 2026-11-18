@@ -60,12 +60,13 @@ import {
   readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, appendFileSync, writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
+import { ENV } from '../../../core/env.ts'
 import { configDir, setting, stateDir, type Env } from '../../../core/paths.ts'
 import { readText, update } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted, type FilePr, type PrFile } from '../../../hooks/pr-file-format.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import {
-  callerOf, changeEntry, closeEntry, GRACE_MS, liveSessions, makerOf, pidAlive, putEntry, readLedger,
+  adoptEntry, callerOf, changeEntry, closeEntry, GRACE_MS, liveSessions, makerOf, pidAlive, putEntry, readLedger,
   type LiveSession, type WorkspaceEntry,
 } from './lib/workspace-ledger.ts'
 
@@ -99,7 +100,7 @@ interface Context {
   readonly signal?: AbortSignal
   cwds?: readonly string[] | null
   liveNames?: ReadonlySet<string> | null
-  sessions?: readonly LiveSession[]
+  sessions?: readonly LiveSession[] | null
 }
 
 function say(ctx: Context, text: string): void {
@@ -316,8 +317,8 @@ export async function refusal(ctx: Context, real: string, pushable = false): Pro
 
 // --- the ledger: one line per checkout, its owners, and why it stays ----------------------------
 
-/** The host's live sessions, read once per run. */
-function sessionsOf(ctx: Context): readonly LiveSession[] {
+/** The host's live sessions, read once per run; null when its registry cannot be read. */
+function sessionsOf(ctx: Context): readonly LiveSession[] | null {
   if (ctx.sessions !== undefined) return ctx.sessions
   ctx.sessions = liveSessions(configDir(ctx.deps.env, setting(ctx.deps.env, 'HOME')), ctx.deps.alive ?? pidAlive)
   return ctx.sessions
@@ -325,15 +326,15 @@ function sessionsOf(ctx: Context): readonly LiveSession[] {
 
 /** The live session working in the checkout at `real`, by the directory it started in. */
 function agentIn(ctx: Context, real: string): LiveSession | undefined {
-  return sessionsOf(ctx).find(s => {
+  return (sessionsOf(ctx) ?? []).find(s => {
     const cwd = realOf(s.cwd)
     return cwd === real || cwd.startsWith(`${real}/`)
   })
 }
 
-/** Whether a live session carries the orchestrator's name: its successor carries it too. */
-function orchestratorLive(ctx: Context, name: string | null): boolean {
-  return name !== null && sessionsOf(ctx).some(s => s.name === name)
+/** Whether a live session carries the name: an orchestrator's successor carries it too. */
+function namedLive(ctx: Context, name: string | null): boolean {
+  return name !== null && (sessionsOf(ctx) ?? []).some(s => s.name === name)
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString()
@@ -357,7 +358,7 @@ function ledgerWrite(ctx: Context, what: string, write: () => void): void {
 async function openEntry(ctx: Context, target: string, kind: 'clone' | 'pin', branch: string): Promise<void> {
   const real = realOf(target)
   const env = ctx.deps.env
-  const maker = makerOf(callerOf(sessionsOf(ctx), setting(env, 'CLAUDE_CODE_SESSION_ID')), setting(env, 'ORCHESTRATOR_REPORTS_TO'))
+  const maker = makerOf(callerOf(sessionsOf(ctx) ?? [], setting(env, 'CLAUDE_CODE_SESSION_ID')), setting(env, ENV.reportsTo))
   const entry: WorkspaceEntry = {
     v: 1, path: real, kind, repo: await repoOfCheckout(ctx, real), branch, ...maker, created: iso(ctx.deps.now()),
   }
@@ -422,7 +423,8 @@ export async function pushWork(ctx: Context, real: string, dry: boolean): Promis
   const pushed: string[] = []
   for (const b of ahead) {
     const signals = [AbortSignal.timeout(PUSH_MS), ...(ctx.signal === undefined ? [] : [ctx.signal])]
-    const r = await gitRead(ctx, real, ['push', '--quiet', 'origin', `refs/heads/${b}:refs/heads/${b}`], AbortSignal.any(signals), { GIT_TERMINAL_PROMPT: '0' })
+    // The empty lease makes the push a creation: a branch the origin took since the last fetch refuses it.
+    const r = await gitRead(ctx, real, ['push', '--quiet', `--force-with-lease=refs/heads/${b}:`, 'origin', `refs/heads/${b}:refs/heads/${b}`], AbortSignal.any(signals), { GIT_TERMINAL_PROMPT: '0' })
     if (r.status !== 0) {
       const why = r.status === null ? 'no answer in time' : (r.stderr.trim().split('\n')[0] ?? '') || `git exited ${r.status}`
       return { pushed, reason: `cannot push ${b}: ${why}` }
@@ -896,7 +898,12 @@ export async function remove(ctx: Context, argv: readonly string[]): Promise<voi
   // and `--discard` is the operator's word over all of them.
   // --push: the work goes to the origin first, so the guard below finds nothing unpushed.
   let pushed: readonly string[] = []
-  if (opts.has('--push') && !opts.has('--discard')) {
+  if (opts.has('--push') && opts.has('--discard')) throw new Refused('delete: --push and --discard do not go together')
+  if (opts.has('--push')) {
+    // What holds the checkout whatever is pushed (a dirty tree, a stash, a live process) is read
+    // before anything is published.
+    const held = await refusal(ctx, real, true)
+    if (held !== '') throw new Refused(`delete: ${held} (pass --discard to remove it anyway): ${path}`)
     const work = await pushWork(ctx, real, false)
     pushed = work.pushed
     if (work.reason !== '') throw new Refused(`delete: ${work.reason} (pass --discard to remove it anyway): ${path}`)
@@ -962,8 +969,8 @@ export async function ledger(ctx: Context, argv: readonly string[] = []): Promis
     const agentName = agent?.name ?? e.agent
     out(ctx, [
       e.path, e.repo === '' ? '-' : e.repo, e.branch === '' ? '-' : e.branch,
-      owner('orchestrator', e.orchestrator, orchestratorLive(ctx, e.orchestrator)),
-      owner('agent', agentName, agent !== undefined),
+      owner('orchestrator', e.orchestrator, namedLive(ctx, e.orchestrator)),
+      owner('agent', agentName, agent !== undefined || namedLive(ctx, agentName)),
       e.reason ?? '',
     ].join(' | '))
   }
@@ -1130,17 +1137,20 @@ async function sweepOne(s: Sweep, d: string): Promise<void> {
   // The ledger's line: the checkout's own, or one adopted for a checkout it does not name.
   let entry = s.ledger.get(real)
   if (entry === undefined) {
-    entry = await adoptedEntry(ctx, real)
-    const adopted = entry
-    if (!s.dry) ledgerWrite(ctx, `the line of ${real}`, () => putEntry(ctx.root, adopted))
+    const adopted = await adoptedEntry(ctx, real)
+    entry = adopted
+    // A line `create` wrote since the ledger was read wins over the adoption.
+    if (!s.dry) ledgerWrite(ctx, `the line of ${real}`, () => { entry = adoptEntry(ctx.root, adopted) })
   }
   const agent = agentIn(ctx, real)
   if (agent !== undefined) {
     if (!s.dry && entry.agent !== agent.name) ledgerWrite(ctx, `the agent of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, agent: agent.name })))
     return keep(ctx, real, `agent ${agent.name} works in it`)
   }
-  const young = ctx.deps.now() - Date.parse(entry.created) < GRACE_MS
-  if (young || orchestratorLive(ctx, entry.orchestrator)) {
+  // A date that does not read keeps the grace: the safe side.
+  const born = Date.parse(entry.created)
+  const young = Number.isNaN(born) || ctx.deps.now() - born < GRACE_MS
+  if (young || namedLive(ctx, entry.orchestrator) || namedLive(ctx, entry.agent)) {
     if (!s.dry && entry.reason !== undefined) {
       ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, ({ reason: _r, reason_at: _a, ...e }) => e))
     }
@@ -1173,9 +1183,13 @@ async function sweepEnded(s: Sweep, real: string, entry: WorkspaceEntry): Promis
     if (!s.dry && entry.reason !== reason) {
       const at = iso(ctx.deps.now())
       ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, reason, reason_at: at })))
+      // Said once, when first recorded: the stop gate logs it for whoever reads the module's log.
+      say(ctx, `ledger: ${real} stays: ${reason} (orchestrator ${entry.orchestrator ?? 'unknown'}, agent ${entry.agent ?? 'none'})`)
     }
     keep(ctx, real, `${reason} (no live orchestrator or agent)`)
   }
+  // Who lives is read in the registry: one that cannot be read ends nothing.
+  if (sessionsOf(ctx) === null) return keep(ctx, real, 'the session registry cannot be read')
   if (s.dry) {
     const work = await pushWork(ctx, real, true)
     if (work.reason !== '') return stays(work.reason)

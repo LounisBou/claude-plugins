@@ -886,6 +886,12 @@ async function bare(w: World, ...argv: string[]): Promise<{ code: number; out: s
 
 const HOUR = 60 * 60 * 1000
 
+/** Rewrites one line of the world's ledger, as another writer would. */
+function changeEntryOf(path: string, change: (e: WorkspaceEntry) => WorkspaceEntry): void {
+  const at = ledgerPath(join(dir, 'root'))
+  writeFileSync(at, ledgerText(parseLedger(readFileSync(at, 'utf8')).map(e => (e.path === path ? change(e) : e))))
+}
+
 test('the ledger\'s readings: a line, the text, a name without its reference, the maker, the live sessions', () => {
   const e: WorkspaceEntry = { v: 1, path: '/r/p/a', kind: 'clone', repo: 'o/p', branch: 'b', orchestrator: 'Orch: X', agent: null, created: '2026-01-01T00:00:00.000Z' }
   assert.deepEqual(parseEntry(JSON.stringify(e)), e)
@@ -901,14 +907,18 @@ test('the ledger\'s readings: a line, the text, a name without its reference, th
   assert.deepEqual(makerOf(orch, undefined), { orchestrator: 'Orch: X', agent: null })
   assert.deepEqual(makerOf(agent, 'Orch: X [abc123]'), { orchestrator: 'Orch: X', agent: 'Agent: y' })
   assert.deepEqual(makerOf(null, ''), { orchestrator: null, agent: null })
+  assert.deepEqual(makerOf(null, 'Orch: X [abc123]'), { orchestrator: 'Orch: X', agent: null })
+  assert.deepEqual(makerOf(agent, undefined), { orchestrator: null, agent: 'Agent: y' })
+  assert.equal(parseEntry(JSON.stringify({ ...e, reason_at: 3 })), null)
+  assert.equal(parseEntry(JSON.stringify({ ...e, adopted: 'yes' })), null)
   assert.equal(callerOf([orch, agent], 's2'), agent)
   assert.equal(callerOf([orch, agent], 'x'), null)
   assert.equal(callerOf([orch, agent], ''), null)
   assert.equal(callerOf([orch, agent], undefined), null)
   const config = join(dir, 'config')
-  assert.deepEqual(liveSessions(config, () => true), [], 'no registry: no session')
+  assert.equal(liveSessions(config, () => true), null, 'a registry that cannot be read is no « nobody lives »')
   mkdirSync(join(config, 'sessions'), { recursive: true })
-  writeFileSync(join(config, 'sessions', '1.json'), JSON.stringify({ pid: 1, sessionId: 's1', name: 'Orch: X', cwd: '/w' }))
+  writeFileSync(join(config, 'sessions', '1.json'), JSON.stringify({ pid: 1, sessionId: 's1', name: 'Orch: X [ab12cd]', cwd: '/w' }))
   writeFileSync(join(config, 'sessions', '6.json'), JSON.stringify({ name: 'Orch: no id', cwd: '/v' }))
   writeFileSync(join(config, 'sessions', '2.json'), JSON.stringify({ pid: 2, name: 'Agent: gone', cwd: '/r' }))
   writeFileSync(join(config, 'sessions', '3.json'), JSON.stringify({ pid: 3, peerToken: 'no name' }))
@@ -956,7 +966,25 @@ test('delete --push puts the branches on the origin first, never a long-lived on
   const o = await clone(w, src, 'o', 'feat/o', 'unpushed')
   g(o, 'remote', 'remove', 'origin')
   assert.equal((await bare(w, 'delete', o, '--push')).err, `workspace: delete: commits on no remote branch, and no origin to push them to (pass --discard to remove it anyway): ${o}\n`)
-  assert.ok(existsSync(m) && existsSync(n) && existsSync(o))
+  // What holds the checkout anyway is read before anything is published.
+  const d = await clone(w, src, 'd', 'feat/d', 'unpushed')
+  writeFileSync(join(d, 'loose.txt'), 'uncommitted')
+  assert.equal((await bare(w, 'delete', d, '--push')).err, `workspace: delete: the tree is dirty (pass --discard to remove it anyway): ${d}\n`)
+  assert.throws(() => g(join(dir, 'proj.git'), 'rev-parse', '--verify', '-q', 'refs/heads/feat/d'), 'nothing pushed')
+  assert.equal((await bare(w, 'delete', d, '--push', '--discard')).err, 'workspace: delete: --push and --discard do not go together\n')
+  // A branch the origin took since the last fetch is not moved: the push is a creation.
+  const t = await clone(w, src, 't', 'feat/t', 'unpushed')
+  const other = join(dir, 'other')
+  execFileSync('git', ['clone', '-q', join(dir, 'proj.git'), other])
+  g(other, 'checkout', '-q', '-b', 'feat/t')
+  g(other, 'commit', '-q', '--allow-empty', '-m', 'Someone else')
+  g(other, 'push', '-q', 'origin', 'feat/t')
+  const theirs = g(other, 'rev-parse', 'HEAD')
+  const refused = await bare(w, 'delete', t, '--push')
+  assert.equal(refused.code, 1)
+  assert.match(refused.err, /^workspace: delete: cannot push feat\/t: /)
+  assert.equal(g(join(dir, 'proj.git'), 'rev-parse', 'refs/heads/feat/t'), theirs)
+  assert.ok(existsSync(m) && existsSync(n) && existsSync(o) && existsSync(d) && existsSync(t))
 })
 
 test('sweep: a checkout whose orchestrator and agent are gone is pushed and removed; what cannot be keeps its reason on its line', async () => {
@@ -1002,6 +1030,7 @@ test('sweep: a checkout whose orchestrator and agent are gone is pushed and remo
   const tip = g(ahead, 'rev-parse', 'HEAD')
   const r = await bare(w, 'sweep')
   assert.equal(r.code, 0, r.err)
+  assert.ok(r.err.includes(`workspace: ledger: ${dirty} stays: the tree is dirty (orchestrator Orch: Maker, agent none)\n`), r.err)
   assert.deepEqual(r.out.split('\n').filter(l => l !== '' && !l.startsWith(`deleted ${join(dir, 'host')}`)), [
     `pushed feat/ahead of ${ahead}`,
     `deleted ${ahead}`,
@@ -1024,12 +1053,25 @@ test('sweep: a checkout whose orchestrator and agent are gone is pushed and remo
   // A reason is dated when it is first seen, and kept as long as it holds.
   const at = lineOf(w, dirty)?.reason_at
   w.clock += HOUR
-  await bare(w, 'sweep')
+  assert.ok(!(await bare(w, 'sweep')).err.includes('ledger:'), 'said once, when first written')
   assert.equal(lineOf(w, dirty)?.reason_at, at)
+  // A registry that cannot be read ends nothing.
+  rmSync(join(dir, 'home', '.claude', 'sessions'), { recursive: true, force: true })
+  const blind = await bare(w, 'sweep')
+  assert.ok(blind.out.includes(`kept ${dirty}: the session registry cannot be read\n`), blind.out)
+  // Its agent alive by name, wherever it started: no reason is owed.
+  registry(w, [{ pid: 71, name: 'Agent: elsewhere', cwd: '/elsewhere' }], new Set([71]))
+  changeEntryOf(dirty, e => ({ ...e, agent: 'Agent: elsewhere' }))
+  await bare(w, 'sweep')
+  assert.deepEqual([lineOf(w, dirty)?.reason, lineOf(w, dirty)?.reason_at], [undefined, undefined])
+  changeEntryOf(dirty, e => ({ ...e, agent: null }))
+  registry(w, [], new Set())
+  await bare(w, 'sweep')
+  assert.equal(lineOf(w, dirty)?.reason, 'the tree is dirty')
   // Its orchestrator back (a successor carries its name): no reason is owed any more.
   registry(w, [{ pid: 61, name: 'Orch: Maker', cwd: src }], new Set([61]))
   await bare(w, 'sweep')
-  assert.equal(lineOf(w, dirty)?.reason, undefined)
+  assert.deepEqual([lineOf(w, dirty)?.reason, lineOf(w, dirty)?.reason_at], [undefined, undefined])
 })
 
 test('sweep: an agent working in a checkout keeps it and is named on its line; a checkout with no line is adopted, a line with no checkout closed', async () => {
@@ -1045,6 +1087,12 @@ test('sweep: an agent working in a checkout keeps it and is named on its line; a
   w.clock += 2 * HOUR
   w.cwds = lsofOf('/elsewhere')
   registry(w, [{ pid: 7, name: 'Agent: worker', cwd: join(a, 'sub') }], new Set([7]))
+  // A dry run adopts nothing and closes nothing.
+  const ledgerBefore = readFileSync(ledgerPath(root), 'utf8')
+  const dry = await bare(w, 'sweep', '--dry-run')
+  assert.ok(dry.out.includes(`would delete ${b}: no live orchestrator or agent`), dry.out)
+  assert.equal(readFileSync(ledgerPath(root), 'utf8'), ledgerBefore)
+  assert.deepEqual(archived(), [])
   const listed = await bare(w, 'ledger')
   assert.deepEqual(listed.out.split('\n').filter(l => l !== ''), [
     `${a} | ${join(dir, 'proj.git')} | main | orchestrator none | agent Agent: worker (live) | `,
@@ -1062,4 +1110,49 @@ test('sweep: an agent working in a checkout keeps it and is named on its line; a
   assert.deepEqual(archived().filter(x => x['path'] === ghost.path).map(x => x['end']), ['gone'])
   assert.ok(lineOf(w, ghost.path) === undefined)
   assert.equal((await bare(w, 'ledger', 'x')).err, 'workspace: ledger: usage: ledger\n')
+})
+
+test('sweep: an adoption never overwrites a line written since the ledger was read; a sibling sharing a prefix is no agent of it; a date that does not read keeps the grace', async () => {
+  const src = pushed('proj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41' })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const a = await clone(w, src, 'a', 'feat/a')
+  const ab = await clone(w, src, 'ab', 'feat/ab')
+  const root = join(dir, 'root')
+  const made = lineOf(w, a)
+  assert.equal(made?.orchestrator, 'Orch: Maker')
+  // The sweep's reading of the ledger misses a's line (written after it), b's line is unreadable.
+  writeFileSync(ledgerPath(root), ledgerText([{ ...(lineOf(w, ab) as WorkspaceEntry), created: 'not a date' }]))
+  w.clock += 2 * HOUR
+  w.cwds = lsofOf('/elsewhere')
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }, { pid: 8, name: 'Agent: next door', cwd: ab }], new Set([41, 8]))
+  // a's line lands between the sweep's read and its adoption: the maker's line stands.
+  const real = w.deps.run
+  let once = false
+  w.deps = { ...w.deps, run: async (argv, options) => {
+    if (!once && argv.includes('symbolic-ref') && argv.includes(a)) {
+      once = true
+      writeFileSync(ledgerPath(root), ledgerText([...lines(w), made as WorkspaceEntry]))
+    }
+    return real(argv, options)
+  } }
+  const r = await bare(w, 'sweep')
+  assert.equal(r.code, 0, r.err)
+  assert.equal(lineOf(w, a)?.orchestrator, 'Orch: Maker', 'the adoption did not overwrite the maker')
+  assert.ok(r.out.includes(`kept ${ab}: agent Agent: next door works in it`), r.out)
+  assert.ok(!r.out.includes(`kept ${a}: agent`), 'ab is no subdirectory of a')
+  assert.ok(existsSync(a) && existsSync(ab))
+  // No agent in ab any more, its orchestrator gone: its date does not read, so the grace holds it.
+  changeEntryOf(ab, e => ({ ...e, orchestrator: null }))
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const graced = await bare(w, 'sweep')
+  assert.match(graced.out, new RegExp(`^kept ${ab}: pull requests unreadable`, 'm'))
+  assert.ok(existsSync(ab))
+  // The ledger names each owner live or gone, and the reason a checkout stays.
+  changeEntryOf(a, e => ({ ...e, orchestrator: 'Orch: Gone', agent: 'Agent: past', reason: 'the tree is dirty' }))
+  const listed = (await bare(w, 'ledger')).out.split('\n').find(l => l.startsWith(`${a} |`))
+  assert.equal(listed, `${a} | ${join(dir, 'proj.git')} | main | orchestrator Orch: Gone (gone) | agent Agent: past (gone) | the tree is dirty`)
+  changeEntryOf(a, e => ({ ...e, orchestrator: 'Orch: Maker' }))
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  assert.ok((await bare(w, 'ledger')).out.includes(`${a} | ${join(dir, 'proj.git')} | main | orchestrator Orch: Maker (live) | agent Agent: past (gone) |`))
 })

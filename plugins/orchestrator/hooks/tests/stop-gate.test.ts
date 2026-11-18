@@ -1440,6 +1440,23 @@ test('a due sweep runs once, writes the shared stamp first, and logs its deletio
   expect(fx.written.some(l => l.includes('kept'))).toBe(false)
 })
 
+test('a due sweep logs what it pushed and the reason a checkout stays when first written, never its kept lines', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({
+    stampMtimeMs: OLD_STAMP,
+    sweep: {
+      exitCode: 0,
+      stdout: 'pushed feat/x of /tmp/h/work/repo/x\ndeleted /tmp/h/work/repo/x\nkept /tmp/h/work/repo/y: the tree is dirty (no live orchestrator or agent)\n',
+      stderr: 'workspace: ledger: /tmp/h/work/repo/y stays: the tree is dirty (orchestrator Orch: P, agent none)\nworkspace: other\n',
+    },
+  })
+  const { answer, passed } = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(PASSING))
+  expect(answer).toBe(passed)
+  expect(fx.written.some(l => l.includes('sweep pushed feat/x of /tmp/h/work/repo/x'))).toBe(true)
+  expect(fx.written.some(l => l.includes('sweep ledger: /tmp/h/work/repo/y stays: the tree is dirty (orchestrator Orch: P, agent none)'))).toBe(true)
+  expect(fx.written.some(l => l.includes('kept') || l.includes('other'))).toBe(false)
+})
+
 test('a sweep that overruns lets the stop answer on time, said once, the stamp already written', async () => {
   const { handlers } = mounted()
   const fx = fakeDollar({

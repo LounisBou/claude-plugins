@@ -898,6 +898,12 @@ async function runSweep($: Held, stateRoot: string, root: string, until: number)
     }
     for (const line of String(outcome.stdout ?? '').split('\n')) {
       if (line.startsWith('deleted ')) await logLine($, 'guards', `stop gate: sweep deleted ${line.slice('deleted '.length)}`)
+      if (line.startsWith('pushed ')) await logLine($, 'guards', `stop gate: sweep pushed ${line.slice('pushed '.length)}`)
+    }
+    // A checkout whose orchestrator and agent are gone and that cannot go: said once, when its
+    // reason is first written on its ledger line.
+    for (const line of String(outcome.stderr ?? '').split('\n')) {
+      if (line.startsWith('workspace: ledger: ')) await logLine($, 'guards', `stop gate: sweep ${line.slice('workspace: '.length)}`)
     }
     if (outcome.exitCode !== 0) {
       await logLine($, 'guards', `stop gate: sweep error exit ${outcome.exitCode}: ${firstLine(String(outcome.stderr ?? ''))}`)

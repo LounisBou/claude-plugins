@@ -8,6 +8,8 @@
 // the root reads as a checkout. Read and written by `workspace.ts` alone.
 import { appendFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { orchForm, roleOf } from '../../../../core/names.ts'
+import { HOST_SESSIONS_DIR } from '../../../../core/session-orchestration.ts'
 import { readText, update } from '../../../../core/store.ts'
 
 export const WORKSPACE_LEDGER = {
@@ -68,6 +70,8 @@ export function parseEntry(line: string): WorkspaceEntry | null {
   if (!isText(r['repo']) || !isText(r['branch']) || !isText(r['created'])) return null
   if (!isTextOrNull(r['orchestrator']) || !isTextOrNull(r['agent'])) return null
   if (r['reason'] !== undefined && !isText(r['reason'])) return null
+  if (r['reason_at'] !== undefined && !isText(r['reason_at'])) return null
+  if (r['adopted'] !== undefined && r['adopted'] !== true) return null
   return read as WorkspaceEntry
 }
 
@@ -92,6 +96,18 @@ export function readLedger(root: string): WorkspaceEntry[] {
   return parseLedger(readText(ledgerPath(root)) ?? '')
 }
 
+/** Writes `entry` only when no line names its path yet: an adoption never overwrites a maker's line. */
+export function adoptEntry(root: string, entry: WorkspaceEntry): WorkspaceEntry {
+  let held = entry
+  update(ledgerPath(root), current => {
+    const all = parseLedger(current ?? '')
+    const named = all.find(e => e.path === entry.path)
+    if (named !== undefined) held = named
+    return ledgerText(named === undefined ? [...all, entry] : all)
+  }, { waitMs: 2000 })
+  return held
+}
+
 /** Writes `entry`, replacing the one of the same path. */
 export function putEntry(root: string, entry: WorkspaceEntry): void {
   update(ledgerPath(root), current => ledgerText([...parseLedger(current ?? '').filter(e => e.path !== entry.path), entry]), { waitMs: 2000 })
@@ -104,20 +120,21 @@ export function changeEntry(root: string, path: string, change: (e: WorkspaceEnt
 
 /** Closes the entry of `path`: out of the ledger, into the archive with how it ended. */
 export function closeEntry(root: string, path: string, end: string, at: string): void {
-  let closed: WorkspaceEntry | undefined
+  // The archive line is written under the ledger's lock, before the ledger lets the line go: a
+  // failed append leaves the line where it was.
   update(ledgerPath(root), current => {
     const all = parseLedger(current ?? '')
-    closed = all.find(e => e.path === path)
+    const closed = all.find(e => e.path === path)
+    if (closed === undefined) return current ?? ''
+    const line: ClosedEntry = { ...closed, closed: at, end }
+    appendFileSync(archivePath(root), `${JSON.stringify(line)}\n`)
     return ledgerText(all.filter(e => e.path !== path))
   }, { waitMs: 2000 })
-  if (closed === undefined) return
-  const line: ClosedEntry = { ...closed, closed: at, end }
-  appendFileSync(archivePath(root), `${JSON.stringify(line)}\n`)
 }
 
-/** A session name without the ` [ref]` a listing of the agents appends to it. */
+/** A session name without the ` [ref]` a listing of the agents appends to it, in core's one form. */
 export function bareName(name: string): string {
-  return name.replace(/\s*\[[0-9A-Za-z]+\]\s*$/, '').trim()
+  return orchForm(name)
 }
 
 /** A live session of the host: its name, its id, the directory it started in, its process. */
@@ -131,20 +148,21 @@ export interface LiveSession {
 /**
  * The host's sessions whose process lives, read in its registry (`<config>/sessions/<pid>.json`,
  * `name`, `sessionId`, `cwd`, `pid`). A record that does not parse, names no session or whose process is gone is
- * left out: a crashed session leaves its file behind.
+ * left out: a crashed session leaves its file behind. Null when the registry cannot be read.
  */
-export function liveSessions(config: string, alive: (pid: number) => boolean): LiveSession[] {
+export function liveSessions(config: string, alive: (pid: number) => boolean): LiveSession[] | null {
   let names: string[]
   try {
-    names = readdirSync(join(config, 'sessions')).filter(n => /^[0-9]+\.json$/.test(n))
+    names = readdirSync(join(config, HOST_SESSIONS_DIR)).filter(n => /^[0-9]+\.json$/.test(n))
   } catch {
-    return []
+    // A registry that cannot be read is no « nobody lives »: the caller keeps what it would end.
+    return null
   }
   const found: LiveSession[] = []
   for (const n of names) {
     let read: unknown
     try {
-      read = JSON.parse(readText(join(config, 'sessions', n)) ?? '')
+      read = JSON.parse(readText(join(config, HOST_SESSIONS_DIR, n)) ?? '')
     } catch {
       continue
     }
@@ -181,6 +199,6 @@ export function callerOf(sessions: readonly LiveSession[], id: string | undefine
 export function makerOf(caller: LiveSession | null, reportsTo: string | undefined): { orchestrator: string | null; agent: string | null } {
   const to = reportsTo === undefined || reportsTo.trim() === '' ? null : bareName(reportsTo)
   if (caller === null) return { orchestrator: to, agent: null }
-  if (caller.name.startsWith('Agent:')) return { orchestrator: to, agent: caller.name }
+  if (roleOf(caller.name) === 'agent') return { orchestrator: to, agent: caller.name }
   return { orchestrator: caller.name, agent: null }
 }
