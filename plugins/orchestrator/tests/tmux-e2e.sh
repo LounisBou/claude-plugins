@@ -117,9 +117,13 @@ trap cleanup EXIT
 # loads no module, and no `@state` is written. Copies in the sandbox: the host writes its type
 # files into each plugin folder it loads, which must not be the repository's.
 DEPDIRS=""
-for dep in $(jq -r '.dependencies[]?.name' "$ROOT/.claude-plugin/plugin.json"); do
+DEPS=$(jq -r '.dependencies[].name' "$ROOT/.claude-plugin/plugin.json") && [ -n "$DEPS" ] \
+  || { echo "refused: no dependency read in plugin.json: the module would not load" >&2; exit 1; }
+for dep in $DEPS; do
+  case "$dep" in *[!a-z0-9-]*) echo "refused: the dependency name '$dep' is not a plugin folder's" >&2; exit 1 ;; esac
   [ -d "$ROOT/../$dep" ] || { echo "refused: the plugin depends on $dep, which is not beside it" >&2; exit 1; }
-  mkdir -p "$SANDBOX/deps" && cp -R "$ROOT/../$dep" "$SANDBOX/deps/$dep"
+  mkdir -p "$SANDBOX/deps" && cp -R "$ROOT/../$dep" "$SANDBOX/deps/$dep" \
+    || { echo "refused: $dep could not be copied into the sandbox" >&2; exit 1; }
   DEPDIRS="$DEPDIRS --plugin-dir $SANDBOX/deps/$dep"
 done
 WRAPPER="$SANDBOX/bin/${HOST##*/}"
