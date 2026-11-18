@@ -31,7 +31,7 @@ import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
   declaredWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, gateText, gateSelfText, noStatusText, noStatusKey, heldReport, readDeliveryFacts, factsLine, coordinatorOf, chainOwnerTty, waitLabel, waitParts, localMinute, openQuestions, parseWithdrawal,
-  hostStopOf, stopInTail, stopKey, stopText, type HostStop, type WaitKind,
+  hostStopOf, stopInTail, stopKey, stopText, type Gate, type HostStop, type WaitKind,
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { planOlder, planWithdrawal } from './settle.ts'
@@ -46,7 +46,7 @@ import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLi
 import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
-import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { configDir, gateEnv, githubGateArgv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { unattendedPaneLines, type Unattended, type UnattendedPaneLine } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ROUND_DIR } from '../core/orchestration.ts'
@@ -2363,8 +2363,17 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 // write, the coordinator's record and the send queued. Well inside a handler's ten seconds.
 const RELAY_BOUND_MS = 5000
 
-// The bound on each read of a delivery's facts (git's three and gh's one, run at once): inside the relay's.
+// The bound on each read of a delivery's facts (git's three and gh's one, run at once with the gate's, which has its own): inside the relay's.
 const FACTS_BOUND_MS = 3000
+
+// What the relay keeps for its own send after the facts: the gate's read ends that much before the relay's bound.
+const SEND_MARGIN_MS = 500
+
+// The github gate for a delivery's facts, given the time the relay's bound leaves since `started`: null where the plugin is not found.
+async function gateOf($: Host<'env' | 'fs'>, started: number): Promise<Gate | null> {
+  const argv = await githubGateArgv($)
+  return argv ? { argv, boundMs: Math.max(0, RELAY_BOUND_MS - (Date.now() - started) - SEND_MARGIN_MS) } : null
+}
 
 // Whether a session of this role puts its operator questions into the round: an orchestrator, a
 // coordinator and an auditor do, as one rule for every turn's end.
@@ -2394,6 +2403,7 @@ export function entersRound(role: string | null): boolean {
 // flight or not: nothing resumes it. Any other end that is no answer is read for that alone.
 export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer',
   declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }, outbox: Outgoing[] = []): Promise<void> {
+  const started = Date.now()
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2499,7 +2509,7 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   const checkout = wait?.kind === 'delivered' ? await $.session.root().then(root => root || $.session.cwd()).catch(() => '') : ''
   if (wait?.kind === 'delivered' && !checkout) await logLine($, 'supervision', `relay: ${name}'s checkout is unread: its delivery goes without facts`)
   const facts = checkout
-    ? factsLine(await readDeliveryFacts(argv => $.process.run(argv, { timeoutMs: FACTS_BOUND_MS, cwd: checkout }), whole))
+    ? factsLine(await readDeliveryFacts((argv, timeoutMs) => $.process.run(argv, { timeoutMs: timeoutMs ?? FACTS_BOUND_MS, cwd: checkout }), whole, await gateOf($, started)))
     : null
   const text = wait ? relayText(name, wait, patch!.waiting_since!, context, facts) : noStatusText(name, context, answer)
   const sent = orchestrating ? await sendToCoordinator($, coordinator!, text) : await $.session.send({ to, text })
