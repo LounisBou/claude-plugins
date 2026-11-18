@@ -1547,6 +1547,22 @@ test('the coordinator shown a question asked with ask is told in its own session
   expect(fx.submitted.length).toBe(1)
 })
 
+// The pane is the coordinator's own session: a question it asked itself is reached by no message
+// (« no live session … has id »), so the answer is submitted to its own turn, and that one prompt
+// tells it settled, shown or not.
+test('a pick on a question the pane\'s own session asked submits the answer to that session, sends no message, and draws no « not delivered »', async () => {
+  const own = askedObject('s-one', 'Coord: main', '2026-10-18T10:04:00.000Z')
+  const { fx, sent, render } = await askedPane([own], { refuse: 'no live session has id s-one' })
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'coordinator', name: 'Coord: main', context_percent: 10 })) + '\n')
+  fx.files.set(LISTED, JSON.stringify([own.id]) + '\n')
+  await pick(await render(), 'B')
+  const stored = JSON.parse(String(fx.files.get(`${ROUND}/${own.id}.json`)))
+  expect(stored).toMatchObject({ status: 'answered', answer: { text: 'B : acme/app#2 first', by: 'pane' }, delivery: { state: 'delivered', attempts: 1 } })
+  expect(sent).toEqual([])
+  expect(fx.submitted).toEqual([`[module] The operator answered your question ${own.id} « merge order » (blocks: acme/app#1) through Coord: main at ${stored.answer.at} — B : acme/app#2 first`])
+  expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(false)
+})
+
 
 // --- the selector ---------------------------------------------------------------------------
 
@@ -2210,7 +2226,9 @@ test('a replica of a question asked with ask on another machine is drawn only wh
   fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'sent', at: '2026-10-30T10:05:00.000Z', attempts: 1 } }) + '\n')
   expect(await drawnNow()).toContain('being delivered: the answer to Orch: belt on far (blocks: acme/app#1) — sent 1 of 3, not acknowledged yet')
   fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'failed', at: '2026-10-30T10:05:00.000Z', attempts: 1, reason: 'already answered in its own tab' } }) + '\n')
-  expect(await drawnNow()).toContain('not delivered: already answered in its own tab — the answer to Orch: belt on far (blocks: acme/app#1)')
+  expect(await drawnNow()).toContain('not delivered: already answered in its own tab — the answer to Orch: belt on far (blocks: acme/app#1)')  // Withdrawn by its sender afterwards: nobody waits for that answer any more, so no notice stays drawn.
+  fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...replica, status: 'withdrawn', answer: { text: 'merged it myself', by: 'sender', at: '2026-10-30T10:06:00.000Z', settler: 'Orch: belt' }, delivery: { state: 'failed', at: '2026-10-30T10:05:00.000Z', attempts: 1, reason: 'already answered in its own tab' } }) + '\n')
+  expect((await drawnNow()).some(t => t.startsWith('not delivered:'))).toBe(false)
 })
 
 // --- a remote orchestrator's open questions, reconciled with its latest row --------------------

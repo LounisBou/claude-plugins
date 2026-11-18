@@ -2021,8 +2021,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           : sessionKey(entry.sender.session) in local || hostedAsked.has(entry.id))
         asked = askedGroups(localAsked).flat()
         pending = asked.length
-        // An answer to a question asked with `ask` not delivered, while its asker has a row here.
-        failed = localAsked.filter(entry => (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed')
+        // An answer to a question asked with `ask` not delivered, while its asker has a row here;
+        // none for an entry its sender withdrew, whose answer nobody waits for any more.
+        failed = localAsked.filter(entry => entry.status !== 'withdrawn' && (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed')
           .map(entry => ({ entry: askedAsEntry(entry), reason: entry.delivery!.reason ?? 'no answer' }))
         // A replica's answer on its way to its owner's machine, until the owner acknowledges it.
         delivering = localAsked.filter(entry => entry.origin !== undefined && (entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')).map(askedAsEntry)
@@ -2210,7 +2211,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       }))
       // His answer to the question asked with `ask` the controls are under, once at a time: the
       // object answered by the pane, its asker sent the answer, the coordinator that was shown it
-      // told it is settled, as for an entry, the pane drawn again.
+      // told it is settled, as for an entry, the pane drawn again. A question the pane's own
+      // session asked is told by its answer, submitted to that session: no second notice.
       const answerAsked = (id: string, text: string): Promise<void> => {
         if (pane.answering.has(id)) return Promise.resolve()
         pane.answering.add(id)
@@ -2219,7 +2221,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           const done = await answerAskedFromPane($, id, text)
           if (done === null || done.answer === null) return
           forgetDraft(pane, id)
-          if (shown) await $.prompt.submit({ text: settledText(askedAsEntry(done), { text: done.answer.text, by: 'pane', at: done.answer.at }) })
+          if (shown && done.sender.session !== await $.session.id()) await $.prompt.submit({ text: settledText(askedAsEntry(done), { text: done.answer.text, by: 'pane', at: done.answer.at }) })
         })()
           .catch(err => logLine($, 'supervision', `round: ${messageOf(err)}`))
           .finally(() => {
