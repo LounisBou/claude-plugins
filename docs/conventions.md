@@ -110,7 +110,7 @@ changed by a pull request that edits this file and the code it governs together.
   more than once, both measured by CI against their ceilings (`ci/prompts.json`, `npm run prompts`).
   CI reports them, a warning and a line of the weekly report (`telemetry.ts report`); the release
   lowers the budgets (`npm run release`) and refuses one exceeded. CI refuses a pull request that
-  raises any plugin's prompt tokens against its base: a rise is paid by a removal in the same pull request.
+  raises any plugin's prompt tokens against its base: a rise is paid by a removal in the same plugin, in the same pull request.
 - What a kind of session loads is a scenario of `ci/scenarios.json`; `npm run context` sums
   its tokens, and CI writes each pull request's difference by scenario in its summary. A new
   skill or command a session loads in full joins the scenario of that session.

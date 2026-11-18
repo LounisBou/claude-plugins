@@ -51,7 +51,7 @@ jobs:
       - name: tooling tests, with the coverage floor
         if: steps.tested.outputs.repository != 'true'
         run: npm test
-      # The next three steps report: a figure over its ceiling or a script that fails is a warning
+      # Apart from the growth check, the next steps report: a figure over its ceiling or a script that fails is a warning
       # and a line of the run's summary, never a red job (the weekly report prints the same figures).
       # A warning is one non-empty line of the script's own message, the first five at most.
       - name: prompt budgets and duplicates against their ceilings (a report)

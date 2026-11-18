@@ -239,6 +239,16 @@ describe('release run', () => {
     assert.throws(() => prompts(root, ['--growth'], recorder()), /--growth needs a git ref/)
   })
 
+  it('reads the growth against the merge base, not the tip of a base that moved on', () => {
+    const root = released()
+    git(root, 'checkout', '-q', '-b', 'topic')
+    git(root, 'checkout', '-q', 'main')
+    writeFileSync(join(root, 'plugins', 'beta', 'skill.md'), 'Short.\n')
+    git(root, 'commit', '-q', '-am', 'main shrinks beta')
+    git(root, 'checkout', '-q', 'topic')
+    assert.equal(prompts(root, ['--growth', 'main'], recorder()), 0)
+  })
+
   it('writes no budget on a dry run', () => {
     const root = released()
     assert.equal(release(root, ['--dry-run'], recorder()), 0)
