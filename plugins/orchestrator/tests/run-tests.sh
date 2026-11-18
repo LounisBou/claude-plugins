@@ -8262,7 +8262,7 @@ if command -v tmux >/dev/null 2>&1; then
   tmux -L "$CONFSRV" set -w -t home:0 @state busy 2>/dev/null
   tmux -L "$CONFSRV" set -w -t home:2 @state asks 2>/dev/null
   check "the tab bar shows each window's name and state icon in a padded block, the current one in bold, without index or session name" \
-    " sleep ▶ | second | third ✋ " \
+    " sleep  ▶ | second | third ✋ " \
     "$(tmux -u -L "$CONFSRV" display -p -t home:0 '#{W:#{E:window-status-format}|,#{E:window-status-current-format}|}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/|$//' | tr -d '\n')"
   # Each of the seven states renders its own icon after the name, in the inactive block and in
   # the current one; a state the module never writes renders none.
@@ -8273,6 +8273,22 @@ if command -v tmux >/dev/null 2>&1; then
   done
   check "each state renders its icon in both blocks, an unknown state none" \
     " ▶ | ▶ / ● | ● / ✋ | ✋ / ⧖ | ⧖ / ✓ | ✓ / ⏹ | ⏹ / ⚠ | ⚠ / | /" "$stateicons"
+  # The current tab's yellow block ends its label with a space before the icon, in every state
+  # branch, so the label does not touch the icon's block: the branch starts with that space.
+  check "the current tab's highlighted label ends with a space before its state icon, in every state" "ok" \
+    "$(python3 -I - "$HOMECONF" <<'PY'
+import re, sys
+conf = open(sys.argv[1], encoding='utf-8').read()
+current = re.search(r"^set -g window-status-current-format '(.*)'$", conf, re.M).group(1)
+branches = dict(re.findall(r"\{==:#\{@state\},(\w+)\},( ?#\[)", current))
+states = sorted(branches)
+bad = []
+if states != sorted(['busy', 'idle', 'asks', 'held', 'review', 'done', 'over', 'gate']): bad.append('states %s' % states)
+for state in states:
+    if branches[state] != ' #[': bad.append('%s has no space before its icon' % state)
+print('ok' if not bad else '; '.join(bad))
+PY
+)"
   # Every icon keeps one colour on every tab, the current one drawing it in a #303030 block of its
   # own, and each pair holds 7:1 (WCAG AAA): the colours read from the conf, ratios computed.
   check "each icon has one colour on both kinds of tab, over a background that holds it at 7:1" "ok" \
