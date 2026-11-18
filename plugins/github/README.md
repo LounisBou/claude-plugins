@@ -224,8 +224,9 @@ github: <owner/name>#<n> out of draft to run CI, still Not Ready
 A stacked pull request, whose base is the head branch of another open pull request (neither
 the default branch nor a protected one, so a release pull request's head is no stacked base),
 often runs no CI at all: most workflows filter their pull requests on `main`, `develop` or
-`staging`. Such a pull request is ready on its review and either a `tests` record passed at its
-head or its checks green there; a failed run or a failed check blocks it. The bottom pull
+`staging`. Such a pull request is ready on its review; in a repository where the operator
+configured light CI, also on a `tests` record passed at its head or its checks green there, which
+stand over a failed run. A failed check blocks it. The bottom pull
 request keeps the full CI. A `tests` record of an earlier head of the same diff carries, as the
 other kinds do.
 
@@ -237,13 +238,8 @@ The record is written by the **`mcp__github__light_ci`** tool alone, never by
   timeout, `{base}` replaced by the merge base for a tests-impact command such as
   `npx jest --changedSince={base}`), and records `pass` or `fail` with the command, its time and
   its test count. The tool stops at 570 seconds, the host's limit, and records nothing then: a
-  longer suite runs as `python3 <github root>/engine/light_ci.py run --pr <n>` in the
-  background.
-- `{"action": "status", "repo"?}` answers in one line what the repository's file holds and the
-  facts of the question an orchestrator asks once per repository: whether its CI runs on
-  stacked bases, the median pull request run, the stacked pull requests of the last 30 days, the
-  command its stack suggests (the full suite by default, the tests-impact variant named beside),
-  and whether light CI is useful there.
+  command that needs longer is no light CI.
+- `{"action": "status", "repo"?}` answers in one line what the repository's file holds.
 
 Each repository's command lives outside the repository, in
 `${CLAUDE_CONFIG_DIR:-~/.claude}/light-ci/<owner>-<name>.json`:
@@ -255,9 +251,9 @@ Each repository's command lives outside the repository, in
   "decided": { "at": "2026-11-14T18:30:00Z", "words": "<the operator's answer>" } }
 ```
 
-or, for a repository where the operator refused it, `{ "off": "<his words>", "at": "…" }`: its
-stacked pull requests are then ready on their review alone, and the `Ready` line names the date.
-The gate reads that key alone, never the command.
+or, for a repository where the operator refused it, `{ "off": "<his words>", "at": "…" }`. With
+no file, or that refusal, its stacked pull requests are ready on their review alone, and the
+`Ready` line says so. The gate reads that key alone, never the command.
 
 ## Guards
 

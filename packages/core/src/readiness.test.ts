@@ -57,8 +57,13 @@ describe('readiness', () => {
     assert.deepEqual(conditions(evidence({ latest: passed, ciGreen: true, stacked: true })), [])
     // Stacked: neither, a failed run, a record from another producer.
     assert.deepEqual(conditions(evidence({ latest: passed, ciGreen: false, stacked: true })), ['tests'])
-    assert.deepEqual(conditions(evidence({ latest: tests('fail'), ciGreen: true, stacked: true })), ['tests:fail'])
+    assert.deepEqual(conditions(evidence({ latest: tests('fail'), ciGreen: false, stacked: true })), ['tests:fail'])
     assert.deepEqual(conditions(evidence({ latest: tests('pass', 'session-e2e'), ciGreen: false, stacked: true })), ['tests:pass'])
+    // Stacked: its checks green at the head stand over a failed local run.
+    assert.deepEqual(conditions(evidence({ latest: tests('fail'), ciGreen: true, stacked: true })), [])
+    // Stacked in a repository with no CI at all: no check stands over the failed local run.
+    assert.deepEqual(conditions(evidence({ latest: tests('fail'), ciGreen: true, ciNone: true, stacked: true })), ['tests:fail'])
+    assert.deepEqual(conditions(evidence({ latest: passed, ciGreen: true, ciNone: true, stacked: true })), [])
     // Stacked: a record of an earlier head of the same diff carries.
     assert.deepEqual(conditions(evidence({ latest: passed, ciGreen: false, stacked: true, carried: new Set(['tests']) })), [])
     // Stacked: a failed check blocks, held by the gate, over a passed record.

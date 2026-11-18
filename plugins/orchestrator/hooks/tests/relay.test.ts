@@ -688,6 +688,8 @@ test('a session that spawned its successor hands it the open entries at its « t
   }
   expectMoved(fx, asked, other, settled)
   expect(fx.sent.filter(s => s.text === successorText({ name: 'Orch: belt-2', session: 's-two' })).map(s => s.to)).toEqual([{ sessionId: 's-agent' }])
+  // The line is recorded as told: the successor's own module passes this agent at its next measure.
+  expect(JSON.parse(fx.files.get(`${HOME}/.claude/claude-orchestrator/store/told/s-agent`)!).session).toBe('s-two')
 })
 
 test('a « takeover confirmed » to a session that spawned no successor moves nothing before its end', async () => {

@@ -2869,8 +2869,8 @@ kill "$grandchild" 2>/dev/null
 check "light_ci run's timeout ends the command's grandchild too, and records the failure" "gone 1" "$alive $(lcrecord | grep -c '^fail light-ci .* — timed out after 1s')"
 n=$(lccount)
 lcproject '{"command": ["python3", "-c", "import time; time.sleep(5)"], "timeoutSeconds": 30}'
-check "light_ci run cut by its budget writes nothing and says to run it from Bash" "1 1 $n" \
-  "$(lc run --pr 12 --repo acme/thing --budget 1 >/dev/null 2>"$LC/err"; echo "$? $(grep -c "stopped at the tool's budget of 1s, nothing recorded: run $LIGHT run --pr 12 from Bash in the background" "$LC/err") $(lccount)")"
+check "light_ci run cut by its budget writes nothing and names no background route" "1 1 0 $n" \
+  "$(lc run --pr 12 --repo acme/thing --budget 1 >/dev/null 2>"$LC/err"; echo "$? $(grep -c "stopped at the tool's budget of 1s, nothing recorded: a light CI runs within it" "$LC/err") $(grep -c 'background' "$LC/err") $(lccount)")"
 lcproject '{"command": ["python3", "-c", "print(1)"], "prepare": ["python3", "-c", "import sys; sys.exit(1)"]}'
 check "light_ci run writes nothing when prepare fails" "1 1 $n" \
   "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'prepare python3 -c import sys; sys.exit(1) exited 1, no tests run, nothing recorded' "$LC/err") $(lccount)")"
@@ -2908,63 +2908,19 @@ check "light_ci run exits 1 and says so when its record cannot be written" "1 1"
 rm "$LC/cfg/pr-records"; mv "$LC/cfg/pr-records.kept" "$LC/cfg/pr-records"
 check_status "light_ci run refuses a pull request number of 0 with exit 2" 2 lc run --pr 0 --repo acme/thing
 check "light_ci.py imports nothing outside the standard library and the engine" "" \
-  "$(grep -E '^(import|from) ' "$LIGHT" | grep -vE '^(import|from) (argparse|base64|datetime|json|os|re|signal|statistics|subprocess|sys|tempfile|time|urllib\.parse|record|ghlib)( |$)')"
+  "$(grep -E '^(import|from) ' "$LIGHT" | grep -vE '^(import|from) (argparse|json|os|re|signal|subprocess|sys|tempfile|time|record|ghlib)( |$)')"
 
-# status: the project file, then the facts of the invitation.
+# status: what the project file holds.
 lcproject '{"command": ["npx", "jest"], "decided": {"at": "2026-11-14T18:30:00Z", "words": "A"}}'
 check "light_ci status names a configured command and its decision" \
   "acme/thing: configured: npx jest (decided 2026-11-14T18:30:00Z); $LC/cfg/light-ci/acme-thing.json" "$(lc status --repo acme/thing)"
 lcproject '{"off": "non", "at": "2026-11-14T18:30:00Z"}'
 check "light_ci status names the refusal and its date" "acme/thing: off: non, 2026-11-14T18:30:00Z; $LC/cfg/light-ci/acme-thing.json" "$(lc status --repo acme/thing)"
 rm "$LC/cfg/light-ci/acme-thing.json"
-printf '%s' '{"workflow_runs":[{"run_started_at":"2026-11-14T10:00:00Z","updated_at":"2026-11-14T10:02:00Z"},{"run_started_at":"2026-11-14T11:00:00Z","updated_at":"2026-11-14T11:08:00Z"},{"run_started_at":"2026-11-14T12:00:00Z","updated_at":"2026-11-14T12:04:00Z"}]}' \
-  > "$LC/fix/GET_repos_acme_thing_actions_runs__event=pull_request&status=completed&per_page=10.json"
-recent=$(python3 -c 'import datetime; print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
-printf '%s' '[{"number":3,"created_at":"'"$recent"'","head":{"ref":"feat-b"},"base":{"ref":"feat-a"}},{"number":2,"created_at":"'"$recent"'","head":{"ref":"feat-a"},"base":{"ref":"develop"}},{"number":1,"created_at":"'"$recent"'","head":{"ref":"develop"},"base":{"ref":"main"}},{"number":4,"created_at":"2020-01-01T00:00:00Z","head":{"ref":"old-b"},"base":{"ref":"feat-a"}}]' \
-  > "$LC/fix/GET_repos_acme_thing_pulls__state=all&sort=created&direction=desc&per_page=100.json"
-printf '%s' '{"default_branch":"main"}' > "$LC/fix/GET_repos_acme_thing.json"
-printf '%s' '[{"name":"main"},{"name":"develop"}]' > "$LC/fix/GET_repos_acme_thing_branches__protected=true&per_page=100.json"
-lcgit remote set-url origin https://github.com/acme/thing.git
-mkdir -p "$LC/co/.github/workflows"
-printf 'name: ci\non:\n  push:\n  pull_request:\n    branches: [develop, main]\njobs: {}\n' > "$LC/co/.github/workflows/ci.yml"
-printf '{"devDependencies": {"jest": "29.7.0"}}' > "$LC/co/package.json"
-check "light_ci status says missing, the CI limited to the long-lived bases, the median, the stacked count, the command" \
-  "acme/thing: missing; CI on stacked bases: no (ci.yml: develop, main); median pull request run: 4.0 min over 3 runs; stacked pull requests over 30 days: 1; proposed: npx jest (Jest, TIA past 2 min: npx jest --changedSince={base}); useful: yes; file: $LC/cfg/light-ci/acme-thing.json" \
-  "$(lc status)"
-printf 'on: [push, pull_request]\njobs: {}\n' > "$LC/co/.github/workflows/ci.yml"
-check "light_ci status reads a CI on every pull request as covering stacked bases, and proposes nothing to ask" \
-  "CI on stacked bases: yes (ci.yml)|useful: no" "$(lc status | tr ';' '\n' | sed 's/^ //' | grep -E '^(CI on|useful)' | paste -sd'|' -)"
-
-RUNSFIX="$LC/fix/GET_repos_acme_thing_actions_runs__event=pull_request&status=completed&per_page=10.json"
-cp "$RUNSFIX" "$LC/runs.kept"; printf '{"__status":500,"message":"boom"}' > "$RUNSFIX"
-check "light_ci status says the median is unread and useful: unknown when its read failed" \
-  "median pull request run: unread (boom (HTTP 500))|useful: unknown" \
-  "$(lc status | tr ';' '\n' | sed 's/^ //' | grep -E '^(median|useful)' | paste -sd'|' -)"
-mv "$LC/runs.kept" "$RUNSFIX"
-
-# Read through the API (the checkout's origin is another repository): a directory GitHub does not have reads as none,
-# a read that fails reads as unread, never as « no workflow » or « no known stack », and useful is unknown.
-lcgit remote set-url origin "$LC/origin.git"
-WFFIX="$LC/fix/GET_repos_acme_thing_contents_.github_workflows.json"; TOPFIX="$LC/fix/GET_repos_acme_thing_contents_..json"
-printf '{"__status":404,"message":"Not Found"}' > "$WFFIX"
-printf '{"__status":404,"message":"Not Found"}' > "$TOPFIX"
-check "light_ci status reads a repository with no workflow directory as having no workflow, and no known stack" \
-  "CI on stacked bases: no workflow runs on pull requests|proposed: none (no known stack)|useful: yes" \
-  "$(lc status --repo acme/thing | tr ';' '\n' | sed 's/^ //' | grep -E '^(CI on|proposed|useful)' | paste -sd'|' -)"
-printf '{"__status":500,"message":"boom"}' > "$WFFIX"
-printf '{"__status":500,"message":"boom"}' > "$TOPFIX"
-check "light_ci status says unread for the facts a failed read leaves unknown, and useful: unknown" \
-  "CI on stacked bases: unread (boom (HTTP 500))|proposed: unread (boom (HTTP 500))|useful: unknown" \
-  "$(lc status --repo acme/thing | tr ';' '\n' | sed 's/^ //' | grep -E '^(CI on|proposed|useful)' | paste -sd'|' -)"
-rm -f "$WFFIX" "$TOPFIX"
-
-# The workflow reader on the shapes it meets.
-branches() { printf "$1" | python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import light_ci; print(light_ci.pull_request_branches(sys.stdin.read()))' "$ROOT/engine"; }
-check "a pull_request trigger with no branches runs on every base" "None" "$(branches 'on:\n  pull_request:\n  push:\n    branches: [main]\n')"
-check "a branches list under pull_request limits it" "['develop', 'staging']" "$(branches 'on:\n  pull_request:\n    branches:\n      - develop\n      - staging\n')"
-check "a branches glob of every branch runs on every base" "None" "$(branches 'on:\n  pull_request:\n    branches: [\"**\"]\n')"
-check "a workflow with no pull_request trigger runs on none" "[]" "$(branches 'on:\n  push:\n    branches: [main]\n')"
-check "a push trigger's branches never limit pull_request" "None" "$(branches 'on:\n  push:\n    branches: [main]\n  pull_request:\n')"
+check "light_ci status says a repository with no file has none, and proposes nothing" \
+  "acme/thing: none: its stacked pull requests are ready on their review; $LC/cfg/light-ci/acme-thing.json" "$(lc status --repo acme/thing)"
+lcproject '{"command": "npx jest"}'
+check "light_ci status names a file it cannot read as invalid" "1" "$(lc status --repo acme/thing | grep -c '^acme/thing: invalid (command is a non-empty list of words')"
 rm -rf "$LC"
 
 
