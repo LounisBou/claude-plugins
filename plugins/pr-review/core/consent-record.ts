@@ -176,7 +176,7 @@ export function answersChoice<C extends { letter: string; text: string }>(typed:
 }
 
 /** The words a plain confirmation may add after its choice: anything else is a limit, a condition or a question. */
-const CONFIRMATION = new Set(['merci', 'thanks', 'thank', 'you', 'ok', 'okay', 'go', 'oui', 'yes', 'svp', 'please', 'et', 'and', 'then', 'puis', 'fusionne', 'fusionner', 'fusionnez', 'merge', 'vas', 'y', 'allez', 'bon', 'bien', 'parfait', 'super', 'pour', 'for', 'la', 'le', 'les', 'de', 'dispense', 'waiver', 'pr', 'prs'])
+const CONFIRMATION = new Set(['merci', 'thanks', 'thank', 'you', 'ok', 'okay', 'go', 'oui', 'yes', 'svp', 'please', 'et', 'and', 'then', 'puis', 'fusionne', 'fusionner', 'fusionnez', 'merge', 'vas', 'y', 'allez', 'bon', 'bien', 'parfait', 'super', 'pour', 'for', 'la', 'le', 'les', 'de', 'dispense', 'waiver', 'pr', 'prs', 'l', 'd'])
 
 // The subject's own names in an answer, which it may repeat: `owner/name#7`, `owner/name`, `name`, `#7`.
 function withoutOwnSubject(said: string, subject: ConsentSubject): string {
@@ -235,6 +235,114 @@ export function opensChoice(typed: string, choices: readonly { letter: string; t
   return opened(spaced(typed).toLowerCase(), choices).length > 0
 }
 
+// A word, not the middle of a longer one: letters and digits join, accents included.
+export const apart = (pattern: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])(?:${pattern})(?![\\p{L}\\p{N}])`, 'u')
+
+/**
+ * What makes words no plain grant: a question, a condition, an exception, a restriction, a refusal.
+ * Fail-closed: the asker asks again, with the limit or the condition in the question. It is read on
+ * words folded to lower case with the plain apostrophe.
+ */
+export const HEDGED = apart("pas|non|jamais|sauf|mais|attend\\p{L}*|wait|not|don't|dont|no|never|refus\\p{L}*|annul\\p{L}*|cancel|stop|si|if|unless|only|seulement|uniquement|plut[oô]t|rather|avant|before|apr[eè]s|after|sinon|otherwise|r[eé]voqu\\p{L}*|retir\\p{L}*|revok\\p{L}*|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|monday|tuesday|wednesday|thursday|friday|saturday|sunday")
+
+/** A limit left in words: a date, an hour, a duration, a period, a moment, a zone, any way of limiting a consent. Read on words folded to lower case. */
+export const LIMIT_LEFT = new RegExp(
+  "jusqu|until|ce soir|tonight|expir|valable|demain|tomorrow|aujourd'hui|today|\\d{1,2}/\\d{1,2}|\\d{4}-\\d{2}-\\d{2}|(?<![\\p{L}\\p{N}])\\d{1,2}\\s?h(?:\\d{2})?(?![\\p{L}\\p{N}])"
+  + "|(?<![\\p{L}\\p{N}])(?:pendant|durant|during|for|semaines?|weeks?|week-?end|jours?|journ[eé]es?|days?|heures?|hours?|minutes?|mois|months?|ans|ann[eé]es?|years?|temporair\\p{L}*|provisoire\\p{L}*|temporar\\p{L}*|moment|fois|once|am|pm|pst|cst|cet|cest|bst|gmt|utc|locale|local)(?![\\p{L}\\p{N}])"
+  + "|(?<![\\p{L}\\p{N}])[+-]\\s?\\d",
+  'u',
+)
+
+// The words that may open a grant before its choice: « Ok Accorder … », « Oui, accorder … ».
+const GRANT_LEAD = /^(?:ok|okay|oui|yes|go|d'accord)(?![\p{L}\p{N}\p{M}])[\s,!:—-]*/u
+
+// What a kind's subject is called, which a grant may restate (« pour l'auto-merge »).
+const RESTATED: Record<ConsentKind, RegExp> = {
+  'auto-merge': /(?<![\p{L}\p{N}._/-])(?:auto-?merge|merge automatique|fusion automatique|fusionner automatiquement|merger automatiquement)(?![\p{L}\p{N}_-])/gu,
+  'auto-deploy': /(?<![\p{L}\p{N}._/-])(?:auto-?d[eé]ploi\p{L}*|auto-?deploy\p{L}*|d[eé]ploiement (?:automatique|continu)|d[eé]ployer automatiquement)(?![\p{L}\p{N}_-])/gu,
+  'e2e-waiver': /(?<![\p{L}\p{N}._/-])(?:e2e|end-to-end|bout[- ]en[- ]bout)(?![\p{L}\p{N}_-])/gu,
+  'e2e-exemption': /(?<![\p{L}\p{N}._/-])(?:e2e|end-to-end|bout[- ]en[- ]bout)(?![\p{L}\p{N}_-])/gu,
+  'norms-waiver': /(?<![\p{L}\p{N}._/-])(?:norms?|normes?)(?![\p{L}\p{N}_-])/gu,
+}
+
+// The words with the subject's own kind (and an auto-deploy's own environment) taken out: a grant may restate what it grants.
+function restated(said: string, subject: ConsentSubject): string {
+  const kind = said.replace(RESTATED[subject.kind], ' ')
+  return 'env' in subject ? kind.replace(new RegExp(`(?<![\\p{L}\\p{N}._/-])${subject.env}(?![\\p{L}\\p{N}_-])`, 'gu'), ' ') : kind
+}
+
+/**
+ * Typed words cut into the grant they open with and what follows it. The grant is the first line,
+ * or the first sentence of it (up to a `.`, `!` or `?` run followed by a space or the end), its
+ * closing mark kept so that « Accorder ? » stays a question; the rest, line breaks kept, is what he
+ * said next. An exemption is not cut: its record holds his sentence whole, and github reads its
+ * limit and its words in all of it.
+ */
+export function splitGrant(typed: string, subject: ConsentSubject): { grant: string; following: string } {
+  const text = typed.trim()
+  if (subject.kind === 'e2e-exemption') return { grant: text, following: '' }
+  const line = text.split('\n', 1)[0] ?? ''
+  const end = /[.!?]+(?=\s|$)/.exec(line)
+  const cut = end ? end.index + end[0].length : line.length
+  return { grant: text.slice(0, cut).trim(), following: text.slice(cut).trim() }
+}
+
+// A question or a semicolon in any script NFKC does not fold to the ASCII ones (the Arabic question mark).
+const QUESTION = /[?;؟]/
+
+/** The environments an auto-deploy names, and the words that name them. */
+export const ENV_WORDS: Record<string, DeployEnv> = { dev: 'dev', staging: 'staging', stage: 'staging', prod: 'prod', production: 'prod' }
+// An environment is no part of a compound (« pre-prod », « prod-like »): hyphens and underscores join it too.
+export const ENV_NAME = new RegExp(`(?<![\\p{L}\\p{N}_-])(?:${Object.keys(ENV_WORDS).join('|')})(?![\\p{L}\\p{N}_-])`, 'gu')
+
+// A pull request as words name it: `#7`, `PR 7`, `pull request n° 7`, `/pull/7`.
+const PULL_REF = /#\s?(\d+)(?!\d)|(?<![\p{L}\p{N}])(?:prs?|pull requests?|pull)\s*(?:n°|no\.?|#)?\s*(\d+)(?!\d)|\/pulls?\/(\d+)(?!\d)/gu
+
+// Whether words name a repository other than the subject's, token by token (`acme/app-evil` is not `acme/app`), or a pull request other than its own.
+function namesAnother(said: string, subject: ConsentSubject): boolean {
+  const repo = subject.repo.toLowerCase()
+  if (SLASHED.test(said.split(repo).join(' '))) return true
+  for (const token of said.split(/[\s,;:!?()"«»]+/)) {
+    if (!token.includes('/') || !/\p{L}/u.test(token)) continue
+    // The elision before the name (« d'acme/app »), the pull request after it (`#7`) and the closing dot are no part of it.
+    if (token.replace(/^[^/]*'/, '').replace(/#\d+$/, '').replace(/[.']+$/, '') !== repo) return true
+  }
+  const numbers = [...said.matchAll(PULL_REF)].map(match => Number(match[1] ?? match[2] ?? match[3]))
+  return numbers.some(number => !('pr' in subject) || number !== subject.pr)
+}
+
+// What no separate instruction holds: a negation, a veto, a withdrawal, a condition, a time, a scope, a widening, an exception, a reversal, an obligation.
+const NOT_PLAIN = apart(
+  "ne|n(?=')|pas|non|nope|nah|jamais|rien|nothing|aucun\\p{L}*|none|no|not|never|plus|moins|sans|without|oubli\\p{L}*|forget|ignor\\p{L}*|arr[eê]t\\p{L}*|stop|pause|block\\p{L}*|bloqu\\p{L}*|interdi\\p{L}*|forbid\\p{L}*|veto|abort\\p{L}*|reject\\p{L}*|rejet\\p{L}*|den\\p{L}*|d[eé]ni\\p{L}*|withdraw\\p{L}*|freeze|g[eè]le\\p{L}*|suspen\\p{L}*|kill|halt|laisse\\p{L}*|tomb\\p{L}*|hold|undo|d[eé]sactiv\\p{L}*|disabl\\p{L}*|off|supprim\\p{L}*|delet\\p{L}*|remov\\p{L}*|turn|cancel|annul\\p{L}*|silence|absent\\p{L}*|vaut"
+  + "|si|if|unless|quand|lorsque?|when|whenever|d[eè]s|once|pourvu|cas|condition\\p{L}*|provided|tant|long|apr[eè]s|after|avant|before|puisque|since|until|jusqu\\p{L}*|needs?|besoin|faut|doit|doivent|must|should|devrai\\p{L}*|require\\p{L}*|exig\\p{L}*"
+  + "|pour|for|sur|on|dans|in|sous|under|avec|with|vers|to|par|by|juste|just|seul\\p{L}*|uniq\\p{L}*|only|m[eê]me|same|tous|toutes|all|every|chaque|autres?|other\\p{L}*|reste|rest|else|aussi|also|encore|too|max|min|limit\\p{L}*|d[eé]faut|default|instant|sprint|session\\p{L}*|soir|matin|nuit|night|morning|evening|tard|later|maintenant\\s+que|temp\\p{L}*"
+  + "|sauf|except\\p{L}*|hormis|hors|aside|apart|exclu\\p{L}*|exclud\\p{L}*|toutefois|however|instead|cependant|pourtant|mais|but|yet|although|sinon|otherwise|or|ou|ni|either",
+)
+
+// A sentence or a line of an instruction opens with one of these verbs, or with a word of courtesy.
+const OPENING = new RegExp(
+  "^(?:(?:et|puis|and|then|ok|okay|oui|yes|please|svp|s'il te pla[iî]t|maintenant|now|bon|alors|donc)[\\s,]+)*"
+  + "(?:lance\\p{L}*|relance\\p{L}*|push\\p{L}*|pousse\\p{L}*|merge\\p{L}*|fusionne\\p{L}*|continue\\p{L}*|poursui\\p{L}*|d[eé]marre\\p{L}*|commence\\p{L}*|start\\p{L}*|run|launch\\p{L}*|d[eé]ploie\\p{L}*|deploy\\p{L}*|rebase\\p{L}*|force\\p{L}*|vas-y|allez-y|go|passe\\p{L}*|proc[eè]de\\p{L}*|proceed|ship|fais|faites|do|termine\\p{L}*|finis\\p{L}*|encha[iî]ne\\p{L}*|merci|thanks?|thank you|parfait|super|bien|top|nickel)(?![\\p{L}\\p{N}])",
+  'u',
+)
+
+// A slash with a letter on each side, spaces around it or not: a repository or a path, never a date.
+const SLASHED = /\p{L}[\p{L}\p{N}._-]*\s*\/\s*\p{L}/u
+
+/**
+ * Whether the words that follow a grant are a separate positive instruction, which the grant does
+ * not void. Read fail-closed: every sentence or line opens with a verb of action or a word of
+ * courtesy (OPENING), and the words hold no negation, condition, time, scope, widening, exception or
+ * reversal (NOT_PLAIN), no question, no limit, no other repository, pull request or environment than
+ * the subject's. Any other text is no instruction the grant survives, and the answer records nothing.
+ */
+export function plainInstruction(following: string, subject: ConsentSubject): boolean {
+  const said = spaced(following).normalize('NFKC').toLowerCase().replace(/[’‘]/g, "'")
+  if (said === '' || QUESTION.test(said) || HEDGED.test(said) || LIMIT_LEFT.test(said) || NOT_PLAIN.test(said) || namesAnother(said, subject)) return false
+  if (following.normalize('NFKC').split(/[\n.!]+/).map(part => spaced(part).toLowerCase().replace(/[’‘]/g, "'")).filter(part => part !== '').some(part => !OPENING.test(part))) return false
+  return !('env' in subject) || [...said.matchAll(ENV_NAME)].every(match => ENV_WORDS[match[0]] === subject.env)
+}
+
 /**
  * The choice an answer opens with, when it is a plain answer of that choice: its text first, then
  * the end of the answer or a character that is no letter, digit or combining mark, case and
@@ -253,16 +361,19 @@ export function opensChoice(typed: string, choices: readonly { letter: string; t
  * answersChoice's, which refuses all but the exact forms.
  */
 export function leadingChoice<C extends { letter: string; text: string }>(typed: string, choices: readonly C[], subject: ConsentSubject, question?: string): C | undefined {
-  const said = spaced(typed).toLowerCase()
+  const { grant, following } = splitGrant(typed, subject)
+  const said = spaced(grant).normalize('NFKC').toLowerCase().replace(/[’‘]/g, "'").replace(GRANT_LEAD, '')
   const candidates = opened(said, choices)
   const first = candidates[0]
   if (first === undefined) return undefined
   const text = spaced(first.text).toLowerCase()
   if (candidates[1] !== undefined && spaced(candidates[1].text).toLowerCase() === text) return undefined
   if (!grants(first.text)) return first
+  // What he said after the grant is an instruction to its asker: the grant keeps its place when it is a plain one.
+  if (following !== '' && !plainInstruction(following, subject)) return undefined
   // Only an exemption carries a limit of its own (`until`, which expires it): no other kind's record expires, so a limit there is never the question's.
-  const rest = withoutOwnSubject(subject.kind === 'e2e-exemption' ? withoutStatedLimit(said.slice(text.length), question) : said.slice(text.length), subject)
-  if (/[?;]/.test(rest)) return undefined
+  const rest = restated(withoutOwnSubject(subject.kind === 'e2e-exemption' ? withoutStatedLimit(said.slice(text.length), question) : said.slice(text.length), subject), subject)
+  if (QUESTION.test(rest)) return undefined
   const words = rest.match(/[\p{L}\p{N}\p{M}]+/gu) ?? []
   return words.every(word => CONFIRMATION.has(word)) ? first : undefined
 }
@@ -277,9 +388,15 @@ export function consentRecordOf(fields: {
   choices: readonly { letter: string; text: string }[]; by: Answerer; at: string
 }): ConsentRecord | undefined {
   // The coordinator's and the pane's words are the operator's own orders, which need no exact form;
-  // a tab's are the asking session's, and keep to answersChoice's exact forms.
-  const leadingSubject = fields.by !== 'tab' ? parseConsentSubject(fields.subject) : undefined
-  const answer = consentAnswer(fields.answer, fields.choices, leadingSubject === undefined ? undefined : { subject: leadingSubject, question: fields.question })
+  // a tab's are the asking session's, and keep to answersChoice's exact forms unless they grant plainly.
+  const subject = parseConsentSubject(fields.subject)
+  const leading = subject === undefined ? undefined : { subject, question: fields.question }
+  let answer = consentAnswer(fields.answer, fields.choices, fields.by !== 'tab' ? leading : undefined)
+  // A tab's other words keep the exact forms, but a plain grant of the asked subject there (« Ok Accorder pour l'auto-merge ! », with or without an instruction after it) grants as the coordinator's does.
+  if (fields.by === 'tab' && leading !== undefined && !grants(answer)) {
+    const granted = consentAnswer(fields.answer, fields.choices, leading)
+    if (grants(granted)) answer = granted
+  }
   if (answer === '') return undefined
   return parseConsentRecord({ v: CONSENT_VERSION, subject: fields.subject, entry: fields.entry, question: fields.question, answer, by: fields.by, at: fields.at })
 }

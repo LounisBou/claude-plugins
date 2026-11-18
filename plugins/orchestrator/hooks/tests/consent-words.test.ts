@@ -290,6 +290,36 @@ test('a plain grant holds only the grant, the subject and the limit: an instruct
   expect('ok' in judged("Accorder l'auto-merge de acme/guide, merci"), 'a plain grant with thanks').toBe(true)
 })
 
+test('a plain grant followed by a separate instruction stays a grant: the instruction is kept whole in the question; a condition, a limit or another subject after it refuses', () => {
+  const judged = (said: string) => judgeWords(words({ subject: { kind: 'auto-merge', repo: 'acme/guide' }, until: null, said }), NOW.getTime())
+  const merged = judged("Ok Accorder l'auto-merge de acme/guide !!!\n\nLance le push forcé go !")
+  expect('ok' in merged && merged.ok).toMatchObject({ answer: 'Accorder', question: expect.stringContaining('Lance le push forcé go !') })
+  expect('ok' in judged("Accorder l'auto-merge de acme/guide. Lance le push")).toBe(true)
+  for (const said of [
+    "Accorder l'auto-merge de acme/guide\n\nsauf acme/guide#3", "Accorder l'auto-merge de acme/guide. Valable jusqu'à vendredi", "Accorder l'auto-merge de acme/guide.\nLance le push de acme/other",
+    "Accorder l'auto-merge de acme/guide ? Lance le push", "Accorder l'auto-merge de acme/guide. Lance le push ?", "Accorder l'auto-merge de acme/guide. Refuser le reste",
+    "Accorder l'auto-merge de acme/guide. Lance le push sur acme/guide-evil", "Accorder l'auto-merge de acme/guide. Merge la PR 8", "Accorder l'auto-merge de acme/guide.\nQuand la CI passe, désactive-le",
+  ]) expect('refuse' in judged(said), said).toBe(true)
+})
+
+test('a grant that names its subject after a first sentence of its own grants as it always did, and a following instruction needs the grant alone to name it', () => {
+  const merge = { kind: 'auto-merge' as const, repo: 'acme/app' }
+  const judged = (said: string, subject: Words['subject'] = merge) => judgeWords(words({ subject, until: null, said }), NOW.getTime())
+  for (const said of [
+    "Ok. Accorder l'auto-merge pour acme/app", "Accorder. L'auto-merge de acme/app, merci.", 'Accorder.\nauto-merge pour acme/app', "Oui !!! Accorder l'auto-merge pour acme/app", 'Accorder !\nacme/app auto-merge', 'Ok go ! auto-merge acme/app',
+    'Accorder.\nPour acme/app l\'auto-merge',
+  ]) expect('ok' in judged(said), said).toBe(true)
+  expect('ok' in judged('Oui. Auto-deploy de acme/app en prod', { kind: 'auto-deploy', repo: 'acme/app', env: 'prod' })).toBe(true)
+  expect('ok' in judged('Accorder. Dispense E2E acme/app#7', { kind: 'e2e-waiver', repo: 'acme/app', pr: 7 })).toBe(true)
+  // The grant alone names the subject and the instruction is positive: the grant is followed by its instruction.
+  expect('ok' in judged("Accorder l'auto-merge de acme/app. Lance le push")).toBe(true)
+  // The instruction names the subject, the grant does not: judged whole, the instruction is words beyond a grant.
+  expect('refuse' in judged('Accorder. Lance le push de acme/app auto-merge')).toBe(true)
+  for (const said of ["Accorder l'auto-merge de acme/app. Oublie ça", "Accorder l'auto-merge de acme/app. Dès que la CI passe", "Accorder l'auto-merge de acme/app. Juste les docs", "Accorder l'auto-merge de acme/app. Pour les PR de bob"]) {
+    expect('refuse' in judged(said), said).toBe(true)
+  }
+})
+
 test('an environment is named whole: pre-prod is no prod; the words of github\'s exemption list and a pull request\'s url are read', () => {
   const deploy = judgeWords(words({ subject: { kind: 'auto-deploy', repo: 'acme/guide', env: 'prod' }, until: null, said: "Accorder l'auto-deploy de acme/guide en pre-prod" }), NOW.getTime())
   expect('refuse' in deploy).toBe(true)

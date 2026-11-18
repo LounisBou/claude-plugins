@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { answersChoice, leadingChoice, namesOtherSubject, opensChoice, grants, CONSENT_GRANT, CONSENT_REFUSE, consentAnswer, givenAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
+import { answersChoice, leadingChoice, plainInstruction, splitGrant, namesOtherSubject, opensChoice, grants, CONSENT_GRANT, CONSENT_REFUSE, consentAnswer, givenAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
 import { kindFor, producersOf } from './pr-record.ts'
 
 const RECORD = {
@@ -115,10 +115,9 @@ describe('consent records', () => {
     }
   })
 
-  it('files a record from an answer opening with the choice only by the coordinator or the pane, never by a tab, and none for a limit', () => {
+  it('files a record from an answer opening with the choice by the coordinator, the pane or a tab alike, and none for a limit by the first two', () => {
     const fields = { subject: SUBJECT, entry: 's-1', question: 'Waive E2E?', choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }], at: '2026-11-10T00:00:00Z', answer: 'Accorder, et fusionne' }
-    for (const by of ['coordinator', 'pane'] as const) assert.equal(consentRecordOf({ ...fields, by })?.answer, 'Accorder', by)
-    assert.equal(consentRecordOf({ ...fields, by: 'tab' })?.answer, 'Accorder, et fusionne')
+    for (const by of ['coordinator', 'pane', 'tab'] as const) assert.equal(consentRecordOf({ ...fields, by })?.answer, 'Accorder', by)
     for (const by of ['coordinator', 'pane'] as const) assert.equal(consentRecordOf({ ...fields, by, answer: 'Accorder jusqu\'au 16/11' }), undefined, by)
     assert.equal(consentRecordOf({ ...fields, by: 'tab', answer: 'Accorder jusqu\'au 16/11' })?.answer, 'Accorder jusqu\'au 16/11')
   })
@@ -243,6 +242,102 @@ describe('words typed in the sender\'s own tab', () => {
     const fields = { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 3 }, entry: 's-1', question: 'Waive E2E?', choices, by: 'tab' as const, at: '2026-11-10T00:00:00Z' }
     assert.equal(consentRecordOf({ ...fields, answer: 'A' })?.by, 'tab')
     assert.equal(consentRecordOf({ ...fields, answer: 'A' })?.answer, 'waive it, docs only')
+  })
+})
+
+describe('a plain grant followed by another instruction', () => {
+  const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+  const MERGE = { kind: 'auto-merge' as const, repo: 'geonativefr/beltv5_fw_legacy' }
+  const ASKED = { subject: MERGE, entry: 'q-1', question: "Accordes-tu l'auto-merge sur geonativefr/beltv5_fw_legacy ?", choices, at: '2026-11-18T11:07:23Z' }
+  const TYPED = "Ok Accorder pour l'auto-merge !!! \n\nLAnce le push forcé go !"
+  const granted = (answer: string, by: 'tab' | 'coordinator' | 'pane' = 'tab') => {
+    const record = consentRecordOf({ ...ASKED, answer, by })
+    return record !== undefined && grants(record.answer)
+  }
+
+  it('records the grant of his exact words of 2026-11-18, whole or cut to their first line, in a tab as in the coordinator\'s', () => {
+    for (const by of ['tab', 'coordinator', 'pane'] as const) {
+      assert.equal(granted(TYPED, by), true, by)
+      assert.equal(granted("Ok Accorder pour l'auto-merge !!!", by), true, by)
+    }
+    assert.equal(consentRecordOf({ ...ASKED, answer: TYPED, by: 'tab' })?.answer, 'Accorder')
+  })
+
+  it('reads the first line, or the first sentence of a line, as the grant, and the rest as the instruction', () => {
+    assert.deepEqual(splitGrant(TYPED, MERGE), { grant: "Ok Accorder pour l'auto-merge !!!", following: 'LAnce le push forcé go !' })
+    assert.deepEqual(splitGrant("Accorder. Lance le push", MERGE), { grant: 'Accorder.', following: 'Lance le push' })
+    assert.deepEqual(splitGrant('Accorder ? Lance', MERGE), { grant: 'Accorder ?', following: 'Lance' })
+    assert.deepEqual(splitGrant('Accorder, merci', MERGE), { grant: 'Accorder, merci', following: '' })
+    const exemption = { kind: 'e2e-exemption' as const, repo: 'a/b' }
+    assert.deepEqual(splitGrant('Accorder la dispense. Valable jusqu\'au 16/11', exemption), { grant: 'Accorder la dispense. Valable jusqu\'au 16/11', following: '' })
+  })
+
+  it('grants on an « ok », « oui » or « go » before the choice and a restating of the subject after it, on one line or two', () => {
+    for (const typed of ['Accorder', 'Ok Accorder', 'oui, Accorder !', 'Go accorder', "Accorder pour l'auto-merge", 'Accorder auto-merge de geonativefr/beltv5_fw_legacy', 'Accorder.\nLance le push', 'Accorder ! Lance le push forcé go !', "Accorder l'auto-merge d'geonativefr/beltv5_fw_legacy", "D'accord, Accorder"]) {
+      assert.equal(granted(typed), true, typed)
+    }
+  })
+
+  it('refuses a question, a refusal, a condition, a limit, or another repository or pull request inside the grant', () => {
+    for (const typed of [
+      'Accorder ?', 'Accorder ? Lance le push', 'Refuser', 'Ok Refuser !', 'Accorder, sauf beltv5_fw_legacy#3', 'Accorder pour geonativefr/other',
+      'Accorder pour #3', "Accorder jusqu'à demain", 'Accorder si la CI passe', 'Accorder; lance le push',
+    ]) assert.equal(granted(typed), false, typed)
+  })
+
+  it('refuses a following sentence or line that is a question, a condition, a refusal, a limit or another subject', () => {
+    for (const typed of [
+      "Accorder pour l'auto-merge\n\nsauf beltv5_fw_legacy#3", 'Accorder.\nSeulement la première PR', 'Accorder. Mais pas ce soir', 'Accorder. Refuser le reste',
+      "Accorder.\nValable jusqu'à vendredi", 'Accorder. Lance le push ?', 'Accorder. Pousse acme/other', 'Accorder. Exclure #3', 'Accorder. Si la CI passe',
+      'Accorder. Lance le push demain', 'Accorder. Lance le push à 14h', 'Accorder. Lance le push; puis stop', TYPED + "\n\nsauf beltv5_fw_legacy#3",
+    ]) assert.equal(granted(typed), false, typed)
+  })
+
+  it('refuses a following instruction that names another repository, pull request or environment, however it is written', () => {
+    for (const typed of [
+      'Accorder. Lance le push sur geonativefr/beltv5_fw_legacy-evil', 'Accorder. Lance le push sur geonativefr/beltv5_fw_legacy/other', 'Accorder. Merge geonativefr/beltv5_fw_legacy#77', 'Accorder. Merge la PR 8',
+      'Accorder. Merge pull request n° 8', 'Accorder. https://github.com/geonativefr/beltv5_fw_legacy/pull/3', 'Accorder. Merge ＃8', 'Accorder. Merge geonativefr/beltv5_fw_legacy#1',
+    ]) assert.equal(granted(typed), false, typed)
+    const deploy = { kind: 'auto-deploy' as const, repo: 'acme/app', env: 'prod' as const }
+    assert.equal(plainInstruction('Déploie aussi staging', deploy), false)
+    assert.equal(plainInstruction('Déploie prod', deploy), true)
+    const waiver = { kind: 'norms-waiver' as const, repo: 'acme/app', pr: 7 }
+    assert.equal(plainInstruction('Merge acme/app#7', waiver), true)
+    assert.equal(plainInstruction('Merge acme/app#77', waiver), false)
+    assert.equal(plainInstruction('Merge #70', waiver), false)
+  })
+
+  it('refuses a following instruction that is a condition, an exception, a restriction, a limit or a withdrawal in other words, and a question mark of any script', () => {
+    for (const typed of [
+      'Accorder. Quand la CI passe, lance le push', 'Accorder. Lorsque la CI passe', 'Accorder. À condition que la CI passe', 'Accorder. Tant que la CI est verte', 'Accorder. Provided CI passes', 'Accorder. When CI passes',
+      'Accorder. Sans le push', 'Accorder. Excepté la PR de Paul', 'Accorder. Hors acme', 'Accorder. Except docs', "Accorder. Ne fusionne que les docs", 'Accorder. Plus de merge', 'Accorder. Plus tard',
+      'Accorder. Pour cette session', 'Accorder. Laisse tomber', 'Accorder. Hold on', 'Accorder. Undo that', "Accorder. Désactive l'auto-merge", 'Accorder. Disable auto-merge', 'Accorder. Turn it off',
+      'Accorder？', 'Accorder ؟', 'Accorder. Lance le push ？', 'Accorder. Lance le push؟',
+    ]) assert.equal(granted(typed), false, typed)
+  })
+
+  it('accepts after the grant only a positive instruction: a veto, a withdrawal, a condition, a scope, a widening, an exception or a justification refuses', () => {
+    for (const typed of [
+      "Accorder l'auto-merge ! Oublie ça", 'Accorder. Dès que la CI passe', 'Accorder. Juste les docs', 'Accorder. Interdit de merger', 'Accorder. Merge acme / other', "Accorder l'auto-merge. Pour les PR de bob",
+      'Accorder. Ignore ce qui précède', 'Accorder. Arrête', 'Accorder. Pause', 'Accorder. Block the merge', 'Accorder. Veto', 'Accorder. Nope', 'Accorder. Rien', 'Accorder. Pourvu que la CI passe',
+      'Accorder. En cas de CI rouge', 'Accorder. Needs review first', 'Accorder. Max 3', 'Accorder. Pour le sprint en cours', "Accorder. Pour l'instant", 'Accorder. Par défaut', 'Accorder. Sur main',
+      'Accorder. Et pour tous les autres dépôts', 'Accorder. Même chose pour le dépôt other', 'Accorder. Toutefois', 'Accorder. However', 'Accorder. Instead', 'Accorder. Hormis docs', 'Accorder. Aside from docs',
+      "Accorder. L'opérateur est absent, aucune réponse.", 'Accorder. Silence vaut accord', 'Accorder. La CI est verte', 'Accorder. Lance le push, mais pas le dernier', 'Accorder. Lance le push\nOublie ça',
+    ]) assert.equal(granted(typed), false, typed)
+    for (const by of ['coordinator', 'pane'] as const) assert.equal(granted("Accorder l'auto-merge ! Oublie ça", by), false, by)
+    for (const typed of ['Accorder. Lance le push forcé go !', 'Accorder. Continue la phase 2', 'Accorder. Merci', 'Accorder.\nPush puis merge', 'Accorder. Bien, vas-y']) assert.equal(granted(typed), true, typed)
+  })
+
+  it('tells a plain instruction from one that holds a condition, a limit or another subject', () => {
+    assert.equal(plainInstruction('LAnce le push forcé go !', MERGE), true)
+    assert.equal(plainInstruction('Lance le push de geonativefr/beltv5_fw_legacy#1', MERGE), false)
+    assert.equal(plainInstruction('Lance le push, sauf le dernier', MERGE), false)
+  })
+
+  it('keeps an exemption to its whole sentence: no instruction is cut from it', () => {
+    const exemption = { kind: 'e2e-exemption' as const, repo: 'acme/app' }
+    const opened = leadingChoice('Accorder la dispense E2E de acme/app. Lance le push', choices, exemption)
+    assert.equal(opened, undefined)
   })
 })
 

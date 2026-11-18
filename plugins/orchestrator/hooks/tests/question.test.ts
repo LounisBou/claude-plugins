@@ -500,7 +500,7 @@ test('a consent question answered « Accorder » in the asker\'s tab is recorded
   expect((await records('let me think')).length).toBe(0)
 })
 
-test('words that open with « Accorder » typed in the coordinator\'s own tab are the consent; in another session\'s tab they record none', async () => {
+test('words that open with « Accorder » typed in any session\'s own tab are the consent, an instruction after them or not; a limit, a condition or a question records none', async () => {
   const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
   const records = async (me: [string, string], typed: string) => {
     const { dollar, files } = world({ me })
@@ -510,9 +510,39 @@ test('words that open with « Accorder » typed in the coordinator\'s own tab ar
     return [...files.entries()].filter(([p]) => p.includes('/consents/acme/app/')).map(([, text]) => JSON.parse(text).answer)
   }
   const words = 'Accorder la dispense et fusionner, merci'
-  expect(await records(['coordinator', 'Coord: general [a1b2c3]'], words)).toEqual(['Accorder'])
-  expect(await records(['orchestrator', 'Orch: belt [a1b2c3]'], words)).toEqual([])
-  expect(await records(['coordinator', 'Coord: general [a1b2c3]'], "Accorder la dispense, valable jusqu'au 16/11")).toEqual([])
+  for (const me of [['coordinator', 'Coord: general [a1b2c3]'], ['orchestrator', 'Orch: belt [a1b2c3]']] as [string, string][]) {
+    expect(await records(me, words)).toEqual(['Accorder'])
+    expect(await records(me, "Ok Accorder pour l'auto-merge !!! \n\nLAnce le push forcé go !")).toEqual(['Accorder'])
+    expect(await records(me, "Accorder la dispense, valable jusqu'au 16/11")).toEqual([])
+    expect(await records(me, "Accorder pour l'auto-merge\n\nsauf acme/app#3")).toEqual([])
+    expect(await records(me, 'Accorder ?')).toEqual([])
+    expect(await records(me, 'Refuser')).toEqual([])
+    expect(await records(me, "Accorder pour acme/other")).toEqual([])
+  }
+})
+
+test('words cut at the cap grant nothing, whatever their first line says: the tail was never read', async () => {
+  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
+  const { dollar, files } = world({ me: ['coordinator', 'Coord: general [a1b2c3]'] })
+  await ask(dollar, { ...FULL, urgent: undefined, ...consent })
+  const long = `Accorder l'auto-merge !\n\n${'Lance le push forcé et range les logs. '.repeat(14)}\nMais seulement si la CI est verte, sinon annule tout.`
+  expect(long.length).toBeGreaterThan(500)
+  await claimAsked(dollar, 'composer', long, NOW)
+  expect(stored(files)[0]?.claimed?.typed).toMatch(/\[cut at 500 of \d+ characters\]$/)
+  await settleClaimed(dollar, [], NOW)
+  expect(stored(files)[0]).toMatchObject({ status: 'answered' })
+  expect([...files.keys()].filter(p => p.includes('/consents/acme/app/'))).toEqual([])
+})
+
+test('the instruction that follows his grant is kept whole in the answer of the entry, which its asker reads', async () => {
+  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
+  const { dollar, files } = world({ me: ['orchestrator', 'Orch: belt [a1b2c3]'] })
+  await ask(dollar, { ...FULL, urgent: undefined, ...consent })
+  const typedWords = "Ok Accorder pour l'auto-merge !!!\n\nLAnce le push forcé go !"
+  await claimAsked(dollar, 'composer', typedWords, NOW)
+  await settleClaimed(dollar, [], NOW)
+  expect(stored(files)[0]).toMatchObject({ status: 'answered', answer: { text: typedWords, by: 'tab' } })
+  expect([...files.keys()].filter(p => p.includes('/consents/acme/app/')).length).toBe(1)
 })
 
 test('a subagent\'s call is refused', async () => {

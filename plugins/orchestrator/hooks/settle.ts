@@ -93,7 +93,7 @@ export function planAsked(entry: Fields, request: SettleRequest, me: Me, at: str
     asker,
     deliver: own ? null : 'now',
     // His consent is recorded from his answer only: one carried by a message is the model's word.
-    // A stand-in's consent is the tab's, which keeps to answersChoice's exact forms: its words are
+    // A stand-in's consent is the tab's, which grants on an exact form or a plain grant (consentRecordOf): its words are
     // its session's own, never the coordinator's order.
     consentBy: !answered || request.outcome === 'answered-by-message' ? null : (own || standsIn) && me.role !== 'coordinator' ? 'tab' : 'coordinator',
     consentText: request.text,
