@@ -168,6 +168,12 @@ function openRow(f: Fields): { readonly row: Row } | { readonly error: string } 
   return { row }
 }
 
+/** The rules a build brief adds for the work's checks: the browser captures and the E2E. An investigate brief carries none. */
+const buildRulesOf = (mode: string): string => mode === 'investigate' ? '' : [
+  `- A frontend surface created or substantially changed is tested in a real browser with Playwright, on seeded or fixture data, its screenshots in the pull request's description, never committed. Audit each capture against \`${CHECKLIST}\`; the report carries \`<image>: clean\` or \`<image>: <defect>\` per image. A capture that shows a defect is not delivered: fix it, retake, audit again. A screen with no data for your account is seeded, never skipped; if you cannot, STOP. A minor change says so and why in the report.`,
+  '- E2E as the pull request\'s check plan requires; the report carries `E2E: <test path(s)> — <command> — passed` or `E2E: none — <reason>`, never the description.',
+].join('\n')
+
 /** The delivery lines of a build brief: the push, the draft pull request and the turn's last line. An investigate brief carries none. */
 const deliveryOf = (mode: string, branch: string, base: string, report: string): string => mode === 'investigate' ? '' : [
   `- Push with one bare command, \`git push -u origin ${branch}\`.`,
@@ -212,8 +218,8 @@ function phaseValues(f: Fields, deps: Deps): Values {
     TIER: tierOf(row),
     ORCHESTRATOR: f['orchestrator'] ?? '',
     REPORT_PATH: report,
-    SCREENSHOT_CHECKLIST: CHECKLIST,
     LENS_MODEL,
+    BUILD_RULES: buildRulesOf(f['mode'] ?? 'build'),
     DELIVERY: deliveryOf(f['mode'] ?? 'build', f['branch'] ?? '', base, report),
   }
 }

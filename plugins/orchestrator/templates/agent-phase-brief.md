@@ -18,8 +18,7 @@ Read {{READ}}, the repository's own instructions (its quality gate, its workflow
 
 - Something outside the plan's scope seems needed: STOP and ask the orchestrator.
 - Never edit an existing test's assertion to make it pass: a test or the spec that looks wrong is reported, and you STOP.
-- A frontend surface created or substantially changed is tested in a real browser with Playwright, on seeded or fixture data, its screenshots in the pull request's description, never committed. Audit each capture against `{{SCREENSHOT_CHECKLIST}}`; the report carries `<image>: clean` or `<image>: <defect>` per image. A capture that shows a defect is not delivered: fix it, retake, audit again. A screen with no data for your account is seeded, never skipped; if you cannot, STOP. A minor change says so and why in the report.
-- E2E as the pull request's check plan requires; the report carries `E2E: <test path(s)> — <command> — passed` or `E2E: none — <reason>`, never the description.
+{{BUILD_RULES?}}
 - The quality gate runs on the final head, its exit code read; a scoped run covers the tests of every file touched, and a signature, constructor or service change runs the full gate.
 - Every command runs synchronously in its tool call; a long suite under `set -o pipefail`, piped to `tail`, with `timeout: 600000`. Never end a turn waiting for a run.
 - Scratch lives in your host's scratchpad and stays there; anything else you built is removed by its literal path, never through a shell variable.
