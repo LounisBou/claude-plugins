@@ -17,9 +17,12 @@ read by loops that act on them; never through briefs or prompts. Two examples:
 A prompt or a brief carries a rule only where no loop can hold it, and the aim is briefs that empty
 out.
 
-No mechanism (a guard, a record, a check, a parser) is built against a defect never observed, and a
-mechanism that costs more than it has caught is removed. Example: the consent record of auto-merge
-and auto-deploy (decision 0004, amended 2026-11-15 for waivers), which caught nothing and is removed.
+No over-development or over-protection: no mechanism (a guard, a record, a check, a parser) is built
+against a defect never observed, and a mechanism that costs more than it has caught is removed.
+Example: the consent record of auto-merge and auto-deploy (decision 0004, amended 2026-11-15 for
+waivers), which caught nothing and is removed.
+
+Who merges: the auto-merge bullet of the repository's CLAUDE.md states it.
 
 ## One rule, one place
 
