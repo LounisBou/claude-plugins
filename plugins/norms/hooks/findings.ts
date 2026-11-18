@@ -73,11 +73,12 @@ export function launchedId(answer: unknown): string | undefined {
 // pr-review's loop: a restart loses it, and check_done then asks for the agents again.
 const reports = new Map<string, Finding[] | null>()
 
-// The agents of the running check the host runs in the background, by id: their type, whether
-// they handed a report back already, and whether their current turn did. Their Agent call answered
-// only with their launch; the report comes later, from the agent's own loop. A run whose report was
-// read is done: a later turn of the agent (a question it is asked again) changes nothing.
-type Run = { agent: string; hasHandedBack: boolean; isTurnHandedBack: boolean }
+// The agents of the running check the host runs in the background, by id: their type, and whether
+// they handed a report back already. Their Agent call answered only with their launch; the report
+// comes from the agent's own SubagentHandback call, the one way the host delivers it. An agent that
+// ends without one leaves its findings unknown. A run whose report was read is done: a later turn
+// of the agent (a question it is asked again) changes nothing.
+type Run = { agent: string; hasHandedBack: boolean }
 const background = new Map<string, Run>()
 
 export function noteReport(agent: string, findings: Finding[] | null): void {
@@ -91,7 +92,7 @@ export function noteReport(agent: string, findings: Finding[] | null): void {
  */
 export function noteRun(agent: string, findings: Finding[] | null, launched?: string): void {
   for (const [id, run] of background) if (run.agent === agent) background.delete(id)
-  if (launched !== undefined) background.set(launched, { agent, hasHandedBack: false, isTurnHandedBack: false })
+  if (launched !== undefined) background.set(launched, { agent, hasHandedBack: false })
   noteReport(agent, findings)
 }
 
@@ -110,23 +111,7 @@ export function noteHandback(id: string, report: string, isDelivered: boolean): 
   const run = background.get(id)
   if (run === undefined || (!isDelivered && !run.hasHandedBack)) return
   run.hasHandedBack = true
-  run.isTurnHandedBack = true
   settle(id, run, reportOf(report))
-}
-
-/**
- * The end of a background agent's turn: a turn that handed its report back is read already; one
- * that ended without a hand-back reports its last answer, and one that ended otherwise (an error,
- * an abort) reports nothing.
- */
-export function noteEnd(id: string, reason: string, answer: string): void {
-  const run = background.get(id)
-  if (run === undefined) return
-  if (run.isTurnHandedBack) {
-    run.isTurnHandedBack = false
-    return
-  }
-  settle(id, run, reason === 'answer' ? reportOf(answer) : null)
 }
 
 export function resetReports(): void {

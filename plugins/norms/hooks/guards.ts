@@ -31,7 +31,6 @@ import { fieldsOf, type Host, type Next, type On } from '../core/host.ts'
 import { SKILL_MATCHER as CHECK_SKILL_MATCHER } from './check.ts'
 import { askAllow, observed, type JournalHost } from './observe.ts'
 import { clearMark } from './record.ts'
-import { noteEnd } from './findings.ts'
 
 type GuardHost = JournalHost & Host<'state'>
 
@@ -337,11 +336,8 @@ export function register(on: On<GuardHost>): void {
     return next(e)
   }).catch(pass)
 
-  // The module's one turn.complete hook. A subagent's turn: a norms agent the host ran in the
-  // background may have ended there without handing its report back (findings.ts).
   on('turn.complete', async (_$, e, next) => {
-    if (e['agentId']) noteEnd(String(e['agentId']), String(e['reason'] ?? ''), String(e['answer'] ?? ''))
-    else if (e['isAborted']) resetGuards()
+    if (!e['agentId'] && e['isAborted']) resetGuards()
     return next(e)
   }).catch(pass)
 

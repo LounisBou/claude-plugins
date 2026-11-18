@@ -882,7 +882,9 @@ test('an agent run in the background is read from its SubagentHandback call: its
   expect(recordCalls(calls).map(c => c['result'])).toEqual(['pass'])
 })
 
-test('an agent run in the background that ends its turn without a hand-back is read from its last answer', async () => {
+// The host delivers a background agent's report through its hand-back alone: the last answer of a
+// turn that ended without one never reaches the session, so it is no report.
+test('an agent run in the background that ends its turn without a hand-back leaves its findings unknown', async () => {
   resetCache()
   const calls: Call[] = []
   const { $ } = setup({}, {}, calls)
@@ -891,8 +893,22 @@ test('an agent run in the background that ends its turn without a hand-back is r
   await m.scope($)
   await m.agent($, PATTERN, launch(PATTERN_ID, 'Norms: pattern conformity'))
   await b.ended($, PATTERN_ID, PATTERN_REPORT)
-  await m.raw($, { open: 0, fixed: 0, passed: 4 })
-  expect(recordCalls(calls).length).toBe(1)
+  expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 4 })))?.['result']).toContain(`${PATTERN} returned no readable findings block`)
+  expect(recordCalls(calls)).toEqual([])
+})
+
+test('a hand-back without a block stays unknown through the end of its turn, whose answer holds one', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  const b = background(m)
+  await m.scope($)
+  await m.agent($, SCOPE_AGENT, launch('a7bdad4b3b46ee92f', 'Norms: diff scope'))
+  await b.handBack($, 'a7bdad4b3b46ee92f', BLOCKLESS_REPORT)
+  await b.ended($, 'a7bdad4b3b46ee92f', block([]))
+  expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 0 })))?.['result']).toContain(`${SCOPE_AGENT} returned no readable findings block`)
+  expect(recordCalls(calls)).toEqual([])
 })
 
 test('a background agent that hands back no block, fails, or whose hand-back reached no one leaves its findings unknown', async () => {
