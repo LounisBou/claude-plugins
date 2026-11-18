@@ -2226,7 +2226,8 @@ test('a replica of a question asked with ask on another machine is drawn only wh
   fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'sent', at: '2026-10-30T10:05:00.000Z', attempts: 1 } }) + '\n')
   expect(await drawnNow()).toContain('being delivered: the answer to Orch: belt on far (blocks: acme/app#1) — sent 1 of 3, not acknowledged yet')
   fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'failed', at: '2026-10-30T10:05:00.000Z', attempts: 1, reason: 'already answered in its own tab' } }) + '\n')
-  expect(await drawnNow()).toContain('not delivered: already answered in its own tab — the answer to Orch: belt on far (blocks: acme/app#1)')  // Withdrawn by its sender afterwards: nobody waits for that answer any more, so no notice stays drawn.
+  expect(await drawnNow()).toContain('not delivered: already answered in its own tab — the answer to Orch: belt on far (blocks: acme/app#1)')
+  // Withdrawn by its sender afterwards: nobody waits for that answer any more, so no notice stays drawn.
   fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...replica, status: 'withdrawn', answer: { text: 'merged it myself', by: 'sender', at: '2026-10-30T10:06:00.000Z', settler: 'Orch: belt' }, delivery: { state: 'failed', at: '2026-10-30T10:05:00.000Z', attempts: 1, reason: 'already answered in its own tab' } }) + '\n')
   expect((await drawnNow()).some(t => t.startsWith('not delivered:'))).toBe(false)
   // Withdrawn here by the coordinator, its withdrawal never acknowledged: its asker still waits, so it stays drawn.

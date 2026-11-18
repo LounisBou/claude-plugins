@@ -524,6 +524,7 @@ test('the pane\'s answer to its own session\'s question that the host drops is w
   const id = /Asked as (\S+?):/.exec(asking.result)![1]!
   await answerAskedFromPane(m.coordinator, id, 'A : acme/app#1 first', AT)
   expect(m.sent).toEqual([])
+  expect(m.submitted.map(s => s.session)).toEqual(['s-coord'])
   expect(entryOf(m, id)).toMatchObject({ status: 'answered', delivery: { state: 'failed', reason: 'the session is closing' } })
 })
 

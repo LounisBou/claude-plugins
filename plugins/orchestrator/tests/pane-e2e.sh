@@ -783,7 +783,7 @@ fi
 # (f) The coordinator asks a question itself, with the ask tool, and the operator answers it in its
 # own pane: no message reaches the session that sends it (« no live session … has id »), so the
 # answer is submitted to the coordinator's own turn, and it is the one notice it gets. Its turn,
-# started by that prompt, is interrupted once the answer shows in its tab.
+# started by that prompt, is interrupted once the answer shows in its tab and is measured.
 echo "== (f) a question the coordinator asked itself, answered in its own pane (160x50)"
 coord_ask_command() { flow_ask_command coord-ask 'the order' 'Which page goes first?' 'the design' 'the README' 'the docs'; }
 START_COMMANDS=coord_ask_command start 50 flow
@@ -794,11 +794,14 @@ sleep 1
 tm send-keys -t "$SESSION" Enter
 asked=$(until_ms 120 coord_open)
 own=$(coord_id)
-# The asking turn ends on « Asked » before the pane is answered.
-until_ms 60 in_tab 'Asked' >/dev/null
+[ -n "$own" ] || own=none
+# The asking turn ends on the model's reply « Asked » (its own line, not the tool's « Asked as »)
+# before the pane is answered.
+ended=$(until_ms 120 in_tab '⏺ Asked')
 sleep 2
-check "(f) the coordinator's own question is asked with the ask tool and drawn in its pane" "yes|drawn" \
-  "$([ "$asked" != never ] && echo yes)|$(wait_for 'Which page goes first?' 25 && echo drawn || echo missing)"
+pane_has() { pane | grep -qF -- "$1"; }
+check "(f) the coordinator's own question is asked with the ask tool, its turn ended, and drawn in its pane" "yes|yes|drawn" \
+  "$([ "$asked" != never ] && echo yes)|$([ "$ended" != never ] && echo yes)|$([ "$(until_ms 25 pane_has 'Which page goes first?')" != never ] && echo drawn || echo missing)"
 coordround round >/dev/null
 keys_to_pane
 tm send-keys -t "$SESSION" Enter
@@ -806,7 +809,8 @@ stamp=$(ms)
 read -r gone told <<< "$(since_answer "$stamp" 15 'Which page goes first?' "The operator answered your question $own")"
 record "(f) answered in the coordinator's own pane"
 delay f "$gone" "$told"
-press Escape
+# The first Escape gives the keys back to the prompt, the second interrupts the turn the answer started.
+press Escape Escape
 check "(f) answered once from the pane, delivered to the coordinator's own turn, no second notice, nothing « not delivered »" "answered|A : the design|delivered|yes|1|0|0|yes" \
   "$(jq -r .status "$SANDBOX/state/round/$own.json")|$(jq -r .answer.text "$SANDBOX/state/round/$own.json")|$(jq -r .delivery.state "$SANDBOX/state/round/$own.json")|$(fluid "$gone")|$(tab_count "The operator answered your question $own")|$(tab_count 'Settled in the pane: Coord: e2e')|$(pane | grep -c 'not delivered')|$(fluid "$told")"
 
