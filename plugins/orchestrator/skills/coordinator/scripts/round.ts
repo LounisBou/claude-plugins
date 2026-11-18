@@ -359,7 +359,7 @@ function isDir(path: string): boolean {
  * its answers from no other.
  */
 // What the decide line asks of the session that runs the round.
-const ROUND_LINE = 'load orchestrator:coordination and run its decision round over the entries below'
+const ROUND_LINE = 'load orchestrator:coordination and run its decision round over every entry below, due or not, this command run again before each question and an entry it no longer lists not asked'
 
 function decideRound(ctx: Context, me: string): number {
   // A record naming no pid cannot be judged by the hooks module, which counts it live: so does the
@@ -371,19 +371,19 @@ function decideRound(ctx: Context, me: string): number {
     return 0
   }
   if (coordinator !== undefined) {
-    ctx.out(`decide: coordinator — ${ROUND_LINE}`)
+    ctx.out(`decide: coordinator — ${ROUND_LINE}; a closing proposal (done) presented apart, outside the count`)
     return round(ctx, ['--by-urgency'])
   }
-  if (roleOf(me) !== 'orchestrator') die(`round: --decide with no coordinator live runs in an Orch: session, and ${me} is not one`)
   const state = stateOf(ctx.env)
   const open = ordered(roundEntries(join(state, ROUND_DIR)).filter(e => e['status'] === 'open' && e['kind'] === 'operator'))
   if (open.length === 0) {
     ctx.out('decide: empty | no open question — say so in one line and stop')
     return 0
   }
+  if (roleOf(me) !== 'orchestrator') die(`round: --decide with no coordinator live runs in an Orch: session, and ${me} is not one`)
   const module = moduleOf(ctx.env)
   const view = { pane: paneOpen(ctx, state), text: true, live: liveSessions(module), remote: remoteMachines(module) }
-  ctx.out(`decide: machine | ${open.length} open — no coordinator is live: ${ROUND_LINE}, each answer closed by settle (answered-here)`)
+  ctx.out(`decide: machine | ${open.length} open — no coordinator is live: ${ROUND_LINE}, each answer closed by settle (answered-here) only, which no other outcome of yours passes`)
   for (const entry of open) entryLines(entry, view).forEach(line => ctx.out(line))
   return 0
 }

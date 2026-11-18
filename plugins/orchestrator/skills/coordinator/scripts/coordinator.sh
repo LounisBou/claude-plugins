@@ -34,7 +34,7 @@
 #                            question's text, none recorded as listed), « decide: elsewhere | <name> | <tty> — … »
 #                            (a coordinator is live and this is not it: nothing follows) or « decide: empty | no
 #                            open question — … »; exit 0 in each; a record naming no pid counts as a coordinator
-#                            live (as the hooks module reads it); no coordinator live and a session that is not an
+#                            live (as the hooks module reads it); no coordinator live, a question open and a session not an
 #                            orchestrator, or a liveness check that cannot run, is a refusal, exit 1
 #   coordinator.sh round-archive   moves every entry settled over a day ago into round/archive/; prints
 #                            "archived <n>"
