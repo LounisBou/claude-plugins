@@ -10,11 +10,11 @@ repository.
 
 Session start and end (role from the title, model, effort, launch latency, time to the first
 turn, duration, cost, context), each turn's end (duration, tokens, context, the session's
-cumulative cost and the turn's own), each API call of the session's own loop (raw, from the transcript:
+cumulative cost and the turn's own), each API call of the session's own loop and of its subagents (raw, from the transcripts:
 ids, model, stop reason, the `usage` object as the host wrote it, the names of the tools it used and its
 times; no derived value), each tool call (tool, MCP server, outcome, who refused it,
 duration, a redacted Bash line), subagents (each of their runs, with its type, task, models, effort, calls and token sums, read from the child's transcript) and launched sessions spawned and closed, questions put
-to the operator and the letters chosen (the orchestrator's round questions with their id and asker, read once settled), the dispatch record's writes (read from the events its script publishes in the orchestrator's journal), and each finding of an implementer's self-review, fixed or answered with its reason, recorded by the module's tool `mcp__telemetry__self_review`. Every line names the session that acted (`title` and `role`, once the
+to the operator and the letters chosen (the orchestrator's round questions with their id and asker, read once settled), the dispatch record's writes (read from the events its script publishes in the orchestrator's journal), and each finding of an implementer's self-review, fixed or answered with its reason, recorded by the module's tool `mcp__telemetry__self_review`. Each fix opened or committed whose text names pull requests is an `escape` candidate, the names kept as written. Every line names the session that acted (`title` and `role`, once the
 module has learned them; `parent` and `launch_tier` in a session the orchestrator's launcher spawned for an orchestrator, on a tier) and each GitHub act the repository, pull request and head it names
 (`target`). No prompt, answer, message or tool output is kept in the events; the
 session's transcript, which holds them, is exported beside them, redacted (see Commands).

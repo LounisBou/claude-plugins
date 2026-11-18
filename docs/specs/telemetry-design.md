@@ -52,7 +52,14 @@ session) closes with no rank. The writer reads the child's own transcript
 (`<session>/subagents/agent-<id>.jsonl`, and its `.meta.json`) and adds to the event what the run
 cost: its type and task (a review reader's lens), the models that answered, its last effort, its API
 calls and their token sums (`totals`), counted over the calls that began within the run's
-`duration_ms`. A transcript that cannot be read leaves the event as it came.
+`duration_ms`, then one `api_call` per call of the run, naming the child (`agent`): with the session's own
+calls, every token the session spent is a timestamped fact, summed by hour by its reader. A transcript
+that cannot be read leaves the event as it came.
+
+**Escape candidates.** A `fix` pull request opened (the github tool's `pr-create`, or `gh pr create
+--title`) or a `fix` commit (`git commit -m`) whose subject or text names pull requests is an `escape`
+event with those names as written. Whether one was merged, and is where the defect came from, is its
+reader's join with the merges; a message read from a file is not read.
 
 **Self-review outcomes.** The module lists one tool of its own, `self_review`, at the session's
 start. An implementer calls it once its self-review is done, with each finding's lens, file, line,

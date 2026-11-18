@@ -386,17 +386,32 @@ test('append: a subagent\'s agent_closed takes its type, task, model, effort and
     writeFileSync(join(dir, 'agent-a1.jsonl'), `${SUBAGENT_LINES}\n`)
     writeFileSync(join(dir, 'agent-a1.meta.json'), JSON.stringify({ agentType: 'orchestrator:lens', description: 'Lens: correctness', pickedEffortModel: 'claude-opus-5-5' }))
     for (const line of [closedLine({ child: 'a9' }), closedLine({ kind: 'session', child: undefined, title: 'Agent: x' }), closedLine({ session: '00000000-0000-0000-0000-000000000000' })]) assert.equal(enrich(line, config), line)
-    const first = JSON.parse(enrich(closedLine({ ts: '2026-11-17T10:00:03.000Z', run: 1, duration_ms: 5_000 }), config)) as Record<string, unknown>
+    const first = JSON.parse(enrich(closedLine({ ts: '2026-11-17T10:00:03.000Z', run: 1, duration_ms: 5_000 }), config).split('\n')[0] ?? '') as Record<string, unknown>
     assert.deepEqual([first['calls'], first['totals']], [1, { in: 2, out: 9, cache_read: 0, cache_write: 30000 }])
     setStdin(`${closedLine()}\n`)
     assert.equal(run(['append', '--config', config], deps), 0)
     const lines = readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
-    assert.equal(lines.length, 1)
+    assert.deepEqual(lines.map(l => l['event']), ['agent_closed', 'api_call', 'api_call'])
     const closed = lines[0] ?? {}
     assert.deepEqual(
       [closed['subagent_type'], closed['description'], closed['models'], closed['effort'], closed['calls'], closed['totals'], closed['role']],
       ['orchestrator:lens', 'Lens: correctness', ['claude-opus-5-5'], 'low', 2, { in: 6, out: 25, cache_read: 31000, cache_write: 31200 }, 'agent'],
     )
     assert.ok(!JSON.stringify(lines).includes('never kept'))
+  })
+})
+
+test('append: a subagent\'s run end is followed by one api_call per call of the run, raw, naming the child (`agent`) and stamped like the event', () => {
+  harness((config, deps, setStdin) => {
+    const dir = join(config, 'projects', '-w', S, 'subagents')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(config, 'projects', '-w', `${S}.jsonl`), `${CALL_LINES}\n`)
+    writeFileSync(join(dir, 'agent-a1.jsonl'), `${SUBAGENT_LINES}\n`)
+    setStdin(`${closedLine({ title: 'Agent: x', parent: 'Orch: y' })}\n`)
+    assert.equal(run(['append', '--config', config], deps), 0)
+    const lines = readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    assert.deepEqual(lines.map(l => [l['event'], l['message'], l['agent']]), [['agent_closed', undefined, undefined], ['api_call', 'm2', 'a1'], ['api_call', 'm3', 'a1']])
+    const call = lines[1] ?? {}
+    assert.deepEqual([call['ts'], call['title'], call['role'], call['parent'], call['usage']], ['2026-11-17T11:10:02.000Z', 'Agent: x', 'agent', 'Orch: y', { input_tokens: 3, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 31000, new_field: 7 }])
   })
 })
