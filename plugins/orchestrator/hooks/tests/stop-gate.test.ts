@@ -1016,8 +1016,6 @@ test('a busy wake the host drops is tried again a minute later, its bound still 
   expect(w.submitted.length).toBe(1)
 })
 
-const NINE_RUNS = 'w1/t4 | /dev/ttys004 | ✳ Agent: nine | Agent: nine'
-
 // An orchestrator whose record holds the line of acme/app#9, the forge answering the machine file's query.
 function prWorld(open: number[], drops = 0, over: Parameters<typeof fakeDollar>[0] = {}) {
   const fx = fakeDollar({
@@ -1044,13 +1042,13 @@ function prWorld(open: number[], drops = 0, over: Parameters<typeof fakeDollar>[
   return { dollar, timers, submitted, ran: fx.ran, wrote: fx.wrote }
 }
 
-test('a pull request of the orchestration merged outside the session wakes it at the tick, with its agent to close, the line archived', async () => {
+test('a pull request of the orchestration merged outside the session wakes it at the tick, its agent no longer running, the line archived', async () => {
   const { handlers } = mounted()
-  const w = prWorld([], 0, { listing: NINE_RUNS })
+  const w = prWorld([])
   await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
   expect(w.timers.map(t => t.ms)).toEqual([0])
   await w.timers.shift()!.fire()
-  expect(w.submitted).toEqual(['[module] acme/app#9 merged: its agent Agent: nine is done with it, close it.'])
+  expect(w.submitted).toEqual(['[module] acme/app#9 merged.'])
   expect(w.ran.filter(l => l.startsWith('gh api graphql')).length).toBe(1)
   expect(w.wrote[`${RECORD.replace(/\.jsonl$/, '')}.archive.jsonl`]).toContain('"pr":9')
   // Nothing open left to watch: the tick is not armed again.
@@ -1094,14 +1092,14 @@ test('with no pull request of its own, the tick keeps the file current while a r
 
 test('a pull request wake the host drops is tried again a minute later, told then, and its line archived only once told', async () => {
   const { handlers } = mounted()
-  const w = prWorld([], 1, { listing: NINE_RUNS })
+  const w = prWorld([], 1)
   await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
   await w.timers.shift()!.fire()
   expect(w.submitted).toEqual([])
   expect(Object.keys(w.wrote).some(p => p.endsWith('.archive.jsonl'))).toBe(false)
   expect(w.timers.map(t => t.ms)).toEqual([60_000])
   await w.timers.shift()!.fire()
-  expect(w.submitted).toEqual(['[module] acme/app#9 merged: its agent Agent: nine is done with it, close it.'])
+  expect(w.submitted).toEqual(['[module] acme/app#9 merged.'])
   expect(Object.keys(w.wrote).some(p => p.endsWith('.archive.jsonl'))).toBe(true)
 })
 

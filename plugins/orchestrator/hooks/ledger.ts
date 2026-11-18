@@ -6,7 +6,7 @@
 // when it is an agent's (orchestratorOn, the one mapping the relay uses). No model, no refusal, no
 // gate: the call has already succeeded, so a write that fails is one log line and the answer goes on.
 // A pull request of the orchestration merged or closed, wherever it was (the machine's pull request
-// file, pr-file.ts), one that became Ready (its agent closes), one entering the anomaly, and one its agent still holds turned conflicting with its base (its agent rebases), wake the orchestrator once each: the module's tick
+// file, pr-file.ts), one that became Ready (the module closes its agent once done, close-agent.ts), one entering the anomaly, and one its agent still holds turned conflicting with its base (its agent rebases), wake the orchestrator once each: the module's tick
 // (guards.ts) submits the lines prWake gives, the ended lines then archived.
 import { prRefsOf } from '../core/learning.ts'
 import { agentsOf, isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
@@ -18,7 +18,8 @@ import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from
 import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
-import { holdsOf, readyAgentLine } from './ready-agent.ts'
+import { agentLine, holdsOf } from './ready-agent.ts'
+import { closeDoneAgent, type CloseOutcome } from './close-agent.ts'
 import { archive, boundedReading, readOr, registered, republish } from './unattended.ts'
 import type { FilePr } from './pr-file-format.ts'
 
@@ -185,24 +186,51 @@ export function register(on: On<Held>, now: () => Date = () => new Date(), bound
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => afterCall($, e, next, now, bound)).catch(net)
 }
 
-// The open rows an agent owns in any record of the orchestration, as the takeover reads them: the row its
-// launch brief was printed for, in the record beside that brief, else the rows whose note names it.
-async function rowsHeldBy($: Held, agent: string, records: readonly RecordText[]): Promise<HeldRow[]> {
+// The row an agent's launch brief was printed for and that brief's directory; undefined when it names none.
+async function briefRowOf($: Held, agent: string): Promise<{ row: number; dir: string } | undefined> {
   const dir = `${await stateDir($)}/prompts`
   const launch = newestLaunch((await $.fs.list(dir).catch((): FsEntry[] => [])).map(entry => entry.name), agent)
   const brief = launch === undefined ? undefined : briefOfLaunch(await readOr($, `${dir}/${launch}`))
   const row = brief === undefined ? undefined : rowOfBrief(await readOr($, brief))
-  return rowsOwnedBy(agent, brief === undefined || row === undefined ? undefined : { row: Number(row), dir: dirOf(brief) }, records)
+  return brief === undefined || row === undefined ? undefined : { row: Number(row), dir: dirOf(brief) }
 }
 
-// The line a pull request of the orchestration merged or closed wakes it with: its agent to close when it
-// runs and holds nothing else; when it still holds something (`holds`: rows, other pull requests), to be told.
-export function endedLine(ended: { repo: string; pr: number; state: 'MERGED' | 'CLOSED'; agent?: string | undefined; holds?: readonly string[] }): string {
-  const key = prKey(ended.repo, ended.pr)
-  const what = ended.state === 'MERGED' ? 'merged' : 'closed unmerged'
-  if (ended.agent === undefined) return `[module] ${key} ${what}.`
-  const holds = ended.holds ?? []
-  return `[module] ${key} ${what}: its agent ${ended.agent} ${holds.length > 0 ? `still holds ${holds.join(', ')}; tell it, do not close it` : 'is done with it, close it'}.`
+// The open rows an agent owns in any record of the orchestration, as the takeover reads them: the row its
+// launch brief was printed for, in the record beside that brief, else the rows whose note names it.
+async function rowsHeldBy($: Held, agent: string, records: readonly RecordText[]): Promise<HeldRow[]> {
+  return rowsOwnedBy(agent, await briefRowOf($, agent), records)
+}
+
+// Whether a record's text holds the row of that id, open or closed.
+const holdsRow = (text: string, id: number): boolean => text.split('\n').some(line => {
+  try {
+    const row: unknown = JSON.parse(line)
+    return typeof row === 'object' && row !== null && !isLedgerMarked(row) && (row as Record<string, unknown>)['id'] === id
+  } catch {
+    return false
+  }
+})
+
+/*
+ * The module's act on an agent done with a pull request that holds nothing else: closed when the facts allow it
+ * (close-agent.ts), its cost on the row its brief was printed for, in the record beside that brief. An agent the
+ * launcher does not list idle, or with no session row, waits for a later tick.
+ */
+async function closeOf($: Held, agent: string, records: readonly RecordText[], idle: ReadonlyMap<string, string>): Promise<{ outcome: CloseOutcome; session: string | undefined }> {
+  const tty = idle.get(agent)
+  const session = await sessionOf($, agent)
+  if (tty === undefined || session === undefined) return { outcome: { kind: 'later' }, session }
+  const bound = await briefRowOf($, agent)
+  const record = bound === undefined ? undefined : records.find(r => dirOf(r.path) === bound.dir && holdsRow(r.text, bound.row))
+  const cost = bound === undefined || record === undefined ? undefined : { record: record.path, row: bound.row }
+  return { outcome: await closeDoneAgent($, { agent, tty, session, cost }), session }
+}
+
+// The line an act tells, none while it waits for a later tick.
+function actLine(key: string, what: string, agent: string, act: { outcome: CloseOutcome; session: string | undefined }): string | null {
+  const { outcome, session } = act
+  if (outcome.kind === 'later') return null
+  return outcome.kind === 'closed' ? agentLine({ key, what, agent, session, closed: { cost: outcome.cost } }) : agentLine({ key, what, agent, open: outcome.why })
 }
 
 // The session id of the agent a line names, from its row in the module's store: the newest row of that name.
@@ -244,9 +272,10 @@ export function anomalyLine(u: Unattended): string {
  * beyond the file's refresh): a line for each pull request merged or closed, with the open rows waiting
  * on a merged one (mergeRelayLine), one for each entering the anomaly, and one for each turned conflicting
  * with its base that the anomaly does not say (conflictLine, once per head and base head), each once (`told`, what
- * was told, updated here: one that leaves the anomaly is dropped, so a re-entry is told again). `settle`
- * archives the ended lines once their wake is delivered; `watching`, whether a line is still open or
- * a reader wants the file: the tick keeps it current while either holds; `moved`, whether the session's row
+ * was told, updated here: one that leaves the anomaly is dropped, so a re-entry is told again). The agent of a
+ * pull request Ready or ended that holds nothing else is closed here once done (closeOf), and the act told. `settle`
+ * archives the ended lines once their wake is delivered, but those whose agent's close waits; `watching`, whether a
+ * line is still open, a close waits or a reader wants the file: the tick keeps it current while one holds; `moved`, whether the session's row
  * took new pull requests from this reading, which the deck and the remote row are then told (guards.ts).
  * A reading that failed tells nothing and keeps watching.
  */
@@ -283,33 +312,55 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   const waitingOn = (ended: (typeof reading.ended)[number]) => ended.state === 'MERGED'
     ? reading.records.flatMap(record => waitingRows(record.text, { repo: ended.line.repo.toLowerCase(), pr: ended.line.pr }))
     : []
+  // The ended lines whose agent's close waits for a later tick: kept out of the archive, and the tick kept running.
+  const waiting = new Set<string>()
+  // One act per agent and tick: an agent done with two pull requests is closed once, both told.
+  const acts = new Map<string, Awaited<ReturnType<typeof closeOf>>>()
+  const actOn = async (agent: string) => {
+    const act = acts.get(agent) ?? await closeOf($, agent, reading.records, reading.idle)
+    acts.set(agent, act)
+    return act
+  }
   for (const ended of reading.ended) {
-    const key = `${prKey(ended.line.repo, ended.line.pr)} ended`
-    if (told.has(key)) continue
-    told.add(key)
+    const pk = prKey(ended.line.repo, ended.line.pr)
+    const first = !told.has(`${pk} ended`)
+    told.add(`${pk} ended`)
     const { repo, pr } = ended.line
-    // Its agent is named only while it runs (the launcher's listing, where the close command ends it) and holds nothing else:
-    // the one put on it last, else one before it still running.
+    const what = ended.state === 'MERGED' ? 'merged' : 'closed unmerged'
+    // Its agent is named only while it runs (the launcher's listing, where a close ends it): the one put on it last,
+    // else one before it still running; closed by the module when it holds nothing else, told when it does.
     const named = agentsOf(ended.line).find(name => reading.live.has(name))
     const holds = named === undefined ? [] : [
       ...(await rowsHeldBy($, named, reading.records)).map(row => `row ${row.id} (${dirOf(row.path).split('/').pop()})`),
       ...reading.kept.filter(line => agentsOf(line).includes(named)).map(line => prKey(line.repo, line.pr)),
     ]
-    lines.push(endedLine({ repo, pr, state: ended.state, agent: named, holds }))
-    const relay = mergeRelayLine({ repo, pr }, waitingOn(ended))
+    let said: string | null = null
+    if (named !== undefined && holds.length > 0) said = first ? agentLine({ key: pk, what, agent: named, holds }) : null
+    else if (named !== undefined) {
+      const act = await actOn(named)
+      said = actLine(pk, what, named, act)
+      if (act.outcome.kind === 'later') waiting.add(pk)
+    }
+    if (said === null && first) said = `[module] ${pk} ${what}.`
+    if (said !== null) lines.push(said)
+    const relay = first ? mergeRelayLine({ repo, pr }, waitingOn(ended)) : null
     if (relay !== null) lines.push(relay)
   }
-  // A Ready pull request's agent is done: told once per Ready head, so an agent resumed for a fix is told again only at the next head.
-  // One the forge reads conflicting is no longer ready to merge: its agent is told to rebase it, not to close.
+  // A Ready pull request's agent is done with it: acted on once per Ready head, so an agent resumed for a fix is closed again only at
+  // the next head; one not done yet is tried again at the next tick. One the forge reads conflicting is no longer ready to merge.
   for (const line of reading.atReady) {
     if (reading.forge.get(prKey(line.repo, line.pr))?.mergeable === 'CONFLICTING') continue
-    const key = `${prKey(line.repo, line.pr)} ready ${reading.readyHeads.get(prKey(line.repo, line.pr)) ?? ''}`
+    const pk = prKey(line.repo, line.pr)
+    const key = `${pk} ready ${reading.readyHeads.get(pk) ?? ''}`
     if (told.has(key)) continue
-    told.add(key)
     // The agent put on it last that still runs, else one put on it before, as a merge names it.
     const agent = agentsOf(line).find(name => reading.live.has(name)) ?? line.agent ?? ''
     const holds = holdsOf(reading.kept, other => other === agent, key => reading.readyHeads.has(key))
-    lines.push(readyAgentLine({ repo: line.repo, pr: line.pr, agent, session: await sessionOf($, agent), holds }))
+    const said = holds.length > 0 ? agentLine({ key: pk, what: 'is Ready', agent, holds })
+      : actLine(pk, 'is Ready', agent, await actOn(agent))
+    if (said === null) continue
+    told.add(key)
+    lines.push(said)
   }
   for (const [key, pr] of conflicts) {
     if (told.has(conflictKey(key, pr))) continue
@@ -327,7 +378,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   }
   const settle = async (): Promise<void> => {
     const byRecord = new Map<string, LedgerLine[]>()
-    for (const ended of reading.ended) byRecord.set(ended.path, [...(byRecord.get(ended.path) ?? []), ended.line])
+    for (const ended of reading.ended) {
+      if (!waiting.has(prKey(ended.line.repo, ended.line.pr))) byRecord.set(ended.path, [...(byRecord.get(ended.path) ?? []), ended.line])
+    }
     for (const [path, ended] of byRecord) {
       try {
         await archive($, path, ended)
@@ -336,5 +389,5 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
       }
     }
   }
-  return { lines, watching: reading.kept.length > 0 || reading.wanted, moved, settle }
+  return { lines, watching: reading.kept.length > 0 || reading.wanted || waiting.size > 0, moved, settle }
 }

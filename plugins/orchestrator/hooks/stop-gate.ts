@@ -213,6 +213,11 @@ export function liveNames(rows: readonly Row[]): Set<string> {
   return new Set(rows.filter(row => activity(row.title) !== null).map(labelOf))
 }
 
+// The tty of each session the listing shows idle, by its label: where the module closes an agent done with its work.
+export function idleTtys(rows: readonly Row[]): Map<string, string> {
+  return new Map(rows.filter(row => activity(row.title) === 'idle').map(row => [labelOf(row), row.tty]))
+}
+
 // --- the orchestrator's own agents (stop_gate.py:224-247) --------------------------------
 
 // The host's status of the session a tty runs, from the host's own per-process record

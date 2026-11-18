@@ -1,7 +1,7 @@
 // hooks/ready-agent.ts
 // What says an agent is done with a Ready pull request, read from the artifact (the label at the pull
 // request's head), so any reader that learns of it late, the module's tick of a fresh session or the
-// takeover's print, names the same agents to close. Pure: the reading of the files is the caller's.
+// takeover's print, names the same agents done. Pure: the reading of the files is the caller's.
 import { agentsOf, prKey, READY_LABEL, type LedgerLine } from '../core/pr-ledger.ts'
 import type { FilePr } from './pr-file-format.ts'
 
@@ -19,12 +19,17 @@ export function holdsOf(kept: readonly LedgerLine[], isAgent: (agent: string) =>
   return kept.filter(other => agentsOf(other).some(isAgent) && !isReady(prKey(other.repo, other.pr))).map(other => prKey(other.repo, other.pr))
 }
 
-// The line a pull request that is Ready wakes its orchestrator with: its agent is done with it and closes now, its
-// session id (`session`, read where the agent is still running) kept on the row to resume it from; when the agent still
-// holds another pull request (`holds`), to be told.
-export function readyAgentLine(ready: { repo: string; pr: number; agent: string; session?: string | undefined; holds?: readonly string[] }): string {
-  const head = `[module] ${prKey(ready.repo, ready.pr)} is Ready: its agent ${ready.agent}`
-  const holds = ready.holds ?? []
-  if (holds.length > 0) return `${head} still holds ${holds.join(', ')}; tell it, do not close it.`
-  return `${head} is done with it${ready.session === undefined ? '' : ` (session ${ready.session})`}, close it.`
+/*
+ * The line a pull request of the orchestration that became Ready, merged or closed tells of its agent: closed by the
+ * module (close-agent.ts), its session kept to resume it; left open, with the fact that kept it open; or still holding
+ * another pull request or row (`holds`), to be told. `what` is what the pull request did.
+ */
+export function agentLine(a: { key: string; what: string; agent: string; session?: string | undefined; holds?: readonly string[]; closed?: { cost: string | null }; open?: string }): string {
+  const head = `[module] ${a.key} ${a.what}: its agent ${a.agent}`
+  const holds = a.holds ?? []
+  if (holds.length > 0) return `${head} still holds ${holds.join(', ')}; tell it.`
+  if (a.open !== undefined) return `${head} left open: ${a.open}.`
+  const unrecorded = a.closed?.cost ?? null
+  const cost = unrecorded === null ? '' : `; its cost not recorded: ${unrecorded}`
+  return `${head} closed by the module (session ${a.session ?? '?'}, resumable within the hour)${cost}.`
 }

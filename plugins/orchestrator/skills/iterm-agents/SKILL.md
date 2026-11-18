@@ -77,7 +77,7 @@ An `Agent:` session also comes up without the away recap and the silent-turn rem
 
 ## Window and tab hygiene
 
-**A finished agent's window or tab is closed, not left open.** The Ready of its pull request stands the agent down and closes its place in the same move (`close --tty --expect-title`, its `closed 1 session on <tty>` line the proof); until then the kept review findings are sent to it. The only places open at any time are the orchestrator's and its running implementers' (and the auditor's tab). `close --tty` on a hidden agent closes its session alone — its tab and its review pane stay open (`references/commands.md`, « How the launcher builds a tab », the hidden-pane entry).
+**A finished agent's window or tab is closed by the module** at the Ready or merge of its pull request. The only places open at any time are the orchestrator's and its running implementers' (and the auditor's tab). `close --tty` on a hidden agent closes its session alone — its tab and its review pane stay open (`references/commands.md`, « How the launcher builds a tab », the hidden-pane entry).
 
 **A window or a tab is closed by its tty with `--expect-title`, never by title alone or by position** — the title its spawn was given, `list`'s for a session you did not spawn (a rotation takes none, below). Match on words, never on the first character, an activity glyph that flips on its own.
 

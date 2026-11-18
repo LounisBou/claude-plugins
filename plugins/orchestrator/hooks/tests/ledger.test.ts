@@ -36,7 +36,11 @@ type Over = {
   forge?: Record<string, string>
   closed?: Record<string, Record<number, 'MERGED' | 'CLOSED'>>
   // What the launcher's `list` prints: the agents running (empty when none is given); null when it cannot be read.
+  // Its `close` drops the session on that tty from it, or fails when `closeFails`.
   launcher?: string | null
+  closeFails?: boolean
+  // What `git status --porcelain` prints in an agent's checkout.
+  dirty?: string
 }
 
 // The orchestrator s-orch (its record registered, owned), the agent s-agent on /dev/ttys005 launched for it.
@@ -54,6 +58,7 @@ function fake(over: Over = {}) {
   const logged: string[] = []
   const runs: string[][] = []
   const reportsTo = over.reportsTo === undefined ? `${ORCH} [a1b2c3]` : over.reportsTo
+  let listed = over.launcher
   const dollar = hostOf({
     plugin: { root: '/plugins/orch' },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'ORCHESTRATOR_REPORTS_TO' ? reportsTo ?? undefined : undefined) },
@@ -79,7 +84,14 @@ function fake(over: Over = {}) {
         runs.push([...argv])
         const lock = lockRun(argv, files)
         if (lock !== null) return lock
-        if (argv[0] === 'bash' && argv[2] === 'list') return over.launcher === null ? { exitCode: 1, stdout: '', stderr: 'no terminal' } : { exitCode: 0, stdout: over.launcher ?? '', stderr: '' }
+        if (argv[0] === 'bash' && argv[2] === 'list') return listed === null ? { exitCode: 1, stdout: '', stderr: 'no terminal' } : { exitCode: 0, stdout: listed ?? '', stderr: '' }
+        if (argv[0] === 'bash' && argv[2] === 'close') {
+          if (over.closeFails) return { exitCode: 1, stdout: '', stderr: `ERROR: close: refused: the window on ${argv[4]} is named 'Other'` }
+          listed = (listed ?? '').split('\n').filter(line => !line.includes(` | ${argv[4]} | `)).join('\n')
+          return { exitCode: 0, stdout: '', stderr: '' }
+        }
+        if (argv[0] === 'git' && argv[1] === 'status') return { exitCode: 0, stdout: over.dirty ?? '', stderr: '' }
+        if (argv[0] === 'git' && argv[1] === 'rev-list') return { exitCode: 0, stdout: '0\n', stderr: '' }
         if (argv[0] === 'mv') { files.set(argv[3]!, files.get(argv[2]!)!); files.delete(argv[2]!) }
         if (argv[0] === 'rm') for (const p of argv.slice(2)) files.delete(p)
         const asked = prQueryRun(argv, repo => over.forge?.[repo] ?? null, over.closed)
@@ -352,11 +364,26 @@ const WAITERS = [
 // The launcher's listing with the agents named running, each in a tab whose title carries the host's glyph.
 const running = (...agents: string[]) => agents.map((name, n) => `w1/t${n} | /dev/ttys00${n} | ✳ ${name} | ${name}`).join('\n')
 
-test('a pull request merged outside the session wakes its orchestrator with its agent to close and the open rows waiting on it; its line archived once told', async () => {
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17', 'Agent: p18') })
+// An agent whose last turn ended on `status: done`: its wait file `delivered`, its host idle in its checkout.
+const doneAgent = (session: string, name: string, pid: number): Record<string, string> => ({
+  [`${STATE}/store/sessions/${session}`]: row('agent', `${name} [a1b2c3]`),
+  [`${STATE}/store/waits/${session}`]: JSON.stringify({ waiting: 'delivered', blocks: 'acme/app#17', waiting_since: AT, name, pid: String(pid) }),
+  [`${HOME}/.claude/sessions/${pid}.json`]: JSON.stringify({ pid, sessionId: session, cwd: `/work/${session}`, status: 'idle', name }),
+})
+const P17_DONE = doneAgent('s-p17', 'Agent: p17', 417)
+const NO_ROW = 'no row of its brief found'
+// The line of an agent the module closed.
+const closedLine = (key: string, what: string, agent = 'Agent: p17', session = 's-p17', cost: string | null = NO_ROW) =>
+  `[module] ${key} ${what}: its agent ${agent} closed by the module (session ${session}, resumable within the hour)${cost === null ? '' : `; its cost not recorded: ${cost}`}.`
+// The launcher's closes the world ran.
+const closes = (runs: readonly string[][]) => runs.filter(argv => argv[2] === 'close').map(argv => argv.slice(3).join(' '))
+
+test('a pull request merged outside the session closes its agent done with it and wakes its orchestrator with the act and the open rows waiting on it; its line archived once told', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17', 'Agent: p18') })
   const woke = await prWake(world.dollar, new Set())
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
   expect(woke.lines).toEqual([
-    '[module] acme/app#17 merged: its agent Agent: p17 is done with it, close it.',
+    closedLine('acme/app#17', 'merged'),
     '[module] acme/app#17 merged; open rows waiting on it: row 3 « P18 cache » (Agent: p18), row 4 « P19 ui ». Tell each one\'s agent now.',
   ])
   expect(woke.watching).toBe(false)
@@ -375,18 +402,38 @@ test('a merge says nothing of closing an agent the close command already closed:
   expect(woke.lines.join('\n')).not.toContain('close it')
 })
 
-test('a merge says its agent still holds the open row that waits on it, or another pull request of its own, and never to close it', async () => {
+test('a merge says its agent still holds the open row that waits on it, or another pull request of its own, and closes nothing', async () => {
   const other = ledgerLine(21, 'working', { agent: 'Agent: p17' }, 'acme/lib')
   const holds = JSON.stringify({ id: 8, state: 'open', label: 'P17 follow-up', blocker: 'PR acme/app#17 merged', note: 'Dispatched 2026-11-15: Agent: p17' })
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${holds}\n${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n${other}\n` }, forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
   const woke = await prWake(world.dollar, new Set())
-  expect(woke.lines[0]).toBe('[module] acme/app#17 merged: its agent Agent: p17 still holds row 8 (app), acme/lib#21; tell it, do not close it.')
-  expect(woke.lines.join('\n')).not.toContain('is done with it, close it')
+  expect(woke.lines[0]).toBe('[module] acme/app#17 merged: its agent Agent: p17 still holds row 8 (app), acme/lib#21; tell it.')
+  expect(closes(world.runs)).toEqual([])
 })
 
-test('a merge says close it when the launcher cannot be read, as every agent a line names is then taken for running', async () => {
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n` }, forge: { 'acme/app': '[]' }, launcher: null })
-  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 is done with it, close it.'])
+test('a merge closes nothing while the launcher cannot be read: told merged once, its line kept and watched for a later tick', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n`, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: null })
+  const told = new Set<string>()
+  const woke = await prWake(world.dollar, told)
+  expect([woke.lines, woke.watching, closes(world.runs)]).toEqual([['[module] acme/app#17 merged.'], true, []])
+  await woke.settle()
+  expect(world.files.get(RECORD)).toContain('"pr":17')
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
+})
+
+test('a merge whose agent is not done yet closes nothing until its last turn ends on done, then closes it and archives the line', async () => {
+  const told = new Set<string>()
+  const rows = { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n`, ...P17_SESSION }
+  const working = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  const first = await prWake(working.dollar, told)
+  expect([first.lines, first.watching, closes(working.runs)]).toEqual([['[module] acme/app#17 merged.'], true, []])
+  await first.settle()
+  expect(working.files.get(RECORD)).toContain('"pr":17')
+  const done = fake({ session: 's-orch', reportsTo: null, rows: { ...rows, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  const then = await prWake(done.dollar, told)
+  expect(then.lines).toEqual([closedLine('acme/app#17', 'merged')])
+  await then.settle()
+  expect(done.files.get(RECORD)).not.toContain('"pr":17')
 })
 
 // A pull request of the orchestration that carries Ready, its agent running in the session s-p17.
@@ -394,25 +441,50 @@ const READY_PR = JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z'
 const P17_LINE = ledgerLine(17, 'working', { agent: 'Agent: p17' })
 const P17_SESSION = { [`${STATE}/store/sessions/s-p17`]: row('agent', 'Agent: p17 [a1b2c3]', '/dev/ttys006') }
 
-test('a pull request that becomes Ready wakes its orchestrator with its agent to close and its session id to keep, once', async () => {
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+test('a pull request that becomes Ready closes its agent done with it, its checkout kept, and tells the act with its session id, once', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
   const told = new Set<string>()
-  expect((await prWake(world.dollar, told)).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 is done with it (session s-p17), close it.'])
+  expect((await prWake(world.dollar, told)).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
   expect((await prWake(world.dollar, told)).lines).toEqual([])
+  expect(closes(world.runs)).toHaveLength(1)
 })
 
-test('a successor or a restarted module, its told empty, names the agent of a pull request already Ready once, as one that saw it become Ready; its next tick says nothing', async () => {
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
-  const first = new Set<string>()
-  const line = '[module] acme/app#17 is Ready: its agent Agent: p17 is done with it (session s-p17), close it.'
-  expect((await prWake(world.dollar, first)).lines).toEqual([line])
-  // The module restarts: nothing is remembered, and the agent still runs, so it is told again, once.
-  const restarted = new Set<string>()
-  expect((await prWake(world.dollar, restarted)).lines).toEqual([line])
-  expect((await prWake(world.dollar, restarted)).lines).toEqual([])
+test('a Ready pull request whose agent is not done, or is busy, closes nothing and says nothing: tried again at the next tick', async () => {
+  const told = new Set<string>()
+  const notDone = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  expect([(await prWake(notDone.dollar, told)).lines, closes(notDone.runs)]).toEqual([[], []])
+  const busy = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: 'w1/t0 | /dev/ttys000 | ⠂ Agent: p17 | Agent: p17' })
+  expect([(await prWake(busy.dollar, told)).lines, closes(busy.runs)]).toEqual([[], []])
+  const done = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  expect((await prWake(done.dollar, told)).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
 })
 
-test('a pull request that is not Ready, or whose agent the launcher no longer lists, says nothing to close', async () => {
+test('an agent done whose checkout is not clean, or whose close the launcher refuses, is left open and told once with the fact', async () => {
+  const dirty = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17'), dirty: ' M a.ts\n?? b.ts\n' })
+  const told = new Set<string>()
+  expect((await prWake(dirty.dollar, told)).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 left open: tree not clean in /work/s-p17 (2 paths changed, 0 commits unpushed).'])
+  expect(closes(dirty.runs)).toEqual([])
+  expect((await prWake(dirty.dollar, told)).lines).toEqual([])
+  const refused = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17'), closeFails: true })
+  expect((await prWake(refused.dollar, new Set())).lines).toEqual(["[module] acme/app#17 is Ready: its agent Agent: p17 left open: the launcher's close failed: ERROR: close: refused: the window on /dev/ttys000 is named 'Other'."])
+})
+
+test('a closed agent\'s cost goes on the row its brief was printed for, in the record beside that brief', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${JSON.stringify({ id: 4, state: 'open', label: 'P17' })}\n${P17_LINE}\n`, ...P17_DONE, ...launched('/briefs/app', 'Agent: p17', 4) }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'is Ready', 'Agent: p17', 's-p17', null)])
+  expect(world.runs.filter(argv => argv[2] === 'cost')).toEqual([['bash', '/plugins/orch/skills/orchestrator/scripts/dispatch-record.sh', 'cost', RECORD, '4', '--session', 's-p17']])
+})
+
+test('a successor or a restarted module, its told empty, closes the agent of a pull request already Ready; one already closed is no longer listed and nothing is done again', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  // The module restarts: nothing is remembered, and the agent closed is not listed: nothing is closed or told again.
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([])
+  expect(closes(world.runs)).toHaveLength(1)
+})
+
+test('a pull request that is not Ready, or whose agent the launcher no longer lists, closes nothing', async () => {
   const notReady = JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Not Ready' }] }])
   const waiting = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION }, forge: { 'acme/app': notReady }, launcher: running('Agent: p17') })
   expect((await prWake(waiting.dollar, new Set())).lines).toEqual([])
@@ -422,36 +494,36 @@ test('a pull request that is not Ready, or whose agent the launcher no longer li
   expect((await prWake(unlisted.dollar, new Set())).lines).toEqual([])
 })
 
-test('a Ready pull request whose agent holds another open pull request says to tell it, not to close it', async () => {
+test('a Ready pull request whose agent holds another open pull request says to tell it, and closes nothing', async () => {
   const other = ledgerLine(21, 'working', { agent: 'Agent: p17' }, 'acme/lib')
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n${other}\n`, ...P17_SESSION }, forge: { 'acme/app': READY_PR, 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
-  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 still holds acme/lib#21; tell it, do not close it.'])
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n${other}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR, 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 still holds acme/lib#21; tell it.'])
+  expect(closes(world.runs)).toEqual([])
 })
 
-test('an agent resumed for a fix on a pull request still Ready is not told to close mid-fix; the next Ready head tells it again, and a merge then names nothing to close', async () => {
+test('an agent resumed for a fix on a pull request still Ready is not closed mid-fix; the next Ready head closes it again, and a merge then names nothing to close', async () => {
   const told = new Set<string>()
-  const ready = (launcher: string | null, sha = 'a'.repeat(40)) => fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION },
+  const ready = (launcher: string | null, sha = 'a'.repeat(40)) => fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE },
     forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Ready' }], sha }]) }, launcher })
   expect((await prWake(ready(running('Agent: p17')).dollar, told)).lines).toHaveLength(1)
-  // Closed at Ready, then resumed for a fix while the label still stands: the same head says nothing.
+  // Closed at Ready, then resumed for a fix while the label still stands: the same head closes nothing.
   expect((await prWake(ready('').dollar, told)).lines).toEqual([])
   expect((await prWake(ready(running('Agent: p17')).dollar, told)).lines).toEqual([])
-  // A launcher listing that failed once does not make the agent told again either.
+  // A launcher listing that failed once does not make the agent closed again either.
   expect((await prWake(ready(null).dollar, told)).lines).toEqual([])
   expect((await prWake(ready(running('Agent: p17')).dollar, told)).lines).toEqual([])
-  // The fix pushed, Ready again at the next head: told again.
+  // The fix pushed, Ready again at the next head: closed again.
   expect((await prWake(ready(running('Agent: p17'), 'b'.repeat(40)).dollar, told)).lines).toHaveLength(1)
   const merged = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION }, forge: { 'acme/app': '[]' }, launcher: '' })
   expect((await prWake(merged.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged.'])
 })
 
-test('two Ready pull requests of one agent: the agent holds nothing the other one does not release, both say to close it', async () => {
+test('two Ready pull requests of one agent: the agent holds nothing the other one does not release, it is closed once and both tell it', async () => {
   const second = ledgerLine(18, 'working', { agent: 'Agent: p17' })
   const both = JSON.stringify([17, 18].map(number => ({ number, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Ready' }] })))
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n${second}\n`, ...P17_SESSION }, forge: { 'acme/app': both }, launcher: running('Agent: p17') })
-  const lines = (await prWake(world.dollar, new Set())).lines
-  expect(lines).toHaveLength(2)
-  expect(lines.every(line => line.endsWith('close it.') && !line.includes('still holds'))).toBe(true)
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n${second}\n`, ...P17_DONE }, forge: { 'acme/app': both }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'is Ready'), closedLine('acme/app#18', 'is Ready')])
+  expect(closes(world.runs)).toHaveLength(1)
 })
 
 // A pull request of the orchestration its agent still works on, the forge reading it against its base (`main` at `c…` unless given).
@@ -492,24 +564,24 @@ test('a conflict names the agent put on the pull request before when the one nam
 // A line put on a reviewer after its implementer: the implementer kept in `earlier`.
 const reviewedLine = (pr: number, repo = 'acme/app') => JSON.stringify({ v: 1, ledger: 'pr', repo, pr, status: 'working', agent: `Agent: review ${pr} r1`, earlier: ['Agent: p17'], since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:30:00Z' })
 
-test('a merge names the agent put on the pull request before when the one named last no longer runs', async () => {
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${reviewedLine(17)}\n` }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
-  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 is done with it, close it.'])
+test('a merge closes the agent put on the pull request before when the one named last no longer runs', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${reviewedLine(17)}\n`, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'merged')])
 })
 
-test('a Ready pull request whose last agent is closed names the one put on it before, still running, to close it', async () => {
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${reviewedLine(17)}\n`, ...P17_SESSION },
+test('a Ready pull request whose last agent is closed closes the one put on it before, still running', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${reviewedLine(17)}\n`, ...P17_DONE },
     forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Ready' }] }]) }, launcher: running('Agent: p17') })
-  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 is done with it (session s-p17), close it.'])
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
 })
 
-test('a pull request an agent still attends through its earlier list holds it: a merge or a Ready of another one says to tell it, not to close it', async () => {
+test('a pull request an agent still attends through its earlier list holds it: a merge or a Ready of another one says to tell it, and closes nothing', async () => {
   const merged = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(18, 'working', { agent: 'Agent: p17' })}\n${reviewedLine(21, 'acme/lib')}\n` },
     forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
-  expect((await prWake(merged.dollar, new Set())).lines).toEqual(['[module] acme/app#18 merged: its agent Agent: p17 still holds acme/lib#21; tell it, do not close it.'])
+  expect((await prWake(merged.dollar, new Set())).lines).toEqual(['[module] acme/app#18 merged: its agent Agent: p17 still holds acme/lib#21; tell it.'])
   const ready = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n${reviewedLine(21, 'acme/lib')}\n`, ...P17_SESSION },
     forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Ready' }] }]), 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
-  expect((await prWake(ready.dollar, new Set())).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 still holds acme/lib#21; tell it, do not close it.'])
+  expect((await prWake(ready.dollar, new Set())).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 still holds acme/lib#21; tell it.'])
 })
 
 test('a mergeability the forge still computes (UNKNOWN) is no conflict: nothing is told', async () => {
@@ -556,16 +628,17 @@ test('a file refreshed without the base keeps the conflict told of its head: the
   expect((await prWake(world.dollar, told)).lines).toEqual([])
 })
 
-test('a Ready pull request the forge reads conflicting is told to rebase only, not to close: its agent gets one order', async () => {
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION },
+test('a Ready pull request the forge reads conflicting is told to rebase only, its agent not closed: its agent gets one order', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE },
     forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Ready' }], mergeable: 'CONFLICTING' }]) }, launcher: running('Agent: p17') })
   const told = new Set<string>()
   expect((await prWake(world.dollar, told)).lines).toEqual([CONFLICT_LINE])
-  // The conflict gone at the same head, it is ready again: its agent is told to close it then.
+  expect(closes(world.runs)).toEqual([])
+  // The conflict gone at the same head, it is ready again: its agent is closed then.
   const file = JSON.parse(world.files.get(`${STATE}/prs.json`)!) as { prs: Record<string, unknown>[] }
   for (const pr of file.prs) pr['mergeable'] = 'MERGEABLE'
   world.files.set(`${STATE}/prs.json`, JSON.stringify(file))
-  expect((await prWake(world.dollar, told)).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 is done with it (session s-p17), close it.'])
+  expect((await prWake(world.dollar, told)).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
 })
 
 test('a pull request told in anomaly without an agent that then turns conflicting is told again, in conflict', async () => {
@@ -590,38 +663,40 @@ const mergedLine = ledgerLine(17, 'working', { agent: 'Agent: p17' })
 
 test('a row the agent\'s brief names holds it, in the record beside that brief: the same id in another record is not its row', async () => {
   const files = { ...launched('/briefs/web', 'Agent: p17', 8), ...second(`${rowOf(8, 'closed')}\n${rowOf(9, 'open', { note: 'Dispatched: Agent: someone' })}\n`) }
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'open')}\n${mergedLine}\n`, ...files }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'open')}\n${mergedLine}\n`, ...files, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
   // Row 8 of web is closed, row 9 of web is another agent's and row 8 of app, open, is no row of its brief: nothing holds p17.
-  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 is done with it, close it.'])
+  // Closed, its cost goes on row 8 of web, the row of its brief, closed or not.
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'merged', 'Agent: p17', 's-p17', null)])
+  expect(world.runs.filter(argv => argv[2] === 'cost').map(argv => argv.slice(3, 5))).toEqual([[OTHER, '8']])
   const held = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'closed')}\n${mergedLine}\n`, ...launched('/briefs/web', 'Agent: p17', 8), ...second(`${rowOf(8, 'open', { note: 'no agent here' })}\n`) }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
-  expect((await prWake(held.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 8 (web); tell it, do not close it.'])
+  expect((await prWake(held.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 8 (web); tell it.'])
 })
 
 test('a row open in any record of the orchestration holds the agent, whether or not it waits on a merge, and a deferred or closed one holds nothing', async () => {
   const rows = [rowOf(3, 'open', { note: 'Dispatched: Agent: p17' }), rowOf(4, 'open', { note: 'Dispatched: Agent: p17', deferred: 'later, 2026-11-15' }), rowOf(5, 'closed', { note: 'Dispatched: Agent: p17' }), mergedLine].join('\n') + '\n'
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
-  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 3 (app); tell it, do not close it.'])
+  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 3 (app); tell it.'])
 })
 
 test('a note names an agent by its whole name: a row of Agent: p17 does not hold Agent: p1', async () => {
   const rows = [rowOf(3, 'open', { note: 'Dispatched: Agent: p17 on feat/next' }), ledgerLine(1, 'working', { agent: 'Agent: p1' }), mergedLine].join('\n') + '\n'
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p1', 'Agent: p17') })
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows, ...doneAgent('s-p1', 'Agent: p1', 401) }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p1', 'Agent: p17') })
   expect((await prWake(world.dollar, new Set())).lines).toEqual([
-    '[module] acme/app#1 merged: its agent Agent: p1 is done with it, close it.',
-    '[module] acme/app#17 merged: its agent Agent: p17 still holds row 3 (app); tell it, do not close it.',
+    closedLine('acme/app#1', 'merged', 'Agent: p1', 's-p1'),
+    '[module] acme/app#17 merged: its agent Agent: p17 still holds row 3 (app); tell it.',
   ])
 })
 
 test('another working line of the agent holds it; a parked one does not', async () => {
   const parked = ledgerLine(19, 'parked', { ruling: 'later, 2026-11-15' }, 'acme/lib').replace('"ruling"', '"agent":"Agent: p17","ruling"')
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${mergedLine}\n${parked}\n` }, forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 19, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
-  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 is done with it, close it.'])
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${mergedLine}\n${parked}\n`, ...P17_DONE }, forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 19, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'merged')])
 })
 
 test('a pull request closed unmerged whose agent works another line is told as holding it', async () => {
   const rows = `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n${ledgerLine(21, 'working', { agent: 'Agent: p17' }, 'acme/lib')}\n`
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows }, forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, closed: { 'acme/app': { 17: 'CLOSED' } }, launcher: running('Agent: p17') })
-  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 closed unmerged: its agent Agent: p17 still holds acme/lib#21; tell it, do not close it.'])
+  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 closed unmerged: its agent Agent: p17 still holds acme/lib#21; tell it.'])
 })
 
 test('the tick keeps watching while a reader wants the file, its own lines all ended', async () => {
@@ -630,9 +705,9 @@ test('the tick keeps watching while a reader wants the file, its own lines all e
   expect((await prWake(world.dollar, new Set())).watching).toBe(true)
 })
 
-test('a pull request closed unmerged wakes its orchestrator with its agent to close, no row relayed', async () => {
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS }, forge: { 'acme/app': '[]' }, closed: { 'acme/app': { 17: 'CLOSED' } }, launcher: running('Agent: p17') })
-  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 closed unmerged: its agent Agent: p17 is done with it, close it.'])
+test('a pull request closed unmerged closes its agent done with it and wakes its orchestrator with the act, no row relayed', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: WAITERS, ...P17_DONE }, forge: { 'acme/app': '[]' }, closed: { 'acme/app': { 17: 'CLOSED' } }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'closed unmerged')])
 })
 
 test('a pull request entering the anomaly wakes its orchestrator once, again only after it leaves and re-enters; nothing changed wakes nothing', async () => {
@@ -654,12 +729,12 @@ test('a merge whose archive fails is told once, not at every tick; a row of anot
   const other = '/briefs/web/dispatch-record.jsonl'
   const world = fake({
     session: 's-orch', reportsTo: null, readOnly: true, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17'),
-    rows: { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n`, [`${STATE}/records/s-orch`]: `${RECORD}\n${other}\n`, [`${other}.owner`]: `${ORCH}\n`, [other]: `${JSON.stringify({ id: 9, state: 'open', label: 'P20 web', blocker: 'PR acme/app#17 merged' })}\n` },
+    rows: { ...P17_DONE, [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n`, [`${STATE}/records/s-orch`]: `${RECORD}\n${other}\n`, [`${other}.owner`]: `${ORCH}\n`, [other]: `${JSON.stringify({ id: 9, state: 'open', label: 'P20 web', blocker: 'PR acme/app#17 merged' })}\n` },
   })
   const told = new Set<string>()
   const first = await prWake(world.dollar, told)
   expect(first.lines).toEqual([
-    '[module] acme/app#17 merged: its agent Agent: p17 is done with it, close it.',
+    closedLine('acme/app#17', 'merged'),
     "[module] acme/app#17 merged; open rows waiting on it: row 9 « P20 web ». Tell each one's agent now.",
   ])
   await first.settle()
