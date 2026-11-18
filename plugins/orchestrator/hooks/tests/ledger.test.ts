@@ -543,7 +543,7 @@ test('a merge whose agent turned busy before the close keeps its line until the 
 
 test('an agent is closed on the tab of this orchestration\'s chain: another orchestration\'s tab of the same name is never closed', async () => {
   const foreign = 'w2/t7 | /dev/ttys007 | ✳ Agent: p17 | Agent: p17'
-  const rows = { [RECORD]: `${P17_LINE}\n`, ...P17_DONE, [`${STATE}/store/sessions/s-x17`]: row('agent', 'Agent: p17 [ffffff]', '/dev/ttys007') }
+  const rows = { [RECORD]: `${P17_LINE}\n`, ...P17_DONE, [`${STATE}/store/sessions/s-x17`]: row('agent', 'Agent: p17 [a1b2c3]', '/dev/ttys007') }
   const both = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: `${running('Agent: p17')}\n${foreign}` })
   const woke = await prWake(both.dollar, new Set())
   expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
@@ -560,7 +560,7 @@ test('an agent is closed on the tab of this orchestration\'s chain: another orch
 
 test('an agent whose own tab is busy waits, whatever tab of the same name another orchestration leaves idle', async () => {
   const foreign = 'w2/t7 | /dev/ttys007 | ✳ Agent: p17 | Agent: p17'
-  const rows = { [RECORD]: `${P17_LINE}\n`, ...P17_DONE, [`${STATE}/store/sessions/s-x17`]: row('agent', 'Agent: p17 [ffffff]', '/dev/ttys007') }
+  const rows = { [RECORD]: `${P17_LINE}\n`, ...P17_DONE, [`${STATE}/store/sessions/s-x17`]: row('agent', 'Agent: p17 [a1b2c3]', '/dev/ttys007') }
   const world = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: `w1/t0 | /dev/ttys000 | ⠂ Agent: p17 | Agent: p17\n${foreign}` })
   const told = new Set<string>()
   const woke = await prWake(world.dollar, told)
