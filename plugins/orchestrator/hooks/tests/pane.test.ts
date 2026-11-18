@@ -1420,6 +1420,71 @@ test('the Other answer of a question asked with ask is its field once picked, it
   expect(sent.length).toBe(1)
 })
 
+// The host's terminal field wraps its text, and places its caret, at the pane's whole width less
+// its label and its hint, whatever space the boxes around it take: a field drawn indented by four
+// columns had lines four columns wider than its room, which the host cut with « … », its caret
+// rows below at the column of a line it did not draw (the operator's report of 2026-11-18).
+const sideOf = (path: El[], side: 'Left' | 'Right') => path.reduce((sum, el) => {
+  const p = el.props
+  return sum + Number(p[`padding${side}`] ?? p['paddingX'] ?? p['padding'] ?? 0) + Number(p[`margin${side}`] ?? p['marginX'] ?? p['margin'] ?? 0)
+}, 0)
+function pathTo(node: unknown, match: (node: El) => boolean): El[] | null {
+  if (!isEl(node)) return null
+  if (match(node)) return [node]
+  for (const kid of [node.props.children].flat()) {
+    const found = pathTo(kid, match)
+    if (found) return [node, ...found]
+  }
+  return null
+}
+
+test('the Other answer field is drawn across the pane\'s whole width, the width the host wraps it at', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
+  const { render } = await askedPane([first])
+  await pick(await render(), 'other')
+  const path = pathTo(await render(), n => n.type === 'Input')!
+  expect([sideOf(path, 'Left'), sideOf(path, 'Right')]).toEqual([0, 0])
+  // A window shorter than the tree draws its track in a right margin of its own: not beside the
+  // field, which would lose those columns, nor over its hint. The key line stays pinned.
+  await shortWindowKeepsTheKeyLine(render)
+})
+
+async function shortWindowKeepsTheKeyLine(render: (props?: object) => Promise<El>): Promise<void> {
+  const short = await render({ scroll: { offset: 0, bodyRows: 6 }, bodyColumns: 80 })
+  const shortPath = pathTo(short, n => n.type === 'Input')!
+  expect([sideOf(shortPath, 'Left'), sideOf(shortPath, 'Right')]).toEqual([0, 0])
+  const overlays = kidsOf(short).filter(k => isEl(k) && k.props.position === 'absolute')
+  expect(overlays.filter(k => k.props.right === 0)).toEqual([])
+  const pinned = overlays.filter(k => k.props['left'] === 0)
+  expect(pinned.length).toBe(1)
+  expect(texts(pinned[0]).join(' ')).toContain('Enter')
+}
+
+// The host brings a field that takes the ring into view by moving the window itself, and tells
+// the module nothing of that move: the pane is drawn again once it has, so the key line is pinned
+// at the window's new top.
+test('the field taking the ring draws the pane again once the host has moved the window to it', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z', { choices: [], recommended: null, why: null })
+  const { fx, render, ring } = await askedPane([first])
+  await render()
+  fx.later.length = 0
+  fx.invalidated.length = 0
+  await ring(`answer:${first.id}`)
+  expect(fx.invalidated).toEqual([])
+  for (const timer of fx.later) timer.fn()
+  expect(fx.invalidated).toEqual(['ui.render'])
+  fx.later.length = 0
+  await ring(`choices:${first.id}`)
+  for (const timer of fx.later) timer.fn()
+  expect(fx.invalidated).toEqual(['ui.render'])
+})
+
+test('a question without choices, its field drawn at once, keeps its key line pinned in a short window, with no track', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z', { choices: [], recommended: null, why: null })
+  const { render } = await askedPane([first])
+  await shortWindowKeepsTheKeyLine(render)
+})
+
 test('a question asked with ask without choices takes the field at once', async () => {
   const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z', { choices: [], recommended: null, why: null })
   const { render } = await askedPane([first])

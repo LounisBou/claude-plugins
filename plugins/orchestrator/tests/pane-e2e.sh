@@ -189,7 +189,7 @@ start() {
     flow) : ;;
     *) questions_round "$now" ;;
   esac
-  tm new-session -d -s "$SESSION" -x 160 -y "$rows" -c "$SANDBOX/work" \
+  tm new-session -d -s "$SESSION" -x "${COLS:-160}" -y "$rows" -c "$SANDBOX/work" \
     env -i HOME="$HOME" USER="$USER" PATH="$PATH" TERM=xterm-256color FORCE_HYPERLINK=1 \
     ORCHESTRATOR_STATE_DIR="$SANDBOX/state" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" \
     ORCHESTRATOR_WORKSPACES="$SANDBOX/workspaces" \
@@ -561,6 +561,38 @@ check "Enter answers it, its sender reached by no session" "answered|A : tag it"
 notice=$(line_of 'not delivered:')
 check "the notice is one line at the section's foot, above the orchestrators" "1|1" "$(pane | grep -c 'not delivered:')|$([ -n "$notice" ] && [ "$notice" -lt "$(line_of 'Orchestrators')" ] && echo 1)"
 check "the section holds no question left, and still says who waits" "1|0|1" "$(pane | grep -c '^Questions for you$')|$(pane | grep -c 'Which page goes first')|$(pane | grep -c '^none in the pane — 1 orchestrator waits for you: ask the coordinator')"
+
+# The operator's report of 2026-11-18: a text longer than the field's line was drawn cut with
+# « … », the caret rows below at the column of a line not drawn, and the text drawn again under
+# the field. The text wraps in the field, once, and the caret (the terminal's cursor) follows its
+# last character: at 160 columns, at 100, where the pane is drawn over the transcript, and in a
+# window shorter than the tree, where the pane would draw its scroll track. The caret's cell: the
+# four cells before the terminal's cursor, a bar, and the cell under it, blank or past the row's
+# end (the row's characters counted as cells: the rows read here hold no wide character).
+caret_cell() {
+  local cx cy
+  cx=$(tm display -p -t "$SESSION" '#{cursor_x}'); cy=$(tm display -p -t "$SESSION" '#{cursor_y}')
+  screen | sed -n "$((cy + 1))p" | perl -CS -ne 'chomp; my $c = '"$cx"'; my $under = $c < length ? substr($_, $c, 1) : " "; print $c < 4 ? "" : substr($_, $c - 4, 4), "|", ($under eq " " ? "blank" : $under)'
+}
+FIELD_TEXT="C, pas de tag pour l'instant mais les versions vont suivre celle du legacy : les corrections seront v32_33_cg1 pour corrections geonative 1, puis la suite jusqu'au bout"
+for size in 160x50 100x50 160x14; do
+  echo "== a long text typed in the field ($size)"
+  COLS=${size%x*} start "${size#*x}" report 'Questions for you'
+  # In the short window the field is below the pinned key line and the question: the wheel brings it in.
+  for ((i = 0; i < 10; i++)); do pane | grep -q '^Other answer: ' && break; wheel down 1; done
+  click 'Other answer'
+  check "the field takes the keys ($size)" "0" "$(wait_for '⏎ send' 5; echo $?)"
+  tm send-keys -t "$SESSION" -l "$FIELD_TEXT"
+  wait_for "jusqu'au bout" 5
+  sleep 0.5
+  record "a long text typed in the field, $size"
+  # Its head is drawn at most once: scrolled out of the field's four rows where they cannot hold it.
+  check "the text wraps in the field, cut nowhere, drawn once ($size)" "0|1|1|1" "$(pane | grep -c '…')|$(flat | grep -c 'v32_33_cg1 pour corrections geonative 1, puis la suite')|$([ "$(screen | grep -c 'C, pas de tag')" -le 1 ] && echo 1)|$(screen | grep -c 'v32_33_cg1')"
+  check "the caret follows the text's last character ($size)" "bout|blank" "$(caret_cell)"
+  # The window shorter than the tree: no track beside the field, the key line still pinned at its top.
+  [ "$size" = 160x14 ] && check "the key line pinned at the window's top, no track beside the field ($size)" "1|" \
+    "$(pane | head -2 | grep -c 'Enter: choose')|$(thumb)"
+done
 
 echo "== an orchestrator that asks two questions (160x50)"
 start 50 pair
