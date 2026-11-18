@@ -853,6 +853,52 @@ test('a hand-back that reached no one, or came from no reader of the pass, fills
   expect(String(out.result)).toContain('"pending": 1')
 })
 
+test('a hand-back that comes before its launch is registered is kept for it', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await handBack($, 'a1', PASS2_REPORT)
+  await launchReader($, 'a1')
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"exit": "clean"')
+})
+
+test('a pending answer names the readers still awaited', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"code-reviewer"')
+})
+
+test('a late hand-back of an earlier pass fills no place of the next one', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a2')
+  await handBack($, 'a1', PASS2_REPORT)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"pending": 1')
+})
+
+test('a released loop is not held by a reader still awaited', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  on('prompt.submit', (_$, e) => e)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  await $.prompt.submit({ text: 'stop, I need the terminal', wait: false, origin: composer })
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).not.toContain('"pending"')
+})
+
 test('a fix loop\'s background reader hand-back with a clean block ends the loop clean', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
   wireHandback(on, stubs)

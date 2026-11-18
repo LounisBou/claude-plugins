@@ -66,12 +66,14 @@ export type Loop = {
   readers: string[]
   // The background readers of the pass not yet handed back, by agentId, with their place in `reports`.
   awaiting: Map<string, number>
+  // The reports handed back before their launch was registered, by agentId.
+  early: Map<string, Finding[] | null>
 }
 
 // The rounds a review runs at most: core's cap on a check plan's review rounds.
 export const MAX_PASSES: number = REVIEW_ROUNDS.cap
 
-export const loop: Loop = { isActive: false, pass: 0, maxPasses: MAX_PASSES, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isRecordPending: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map() }
+export const loop: Loop = { isActive: false, pass: 0, maxPasses: MAX_PASSES, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isRecordPending: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), early: new Map() }
 
 export function resetLoop(testCommand: string, isReviewOnly = false, dir?: string, dirWhy?: string, maxPasses = MAX_PASSES): void {
   loop.isActive = true
@@ -93,6 +95,7 @@ export function resetLoop(testCommand: string, isReviewOnly = false, dir?: strin
   loop.reports = []
   loop.readers = []
   loop.awaiting = new Map()
+  loop.early = new Map()
 }
 
 // The successful preflight, once per session: a skill started again skips it.

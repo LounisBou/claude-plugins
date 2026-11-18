@@ -72,6 +72,7 @@ export function act(e: Events['tool.call'], dir?: { dir: string } | { why: strin
     loop.reports = []
     loop.readers = []
     loop.awaiting = new Map()
+    loop.early = new Map()
     loop.lastFindings = 0
     loop.lastBlocking = undefined
     return { pass: loop.pass, max_passes: loop.maxPasses, next: 'run the review, each review agent\'s prompt ending with report_request verbatim, then report findings', report_request: REPORT_REQUEST.trim() }
@@ -82,8 +83,9 @@ export function act(e: Events['tool.call'], dir?: { dir: string } | { why: strin
     const keys = strings(e['keys'])
     // The verdict is computed once every reader the host runs in the background has handed back;
     // until then the pass is open, nothing is refused and nothing is counted.
-    if (loop.awaiting.size > 0) {
-      return { pending: loop.awaiting.size, next: 'the review agents run in the background: wait for their hand-back, then call findings again' }
+    if (loop.isActive && loop.awaiting.size > 0) {
+      const names = [...loop.awaiting.values()].map((place) => loop.readers[place] ?? 'review agent')
+      return { pending: loop.awaiting.size, awaited: names, next: 'the review agents run in the background: wait for their hand-back, then call findings again' }
     }
     // A verdict, whether a clean exit, a reviewer's or the fix loop's last pass, is computed from
     // the agents' blocks: none without an agent.
@@ -143,8 +145,13 @@ export function act(e: Events['tool.call'], dir?: { dir: string } | { why: strin
 // A background reader of the pass has handed its report back: its block fills its place, read once.
 // A report with no readable block leaves its place null: the pass is never clean.
 function settle(id: string, report: ReturnType<typeof reportOf>): void {
+  if (!loop.isActive || !loop.isReviewing) return
   const place = loop.awaiting.get(id)
-  if (place === undefined || !loop.isActive || !loop.isReviewing) return
+  // A hand-back that comes before the launch's answer is kept for it.
+  if (place === undefined) {
+    loop.early.set(id, report)
+    return
+  }
   loop.reports[place] = report
   loop.awaiting.delete(id)
 }
@@ -477,7 +484,8 @@ export function register(on: On<LoopHost>): void {
       // Unreadable: no count.
     }
     if (loop.isReviewing) {
-      if (agent !== undefined) loop.awaiting.set(agent, loop.reports.length)
+      if (agent !== undefined && loop.early.has(agent)) report = loop.early.get(agent) ?? null
+      else if (agent !== undefined) loop.awaiting.set(agent, loop.reports.length)
       loop.reports.push(report)
       loop.readers.push(reader)
     }
