@@ -437,7 +437,7 @@ test('a measure of an orchestrator whose coordinator runs elsewhere sends it not
   const fx = fakeDollar({ origin: 'git@github.com:me/belt.git', launchName: 'Orch: belt' })
   fx.files.set(`${HOME}/.claude/claude-orchestrator/store/coordinator-learnt`, JSON.stringify({ name: 'Coord: ops', from: 'bridge:session_01AbCdEf', at: 'T' }) + '\n')
   await drive(chains, 'session.measure', fx.dollar, MEASURED)
-  fx.usage.context.percent = 60
+  fx.usage.context.percent = 45
   await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.sent).toEqual([])
 })
