@@ -21,8 +21,6 @@ export const MODE_DIALOG_CODE = 'orchestrator.mode.dialog'
 export const WAITED_ON_DIALOG_CODE = 'orchestrator.dialog.waited-on'
 export const RENAME_PENDING_CODE = 'orchestrator.naming.rename-pending'
 export const END_TODO_OPEN_CODE = 'orchestrator.coordinator-end.todo-open'
-// The one stop gate check that refuses (the refusal's code, not an escape's).
-export const PROSE_CHOICE_CODE = 'orchestrator.stop-gate.prose-choice'
 
 export type Held = Host<'plugin' | 'env' | 'process' | 'fs' | 'session' | 'clock'>
 

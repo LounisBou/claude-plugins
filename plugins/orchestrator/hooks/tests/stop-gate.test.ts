@@ -12,11 +12,11 @@ import {
   deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake as gateWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
-  noticeFrom, awaitingAny, NOTICE_TTL_MS, busyWake, parseGoalsCheck, goalsPaths, restatedQuestions, putsChoiceToOperator, PROSE_CHOICE_REASON,
+  noticeFrom, awaitingAny, NOTICE_TTL_MS, busyWake, parseGoalsCheck, goalsPaths,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE, type DeclaredWait, type Heads,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
-import { askTurnStarted, askedInTurn, parseAsked, questionBlock } from '../question.ts'
+import { askTurnStarted, parseAsked, questionBlock } from '../question.ts'
 import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf, prQueryRun } from './fakes.ts'
@@ -89,189 +89,27 @@ test('a question the operator answered from the pane, or a coordinator\'s turn, 
   expect(coordinator.observed).toBeUndefined()
 })
 
-// --- a turn's end never restates an open question ------------------------------------------------
+// --- the gate reads no prose ---------------------------------------------------------------------
 
-// The block `ask` handed its asker, as the model would copy it into a later turn's message.
-const ASKED_BLOCK = questionBlock(parseAsked(ASKED_HERE)!, { i: 1, n: 1 })
-const RESTATED_REASON = 'Already in the round (q-a1b2c3-1): name it by its subject, do not copy it.'
-
-test('a block copied at a later turn, by its id line or by its question line, is told once', () => {
-  const entry = { id: 'q-a1b2c3-1', ask: 'Which one?' }
-  expect(restatedQuestions(`Still waiting.\n\n${ASKED_BLOCK}`, [entry])).toEqual(['q-a1b2c3-1'])
-  expect(restatedQuestions('**Question 1 of 1** (q-a1b2c3-1)\nsomething else', [entry])).toEqual(['q-a1b2c3-1'])
-  expect(restatedQuestions('_Question_ : Which one?', [entry])).toEqual(['q-a1b2c3-1'])
-  // A longer question that starts like this one's, or a quote of the block, is judged by whole lines.
-  expect(restatedQuestions('_Question_ : Which one? And why?', [entry])).toEqual([])
-  expect(restatedQuestions('> **Question 1 of 1** (q-a1b2c3-1)', [entry])).toEqual(['q-a1b2c3-1'])
-  expect(restatedQuestions('**Question 1 of 1** (q-a1b2c3-1) is the one I meant', [entry])).toEqual([])
-  expect(restatedQuestions(ASKED_BLOCK, [entry, { id: 'q-other-1', ask: 'Another?' }])).toEqual(['q-a1b2c3-1'])
-  // Another question's id is no copy of this one: the id is matched whole, in its parentheses.
-  expect(restatedQuestions('**Question 1 of 1** (q-a1b2c3-12)', [entry])).toEqual([])
-})
-
-test('a mention of an open question by its subject, or by its id inside a sentence, is no copy', () => {
-  const entry = { id: 'q-a1b2c3-1', ask: 'Which one?' }
-  expect(restatedQuestions('The question on the report is still open.', [entry])).toEqual([])
-  expect(restatedQuestions('q-a1b2c3-1 is still open, nothing to add.', [entry])).toEqual([])
-  expect(restatedQuestions(ASKED_BLOCK, [])).toEqual([])
-})
-
-test('a stop whose message copies the block of a question asked in an earlier turn is told, and passes', async () => {
-  const { handlers } = mounted()
-  askTurnStarted()
-  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
-  const told = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `Still waiting.\n\n${ASKED_BLOCK}` }))
-  expect(told.observed).toBe(RESTATED_REASON)
-})
-
-test('the turn that asked the question may write its block once', async () => {
-  const { handlers } = mounted()
-  askTurnStarted()
-  askedInTurn('q-a1b2c3-1')
-  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
-  const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `Asking.\n\n${ASKED_BLOCK}` }))
-  expect(passed.answer).toBe(passed.passed)
-  expect(passed.observed).toBeUndefined()
-  // The next turn's start empties the turn's questions: the same block is then a restatement.
-  askTurnStarted()
-  const later = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))
-  expect(later.observed).toBe(RESTATED_REASON)
-})
-
-test('a question answered or withdrawn may be written again, as one by its subject only', async () => {
-  const { handlers } = mounted()
-  askTurnStarted()
-  const closed = [
-    askedHere({ status: 'answered', answer: { text: 'A', by: 'pane', at: '2026-11-14T10:05:00Z' } }),
-    askedHere({ status: 'withdrawn' }),
-  ]
-  for (const text of closed) {
-    const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': text } })
-    const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))
-    expect(passed.observed).toBeUndefined()
-  }
-  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
-  const bySubject = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'The question on the report is still open.' }))
-  expect(bySubject.observed).toBeUndefined()
-  // The same copy, the question being open, is told: the passes above are the question's state, not the text.
-  const open = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))
-  expect(open.observed).toBe(RESTATED_REASON)
-  // A question another session asked is not this session's to be told of.
-  const other = fakeDollar({ round: { 'q-ffffff-1.json': askedHere({ id: 'q-ffffff-1', sender: { session: 'ffffff', name: 'Orch: other', role: 'orchestrator', machine: 'box-1' } }) } })
-  const elsewhere = await stop(handlers['classic.Stop'], other.dollar, stopEvent({ last_assistant_message: ASKED_BLOCK }))
-  expect(elsewhere.observed).toBeUndefined()
-})
-
-// 2026-11-17, Orch: Blitz: its question settled as answered with his question back, the turn then ended on
-// this message: the choice restated in prose, with no entry open in the round, so no ✋ and no counter.
+// 2026-11-17, Orch: Blitz: a choice put to the operator in prose. A question is asked by `ask` alone, and
+// the gate decides on facts: the turn's words are neither refused nor told, whatever they say.
 const BLITZ = 'Le point 2 est corrigé. S1 sera déclarée prête dès que vous aurez tranché la question : '
   + 'corriger les points 3 et 4 (A, que je recommande), ou la laisser telle quelle (C).'
 
-test('a final message that puts a choice or a decision to the operator in prose is told apart from a report', () => {
-  expect(putsChoiceToOperator(BLITZ)).toBe(true)
-  expect(putsChoiceToOperator('Two ways to go: A) cut the scope, B) move the date. I recommend A. Which one do you want?')).toBe(true)
-  expect(putsChoiceToOperator('The tests pass.\n\nShould I merge it now?')).toBe(true)
-  expect(putsChoiceToOperator('The tests pass.\n\nVoulez-vous que je fusionne maintenant ?')).toBe(true)
-  // A report that names choices already made, or lists lettered parts, asks him nothing.
-  expect(putsChoiceToOperator('He chose option A over B, so the scope was cut. The phase is done and merged.')).toBe(false)
-  expect(putsChoiceToOperator('Le choix (A) a été appliqué, (B) écarté, et (C) reste ouvert côté code. Tout est mergé.')).toBe(false)
-  expect(putsChoiceToOperator('Plan:\nA. the parser\nB. the gate\nC. the tests\n\nAll three are merged.')).toBe(false)
-  expect(putsChoiceToOperator('Did the build pass? Yes, all of it.')).toBe(false)
-  // The words of a request, used for something else or in the past, with lettered parts or none.
-  for (const report of [
-    'Étapes A) et B) terminées. Je recommande de passer à la phase suivante.',
-    'Lots livrés: A) parser B) gate.\n\nLet me know when you want the next phase.',
-    'Option A livrée; option B écartée. Je recommande de vérifier les logs.',
-    'Vous avez tranché la question : (A) appliqué, (B) écarté. Tout est mergé.',
-    'Ma recommandation (A) a été suivie, (B) écarté. Phase livrée.',
-    "Le choix d'architecture est fait (A, que je recommandais) ; (A cause du timeout) reste le lot.",
-    'Done: (A) parser, (B) gate merged. Anything else?',
-    'Merged. The agent asked: should I rebase?',
-    'The CI shows which job failed?',
-  ]) expect(putsChoiceToOperator(report)).toBe(false)
-  // The wait line the refusal itself teaches does not hide the question above it; options split by paragraphs are read.
-  expect(putsChoiceToOperator(`${BLITZ}\n\nwaiting: operator — blocks: S1`)).toBe(true)
-  expect(putsChoiceToOperator('Dès que vous aurez tranché :\n\nA. corriger\n\nB. laisser')).toBe(true)
-  expect(putsChoiceToOperator('The report says nothing on which tests failed?')).toBe(false)
-  expect(putsChoiceToOperator('')).toBe(false)
-  // A question block copied inside a fence or a quote is a quotation, not the turn's own question.
-  expect(putsChoiceToOperator(`Done.\n\n\`\`\`\n${BLITZ}\n\`\`\``)).toBe(false)
-  expect(putsChoiceToOperator(`Done.\n\n> ${BLITZ}`)).toBe(false)
-})
-
-// The one check of the gate that refuses; the others observe.
-async function refusedStop(handler: Guards['classic.Stop'], dollar: World, e: StopEvent) {
-  const fx = journalled(dollar)
-  let passed: unknown = null
-  const answer = await handler(fx.dollar, e, async (x: unknown) => { passed = x; return x })
-  return { answer: fieldsIn(answer), passed, journal: fx.journal() }
-}
-
-test('a turn that ends on a choice put to the operator in prose, with no question open in the round, is refused', async () => {
-  const { handlers } = mounted()
-  const { dollar } = fakeDollar({})
-  const refused = await refusedStop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: BLITZ }))
-  expect(refused.answer.block).toBe(PROSE_CHOICE_REASON)
-  expect(refused.passed).toBeNull()
-  expect(refused.journal).toEqual(['refusal orchestrator.stop-gate.prose-choice'])
-  // The reason names the tool that asks, and the wait that follows.
-  expect(PROSE_CHOICE_REASON).toContain('mcp__orchestrator__ask')
-  expect(PROSE_CHOICE_REASON).toContain('operator wait')
-})
-
-test('the same message passes when a question of the session is open, when the stop is a re-fire, or when it is a report', async () => {
-  const { handlers } = mounted()
-  const e = stopEvent({ last_assistant_message: BLITZ })
-  const open = await stop(handlers['classic.Stop'], fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } }).dollar, e)
-  expect(fieldsIn(open.answer).block).toBeUndefined()
-  expect(open.answer).toBe(open.passed)
-  // A question settled or another session's leaves none open: refused.
-  const settled = askedHere({ status: 'answered', answer: { text: 'A', by: 'pane', at: '2026-11-14T10:05:00Z' } })
-  expect((await refusedStop(handlers['classic.Stop'], fakeDollar({ round: { 'q-a1b2c3-1.json': settled } }).dollar, e)).answer.block).toBe(PROSE_CHOICE_REASON)
-  // The host re-fires a refused stop with `stop_hook_active`: it passes, so a turn is refused once.
-  const again = await refusedStop(handlers['classic.Stop'], fakeDollar({}).dollar, stopEvent({ last_assistant_message: BLITZ, stop_hook_active: true }))
-  expect(again.answer.block).toBeUndefined()
-  expect(again.passed).not.toBeNull()
-  const report = await refusedStop(handlers['classic.Stop'], fakeDollar({}).dollar, stopEvent({ last_assistant_message: 'He chose option A over B. The phase is merged.' }))
-  expect(report.answer.block).toBeUndefined()
-  expect(report.journal).not.toContain('refusal orchestrator.stop-gate.prose-choice')
-})
-
-test('a round that cannot be read refuses nothing, and neither does a session that handed over', async () => {
-  const { handlers } = mounted()
-  const e = stopEvent({ last_assistant_message: BLITZ })
-  for (const hang of ['list', 'read'] as const) {
-    const fx = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE }, roundHang: hang, env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.2' } })
-    const unread = await refusedStop(handlers['classic.Stop'], fx.dollar, e)
-    expect(unread.answer.block).toBeUndefined()
-    expect(unread.passed).not.toBeNull()
-    expect(unread.journal).toEqual([])
-  }
-  // The successor's spawn, run through Bash without error, is the hand-over: its successor holds the questions.
-  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
-  await handlers['tool.call'](fakeDollar({}).dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
-  const handed = await refusedStop(handlers['classic.Stop'], fakeDollar({}).dollar, e)
-  expect(handed.answer.block).toBeUndefined()
-  expect(handed.passed).not.toBeNull()
-})
-
-test('an auditor is refused the same way; the coordinator, whose decision round presents questions in prose, is not', async () => {
-  const { handlers } = mounted()
-  const e = stopEvent({ last_assistant_message: BLITZ })
-  const auditor = await refusedStop(handlers['classic.Stop'], fakeDollar({ launchName: 'Audit: belt' }).dollar, e)
-  expect(auditor.answer.block).toBe(PROSE_CHOICE_REASON)
-  const coordinator = await refusedStop(handlers['classic.Stop'], fakeDollar({ launchName: 'Coord: machine' }).dollar, e)
-  expect(coordinator.answer.block).toBeUndefined()
-  const agent = await refusedStop(handlers['classic.Stop'], fakeDollar({ launchName: 'Agent: belt' }).dollar, e)
-  expect(agent.answer.block).toBeUndefined()
-})
-
-test('a message copying an open question and asking one more is told as a restatement first', async () => {
+test('a turn that ends on a choice in prose, or on the block of a question still open, is neither refused nor told', async () => {
   const { handlers } = mounted()
   askTurnStarted()
-  const { dollar } = fakeDollar({ round: { 'q-a1b2c3-1.json': ASKED_HERE } })
-  const told = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `${ASKED_BLOCK}\n\n**Question 1 of 1** (q-new-1)` }))
-  expect(told.observed).toBe(RESTATED_REASON)
+  const ASKED_BLOCK = questionBlock(parseAsked(ASKED_HERE)!, { i: 1, n: 1 })
+  for (const [launchName, round] of [['Orch: belt', {}], ['Audit: belt', {}], ['Orch: belt', { 'q-a1b2c3-1.json': ASKED_HERE }]] as const) {
+    for (const message of [BLITZ, `Still waiting.\n\n${ASKED_BLOCK}`]) {
+      const fx = journalled(fakeDollar({ launchName, round }).dollar)
+      let passed: unknown = null
+      const answer = await handlers['classic.Stop'](fx.dollar, stopEvent({ last_assistant_message: message }), async (x: unknown) => { passed = x; return x })
+      expect(fieldsIn(answer).block).toBeUndefined()
+      expect(passed).not.toBeNull()
+      expect(fx.journal().filter(line => line.startsWith('refusal'))).toEqual([])
+    }
+  }
 })
 
 test('an orchestrator ending on an operator wait that blocks nothing gets the blocks-nothing refusal, not the no-question one', async () => {

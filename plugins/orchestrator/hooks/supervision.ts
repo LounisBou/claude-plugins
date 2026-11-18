@@ -26,7 +26,7 @@ import {
 } from './session-name.ts'
 import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, hostTasks } from './stop-gate.ts'
 import { moduleDirOf } from './module-log.ts'
-import { answersChoice, namesOtherSubject, opensChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
+import { answersChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
@@ -2613,11 +2613,7 @@ export async function writeConsent($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   if (!entry.consent) return null
   const record = consentRecordOf({ subject: entry.consent, entry: entry.id, question: entry.question, answer: text, choices: entry.choices, by, at })
   if (!record) {
-    const why = opensChoice(text, entry.choices)
-      ? namesOtherSubject(text, entry.consent)
-        ? `« ${text.trim()} » names a pull request or repository other than the question's own (${subjectLabel(entry.consent)}): ask again, with it in the question`
-        : `« ${text.trim()} » adds words after its choice (a limit, a condition or a question): only a plain confirmation records, so ask again with the limit in the question`
-      : `« ${text.trim()} » names none of its choices`
+    const why = `« ${text.trim()} » names none of its choices: a consent is answered by its letter`
     await logLine($, 'supervision', `round: the consent of ${entry.id} (${subjectLabel(entry.consent)}) was not recorded: ${why}`)
     return why
   }
@@ -3781,8 +3777,7 @@ async function showGate($: Host<'env' | 'fs' | 'plugin' | 'process'>, reading: {
 // per-file convention: the engine fences $ to the file that received it, so
 // guards.ts's identical reader cannot be imported, and each domain spells its
 // own over its own $. A caller in another file hands its $ in as an argument,
-// as it does to every other function of this file it calls (question.ts's
-// settleWords reads the transcript so).
+// as it does to every other function of this file it calls.
 export async function readBlock($: Host<'process'>, path: string, index: number, timeoutMs: number): Promise<Uint8Array> {
   const { exitCode, stdout } = await $.process.run(blockArgv(path, index), { timeoutMs })
   if (exitCode !== 0) throw new Error(`dd exited ${exitCode} on ${path}`)
