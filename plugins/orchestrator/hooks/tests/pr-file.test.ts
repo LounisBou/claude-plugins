@@ -103,8 +103,9 @@ const pr = (n: number, state: FilePr['state'], more: Partial<FilePr> = {}): File
   ({ repo: 'acme/app', pr: n, state, draft: false, head: `b${n}`, sha: 's', author: 'me', createdAt: null, labels: [], mergeable: null, fork: null, ...more })
 
 test('the change log says each state change once, one line each, nothing on the first file and no CI', () => {
-  const before: PrFile = { v: 1, at: 'x', tried: 'x', viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(7, 'OPEN', { draft: true }), pr(8, 'OPEN'), pr(9, 'OPEN'), pr(10, 'CLOSED')] }
-  const after = [pr(7, 'OPEN'), pr(8, 'MERGED'), pr(10, 'OPEN'), pr(11, 'OPEN')]
+  const before: PrFile = { v: 1, at: 'x', tried: 'x', viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(7, 'OPEN', { draft: true, ci: 'pending' } as Partial<FilePr>), pr(8, 'OPEN'), pr(9, 'OPEN'), pr(10, 'CLOSED')] }
+  // A CI word an older file or answer still carries makes no line: CI is the gate's.
+  const after = [pr(7, 'OPEN', { ci: 'success' } as Partial<FilePr>), pr(8, 'MERGED'), pr(10, 'OPEN'), pr(11, 'OPEN')]
   expect(changeLines(before, after, ['acme/app'], 'T')).toEqual([
     'T acme/app#7 ready for review', 'T acme/app#8 merged', 'T acme/app#10 reopened', 'T acme/app#11 opened', 'T acme/app#9 no longer open',
   ])

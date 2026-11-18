@@ -25,7 +25,7 @@ below, and the `args` object holds the subcommand's arguments.
 |---|---|---|
 | `pr-get` | `[--branch B \| --pr N]` | The PR of a branch (default: the current one) or number `N`, as a list of one (`pr-lines`; `--json`: the list). An unknown number exits 4 |
 | `pr-list` | | Open PRs, a line each (`pr-lines`); `--json`: the full list |
-| `pr-panel` | | The open PRs, newest first (at most 100), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` (`SUCCESS`, `FAILURE`, `PENDING`) from the head's status check rollup, not the gate's reading |
+| `pr-panel` | | The open PRs, newest first (at most 100), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` (`SUCCESS`, `FAILURE`, `PENDING`, `?`) from the head's status check rollup, not the gate's reading |
 | `pr-status` | `<pr>` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
 | `pr-checks` | `<pr>` | Verdict, counts, failed and skipped names (`checks-summary`); `--json`: commit status and check runs |
 | `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read |
@@ -40,7 +40,7 @@ below, and the `args` object holds the subcommand's arguments.
 `pr-gate` is the one reading of CI, the ready guard's and the orchestrator's: it reads the PR, then at
 its head the statuses, check runs and Actions runs, and the base's required checks. `state` is `open`,
 `closed` or `merged`, `head` the full sha. `ci.result`: `FAILURE` (`ci.failed`), `PENDING` (nothing reported
-yet, `ci.running`, or `ci.skipped`: a check that proved nothing), `SUCCESS`, or `NONE` when the repository has no CI. Which
+yet, `ci.running`, or `ci.skipped`: a check that proved nothing, or `ci.unverified`: the required checks unread), `SUCCESS`, or `NONE` when the repository has no CI. Which
 run counts is the gate's code (`ghlib/fmt.py` `gate_ci`) and its tests. `gh run rerun` of a
 draft-time run skips its jobs again: push a new commit.
 

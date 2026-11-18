@@ -3,7 +3,7 @@
 // the machine name (their ledger lines), every open one of their repositories and of those the
 // workspace checkouts are clones of (`prs.wanted`, the sweep's), and those seen merged or closed within ENDED_KEPT_MS, with its state,
 // draft, head, base and their commits, labels, mergeable and fork, beside `<state>/prs.log`, one line per change.
-// It reads no CI: CI is the github gate's alone (`pr-gate`, read by `relay.ts` and ci-watch). No daemon refreshes it: a reader that finds it older than PR_FILE_INTERVAL_MS refreshes
+// It reads no CI: the module's CI is the github gate's (`pr-gate`, read by `relay.ts`). No daemon refreshes it: a reader that finds it older than PR_FILE_INTERVAL_MS refreshes
 // it, under the file's lock, in one forge call for every repository (one GraphQL query), so the
 // machine pays one call per interval whatever the number of orchestrators or pull requests. A call
 // that fails keeps the pull requests read before and says so on the log; the next try waits a whole
