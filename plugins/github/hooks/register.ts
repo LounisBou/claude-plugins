@@ -832,8 +832,9 @@ async function refuse($: Mod, code: string, text: string): Promise<{ deny: strin
 
 /*
  * The light CI's project file, ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/light-ci/<owner>-<name>.json, which the
- * gate reads for one key: `off`, the operator's refusal of light CI for the repository. The date of that refusal
- * when a stacked pull request's repository has one, or undefined: a file that cannot be read refuses nothing.
+ * gate reads for one key: `off`, the operator's refusal of light CI for the repository. A stacked pull request's
+ * repository with no file, or with that refusal, has no light CI: the words the Ready line names it by. Undefined
+ * when the file holds a command, or cannot be read, which refuses nothing.
  */
 export const LIGHT_CI_TOOL = SCRIPTED.tool
 // The host runs a process for 10 minutes at most: the script stops the run within its budget, a little less.
@@ -846,11 +847,13 @@ async function lightCiOffOf($: Mod, gate: Gate): Promise<string | undefined> {
     const dir = await configDir($)
     const [owner, name] = gate.repo.toLowerCase().split('/')
     const path = dir ? dir + '/light-ci/' + owner + '-' + name + '.json' : undefined
-    if (!path || !(await $.fs.exists(path))) return undefined
+    if (!path) return undefined
+    if (!(await $.fs.exists(path))) return 'no light CI configured for this repository'
     const file: unknown = JSON.parse(String(await $.fs.read(path)))
     const { off, at } = isRecord(file) ? file : {}
     if (typeof off !== 'string' || off.trim() === '') return undefined
-    return typeof at === 'string' && /^\d{4}-\d{2}-\d{2}/.test(at) ? at.slice(0, 10) : 'undated'
+    return 'the operator\'s refusal of light CI for this repository ('
+      + (typeof at === 'string' && /^\d{4}-\d{2}-\d{2}/.test(at) ? at.slice(0, 10) : 'undated') + ')'
   } catch {
     return undefined
   }
@@ -2422,7 +2425,7 @@ export function register(on: On<Mod>): void {
         description:
           'Light CI of a stacked pull request (its base another open pull request\'s head): "run" {pr}, from a clean checkout '
           + 'of its head, runs the repository\'s command and records its tests at the head for the Ready gate; "status" '
-          + 'says the repository\'s light CI file and whether to propose one. See ' + root + '/engine/REFERENCE.md « Light CI ».',
+          + 'says what the repository\'s light CI file holds. See ' + root + '/engine/REFERENCE.md « Light CI ».',
         inputSchema: {
           type: 'object',
           properties: {

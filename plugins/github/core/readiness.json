@@ -16,7 +16,7 @@
     },
     "tests": {
       "holder": "gate",
-      "means": "a stacked pull request only (its base the head branch of another open pull request): the light CI's tests record passed at its head, or its checks green there; none where the operator turned light CI off for the repository; a failed run at the head blocks anyway"
+      "means": "a stacked pull request only (its base the head branch of another open pull request): the light CI's tests record passed at its head, or its checks green there, which stand over a failed run; none where the repository has no light CI configured or the operator turned it off"
     },
     "ci": {
       "holder": "github",
