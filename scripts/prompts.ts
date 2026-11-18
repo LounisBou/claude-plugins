@@ -7,6 +7,7 @@
 //   npm run prompts -- --balance also print the prompt tokens gained or lost since the last release
 //   npm run prompts -- --lower   rewrite ci/prompts.json down to what is measured (the release runs it)
 //   npm run prompts -- --base <ref>   also refuse a ceiling lowered since <ref>, unless a commit since is the release
+//   npm run prompts -- --growth <ref> refuse a plugin whose prompt tokens rose since the merge base with <ref> (what CI runs on a pull request)
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -105,6 +106,14 @@ export function loweredOutsideRelease(ceilings: Ceilings, base: Ceilings, releas
   return faults
 }
 
+/** One line per plugin whose tokens rose against its base; a plugin absent from the base is new, and has none to rise from. */
+export function grown(now: Readonly<Record<string, number>>, base: Readonly<Record<string, number>>): string[] {
+  return Object.entries(now).flatMap(([plugin, tokens]) => {
+    const before = base[plugin]
+    return before !== undefined && tokens > before ? [`${plugin}: prompt tokens rose from ${before} to ${tokens} against the base, and a pull request raises none`] : []
+  })
+}
+
 /** A release commit's subject: `chore(release): …`, or `chore: release <n>` as releases 2 to 3.1 read. */
 const RELEASE_GREP = '^chore(\\(release\\):|: release )'
 export const isReleaseSubject = (subject: string): boolean => new RegExp(RELEASE_GREP).test(subject)
@@ -193,7 +202,21 @@ function promptFiles(root: string): PromptFile[] {
   return files
 }
 
+/** The prompt tokens of each plugin at the merge base of `ref` and HEAD. */
+function tokensAtMergeBase(root: string, ref: string): Record<string, number> {
+  const mergeBase = execFileSync('git', ['merge-base', ref, 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+  return { ...measure(promptFilesAt(root, mergeBase)).tokens }
+}
+
 export function run(root: string, args: readonly string[], io: Io): number {
+  const growth = args.indexOf('--growth')
+  if (growth >= 0) {
+    const ref = args[growth + 1]
+    if (ref === undefined) throw new Error('--growth needs a git ref')
+    const faults = grown(measure(promptFiles(root)).tokens, tokensAtMergeBase(root, ref))
+    for (const fault of faults) io.err(fault)
+    return faults.length > 0 ? 1 : 0
+  }
   const lower = args.includes('--lower')
   const measured = measure(promptFiles(root))
   const { ceilings, authored } = parseCeilings(JSON.parse(readFileSync(join(root, CEILINGS_PATH), 'utf8')))

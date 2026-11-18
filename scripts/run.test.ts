@@ -225,6 +225,20 @@ describe('release run', () => {
     assert.equal(prompts(root, ['--base', 'HEAD~2'], recorder()), 0)
   })
 
+  it('refuses a rise of prompt tokens against the merge base, and passes a fall, whatever the budgets say', () => {
+    const root = released()
+    git(root, 'checkout', '-q', '-b', 'topic')
+    writeFileSync(join(root, 'plugins', 'beta', 'skill.md'), 'A short prompt, and a longer one.\n')
+    git(root, 'commit', '-q', '-am', 'grow beta')
+    const io = recorder()
+    assert.equal(prompts(root, ['--growth', 'main'], io), 1)
+    assert.match(io.lines.err.join('\n'), /^beta: prompt tokens rose from 4 to 9 against the base/)
+    writeFileSync(join(root, 'plugins', 'beta', 'skill.md'), 'Short.\n')
+    git(root, 'commit', '-q', '-am', 'shrink beta')
+    assert.equal(prompts(root, ['--growth', 'main'], recorder()), 0)
+    assert.throws(() => prompts(root, ['--growth'], recorder()), /--growth needs a git ref/)
+  })
+
   it('writes no budget on a dry run', () => {
     const root = released()
     assert.equal(release(root, ['--dry-run'], recorder()), 0)
