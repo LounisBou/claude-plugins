@@ -39,7 +39,7 @@ directory — number, title, where it comes from, status — so the round surviv
 compaction, in asking order: the urgent first (a production fault, a detected
 regression, a decision under a real deadline), then the oldest first. An item found settled is written there as « already done: <evidence> »,
 dropped from the count, and not asked. Announce it in one line, the goals line from the same `goals status`:
-« N questions, back to back. Goals: m/n met, open: G3, G4. » A question that arises mid-round is appended as N + 1, announced in one line, and
+« N questions, back to back. Goals: m/n met, open: <each goal in a few words> (G3), … » A question that arises mid-round is appended as N + 1, announced in one line, and
 taken in order; the count in the header moves with it.
 
 ## 2. Present ONE question

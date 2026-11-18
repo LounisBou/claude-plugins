@@ -28,6 +28,7 @@ import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { moduleDirOf } from './module-log.ts'
 import { recordsRegistryPath } from '../core/orchestration.ts'
+import { subjectOf } from '../core/pr-ledger.ts'
 import { commandForms, commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import { messageOf, type CatchHook, type Events, type Host, type On } from './host.ts'
 import { configDir, logLine, stateDir } from './module-io.ts'
@@ -211,9 +212,10 @@ export function parseDispatchRow(line: string): DispatchRow | null {
 
 // What /orchestrator:progress says, one record file per group: the rows still
 // open first — in flight, decisions pending; a successor reads them as work, never as
-// history — and a row the operator deferred as `deferred=<id> … ruling=<his words>`, as
-// `dispatch-record.sh summary --open` prints it, never as work to dispatch — then the tally the record's own summary shapes
-// (dispatches, closed, rounds to the one decimal). An empty label keeps its
+// history — and a row the operator deferred as `deferred: <subject> (row <id>) — ruling: <his words>`,
+// never as work to dispatch — then the tally the record's own summary shapes
+// (dispatches, closed, rounds to the one decimal). The operator reads it: each row leads with its
+// subject, its label in plain words, the id after it. An empty label keeps its
 // row and is named for what it is; no group at all is said as that.
 //
 // The goals lines lead: one `goals met=m/n … open=…` per record that has a goals.md, the
@@ -224,8 +226,8 @@ export function progressLines(groups: readonly DispatchRow[][], goals: readonly 
   const lines = [...goals, ...rows
     .filter(row => row.state === 'open')
     .map(row => {
-      const label = row.label === '' ? 'no label' : row.label
-      return row.deferred ? `deferred=${row.id} label=${label} ruling=${row.deferred}` : `open=${row.id} label=${label}`
+      const subject = subjectOf(row.label) || row.label.trim() || 'no label'
+      return row.deferred ? `deferred: ${subject} (row ${row.id}) — ruling: ${row.deferred}` : `open: ${subject} (row ${row.id})`
     })]
   const closed = rows.filter(row => row.state === 'closed').length
   const avg = Math.round((rows.reduce((sum, row) => sum + row.rounds, 0) / rows.length) * 10) / 10

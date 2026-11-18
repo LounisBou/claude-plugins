@@ -263,12 +263,12 @@ test('an open row with blocker none, no live agent and no open pull request is r
   const { dollar, files } = world()
   files.set(RECORD, readyRecord(READY_ROWS))
   const reading = await readUnattended(dollar, 's-orch', NOW)
-  expect(reading?.ready).toEqual([{ id: 21, keyword: 'IDLEWORK' }, { id: 22, keyword: 'FIVEWORK' }])
-  expect(reading?.readyLine).toBe('Lignes prêtes sans agent : 21 IDLEWORK, 22 FIVEWORK')
+  expect(reading?.ready).toEqual([{ id: 21, keyword: 'IDLEWORK', subject: 'nobody on it' }, { id: 22, keyword: 'FIVEWORK', subject: 'its agent runs' }])
+  expect(reading?.readyLine).toBe('Sujets prêts sans agent : nobody on it (ligne 21) ; its agent runs (ligne 22)')
   // The agent of the second row is running: the launcher's listing says it so.
   const { dollar: running, files: again } = world({ launcher: 'w1/t1 | /dev/ttys001 | ✳ Agent: fivework | Agent: fivework' })
   again.set(RECORD, readyRecord(READY_ROWS))
-  expect((await readUnattended(running, 's-orch', NOW))?.readyLine).toBe('Lignes prêtes sans agent : 21 IDLEWORK')
+  expect((await readUnattended(running, 's-orch', NOW))?.readyLine).toBe('Sujets prêts sans agent : nobody on it (ligne 21)')
 })
 
 test('a row whose until time has passed is ready, one before it is not; a measure is never ready', async () => {
@@ -278,8 +278,8 @@ test('a row whose until time has passed is ready, one before it is not; a measur
     ROW(32, 'LATEWAKE: at noon', { blocker: 'until 2026-11-14T12:00:00Z' }),
     ROW(33, 'SPEED: p95', { blocker: 'measure p95 under 300 ms' }),
   ]))
-  expect((await readUnattended(dollar, 's-orch', NOW))?.ready).toEqual([{ id: 31, keyword: 'WAKEUP' }])
-  expect((await readUnattended(dollar, 's-orch', Date.parse('2026-11-14T12:00:00Z')))?.ready).toEqual([{ id: 31, keyword: 'WAKEUP' }, { id: 32, keyword: 'LATEWAKE' }])
+  expect((await readUnattended(dollar, 's-orch', NOW))?.ready).toEqual([{ id: 31, keyword: 'WAKEUP', subject: 'at ten' }])
+  expect((await readUnattended(dollar, 's-orch', Date.parse('2026-11-14T12:00:00Z')))?.ready).toEqual([{ id: 31, keyword: 'WAKEUP', subject: 'at ten' }, { id: 32, keyword: 'LATEWAKE', subject: 'at noon' }])
 })
 
 test('an open pull request in the ledger holds its row, with no agent running; the launcher is asked once, and only when a row may be ready', async () => {
@@ -315,7 +315,7 @@ test('the turn end leaves the ready rows beside the unattended pull requests for
   const first = await handlers['prompt.submit'](dollar, { text: 'go', context: ['before'] })
   expect(first.context?.[0]).toBe('before')
   expect(first.context?.[1]).toContain('En anomalie : acme/app#8')
-  expect(first.context?.slice(2)).toEqual(['Lignes prêtes sans agent : 21 IDLEWORK'])
+  expect(first.context?.slice(2)).toEqual(['Sujets prêts sans agent : nobody on it (ligne 21)'])
   expect((await handlers['prompt.submit'](dollar, { text: 'go' })).context).toBe(undefined)
   // Nothing ready, nothing unattended: no line at all.
   const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
@@ -410,7 +410,7 @@ test('a changed line is said without the lines that did not change: the ready ro
   }
   expect((await turn())?.length).toBe(1)
   files.set(RECORD, `${files.get(RECORD)}${JSON.stringify(READY_ROWS[0])}\n`)
-  expect(await turn()).toEqual(['Lignes prêtes sans agent : 21 IDLEWORK'])
+  expect(await turn()).toEqual(['Sujets prêts sans agent : nobody on it (ligne 21)'])
 })
 
 test('a line no prompt has said yet is kept across turn ends, while it still holds, beside what changed since', async () => {
@@ -423,7 +423,7 @@ test('a line no prompt has said yet is kept across turn ends, while it still hol
   const said = (await handlers['prompt.submit'](dollar, { text: 'go' })).context
   expect(said?.length).toBe(2)
   expect(said?.[0]).toContain('En anomalie : acme/app#8')
-  expect(said?.[1]).toBe('Lignes prêtes sans agent : 21 IDLEWORK')
+  expect(said?.[1]).toBe('Sujets prêts sans agent : nobody on it (ligne 21)')
   // A line that stopped holding before its prompt is not said.
   const { dollar: quiet } = world({ forge: { 'acme/app': JSON.stringify([{ number: 7 }, { number: 6 }]) } })
   await handlers['turn.complete'](dollar, { reason: 'answer' })
