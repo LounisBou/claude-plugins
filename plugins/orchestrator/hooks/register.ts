@@ -2,7 +2,7 @@
 // Entry point of the hooks module: mounts the domains. Each domain lands in
 // its own task; the gauge arrived first, the guards second, the store third,
 // the commands fourth, the naming fifth, the short commands' sync sixth, the declared wait seventh, the to-do tool, then the ask and settle tools;
-// the round's wake and the pane's tool ride with the supervision.
+// the round's wake, the pane's tool and the window's state at the start ride with the supervision.
 // The gauge stays before the supervision: a chain answers in registration order, and the store's row
 // reads the figure through the gauge's own module memory — mounted after it,
 // the row would carry one measure behind.
@@ -14,7 +14,7 @@ import { register as registerWait } from './wait.ts'
 import { register as registerUnattended } from './unattended.ts'
 import { register as registerLedger } from './ledger.ts'
 import { register as registerGateRecheck } from './gate-recheck.ts'
-import { register as registerSupervision, registerWake, registerPaneTool } from './supervision.ts'
+import { register as registerSupervision, registerWake, registerPaneTool, registerStartState } from './supervision.ts'
 import { register as registerTodo } from './todo.ts'
 import { register as registerQuestion, registerSettle } from './question.ts'
 import { register as registerReview } from './review.ts'
@@ -47,6 +47,7 @@ export function register(on: On<Mod>): void {
   registerSupervision(on)
   registerWake(on)
   registerPaneTool(on)
+  registerStartState(on)
   registerTodo(on)
   registerQuestion(on)
   registerSettle(on)

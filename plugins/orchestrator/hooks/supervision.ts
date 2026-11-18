@@ -1601,6 +1601,26 @@ export function registerPaneTool(on: On<Held>): void {
   })
 }
 
+// The window's state written at the session's start, fresh or resumed, as a turn's end would write
+// it: a session that takes no turn (a `--resume` that is only re-homed) shows its state all the
+// same, never an empty tab. Mounted beside the supervision like the wake and the pane's tool, whose
+// register holds no start handler. Bounded, as the first start is awaited; outside a home session
+// nothing is written, and a failure is logged and never fails the start.
+export function registerStartState(on: On<Held>): void {
+  on('session.start', {}, async ($, e, next) => {
+    try {
+      const shown = await withDeadline(showTurnEnd($), RELAY_BOUND_MS)
+      if (isDegradedPass(shown)) await logLine($, 'supervision', `tab-state: did not finish within ${RELAY_BOUND_MS} ms`)
+    } catch (err) {
+      await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)
+    }
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+}
+
 // `declarations`: the waits this session's turns declared and its successor's spawn (wait.ts), which the turn's end reads.
 export function register(on: On<Held>, declarations: Declarations = DECLARATIONS): void {
   // Module memory: the role the pane was opened in, the tty its agents are read

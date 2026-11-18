@@ -389,3 +389,58 @@ test('a turn ends with ✋ while a question its session asked is open, whatever 
     expect(fx.states().at(-1)).toBe(shown)
   }
 })
+
+// A session that starts (fresh or resumed) and takes no turn still shows a state on its window.
+const started = { cwd: '/work' }
+
+test('a resumed session with no turn shows idle from its start', async () => {
+  const chains = mounted()
+  const fx = fake({ pane: '%41' })
+  await drive(chains, 'session.start', fx.dollar, started)
+  expect(fx.states()).toEqual(['idle'])
+  expect(fx.calls.find(c => c[3] === 'set-option')).toEqual(['tmux', '-S', SOCKET, 'set-option', '-w', '-t', '%41', '@state', 'idle'])
+})
+
+for (const [waiting, shown] of [['delivered', 'review'], ['question', 'held']] as const) {
+  test(`a session that starts on a ${waiting} wait shows ${shown}, as a turn's end would`, async () => {
+    const chains = mounted()
+    const fx = fake({ pane: '%42' })
+    fx.files.set(`${STATE}/store/waits/s-one`, JSON.stringify({ name: 'Agent: belt-p3', pid: '501', waiting }))
+    await drive(chains, 'session.start', fx.dollar, started)
+    expect(fx.states()).toEqual([shown])
+  })
+}
+
+test('a session that starts with a question of its own open shows asks', async () => {
+  const chains = mounted()
+  const fx = fake({ pane: '%43' })
+  fx.files.set(`${STATE}/round/q-s-one-1.json`, askedFile('s-one', 'open'))
+  await drive(chains, 'session.start', fx.dollar, started)
+  expect(fx.states()).toEqual(['asks'])
+})
+
+test('a start writes nothing a turn would not, and the first turn still goes busy', async () => {
+  const chains = mounted()
+  const fx = fake({ pane: '%44' })
+  await drive(chains, 'session.start', fx.dollar, started)
+  await drive(chains, 'session.start', fx.dollar, started)
+  await drive(chains, 'turn.start', fx.dollar, {})
+  expect(fx.states()).toEqual(['idle', 'busy'])
+})
+
+test('a start outside a home session writes nothing', async () => {
+  const chains = mounted()
+  const outside = fake({ pane: '%45', tmux: false })
+  await drive(chains, 'session.start', outside.dollar, started)
+  expect(outside.calls).toEqual([])
+  const plain = fake({ pane: '%46', home: false })
+  await drive(chains, 'session.start', plain.dollar, started)
+  expect(plain.states()).toEqual([])
+  expect(plain.logged.filter(l => l.includes('tab-state'))).toEqual([])
+})
+
+test('a failing tmux call at the start does not fail the hook', async () => {
+  const chains = mounted()
+  const fx = fake({ pane: '%47', fail: 'set' })
+  expect(await drive(chains, 'session.start', fx.dollar, started)).toBe(started)
+})
