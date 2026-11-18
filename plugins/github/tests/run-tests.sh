@@ -605,6 +605,23 @@ printf '%s' '[{"name":"bug"}]' > "$F3/POST_repos_acme_thing_issues_7_labels.json
 check "label-add returns the label set" "bug" \
   "$(gh3 label-add 7 bug --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')"
 
+# A write answers one short line by default, never the object GitHub sent back: a whole pull
+# request is several thousand tokens in the context of whoever closed it. --json still gives it.
+printf '%s' '{"number":7,"state":"closed","draft":true,"title":"New","html_url":"https://github.com/acme/thing/pull/7","base":{"repo":{"full_name":"acme/thing"}},"body":"BIGBODY"}' > "$F3/PATCH_repos_acme_thing_pulls_7.json"
+out=$(gh3 pr-update 7 --state closed)
+check "pr-update answers one line" "acme/thing#7 closed, draft New https://github.com/acme/thing/pull/7" "$out"
+check "pr-update --json still answers the object" "1" "$(gh3 pr-update 7 --state closed --json | grep -c BIGBODY)"
+printf '%s' '{"id":99,"html_url":"https://github.com/acme/thing/pull/7#issuecomment-99","body":"BIGBODY"}' > "$F3/POST_repos_acme_thing_issues_7_comments.json"
+check "pr-comment answers the comment's id and url" "comment 99 https://github.com/acme/thing/pull/7#issuecomment-99" "$(gh3 pr-comment 7 --body-file "$BODY")"
+check "label-add answers the label names" "labels: bug" "$(gh3 label-add 7 bug)"
+printf '%s' '{"requested_reviewers":[{"login":"ann"},{"login":"bob"}]}' > "$F3/POST_repos_acme_thing_pulls_7_requested_reviewers.json"
+check "reviewer-add answers the reviewers" "reviewers: ann, bob" "$(gh3 reviewer-add 7 ann bob)"
+printf '%s' '{"assignees":[{"login":"ann"}]}' > "$F3/POST_repos_acme_thing_issues_7_assignees.json"
+check "assignee-add answers the assignees" "assignees: ann" "$(gh3 assignee-add 7 ann)"
+printf '%s' '{"id":5,"state":"COMMENTED","html_url":"https://github.com/acme/thing/pull/7#pullrequestreview-5","body":"BIGBODY"}' > "$F3/POST_repos_acme_thing_pulls_7_reviews.json"
+printf 'x\n' > "$WORK/review-body.md"
+check "review-submit answers the review's id, state and url" "review 5 COMMENTED https://github.com/acme/thing/pull/7#pullrequestreview-5" "$(gh3 review-submit 7 --event COMMENT --body-file "$WORK/review-body.md")"
+
 # label-remove interpolates the label name raw into a DELETE path. A
 # multi-word label like "good first issue" carries a literal space, a control
 # character to http.client, which previously escaped only as an uncaught

@@ -203,6 +203,51 @@ def _pr_created(obj):
     )
 
 
+def _names(items, key):
+    return ", ".join(str(i.get(key, "")) for i in items or [] if isinstance(i, dict)) or "none"
+
+
+def _pr_updated(obj):
+    pull = _first(obj) or {}
+    repo_name = ((pull.get("base") or {}).get("repo") or {}).get("full_name")
+    state = "merged" if pull.get("merged") else pull.get("state", "?")
+    return "%s#%s %s%s %s %s" % (
+        repo_name or "pull request",
+        pull.get("number", "?"),
+        state,
+        ", draft" if pull.get("draft") else "",
+        _first_line(pull.get("title"), 100),
+        pull.get("html_url", ""),
+    )
+
+
+def _comment_ack(obj):
+    comment = _first(obj) or {}
+    reply = (comment.get("addPullRequestReviewThreadReply") or {}).get("comment")
+    comment = reply if isinstance(reply, dict) else comment
+    return ("comment %s %s" % (comment.get("id", "?"), comment.get("html_url") or comment.get("url") or "")).rstrip()
+
+
+def _deleted(obj):
+    return "deleted"
+
+
+def _labels_ack(obj):
+    return "labels: " + _names(obj if isinstance(obj, list) else [], "name")
+
+
+def _people_ack(obj):
+    obj = _first(obj) or {}
+    if "assignees" in obj:
+        return "assignees: " + _names(obj.get("assignees"), "login")
+    return "reviewers: " + _names(obj.get("requested_reviewers"), "login")
+
+
+def _review_ack(obj):
+    review = _first(obj) or {}
+    return ("review %s %s %s" % (review.get("id", "?"), review.get("state", "?"), review.get("html_url", ""))).rstrip()
+
+
 def _threads(obj, resolved):
     items = obj if isinstance(obj, list) else obj.get("threads", [])
     return json.dumps([t for t in items if bool(t.get("isResolved")) is resolved], sort_keys=True)
@@ -472,6 +517,12 @@ _FORMATTERS = {
     "pr-details": _pr_details,
     "pr-summary": _pr_summary,
     "pr-created": _pr_created,
+    "pr-updated": _pr_updated,
+    "comment-ack": _comment_ack,
+    "deleted": _deleted,
+    "labels-ack": _labels_ack,
+    "people-ack": _people_ack,
+    "review-ack": _review_ack,
     "checks-status": _checks_status,
     "open-threads": lambda obj: _threads(obj, False),
     "resolved-threads": lambda obj: _threads(obj, True),
@@ -491,9 +542,21 @@ _FORMATTERS = {
     "issue-detail": _issue_detail,
 }
 
-# What a read answers when no --format and no --json is given: the few lines its caller reads. A
+# What a read or a write answers when no --format and no --json is given: the few lines its caller reads. A
 # command not listed answers its object. `--json` (or `--format raw`) gives the full object.
 DEFAULT_FORMATS = {
+    "pr-update": "pr-updated",
+    "pr-comment": "comment-ack",
+    "comment-edit": "comment-ack",
+    "thread-reply": "comment-ack",
+    "comment-delete": "deleted",
+    "label-add": "labels-ack",
+    "reviewer-add": "people-ack",
+    "reviewer-remove": "people-ack",
+    "assignee-add": "people-ack",
+    "assignee-remove": "people-ack",
+    "review-submit": "review-ack",
+    "thread-resolve": "resolve-status",
     "pr-get": "pr-lines",
     "pr-list": "pr-lines",
     "pr-checks": "checks-summary",
