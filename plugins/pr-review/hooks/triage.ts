@@ -4,10 +4,8 @@
 // its permission check applies), then triaged by the same script the Bash
 // route runs. One call answers the open items, the counts, the tier and the
 // line to announce, where the skill used to spend a dozen shell blocks.
-// The pull request it read is the one the walkthrough's journal lines then name (hooks/observe.ts).
 import { answerOf, fieldsOf, reasonOf, type Host, type On } from '../core/host.ts'
-import { noteSubject, resetSubject } from './observe.ts'
-import { GH_TOOL } from './policy.ts'
+import { GH_TOOL } from './state.ts'
 
 type TriageHost = Host<'tool' | 'process' | 'plugin'>
 
@@ -43,17 +41,9 @@ export const OPEN_COMMENTS_SCHEMA = {
   properties: { pr: { type: 'integer', description: 'the pull request number; omitted, the current branch\'s' } },
 }
 
-// The pull request a raw answer of the github tool names, for the journal: its repository, its
-// number and its head, each as far as the answer holds it.
-function noteRead(record: Readonly<Record<string, unknown>> | undefined): void {
-  resetSubject()
-  noteSubject({ repo: fieldsOf(fieldsOf(record?.['base'])?.['repo'])?.['full_name'], pr: record?.['number'], head: fieldsOf(record?.['head'])?.['sha'] })
-}
-
 async function fetchAll($: Host<'tool'>, pr?: number): Promise<Record<string, unknown>> {
   const raw = pr ? await gh($, 'pr-status', { pr, json: true }) : await gh($, 'pr-get', { format: 'raw' })
   const record = fieldsOf(Array.isArray(raw) ? raw[0] : raw)
-  noteRead(record)
   const number = record?.['number']
   if (!number) return { pr: raw }
   const [issueComments, reviews, threads] = await Promise.all([

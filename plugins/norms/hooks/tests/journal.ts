@@ -15,8 +15,3 @@ export function watchJournal($: World): () => LearningEvent[] {
   }
   return () => events
 }
-
-// What a journal line of an observed guard holds: its code, as the source and as the refusal it would have been.
-export const observedAs = (code: string) => ({
-  kind: 'escape', source: { plugin: 'norms', code }, evidence: [{ type: 'refusal', code }], context: { session: 'sess-1' },
-})

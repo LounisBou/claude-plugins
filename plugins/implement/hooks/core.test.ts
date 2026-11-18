@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'claude-code/testing'
 import { candidateLaunchers, lastLine, reviewerPrompt, reviewerTitle } from './review.ts'
 import {
-  IDLE, armedBy, agentDecision, bandLine, bandOf, bandSegments, bashDecision, checkDeny, codenameOf, doctorText, editDecision,
-  ignoreVerdict, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
+  IDLE, armedBy, bandLine, bandOf, bandSegments, codenameOf, doctorText, guardOf,
+  ignoreVerdict, markRow, modeOf, nextRow, onTurnEnd, parseState,
   preflightLines, shellActions, silencesAttribution, simpleCommands, skillOf, skillText, stateLine,
-  COMMITTED_IGNORED, GUARD_SKIPPED, LOCAL_NOT_IGNORED, METHOD_LINE, PREFLIGHT_PASSED, type Guard, type Snapshot,
+  COMMITTED_IGNORED, GUARD_SKIPPED, LOCAL_NOT_IGNORED, METHOD_LINE, PREFLIGHT_PASSED, type Snapshot,
 } from './core.ts'
 
 // The same text as tests/fixtures/state-table.md, which tests/run-tests.sh
@@ -176,116 +176,24 @@ describe('the shell reader', () => {
   })
 })
 
-// A rule's finding: the code the journal holds it under, and whether the call is refused.
-const observedAs = (code: string) => ({ code, irreversible: false })
-
-describe('the guards', () => {
+describe('what is armed', () => {
   const phase = armedBy(IDLE, 'phase')
   const close = armedBy(IDLE, 'close')
-  const checking = armedBy(IDLE, 'check')
-
-  test('phase and close let a push, a merge and a pull request through', () => {
-    const outward = ['git push', 'git push -u origin feat/x', 'git push --force origin main', 'git push --force-with-lease',
-      'git merge main', 'gh pr create --fill', 'gh pr create --draft', 'gh pr ready 3', 'gh pr merge 3']
-    for (const g of [phase, close]) {
-      for (const command of outward) expect(bashDecision(g, command)).toBeNull()
-    }
-  })
-
-  test('nothing is refused while no skill is armed, or after feature or prepare took over', () => {
-    for (const g of [IDLE, armedBy(phase, 'feature'), armedBy(phase, 'prepare')]) {
-      expect(bashDecision(g, 'git push')).toBeNull()
-      expect(agentDecision(g, 'general-purpose')).toBeNull()
-      expect(editDecision(g, 'Edit')).toBeNull()
-    }
-  })
-
-  test('a subagent during a phase is observed whatever the user typed, and never refused', () => {
-    for (const typed of ['use a subagent for the tests', "don't use an agent", 'run implement:phase, with an agent']) {
-      expect(agentDecision(onTyped(phase, typed), 'general-purpose')).toMatchObject(observedAs('implement.phase.subagent'))
-    }
-    expect(agentDecision(armedBy(onTyped(IDLE, 'run implement:phase, with an agent'), 'phase'), 'general-purpose')).toMatchObject(observedAs('implement.phase.subagent'))
-  })
-
-  test('a check observes a shell line that writes into the tree, and lets the gate run', () => {
-    const checking = armedBy(IDLE, 'check')
-    const observed: Record<string, string> = {
-      'sed -i s/a/b/ src/a.ts': 'implement.check.write', 'git diff > fix.patch': 'implement.check.redirect', 'echo x >> README.md': 'implement.check.redirect',
-      'cp a b': 'implement.check.write', 'cat a | tee b': 'implement.check.write', 'perl -pi -e s/a/b/ f': 'implement.check.write',
-      'mv a b': 'implement.check.write', 'touch a': 'implement.check.write',
-    }
-    for (const [line, code] of Object.entries(observed)) expect(bashDecision(checking, line)).toMatchObject(observedAs(code))
-    for (const line of ['npm test', 'bash tests/run-tests.sh 2>&1', 'git diff abc..HEAD --stat', 'grep -n x src/a.ts', 'sed -n 1,5p a.ts', 'pytest -q > /dev/null']) {
-      expect(bashDecision(checking, line)).toBeNull()
-    }
-  })
-
-  test('a check refuses a removal, the one act it cannot take back, before any other finding of the line', () => {
-    const checking = armedBy(IDLE, 'check')
-    for (const line of ['rm src/a.ts', 'rmdir out', 'rm -rf build', '/bin/rm a', 'git add a && rm b', 'echo x > f; sudo rm f', 'cp a b && rm a', 'sh -c "rm a"']) {
-      expect(bashDecision(checking, line)).toMatchObject({ code: 'implement.check.remove', irreversible: true })
-    }
-    expect(checkDeny('rm')).toContain('implement:check removes nothing: rm refused by the implement plugin')
-    for (const line of ['echo rm', 'git log --oneline -- rm', 'grep -n "rm -rf" a.ts', 'ls # rm a']) expect(bashDecision(checking, line)).toBeNull()
-    for (const g of [IDLE, phase, close]) expect(bashDecision(g, 'rm src/a.ts')).toBeNull()
-  })
-
-  test('a check observes a shell line the reader cannot read: an over-limit brace word is a doubt, not a refusal', () => {
-    for (const line of ['{git,commit}{1..1001} -m x', 'echo ok; git {add,-A}{1..1001}', 'echo {1..100000}']) {
-      expect(bashDecision(checking, line)).toMatchObject(observedAs('implement.check.unreadable'))
-    }
-    for (const g of [IDLE, phase, close]) expect(bashDecision(g, '{git,commit}{1..1001} -m x')).toBeNull()
-  })
-
-  test('a removal named in a shell line the reader cannot read is still refused', () => {
-    for (const line of ['rm a; echo {1..2000}', 'echo {1..100000} && /bin/rm -rf x', 'echo {1..2000}; sh -c "rmdir out"']) {
-      expect(bashDecision(checking, line)).toMatchObject({ code: 'implement.check.remove', irreversible: true })
-    }
-    for (const line of ['echo {1..100000} # form', 'ls {1..2000}/rmfile', 'echo {1..2000} firm']) expect(bashDecision(checking, line)).toMatchObject(observedAs('implement.check.unreadable'))
-  })
 
   test('an aborted turn releases everything, an answered one keeps a phase armed', () => {
     expect(onTurnEnd(phase, true)).toEqual(IDLE)
     expect(onTurnEnd(phase, false).outer).toBe('phase')
-    expect(agentDecision(onTurnEnd(phase, false), 'general-purpose')).toMatchObject(observedAs('implement.phase.subagent'))
-    expect(agentDecision(onTurnEnd(phase, true), 'general-purpose')).toBeNull()
   })
 
-  test('a phase observes every subagent but a read-only search one', () => {
-    expect(agentDecision(phase, 'Explore')).toBeNull()
-    expect(agentDecision(phase, 'general-purpose')).toMatchObject(observedAs('implement.phase.subagent'))
-    expect(agentDecision(phase, undefined)).toMatchObject(observedAs('implement.phase.subagent'))
-    expect(agentDecision(close, 'general-purpose')).toBeNull()
+  test('a check arms nothing: the phase it runs inside stays armed, and outside one nothing is', () => {
+    expect(armedBy(phase, 'check').outer).toBe('phase')
+    expect(armedBy(IDLE, 'check')).toEqual(IDLE)
   })
 
-  test('a check observes edits, staging and commits until its verdict', () => {
-    expect(editDecision(checking, 'Edit')).toMatchObject(observedAs('implement.check.edit'))
-    expect(bashDecision(checking, 'git add -A')).toMatchObject(observedAs('implement.check.stage'))
-    expect(bashDecision(checking, 'git commit -m x')).toMatchObject(observedAs('implement.check.commit'))
-    expect(bashDecision(checking, 'git log --oneline')).toBeNull()
-    expect(editDecision(onTurnEnd(checking, false), 'Edit')).toBeNull()
-  })
-
-  test('a check inside a phase keeps the phase armed once it ends', () => {
-    const nested = armedBy(phase, 'check')
-    expect(nested.outer).toBe('phase')
-    expect(editDecision(nested, 'Write')).toMatchObject(observedAs('implement.check.edit'))
-    const after: Guard = { ...nested, checking: false }
-    expect(editDecision(after, 'Write')).toBeNull()
-    expect(agentDecision(after, 'general-purpose')).toMatchObject(observedAs('implement.phase.subagent'))
-  })
-
-  test('the user\'s words end a check, the slash command that starts it does not', () => {
-    expect(onTyped(checking, '/implement:check HEAD~1..HEAD').checking).toBe(true)
-    expect(onTyped(checking, 'stop, fix it').checking).toBe(false)
-  })
-
-  test('the verdict is the table and its verdict line together', () => {
-    const table = '| check | evidence | result |\n|---|---|---|\n| 1 truncation | ok | PASS |\n'
-    expect(isVerdict(`${table}\nPASS\nDONE`)).toBe(true)
-    expect(isVerdict(`${table}\nFAIL: 5, 6\nDONE_WITH_CONCERNS`)).toBe(true)
-    expect(isVerdict(table)).toBe(false)
-    expect(isVerdict('PASS')).toBe(false)
+  test('the guard as the host kept it: a field of another shape is the idle value', () => {
+    expect(guardOf({ outer: 'phase' })).toEqual({ outer: 'phase' })
+    expect(guardOf({ outer: 'check' })).toEqual(IDLE)
+    expect(guardOf(null)).toEqual(IDLE)
   })
 
   test('the commit trailer is silenced while a committing skill is armed', () => {

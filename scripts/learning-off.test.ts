@@ -9,11 +9,11 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
-import { parseLearningEvent } from '../packages/core/src/learning.ts'
+import { findingEvent, parseLearningEvent } from '../packages/core/src/learning.ts'
 import { register as registerLearning } from '../plugins/learning/hooks/register.ts'
 import { run as distil } from '../plugins/learning/skills/learning/scripts/distil.ts'
 import { run as health } from '../plugins/learning/skills/learning/scripts/health.ts'
-import { noteSubject as noteNorms, observed as observedByNorms, type JournalHost } from '../plugins/norms/hooks/observe.ts'
+import { journal as journalByNorms, noteSubject as noteNorms, type JournalHost } from '../plugins/norms/hooks/observe.ts'
 import { noteSubject as noteReview, observed as observedByReview } from '../plugins/pr-review/hooks/observe.ts'
 import { manifestPath, readPlugins } from './lib/plugins.ts'
 
@@ -41,7 +41,7 @@ function hostOn(home: string, logged: string[]): JournalHost {
     },
     session: { id: async () => 'sess-1' },
     clock: { sleep: async () => undefined },
-    ui: { log: line => { logged.push(line) }, ask: async () => '' },
+    ui: { log: line => { logged.push(line) } },
   }
 }
 
@@ -67,7 +67,7 @@ async function write(home: string, logged: string[]): Promise<void> {
   const $ = hostOn(home, logged)
   noteNorms({ repo: 'Acme/App', pr: 1, head: 'a'.repeat(40) })
   noteReview({ repo: 'Acme/App', pr: 2, head: 'b'.repeat(40) })
-  await observedByNorms($, 'norms.edit.ungranted', () => NOW)
+  await journalByNorms($, known => [findingEvent({ ...known(), code: 'norms.documentation.info', severity: 'info', file: 'a.md' })], () => NOW)
   await observedByReview($, 'pr-review.reader.no-request', () => NOW)
 }
 

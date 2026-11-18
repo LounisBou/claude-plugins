@@ -7,7 +7,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Engine, Reply, TestOn } from 'claude-code/testing'
 import { parseLearningEvent } from '../../core/learning.ts'
 import { REPORT_REQUEST } from '../report.ts'
-import { observedAs, watchJournal } from './journal.ts'
+import { watchJournal } from './journal.ts'
 
 const ok = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 const HEAD = 'a'.repeat(40)
@@ -128,22 +128,4 @@ test('a journal that cannot be written changes nothing of the loop: its answer, 
   expect(logged.length).toBe(1)
   expect(logged[0]).toContain('pr-review: the journal could not be written or pruned')
   expect(logged[0]).toContain('disk full')
-})
-
-test('a guard observed during process-comments names the pull request open_comments read', async ($, on) => {
-  const journal = watchJournal(on)
-  on('process.run', () => ({ value: { ...ok, stdout: '{"pr": 7}' } }))
-  on('skill.prompt', () => ({ text: 'SKILL TEXT' }))
-  on('tool.list', () => ({ value: [{ name: 'mcp__github__gh' }] }))
-  on('tool.call', { tool: 'mcp__github__gh' }, (_$, e) => ({
-    result: JSON.stringify(e['command'] === 'pr-get' ? [{ number: 7, head: { sha: HEAD }, base: { repo: { full_name: 'Owner/Repo' } } }] : e['command'] === 'comments-resolved-batch' ? {} : []),
-  }))
-  on('tool.call', () => ({ result: 'ran' }))
-  await $.skill.prompt({ skill: 'pr-review:process-comments', text: '' })
-  await $.tool.call({ tool: 'mcp__pr-review__open_comments' })
-  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/a.ts', old_string: 'a', new_string: 'b', replace_all: false })
-  const [event] = journal()
-  expect(parseLearningEvent(event)).toEqual(event)
-  expect(event).toMatchObject(observedAs('pr-review.edit.ungranted'))
-  expect(event?.subject).toEqual({ repo: 'owner/repo', pr: 7, head: HEAD })
 })

@@ -3,13 +3,13 @@
 // by check_done once the pull request is read, and the pull request on every event written while
 // the check stands. An event holds where and how severe, never what was said.
 import { expect, test } from 'claude-code/testing'
-import { parseLearningEvent } from '../../core/learning.ts'
+import { findingEvent, parseLearningEvent } from '../../core/learning.ts'
 import { register as registerCheck, resetCache } from '../check.ts'
-import { register as registerGuards, resetGuards } from '../guards.ts'
+import { journal as writeJournal } from '../observe.ts'
 import { register as registerRecord } from '../record.ts'
 import { fakeDollar, gitRuns, hook, HEAD, mount, nextOf, type FakeSetup, type Call, type World, hooksOn } from './fakes.ts'
 import { fieldsOf, listOf } from '../../core/host.ts'
-import { observedAs, watchJournal } from './journal.ts'
+import { watchJournal } from './journal.ts'
 
 const PR_12 = { number: 12, head: { sha: HEAD }, base: { ref: 'main' } }
 const SUBJECT = { repo: 'owner/repo', pr: 12, head: HEAD }
@@ -29,22 +29,19 @@ function setup(pulls: unknown[] = [PR_12], runs: FakeSetup['runs'] = {}) {
 
 function mounted() {
   resetCache()
-  resetGuards()
   const hooks = mount(on => {
     registerCheck(on)
     registerRecord(on)
-    registerGuards(on)
   })
   return {
     hooks,
-    // The check as the person types it: the guards' walkthrough begins, then the scope is computed.
+    // The check as the person types it: the scope is computed.
     scope: async ($: World, args = '') => {
       for (const h of hooksOn(hooks, 'command.run').filter(h => h.matcher?.['command'] === 'norms:check')) await h.handler($, { command: 'norms:check', args }, nextOf().next)
     },
     agent: ($: World, name: string, findings: unknown[]) =>
       hook(hooks, 'tool.call', { tool: 'Agent' }).handler($, { tool: 'Agent', subagent_type: name }, async () => ({ result: 'Read.\n```json\n' + JSON.stringify({ findings }) + '\n```' })),
     done: ($: World, input: Readonly<Record<string, unknown>>) => hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' }).handler($, input, nextOf().next),
-    edit: ($: World) => hook(hooks, 'tool.call', { tool: 'Edit' }).handler($, { tool: 'Edit', file_path: '/repo/src/a.ts', old_string: 'a', new_string: 'b' }, nextOf().next),
   }
 }
 
@@ -115,26 +112,10 @@ test('a journal that cannot be written changes nothing of the record: one line i
   expect(logs[0]).toContain('norms: the journal could not be written or pruned: disk full')
 })
 
-test('an observed guard names the pull request the check reads: the scope\'s own lookup found it', async () => {
-  const { $, journal, calls } = setup()
-  const m = mounted()
-  await m.scope($)
-  const lookups = calls.length
-  await m.edit($)
-  const [event] = journal()
-  expect(parseLearningEvent(event)).toEqual(event)
-  expect(event).toMatchObject(observedAs('norms.edit.ungranted'))
-  expect(event?.subject).toEqual(SUBJECT)
-  // The subject costs the guard no call of its own.
-  expect(calls.length).toBe(lookups)
-})
-
-test('a check given its base reads no pull request at its start: the guard\'s event names the repository and the head, and check_done the pull request', async () => {
+test('a check given its base reads no pull request at its start: check_done names it', async () => {
   const { $, journal } = setup()
   const m = mounted()
   await m.scope($, 'base=main')
-  await m.edit($)
-  expect(journal().map(e => e.subject)).toEqual([{ ...SUBJECT, pr: null }])
   await m.agent($, 'norms:norms-magic-values', [{ severity: 'error', file: 'src/a.ts', summary: 's' }])
   await m.done($, { open: 1, fixed: 0, passed: 0 })
   expect(journal().at(-1)?.subject).toEqual(SUBJECT)
@@ -145,8 +126,6 @@ test('the end of the session forgets the pull request: a later event names none'
   const m = mounted()
   await m.scope($)
   for (const h of hooksOn(m.hooks, 'session.end')) await h.handler($, { sessionId: 'sess-1' }, nextOf().next)
-  const guards = mount(registerGuards)
-  await hook(guards, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, nextOf().next)
-  await hook(guards, 'tool.call', { tool: 'Edit' }).handler($, { tool: 'Edit', file_path: '/repo/src/a.ts', old_string: 'a', new_string: 'b' }, nextOf().next)
+  await writeJournal($, known => [findingEvent({ ...known(), code: 'norms.documentation.info', severity: 'info', file: 'a.md' })])
   expect(journal().map(e => e.subject)).toEqual([{ repo: null, pr: null, head: null }])
 })

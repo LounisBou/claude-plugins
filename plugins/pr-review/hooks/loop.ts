@@ -6,8 +6,7 @@
 // review record at its end; the fix loop writes none.
 //
 // Never a trap: any prompt the user types, an interrupted turn or a /clear releases the loop.
-import { loop, resetLoop, MAX_PASSES } from './state.ts'
-import { GH_TOOL } from './policy.ts'
+import { loop, resetLoop, GH_TOOL, MAX_PASSES } from './state.ts'
 import { isSpawned } from '../core/env.ts'
 import { answerOf, fieldsOf, reasonOf, type Host, type Events, type On } from '../core/host.ts'
 import { findingEvent } from '../core/learning.ts'

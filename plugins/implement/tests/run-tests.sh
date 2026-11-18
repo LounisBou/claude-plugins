@@ -459,12 +459,9 @@ check "the host validates the plugin" "0" \
 check "the module's tests pass in the host's kit" "0" \
   "$(claude plugin test "$ROOT" >/dev/null 2>&1; echo $?)"
 
-# The self-review before the pull request is the method's: close and phase point at it, phase says
-# its lens readers run, the journal keeping one line for each.
+# The self-review before the pull request is the method's: close and phase point at it.
 check "close and phase point at the method's self-review" "1|1" \
   "$(grep -c 'self-review comes after the last step below and before the pull request opens' "$ROOT/skills/close/SKILL.md")|$(grep -c 'the self-review before the pull request, consent, ready' "$ROOT/skills/phase/SKILL.md")"
-check "phase says its lens readers run, one journal line each" "1" \
-  "$(tr '\n' ' ' < "$ROOT/skills/phase/SKILL.md" | grep -c 'Its lens readers run when the self-review asks, each noted in the journal.')"
 
 echo
 echo "$pass passed, $fail failed"

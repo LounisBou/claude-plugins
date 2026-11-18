@@ -87,11 +87,7 @@ number (`line`, `start-line`, `review-id`) as a JSON number, text as a string. A
 body travels as `body` and a set of inline comments as `comments`, never as a
 file path: the tool writes them to files itself.
 
-A write made through the tool passes the session's permission check. Where this
-plugin's module loads, it also holds this skill's Iron Rules (no code change
-without option 1 or 3, no resolve without option 1 or 4, no reply posted, no
-push): ask the user for that word first.
-A forced push and a deleted comment stay refused.
+A write made through the tool passes the session's permission check.
 
 **When `mcp__github__gh` is not in your tool list** (a session where plugin
 modules do not load, such as `claude -p`), read `references/bash-route.md` and

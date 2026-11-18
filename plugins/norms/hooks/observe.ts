@@ -1,13 +1,12 @@
 // hooks/observe.ts
-// The module's journal (core's learning.ts): the one writer of its events. A guard that observes
-// instead of refusing leaves one escape under its stable code, the refusal it would have answered
-// as its evidence; a check leaves its agents' findings, and a question its answer. Each event names
-// the pull request the session works on once the module read it (`noteSubject`). Never throws: the
-// journal is an observation, and a call whose line cannot be written goes through all the same.
+// The module's journal (core's learning.ts): the one writer of its events. A check leaves its
+// agents' findings. Each event names the pull request the session works on once the module read it
+// (`noteSubject`). Never throws: the journal is an observation, and a call whose line cannot be
+// written goes through all the same.
 import { configDirOf } from '../core/env.ts'
 import { reasonOf, type Host } from '../core/host.ts'
 import { appendEventOver, randomPart, type JournalIo } from '../core/journal.ts'
-import { answerEvent, journalDir, learningEvent, subjectOf, type Known, type LearningEvent } from '../core/learning.ts'
+import { journalDir, subjectOf, type Known, type LearningEvent } from '../core/learning.ts'
 
 export const PLUGIN = 'norms'
 const SESSION = /^[A-Za-z0-9._-]{1,80}$/
@@ -16,7 +15,7 @@ const SESSION = /^[A-Za-z0-9._-]{1,80}$/
 export type JournalHost = Host<'env' | 'fs' | 'process'> & {
   session: Pick<Host<'session'>['session'], 'id'>
   clock: Pick<Host<'clock'>['clock'], 'sleep'>
-  ui: Pick<Host<'ui'>['ui'], 'log' | 'ask'>
+  ui: Pick<Host<'ui'>['ui'], 'log'>
 }
 
 // The journal is pruned once per process, at its first line.
@@ -82,32 +81,4 @@ export async function journal($: JournalHost, build: (known: () => Known) => Rea
       // A session with no log has nothing to tell.
     }
   }
-}
-
-export function observed($: JournalHost, code: string, now?: () => Date): Promise<void> {
-  return journal($, (known) => {
-    const { plugin, ...rest } = known()
-    return [learningEvent({ ...rest, source: { plugin, code }, trust: 'computed', evidence: [{ type: 'refusal', code }], kind: 'escape' })]
-  }, now)
-}
-
-/** The operator's own answer to a grant the module asked of them (`asked` names it): one event of their trust. */
-export function answered($: JournalHost, asked: string, granted: boolean, now?: () => Date): Promise<void> {
-  return journal($, (known) => [answerEvent({ ...known(), given: { asked, granted } })], now)
-}
-
-/**
- * Asks the operator to allow an act and answers what they chose, undefined when nobody answered (a
- * session with no one to ask, a dialog dismissed). Their own Allow or Deny is kept in the journal.
- */
-export async function askAllow($: JournalHost, asked: string, question: string): Promise<boolean | undefined> {
-  let answer: string
-  try {
-    answer = await $.ui.ask(question, ['Allow', 'Deny'])
-  } catch {
-    return undefined
-  }
-  if (answer !== 'Allow' && answer !== 'Deny') return undefined
-  await answered($, asked, answer === 'Allow')
-  return answer === 'Allow'
 }
