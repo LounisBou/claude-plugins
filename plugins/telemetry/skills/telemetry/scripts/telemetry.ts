@@ -14,6 +14,7 @@
 //                                                         orchestrator's journal holds; with --auto, at most once a day
 //   telemetry.ts report   --config <dir> [--week <first day>] [--tool <owner/name>]...
 //                                                         the week's cost, delay, questions, refusals and figures
+//   telemetry.ts spend    --config <dir>                  the spend flag, recomputed now and written beside the events
 //
 // <dir> is the host's configuration directory; the store is <dir>/telemetry. The operator's
 // ~/.env (TELEMETRY_ENV_FILE in tests) is read for its secrets, which never leave this process.
@@ -31,10 +32,11 @@ import { exportExclusive, logsRepo, machineName, type Git } from './lib/export.t
 import { parseOptions, report, type Check, type Gh } from './lib/report.ts'
 import { parseEnvFile, type EnvSecrets } from './lib/redact.ts'
 import { append, check, eventsDir, parseEvent } from './lib/store.ts'
+import { refreshSpend } from './lib/spend.ts'
 import { claimSweep, sweep, sweepDue } from './lib/sweep.ts'
 import { summarize, summarizeFile, transcriptOf } from './lib/transcript.ts'
 
-export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill [--calls]|sweep [--auto]|report [--week <YYYY-MM-DD>] [--tool <owner/name>]...} --config <dir> [<transcript>...]'
+export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill [--calls]|sweep [--auto]|spend|report [--week <YYYY-MM-DD>] [--tool <owner/name>]...} --config <dir> [<transcript>...]'
 
 /** A git command is never left running past this. */
 export const GIT_TIMEOUT_MS = 60_000
@@ -218,6 +220,12 @@ export function run(args: readonly string[], deps: Deps): number {
       const lines = raw.map(line => enrich(line, config)).join('\n')
       const { refused } = append(eventsDir(stateDir), lines, secrets)
       for (const reason of refused) deps.err(`telemetry: a line was refused (${reason})`)
+      // The spend flag follows the events, at most every few minutes; like the rest here it never fails the write.
+      try {
+        refreshSpend({ stateDir, eventsDir: eventsDir(stateDir), config, env: deps.env, secrets, now: deps.now() })
+      } catch (error) {
+        deps.err(`telemetry: the spend flag was skipped: ${error instanceof Error ? error.message : String(error)}`)
+      }
       if (raw.some(line => endsSession(line))) {
         // A session's end is the trigger of the day's sweep and of the export; neither ever fails the write.
         try {
@@ -272,6 +280,11 @@ export function run(args: readonly string[], deps: Deps): number {
       const result = sweep({ config, stateDir, secrets, moduleDir: deps.env['ORCHESTRATOR_MODULE_DIR'], journalDir: deps.env['ORCHESTRATOR_JOURNAL_DIR'], now: deps.now() })
       for (const reason of result.refused) deps.err(`telemetry: a line was refused (${reason})`)
       deps.out(`sweep: ${result.sessions} session(s) without an end summarized, ${result.questions} round question(s) recorded, ${result.dispatches} dispatch(es) recorded`)
+      return 0
+    }
+    case 'spend': {
+      const flag = refreshSpend({ stateDir, eventsDir: eventsDir(stateDir), config, env: deps.env, secrets, now: deps.now(), force: true })
+      deps.out(flag?.line ?? 'spend: nothing written')
       return 0
     }
     default:

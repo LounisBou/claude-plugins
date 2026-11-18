@@ -415,3 +415,38 @@ test('append: a subagent\'s run end is followed by one api_call per call of the 
     assert.deepEqual([call['ts'], call['title'], call['role'], call['parent'], call['usage']], ['2026-11-17T11:10:02.000Z', 'Agent: x', 'agent', 'Orch: y', { input_tokens: 3, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 31000, new_field: 7 }])
   })
 })
+
+test('append writes the spend flag from the last hour\'s calls, priced by the orchestrator\'s prices, and `spend` recomputes it now', () => {
+  harness((config, deps, setStdin) => {
+    const module = join(config, 'orch')
+    mkdirSync(join(module, 'routing'), { recursive: true })
+    writeFileSync(join(module, 'routing', 'prices.json'), JSON.stringify({ big: { input: 10, output: 50, cache_write_5m: 12.5, cache_write_1h: 20, cache_read: 0.25 } }))
+    Object.assign(deps.env, { ORCHESTRATOR_MODULE_DIR: module, TELEMETRY_SPEND_ALERT_USD_PER_HOUR: '20' })
+    const call = { v: 1, ts: '2026-11-13T20:30:00.000Z', event: 'api_call', session: S, title: 'Orch: billing', message: 'msg-1', model: 'big', usage: { output_tokens: 1_000_000 } }
+    setStdin(JSON.stringify(call))
+    assert.equal(run(['append', '--config', config], deps), 0)
+    const file = join(config, 'telemetry', 'spend-flag.json')
+    const written = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    assert.equal(written['over'], true)
+    assert.equal(written['rate_usd_per_hour'], 50)
+    assert.deepEqual(written['top'], [{ session: S, name: 'Orch: billing', usd: 50 }])
+    // A flag younger than its period is left as it is; `spend` recomputes whatever its age.
+    deps.env['TELEMETRY_SPEND_ALERT_USD_PER_HOUR'] = '100'
+    setStdin(JSON.stringify({ ...call, message: 'msg-0', ts: '2026-11-13T20:31:00.000Z', usage: { output_tokens: 0 } }))
+    assert.equal(run(['append', '--config', config], deps), 0)
+    assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>)['over'], true)
+    assert.equal(run(['spend', '--config', config], deps), 0)
+    assert.equal(deps.outs.at(-1), 'spend 50 $/h over the last hour, under 100 $/h')
+    assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>)['over'], false)
+  })
+})
+
+test('append: a spend flag that cannot be written is said and never fails the write', () => {
+  harness((config, deps, setStdin) => {
+    mkdirSync(join(config, 'telemetry', 'spend-flag.json'), { recursive: true })
+    setStdin(end)
+    assert.equal(run(['append', '--config', config], deps), 0)
+    assert.match(deps.errs.join('\n'), /telemetry: the spend flag was skipped: /)
+    assert.equal(readFileSync(join(config, 'telemetry', 'events', '2026-11-13.jsonl'), 'utf8').trim().split('\n').length, 1)
+  })
+})
