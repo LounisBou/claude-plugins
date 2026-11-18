@@ -25,12 +25,13 @@
 #
 # The hosts run with the user's settings left out (`--setting-sources project`, through a
 # wrapper the launcher is pointed at) and no MCP server, and with this checkout loaded as their
-# plugin: the module it carries is what writes each window's `@state`. Everything the launcher writes goes to
-# the sandbox: its state (ORCHESTRATOR_STATE_DIR, the chain and the launch files among it) and
-# the module's own files (ORCHESTRATOR_MODULE_DIR). What the host itself keeps of a session it
-# ran is its own bookkeeping: the transcript directory of the sandbox's work path is removed at
-# the end (copied first into the sandbox with --keep), and the prompt history keeps its lines
-# naming the sandbox, which the script only counts. The sandbox lives under ORCHESTRATOR_E2E_DIR
+# plugin, with the plugins its plugin.json depends on: the module it carries is what writes each
+# window's `@state`. Everything the launcher writes goes to the sandbox: its state
+# (ORCHESTRATOR_STATE_DIR, the chain and the launch files among it) and the module's own files
+# (ORCHESTRATOR_MODULE_DIR). What the host itself keeps of a session it ran is its own
+# bookkeeping: the transcript directory of the sandbox's work path is removed at the end (copied
+# first into the sandbox with --keep), and the prompt history keeps its lines naming the sandbox,
+# which the script only counts. The sandbox lives under ORCHESTRATOR_E2E_DIR
 # (/tmp by default), a directory the host already trusts: the script never accepts the trust
 # question, and refuses to go on when a host asks it. It skips itself without tmux, jq or the
 # host. The banner's plan is the operator's: ORCHESTRATOR_E2E_PLAN=Ultra on a machine whose
@@ -110,7 +111,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The host the launcher starts: the real one, without the user's settings.
+# The host the launcher starts: the real one, without the user's settings. Without them it knows
+# no marketplace, so the plugins this one depends on (plugin.json's `dependencies`, siblings in
+# the monorepo) are loaded from their folders too: a plugin whose dependency is not installed
+# loads no module, and no `@state` is written. Copies in the sandbox: the host writes its type
+# files into each plugin folder it loads, which must not be the repository's.
+DEPDIRS=""
+for dep in $(jq -r '.dependencies[]?.name' "$ROOT/.claude-plugin/plugin.json"); do
+  [ -d "$ROOT/../$dep" ] || { echo "refused: the plugin depends on $dep, which is not beside it" >&2; exit 1; }
+  mkdir -p "$SANDBOX/deps" && cp -R "$ROOT/../$dep" "$SANDBOX/deps/$dep"
+  DEPDIRS="$DEPDIRS --plugin-dir $SANDBOX/deps/$dep"
+done
 WRAPPER="$SANDBOX/bin/${HOST##*/}"
 # No test session may come up in Remote Control, where the operator would see it: the wrapper
 # drops a --remote-control the launcher gives an orchestrator, and makes every launch carry
@@ -130,7 +141,7 @@ while [ \$n -gt 0 ]; do
   set -- "\$@" "\$a"
 done
 [ \$patched -eq 1 ] || set -- "\$@" --settings '{"remoteControlAtStartup":false}'
-exec "\$real" --setting-sources project --plugin-dir "$ROOT" "\$@"
+exec "\$real" --setting-sources project --plugin-dir "$ROOT"$DEPDIRS "\$@"
 WSH
 chmod +x "$WRAPPER"
 # The launcher's own trust record names the work directory; the host trusts it through BASE.
@@ -490,8 +501,11 @@ W0=$(tm display -p -t home:0 '#{window_id}')
 SHELL_PANE=$(tm split-window -d -P -F '#{pane_id}' -t "$HEIR_WIN" -c "$WORKDIR" '/bin/bash --noprofile --norc')
 LT="$SHELL_PANE"
 launcher 30 takeover --tty "$OWN_TTY" --expect-title "Orch: e2e lead"
+# Window 0 here is a shell with no host and so no session: the takeover has no transcript to wait
+# on and says so before it kills (615f887e, « wait for the predecessor's handed over »).
 check "the takeover kills window 0 and gives the successor index 0, the operator's view with it" \
-  "0|took window 0: the predecessor's window $W0 on $OWN_TTY was closed|0 $HEIR_WIN Orch: e2e lead 1|0" \
+  "0|takeover: no transcript of the session on $OWN_TTY was found: no « handed over » read
+took window 0: the predecessor's window $W0 on $OWN_TTY was closed|0 $HEIR_WIN Orch: e2e lead 1|0" \
   "$(rc)|$(out)|$(windows | awk '$1 == 0')|$(windows | grep -c " $W0 ")"
 if wait_reply "$HEIR_PANE" E2E-HEIR-READY 90; then HREPLIED=1; else HREPLIED=0; fi
 audit_rc
