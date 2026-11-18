@@ -1726,8 +1726,8 @@ test('a stamp from today prunes nothing', async ($, on) => {
 
 // ---- auto-merge on the operator's word ----
 
-// What the operator's recorded answer is for a consent that grants: « Accorder » alone; the words a call quotes it with name what it grants.
-const HIS_WORDS = CONSENT_GRANT + ' : on est en auto-merge, pour cette orchestration infra compris'
+// The operator's words, quoted with their date: what auto-merge rests on.
+const HIS_WORDS = '« on est en auto-merge, pour cette orchestration infra compris », 2026-11-18T19:33Z'
 const typed = ($: Engine, text: string, kind = 'composer') => $.prompt.submit({ text, origin: { kind }, wait: false })
 const setAutoMerge = (on: boolean, words: string, repo = 'acme/thing') =>
   gh('auto-merge-set', { repo, on, words }, undefined)
@@ -1742,7 +1742,7 @@ function mergeWorld(text: string = CONSENT_GRANT, over: World = {}): World {
   return { ...answered, ...over, tree: { ...answered.tree, ...over.tree } }
 }
 
-test('auto-merge-set on, quoting the operator\'s recorded answer, lists the repository, and its pr-ready asks nothing', async ($, on) => {
+test('auto-merge-set on, quoting the operator\'s dated words, lists the repository, and its pr-ready asks nothing', async ($, on) => {
   const seen = await world($, on, mergeWorld(CONSENT_GRANT, { verdict: { decision: 'ask' } }))
   const set = await $.tool.call(setAutoMerge(true, HIS_WORDS))
   expect(set.deny).toBeUndefined()
@@ -1754,68 +1754,24 @@ test('auto-merge-set on, quoting the operator\'s recorded answer, lists the repo
   expect(commands(seen)).toContain('pr-ready')
 })
 
-test('words the operator typed are no consent: with no consent record auto-merge-set is refused and writes nothing', async ($, on) => {
+test('words with no date are no consent: auto-merge-set is refused and writes nothing', async ($, on) => {
   const seen = await world($, on)
-  await typed($, HIS_WORDS)
-  await typed($, 'oui, vas-y')
-  for (const words of [HIS_WORDS, 'oui, vas-y']) {
+  for (const words of ['oui, vas-y', 'on est en auto-merge', '']) {
     const out = await $.tool.call(setAutoMerge(true, words))
-    expect(out.deny, words).toContain('github: auto-merge-set')
+    expect(out.deny, words).toContain('github: auto-merge-set rests on the operator\'s words, quoted in "words" with their date')
   }
-  const out = await $.tool.call(setAutoMerge(true, HIS_WORDS))
-  expect(out.deny).toContain('consent record (orchestrator) of auto-merge on acme/thing')
-  expect(out.deny).toContain('declare_wait\'s consent_kind "auto-merge" and consent_repo "acme/thing"')
   expect(seen.files).toEqual({})
   expect(seen.writes).toEqual([])
 })
 
-// A recorded answer is a grant only as « Accorder »: a refusal quoted with on:true, in the choice's words or in prose, puts nothing in auto-merge.
-for (const answer of ['B : ne pas passer thing en auto-merge', 'ne pas passer thing en auto-merge', 'oui, thing passe en auto-merge', 'oui']) {
-  test('a recorded answer that is no « ' + CONSENT_GRANT + ' » never carries auto-merge: ' + answer, async ($, on) => {
-    const seen = await world($, on, mergeWorld(answer))
-    const words = answer + ' : thing en auto-merge'
-    const out = await $.tool.call(setAutoMerge(true, words))
-    expect(out.deny).toContain('github: auto-merge-set refused on acme/thing')
-    expect(out.deny).toContain('« ' + CONSENT_GRANT + ' »')
-    expect(seen.files).toEqual({})
-    expect(seen.writes).toEqual([])
-  })
-}
 
-for (const spelling of ['auto-merge', 'auto merge', 'automerge', 'AUTO-MERGE']) {
-  test('the word « ' + spelling + ' » names auto-merge in the recorded answer, the repository unnamed', async ($, on) => {
-    const words = CONSENT_GRANT + ' : le projet est en ' + spelling
-    const seen = await world($, on, mergeWorld())
-    const out = await $.tool.call(setAutoMerge(true, words))
-    expect(out.deny).toBeUndefined()
-    expect(listed(seen)).toEqual(['acme/thing'])
-  })
-}
 
-test('the words hold the recorded answer with their whitespace normalised', async ($, on) => {
-  const seen = await world($, on, mergeWorld())
-  const out = await $.tool.call(setAutoMerge(true, CONSENT_GRANT + '  :\non est en  auto-merge'))
-  expect(out.deny).toBeUndefined()
-  expect(listed(seen)).toEqual(['acme/thing'])
-})
 
-test('a consent answer without the auto-merge word is refused', async ($, on) => {
-  const seen = await world($, on, mergeConsent())
-  const out = await $.tool.call(setAutoMerge(true, CONSENT_GRANT + ' : thing passe en automatique'))
-  expect(out.deny).toContain('auto-merge')
-  expect(seen.files).toEqual({})
-})
 
-test('a consent record of an E2E waiver does not carry auto-merge', async ($, on) => {
-  const seen = await world($, on, mergeConsent(undefined, { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }))
-  const out = await $.tool.call(setAutoMerge(true, HIS_WORDS))
-  expect(out.deny).toContain('consent record (orchestrator) of auto-merge on acme/thing')
-  expect(seen.files).toEqual({})
-})
 
 
 test('auto-merge-set off takes the repository out, whatever its case, and its pr-ready is observed again', async ($, on) => {
-  const words = CONSENT_GRANT + ' : thing sort de l\'auto-merge'
+  const words = '« thing sort de l\'auto-merge », 2026-11-18T19:40Z'
   const seen = await world($, on, mergeWorld(CONSENT_GRANT, { autoMerge: ['Acme/Thing', 'acme/other'] }))
   const out = await $.tool.call(setAutoMerge(false, words))
   expect(out.deny).toBeUndefined()
@@ -1950,25 +1906,13 @@ test('a Write of another auto-merge.json, outside the plugins\' data, goes throu
 
 // The moment the module reads on its clock: noon in UTC, a day everywhere the tests run.
 const RECEIVED = Date.UTC(2026, 10, 2, 12, 0, 0)
-test('auto-merge-set accepts a quote that holds the operator\'s recorded answer whole', async ($, on) => {
+test('auto-merge-set accepts his dated words inside a wrapping', async ($, on) => {
   const seen = await world($, on, mergeWorld())
   const wrapped = await $.tool.call(setAutoMerge(true, '« ' + HIS_WORDS + ' » — operator'))
   expect(wrapped.deny).toBeUndefined()
   expect(listed(seen)).toEqual(['acme/thing'])
 })
 
-test('auto-merge-set refuses spans that hold the recorded answer only in parts', async ($, on) => {
-  const seen = await world($, on, mergeWorld())
-  for (const words of [
-    'they said « Accor » « der » so auto-merge is on',
-    'auto-merge: « Accorde »',
-    '« Acc » and « order » auto-merge',
-  ]) {
-    const out = await $.tool.call(setAutoMerge(true, words))
-    expect(out.deny).toContain('github: auto-merge-set')
-  }
-  expect(seen.files).toEqual({})
-})
 
 // ---- leaving draft is the operator's outside auto-merge ----
 
@@ -3258,45 +3202,23 @@ const consentWrites = (seen: Seen) => seen.writes.filter((w) => w.path.startsWit
 const DIALOG = { v: 1, subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }, question: WAIVER_Q, by: 'tab', at: '2026-11-02T12:00:00Z' }
 const granted = (over: Record<string, unknown> = {}) => consent({ answer: 'Accorder', ...over })
 
-for (const answer of ['Accorder', 'Refuser']) {
-  test('the operator\'s « ' + answer + ' » to the waiver dialog is recorded once, dated by the module', async ($, on) => {
-    mock.clock(on, { now: RECEIVED })
-    const seen = await world($, on, { records: TWO, answer })
-    await askWaiver($)
-    const [written, ...more] = consentWrites(seen)
-    expect(more).toEqual([])
-    expect(written).toMatchObject({ ...DIALOG, answer })
-    expect(String(written.entry)).toStartWith('dialog-guard-session-')
-  })
-}
 
-test('a dialog that is no waiver question records nothing', async ($, on) => {
+test('a waiver dialog records nothing: a waiver rests on his quoted, dated words', async ($, on) => {
   const seen = await world($, on, { answer: 'Accorder' })
+  await askWaiver($)
   await askWaiver($, WAIVER_Q, ['Accorder', 'Plus tard'])
   await askWaiver($, 'Merge acme/thing#12 ?')
   expect(consentWrites(seen)).toEqual([])
 })
 
-test('a successor session reads the dialog\'s « Accorder » at a head with no E2E record: Ready, and says the waiver', async ($, on) => {
-  const seen = await world($, on, { records: TWO, ...consentWorld({ x: { ...DIALOG, entry: 'dialog-s-1', answer: 'Accorder' } }) })
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
-  expect(seen.logs[0]).toContain('(e2e waived by the operator (tab, 2026-11-02T12:00:00Z)).')
-})
 
-for (const by of ['pane', 'coordinator']) {
-  test('the « Accorder » given in the ' + by + ' counts as the dialog\'s does', async ($, on) => {
-    const seen = await world($, on, { records: TWO, ...consentWorld({ a: granted({ by }) }) })
-    await $.tool.call(gh('pr-gate', { pr: 12 }))
-    expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
-  })
-}
 
 for (const [label, records] of [
   ['a « Refuser »', { a: consent({ answer: 'Refuser' }) }],
   ['a « Refuser » after an « Accorder »', { a: granted(), b: consent({ entry: 'b', answer: 'Refuser', at: '2026-11-04T10:00:00Z' }) }],
   ['an « Accorder » of another pull request', { a: granted({ subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 13 } }) }],
   ['an answer that is no choice of the question', { a: consent() }],
+  ['an « Accorder »', { a: granted() }],
 ] as const) {
   test('with ' + label + ' the E2E is not waived', async ($, on) => {
     const seen = await world($, on, { records: TWO, labels: ['Ready'], ...consentWorld(records) })
@@ -3305,19 +3227,7 @@ for (const [label, records] of [
   })
 }
 
-test('a run that failed at an earlier head after the « Accorder » voids it', async ($, on) => {
-  const failedAfter = earlier([at('e2e', 'fail', {}, '2026-11-04T10:00:00Z')])
-  const seen = await world($, on, { records: TWO, labels: ['Ready'], tree: { ...failedAfter, ...consentWorld({ a: granted() }).tree } })
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: e2e: no record at 0123456'])
-})
 
-test('a run that failed at an earlier head before the « Accorder » leaves it standing', async ($, on) => {
-  const failedBefore = earlier([at('e2e', 'fail', {}, '2026-11-02T10:00:00Z')])
-  const seen = await world($, on, { records: TWO, tree: { ...failedBefore, ...consentWorld({ a: granted() }).tree } })
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
-})
 
 // ---- the operator's quoted words, with their date: from any channel, no consent record ----
 
@@ -3360,25 +3270,12 @@ const normsAnswer = (answer: string, over: Record<string, unknown> = {}) =>
   consent({ subject: { kind: 'norms-waiver', repo: 'acme/thing', pr: 12 }, question: NORMS_Q, answer, ...over })
 const NORMS_MISSING = 'github: acme/thing#12 back to Not Ready at 0123456. Missing: norms: no record at 0123456'
 
-test('the operator\'s « Accorder » to the norms waiver dialog is recorded with the norms subject', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { records: ONLY_REVIEW, answer: 'Accorder' })
-  await askWaiver($, NORMS_Q)
-  const [written, ...more] = consentWrites(seen)
-  expect(more).toEqual([])
-  expect(written).toMatchObject({ subject: { kind: 'norms-waiver', repo: 'acme/thing', pr: 12 }, question: NORMS_Q, answer: 'Accorder', by: 'tab' })
-})
 
-test('norms required by the plan and waived by his « Accorder »: Ready with no norms record, and says the waiver', async ($, on) => {
-  const seen = await world($, on, { records: ONLY_REVIEW, plan: NORMS_REQUIRED, ...consentWorld({ a: normsAnswer('Accorder') }) })
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
-  expect(seen.logs[0]).toContain('norms waived by the operator (pane, 2026-11-03T10:00:00Z)')
-})
 
 for (const [label, records] of [
   ['his « Refuser »', { a: normsAnswer('Refuser') }],
   ['an « Accorder » of the E2E only', { a: granted() }],
+  ['his « Accorder »', { a: normsAnswer('Accorder') }],
 ] as const) {
   test('norms required by the plan with ' + label + ' stay missing', async ($, on) => {
     const seen = await world($, on, { records: ONLY_REVIEW, plan: NORMS_REQUIRED, labels: ['Ready'], ...consentWorld(records) })
@@ -3389,12 +3286,6 @@ for (const [label, records] of [
   })
 }
 
-test('a norms check that failed at an earlier head after his « Accorder » voids the waiver', async ($, on) => {
-  const failedAfter = earlier([at('norms', 'fail', {}, '2026-11-04T10:00:00Z')])
-  const seen = await world($, on, { records: ONLY_REVIEW, plan: NORMS_REQUIRED, labels: ['Ready'], tree: { ...failedAfter, ...consentWorld({ a: normsAnswer('Accorder') }).tree } })
-  await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(seen.logs).toEqual([NORMS_MISSING])
-})
 
 test('a norms waiver quoting the operator\'s dated words is written as given, with no consent record', reviewing('norms'), async ($, on) => {
   const seen = await world($, on, { plan: NORMS_REQUIRED, git: CLEAN })
@@ -3426,7 +3317,7 @@ const deployList = (...grants: Array<[string, string]>) =>
   ({ repositories: grants.map(([repo, env]) => ({ repo, env })), commands: DEPLOYS })
 const STAGING_ONLY = { deployList: deployList([INFRA, 'staging']) }
 const PROD_DEPLOY = 'cd ~/infra && composer deploy:api:prod -- 1.2.3 > /tmp/log 2>&1'
-const AUTO_DEPLOY_WORDS = CONSENT_GRANT + ' : infra passe en auto-deploy'
+const AUTO_DEPLOY_WORDS = '« infra passe en auto-deploy », 2026-11-18T19:35Z'
 const setDeploy = (on: boolean, words: string, env = 'prod', extra: Record<string, unknown> = {}, repo = INFRA) =>
   gh('auto-deploy-set', { repo, env, on, words, ...extra }, undefined)
 const deployGrants = (seen: Seen) => JSON.parse(String(seen.files[AUTO_DEPLOY])).repositories
@@ -3501,7 +3392,7 @@ function deployWorld(text: string = CONSENT_GRANT, env = 'prod', over: World = {
   return { ...answered, ...over, tree: { ...answered.tree, ...over.tree } }
 }
 
-test('auto-deploy-set grants one environment of a repository on the operator\'s recorded answer naming auto-deploy', async ($, on) => {
+test('auto-deploy-set grants one environment of a repository on the operator\'s quoted, dated words', async ($, on) => {
   const seen = await world($, on, deployWorld(CONSENT_GRANT, 'prod', STAGING_ONLY))
   const set = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod'))
   expect(set.deny).toBeUndefined()
@@ -3511,69 +3402,27 @@ test('auto-deploy-set grants one environment of a repository on the operator\'s 
   expect(((await $.tool.call(bash(PROD_DEPLOY)))).deny).toBeUndefined()
 })
 
-test('words the operator typed are no consent: with no consent record a list change is refused and writes nothing', async ($, on) => {
+test('words with no date are no consent: a list change is refused and writes nothing', async ($, on) => {
   const seen = await world($, on, STAGING_ONLY)
-  await typed($, AUTO_DEPLOY_WORDS)
-  const out = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS))
-  expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
-  expect(out.deny).toContain('declare_wait\'s consent_kind "auto-deploy" and consent_repo "acme/infra" and consent_env "prod"')
+  for (const words of ['oui', CONSENT_GRANT, 'infra passe en auto-deploy']) {
+    const out = await $.tool.call(setDeploy(true, words))
+    expect(out.deny, words).toContain('github: auto-deploy-set rests on the operator\'s words, quoted in "words" with their date')
+  }
   expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
   expect(seen.writes).toEqual([])
 })
 
-// A recorded answer is a grant only as « Accorder »: a refusal quoted with on:true, in the choice's words or in prose, grants no environment.
-for (const answer of ['B : ne pas passer infra en auto-deploy sur prod', 'ne pas passer infra en auto-deploy sur prod', 'oui, infra passe en auto-deploy', 'oui']) {
-  test('a recorded answer that is no « ' + CONSENT_GRANT + ' » never carries auto-deploy: ' + answer, async ($, on) => {
-    const seen = await world($, on, deployWorld(answer, 'prod', STAGING_ONLY))
-    const out = await $.tool.call(setDeploy(true, answer + ' : infra en auto-deploy'))
-    expect(out.deny).toContain('github: auto-deploy-set refused on acme/infra for prod')
-    expect(out.deny).toContain('« ' + CONSENT_GRANT + ' »')
-    expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
-    expect(seen.writes).toEqual([])
-  })
-}
 
 
-const DEPLOY_ANSWER = CONSENT_GRANT + ' : infra passe en auto-deploy sur staging'
 
-test('auto-deploy-set may quote the operator\'s answer in a consent record of that repository and environment', async ($, on) => {
-  const seen = await world($, on, deployWorld(CONSENT_GRANT, 'staging'))
-  const out = await $.tool.call(setDeploy(true, DEPLOY_ANSWER, 'staging'))
-  expect(out.deny).toBeUndefined()
-  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
-})
 
-test('a consent record of auto-deploy on one environment does not carry another', async ($, on) => {
-  const seen = await world($, on, deployWorld(CONSENT_GRANT, 'staging'))
-  const out = await $.tool.call(setDeploy(true, DEPLOY_ANSWER, 'prod'))
-  expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
-  expect(seen.writes).toEqual([])
-})
 
-// The operator answered « Accorder » to the consent question: the grant rests on that record, whatever words the call carries.
-for (const words of [CONSENT_GRANT, 'oui, c\'est bon', 'déploiement automatique : ' + CONSENT_GRANT]) {
-  test('auto-deploy-set on is granted by the recorded « ' + CONSENT_GRANT + ' », whatever its words say: ' + words, async ($, on) => {
-    const seen = await world($, on, deployWorld(CONSENT_GRANT, 'prod', STAGING_ONLY))
-    const out = await $.tool.call(setDeploy(true, words, 'prod'))
-    expect(out.deny).toBeUndefined()
-    expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }, { repo: INFRA, env: 'prod' }])
-  })
-}
 
-test('auto-deploy-set on with no consent record is refused naming the record, whatever its words say', async ($, on) => {
-  const seen = await world($, on, STAGING_ONLY)
-  const out = await $.tool.call(setDeploy(true, CONSENT_GRANT, 'prod'))
-  expect(out.deny).toContain('github: auto-deploy-set refused on acme/infra for prod')
-  expect(out.deny).toContain('consent record (orchestrator) of auto-deploy on acme/infra for prod')
-  expect(out.deny).toContain('newest answer is missing or is not « ' + CONSENT_GRANT + ' »')
-  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
-  expect(seen.writes).toEqual([])
-})
 
-test('auto-deploy-set on adds the declared commands on the recorded « ' + CONSENT_GRANT + ' » too, whatever its words say', async ($, on) => {
+test('auto-deploy-set on adds the declared commands on his dated words too', async ($, on) => {
   const seen = await world($, on, deployWorld())
   const declared = { kind: 'script', path: 'scripts/deploy.sh' }
-  const out = await $.tool.call(setDeploy(true, 'oui', 'prod', { commands: [declared] }))
+  const out = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod', { commands: [declared] }))
   expect(out.deny).toBeUndefined()
   expect(JSON.parse(String(seen.files[AUTO_DEPLOY])).commands).toContainEqual({ repo: INFRA, ...declared })
 })
@@ -3584,37 +3433,9 @@ const answers = (older: string, newer: string): World => consentWorld({
   b: consent({ subject: { kind: 'auto-deploy', repo: INFRA, env: 'prod' }, entry: 'b', answer: newer, by: 'coordinator', at: '2026-11-04T10:00:00Z' }),
 }, '/cfg/consents/acme/infra')
 
-test('auto-deploy-set on is refused when the newest recorded answer is « ' + CONSENT_REFUSE + ' », even with the older « ' + CONSENT_GRANT + ' » quoted', async ($, on) => {
-  const seen = await world($, on, { ...answers(CONSENT_GRANT, CONSENT_REFUSE), ...STAGING_ONLY })
-  const out = await $.tool.call(setDeploy(true, AUTO_DEPLOY_WORDS, 'prod'))
-  expect(out.deny).toContain('github: auto-deploy-set refused on acme/infra for prod')
-  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }])
-  expect(seen.writes).toEqual([])
-})
 
-test('auto-deploy-set on is granted when the newest recorded answer is « ' + CONSENT_GRANT + ' » after an older « ' + CONSENT_REFUSE + ' »', async ($, on) => {
-  const seen = await world($, on, { ...answers(CONSENT_REFUSE, CONSENT_GRANT), ...STAGING_ONLY })
-  const out = await $.tool.call(setDeploy(true, CONSENT_GRANT, 'prod'))
-  expect(out.deny).toBeUndefined()
-  expect(deployGrants(seen)).toEqual([{ repo: INFRA, env: 'staging' }, { repo: INFRA, env: 'prod' }])
-})
 
-// A withdrawal quotes a record of its subject, its words naming auto-deploy as the operator writes it, in French too.
-for (const spelling of ['auto-déploiement', 'déploiement automatique', 'Déploiement Automatique', 'deploiement automatique', 'déploiement continu', 'DÉPLOIEMENT CONTINU']) {
-  test('the words « ' + spelling + ' » name auto-deploy in a withdrawal', async ($, on) => {
-    const seen = await world($, on, deployWorld(CONSENT_GRANT, 'prod', { deployList: deployList([INFRA, 'prod']) }))
-    const out = await $.tool.call(setDeploy(false, CONSENT_GRANT + ' : infra sort du ' + spelling, 'prod'))
-    expect(out.deny).toBeUndefined()
-    expect(deployGrants(seen)).toEqual([])
-  })
-}
 
-test('auto-deploy-set off whose words do not name auto-deploy is refused', async ($, on) => {
-  const seen = await world($, on, deployWorld(CONSENT_GRANT, 'prod', { deployList: deployList([INFRA, 'prod']) }))
-  const out = await $.tool.call(setDeploy(false, CONSENT_GRANT + ' : infra sort', 'prod'))
-  expect(out.deny).toContain('"déploiement automatique"')
-  expect(seen.writes).toEqual([])
-})
 
 test('auto-deploy-set off takes the environment out, and the deploy is refused again', async ($, on) => {
   const seen = await world($, on, deployWorld(CONSENT_GRANT, 'prod', { deployList: deployList([INFRA, 'staging'], [INFRA, 'prod']) }))

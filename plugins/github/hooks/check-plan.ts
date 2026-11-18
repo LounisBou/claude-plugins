@@ -4,7 +4,6 @@
 // means are core's readiness contract (readiness.ts). Pure functions only: register.ts reads and
 // writes the file, and posts the plan on the pull request.
 
-import { CONSENT_GRANT, CONSENT_REFUSE } from '../core/consent-record.ts'
 import { DETAIL_MAX, RECORD_VERSION, type Kind } from '../core/pr-record.ts'
 import { PLAN_NEEDS, PLAN_OMITTED, reviewNeed, WAIVABLE, type Planned, type Waivable } from '../core/readiness.ts'
 import { isRepoName } from './e2e-scope.ts'
@@ -89,29 +88,9 @@ export function planExcuses(plan: CheckPlan | undefined): Excused {
   return excused
 }
 
-/*
- * The operator's waiver of a required E2E or norms check: one question, « Dispense d'E2E pour <owner/name>#<n> : <why> »
- * or « Dispense de normes pour … », its choices « Accorder » and « Refuser », asked by dialog or in the round. His answer, from any channel, is the consent
- * record of the pull request (core's consent-record.ts) whose subject names the check; the newest one decides. A waiver
- * written through mcp__github__record rests on his words quoted in `detail` with their date instead, and reads no record.
- */
+/* The operator's waiver of a required E2E or norms check rests on his words quoted in `detail` with their date (mcp__github__record). */
 export type { Waivable }
 export const WAIVED = WAIVABLE
-// The consent subject the dialog's answer is recorded under.
-export const waiverSubject = (check: Waivable) => `${check}-waiver` as const
-const WAIVER_QUESTION = /^\s*Dispense (d['’]E2E|de normes) pour ([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)\s*:/i
-
-/** The check and pull request a dialog question asks the waiver of, or undefined when it is no waiver question. */
-export function waiverQuestion(question: unknown): { check: Waivable; repo: string; pr: number } | undefined {
-  const q = (typeof question === 'object' && question !== null ? question : {}) as Record<string, unknown>
-  const match = WAIVER_QUESTION.exec(String(q['question'] ?? ''))
-  const labels = Array.isArray(q['options']) ? q['options'].map((o: unknown) => String(fieldOf(o, 'label') ?? '').trim()) : []
-  if (!match || labels.length !== 2 || !labels.includes(CONSENT_GRANT) || !labels.includes(CONSENT_REFUSE) || q['multiSelect'] === true) return undefined
-  const pr = Number(match[3])
-  const repo = match[2] ?? ''
-  const check: Waivable = /normes/i.test(match[1] ?? '') ? 'norms' : 'e2e'
-  return isRepoName(repo) && pr > 0 ? { check, repo, pr } : undefined
-}
 
 /** A check's need as a plan writes it: a required review with its rounds. */
 export const needText = (check: Check): string => check.need + (check.max !== undefined ? ': max ' + check.max : '')
