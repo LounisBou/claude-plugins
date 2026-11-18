@@ -197,24 +197,42 @@ describe('an unattended pull request', () => {
       assert.deepEqual(ready(rowText() + rowText({ id: 13, label: 'GATEFIX: a gate' })).map(r => r.id), [12, 13])
     })
 
-    it('is not named while a live agent is on it, by its subject or by the row note', () => {
-      assert.deepEqual(ready(rowText(), { live: ['Agent: tokendrift'] }), [])
-      assert.deepEqual(ready(rowText({ note: 'Agent: drift-2, dispatched' }), { live: ['Agent: drift-2'] }), [])
-      assert.deepEqual(ready(rowText(), { live: ['Agent: gatefix'] }).length, 1)
-      assert.deepEqual(ready(rowText(), { live: ['Orch: tokendrift'] }).length, 1)
-      // A whole word of the subject holds it, a piece of a word does not.
-      assert.deepEqual(ready(rowText({ label: 'FIX: a thing' }), { live: ['Agent: prefix-bug'] }).length, 1)
-      assert.deepEqual(ready(rowText({ label: 'FIX: a thing' }), { live: ['Agent: fix-2 [a1b2c3]'] }), [])
+    it('is not named while a live agent is on its row, whatever its title shares with the label', () => {
+      const held = rowText({ agent: 'Agent: row knows its agent' })
+      assert.deepEqual(ready(held, { live: ['Agent: row knows its agent'] }), [])
+      assert.deepEqual(ready(held, { live: ['Agent: row knows its agent [a1b2c3]'] }), [])
+      assert.deepEqual(ready(held, { live: ['Agent: ROW knows its agent'] }), [])
+      assert.deepEqual(ready(held, { live: ['Agent: gatefix', 'Orch: row knows its agent'] }).length, 1)
     })
 
-    it('is not named while an open pull request holds it, by its agent or by the row note', () => {
-      assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: tokendrift' })] }), [])
+    it('is named once its agent has ended: the live set frees the row', () => {
+      assert.deepEqual(ready(rowText({ agent: 'Agent: row knows its agent' }), { live: [] }).map(r => r.id), [12])
+    })
+
+    it('a rotation moves the row to the new agent: only the one the row names holds it', () => {
+      const before = rowText({ agent: 'Agent: first' })
+      const after = rowText({ agent: 'Agent: second' })
+      assert.deepEqual(ready(before, { live: ['Agent: first'] }), [])
+      assert.deepEqual(ready(after, { live: ['Agent: first'] }).length, 1)
+      assert.deepEqual(ready(after, { live: ['Agent: second'] }), [])
+    })
+
+    it('guesses no agent: a title with the label\'s word, or a note naming one, holds nothing', () => {
+      assert.deepEqual(ready(rowText(), { live: ['Agent: tokendrift'] }).length, 1)
+      assert.deepEqual(ready(rowText({ note: 'Held by Agent: drift-2, dispatched' }), { live: ['Agent: drift-2'] }).length, 1)
+      assert.deepEqual(ready(rowText({ note: 'Dispatched: Agent: drift-2' }), { live: ['Agent: drift-2'] }).length, 1)
+    })
+
+    it('is not named while an open pull request holds it, by its agent (the row\'s) or by the row note', () => {
+      const own = rowText({ agent: 'Agent: tokendrift' })
+      assert.deepEqual(ready(own, { lines: [line({ agent: 'Agent: tokendrift [a1b2c3]' })] }), [])
       assert.deepEqual(ready(rowText({ note: 'claude-plugins#7 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }), [])
       assert.deepEqual(ready(rowText({ note: 'other-claude-plugins#7 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }).length, 1)
       assert.deepEqual(ready(rowText({ note: 'claude-plugins#71 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }).length, 1)
-      assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: other' })] }).length, 1)
-      // An agent put on the pull request before the last one holds it too.
-      assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: review r1', earlier: ['Agent: tokendrift'] })] }), [])
+      assert.deepEqual(ready(own, { lines: [line({ agent: 'Agent: other' })] }).length, 1)
+      // A title of the label's word on the pull request holds nothing; an agent put on the pull request before the last one holds it.
+      assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: tokendrift' })] }).length, 1)
+      assert.deepEqual(ready(own, { lines: [line({ agent: 'Agent: review r1', earlier: ['Agent: tokendrift'] })] }), [])
     })
 
     it('is not named with a blocker, a deferral that has no date, a closed state, or no blocker said', () => {
@@ -237,7 +255,7 @@ describe('an unattended pull request', () => {
 
     it('a due deferred row is held by a live agent or an open pull request as any row is, and comes after the ready rows beside it', () => {
       const MOMENT = Date.parse('2026-11-28T08:00:00Z')
-      const due = rowText({ deferred: 'later', blocker: 'until 2026-11-28T08:00:00Z' })
+      const due = rowText({ deferred: 'later', blocker: 'until 2026-11-28T08:00:00Z', agent: 'Agent: tokendrift' })
       const at = (text: string, over: { lines?: LedgerLine[]; live?: string[] } = {}) =>
         readyRows({ texts: [text], lines: over.lines ?? [], live: new Set(over.live ?? []), now: MOMENT })
       assert.deepEqual(at(due, { live: ['Agent: tokendrift'] }), [])
@@ -247,10 +265,10 @@ describe('an unattended pull request', () => {
       assert.equal(readyRowsLine(both)?.split('\n').length, 2)
     })
 
-    it('names a row with no keyword as such, and only its note can hold it', () => {
+    it('names a row with no keyword as such, and only its agent can hold it', () => {
       assert.equal(readyRowsLine(ready(rowText({ label: undefined }))), 'Sujets prêts sans agent : no keyword (ligne 12)')
       assert.equal(readyRowsLine(ready(rowText({ label: ': no word' }), { live: ['Agent: tokendrift'] })), 'Sujets prêts sans agent : no word (ligne 12)')
-      assert.deepEqual(ready(rowText({ label: undefined, note: 'Agent: tokendrift' }), { live: ['Agent: tokendrift [a1b2c3]'] }), [])
+      assert.deepEqual(ready(rowText({ label: undefined, agent: 'Agent: tokendrift' }), { live: ['Agent: tokendrift [a1b2c3]'] }), [])
     })
 
     it('reads the rows of every record', () => {

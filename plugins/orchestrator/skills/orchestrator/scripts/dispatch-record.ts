@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { orchForm } from '../../../core/names.ts'
+import { orchForm, parseSessionName } from '../../../core/names.ts'
 import { sessionOrchestration } from '../../../core/session-orchestration.ts'
 import { MODULE_DIR, recordsRegistryPath } from '../../../core/orchestration.ts'
 import { setting, stateDir, type Env } from '../../../core/paths.ts'
@@ -20,10 +20,10 @@ import { AUDIT_CONTRACT, prRefsOf, type Edge, type Facts, type Step } from '../.
 import { archiveOf, isLedgerMarked, ledgerLineOf, ledgerLines, parsePrRef, prKey, statusText, untilOf, withArchived, withLine, withoutEarlier, withoutLines, type LedgerSet } from '../../../core/pr-ledger.ts'
 
 export const USAGE =
-  'usage: dispatch-record.sh {open|round|review|verdict|fixed|surface|audit|ready|close|defer|undefer|blocker|note|escaped|cost|summary|goals|pr|pr-archive} <record> [...] (see header)'
+  'usage: dispatch-record.sh {open|round|review|verdict|fixed|surface|audit|ready|close|defer|undefer|blocker|note|agent|escaped|cost|summary|goals|pr|pr-archive} <record> [...] (see header)'
 
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-const WRITES = new Set(['open', 'round', 'review', 'verdict', 'fixed', 'surface', 'audit', 'ready', 'close', 'defer', 'undefer', 'blocker', 'note', 'escaped', 'cost'])
+const WRITES = new Set(['open', 'round', 'review', 'verdict', 'fixed', 'surface', 'audit', 'ready', 'close', 'defer', 'undefer', 'blocker', 'note', 'agent', 'escaped', 'cost'])
 
 /**
  * What an open row waits on before it can start: nothing; a pull request merged, another row closed,
@@ -738,10 +738,11 @@ export function openLine(row: Row): string {
     ? `deferred=${text(row['id'])} label=${text(row['label'])} ruling=${text(row['deferred'])}`
     : `open=${text(row['id'])} label=${text(row['label'])}`
   const blocker = typeof row['blocker'] === 'string' && row['blocker'] !== 'none' ? ` blocker=${row['blocker']}` : ''
+  const agent = typeof row['agent'] === 'string' && row['agent'] !== '' ? ` agent=${row['agent']}` : ''
   const note = typeof row['note'] === 'string' && row['note'] !== '' ? ` note=${row['note']}` : ''
   const v = field(row['review'], 'verdict')
   const verdict = truthy(v) ? ` verdict=${text(field(v, 'result'))}@${text(field(v, 'head')).slice(0, 7)} — ${text(field(v, 'words'))} — findings=${text(or(field(v, 'findings'), 'none'))}` : ''
-  return `${line}${blocker}${note}${verdict}`
+  return `${line}${blocker}${agent}${note}${verdict}`
 }
 
 const isOpen = (row: Row): boolean => row['state'] === 'open'
@@ -924,7 +925,7 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
   if (cmd === 'open') return open(ctx, rest)
   if (cmd === 'summary') return summary(ctx, rest)
   if (cmd === 'goals') return goals(ctx, rest)
-  if (!WRITES.has(cmd)) die(ctx, `unknown subcommand: ${cmd} (expected open, round, review, verdict, fixed, surface, audit, ready, close, defer, undefer, blocker, note, escaped, cost, summary, goals, pr or pr-archive)`)
+  if (!WRITES.has(cmd)) die(ctx, `unknown subcommand: ${cmd} (expected open, round, review, verdict, fixed, surface, audit, ready, close, defer, undefer, blocker, note, agent, escaped, cost, summary, goals, pr or pr-archive)`)
   const id = argv[2] ?? ''
   if (id === '') die(ctx, `${cmd}: a row id is required`)
   requireRow(ctx, cmd, id)
@@ -964,6 +965,13 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
       if (cmd === 'note' && value === '') delete row['note']
       else row[cmd] = value
     })
+  }
+  // agent: the session working the open row, a fact the launcher writes at the spawn of its brief's row.
+  if (cmd === 'agent') {
+    if (rowOf(ctx, id)['state'] !== 'open') die(ctx, `agent: row ${id} is not open`)
+    const name = args[0] ?? ''
+    if (args.length !== 1 || parseSessionName(name)?.role !== 'agent') die(ctx, `agent: give the session's name, one argument, \`Agent: <subject>\`, got: ${args.join(' ')}`)
+    return rewrite(ctx, id, row => { row['agent'] = name })
   }
   // defer: the operator ruled « later » on an open row: it stays open, with his words and a revisit date.
   if (rowOf(ctx, id)['state'] !== 'open') die(ctx, `defer: row ${id} is not open`)

@@ -219,10 +219,10 @@ const holdsRow = (text: string, id: number): boolean => text.split('\n').some(li
 })
 
 /*
- * The open rows whose note names the agent (`Held by Agent: <name>`, `Dispatched …: Agent: <name>`) besides its own:
+ * The open rows whose `agent` field names the agent (`dispatch-record.sh agent`) besides its own:
  * another subject it was put on, which keeps it open at the Ready or the merge of its pull request. Its own row is the
  * one its brief was printed for, as the takeover reads it (in the record beside that brief, else of that id in any
- * record); an agent whose brief names no row owns the one row its note names that waits on no blocker (one that waits is a
+ * record); an agent whose brief names no row owns the one row that names it and waits on no blocker (one that waits is a
  * follow-up), and of several, none is told apart.
  */
 async function otherRowsOf($: Held, agent: string, records: readonly RecordText[]): Promise<HeldRow[]> {

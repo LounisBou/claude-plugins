@@ -192,6 +192,25 @@ test('blocker and note: set at open or later on an open row, checked against the
   assert.equal(await cli(['note', r, '2', 'x']), '1||ERROR: note: row 2 is not open\n')
 })
 
+test('agent: puts a session on an open row, replaces it at a rotation, and is printed on the open line', async () => {
+  await withGoals()
+  const r = rec()
+  await cli(['open', r, '--class', 'c', '--tier', 'deep', '--label', 'one'])
+  await cli(['open', r, '--class', 'c', '--tier', 'deep', '--label', 'two'])
+  assert.equal(await cli(['agent', r, '1', 'Agent: row knows']), '0||')
+  assert.equal(rows()[0]?.['agent'], 'Agent: row knows')
+  assert.equal(Object.hasOwn(rows()[1] ?? {}, 'agent'), false)
+  assert.equal(await cli(['summary', r, '--open', '--label', '1']), '0|open=1 label=one agent=Agent: row knows\n|')
+  // A rotation: the replacement takes the row.
+  assert.equal(await cli(['agent', r, '1', 'Agent: row knows 2']), '0||')
+  assert.equal(rows()[0]?.['agent'], 'Agent: row knows 2')
+  assert.match(await cli(['agent', r, '1', 'Orch: someone']), /agent: give the session's name, one argument, `Agent: <subject>`, got: Orch: someone/)
+  assert.match(await cli(['agent', r, '1']), /agent: give the session's name/)
+  assert.equal(await cli(['agent', r, '9', 'Agent: a']), `1||ERROR: agent: no row with id 9 in ${r}\n`)
+  await cli(['close', r, '2', '--verdict', 'done'])
+  assert.equal(await cli(['agent', r, '2', 'Agent: a']), '1||ERROR: agent: row 2 is not open\n')
+})
+
 test('blocker: the moment (until, an existing ISO UTC time) and the measure (free words) are accepted by open and blocker, the rest refused', async () => {
   await withGoals()
   const r = rec()

@@ -252,10 +252,10 @@ const readyRecord = (rows: object[]) => `${rows.map(r => JSON.stringify(r)).join
 const ROW = (id: number, label: string, more: Record<string, unknown> = {}) => ({ id, state: 'open', label, blocker: 'none', ...more })
 const READY_ROWS = [
   ROW(21, 'IDLEWORK: nobody on it'),
-  ROW(22, 'FIVEWORK: its agent runs'),
+  ROW(22, 'FIVEWORK: its agent runs', { agent: 'Agent: fivework' }),
   ROW(23, 'LATERWORK: waits', { blocker: 'row 4 closed' }),
   ROW(24, 'PUTOFF: deferred', { deferred: 'later, 2026-11-14' }),
-  ROW(25, 'SEVEN: its pull request is open'),
+  ROW(25, 'SEVEN: its pull request is open', { agent: 'Agent: seven' }),
   ROW(26, 'DONEWORK: closed', { state: 'closed' }),
 ]
 

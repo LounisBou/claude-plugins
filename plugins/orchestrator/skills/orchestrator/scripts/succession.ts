@@ -10,11 +10,10 @@
 // Live state, and nothing of it lands in a file.
 //
 // The Live state: the open rows at level 1; their owners, « ruling » for a deferred one (DEFERRED DUE once its `until` date has come), an open
-// row's live agent as the row its brief was printed for binds it (a hand-written note naming an
-// agent whose brief names no row, `Dispatched …: Agent: <name>`),
+// row's live agent as the row's `agent` field names it (`dispatch-record.sh agent`, written by the launcher),
 // else its blocker checked on its artifact (the pull request merged, the row closed, the release
 // installed, the `until` time passed; a `measure` never falls): fallen and with no agent, READY NOT
-// STARTED; a row whose note names an agent no longer live, DISPATCHED, NO LIVE AGENT; an open row
+// STARTED; a row whose `agent` is no longer live, DISPATCHED, NO LIVE AGENT; an open row
 // with no blocker recorded reads NO OWNER; the record's pull request ledger; the agents of this
 // orchestration, each with its tty and the brief its launch named: the deck's orchestrator on the
 // predecessor's tty (by name when no tty is given or the deck has none there), joined with the
@@ -61,7 +60,7 @@ import { archiveSettled } from './lib/round-archive.ts'
 import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
 import { askedKey } from '../../../hooks/asked-key.ts'
 import { holdsOf, readyHeadsOf } from '../../../hooks/ready-agent.ts'
-import { bareName, briefOfLaunch, namesAgent as names, newestLaunch, rowOfBrief } from '../../../hooks/row-owner.ts'
+import { bareName, briefOfLaunch, isAgent, newestLaunch, rowOfBrief } from '../../../hooks/row-owner.ts'
 export { rowOfBrief }
 import type { Asked } from '../../../hooks/question.ts'
 
@@ -134,8 +133,10 @@ export interface OpenRow {
   readonly meant?: string
   readonly label?: string
   readonly ruling?: string
-  /** The row's note of judgment, where its dispatch names the agent it went to. */
+  /** The row's note of judgment. */
   readonly note?: string
+  /** The session working the row, as `dispatch-record.sh agent` wrote it (`Agent: <subject>`). */
+  readonly agent?: string
   /** What the row waits on; undefined when none was recorded. */
   readonly blocker?: string
   /** The pull requests the row names, as written (`<repo>#<n>`, the repository maybe by its short name). */
@@ -161,8 +162,6 @@ export interface LiveAgent {
   readonly name: string
   readonly tty: string | null
   readonly brief?: string
-  /** The row its brief was printed for (rowOfBrief); undefined when no brief names one. */
-  readonly row?: string
   /** What its Ready pull request says of it, `Ready (<prs>): the module closes it once done` or the pull requests it still holds; undefined when none of its pull requests is Ready. */
   readonly ready?: string
 }
@@ -507,6 +506,7 @@ export function openRows(rows: readonly Row[], holders: readonly Holder[] = []):
       ruling: typeof row['deferred'] === 'string' ? row['deferred'] : '',
       ...(typeof row['note'] === 'string' && row['note'] !== '' ? { note: row['note'] } : {}),
       ...(typeof row['blocker'] === 'string' ? { blocker: row['blocker'] } : {}),
+      ...(typeof row['agent'] === 'string' && row['agent'] !== '' ? { agent: row['agent'] } : {}),
       ...(refs.length > 0 ? { refs } : {}),
       ...(heads.length > 0 ? { heads } : {}),
     }
@@ -619,11 +619,7 @@ export function readOpen(
     const ready = shown ? readyNote(agent.name, ledger, (repo, pr) => ['MERGED', 'CLOSED'].includes(prState?.(repo, pr) ?? ''), readyHead) : undefined
     const said = ready === undefined ? agent : { ...agent, ready }
     const brief = briefOf(state, agent.name)
-    if (brief === undefined) return said
-    // A brief that cannot be read binds no row: the takeover still prints the rest of the state.
-    let row: string | undefined
-    try { row = rowOfBrief(readText(brief)) } catch { row = undefined }
-    return row === undefined ? { ...said, brief } : { ...said, brief, row }
+    return brief === undefined ? said : { ...said, brief }
   })
   // A row of a record older than the ledger names no pull request the ledger holds: the forge's open
   // ones are matched to the open rows, by what a label names and the heads its review recorded.
@@ -700,12 +696,11 @@ export function fallOf(blocker: string, facts: Artifacts): Fall {
 }
 
 /**
- * Who works each open row, from the facts the state holds: the live agents whose brief was printed
- * for it (rowOfBrief, the id the dispatch recorded), never a guess from its label nor a name its note
- * merely mentions; an agent whose brief names no row is matched on a note naming it in the dispatch's
- * form, `Dispatched …: Agent: <name>` (listed without the role prefix). A deferred row reads
+ * Who works each open row, from the fact the record holds: the live agents the row's `agent` field names
+ * (`dispatch-record.sh agent`, which the launcher writes at the spawn of the row's brief), never a guess
+ * from its label nor from its note (listed without the role prefix). A deferred row reads
  * « ruling » until its `until` date, then DEFERRED DUE; a row with no live agent reads its blocker checked on its artifact: `blocked: <blocker>` while it stands, then an open pull request it holds,
- * DISPATCHED, NO LIVE AGENT when its note names an agent the deck no longer lists, READY NOT STARTED
+ * DISPATCHED, NO LIVE AGENT when its `agent` names a session the deck no longer lists, READY NOT STARTED
  * once its blocker has fallen, `blocker unread: <blocker>` when its artifact cannot be read; a row
  * with no blocker recorded reads NO OWNER. Each line leads with the row's subject, its id in parentheses: `<subject> (<id>): <owner>`.
  */
@@ -716,16 +711,15 @@ export function ownersOf(open: OpenState, fall: (blocker: string) => Fall = () =
     const lead = subject === '' ? row.id : `${subject} (${row.id}):`
     // A deferred row waits for its revisit date, its `until` blocker; once it has come the row goes back to the operator.
     if ((row.ruling ?? '') !== '') return `${lead} ${row.blocker !== undefined && untilOf(row.blocker) !== undefined && fall(row.blocker) === 'fallen' ? 'DEFERRED DUE, ask the operator: relaunch or drop' : 'ruling'}`
-    const note = row.note ?? ''
     const seats: readonly LiveAgent[] = open.seats ?? open.agents.map(name => ({ name, tty: null }))
-    const live = seats.filter(seat => (seat.row === undefined ? names(note, seat.name) : seat.row === row.id)).map(seat => seat.name)
+    const live = seats.filter(seat => isAgent(row.agent, seat.name)).map(seat => seat.name)
     if (live.length > 0) return `${lead} ${live.map(bareName).join(', ')}`
     // A blocker still standing says why nobody is on the row; once it fell, an open pull request the row holds is its owner.
     const fell = row.blocker === undefined ? undefined : fall(row.blocker)
     if (fell === 'standing') return `${lead} blocked: ${row.blocker}`
     if ((row.linked ?? []).length > 0) return `${lead} ${(row.linked ?? []).join(', ')}`
     // Dispatched, and its agent gone from the deck: its pull request or branch is read before anyone is sent again.
-    if (/\bAgent:\s*\S/.test(note)) return `${lead} DISPATCHED, NO LIVE AGENT`
+    if (row.agent !== undefined) return `${lead} DISPATCHED, NO LIVE AGENT`
     if (row.blocker === undefined) return `${lead} NO OWNER`
     return `${lead} ${fell === 'fallen' ? 'READY NOT STARTED' : `blocker unread: ${row.blocker}`}`
   })

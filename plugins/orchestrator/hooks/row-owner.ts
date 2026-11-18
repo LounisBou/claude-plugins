@@ -1,26 +1,17 @@
 // hooks/row-owner.ts
 // Who owns an open row of a dispatch record, as the takeover prints « Row owners » and the module's
 // merge wake reads it: the live agent whose launch brief was printed for the row (the id the dispatch
-// recorded, in the record of the brief's directory), else, for an agent whose brief names no row, a note
-// naming it in the dispatch's form, `Dispatched …: Agent: <name>`. Pure: the reading of the files is the caller's.
+// recorded, in the record of the brief's directory), else, for an agent whose brief names no row, the rows
+// that name it in their `agent` field (`dispatch-record.sh agent`). Pure: the reading of the files is the caller's.
 import { isLedgerMarked } from '../core/pr-ledger.ts'
 
 /** An agent's name without its role prefix. */
 export const bareName = (name: string): string => name.replace(/^Agent:\s*/, '').trim()
 
-/**
- * Whether a note names that agent in the dispatch's form, `Agent: <name>` (`Dispatched …: Agent: <name>`),
- * its name whole, not as the start of a longer word; a name mentioned in passing is no dispatch.
- */
-export function namesAgent(text: string, agent: string): boolean {
-  const name = bareName(agent).toLowerCase()
-  if (name === '') return false
-  const lower = text.toLowerCase()
-  for (let at = lower.indexOf(name); at !== -1; at = lower.indexOf(name, at + 1)) {
-    const after = lower[at + name.length] ?? ' '
-    if (/(?:^|[^a-z0-9])agent:\s*$/.test(lower.slice(0, at)) && !/[a-z0-9]/.test(after)) return true
-  }
-  return false
+/** Whether the name a row carries in its `agent` field is that agent's: the same name, its reference and its case apart. */
+export function isAgent(named: unknown, agent: string): boolean {
+  const name = bareName(agent).replace(/ \[[^\]]*\]$/, '').toLowerCase()
+  return typeof named === 'string' && name !== '' && bareName(named).replace(/ \[[^\]]*\]$/, '').toLowerCase() === name
 }
 
 /**
@@ -65,7 +56,7 @@ export const dirOf = (path: string): string => path.slice(0, Math.max(0, path.la
 /**
  * The open rows, not deferred, that an agent owns, in any record. `bound` is the row its brief names
  * (`row`) and the directory of that brief: the row of that id in the record beside the brief, or in
- * every record when none sits there. An agent with no such brief owns the rows whose note names it.
+ * every record when none sits there. An agent with no such brief owns the rows whose `agent` field names it.
  */
 export function rowsOwnedBy(agent: string, bound: { row: number; dir: string } | undefined, records: readonly RecordText[]): HeldRow[] {
   const beside = bound === undefined ? [] : records.filter(record => dirOf(record.path) === bound.dir)
@@ -81,9 +72,9 @@ export function rowsOwnedBy(agent: string, bound: { row: number; dir: string } |
       }
       if (typeof row !== 'object' || row === null || Array.isArray(row)) continue
       if (isLedgerMarked(row)) continue
-      const { id, state, note, deferred } = row as Record<string, unknown>
+      const { id, state, agent: named, deferred } = row as Record<string, unknown>
       if (typeof id !== 'number' || state !== 'open' || (typeof deferred === 'string' && deferred.trim() !== '')) continue
-      if (bound === undefined ? typeof note === 'string' && namesAgent(note, agent) : id === bound.row) found.push({ path, id })
+      if (bound === undefined ? isAgent(named, agent) : id === bound.row) found.push({ path, id })
     }
   }
   return found

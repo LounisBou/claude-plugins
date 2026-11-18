@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { parseLauncherArgs } from '../../../core/launcher.ts'
-import { main, prepDeps, requestOf, runAdapter } from './launcher.ts'
+import type { RowDeps } from './agent-row.ts'
+import { main, prepDeps, requestOf, rowDeps, runAdapter } from './launcher.ts'
 
 const io = (): { out: string[]; err: string[]; io: { out: (t: string) => void; err: (t: string) => void } } => {
   const out: string[] = []
@@ -61,5 +62,26 @@ describe('the launcher entry', () => {
     writeFileSync(adapter, 'kill -TERM $$\n')
     assert.equal(await runAdapter('/bin/sh', request, adapter), 128 + 15)
     assert.equal(await runAdapter(join(dir, 'no-such-python'), request, adapter), 1)
+  })
+
+  it('puts the agent a spawn launched on its row once the adapter succeeded, and only then', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'launcher-'))
+    const brief = join(dir, 'brief.md')
+    writeFileSync(brief, 'Row: 355 X: y\n')
+    writeFileSync(join(dir, 'record.jsonl'), '{"id":355,"state":"open"}\n')
+    const state = join(dir, 'state')
+    mkdirSync(join(state, 'records'), { recursive: true })
+    writeFileSync(join(state, 'records', 'sess'), `${join(dir, 'record.jsonl')}\n`)
+    const env = { CLAUDE_CODE_SESSION_ID: 'sess', ORCHESTRATOR_STATE_DIR: state }
+    const line = ['spawn', '--dir', dir, '--model', 'm', '--effort', 'low', '--title', 'Agent: a', '--brief', brief, '--orchestrator', 'Orch: o']
+    const said: string[][] = []
+    const row = { ...rowDeps(env, io().io), run: async (argv: readonly string[]) => (said.push([...argv]), { status: 0, stdout: '', stderr: '' }) } as RowDeps
+    const ok = async (): Promise<number> => 0
+    assert.equal(await main(line, env, io().io, prepDeps(env, io().io), ok, row), 0)
+    assert.deepEqual(said.map(argv => argv.slice(2)), [['agent', join(dir, 'record.jsonl'), '355', 'Agent: a']])
+    said.length = 0
+    assert.equal(await main(line, env, io().io, prepDeps(env, io().io), async () => 3, row), 3)
+    assert.equal(await main(line, { ...env, ORCHESTRATOR_DRY_RUN: '1' }, io().io, prepDeps(env, io().io), ok, row), 0)
+    assert.deepEqual(said, [])
   })
 })

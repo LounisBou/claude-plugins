@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { LauncherArgsError, parseLauncherArgs, type LauncherRequest } from '../../../core/launcher.ts'
 import { isEntry, processIo, run, type Io } from '../../orchestrator/scripts/lib/process.ts'
+import { recordAgent, type RowDeps } from './agent-row.ts'
 import { prepared, type PrepDeps } from './spawn-prep.ts'
 import { modelsMapOf, Refused, resolveTier } from './tier.ts'
 
@@ -33,6 +34,7 @@ import { modelsMapOf, Refused, resolveTier } from './tier.ts'
 const HERE = process.env['ORCHESTRATOR_ADAPTER_DIR'] || dirname(fileURLToPath(import.meta.url))
 const ADAPTER = join(HERE, 'iterm_agent.py')
 const LINT = join(HERE, '..', '..', 'orchestrator', 'scripts', 'brief-lint.sh')
+const DISPATCH_RECORD = join(HERE, '..', '..', 'orchestrator', 'scripts', 'dispatch-record.sh')
 
 const kindOf = (path: string): 'dir' | 'file' | null => {
   try {
@@ -49,6 +51,14 @@ export function prepDeps(env: NodeJS.ProcessEnv, io: Io): PrepDeps {
     env, cwd: process.cwd(), run, lint: LINT, warn: line => io.err(`${line}\n`), home: homedir(),
     read: path => (kindOf(path) === 'file' ? readFileSync(path, 'utf8') : null),
     isDir: path => kindOf(path) === 'dir', isFile: path => kindOf(path) === 'file',
+  }
+}
+
+/** What putting an agent on its row reads, from this process. */
+export function rowDeps(env: NodeJS.ProcessEnv, io: Io): RowDeps {
+  return {
+    env, run, script: DISPATCH_RECORD, warn: line => io.err(`${line}\n`),
+    read: path => (kindOf(path) === 'file' ? readFileSync(path, 'utf8') : null),
   }
 }
 
@@ -94,7 +104,10 @@ export function runAdapter(python: string, request: LauncherRequest, adapter: st
   })
 }
 
-export async function main(argv: readonly string[], env: NodeJS.ProcessEnv, io: Io, deps: PrepDeps = prepDeps(env, io)): Promise<number> {
+export async function main(
+  argv: readonly string[], env: NodeJS.ProcessEnv, io: Io, deps: PrepDeps = prepDeps(env, io),
+  adapter: typeof runAdapter = runAdapter, onRow: RowDeps = rowDeps(env, io),
+): Promise<number> {
   const read = requestOf(argv)
   if ('said' in read) {
     io.err(`${read.said}\n`)
@@ -116,7 +129,10 @@ export async function main(argv: readonly string[], env: NodeJS.ProcessEnv, io: 
     io.out(`${JSON.stringify(request)}\n`)
     return 0
   }
-  return runAdapter(env['ORCHESTRATOR_ADAPTER_PYTHON'] || 'python3', request)
+  const code = await adapter(env['ORCHESTRATOR_ADAPTER_PYTHON'] || 'python3', request)
+  // The agent runs, verified: its row says so. A dry run touches nothing.
+  if (code === 0 && !env['ORCHESTRATOR_DRY_RUN']) await recordAgent(request, onRow)
+  return code
 }
 
 /* node:coverage ignore next */
