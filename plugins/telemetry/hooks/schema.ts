@@ -143,6 +143,19 @@ export const EVENT_SCHEMA = {
       field('title', 'string', 'Session: the closed session\'s title.'),
     ],
   },
+  self_review: {
+    summary: 'The outcome of one finding of an implementer\'s self-review: fixed, or answered with its reason.',
+    writers: ['tool `mcp__telemetry__self_review`, one event per finding of the call'],
+    fields: [
+      field('lens', 'string', 'The reader\'s lens that reported it.'),
+      field('file', 'string', 'The file it names.'),
+      field('line', 'number', 'The line it names.'),
+      field('severity', 'string', '`critical`, `important` or `minor`.'),
+      field('outcome', 'string', '`fixed` or `answered`.'),
+      field('reason', 'string', 'Answered: why it stays, redacted and cut to 80 characters.'),
+      field('target', 'object', 'The pull request: `repo`, `pr`, each present when the call names it.'),
+    ],
+  },
   question: {
     summary: 'A question put to the operator and the letters chosen; no text.',
     writers: ['tool `AskUserQuestion` (source `ask_user`)', 'orchestrator tool `declare_wait` of kind `operator` (source `round`)', '`telemetry.ts sweep`, from a settled question\'s file in the orchestrator\'s round (source `round_file`): the event\'s `session`, `title` and `role` are the asker\'s, its `ts` the answer\'s'],
