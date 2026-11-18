@@ -39,7 +39,7 @@ import { answerAskedFromPane, askedAsEntry, closeRound, moveAsked, nameMovedAske
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
-  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
+  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, PRS_CAP, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLines, splitLines, seqOf, type QAck, type QEvent } from './remote-round.ts'
@@ -122,7 +122,9 @@ export type SessionRow = {
   unattended?: UnattendedView | null
 }
 
-export type UnattendedView = { at: string; line: string | null; prs: readonly Unattended[]; unread: readonly string[] }
+// `open`: the pull requests its dispatch record's lines hold that the forge reads open, as `owner/name#n`, whoever
+// has a watch on them: the deck lists them beside the ones its own ci-watch files cover, so a successor keeps its predecessor's.
+export type UnattendedView = { at: string; line: string | null; prs: readonly Unattended[]; unread: readonly string[]; open?: readonly string[] }
 
 // A row lives while its session's host process does: a session idle for hours —
 // waiting on a long agent phase, on a CI watch — is still there, and one that
@@ -384,7 +386,8 @@ export function parseSessionRow(text: string): SessionRow | null {
   const isUnattended = (value: unknown): value is UnattendedView | null => value === null || (isRecord(value) && isText(value['at']) && isTextOrNull(value['line'])
     && Array.isArray(value['prs']) && value['prs'].every(pr => isRecord(pr) && isText(pr['repo']) && isFigure(pr['pr']) && isTextOrNull(pr['since'])
       && (pr['waits'] === undefined || (isRecord(pr['waits']) && ['ready', 'hold', 'record'].includes(String(pr['waits']['why'])) && (pr['waits']['on'] === undefined || isText(pr['waits']['on'])))))
-    && Array.isArray(value['unread']) && value['unread'].every(isText))
+    && Array.isArray(value['unread']) && value['unread'].every(isText)
+    && (value['open'] === undefined || (Array.isArray(value['open']) && value['open'].every(isText))))
   return {
     role: field('role', isRole, null),
     name: field('name', isText, null),
@@ -2957,6 +2960,14 @@ async function prsOf($: Host<'env' | 'fs'>, sessionId: string, repo: string | nu
   return prsInFlight(names, owners, sessionId, repo)
 }
 
+// The pull requests an orchestrator's row lists: those its own ci-watch files cover, and the open ones its
+// dispatch record holds (the row's `unattended.open`, set at its last turn end), each once, as `owner/name#n`,
+// sorted and cut to the row's cap. A successor owns none of its predecessor's watches; the record is what it keeps.
+async function pullRequestsOf($: Host<'env' | 'fs'>, sessionId: string, row: SessionRow): Promise<string[]> {
+  const held = new Set([...await prsOf($, sessionId, row.repo), ...(row.unattended?.open ?? []).filter(prShaped)])
+  return [...held].sort().slice(0, PRS_CAP)
+}
+
 // An orchestrator's row, for a coordinator on another machine when it is news
 // (remote-row.ts): a coordinator on this machine reads the store itself, and none known
 // is nobody to send to. It is sent at a turn's end alone, with the figures the host has at that
@@ -2968,7 +2979,7 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   if (read?.role !== 'orchestrator') return
   const to = await coordinatorAddress($)
   if (!to || to.local) return
-  const prs = await prsOf($, sessionId, read.repo)
+  const prs = await pullRequestsOf($, sessionId, read)
   const waitText = String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => ''))
   const fill = await hostFill($)
   // The reading is the one of this instant: its stamp is now, not the last measure's.
@@ -3292,7 +3303,7 @@ export async function writeDeck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pro
   }
   const prs = new Map<string, string[]>()
   for (const [key, row] of Object.entries(local)) {
-    if (row.role === 'orchestrator') prs.set(key, await prsOf($, key.slice('sessions/'.length), row.repo))
+    if (row.role === 'orchestrator') prs.set(key, await pullRequestsOf($, key.slice('sessions/'.length), row))
   }
   const now = Date.now()
   const deck = deckOf({

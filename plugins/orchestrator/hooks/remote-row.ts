@@ -130,7 +130,7 @@ function repoShaped(repo: unknown): repo is string {
   return typeof repo === 'string' && repo.length <= REPO_CAP && REPO_SHAPE.test(repo)
 }
 
-function prShaped(pr: unknown): pr is string {
+export function prShaped(pr: unknown): pr is string {
   return typeof pr === 'string' && pr.length <= PR_CAP && PR_SHAPE.test(pr)
 }
 

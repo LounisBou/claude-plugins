@@ -30,10 +30,12 @@ export const UNATTENDED_BOUND_MS = 20_000
 // `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `kept`: its lines still open; `records`: its records, each with its path and its text.
 // `live`: the names of the agents the launcher lists running, among those a line names (every one when its listing could not be read).
 // `wanted`: whether the sweep asks the file to hold a repository (`prs.wanted`).
+// `openKeys`: the session's lines still open on the forge as `owner/name#n`, attended or not: the deck lists them.
 // `atReady`: the lines still open whose pull request carries Ready and whose agent the launcher lists running: that agent is done and closes now. `readyHeads`: the head each open pull request carries Ready at.
 export type Reading = {
   list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
   ended: Ended[]; kept: LedgerLine[]; atReady: LedgerLine[]; readyHeads: ReadonlyMap<string, string>; records: RecordText[]; live: ReadonlySet<string>; wanted: boolean
+  openKeys: string[]
 }
 export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
 
@@ -142,7 +144,9 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   const readyHeads = readyHeadsOf(file?.prs ?? [])
   const agents = kept.some(line => readyHeads.has(prKey(line.repo, line.pr))) ? await running() : null
   const atReady = kept.filter(line => line.status === 'working' && agents?.has(line.agent ?? '') === true && readyHeads.has(prKey(line.repo, line.pr)))
-  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, wanted }
+  const openNow = new Set(open.map(pr => prKey(pr.repo, pr.pr)))
+  const openKeys = kept.map(line => prKey(line.repo, line.pr)).filter(key => openNow.has(key))
+  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, wanted, openKeys }
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.
@@ -157,14 +161,35 @@ export async function boundedReading($: Held, sessionId: string, now: number = D
   return null
 }
 
+// The pull requests of the record that wait on the operator's merge: Ready, or a line that says it waits on him.
+// One he put On Hold is his own pause, not a merge waiting.
+export function waitingOnMerge(list: readonly Unattended[]): Unattended[] {
+  return list.filter(u => u.waits?.why === 'ready' || u.waits?.why === 'record')
+}
+
+// The refusal of a done while pull requests wait on the operator's merge: merge them where the repository is in
+// auto-merge (the session's own merge, done before it ends), else name them in an operator wait, which needs no `ask`.
+export function mergeRefusal(line: string): string {
+  return `Not done: ${line}. Merge each one in a repository in auto-merge; otherwise declare an operator wait whose blocks name them (no \`ask\` is needed for it).`
+}
+
 // What the declared wait asks before it takes a done or a deferred: the refusal while a pull request
-// is in anomaly (no agent, not Ready, no wait of its own, or in conflict), else null: what rests on the operator
-// holds nothing. Handed to wait.ts by register.ts.
+// is in anomaly (no agent, not Ready, no wait of its own, or in conflict), else, for a done alone, while
+// one waits on the operator's merge (`waitingOnMerge`), else null. Handed to wait.ts by register.ts.
 export async function holdsDone($: Held, wait: DeclaredWait): Promise<string | null> {
   if (wait.kind !== 'done' && wait.kind !== 'deferred') return null
   const reading = await boundedReading($, await $.session.id())
   const anomalies = reading?.list.filter(u => u.waits === undefined) ?? []
-  return anomalies.length > 0 ? unattendedRefusal(unattendedLine(anomalies, []) ?? '') : null
+  if (anomalies.length > 0) return unattendedRefusal(unattendedLine(anomalies, []) ?? '')
+  const merging = wait.kind === 'done' ? waitingOnMerge(reading?.list ?? []) : []
+  return merging.length > 0 ? mergeRefusal(unattendedLine(merging, []) ?? '') : null
+}
+
+// The pull requests of the session's record waiting on the operator's merge, which an operator wait
+// that asks him nothing with `ask` may name; none when the reading fails.
+export async function mergeWaits($: Held): Promise<Unattended[]> {
+  const reading = await boundedReading($, await $.session.id())
+  return waitingOnMerge(reading?.list ?? [])
 }
 
 // The lines each turn end leaves for the next turn's context, by session.
@@ -188,7 +213,7 @@ export function register(on: On<Held>): void {
         const owed = [...(pending.get(sessionId) ?? []).filter(text => read.includes(text)), ...read.filter(text => !before.includes(text))]
         if (owed.length === 0) pending.delete(sessionId)
         else pending.set(sessionId, owed)
-        await publishUnattended($, sessionId, { at: new Date().toISOString(), line: reading.line, prs: reading.list, unread: reading.unread })
+        await publishUnattended($, sessionId, { at: new Date().toISOString(), line: reading.line, prs: reading.list, unread: reading.unread, open: reading.openKeys })
       }
     } catch (err) {
       await logLine($, 'unattended', messageOf(err))
