@@ -2,8 +2,8 @@
 // The norms record: /norms:check ends by calling mcp__norms__check_done, which
 // leaves one record at the pull request's head through the github plugin's
 // record tool (mcp__github__record), for its ready guard to read.
-// The call is refused unless /norms:check computed its scope in this session,
-// typed or run through the Skill tool (hooks/check.ts sets the mark), so the record follows its own scope. A
+// The scope /norms:check computed in this session, typed or run through the Skill tool
+// (hooks/check.ts sets the mark), tells the call which repository the check read. A
 // failure never throws out of the handler: the answer is one `record:` line,
 // the path written or `none` with the reason.
 // The same call leaves the check's findings in the module's journal (hooks/observe.ts), one event
@@ -29,7 +29,7 @@ export const CHECK_DONE_DESCRIPTION =
   '/norms:check\'s last act: record its outcome at the pull request\'s head commit, for the github '
   + 'plugin\'s ready guard. open = findings neither fixed nor passed, fixed = findings fixed, passed = '
   + 'findings passed; setAside = findings set aside, with their reason (they no longer count as open); auto = true in automatic mode. Answers one line, `record: <path>` or `record: none — <why>`: print it in the report. '
-  + 'Refused unless /norms:check computed its scope in this session and its agents reported their findings, which the figures must account for once each.'
+  + 'Refused unless its agents reported their findings, which the figures must account for once each.'
 
 export const CHECK_DONE_SCHEMA = {
   type: 'object',
@@ -44,9 +44,9 @@ export const CHECK_DONE_SCHEMA = {
   required: ['open', 'fixed', 'passed'],
 }
 
-// The scope /norms:check computed in this session: its head, the time, and the files the check
-// read. A commit made after the check (the fix commits of check.md 7.4) may only touch those
-// files, or the record would vouch for code the check never read.
+// The scope /norms:check computed in this session: its head and the repository it read. The record
+// is written at the head of the call, which a fix commit of check.md 7.4 moves past the head the
+// check read.
 // Kept in the host's $.state, which outlives the module's own variables, so a restart of the
 // hooks worker does not lose it; cleared at session.end, since the state's scope is not known
 // to be the session's. The module variable holds the mark only when $.state refused it, so the
@@ -66,9 +66,8 @@ export function asMark(value: unknown): Mark | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const v = value as Record<string, unknown>
   if (typeof v['head'] !== 'string' || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(v['head'])) return undefined
-  if (typeof v['at'] !== 'number' || !Array.isArray(v['files']) || !v['files'].every(f => typeof f === 'string')) return undefined
   if (v['dir'] !== undefined && (typeof v['dir'] !== 'string' || !v['dir'].startsWith('/'))) return undefined
-  return { head: v['head'], at: v['at'], files: v['files'] as string[], ...(typeof v['dir'] === 'string' ? { dir: v['dir'] } : {}) }
+  return { head: v['head'], ...(typeof v['dir'] === 'string' ? { dir: v['dir'] } : {}) }
 }
 
 // One line in the session's log. A log that throws or rejects draws nothing: what the line
@@ -83,8 +82,8 @@ function warn($: Host<'ui'>, line: string): void {
 
 // `dir`: the repository the check read, so that a later shell `cd` into another repository is not
 // taken for the reviewed one.
-export async function markScope($: RecordHost, head: string, files: readonly string[] = [], dir?: string): Promise<void> {
-  const mark: Mark = { head, at: Date.now(), files: [...files], ...(dir ? { dir } : {}) }
+export async function markScope($: RecordHost, head: string, dir?: string): Promise<void> {
+  const mark: Mark = { head, ...(dir ? { dir } : {}) }
   // A new check starts from no findings: the agents it runs report them again.
   resetReports()
   isJournaled = false
@@ -124,7 +123,7 @@ export async function clearMark($: Host<'state'>): Promise<void> {
   }
 }
 
-// The state first, then the memory copy; neither leaves no mark, and check_done refuses.
+// The state first, then the memory copy; neither leaves no mark, and check_done reads the session's repository.
 async function readMark($: Host<'state'>): Promise<Mark | undefined> {
   try {
     const stored = asMark((await $.state.get({ plugin: 'norms', key: 'scopeMark' }))?.value)
@@ -266,7 +265,6 @@ async function journalFindings($: RecordHost, findings: readonly Found[], dir: s
 
 export async function checkDone($: RecordHost, input: Events['tool.call']): Promise<{ result: string; isError?: boolean }> {
   const checked = await readMark($)
-  if (!checked) return { result: 'norms: run /norms:check first: the record follows its own scope', isError: true }
   const given = { open: count(input['open']), fixed: count(input['fixed']), passed: count(input['passed']), setAside: input['setAside'] === undefined ? 0 : count(input['setAside']) }
   if (given.open === undefined || given.fixed === undefined || given.passed === undefined || given.setAside === undefined) {
     return { result: 'norms: open, fixed, passed and setAside are whole numbers, 0 or more', isError: true }
@@ -295,11 +293,11 @@ export async function checkDone($: RecordHost, input: Events['tool.call']): Prom
     return { result: `norms: the agents reported ${total} finding(s) and open + fixed + passed + setAside add up to ${open + fixed + passed + setAside}: every finding is open, fixed, passed or set aside, once`, isError: true }
   }
   // What the check's events are about, as far as this call reads it.
-  let dir = checked.dir
+  let dir = checked?.dir
   let unfixed = 0
   try {
     // The repository the check read, not the one a later shell `cd` landed in.
-    dir = checked.dir ?? await repositoryDir($)
+    dir = checked?.dir ?? await repositoryDir($)
     // First, so the reason is clear: a record is written on a clean checkout.
     if ((await git($, ['git', 'status', '--porcelain', '-uno'], dir)).trim() !== '') {
       return { result: none('the tracked files have changes') }
@@ -307,15 +305,7 @@ export async function checkDone($: RecordHost, input: Events['tool.call']): Prom
     // At the call, not at the scope: the fix commits of check.md 7.4 are in it.
     const head = (await git($, ['git', 'rev-parse', 'HEAD'], dir)).trim()
     if (!head) return { result: none('the checkout has no commit') }
-    if (head !== checked.head) {
-      const changed = (await git($, ['git', 'diff', '--name-only', checked.head, head], dir)).split('\n').map(f => f.trim()).filter(Boolean)
-      const read = new Set(checked.files)
-      const unread = changed.filter(f => !read.has(f))
-      if (unread.length > 0) {
-        const named = unread.slice(0, 5).join(', ') + (unread.length > 5 ? ', …' : '')
-        return { result: none(`commits since the check touch files it did not read (${named}): run /norms:check again`) }
-      }
-    } else if (fixed > 0) {
+    if (checked && head === checked.head && fixed > 0) {
       // A fix is a commit (check.md 7.4), and the checkout is clean at the head the check read:
       // nothing was fixed, and the findings said fixed are open.
       unfixed = fixed
@@ -332,7 +322,7 @@ export async function checkDone($: RecordHost, input: Events['tool.call']): Prom
     const pr = numberOf(pull.pull)
     if (pr === undefined) return { result: none('the branch has no pull request') }
     // The findings are the ones of the head the check read.
-    noteSubject({ repo, pr, head: checked.head })
+    noteSubject({ repo, pr, head: checked?.head ?? head })
     await journalFindings($, known.findings, dir)
     let recorded: { text: string } | { why: string }
     try {

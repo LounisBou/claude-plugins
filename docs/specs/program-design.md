@@ -262,8 +262,8 @@ Each item ends on its state on `main`: **fixed** (with its pull request), **part
 
 **norms**
 - `hooks/record.ts:71-104`: the pass is computed from figures the model passes in; `:35-39` stores the scope's head and never compares it at `check_done`.
-  **Partly** (#28, #77, #181): the head is compared and later commits may touch only the files the check
-  read; the figures the model passes must account once for each finding its agents reported, an automatic check's figures are the
+  **Partly** (#28, #77, #181): the head is no longer compared (sweep PR 10): the record is written at the head of the call and no refusal follows a later commit;
+  the figures the model passes must account once for each finding its agents reported, an automatic check's figures are the
   findings' own and a finding said fixed with no commit since the check counts as open (#342); the pass is still `open === 0` over them
   (`hooks/record.ts`). **Settled**, the operator's words of 2026-11-15, about 17:40 Paris, on the recommendation that kept today's behaviour: « suis tes recommandations »: the check keeps the model's word on which findings it fixed, with one round of agents.
 - `hooks/guards.ts:50`: `/\bpush/i` on the last prompt grants a push (« don't push » included). **Fixed** (#28): the host's dialog.

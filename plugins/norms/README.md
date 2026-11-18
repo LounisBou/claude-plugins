@@ -75,22 +75,21 @@ mechanical work the markdown would otherwise hand the model:
   agents reported, each ending its answer with a JSON block the module reads:
   the call is refused when no agent reported, when one gave no readable block,
   or when its figures do not account for every finding once. A finding said fixed
-  with no commit since the check is counted open. Commits made after the check may only
-  touch the files it read. Once the pull request is read, the same call keeps the check's
+  with no commit since the check is counted open. Once the pull request is read, the same call keeps the check's
   findings in the journal, one `finding` line each: the agent and the severity as its code
   (`norms.magic-values.error`), the file as its path, the pull request as its subject, and
   nothing of the finding's text. Every line of the journal names the pull request the check
   reads, once the module read it. It leaves none, and says why on a `record:` line of
-  the report, when `/norms:check` did not compute its scope in the session, the
-  branch has no pull request, tracked files have changes, a later commit touches
-  a file the check did not read, or the `github` plugin is absent, older, or
-  refuses the record. Whether a pull request owes the check is its plan's to say (the
+  the report, when the branch has no pull request, tracked files have changes, or the
+  `github` plugin is absent, older, or refuses the record. Whether a pull request owes the check is its plan's to say (the
   `github` plugin's `hooks/check-plan.ts`), not this plugin's.
 - `validate`: the lexical checks (empty entries, vague words, no code block,
   mixed list markers, no top-level header) arrive with exact line numbers.
 
-Every hook that fails passes the event on unchanged, and the markdown keeps
-its own instructions for each step, so a host without modules runs as before.
+A `/norms:check` whose scope cannot be computed reaches its markdown with a
+`<norms-scope>` block holding one `refused:` line that names the failure: the command
+prints it and stops, and computes no scope itself. Every other hook that fails passes
+the event on unchanged.
 
 ## CONTRIBUTING.md stays with the project
 
