@@ -2,8 +2,9 @@
 // The to-do list of a session, owned by the orchestrator: what the operator asked of it that does
 // not end within the turn, or that is for another session. One file per holder, `<state>/todo/<name>.jsonl`,
 // one line per item, in the grammar of the dispatch record's rows (`id`, `opened`, `label`, `state`,
-// `deferred`, `verdict`) plus `words`, `said_at`, `from`, `images` and `rows`: the item keeps his words and the
-// dispatch rows it turned into, never their state, which is the rows' own. Written by the orchestrator's hooks module
+// `deferred`, `verdict`) plus `words`, `said_at`, `from`, `images`, `rows`, `agent`, `waits` and `surfaced`: the item
+// keeps his words, who takes it (the dispatch rows it turned into, or an agent) or what it waits on, never the rows'
+// state, which is their own. Written by the orchestrator's hooks module
 // alone, under the store's lock; read by its stop gate, its declared wait, its status command and the
 // coordinator's end (docs/contracts.md).
 import { ROLES } from '../core/names.ts'
@@ -37,6 +38,31 @@ export interface TodoItem {
   readonly closed?: string
   /** The dispatch rows the item turned into; their state is read in the record, never copied here. */
   readonly rows?: readonly number[]
+  /** The agent that takes it, by its session name. */
+  readonly agent?: string
+  /** What it waits on, why, until when, and its deadline: the module surfaces it when each date passes. */
+  readonly waits?: TodoWait
+  /** The dates of `waits` the module already surfaced it for. */
+  readonly surfaced?: readonly TodoDate[]
+}
+
+/** What an item waits on: the fact, why, the instant the wait ends, and the instant it is owed by (ISO, UTC). */
+export interface TodoWait {
+  readonly on: string
+  readonly why: string
+  readonly until: string
+  readonly deadline: string
+}
+
+/** The two dates of a wait the module surfaces an item at. */
+export type TodoDate = 'until' | 'deadline'
+const DATES: readonly TodoDate[] = ['until', 'deadline']
+
+/** Who takes an item, or what it waits on: one of them at least, never neither. */
+export interface TodoOwner {
+  readonly rows?: readonly number[]
+  readonly agent?: string
+  readonly waits?: TodoWait
 }
 
 /** What a caller records: his words, when he said them, who carries them, and a label if it has one. */
@@ -46,6 +72,8 @@ export interface TodoAdd {
   readonly from: string
   readonly label?: string
   readonly images?: readonly string[]
+  /** Who takes it or what it waits on; the tool refuses an add without (parseOwner). */
+  readonly owner?: TodoOwner
 }
 
 /** The images one item keeps at most. */
@@ -88,6 +116,50 @@ const isRowId = (value: unknown): value is number => typeof value === 'number' &
 
 const filled = (value: unknown): value is string => typeof value === 'string' && value.trim() !== ''
 
+const isWait = (value: unknown): value is TodoWait => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const o = value as Record<string, unknown>
+  return filled(o['on']) && filled(o['why']) && filled(o['until']) && filled(o['deadline'])
+}
+
+const WAIT_FIELDS = ['waits_on', 'why', 'until', 'deadline'] as const
+
+/** The flat fields of a call that name who takes an item or what it waits on (parseOwner). */
+export const TODO_OWNER_FIELDS = ['row', 'agent', ...WAIT_FIELDS] as const
+
+/**
+ * What an item waits on, read from a call's flat fields `waits_on`, `why`, `until` and `deadline`, the
+ * two dates ISO instants, the deadline not before the end of the wait: none when no field is given.
+ */
+export function parseWait(e: Record<string, unknown>): { waits?: TodoWait } | { error: string } {
+  if (WAIT_FIELDS.every(field => e[field] === undefined)) return {}
+  const missing = WAIT_FIELDS.filter(field => !filled(e[field]))
+  if (missing.length > 0) return { error: `a wait names all of waits_on, why, until and deadline: ${missing.join(', ')} missing.` }
+  const until = Date.parse(String(e['until']))
+  const deadline = Date.parse(String(e['deadline']))
+  if (!Number.isFinite(until) || !Number.isFinite(deadline)) return { error: 'until and deadline are ISO instants, 2026-11-20T09:00:00Z.' }
+  if (deadline < until) return { error: 'the deadline falls before the wait ends: deadline is the later date.' }
+  return { waits: { on: String(e['waits_on']).trim(), why: String(e['why']).trim(), until: stampOf(until), deadline: stampOf(deadline) } }
+}
+
+/**
+ * Who takes an item, or what it waits on, read from a call's flat fields: `row` (a dispatch row),
+ * `agent` (an agent's session name, never the list's holder), or the wait (parseWait).
+ */
+export function parseOwner(e: Record<string, unknown>, holder: string): { owner: TodoOwner } | { error: string } {
+  const row = e['row']
+  if (row !== undefined && !isRowId(row)) return { error: 'row is the dispatch row that takes it, a positive integer.' }
+  const agent = e['agent']
+  if (agent !== undefined && !filled(agent)) return { error: 'agent names the agent that takes it, by its session name.' }
+  if (filled(agent) && holderOf(agent) === holderOf(holder)) return { error: 'agent names another session than the one whose list keeps it: a to-do its holder takes itself is left aside.' }
+  const wait = parseWait(e)
+  if ('error' in wait) return wait
+  if (row === undefined && !filled(agent) && wait.waits === undefined) {
+    return { error: 'a to-do names who takes it, `row` (a dispatch row) or `agent` (an agent\'s session name), or what it waits on: waits_on, why, until and deadline.' }
+  }
+  return { owner: { ...(isRowId(row) ? { rows: [row] } : {}), ...(filled(agent) ? { agent: agent.trim() } : {}), ...(wait.waits ? { waits: wait.waits } : {}) } }
+}
+
 /** An item as a line holds it, each field of its type, or undefined. */
 export function parseTodoItem(raw: unknown): TodoItem | undefined {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
@@ -100,6 +172,9 @@ export function parseTodoItem(raw: unknown): TodoItem | undefined {
   if (o['closed'] !== undefined && typeof o['closed'] !== 'string') return undefined
   if (o['rows'] !== undefined && !(Array.isArray(o['rows']) && o['rows'].every(isRowId))) return undefined
   if (o['images'] !== undefined && !isImageList(o['images'])) return undefined
+  if (o['agent'] !== undefined && !filled(o['agent'])) return undefined
+  if (o['waits'] !== undefined && !isWait(o['waits'])) return undefined
+  if (o['surfaced'] !== undefined && !(Array.isArray(o['surfaced']) && o['surfaced'].every(date => DATES.includes(date)))) return undefined
   return raw as TodoItem
 }
 
@@ -120,6 +195,8 @@ const textOf = (items: readonly TodoItem[]): string => items.map(item => `${JSON
 
 const stamp = (now: Date): string => `${now.toISOString().slice(0, 19)}Z`
 
+const stampOf = (ms: number): string => stamp(new Date(ms))
+
 /** The list with the item added, numbered after the highest id; the item too. */
 export function addTodo(text: string, set: TodoAdd, now: Date): { text: string; item: TodoItem } {
   const items = todoItems(text)
@@ -134,6 +211,7 @@ export function addTodo(text: string, set: TodoAdd, now: Date): { text: string; 
     said_at: set.said_at,
     from: set.from,
     ...(set.images !== undefined && set.images.length > 0 ? { images: [...set.images] } : {}),
+    ...(set.owner ?? {}),
   }
   return { text: textOf([...items, item]), item }
 }
@@ -162,6 +240,37 @@ export function rowTodo(text: string, id: number, row: number): { text: string; 
   if (!isRowId(row)) return { error: 'a dispatch row id is a positive integer' }
   return change(text, id, item => (item.state === 'closed' ? { error: `to-do ${id} is already closed` }
     : { ...item, rows: [...new Set([...(item.rows ?? []), row])].sort((a, b) => a - b) }))
+}
+
+/** The list with the item's wait set anew, its surfacing started over, or why it cannot be. */
+export function waitTodo(text: string, id: number, waits: TodoWait): { text: string; item: TodoItem } | { error: string } {
+  return change(text, id, item => {
+    if (item.state === 'closed') return { error: `to-do ${id} is already closed` }
+    const { surfaced: _surfaced, ...rest } = item
+    return { ...rest, waits }
+  })
+}
+
+/** An open item whose wait date has passed and was not surfaced yet, with the date. */
+export type DueTodo = { readonly item: TodoItem; readonly date: TodoDate }
+
+/** The open items a wait date of which passed at `now` that the module has not surfaced them for: the later date only, when both did. */
+export function dueTodos(items: readonly TodoItem[], now: number): DueTodo[] {
+  return openTodos(items).flatMap(item => {
+    if (item.waits === undefined) return []
+    const passed = DATES.filter(date => Date.parse(item.waits![date]) <= now)
+    const date = passed.at(-1)
+    return date === undefined || item.surfaced?.includes(date) ? [] : [{ item, date }]
+  })
+}
+
+/** The list with each item marked surfaced for its date and every earlier one. */
+export function surfaceTodos(text: string, due: readonly DueTodo[]): string {
+  const marks = new Map(due.map(entry => [entry.item.id, DATES.slice(0, DATES.indexOf(entry.date) + 1)]))
+  return textOf(todoItems(text).map(item => {
+    const dates = marks.get(item.id)
+    return dates === undefined || item.state === 'closed' ? item : { ...item, surfaced: [...new Set([...(item.surfaced ?? []), ...dates])] }
+  }))
 }
 
 const isDeferred = (item: TodoItem): boolean => typeof item.deferred === 'string' && item.deferred.trim() !== ''

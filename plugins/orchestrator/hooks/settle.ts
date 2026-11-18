@@ -8,13 +8,18 @@
 // lock, then journals his answer and tells the asker, is question.ts's `closeRound`: the host's `$`
 // cannot be handed through this strict file, which imports no file that is not.
 
+import { TODO_OWNER_FIELDS } from './todo-format.ts'
+
 export const SETTLE_TOOL = 'settle'
 
 export const OUTCOMES = ['answered-here', 'answered-by-message', 'withdrawn'] as const
 export type Outcome = typeof OUTCOMES[number]
 
-/** One call, validated: the entry, how it ends, his answer or the reason, the message's author, the work it asks. */
-export type SettleRequest = { id: string; outcome: Outcome; text: string; author: string | null; work: string | null }
+/**
+ * One call, validated: the entry, how it ends, his answer or the reason, the message's author, the work it
+ * asks, and, when given, who takes that work or what it waits on, as the todo tool reads them.
+ */
+export type SettleRequest = { id: string; outcome: Outcome; text: string; author: string | null; work: string | null; owner?: Record<string, unknown> }
 
 /** The session that settles. */
 export type Me = { session: string; name: string; role: string }
@@ -37,7 +42,8 @@ export function parseSettle(e: Record<string, unknown>): { request: SettleReques
   if (e['work'] !== undefined && typeof e['work'] !== 'string') return { error: 'work is a string: the work his answer asks, in his words.' }
   const work = outcome === 'withdrawn' ? null : text(e['work'])
   if (outcome === 'withdrawn' && text(e['work']) !== null) return { error: 'a withdrawn question asks no work.' }
-  return { request: { id, outcome, text: said, author: outcome === 'answered-by-message' ? author : null, work } }
+  const owner = Object.fromEntries(TODO_OWNER_FIELDS.filter(field => e[field] !== undefined).map(field => [field, e[field]]))
+  return { request: { id, outcome, text: said, author: outcome === 'answered-by-message' ? author : null, work, ...(work !== null && Object.keys(owner).length > 0 ? { owner } : {}) } }
 }
 
 /** Who asked a question and where its answer goes: its session, its name, and whether it came from another machine. */

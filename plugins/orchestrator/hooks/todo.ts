@@ -1,30 +1,34 @@
 // hooks/todo.ts
 // The `todo` tool: what the operator asks of a session that will not be done within the turn, or that
-// is for another session, recorded in the holder's own list (todo-format.ts, docs/contracts.md). The
-// model judges that a request is one and records it; code keeps the list, under the store's lock, and
+// is for another session, recorded in the holder's own list (todo-format.ts, docs/contracts.md). No item
+// is left aside: each names who takes it (a dispatch row, an agent) or what it waits on, why, until when
+// and its deadline, and the module surfaces it to its holder when either date passes (registerSurface).
+// The model judges that a request is one and records it; code keeps the list, under the store's lock, and
 // holds the session's « done » while an item is open (the declared wait, the stop gate, the
 // coordinator's end). A request for another session is written into that session's list first, then
 // sent, in one call: no relay goes out unrecorded. A session on another machine is only sent the
 // message, and told so.
 import { updateOver } from '../core/store-io.ts'
 import {
-  addTodo, closeTodo, deferTodo, deferredTodos, holderOf, openTodos, pendingTodos, rowTodo, todoFile, todoImagesLine, todoItems, todoName, todoPath, isImageList, TODO_CONTRACT, TODO_IMAGES_MAX, type TodoItem,
+  addTodo, closeTodo, deferTodo, deferredTodos, dueTodos, holderOf, openTodos, parseOwner, parseWait, pendingTodos, rowTodo, surfaceTodos, todoFile, todoImagesLine, todoItems, todoName, todoPath,
+  isImageList, waitTodo, TODO_CONTRACT, TODO_IMAGES_MAX, type DueTodo, type TodoItem,
 } from './todo-format.ts'
 import { todoOpen, type DeclaredWait } from './stop-gate.ts'
 import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf, walkedName } from './supervision.ts'
 import { roleOf } from './session-name.ts'
 import { parseRemoteRow, ROW_MARKER } from './remote-row.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
-import { messageOf, type Host, type On } from './host.ts'
+import { messageOf, type Host, type On, type Timer } from './host.ts'
 
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock'>
+type Surfacing = Held & Host<'prompt'>
 
 export const TODO_TOOL = 'todo'
 
 // The sessions that keep a list: the ones that take the operator's word and hold no code of their own.
 const KEEPERS: readonly string[] = ['orchestrator', 'coordinator', 'auditor']
 
-const ACTIONS = ['add', 'row', 'done', 'drop', 'defer', 'list'] as const
+const ACTIONS = ['add', 'row', 'wait', 'done', 'drop', 'defer', 'list'] as const
 type Answer = { result: string; isError?: true }
 
 const refuse = (result: string): Answer => ({ result, isError: true })
@@ -96,9 +100,13 @@ async function writeTodos($: Held, name: string, change: (text: string) => { tex
   return made
 }
 
+const waitLine = (item: TodoItem): string => item.waits === undefined ? ''
+  : `, waits on ${item.waits.on} (${item.waits.why}) until ${item.waits.until}, deadline ${item.waits.deadline}`
+
 const shown = (item: TodoItem): string => {
   const images = todoImagesLine(item)
-  return `${todoName(item)}: « ${item.words} » (said ${item.said_at}, by ${item.from})${item.rows ? `, rows ${item.rows.join(', ')}` : ''}${item.deferred ? `, put off: ${item.deferred}` : ''}${images ? `, ${images}` : ''}`
+  return `${todoName(item)}: « ${item.words} » (said ${item.said_at}, by ${item.from})${item.rows ? `, rows ${item.rows.join(', ')}` : ''}${item.agent ? `, taken by ${item.agent}` : ''}`
+    + `${waitLine(item)}${item.deferred ? `, put off: ${item.deferred}` : ''}${images ? `, ${images}` : ''}`
 }
 
 // Whether a session is on another machine: an orchestrator's row sent here, or the coordinator whose
@@ -136,11 +144,14 @@ async function add($: Held, me: { name: string }, e: Record<string, unknown>, no
   const images = e['images']
   if (images !== undefined && !isImageList(images)) return refuse(`images lists the absolute paths of the images he gave, at most ${TODO_IMAGES_MAX}.`)
   const from = holderOf(me.name)
+  const to = typeof e['to'] === 'string' ? e['to'].trim() : null
+  const owned = parseOwner(e, to ?? me.name)
+  if ('error' in owned) return refuse(owned.error)
   const set = {
     words, said_at: typeof e['said_at'] === 'string' ? e['said_at'].trim() : `${now.toISOString().slice(0, 19)}Z`, from,
     ...(typeof e['label'] === 'string' ? { label: e['label'] } : {}), ...(images !== undefined && images.length > 0 ? { images } : {}),
+    owner: owned.owner,
   }
-  const to = typeof e['to'] === 'string' ? e['to'].trim() : null
   if (to === null || holderOf(to) === from) {
     const made = await writeTodos($, me.name, text => addTodo(text, set, now))
     return 'error' in made ? refuse(made.error) : { result: `Recorded as to-do ${made.item.id} in your list.` }
@@ -165,9 +176,17 @@ async function add($: Held, me: { name: string }, e: Record<string, unknown>, no
   return refuse(`Recorded as to-do ${made.item.id} in the list of ${holderOf(to)}, but not sent: ${sent.reason}. The next session of that name reads the list; send it the words again if it must know now.`)
 }
 
-async function closing($: Held, me: { name: string }, action: 'row' | 'done' | 'drop' | 'defer', e: Record<string, unknown>, now: Date): Promise<Answer> {
+async function closing($: Held, me: { name: string }, action: 'row' | 'wait' | 'done' | 'drop' | 'defer', e: Record<string, unknown>, now: Date): Promise<Answer> {
   const id = e['id']
   if (typeof id !== 'number' || !Number.isInteger(id)) return refuse(`${action} names the to-do by its \`id\`, a number.`)
+  if (action === 'wait') {
+    const wait = parseWait(e)
+    if ('error' in wait) return refuse(wait.error)
+    if (wait.waits === undefined) return refuse('wait names what it waits on anew: waits_on, why, until and deadline.')
+    const waits = wait.waits
+    const made = await writeTodos($, me.name, text => waitTodo(text, id, waits))
+    return 'error' in made ? refuse(made.error) : { result: `To-do ${id} waits on ${waits.on} until ${waits.until}, deadline ${waits.deadline}.` }
+  }
   if (action === 'row') {
     const row = e['row']
     if (typeof row !== 'number' || !Number.isInteger(row) || row < 1) return refuse('row names in `row` the dispatch row the to-do turned into, a positive integer.')
@@ -244,6 +263,68 @@ async function roleAtStart($: Held): Promise<string | null> {
   }
 }
 
+/** How often the module reads its holder's list for a wait date passed. */
+export const SURFACE_TICK_MS = 5 * 60_000
+
+/** The line the holder is told for the items a wait date of which passed. */
+export function surfaceText(due: readonly DueTodo[]): string {
+  return [`[module] ${due.length === 1 ? 'A to-do of your list is' : `${due.length} to-dos of your list are`} due:`,
+    ...due.map(({ item, date }) => `- to-do ${todoName(item)} waited on ${item.waits?.on} (${item.waits?.why}); ${date === 'until' ? `its wait ended at ${item.waits?.until}` : `its deadline ${item.waits?.deadline} passed`}.`),
+    'Do it and close it (todo done), hand it to a row or an agent (todo row, todo add … agent), or wait again with a new date (todo wait).'].join('\n')
+}
+
+/**
+ * One reading of the holder's list: the items a wait date of which passed and that were not surfaced
+ * for it, told in one line, then marked under the store's lock. A mark that fails tells them again at
+ * the next reading: a to-do told twice, never one left untold. Answers the items told.
+ */
+export async function surfaceDue($: Surfacing, name: string, now: number = Date.now()): Promise<DueTodo[]> {
+  const due = dueTodos(await readTodos($, name), now)
+  if (due.length === 0) return []
+  const taken: unknown = await $.prompt.submit({ text: surfaceText(due) })
+  if (typeof taken === 'object' && taken !== null && 'drop' in taken && taken.drop) throw new Error(`the host dropped the wake: ${String(taken.drop)}`)
+  const ids = new Set(due.map(entry => entry.item.id))
+  await updateOver(storeIo($), todoPath(await stateDir($), name), current => current === undefined ? undefined
+    : surfaceTodos(current, dueTodos(todoItems(current), now).filter(entry => ids.has(entry.item.id))))
+  return due
+}
+
+// The reading armed at a keeper's turn end, once per session id (a /clear's new session arms its own),
+// read at once and every SURFACE_TICK_MS after.
+export function registerSurface(on: On<Surfacing>): void {
+  let armed: { sessionId: string; timer: Timer } | null = null
+  let running = false
+  on('turn.complete', {}, async ($, e, next) => {
+    if (e.agentId) return next(e)
+    try {
+      const sessionId = await $.session.id()
+      if (armed?.sessionId === sessionId) return next(e)
+      const me = await whoAmI($)
+      if (me === null) return next(e)
+      armed?.timer.cancel()
+      const tick = async (): Promise<void> => {
+        if (running) return
+        running = true
+        try {
+          await surfaceDue($, me.name)
+        } catch (err) {
+          await logLine($, 'todo', `surface: ${messageOf(err)}`)
+        } finally {
+          running = false
+        }
+      }
+      armed = { sessionId, timer: $.clock.every(SURFACE_TICK_MS, () => void tick()) }
+      await tick()
+    } catch (err) {
+      await logLine($, 'todo', `surface: ${messageOf(err)}`)
+    }
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'todo', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+}
+
 export function register(on: On<Held>): void {
   on('session.start', {}, async ($, e, next) => {
     try {
@@ -255,8 +336,9 @@ export function register(on: On<Held>): void {
         name: TODO_TOOL,
         isDeferred: false,
         description: "Records, as the operator said it, a request of his that will not be done within this turn or that is for another session, and closes it later; it holds this session's `done` while one is open. "
-          + 'action: `add` (words: his words as given; said_at: when he said them; to: another session, whose list is written first and which is then sent the message; label: a short name; images: the absolute paths of the images he gave with it), '
-          + '`row` (id, row: a dispatch row it turned into), `done` (id, outcome: the proof, a pull request, a file or a row), `drop` (id, words: his words that drop it), `defer` (id, words: his ruling that puts it off), `list`. '
+          + 'action: `add` (words: his words as given; said_at: when he said them; to: another session, whose list is written first and which is then sent the message; label: a short name; images: the absolute paths of the images he gave with it; '
+          + 'and who takes it, row: a dispatch row or agent: an agent\'s session name, or what it waits on, waits_on, why, until and deadline: ISO instants; the module surfaces it when either passes), '
+          + '`row` (id, row: a dispatch row it turned into), `wait` (id, waits_on, why, until, deadline: a new wait), `done` (id, outcome: the proof, a pull request, a file or a row), `drop` (id, words: his words that drop it), `defer` (id, words: his ruling that puts it off), `list`. '
           + 'Only for an orchestrator, a coordinator or an auditor.',
         inputSchema: {
           type: 'object',
@@ -270,6 +352,11 @@ export function register(on: On<Held>): void {
             id: { type: 'integer' },
             outcome: { type: 'string' },
             row: { type: 'integer' },
+            agent: { type: 'string' },
+            waits_on: { type: 'string' },
+            why: { type: 'string' },
+            until: { type: 'string' },
+            deadline: { type: 'string' },
           },
           required: ['action'],
         },

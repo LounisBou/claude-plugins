@@ -3,8 +3,8 @@
 // alone under the store's lock; a request for another session written into that session's list first
 // and sent after, in one call; one for a session on another machine only sent, and said not recorded.
 import { expect, test } from 'claude-code/testing'
-import { TODO_TOOL, callTodo, register as registerTodo } from '../todo.ts'
-import { todoItems } from '../todo-format.ts'
+import { SURFACE_TICK_MS, TODO_TOOL, callTodo, register as registerTodo, registerSurface, surfaceDue } from '../todo.ts'
+import { TODO_OWNER_FIELDS, todoItems } from '../todo-format.ts'
 import { register as registerWait, Declarations } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { registerEnd, statusText } from '../commands.ts'
@@ -80,7 +80,11 @@ function world(options: Options = {}) {
   return { dollar, files, sent, writes, logs }
 }
 
-const call = (dollar: World, input: Record<string, unknown>) => callTodo(dollar, { tool: `mcp__orchestrator__${TODO_TOOL}`, ...input }, NOW)
+// An add names who takes it: the tests that read something else give it to an agent.
+const TAKER = { agent: 'Agent: takes-it [9]' }
+const bare = (dollar: World, input: Record<string, unknown>) => callTodo(dollar, { tool: `mcp__orchestrator__${TODO_TOOL}`, ...input }, NOW)
+const call = (dollar: World, input: Record<string, unknown>) =>
+  bare(dollar, input['action'] === 'add' && !TODO_OWNER_FIELDS.some(field => field in input) ? { ...TAKER, ...input } : input)
 const listOf = (files: Map<string, string>, name: string) => todoItems(files.get(`${LISTS}/${name}.jsonl`) ?? '')
 
 test('add records his words, dated, in the caller\'s own list, named for the session without its reference', async () => {
@@ -278,7 +282,7 @@ test('the tool is registered loaded, not deferred, with flat fields', async () =
   expect(registrations).toHaveLength(1)
   expect(registrations[0]?.name).toBe(TODO_TOOL)
   expect(registrations[0]?.isDeferred).toBe(false)
-  expect(Object.keys(fieldsOf(registrations[0]?.inputSchema?.['properties']) ?? {})).toEqual(['action', 'words', 'said_at', 'to', 'label', 'images', 'id', 'outcome', 'row'])
+  expect(Object.keys(fieldsOf(registrations[0]?.inputSchema?.['properties']) ?? {})).toEqual(['action', 'words', 'said_at', 'to', 'label', 'images', 'id', 'outcome', 'row', 'agent', 'waits_on', 'why', 'until', 'deadline'])
   expect(registrations[0]?.inputSchema?.['required']).toEqual(['action'])
 })
 
@@ -452,4 +456,119 @@ test('status shows each session\'s open to-do count beside its row, and nothing 
   expect(lines.find(line => line.includes('Orch: billing'))).toContain('2 to-dos')
   expect(lines.find(line => line.includes('Coord: general'))).not.toContain('to-do')
   expect(statusText(sessions)).not.toContain('to-do')
+})
+
+// --- no to-do left aside: who takes it, or what it waits on and until when --------------------------
+
+const WAIT = { waits_on: 'acme/app#46 merged', why: 'the port needs its fix', until: '2026-11-15T09:00:00Z', deadline: '2026-11-17T18:00:00Z' }
+
+test('add refuses an item that names neither who takes it nor what it waits on, and writes nothing', async () => {
+  const { dollar, files } = world()
+  const refused = await bare(dollar, { action: 'add', words: 'port the fix' })
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toContain('who takes it')
+  for (const input of [
+    { waits_on: 'x', why: 'y', until: '2026-11-15T09:00:00Z' },
+    { ...WAIT, until: 'tomorrow' },
+    { ...WAIT, deadline: '2026-11-15T08:00:00Z' },
+    { row: 0 },
+    { agent: '  ' },
+    { agent: 'Orch: billing [ref-7]' },
+  ]) expect((await bare(dollar, { action: 'add', words: 'port the fix', ...input })).isError).toBe(true)
+  expect([...files.keys()].filter(path => path.startsWith(LISTS))).toEqual([])
+})
+
+test('add keeps the row or the agent that takes it, or the wait, its dates as UTC instants; list shows them', async () => {
+  const { dollar, files } = world()
+  expect((await bare(dollar, { action: 'add', words: 'one', row: 339 })).isError).toBe(undefined)
+  expect((await bare(dollar, { action: 'add', words: 'two', agent: 'Agent: belt-p3 [2]' })).isError).toBe(undefined)
+  expect((await bare(dollar, { action: 'add', words: 'three', ...WAIT, until: '2026-11-15T10:00:00+01:00' })).isError).toBe(undefined)
+  const items = listOf(files, 'Orch: billing')
+  expect(items.map(item => [item.rows, item.agent, item.waits])).toEqual([
+    [[339], undefined, undefined],
+    [undefined, 'Agent: belt-p3 [2]', undefined],
+    [undefined, undefined, { on: WAIT.waits_on, why: WAIT.why, until: '2026-11-15T09:00:00Z', deadline: WAIT.deadline }],
+  ])
+  const listed = String((await bare(dollar, { action: 'list' })).result)
+  for (const part of ['rows 339', 'taken by Agent: belt-p3 [2]', `waits on ${WAIT.waits_on} (${WAIT.why}) until 2026-11-15T09:00:00Z, deadline ${WAIT.deadline}`]) expect(listed).toContain(part)
+})
+
+test('add to another session records the owner in its list', async () => {
+  const { dollar, files } = world()
+  expect((await bare(dollar, { action: 'add', words: 'run the audit', to: 'Coord: general', ...WAIT })).isError).toBe(undefined)
+  expect(listOf(files, 'Coord: general').map(item => item.waits?.on)).toEqual([WAIT.waits_on])
+})
+
+// A world whose clock and prompt the surfacing reads: the prompts it was given, and a submit that may drop.
+function surfacing(drop = false) {
+  const made = world()
+  const prompts: string[] = []
+  made.dollar.prompt.submit = async ({ text }: { text: string }) => { prompts.push(text); return drop ? { drop: 'busy' } : undefined }
+  return { ...made, prompts }
+}
+
+test('the module surfaces an item when its wait ends, once, then again when its deadline passes; closed, owned or early items are not', async () => {
+  const { dollar, files, prompts } = surfacing()
+  await bare(dollar, { action: 'add', words: 'port the fix', ...WAIT })
+  await bare(dollar, { action: 'add', words: 'owned', row: 12 })
+  await bare(dollar, { action: 'add', words: 'closed one', ...WAIT })
+  await bare(dollar, { action: 'done', id: 3, outcome: 'acme/app#47' })
+  expect(await surfaceDue(dollar, 'Orch: billing [ref-1]', Date.parse('2026-11-15T08:59:59Z'))).toEqual([])
+  const at = Date.parse('2026-11-15T09:00:00Z')
+  expect((await surfaceDue(dollar, 'Orch: billing [ref-1]', at)).map(due => [due.item.id, due.date])).toEqual([[1, 'until']])
+  expect(prompts).toHaveLength(1)
+  for (const part of ['[module]', 'to-do 1 (port the fix)', WAIT.waits_on, 'its wait ended at 2026-11-15T09:00:00Z', 'todo wait']) expect(prompts[0]).toContain(part)
+  expect(listOf(files, 'Orch: billing')[0]?.surfaced).toEqual(['until'])
+  expect(await surfaceDue(dollar, 'Orch: billing [ref-1]', at + SURFACE_TICK_MS)).toEqual([])
+  expect((await surfaceDue(dollar, 'Orch: billing [ref-1]', Date.parse(WAIT.deadline))).map(due => due.date)).toEqual(['deadline'])
+  expect(prompts[1]).toContain(`its deadline ${WAIT.deadline} passed`)
+  expect(await surfaceDue(dollar, 'Orch: billing [ref-1]', Date.parse(WAIT.deadline) + 1)).toEqual([])
+})
+
+test('an item whose two dates passed unseen is told once, for its deadline', async () => {
+  const { dollar, files, prompts } = surfacing()
+  await bare(dollar, { action: 'add', words: 'port the fix', ...WAIT })
+  expect((await surfaceDue(dollar, 'Orch: billing', Date.parse('2026-11-18T00:00:00Z'))).map(due => due.date)).toEqual(['deadline'])
+  expect(listOf(files, 'Orch: billing')[0]?.surfaced).toEqual(['until', 'deadline'])
+  expect(prompts).toHaveLength(1)
+})
+
+test('a wake the host drops marks nothing: the item is told again at the next reading', async () => {
+  const { dollar, files, prompts } = surfacing(true)
+  await bare(dollar, { action: 'add', words: 'port the fix', ...WAIT })
+  await expect(surfaceDue(dollar, 'Orch: billing', Date.parse('2026-11-15T10:00:00Z'))).rejects.toThrow('dropped')
+  expect(listOf(files, 'Orch: billing')[0]?.surfaced).toBe(undefined)
+  expect(prompts).toHaveLength(1)
+})
+
+test('wait sets a new wait on an open item and starts its surfacing over; a closed item or a partial wait is refused', async () => {
+  const { dollar, files } = surfacing()
+  await bare(dollar, { action: 'add', words: 'port the fix', ...WAIT })
+  await surfaceDue(dollar, 'Orch: billing', Date.parse('2026-11-15T10:00:00Z'))
+  const again = await bare(dollar, { action: 'wait', id: 1, ...WAIT, until: '2026-11-16T09:00:00Z' })
+  expect(again.isError).toBe(undefined)
+  expect(again.result).toContain('until 2026-11-16T09:00:00Z')
+  const [one] = listOf(files, 'Orch: billing')
+  expect([one?.waits?.until, one?.surfaced]).toEqual(['2026-11-16T09:00:00Z', undefined])
+  expect((await bare(dollar, { action: 'wait', id: 1 })).isError).toBe(true)
+  expect((await bare(dollar, { action: 'wait', id: 1, waits_on: 'x' })).isError).toBe(true)
+  await bare(dollar, { action: 'done', id: 1, outcome: 'row 3' })
+  expect((await bare(dollar, { action: 'wait', id: 1, ...WAIT })).result).toContain('already closed')
+})
+
+test('the reading is armed at a keeper\'s turn end, once per session, read at once; an agent\'s turn end arms none', async () => {
+  const turnEnd = hooksOn(capture<World>(registerSurface), 'turn.complete').at(-1)!.handler
+  const { dollar, prompts } = surfacing()
+  await bare(dollar, { action: 'add', words: 'port the fix', ...WAIT, until: '2026-11-01T09:00:00Z' })
+  const every: number[] = []
+  dollar.clock.every = (ms: number) => { every.push(ms); return { cancel: () => undefined } }
+  await turnEnd(dollar, {}, async () => undefined)
+  await turnEnd(dollar, {}, async () => undefined)
+  expect(every).toEqual([SURFACE_TICK_MS])
+  expect(prompts).toHaveLength(1)
+  const agent = world({ me: ['agent', 'Agent: seven [1]'] }).dollar
+  const armed: number[] = []
+  agent.clock.every = (ms: number) => { armed.push(ms); return { cancel: () => undefined } }
+  await hooksOn(capture<World>(registerSurface), 'turn.complete').at(-1)!.handler(agent, {}, async () => undefined)
+  expect(armed).toEqual([])
 })

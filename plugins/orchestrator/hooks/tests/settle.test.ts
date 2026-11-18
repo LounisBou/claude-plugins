@@ -127,7 +127,7 @@ test('the tool is registered with flat fields, for every main session but an age
   expect(registered.map(spec => spec.name)).toEqual(['settle'])
   const settleHook = hooksOn(hooks, 'tool.call').filter(h => h.matcher?.['tool'] === 'mcp__orchestrator__settle').at(-1)!
   const call = async (dollar: World, e: Record<string, unknown>) => await settleHook.handler(dollar, e, async () => undefined) as Out
-  expect(Object.keys(fieldsOf(registered[0]?.inputSchema?.['properties']) ?? {}).sort()).toEqual(['answer', 'author', 'id', 'outcome', 'reason', 'work'])
+  expect(Object.keys(fieldsOf(registered[0]?.inputSchema?.['properties']) ?? {}).sort()).toEqual(['agent', 'answer', 'author', 'deadline', 'id', 'outcome', 'reason', 'row', 'until', 'waits_on', 'why', 'work'])
   const id = await asked(m)
   expect((await call(m.asker, { id, outcome: 'answered-here', answer: 'A', agentId: 'a-1' })).isError).toBe(true)
   expect((await call(m.asker, { id, outcome: 'answered-here', answer: 'A' })).isError).toBeUndefined()
@@ -231,14 +231,25 @@ test('a store write that fails is refused, nothing changed, nothing sent', async
 test('an answer that asks work records it as a to-do of the asker, in its list, sent to it when another session settles', async () => {
   const m = machine()
   const id = await asked(m)
-  const answer = await settle(m.coordinator, request(id, { text: 'B, and port it', work: 'port the fix to next' }), AT)
+  const answer = await settle(m.coordinator, request(id, { text: 'B, and port it', work: 'port the fix to next', owner: { row: 12 } }), AT)
   expect(answer.result).toContain(`Recorded as to-do 1 in the list of ${ASKER.replace(/ \[.*\]$/, '')}`)
   expect(m.files.get(todoPath(MODULE, ASKER))).toContain('port the fix to next')
   expect(m.sent.length).toBe(2)
   const own = await asked(m)
-  const mine = await settle(m.asker, request(own, { work: 'write the runbook' }), AT)
+  const mine = await settle(m.asker, request(own, { work: 'write the runbook', owner: { agent: 'Agent: runbook [4]' } }), AT)
   expect(mine.result).toContain('Recorded as to-do 2 in your list')
   expect(m.sent.length).toBe(2)
+})
+
+test('the work an answer asks carries who takes it or what it waits on; without either it is not recorded, and the settle stands', async () => {
+  expect(parseSettle({ id: 'q-1', outcome: 'answered-here', answer: 'B', work: 'port it', row: 12, why: 'w' })).toEqual({ request: request('q-1', { text: 'B', work: 'port it', owner: { row: 12, why: 'w' } }) })
+  const m = machine()
+  const id = await asked(m)
+  const answer = await settle(m.coordinator, request(id, { text: 'B, and port it', work: 'port the fix to next' }), AT)
+  expect(answer.result).toContain('The work it asks is not recorded')
+  expect(answer.result).toContain('who takes it')
+  expect(entryOf(m, id).status).toBe('answered')
+  expect(m.files.has(todoPath(MODULE, ASKER))).toBe(false)
 })
 
 // --- a closing proposal the relay wrote --------------------------------------------------------------------

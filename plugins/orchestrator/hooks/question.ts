@@ -634,7 +634,7 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
   const said = [`Settled ${request.id}: ${String(done.entry['status'])}.`, ...closed.said]
   if (request.work !== null) {
     const own = done.asker.session === me.session
-    const made = await callTodo($, { action: 'add', words: request.work, ...(own ? {} : { to: done.asker.name }) }, now)
+    const made = await callTodo($, { ...request.owner, action: 'add', words: request.work, ...(own ? {} : { to: done.asker.name }) }, now)
     said.push(made.isError ? `The work it asks is not recorded: ${made.result}` : made.result)
   }
   return { result: said.join(' ') }
@@ -884,7 +884,8 @@ export function registerSettle(on: On<Held>): void {
         isDeferred: false,
         description: 'Closes a question of the round by its id; one asked with ask is sent its answer at once. '
           + 'outcome: `answered-here` (he answered in this tab; answer: his words or letter), `answered-by-message` (his answer to your own question reached you by a message; answer, and author: that session), '
-          + '`withdrawn` (reason: the evidence, or what made it moot). work: the work his answer asks, in his words, recorded as a to-do of the asker. '
+          + '`withdrawn` (reason: the evidence, or what made it moot). work: the work his answer asks, in his words, recorded as a to-do of the asker, '
+          + 'with who takes it or what it waits on as todo add takes them (row, agent, or waits_on, why, until and deadline). '
           + 'For an orchestrator, a coordinator or an auditor.',
         inputSchema: {
           type: 'object',
@@ -895,6 +896,12 @@ export function registerSettle(on: On<Held>): void {
             reason: { type: 'string' },
             author: { type: 'string' },
             work: { type: 'string' },
+            row: { type: 'integer' },
+            agent: { type: 'string' },
+            waits_on: { type: 'string' },
+            why: { type: 'string' },
+            until: { type: 'string' },
+            deadline: { type: 'string' },
           },
           required: [],
         },
