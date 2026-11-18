@@ -116,88 +116,81 @@ export type DeliveryFacts = {
 // reading of CI: it keeps the latest run of each check, which a rollup of every run does not.
 const GATE_CI: ReadonlyMap<string, CiState> = new Map([['SUCCESS', 'green'], ['FAILURE', 'failing'], ['PENDING', 'pending'], ['NONE', 'none']])
 
-// The github engine as the module runs it: its argv up to the pull request's number, and the time
-// the relay leaves it. The gate makes five or so GitHub reads and answers in about 3.3 s, over a
-// read's own bound, so it gets what the relay's deadline leaves, not a fixed bound.
-export type Gate = { argv: readonly string[]; boundMs: number }
-
-// The least time worth giving the gate: under it the read is not made and CI is said unread.
-export const GATE_MIN_MS = 1500
-
-// What the gate's run came to: its answer, null when it ran out of time, or the error that kept it from running.
-type GateRead = Awaited<ReturnType<FactsRun>> | { error: string }
+// The gate's last answer ci-watch kept for a pull request (core's ciGatePath), as text, or null when
+// it kept none. The relay reads CI there and runs no process for it: the gate makes five or so
+// GitHub reads, about 3.3 s, which a turn's end cannot wait for (2026-11-17, cut at 4.3 s).
+export type KeptGate = (repo: string, pr: number) => Promise<string | null>
 
 const oneLine = (text: unknown): string => String(text ?? '').trim().split('\n')[0]!.slice(0, 120)
 
-// The gate's JSON answer for `head`, in one word of CI or why it is unread. Never a guess: a
-// read that failed, ran out of time, answered another head or answered no known result is unread.
-export function gateCi(done: GateRead, head: string, boundMs: number): { ci: CiState; why?: string } {
-  if (done === null) return { ci: 'unread', why: `the gate did not answer within ${boundMs} ms` }
-  if ('error' in done) return { ci: 'unread', why: `the gate could not run: ${oneLine(done.error)}` }
-  if (done.exitCode !== 0) return { ci: 'unread', why: `the gate failed (exit ${done.exitCode})${oneLine(done.stderr) ? `: ${oneLine(done.stderr)}` : ''}` }
+// The kept gate answer for `head`, in one word of CI or why it is unread. Never a guess: no reading,
+// a reading of another head, or one with no known result is unread.
+export function keptCi(text: string | null, head: string): { ci: CiState; why?: string } {
+  if (text === null) return { ci: 'unread', why: `no gate reading at ${head.slice(0, 7)} yet` }
   let read: unknown
   try {
-    read = JSON.parse(String(done.stdout ?? ''))
+    read = JSON.parse(text)
   } catch {
-    return { ci: 'unread', why: 'the gate answered no JSON' }
+    return { ci: 'unread', why: 'the gate reading kept is no JSON' }
   }
   const answer = typeof read === 'object' && read !== null ? read as { head?: unknown; ci?: unknown } : {}
-  if (typeof answer.head !== 'string') return { ci: 'unread', why: 'the gate answered no head' }
-  if (answer.head.toLowerCase() !== head.toLowerCase()) return { ci: 'unread', why: `the gate read head ${answer.head.slice(0, 7)}, not ${head.slice(0, 7)}` }
+  if (typeof answer.head !== 'string') return { ci: 'unread', why: 'the gate reading kept names no head' }
+  if (answer.head.toLowerCase() !== head.toLowerCase()) return { ci: 'unread', why: `the last gate reading is of head ${answer.head.slice(0, 7)}, not ${head.slice(0, 7)}` }
   const result = typeof answer.ci === 'object' && answer.ci !== null ? (answer.ci as { result?: unknown }).result : undefined
   const ci = typeof result === 'string' ? GATE_CI.get(result) : undefined
-  return ci ? { ci } : { ci: 'unread', why: 'the gate answered no CI result' }
+  return ci ? { ci } : { ci: 'unread', why: 'the gate reading kept has no CI result' }
 }
 
 const lineOf = (done: Awaited<ReturnType<FactsRun>>): string | null => (done && done.exitCode === 0 ? String(done.stdout ?? '').trim() : null)
 
 const countOf = (text: string | null): number | null => (text !== null && /^\d+$/.test(text) ? Number(text) : null)
 
+// The repository a pull request's URL names, `owner/name`, or null.
+const repoOfUrl = (url: unknown): string | null => {
+  const m = typeof url === 'string' ? /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+/.exec(url) : null
+  return m?.[1] ?? null
+}
+
 // The facts of the delivery `report` claims, every read at once: git's three in the checkout,
-// gh's one on the pull request the verdict line names (verdictOf), else on the branch's, and, when
-// the verdict line names the pull request and the github engine (`gate`, its argv up to the
-// pull request, with its time) is found, the gate's, which says CI. A branch's pull request has no number until
-// gh has read it, and the gate would then outrun the relay: its CI is said unread, with why.
-export async function readDeliveryFacts(run: FactsRun, report: string, gate: Gate | null = null): Promise<DeliveryFacts> {
+// gh's one on the pull request the verdict line names (verdictOf), else on the branch's, and CI as
+// the gate's last reading ci-watch kept for that pull request (`kept`) says it at its head.
+export async function readDeliveryFacts(run: FactsRun, report: string, kept: KeptGate): Promise<DeliveryFacts> {
   const named = verdictOf(report)
   const quiet = (argv: readonly string[], timeoutMs?: number) => run(argv, timeoutMs).catch(() => null)
-  const gating: Promise<GateRead> | string = !named ? 'the report names no pull request, so the gate has none to read'
-    : !gate ? 'the github plugin is not found'
-    : gate.boundMs < GATE_MIN_MS ? 'the relay had too little time left for the gate'
-    : run([...gate.argv, String(named.pr), '--json'], gate.boundMs).catch((error: unknown) => ({ error: error instanceof Error ? error.message : String(error) }))
   const [status, head, unpushed, view] = await Promise.all([
     quiet(['git', 'status', '--porcelain']),
     quiet(['git', 'rev-parse', 'HEAD']),
     quiet(['git', 'rev-list', '--count', 'HEAD', '--not', '--remotes']),
     // One --json argument, the fields comma-joined: gh reads a second word as a positional.
-    quiet(['gh', 'pr', 'view', ...(named ? [String(named.pr)] : []), '--json', 'number,headRefOid']),
+    quiet(['gh', 'pr', 'view', ...(named ? [String(named.pr)] : []), '--json', 'number,headRefOid,url']),
   ])
   const porcelain = status && status.exitCode === 0 ? String(status.stdout ?? '') : null
   return {
     dirty: porcelain === null ? null : porcelain.split('\n').filter(line => line.trim() !== '').length,
     unpushed: countOf(lineOf(unpushed)),
     head: lineOf(head) || null,
-    ...pullRequestOf(lineOf(view), typeof gating === 'string' ? gating : await gating, gate?.boundMs ?? 0),
+    ...await pullRequestOf(lineOf(view), kept),
     claimed: named ? { pr: named.pr, head: named.head } : null,
   }
 }
 
-// The pull request gh read; its CI is the gate's answer, or unread for the reason the gate was not
-// asked. A pull request gh did not read has no head to compare the gate's answer with: its CI is
-// unread too, said beside it. A gate answer that cannot be read is unread, never a missing CI word.
-function pullRequestOf(json: string | null, gated: GateRead | string, boundMs: number): Pick<DeliveryFacts, 'pr' | 'ciWhy'> {
-  let read: { number?: unknown; headRefOid?: unknown } = {}
+// The pull request gh read; its CI is the kept gate reading at its head. A pull request gh did not
+// read has no head to compare the reading with: its CI is unread too, said beside it. A reading that
+// cannot be read is unread, never a missing CI word.
+async function pullRequestOf(json: string | null, kept: KeptGate): Promise<Pick<DeliveryFacts, 'pr' | 'ciWhy'>> {
+  let read: { number?: unknown; headRefOid?: unknown; url?: unknown } = {}
   try {
     read = json ? JSON.parse(json) as typeof read : {}
   } catch {
     read = {}
   }
   if (typeof read.number !== 'number' || typeof read.headRefOid !== 'string') return { pr: null, ciWhy: 'the pull request was not read' }
+  const repo = repoOfUrl(read.url)
   let ci: { ci: CiState; why?: string }
   try {
-    ci = typeof gated === 'string' ? { ci: 'unread', why: gated } : gateCi(gated, read.headRefOid, boundMs)
+    ci = repo === null ? { ci: 'unread', why: 'the pull request\'s repository was not read' } : keptCi(await kept(repo, read.number), read.headRefOid)
   } catch (error) {
-    ci = { ci: 'unread', why: `the gate's answer could not be read: ${oneLine(error instanceof Error ? error.message : error)}` }
+    ci = { ci: 'unread', why: `the gate reading could not be read: ${oneLine(error instanceof Error ? error.message : error)}` }
   }
   return { pr: { number: read.number, head: read.headRefOid, ...(ci.why === undefined ? { ci: ci.ci } : { ci: ci.ci, ciWhy: ci.why }) } }
 }

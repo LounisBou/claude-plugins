@@ -54,6 +54,7 @@ const SCRIPT = join(here, 'brief.sh')
 const LAUNCHER = join(root, 'skills', 'iterm-agents', 'scripts', 'iterm-agent.sh')
 const COORDINATOR = join(root, 'skills', 'coordinator', 'scripts', 'coordinator.sh')
 const RHYTHM = join(here, 'rhythm.sh')
+const LENS_MODEL = join(here, 'lens-model.sh')
 const CHECKLIST = join(root, 'skills', 'orchestrator', 'references', 'screenshot-checklist.md')
 /** The coordinator's notes are printed this far, at most. */
 export const NOTES_CAP = 4000
@@ -205,6 +206,7 @@ function phaseValues(f: Fields, deps: Deps): Values {
     ORCHESTRATOR: f['orchestrator'] ?? '',
     REPORT_PATH: report,
     SCREENSHOT_CHECKLIST: CHECKLIST,
+    LENS_MODEL,
   }
 }
 

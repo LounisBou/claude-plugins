@@ -729,3 +729,13 @@ test('api_call events enter no cost, context or token figure of the report', () 
     assert.match(find(lines(config), '3 context height'), /^3 context height: 1 of 1 turns above 200k/)
   })
 })
+
+test('cold rewrites: a subagent\'s calls (`agent`) are its own loop, not its session\'s: they make no turn of the session', () => {
+  const events = [
+    apiCall(S(1), '2026-11-09T09:00:00.000Z', 'p1', 'm1', usageOf(0, 30_000), { role: 'agent' }),
+    apiCall(S(1), '2026-11-09T11:00:00.000Z', 'x1', 'a1', usageOf(0, 30_000), { agent: 'c1' }),
+  ]
+  scratch({ events }, config => {
+    assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: n\/a — /)
+  })
+})

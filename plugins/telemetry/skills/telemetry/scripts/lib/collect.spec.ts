@@ -461,3 +461,23 @@ test('target: a record result of another repository gives no head to the call, a
   assert.deepEqual(targetOf(recorded({ pr: 7, repo: 'Acme/Thing' }), { text: written }), { repo: 'Acme/Thing', pr: 7, head: SHA.slice(0, 12) })
   assert.deepEqual(targetOf(recorded({ pr: 7, repo: 'acme/thing' }), { text: 'error: no such head' }), { repo: 'acme/thing', pr: 7 })
 })
+
+const escapeOf = (input: unknown, result: unknown = F('result.ok')): Record<string, unknown> | undefined => toolEvents(AT, S, input, result, undefined, 1).find(e => e['event'] === 'escape')
+
+test('escape: a fix pull request opened, or a fix commit, that names pull requests is an escape candidate, the names kept as written', () => {
+  const opened = escapeOf(gh('pr-create', { title: 'fix(github): the gate reads the head', body: 'Regression of claude-plugins#470, see also https://github.com/acme/thing/pull/12 and #9.\n\nRelated: acme/other#3' }, { repo: 'acme/thing' }), { result: 'acme/thing#40 https://github.com/acme/thing/pull/40 head abc' })
+  assert.deepEqual([opened?.['source'], opened?.['names'], opened?.['target']], ['pull_request', ['acme/thing#12', 'acme/other#3', 'claude-plugins#470', '#9'], { repo: 'acme/thing', pr: 40 }])
+  const committed = escapeOf(bashCall("git commit -q -m 'fix(core): keep the lock (#455)' -m 'body'"))
+  assert.deepEqual([committed?.['source'], committed?.['names']], ['commit', ['#455']])
+  const ghCreate = escapeOf(bashCall("gh pr create -R acme/thing --title 'fix: x' --body 'after acme/thing#7'"))
+  assert.deepEqual([ghCreate?.['source'], ghCreate?.['names']], ['pull_request', ['acme/thing#7']])
+})
+
+test('escape: a feature, a fix naming no pull request, a refused or failed call, a commit read from a file are none', () => {
+  assert.equal(escapeOf(gh('pr-create', { title: 'feat: x', body: 'after #12' })), undefined)
+  assert.equal(escapeOf(gh('pr-create', { title: 'fix: x', body: 'no reference' })), undefined)
+  assert.equal(escapeOf(gh('pr-create', { title: 'fix: x', body: '#12' }), F('result.user')), undefined)
+  assert.equal(escapeOf(gh('pr-update', { title: 'fix: x', body: '#12' })), undefined)
+  assert.equal(escapeOf(bashCall('git commit -F /tmp/msg')), undefined)
+  assert.equal(escapeOf(bashCall("git commit -m 'refactor: #12'")), undefined)
+})

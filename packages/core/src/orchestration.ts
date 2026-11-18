@@ -51,6 +51,18 @@ export function ciWatchLogPath(state: string, repo: string | undefined, pr: stri
   return `${state}/${CI_WATCH_DIR}/${ciWatchLogName(repo, pr, base)}`
 }
 
+/** The gate readings ci-watch keeps under the orchestrator's state directory, one file a pull request. */
+export const CI_GATE_DIR = 'ci-gate'
+
+/**
+ * The last answer of github's `pr-gate` ci-watch read for a pull request, `<slug>-pr<n>.json`: the
+ * slug is the repository `owner/name` lowercased (as the gate names it), any character outside
+ * `[a-z0-9._-]` made `_`. The delivery's facts line reads CI there, never from GitHub itself.
+ */
+export function ciGatePath(state: string, repo: string, pr: string): string {
+  return `${state}/${CI_GATE_DIR}/${repo.toLowerCase().replace(/[^a-z0-9._-]/g, '_')}-pr${pr}.json`
+}
+
 /** The pull request number a watch log's name carries, or null: a base watch's log, or no watch log. */
 export function watchNumberOf(name: string): string | null {
   if (/-pr\d+-base\.log$/.test(name)) return null

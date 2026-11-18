@@ -222,7 +222,9 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=Non
     has not reported at the head, as a run or a status, is running: its workflow
     may start after another check has passed. A read of the required checks that failed
     (unverified: what it read and why) leaves the result at best PENDING: a check the
-    base requires may be missing from the runs, so green cannot be told."""
+    base requires may be missing from the runs, so green cannot be told. `checks` lists each check
+    counted, its bucket (pass, fail, pending, skipping) and its link: the one reading its callers
+    classify (the orchestrator's ci-watch and draft guard)."""
     commit_statuses = (statuses or {}).get("statuses") or []
     runs, waiting, unreported_runs = _latest_runs(runs, workflows, suite_runs, states)
     passing = ("success",) if draft else ("success", "neutral")
@@ -261,7 +263,24 @@ def gate_ci(statuses, runs, draft, workflows=None, suite_runs=None, required=Non
         "skipped": skipped,
         "total": len(runs) + len(commit_statuses) + len(unreported),
         "unverified": list(unverified or ()),
+        "checks": [
+            {"name": run.get("name", "?"), "bucket": _bucket(run, passing, unproven), "link": run.get("details_url") or run.get("html_url") or ""}
+            for run in runs
+        ] + [
+            {"name": status.get("context", "?"), "link": status.get("target_url") or "",
+             "bucket": {"success": "pass", "pending": "pending"}.get(status.get("state"), "fail")}
+            for status in commit_statuses
+        ],
     }
+
+
+def _bucket(run, passing, unproven):
+    """A counted check run's bucket, as gate_ci reads it: pending until completed, then pass, skipping
+    (it proved nothing) or fail."""
+    if run.get("status") != "completed":
+        return "pending"
+    conclusion = run.get("conclusion")
+    return "pass" if conclusion in passing else "skipping" if conclusion in unproven else "fail"
 
 
 def _checks_status(obj):

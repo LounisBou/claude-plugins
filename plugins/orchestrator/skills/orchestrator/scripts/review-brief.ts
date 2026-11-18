@@ -21,12 +21,15 @@
 //
 // No lens is a single reading by the review session itself: the lens list and the tier read `none`.
 // Lenses are one `--lens` each, their size said as « 3 read-only lenses (a, b, c) » unless `--size`
-// gives it; `--scope` is the text that follows the list, what the readers check.
+// gives it; `--scope` is the text that follows the list, what the readers check. The readers' tier and
+// model are read from the diff (`lens-model.ts`); `--tier` overrides the tier, the model follows it.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { fill } from './succession.ts'
+import { diffFiles, modelOf, tierOf, type Tier } from './lens-model.ts'
+import { Refused } from '../../iterm-agents/scripts/tier.ts'
 
 export const USAGE =
   'usage: review-brief.sh --out <path> --repo <owner/name> --pr <n> --title "<delivery>" --spec <path> --index <path> --delivery-report <path> --branch <b> --head <sha> '
@@ -89,9 +92,9 @@ export function parseArgs(argv: readonly string[]): Fields | { readonly error: s
   if (!/^[1-9][0-9]*$/.test(get('pr'))) return { error: `--pr is the pull request number, got: ${get('pr')}` }
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(get('repo'))) return { error: `--repo is owner/name, got: ${get('repo')}` }
   if (!/^[0-9a-f]{7,40}$/i.test(get('head'))) return { error: `--head is a commit sha, 7 to 40 hexadecimal characters, got: ${get('head')}` }
-  const tier = get('tier', 'standard')
-  if (!TIERS.includes(tier)) return { error: `--tier is deep, standard or light, got: ${tier}` }
-  if (lenses.length === 0 && get('tier') !== '') return { error: '--tier goes with --lens: with no lens the tier reads none' }
+  const tier = get('tier')
+  if (tier !== '' && !TIERS.includes(tier)) return { error: `--tier is deep, standard or light, got: ${tier}` }
+  if (lenses.length === 0 && tier !== '') return { error: '--tier goes with --lens: with no lens the tier reads none' }
   return {
     out: get('out'), repo: get('repo'), pr: get('pr'), title: get('title'), spec: get('spec'), index: get('index'), deliveryReport: get('delivery-report'), branch: get('branch'),
     head: get('head'), worktree: get('worktree'), orchestrator: get('orchestrator'), reason: get('reason'), size: get('size'), lenses, tier,
@@ -107,6 +110,8 @@ export function placeholdersOf(text: string): string[] {
 /** What each field of the template reads, from the fields given. */
 function values(f: Fields): Record<string, string> {
   const lensed = f.lenses.length > 0
+  // The readers' tier is the diff's class (lens-model.ts) unless `--tier` says otherwise; their model follows the tier.
+  const tier = (f.tier !== '' || !lensed ? f.tier : tierOf(diffFiles(f.worktree, f.base, f.head))) as Tier
   return {
     PROJECT: f.repo.split('/').at(-1) ?? f.repo,
     DELIVERY_TITLE: f.title,
@@ -121,7 +126,8 @@ function values(f: Fields): Record<string, string> {
     STATE_COMMANDS: 'git fetch origin && git status -sb | head -1 && git log --oneline -1',
     ROUND_SIZE: f.size !== '' ? f.size : lensed ? `${f.lenses.length} read-only lenses (${f.lenses.join(', ')})` : 'a single reading by you',
     ROUND_SIZE_REASON: f.reason,
-    LENS_TIER: lensed ? f.tier : 'none',
+    LENS_TIER: lensed ? tier : 'none',
+    LENS_MODEL: lensed ? modelOf(tier) : 'none',
     LENSES: lensed ? [f.lenses.map(lens => `- ${lens}`).join('\n'), ...(f.scope === '' ? [] : [f.scope])].join('\n\n') : f.scope === '' ? 'none' : `none\n\n${f.scope}`,
     SCREENSHOT_CHECKLIST: CHECKLIST,
     REPORT_PATH: f.index,
@@ -153,7 +159,14 @@ export function main(argv: readonly string[], io: Io, template?: string, templat
     }
     text = readFileSync(templatePath, 'utf8')
   }
-  const known = values(parsed)
+  let known: Record<string, string>
+  try {
+    known = values(parsed)
+  } catch (error) {
+    if (!(error instanceof Refused)) throw error
+    io.err(`review-brief: ${error.message}\n`)
+    return 2
+  }
   const unknown = placeholdersOf(text).filter(name => !(name in known))
   if (unknown.length > 0) {
     io.err(`review-brief: the template has fields this command does not fill: ${unknown.map(name => `{{${name}}}`).join(', ')}\n`)

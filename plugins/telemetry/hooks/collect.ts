@@ -26,7 +26,7 @@ export const HEADER_MAX = 12
  * redacts each whole value first and cuts after (`cutFields`), so a secret straddling a limit is
  * never left half-matched and half-kept.
  */
-export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX }
+export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX, reason: TEXT_MAX }
 /** Past this many buffered events the module writes without waiting for the turn's end. */
 export const FLUSH_AT = 100
 
@@ -458,7 +458,81 @@ export function orchestrationOf(command: string): { event: 'agent_spawned' | 'ag
   return out
 }
 
-/** The `tool_call` event, and the events the call's arguments carry (a question, a spawn). */
+/** A conventional `fix` subject: `fix:`, `fix(scope):`, `fix!:`. */
+const FIX_SUBJECT = /^fix(?:\([^)]*\))?!?:/i
+/** The pull requests a text names: `owner/name#N`, `name#N`, `#N` (each a whole word), their URLs. */
+const NAMED_PULLS = [
+  /(?<![\w/.#-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)\b/g,
+  /(?<![\w/.#-])([A-Za-z0-9_.-]+)#(\d+)\b/g,
+  /(?<![\w/.#-])#(\d+)\b/g,
+]
+/** At most this many names are kept on an escape. */
+export const ESCAPE_NAMES_MAX = 10
+
+/** The pull requests `text` names, as written (a URL as `owner/name#N`), each once, in the order of the patterns. */
+export function namedPulls(text: string): string[] {
+  const names = [...text.matchAll(PULL_URLS)].map(m => `${m[1]}#${m[2]}`)
+  for (const pattern of NAMED_PULLS) names.push(...[...text.matchAll(pattern)].map(m => (m.length === 3 ? `${m[1]}#${m[2]}` : `#${m[1]}`)))
+  return [...new Set(names)].slice(0, ESCAPE_NAMES_MAX)
+}
+
+/** Every value of `--name <v>`, `--name=<v>` and its `short` form in `argv`. */
+function flagValues(argv: readonly string[], names: readonly string[]): string[] {
+  const values: string[] = []
+  argv.forEach((word, at) => {
+    if (names.includes(word) && argv[at + 1] !== undefined) values.push(argv[at + 1] ?? '')
+    for (const name of names) if (name.startsWith('--') && word.startsWith(`${name}=`)) values.push(word.slice(name.length + 1))
+  })
+  return values
+}
+
+/** The fix a Bash line writes, when it is one: a `git commit -m` or a `gh pr create --title`, its subject and text. */
+function bashFixes(command: string): { source: string; text: string }[] {
+  let commands: string[][]
+  try {
+    commands = simpleCommands(command)
+  } catch {
+    return []
+  }
+  const found: { source: string; text: string }[] = []
+  for (const argv of commands) {
+    const program = BASENAME(argv[0] ?? '')
+    let source: string | undefined
+    let parts: string[] = []
+    if (program === 'git') {
+      const sub = gitSubcommand(argv)
+      if (sub !== undefined && argv[sub.at] === 'commit') [source, parts] = ['commit', flagValues(argv.slice(sub.at + 1), ['-m', '--message'])]
+    } else if (program === 'gh' && argv[1] === 'pr' && argv[2] === 'create') {
+      const rest = argv.slice(3)
+      source = 'pull_request'
+      parts = [...flagValues(rest, ['-t', '--title']), ...flagValues(rest, ['-b', '--body'])]
+    }
+    if (source !== undefined && FIX_SUBJECT.test(parts[0] ?? '')) found.push({ source, text: parts.join('\n') })
+  }
+  return found
+}
+
+/**
+ * A candidate escaped defect: a fix (a `fix` pull request opened, a `fix` commit) whose subject or
+ * text names pull requests. Whether a name was merged, and is the defect's origin, is its reader's
+ * join; the names are kept as written, the fix's own pull request in `target`.
+ */
+function escapesOf(at: number, session: string, agent: string | undefined, e: Fields, mcp: { server: string; name: string } | undefined, target: Target | undefined): Event[] {
+  const fixes: { source: string; text: string }[] = []
+  if (mcp?.server === 'github' && mcp.name === 'gh' && text(e['command']) === 'pr-create') {
+    const args = record(e['args'])
+    const title = text(args['title']) ?? ''
+    if (FIX_SUBJECT.test(title)) fixes.push({ source: 'pull_request', text: `${title}\n${text(args['body']) ?? ''}` })
+  } else if (text(e['tool']) === 'Bash' && typeof e['command'] === 'string') {
+    fixes.push(...bashFixes(e['command']))
+  }
+  return fixes.flatMap(fix => {
+    const names = namedPulls(fix.text)
+    return names.length === 0 ? [] : [makeEvent('escape', at, session, { agent, source: fix.source, names, target })]
+  })
+}
+
+/** The `tool_call` event, and the events the call's arguments carry (a question, a spawn, an escape). */
 export function toolEvents(at: number, session: string, input: unknown, result: unknown, check: Check | undefined, durationMs: number | undefined): Event[] {
   const e = record(input)
   const tool = text(e['tool']) ?? 'unknown'
@@ -494,6 +568,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
   if (bash !== undefined && outcome === 'ok') {
     for (const found of orchestrationOf(String(e['command']))) events.push(makeEvent(found.event, at, session, { agent, ...found.fields }))
   }
+  if (outcome === 'ok') events.push(...escapesOf(at, session, agent, e, mcp, target !== undefined && Object.keys(target).length > 0 ? target : undefined))
   return events
 }
 

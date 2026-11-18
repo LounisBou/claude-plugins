@@ -429,6 +429,12 @@ pane_lacks() {
 # late, and the orchestrator's host, in the same work directory, writes beside it.
 tab() { screen | awk '{ i = index($0, "│"); print i ? substr($0, 1, i - 1) : $0 }' | tr '\n' ' ' | tr -s ' '; }
 in_tab() { tab | grep -qF -- "$1"; }
+# A turn's end as the tab draws it: the host's « ✻ <verb> for 4s · done 9:30 PM » line, which a
+# turn in progress (« ✻ Crafting… ») does not carry. The model's own words are no mark of it: a
+# reply may or may not stand in a message of its own.
+turn_done() { tab | grep -qE 'for [0-9ms ]+ · done'; }
+pane_has() { pane | grep -qF -- "$1"; }
+picker_open() { pane | grep -q '^Choose: .*▴'; }
 tab_count() { tab | grep -o -F -- "$1" | wc -l | tr -d ' '; }
 # The pane given the keys when it has not them: it holds them on its open, and ctrl+x tab then
 # gives them back to the prompt.
@@ -552,18 +558,28 @@ check "Enter answers the highlighted choice in the short pane" "A : $LONG" "$(jq
 
 echo "== a wait that asks nothing, beside two questions (160x50)"
 start 50 report
+# The facts the checks below read are waited for, each up to a bound, never a fixed sleep: the
+# last rows drawn are the question's field and the section's line of who waits.
+wait_for 'Other answer' 15
+wait_for 'ask the coordinator' 15
 record "drawn"
 check "the wait that asks nothing is no question: two are counted, the section says who waits" "1|1" "$(pane | grep -c '^Questions for you — 2 pending')|$(pane | grep -c '^1 orchestrator waits for you: ask the coordinator')"
 check "its row still shows what it waits on and blocks, each label in its column" "1|1" "$(pane | grep -c '^Status: *waiting for the operator')|$(pane | grep -c '^Blocks: *line 239 (merge of speculoos#53)')"
 check "the question without choices takes its field at once, with no picker" "1|0" "$(pane | grep -c '^Other answer')|$(pane | grep -c '^Choose: ')"
 # The field is given the keys by a click: the pane holds them at its open, the ring on no element.
 click 'Other answer'
+wait_for '⏎ send' 5
 tm send-keys -t "$SESSION" -l 'the design first'
-sleep 0.6
+wait_for 'the design first' 5
 press Enter
+until_ms 10 status_is s-beta-q3 answered >/dev/null
+until_ms 15 pane_has 'Questions for you — 1 pending' >/dev/null
+until_ms 15 picker_open >/dev/null
 check "the free question answered from its field" "answered|the design first" "$(jq -r .status "$SANDBOX/state/round/s-beta-q3.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-beta-q3.json")"
 check "the question with choices is drawn next, its picker open on the first choice" "1|1|A" "$(pane | grep -c '^Questions for you — 1 pending')|$(pane | grep -c '^Choose: .*▴')|$(focused)"
 press Enter
+until_ms 10 status_is s-gamma-q1 answered >/dev/null
+until_ms 15 pane_has 'not delivered:' >/dev/null
 check "Enter answers it, its sender reached by no session" "answered|A : tag it" "$(jq -r .status "$SANDBOX/state/round/s-gamma-q1.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-gamma-q1.json")"
 notice=$(line_of 'not delivered:')
 check "the notice is one line at the section's foot, above the orchestrators" "1|1" "$(pane | grep -c 'not delivered:')|$([ -n "$notice" ] && [ "$notice" -lt "$(line_of 'Orchestrators')" ] && echo 1)"
@@ -798,11 +814,8 @@ tm send-keys -t "$SESSION" Enter
 asked=$(until_ms 120 coord_open)
 own=$(coord_id)
 [ -n "$own" ] || own=none
-# The asking turn ends on the model's reply « Asked » (its own line, not the tool's « Asked as »)
-# before the pane is answered.
-ended=$(until_ms 120 in_tab '⏺ Asked')
-sleep 2
-pane_has() { pane | grep -qF -- "$1"; }
+# The asking turn ends, as the tab draws it, before the pane is answered.
+ended=$(until_ms 120 turn_done)
 check "(f) the coordinator's own question is asked with the ask tool, its turn ended, and drawn in its pane" "yes|yes|drawn" \
   "$([ "$asked" != never ] && echo yes)|$([ "$ended" != never ] && echo yes)|$([ "$(until_ms 25 pane_has 'Which page goes first?')" != never ] && echo drawn || echo missing)"
 # A plain round, deliberately: the coordinator's own question is read in its pane alone, so it is

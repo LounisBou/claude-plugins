@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { orchForm } from './names.ts'
-import { ciWatchLogName, ciWatchLogPath, recordsRegistryPath, registryNameOf, watchNumberOf } from './orchestration.ts'
+import { ciGatePath, ciWatchLogName, ciWatchLogPath, recordsRegistryPath, registryNameOf, watchNumberOf } from './orchestration.ts'
 import { sessionOrchestration } from './session-orchestration.ts'
 import { claimOwner, createOnly, firstLineOf, releaseOwner } from './store.ts'
 
@@ -100,5 +100,10 @@ describe('orchestration names', () => {
     assert.equal(watchNumberOf(ciWatchLogName('o/r', '12')), '12')
     assert.equal(watchNumberOf(ciWatchLogName('o/r', '12', true)), null)
     assert.equal(watchNumberOf('notes.txt'), null)
+  })
+
+  it('names the gate reading ci-watch keeps for a pull request, whatever the case of its repository', () => {
+    assert.equal(ciGatePath('/s', 'Owner/Repo', '12'), '/s/ci-gate/owner_repo-pr12.json')
+    assert.equal(ciGatePath('/s', 'o/r x', '7'), '/s/ci-gate/o_r_x-pr7.json')
   })
 })

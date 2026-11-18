@@ -117,7 +117,8 @@ function enrichTurn(line: string, event: Event, config: string): string {
  * A subagent's run end with its type and task (the host's `agent-<id>.meta.json`), and, from its
  * transcript (`<session>/subagents/agent-<id>.jsonl`), the calls of the run that ended (those that
  * began within its `duration_ms` of the event, every call before it when it has none): their count,
- * models, last effort and token sums. As it came when the transcript cannot be read.
+ * models, last effort and token sums, then one `api_call` line per call, naming the child (`agent`).
+ * As it came when the transcript cannot be read.
  */
 function enrichSubagent(line: string, event: Event, child: string, config: string): string {
   const path = transcriptOf(config, event.session)
@@ -136,7 +137,9 @@ function enrichSubagent(line: string, event: Event, child: string, config: strin
     } catch { /* no type or task, still the run's figures */ }
     const string = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
     const models = [...new Set(calls.map(call => call.model).filter((model): model is string => model !== undefined))].sort()
-    return JSON.stringify({
+    const stamps = Object.fromEntries(STAMPS.filter(key => event[key] !== undefined).map(key => [key, event[key]]))
+    const lines = calls.map(call => JSON.stringify(makeEvent('api_call', call.start, event.session, { agent: child, ...stamps, ...callFields(call) })))
+    return [JSON.stringify({
       ...event,
       subagent_type: string(event['subagent_type']) ?? string(meta['agentType']),
       description: string(event['description']) ?? string(meta['description']),
@@ -144,7 +147,7 @@ function enrichSubagent(line: string, event: Event, child: string, config: strin
       effort: calls.map(call => call.effort).filter(effort => effort !== undefined).at(-1),
       calls: calls.length,
       totals: callTotals(calls),
-    })
+    }), ...lines].join('\n')
   } catch {
     return line
   }

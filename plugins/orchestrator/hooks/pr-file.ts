@@ -2,8 +2,8 @@
 // The machine's one pull request file: `<state>/prs.json`, every pull request the dispatch records on
 // the machine name (their ledger lines), every open one of their repositories and of those the
 // workspace checkouts are clones of (`prs.wanted`, the sweep's), and those seen merged or closed within ENDED_KEPT_MS, with its state,
-// draft, head, base and their commits, labels, mergeable, fork and one CI word, beside `<state>/prs.log`, one line
-// per change. No daemon refreshes it: a reader that finds it older than PR_FILE_INTERVAL_MS refreshes
+// draft, head, base and their commits, labels, mergeable and fork, beside `<state>/prs.log`, one line per change.
+// It reads no CI: the module's CI is the github gate's (`pr-gate`, read by `relay.ts`). No daemon refreshes it: a reader that finds it older than PR_FILE_INTERVAL_MS refreshes
 // it, under the file's lock, in one forge call for every repository (one GraphQL query), so the
 // machine pays one call per interval whatever the number of orchestrators or pull requests. A call
 // that fails keeps the pull requests read before and says so on the log; the next try waits a whole
@@ -38,12 +38,12 @@ const ENDED = `ended:pullRequests(states:[MERGED,CLOSED],first:${ENDED_PAGE},ord
 /**
  * The one query: per repository, its open pull requests (one page of OPEN_PAGE, the newest), the last
  * ones merged or closed (one page of ENDED_PAGE, for the sweep's clones) and each pull request the
- * records name, by its number, with its head's check rollup; the viewer; the call's cost.
+ * records name, by its number; the viewer; the call's cost.
  */
 export function prQuery(tracked: ReadonlyMap<string, readonly number[]>): string {
   const parts = [...tracked].map(([repo, numbers], i) => {
     const [owner = '', name = ''] = repo.split('/')
-    const named = numbers.map(n => `n${n}:pullRequest(number:${n}){${FIELDS} commits(last:1){nodes{commit{statusCheckRollup{state}}}}}`).join(' ')
+    const named = numbers.map(n => `n${n}:pullRequest(number:${n}){${FIELDS}}`).join(' ')
     return `r${i}:repository(owner:${literal(owner)},name:${literal(name)}){open:pullRequests(states:OPEN,first:${OPEN_PAGE},orderBy:{field:CREATED_AT,direction:DESC}){pageInfo{hasNextPage} nodes{${FIELDS}}} ${ENDED} ${named}}`
   })
   return `query{viewer{login} rateLimit{cost remaining} ${parts.join(' ')}}`
@@ -68,15 +68,12 @@ function nodePr(repo: string, node: unknown): FilePr | undefined {
   const n = node as Record<string, unknown>
   const author = (n['author'] as { login?: unknown } | null | undefined)?.login
   const labels = ((n['labels'] as { nodes?: unknown } | null | undefined)?.nodes)
-  const commits = ((n['commits'] as { nodes?: unknown } | null | undefined)?.nodes)
-  const rollup = Array.isArray(commits) ? (commits[0] as { commit?: { statusCheckRollup?: { state?: unknown } | null } } | undefined)?.commit?.statusCheckRollup : undefined
   return filePrOf({
     repo, pr: n['number'], state: n['state'], draft: n['isDraft'], head: n['headRefName'], sha: n['headRefOid'], base: n['baseRefName'], baseSha: n['baseRefOid'],
     author: typeof author === 'string' ? author : null, createdAt: n['createdAt'],
     labels: Array.isArray(labels) ? labels.flatMap(label => (typeof (label as { name?: unknown } | null)?.name === 'string' ? [(label as { name: string }).name] : [])) : [],
     mergeable: n['mergeable'],
     fork: n['isCrossRepository'] === true ? (n['headRepositoryOwner'] as { login?: unknown } | null | undefined)?.login ?? '?' : null,
-    ...(Array.isArray(commits) ? { ci: typeof rollup?.state === 'string' ? rollup.state.toLowerCase() : 'none' } : {}),
   })
 }
 
@@ -140,7 +137,6 @@ export function changeLines(before: PrFile | undefined, after: readonly FilePr[]
     }
     if (old.state !== pr.state) say(pr, pr.state === 'OPEN' ? 'reopened' : pr.state.toLowerCase())
     if (old.draft !== pr.draft) say(pr, pr.draft ? 'draft' : 'ready for review')
-    if (pr.ci !== undefined && old.ci !== pr.ci) say(pr, `ci ${pr.ci}`)
   }
   for (const old of before.prs) {
     if (old.state === 'OPEN' && read.includes(old.repo) && !now.has(prKey(old.repo, old.pr))) say(old, 'no longer open')

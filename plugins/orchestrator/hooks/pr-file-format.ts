@@ -15,8 +15,7 @@ export const ENDED_KEPT_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * A pull request as the file holds it: `fork`, the owner of its head's repository when that is a
- * fork; `ci`, its head's check rollup in one lowercase word, for the pull requests the records name;
- * `ended`, when the file first saw it merged or closed; `base` and `baseSha`, its base branch and that
+ * fork; `ended`, when the file first saw it merged or closed; `base` and `baseSha`, its base branch and that
  * branch's commit, absent from a file written before they were read.
  */
 export interface FilePr {
@@ -33,7 +32,6 @@ export interface FilePr {
   readonly labels: readonly string[]
   readonly mergeable: string | null
   readonly fork: string | null
-  readonly ci?: string
   readonly ended?: string
 }
 
@@ -64,13 +62,13 @@ const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filt
 export function filePrOf(value: unknown): FilePr | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const r = value as Record<string, unknown>
-  const { repo, pr, state, draft, head, sha, base, baseSha, ci, ended } = r
+  const { repo, pr, state, draft, head, sha, base, baseSha, ended } = r
   if (typeof repo !== 'string' || typeof pr !== 'number' || !Number.isInteger(pr) || pr < 1 || !isState(state)) return undefined
   return {
     repo, pr, state, draft: draft === true, head: text(head) ?? '', sha: text(sha) ?? '', author: text(r['author']),
     createdAt: text(r['createdAt']), labels: strings(r['labels']), mergeable: text(r['mergeable']), fork: text(r['fork']),
     ...(typeof base === 'string' ? { base } : {}), ...(typeof baseSha === 'string' ? { baseSha } : {}),
-    ...(typeof ci === 'string' ? { ci } : {}), ...(typeof ended === 'string' ? { ended } : {}),
+    ...(typeof ended === 'string' ? { ended } : {}),
   }
 }
 

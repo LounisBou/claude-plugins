@@ -405,7 +405,7 @@ test('pr-readiness ready refused by a permission rule stays refused: only the ga
  * One readiness contract: pr-readiness ready, pr-ready and pr-merge read the same head through the
  * same function, so where one is held the others are, for the same missing conditions. On
  * claude-plugins at one head, pr-readiness ready put Ready while pr-ready and pr-merge refused it.
- * A record absent at the head is the one difference: the label is not put, the acts are observed.
+ * A record absent at the head is the one difference: the label is not put, the acts go through.
  */
 for (const [label, w, missing] of [
   ['a failed review', REVIEW_FAILED, 'Missing: ' + REVIEW_FAILED_ITEM + '.'],
@@ -432,12 +432,12 @@ test('pr-readiness not-ready is let through with the gate unread', async ($, on)
   expect(gates(seen)).toBe(0)
 })
 
-test('in auto-merge a merge whose records are only absent goes through, observed, Ready never put', async ($, on) => {
+test('in auto-merge a merge whose records are only absent goes through, Ready never put', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'], verdict: { decision: 'ask' } })
   const out = await $.tool.call(gh('pr-merge', { pr: 12 }))
   expect(out).toEqual({ result: 'ok' })
   expect(seen.asked.length).toBe(0)
-  expect(seen.journal).toEqual(['github.ready.no-record'])
+  expect(seen.journal).toEqual([])
   expect(commands(seen)).toEqual(['pr-gate', 'pr-merge'])
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
@@ -460,11 +460,11 @@ test('in auto-merge a merge with a record absent and CI failed is refused, both 
   expect(commands(seen)).toEqual(['pr-gate'])
 })
 
-test('a merge of a pull request carrying Ready whose records are absent goes through observed, Ready taken off', async ($, on) => {
+test('a merge of a pull request carrying Ready whose records are absent goes through, Ready taken off', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'], autoMerge: ['acme/thing'] })
   const out = await $.tool.call(gh('pr-merge', { pr: 12 }))
   expect(out).toEqual({ result: 'ok' })
-  expect(seen.journal).toEqual(['github.ready.no-record'])
+  expect(seen.journal).toEqual([])
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
@@ -493,7 +493,7 @@ test('in auto-merge a ready merge runs with no question, the gate putting Ready 
 
 // No route merges a pull request whose CI is not green or whose record failed: the Ready label lands
 // before the merge runs, or the merge is refused and the pull request keeps Not Ready. A pull request
-// that misses only records absent at its head is merged without the label, observed.
+// that misses only records absent at its head is merged without the label.
 const MERGE_ACTS = [
   ['tool', gh('pr-merge', { pr: 12 })],
   ['Bash', bash('gh pr merge 12 -R acme/thing --squash --match-head-commit ' + HEAD)],
@@ -514,12 +514,12 @@ for (const [route, call] of MERGE_ACTS) {
     })
   }
 
-  test('a ' + route + ' merge in auto-merge with no record at the head runs, observed once, and Not Ready stays', async ($, on) => {
+  test('a ' + route + ' merge in auto-merge with no record at the head runs, and Not Ready stays', async ($, on) => {
     const seen = await world($, on, { ...NO_RECORDS, autoMerge: ['acme/thing'] })
     const out = await $.tool.call(call)
     expect(out.deny).toBeUndefined()
     expect(actRan(seen, route, 'pr-merge')).toBe(1)
-    expect(seen.journal).toEqual(['github.ready.no-record'])
+    expect(seen.journal).toEqual([])
     expect(seen.pull?.labels).toEqual(['Not Ready'])
   })
 
@@ -725,7 +725,7 @@ test('a pull request that carries Ready, or whose CI is green, is no CI undraft'
   expect(green).toEqual({ result: 'ok' })
   expect(seen.runs.find((r) => r.command === 'pr-ready')?.args).toEqual({ pr: 12 })
   expect(seen.logs.some((l) => l.includes('out of draft to run CI'))).toBe(false)
-  expect(seen.journal).toEqual(['github.ready.no-record'])
+  expect(seen.journal).toEqual([])
 })
 
 // ---- the undraft against CI ----
@@ -760,12 +760,12 @@ for (const [route, call] of UNDRAFT_ACTS) {
     expect(seen.pull?.labels).toEqual(['Not Ready'])
   })
 
-  test('a ' + route + ' undraft in auto-merge with no record at the head and CI green runs, observed', async ($, on) => {
+  test('a ' + route + ' undraft in auto-merge with no record at the head and CI green runs', async ($, on) => {
     const seen = await world($, on, { ...NO_RECORDS, labels: [], autoMerge: ['acme/thing'] })
     const out = await $.tool.call(call)
     expect(out.deny).toBeUndefined()
     expect(actRan(seen, route, 'pr-ready')).toBe(1)
-    expect(seen.journal).toEqual(['github.ready.no-record'])
+    expect(seen.journal).toEqual([])
   })
 }
 
@@ -2403,7 +2403,7 @@ for (const [label, until] of [['an expiry behind', BEHIND], ['an expiry that is 
     expect(String(missing.result).split('expired at').length).toBe(2)
     // The expiry line beside the absent record is no reason of its own: the merge is observed.
     expect(await $.tool.call(gh('pr-merge', { pr: 12 }))).toEqual({ result: 'ok' })
-    expect(seen.journal).toEqual(['github.ready.held', 'github.ready.no-record'])
+    expect(seen.journal).toEqual(['github.ready.held'])
   })
 }
 

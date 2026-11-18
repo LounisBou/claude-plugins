@@ -25,10 +25,10 @@ below, and the `args` object holds the subcommand's arguments.
 |---|---|---|
 | `pr-get` | `[--branch B \| --pr N]` | The PR of a branch (default: the current one) or number `N`, as a list of one (`pr-lines`; `--json`: the list). An unknown number exits 4 |
 | `pr-list` | | Open PRs, a line each (`pr-lines`); `--json`: the full list |
-| `pr-panel` | | The open PRs, newest first (at most 100), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` from the head's status check rollup (`SUCCESS`, `FAILURE`, `PENDING`; a head with no rollup, or a green one holding a skipped run, is `PENDING`, as `pr-checks` reads it) |
+| `pr-panel` | | The open PRs, newest first (at most 100), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` (`SUCCESS`, `FAILURE`, `PENDING`, `?`) from the head's status check rollup, not the gate's reading |
 | `pr-status` | `<pr>` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
 | `pr-checks` | `<pr>` | Verdict, counts, failed and skipped names (`checks-summary`); `--json`: commit status and check runs |
-| `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read, which the module uses to reread the head before it writes a label |
+| `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total", "checks"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read |
 | `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
 | `pr-files` | `<pr>` | Totals, a line per changed path (`files-summary`); `--json`: with the patches, paginated |
@@ -37,17 +37,12 @@ below, and the `args` object holds the subcommand's arguments.
 | `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, a draft by default. One line (`pr-created`): `owner/name#N`, URL, head, labels, then `related` and the PRs updated; `--json` the PR. It gets `Not Ready`; a label failure only prints `error:`. Each open PR its `Related PRs` section names gets the new PR added to its own `Related PRs`; one that cannot be updated only prints `error:` |
 | `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, optionally pinned to the head that was verified |
 
-`pr-gate` reads the PR, then at its head the statuses, check runs and Actions runs; `state` is
-`open`, `closed` or `merged`, `head` the full sha. `ci.total`: statuses and each check's latest
-run (a skipped or neutral one of an older run of its workflow left out, and a cancelled one of an older run
-of its workflow, which that run replaced; every run newer than the workflow's last settled success, still going,
-cancelled or skipped, left out, so a rerun a label write fires never moves a green head, unless that run is
-a run started again or its state is unknown; a workflow run going with no check run yet counts as running, and
-a settled one that failed with no check run, a failure), plus each required check not yet reported (running). `ci.result`: `FAILURE` if one failed (`ci.failed`), `PENDING` if one
-runs (`ci.running`) or proved nothing (`ci.skipped`: `skipped`, or `neutral` on a draft, of a check the
-base requires, or of any check when none at the head passed; a skipped check the base does not require, such as a path-filtered job, beside a check that passed holds nothing back), else
-`SUCCESS`; no check at all is `PENDING`, or `NONE` when the repository has no CI (no active
-workflow, required check, or check on the default branch): no CI to wait for. `gh run rerun` of a
+`pr-gate` is the one reading of CI, the ready guard's and the orchestrator's: it reads the PR, then at
+its head the statuses, check runs and Actions runs, and the base's required checks. `state` is `open`,
+`closed` or `merged`, `head` the full sha. `ci.result`: `FAILURE` (`ci.failed`), `PENDING` (nothing reported
+yet, `ci.running`, or `ci.skipped`: a check that proved nothing, or `ci.unverified`: the required checks unread), `SUCCESS`, or `NONE` when the repository has no CI (no active workflow, required check or check on
+the default branch). `ci.checks`: each check counted, its `bucket` (`pass`, `fail`, `pending`, `skipping`)
+and `link`. Which run counts is the gate's code (`ghlib/fmt.py` `gate_ci`) and its tests. `gh run rerun` of a
 draft-time run skips its jobs again: push a new commit.
 
 `file-at-ref` returns `content` and `binary`: a file not valid UTF-8 has `binary` true and
@@ -110,7 +105,7 @@ head; the request carries no `event`, which keeps the review pending.
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
 | `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready, its labels untouched (« Guards »). `--for-ci`: out of draft only for its CI, with `Not Ready` put on it |
 | `pr-draft` | `<pr>` | Back to draft, its labels untouched: `Ready` follows the records at the head, not the draft state |
-| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` and take the other off, creating the labels when missing (a PR that carries the label already and not the other changes nothing and reads nothing of the repository's labels); prints the state, `(unchanged)` when nothing changed. `ready` only when the gate reads it ready, else the label carried and `Missing: …` |
+| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` and take the other off, creating the labels when missing (a PR already carrying the label reads nothing); prints the state, `(unchanged)` when nothing changed. `ready` only when the gate reads it ready, else the label carried and `Missing: …` |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, any case. One line per label, `created <name>` or `present <name>`, with ` #<colour>` when not the house colour |
 | `label-add` | `<pr> <label>...` | Add labels |
 | `label-remove` | `<pr> <label>` | Remove one label — GitHub deletes one per call |
@@ -299,7 +294,7 @@ Never « external terminal ».
 `--disable-auto`), `gh api` `PUT`/`POST` on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql`
 naming `mergePullRequest`, `markPullRequestReadyForReview` or `enablePullRequestAutoMerge`; the
 engine's same subcommands from Bash. The gate puts `Ready` just before the act, which runs on it,
-or without it, observed (`github.ready.no-record`), when only records are absent at the head. CI
+or without it, when only records are absent at the head. CI
 not green, a failed record, or a `--match-head-commit` or `--sha` off the head refuse it before any
 question, naming what is missing. Refused too: a shell merge or undraft naming no repository
 (`-R`, `--repo`, a URL), a GraphQL merge or undraft, a GraphQL query the line does not show

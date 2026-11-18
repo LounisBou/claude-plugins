@@ -80,8 +80,8 @@ export const EVENT_SCHEMA = {
     ],
   },
   api_call: {
-    summary: 'One API call of the session\'s own loop, as its transcript records it: the facts whole and raw, nothing derived (turns, idle gaps and cold rewrites are computed from them, in the report).',
-    writers: ['the writer, from the transcript, when it appends a session\'s own-loop `turn_end`: the calls of the turn that ended', '`telemetry.ts backfill --calls <transcript>`: every call of a past transcript'],
+    summary: 'One API call of the session\'s own loop or of one of its subagents (`agent`), as its transcript records it: the facts whole and raw, nothing derived (turns, idle gaps and cold rewrites are computed from the session\'s own, in the report; token use per session per hour from all of them).',
+    writers: ['the writer, from the transcript, when it appends a session\'s own-loop `turn_end`: the calls of the turn that ended', 'the writer, from the child\'s transcript, when it appends a subagent\'s `agent_closed`: the calls of the run that ended, with `agent`', '`telemetry.ts backfill --calls <transcript>`: every call of a past transcript\'s own loop'],
     fields: [
       field('prompt', 'string', 'The host\'s `promptId`: the calls under one are one turn.'),
       field('message', 'string', 'The API message id of the response: a call is recorded once however often it is read.'),
@@ -147,6 +147,28 @@ export const EVENT_SCHEMA = {
       field('calls', 'number', 'Enriched, subagent: the run\'s API calls, from its transcript.', 'count'),
       field('totals', 'object', 'Enriched, subagent: the run\'s `in`, `out`, `cache_read`, `cache_write` sums.', TOKENS),
       field('title', 'string', 'Session: the closed session\'s title.'),
+    ],
+  },
+  self_review: {
+    summary: 'The outcome of one finding of an implementer\'s self-review: fixed, or answered with its reason.',
+    writers: ['tool `mcp__telemetry__self_review`, one event per finding of the call'],
+    fields: [
+      field('lens', 'string', 'The reader\'s lens that reported it.'),
+      field('file', 'string', 'The file it names.'),
+      field('line', 'number', 'The line it names.'),
+      field('severity', 'string', '`critical`, `important` or `minor`.'),
+      field('outcome', 'string', '`fixed` or `answered`.'),
+      field('reason', 'string', 'Answered: why it stays, redacted and cut to 80 characters.'),
+      field('target', 'object', 'The pull request: `repo`, `pr`, each present when the call names it.'),
+    ],
+  },
+  escape: {
+    summary: 'A candidate escaped defect: a fix whose subject or text names pull requests; whether a name was merged is its reader\'s join. The orchestrator\'s own record of one is the `dispatch` event of `sub` `escaped`.',
+    writers: ['tool `mcp__github__gh` `pr-create` with a `fix` title (source `pull_request`)', 'a Bash `gh pr create --title fix…` (source `pull_request`) or `git commit -m fix…` (source `commit`) that succeeded'],
+    fields: [
+      field('source', 'string', '`pull_request` or `commit`.'),
+      field('names', 'string[]', 'The pull requests its title, body or message names, as written (`owner/name#N`, `name#N`, `#N`; a URL as `owner/name#N`), at most 10.'),
+      field('target', 'object', 'The fix\'s own pull request or repository, when the call names it: `repo`, `pr`.'),
     ],
   },
   question: {
