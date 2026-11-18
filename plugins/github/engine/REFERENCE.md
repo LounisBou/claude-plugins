@@ -225,7 +225,7 @@ Core's `pr-record.ts` declares each kind's producer, the only plugin github writ
 
 | Producer | Kind | When, and with what |
 |---|---|---|
-| pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | At the loop's end, from the findings blocks: `pass` on a clean exit, or at the pass limit or after a `review_only` pass when nothing Critical or Important was reported, else `fail`. None on dirty tracked files or with no PR (`record: none — <why>`) |
+| pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | A `review_only` loop only, from the findings blocks: `pass` when nothing Critical or Important was reported, else `fail` (an unreadable block fails). The fix loop writes none. None on dirty tracked files or with no PR (`record: none — <why>`) |
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, else `fail`, at the head. Refused unless `/norms:check` computed its scope in this session; a later commit may only touch the files it read. None on a dirty tree or with no PR |
 | orchestrator `mcp__orchestrator__review` | review | `verdict: pass\|fail\|accepted` from an orchestrator session, at the head of a clean checkout: `accepted` names each point set aside with its reason; a `pass` over a failed review at the head is refused |
 | github `mcp__github__light_ci` | tests | « Light CI » below |

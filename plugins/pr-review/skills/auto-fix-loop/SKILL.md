@@ -32,18 +32,15 @@ long run that way. Call it at each of these points, with `action` and its fields
 | Step 6, after a revert | `{"action": "reverted", "key": "<key>", "sha": "<reverted sha>"}` | the sha it marked |
 | Step 7 | `{"action": "status"}` | passes, exit reason, fixes and reverts for the summary |
 
-The answer that carries an `exit` ends with one more line, `record: <path>` or
-`record: none — <why>`: the review record the loop left for the github plugin's
-ready guard, or the reason it left none. It never changes the exit. Step 7 prints it.
-The orchestrator judges a `fail`. A session that wrote or pushed the code writes no review
-record: `review_only` (`start` with `"review_only": true`) is the reviewer's mode, one pass and
-no fix, for a session that did not.
+A session that wrote or pushed the code writes no review record: this loop leaves none.
+`review_only` (`start` with `"review_only": true`) is the reviewer's mode, one pass and
+no fix, for a session that did not; the answer that carries its `exit` ends with one more line,
+`record: <path>` or `record: none — <why>`. It never changes the exit. Step 7 prints it.
+The orchestrator judges a `fail`.
 
 Treat a `seen` key exactly as the algorithm treats `seen_issues`: SKIP it. When an
 answer carries `exit`, go to Step 7 with that reason and render the summary from
-the answer, not from memory. While the loop runs, a stop before either exit
-condition is not refused: go back to Step 2. Any
-prompt the user types, or an interrupted turn, ends that watch.
+the answer, not from memory. Any prompt the user types, or an interrupted turn, ends the loop.
 
 When the tool is not listed, keep the same state yourself, as the algorithm below
 spells it out.
@@ -191,7 +188,8 @@ Run the review (Skill tool or review agents):
 - Optionally add comment-analyzer, pr-test-analyzer, code-simplifier
 - End each agent's prompt with `begin_pass`'s `report_request`, verbatim
 
-Wait for ALL hand-backs (3 tries). Aggregate.
+Run the agents in the foreground, wait for all of them, aggregate. An unreadable findings
+block is never clean.
 
 ### Step 4: Check for clean exit
 
@@ -263,12 +261,11 @@ Display:
 ### Skipped Issues (if any)
 - {issue description} — Reason: {suggestion/ambiguous/already_attempted}
 
-{the last `record:` line, verbatim}
+{`review_only` only: the last `record:` line, verbatim}
 ```
 
-The last line is the `record:` line the last answer that carried one ended with, copied
-as it stands. When the tool was not listed, or the exit answer carried no such line,
-print `record: none — the loop tool is not available`.
+A `review_only` loop prints the last `record:` line an answer carried, or, with none,
+`record: none — the loop tool is not available`. A fix loop prints none.
 
 ## Commit Convention
 

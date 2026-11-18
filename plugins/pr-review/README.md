@@ -116,35 +116,31 @@ and every skill keeps its own route.
   PR, its comments, reviews and open threads read through `mcp__github__gh`, then
   `skills/process-comments/scripts/triage.py` — the same script the Bash route
   runs — answering the open items, the counts, the tier and the line to announce.
-- **`mcp__pr-review__loop` and a Stop gate.** auto-fix-loop's pass counter, seen
-  findings and fix log, held outside the model's memory. While a loop runs and
-  neither exit condition (a review with no Critical or Important finding, the pass limit) is met, a stop goes through
-  and the journal keeps one line. Any prompt the user types, or an interrupted turn, ends that watch.
+- **`mcp__pr-review__loop`.** auto-fix-loop's pass counter, seen
+  findings and fix log, held outside the model's memory. Any prompt the user
+  types, or an interrupted turn, ends the loop; a stop before either exit condition (a review with no
+  Critical or Important finding, the pass limit) is let through.
 - **Findings kept past the session.** Each pass the loop accepts leaves its Critical and
   Important findings in the journal, one `finding` line each (`pr-review.finding`): the
   severity, the file, the pull request and its head, and nothing of the finding's text. The
   pull request is asked of `mcp__github__gh` once per loop; the lines of a walkthrough name
   the one `open_comments` read.
-- **The review record.** When the loop ends, it leaves a review record at the pull
+- **The review record.** When a reviewer's loop (`review_only`) ends, it leaves a review record at the pull
   request's head, written through the github plugin's `mcp__github__record`, for that
-  plugin's ready guard. The verdict is computed, not reported: during a pass, each
+  plugin's ready guard. The fix loop writes none: its session wrote the code, and github refuses
+  a review record written by the session that pushed the head. The verdict is computed, not reported: during a pass, each
   agent the session launches is asked to end with a JSON block of its findings, and
-  the module reads them. An agent the host runs in the background is read from its own
-  hand-back (its `SubagentHandback` call, else its last answer); until every one has
-  answered, `findings` asks to wait and a stop is let through. A clean exit needs every
+  the module reads them. An agent the host runs in the background hands its report back
+  to the session, not to the module: it is read as no block. A clean exit needs every
   agent of the pass to report no Critical or Important finding, and a reviewer's verdict needs at least one agent;
-  a background agent whose hand-back has no block is asked for it once (`findings` names
-  its agentId for a SendMessage, and keeps its place); an agent still without a readable
-  block (or one that fails) leaves the severity unknown, and the record's detail and
-  `findings`' answer name that agent by its `subagent_type`. A background agent whose
-  turn ends in error or aborted is silent at once, and a stop while an agent
-  without its block waits to be asked again goes through, noted in the journal. Every agent launched during a pass is a
+  an agent without a readable block (or one that fails) leaves the severity unknown, and the
+  record's detail names that agent by its `subagent_type`: a reviewer's loop records `fail`,
+  the fix loop's pass is never clean. Every agent launched during a pass is a
   reader of it, whatever its type, but a norms agent (`norms:…`), left as it is.
-  A clean review writes `pass`. A loop stopped by the pass limit writes `fail`. A reviewer's loop (`review_only`) ends
-  after its one pass and records its findings' verdict. A `fail` is judged by the
+  A reviewer's loop ends after its one pass and records its findings' verdict: `pass` when no
+  agent reported a Critical or Important finding, else `fail`. A `fail` is judged by the
   orchestrator, through its review tool, which can accept it at the same head; the loop
-  lifts nothing itself. github refuses a review record written by the session that pushed
-  the head. It leaves none when the loop was
+  lifts nothing itself. The record is left none when the loop was
   released by the user, when the branch has no pull request, when tracked files have
   uncommitted changes, or when the github plugin is absent or older than 0.12.0. The
   loop's answer then says `record: none — <why>`. A github call that fails with a 5xx, a
