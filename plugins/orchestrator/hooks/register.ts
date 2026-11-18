@@ -44,6 +44,8 @@ export function register(on: On<Mod>): void {
   registerWait(on)
   registerGuards(on)
   registerBackground(on)
+  // Ahead of the supervision: its turn end sends the row and writes the deck, which carry the pull requests this turn end publishes.
+  registerUnattended(on)
   registerSupervision(on)
   registerWake(on)
   registerPaneTool(on)
@@ -55,7 +57,6 @@ export function register(on: On<Mod>): void {
   registerCommandsEnd(on)
   registerNaming(on)
   registerShortCommands(on)
-  registerUnattended(on)
   registerLedger(on)
   registerGateRecheck(on)
 }

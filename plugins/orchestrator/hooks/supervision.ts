@@ -3466,6 +3466,18 @@ async function refreshDeck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'
   }
 }
 
+// The deck and the remote coordinator's row said again, for a change of the session's row that no turn end made
+// (the module's tick, ledger.ts): bounded, and never a failure of the caller's.
+export async function refreshRowAndDeck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string): Promise<void> {
+  try {
+    const sent = await withDeadline(sendRow($, sessionId), RELAY_BOUND_MS)
+    if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
+  } catch (err) {
+    await logLine($, 'supervision', `row: ${messageOf(err)}`)
+  }
+  await refreshDeck($)
+}
+
 // The orchestrator an agent reports to, and the path that found it, said in the log under
 // `what`. First the orchestrator the launch recorded (ORCHESTRATOR_REPORTS_TO), without its
 // reference: the session of the host's registry that bears that name and runs live (runsLive,

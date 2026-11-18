@@ -10,7 +10,7 @@ import {
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
-import { launcherOf, recordsRegistryPath } from '../core/orchestration.ts'
+import { launcherOf, RECORDS_DIR, recordsRegistryPath } from '../core/orchestration.ts'
 import { isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, ownerOf, withDeadline, type DeclaredWait } from './stop-gate.ts'
 import { parseSessionRow, publishUnattended, sessionKey, storeOf } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -63,6 +63,27 @@ export async function registered($: Host<'fs'>, state: string, sessionId: string
   return (await readOr($, recordsRegistryPath(state, sessionId))).split('\n').map(line => line.trim()).filter(Boolean)
 }
 
+// How many registries of other sessions one reading looks through.
+const REGISTRY_READ_CAP = 256
+
+// The records of the session's orchestration: those the session registered, and those another session of this
+// machine registered that name the orchestration as their owner (`<record>.owner`). A successor that never read
+// or wrote the record has registered none, and still answers for its project's pull requests.
+export async function projectRecords($: Host<'fs'>, state: string, sessionId: string, own: string | null): Promise<string[]> {
+  const found = await registered($, state, sessionId)
+  if (own === null) return found
+  const mine = recordsRegistryPath(state, sessionId)
+  const dir = `${state}/${RECORDS_DIR}`
+  const listed: readonly { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
+  for (const entry of listed.filter(one => one.kind === 'file').slice(0, REGISTRY_READ_CAP)) {
+    if (`${dir}/${entry.name}` === mine) continue
+    for (const path of (await readOr($, `${dir}/${entry.name}`)).split('\n').map(line => line.trim()).filter(Boolean)) {
+      if (!found.includes(path) && ownerOf(await readOr($, `${path}.owner`)) === own) found.push(path)
+    }
+  }
+  return found
+}
+
 // The lines of the records a session registered, each with its record and its text; `own` keeps only
 // those its orchestration owns, as the stop gate reads them.
 async function linesOf($: Host<'fs'>, records: readonly string[], own: string | null): Promise<{ path: string; text: string; lines: LedgerLine[] }[]> {
@@ -88,7 +109,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   const row = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`))
   if (row?.role !== 'orchestrator' || !row.name) return null
   const state = await stateDir($)
-  const own = await linesOf($, await registered($, state, sessionId), orchestrationOf(row.name))
+  const own = await linesOf($, await projectRecords($, state, sessionId, orchestrationOf(row.name)), orchestrationOf(row.name))
   // Only the repositories the session's dispatch record names, read in the machine's file, refreshed
   // first when it is older than its interval; a turn end refreshes it too when the sweep wants
   // repositories read (`prs.wanted`), whatever its own record holds.
@@ -193,14 +214,16 @@ export async function mergeWaits($: Held): Promise<Unattended[]> {
   return waitingOnMerge(reading?.list ?? [])
 }
 
-// The reading as the session's row says it, written when it differs from what the row holds: the module's tick
-// keeps the row's pull requests current while the session waits, with no turn end to do it.
-export async function republish($: Held, sessionId: string, reading: Reading): Promise<void> {
+// The reading as the session's row says it, written when it differs from what the row holds (true when it wrote): the
+// module's tick keeps the row's pull requests current while the session waits, with no turn end to do it.
+export async function republish($: Held, sessionId: string, reading: Reading): Promise<boolean> {
   const row = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`))
   const held = row?.unattended
   const same = held !== undefined && held !== null && held.line === reading.line
     && JSON.stringify([held.prs, held.unread, held.open]) === JSON.stringify([reading.list, reading.unread, reading.openKeys])
-  if (row !== null && !same) await publishUnattended($, sessionId, { at: new Date().toISOString(), line: reading.line, prs: reading.list, unread: reading.unread, open: reading.openKeys })
+  if (row === null || same) return false
+  await publishUnattended($, sessionId, { at: new Date().toISOString(), line: reading.line, prs: reading.list, unread: reading.unread, open: reading.openKeys })
+  return true
 }
 
 // The lines each turn end leaves for the next turn's context, by session.

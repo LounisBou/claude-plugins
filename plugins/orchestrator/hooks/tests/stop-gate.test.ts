@@ -1070,6 +1070,17 @@ test('an open pull request entering the anomaly wakes the orchestrator once; not
   expect(w.timers.map(t => t.ms)).toEqual([60_000])
 })
 
+test('the tick that finds the pull requests of the record moved puts them on the session\'s row and in the deck, with no turn ended', async () => {
+  const { handlers } = mounted()
+  const w = prWorld([9])
+  await stop(handlers['classic.Stop'], w.dollar, stopEvent({}))
+  await w.timers.shift()!.fire()
+  const rowPath = Object.keys(w.wrote).find(path => path.endsWith('/store/sessions/a1b2c3'))
+  expect(JSON.parse(w.wrote[rowPath ?? ''] ?? '{}').unattended?.open).toEqual(['acme/app#9'])
+  const deckPath = Object.keys(w.wrote).find(path => path.endsWith('/deck.json'))
+  expect(JSON.parse(w.wrote[deckPath ?? ''] ?? '{}').orchestrators?.find((o: { name: string }) => o.name === 'Orch: belt')?.prs).toEqual(['acme/app#9'])
+})
+
 test('with no pull request of its own, the tick keeps the file current while a reader wants it: one call an interval', async () => {
   const { handlers } = mounted()
   const w = prWorld([], 0, { records: [''], files: { [`${STATE}/prs.wanted`]: `acme/web ${new Date().toISOString()}\n` }, forge: { 'acme/web': '[]' } })

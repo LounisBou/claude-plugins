@@ -15,7 +15,7 @@ import { paneRows, sendRow, readRemoteRows, type SessionRow } from '../supervisi
 import { register } from '../register.ts'
 import { fingerprint } from '../relay.ts'
 import { parseQ } from '../remote-round.ts'
-import { logLineOf, lockRun } from './fakes.ts'
+import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
 import { capture, hooksOn, hostOf } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Host, type Noun, type SessionSendResult } from '../../core/host.ts'
 
@@ -38,7 +38,11 @@ function storeRow(over: Partial<SessionRow> = {}): string {
   }) + '\n'
 }
 
-function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean } = {}) {
+const RECORD_PATH = '/briefs/belt/dispatch-record.jsonl'
+
+// `record`: the orchestration's dispatch record, registered by the session s-one, with a line saying the operator's merge is awaited
+// on acme/app#8, which the forge (`forge`) lists Ready.
+function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean; record?: boolean } = {}) {
   const files = new Map<string, string>()
   const sent: { to: unknown; text: string }[] = []
   const logged: string[] = []
@@ -46,6 +50,11 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
   files.set(ROW, storeRow())
   if (over.learnt !== false) files.set(LEARNT, JSON.stringify({ name: 'Coord: ops', from: COORD_FROM, at: 'T' }) + '\n')
   if (over.local) files.set(RECORD, JSON.stringify({ name: 'Coord: here', tty: '/dev/ttys9' }))
+  if (over.record) {
+    files.set(`${HOME}/.claude/claude-orchestrator/records/s-one`, `${RECORD_PATH}\n`)
+    files.set(`${RECORD_PATH}.owner`, 'Orch: belt\n')
+    files.set(RECORD_PATH, JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr: 8, status: 'waiting', on: 'le merge de l\'opérateur', since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:30:00Z' }) + '\n')
+  }
   const dollar = hostOf({
     session: {
       id: async () => 's-one',
@@ -79,6 +88,8 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
         const line = logLineOf(argv)
         if (line !== null) logged.push(line)
         if (argv[0] === 'hostname') return { exitCode: 0, stdout: 'bench-mac.local\n', stderr: '' }
+        const asked = prQueryRun(argv, repo => (repo === 'acme/app' ? JSON.stringify([{ number: 8, createdAt: '2026-11-14T08:00:00Z', labels: [{ name: 'Ready' }] }]) : null))
+        if (asked !== null) return asked
         const [verb, , from = '', to = ''] = argv
         if (verb === 'mv' && files.has(from)) {
           files.set(to, files.get(from)!)
@@ -226,6 +237,27 @@ test('the wait relay uses the learnt coordinator when none is registered here', 
   expect(rest).toEqual([])
   expect((parseQ(report!)!.event as { entry: { kind: string; blocks: string | null } }).entry).toMatchObject({ kind: 'done', blocks: null })
   expect(parseRemoteRow(rowLine!)!.waiting).toBe('done')
+})
+
+test('the row a turn end sends carries the pull requests of the record that turn end reads, with no earlier turn to have published them', async () => {
+  const chains = mounted()
+  const fx = fake({ record: true })
+  DECLARATIONS.turnStarted()
+  for (const hook of hooksOn(chains, 'turn.complete')) {
+    await hook.handler(fx.dollar, { answer: 'Waiting.', reason: 'answer', isAborted: false, turnId: 't' }, async e => e)
+  }
+  expect(fx.sent.length).toBe(1)
+  const rowLine = fx.sent[0]!.text.split('\n').find(line => line.startsWith(ROW_MARKER))
+  expect(parseRemoteRow(rowLine ?? '')?.prs).toEqual(['acme/app#8'])
+})
+
+test('sendRow lists the record\'s open pull requests its row published, beside those its watches cover', async () => {
+  const fx = fake()
+  fx.files.set(ROW, storeRow({ unattended: { at: 'T', line: null, prs: [], unread: [], open: ['acme/web#2', 'acme/app#8'] } }))
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/ci-watch/acme_app-pr3.log`, '')
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/ci-watch/acme_app-pr3.log.session`, 's-one\n')
+  await sendRow(fx.dollar, 's-one')
+  expect(parseRemoteRow(fx.sent[0]!.text)?.prs).toEqual(['acme/app#3', 'acme/app#8', 'acme/web#2'])
 })
 
 test('a turn that changes nothing the coordinator holds sends nothing, and the next one that changes it sends once', async () => {

@@ -27,7 +27,7 @@ const row = (role: string, name: string, repo: string | null = 'acme/app', extra
   JSON.stringify({ role, name, repo, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString(), ...extra })
 
 // `extra`: lines of the session's own record beside the ones it has (pull requests 7, 8, 5, 6 and 9).
-type Answers = { forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null | undefined; extra?: string[] }
+type Answers = { forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null | undefined; extra?: string[]; session?: string }
 
 // Pull request 11, an agent that does not run on it, last set well before.
 const ELEVEN = line(11, 'working', { agent: 'Agent: eleven' }, '2026-11-11T08:00:00Z')
@@ -46,6 +46,8 @@ function world(answers: Answers = {}) {
       line(9, 'working', { agent: 'Agent: nine' }),
       ...(answers.extra ?? []),
     ].join('\n') + '\n'],
+    // A successor of the same orchestration: it has registered no record.
+    [`${MODULE}/store/sessions/s-fresh`, row('orchestrator', 'Orch: app')],
     [`${MODULE}/store/sessions/s-other`, row('orchestrator', 'Orch: web')],
     [`${MODULE}/records/s-other`, `${OTHER_RECORD}\n`],
     [OTHER_RECORD, line(10, 'working', { agent: 'Agent: ten' }) + '\n'],
@@ -56,7 +58,7 @@ function world(answers: Answers = {}) {
   const dollar = hostOf({
     plugin: { root: '/plugins/orch' },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : undefined) },
-    session: { id: async () => 's-orch' },
+    session: { id: async () => answers.session ?? 's-orch' },
     clock: { sleep: async () => undefined },
     fs: {
       read: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
@@ -559,13 +561,29 @@ test('the tick republishes the row\'s pull requests once, and leaves the row alo
   const { dollar, files } = world({ forge: labelled({ 9: ['Ready'] }) })
   const path = `${MODULE}/store/sessions/s-orch`
   const read = async () => readUnattended(dollar, 's-orch', NOW)
-  await republish(dollar, 's-orch', (await read())!)
+  expect(await republish(dollar, 's-orch', (await read())!)).toBe(true)
   const first = files.get(path)
   expect(JSON.parse(first ?? '{}').unattended.open).toEqual(['acme/app#7', 'acme/app#8', 'acme/app#6', 'acme/app#9'])
   // The same reading again writes nothing, not even a newer stamp.
   await new Promise(done => setTimeout(done, 5))
-  await republish(dollar, 's-orch', (await read())!)
+  expect(await republish(dollar, 's-orch', (await read())!)).toBe(false)
   expect(files.get(path)).toBe(first)
+})
+
+test('a successor that never read or wrote the record, a session id it has registered nothing under, answers for the project\'s pull requests all the same', async () => {
+  const declare = declaring(new Declarations())
+  const { dollar, files } = world({ session: 's-fresh', forge: labelled({ 8: ['On Hold'], 9: ['Ready'] }) })
+  closedRows(files)
+  expect(files.has(`${MODULE}/records/s-fresh`)).toBe(false)
+  const reading = await readUnattended(dollar, 's-fresh', NOW)
+  expect(reading?.list.map(u => [u.pr, u.waits?.why])).toEqual([[8, 'hold'], [9, 'ready']])
+  expect(reading?.openKeys).toEqual(['acme/app#7', 'acme/app#8', 'acme/app#6', 'acme/app#9'])
+  const refused = await declare(dollar, { kind: 'done' })
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toContain('acme/app#9 (Ready)')
+  expect((await declare(dollar, { kind: 'operator', blocks: 'acme/app#9' })).isError).toBe(undefined)
+  // Another orchestration's record, or one no owner file names, is not the project's: pull request 10 is nobody's here.
+  expect(reading?.list.some(u => u.pr === 10)).toBe(false)
 })
 
 test('declare_wait takes a done from a session that handed over: the unattended pull requests are its successor\'s', async () => {
