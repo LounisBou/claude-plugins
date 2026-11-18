@@ -102,7 +102,7 @@ export function journalled<D extends Journalled>(dollar: D): { dollar: D; journa
 }
 
 // The forge's answer to the machine file's one query (pr-file.ts prQuery), built from each
-// repository's open pull requests (`[{number, createdAt, labels, mergeable}]`; null: the forge cannot
+// repository's open pull requests (`[{number, createdAt, labels, mergeable, sha, base, baseSha}]`; null: the forge cannot
 // be read, the call exits 1 with no data; undefined: a repository it cannot resolve, its alias null
 // and the call exiting 1 with the rest of its data, as `gh api graphql` does). The open ones are the
 // viewer's; a pull request asked by its number and not listed open reads `closed[n]` of the
@@ -120,9 +120,10 @@ export function prQueryRun(
     const listed = open(repo)
     if (listed === null) return { exitCode: 1, stdout: '', stderr: 'HTTP 502' }
     if (listed === undefined) { data[alias] = null; errors.push(`Could not resolve to a Repository with the name '${repo}'.`); continue }
-    const items = JSON.parse(listed) as { number: number; createdAt?: string; labels?: { name: string }[]; mergeable?: string; sha?: string }[]
-    const node = (item: { number: number; createdAt?: string; labels?: { name: string }[]; mergeable?: string; sha?: string }, state = 'OPEN') => ({
+    const items = JSON.parse(listed) as { number: number; createdAt?: string; labels?: { name: string }[]; mergeable?: string; sha?: string; base?: string; baseSha?: string }[]
+    const node = (item: { number: number; createdAt?: string; labels?: { name: string }[]; mergeable?: string; sha?: string; base?: string; baseSha?: string }, state = 'OPEN') => ({
       number: item.number, state, isDraft: false, createdAt: item.createdAt ?? null, headRefName: `b${item.number}`, headRefOid: item.sha ?? 'a'.repeat(40),
+      baseRefName: item.base ?? 'main', baseRefOid: item.baseSha ?? 'c'.repeat(40),
       mergeable: item.mergeable ?? null, author: { login: 'me' }, labels: { nodes: item.labels ?? [] }, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
     })
     const answer: Record<string, unknown> = { open: { pageInfo: { hasNextPage: false }, nodes: items.map(item => node(item)) } }

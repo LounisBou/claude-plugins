@@ -2,7 +2,7 @@
 // The machine's one pull request file: `<state>/prs.json`, every pull request the dispatch records on
 // the machine name (their ledger lines), every open one of their repositories and of those the
 // workspace checkouts are clones of (`prs.wanted`, the sweep's), and those seen merged or closed within ENDED_KEPT_MS, with its state,
-// draft, head, labels, mergeable, fork and one CI word, beside `<state>/prs.log`, one line
+// draft, head, base and their commits, labels, mergeable, fork and one CI word, beside `<state>/prs.log`, one line
 // per change. No daemon refreshes it: a reader that finds it older than PR_FILE_INTERVAL_MS refreshes
 // it, under the file's lock, in one forge call for every repository (one GraphQL query), so the
 // machine pays one call per interval whatever the number of orchestrators or pull requests. A call
@@ -31,7 +31,7 @@ const LABELS_PAGE = 10
 export const LOG_KEPT = 500
 
 const literal = (value: string): string => JSON.stringify(value)
-const BASE = 'number state isDraft createdAt headRefName headRefOid mergeable author{login} isCrossRepository headRepositoryOwner{login}'
+const BASE = 'number state isDraft createdAt headRefName headRefOid baseRefName baseRefOid mergeable author{login} isCrossRepository headRepositoryOwner{login}'
 const FIELDS = `${BASE} labels(first:${LABELS_PAGE}){nodes{name}}`
 const ENDED = `ended:pullRequests(states:[MERGED,CLOSED],first:${ENDED_PAGE},orderBy:{field:UPDATED_AT,direction:DESC}){nodes{${BASE}}}`
 
@@ -71,7 +71,7 @@ function nodePr(repo: string, node: unknown): FilePr | undefined {
   const commits = ((n['commits'] as { nodes?: unknown } | null | undefined)?.nodes)
   const rollup = Array.isArray(commits) ? (commits[0] as { commit?: { statusCheckRollup?: { state?: unknown } | null } } | undefined)?.commit?.statusCheckRollup : undefined
   return filePrOf({
-    repo, pr: n['number'], state: n['state'], draft: n['isDraft'], head: n['headRefName'], sha: n['headRefOid'],
+    repo, pr: n['number'], state: n['state'], draft: n['isDraft'], head: n['headRefName'], sha: n['headRefOid'], base: n['baseRefName'], baseSha: n['baseRefOid'],
     author: typeof author === 'string' ? author : null, createdAt: n['createdAt'],
     labels: Array.isArray(labels) ? labels.flatMap(label => (typeof (label as { name?: unknown } | null)?.name === 'string' ? [(label as { name: string }).name] : [])) : [],
     mergeable: n['mergeable'],
