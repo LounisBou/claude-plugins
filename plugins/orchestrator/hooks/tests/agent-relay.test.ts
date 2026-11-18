@@ -180,7 +180,7 @@ test('a pull request gh failed to read, or one whose repository is unread, still
   expect(noUrl.pr).toEqual({ number: 12, head: SHA, ci: 'unread', ciWhy: 'the pull request\'s repository was not read' })
 })
 
-// Seen 2026-11-17 (claude-plugins#473): the relay ran `pr-gate` itself at the turn's end, on the
+// Seen 2026-11-17: the relay ran `pr-gate` itself at the turn's end, on the
 // 4.3 s its 5 s bound left; the gate makes five or so GitHub reads and was cut. CI now comes from
 // the reading ci-watch kept, and the relay runs no process for it.
 test('a delivery says CI as the gate reading ci-watch kept has it, and runs no process for CI', async () => {
