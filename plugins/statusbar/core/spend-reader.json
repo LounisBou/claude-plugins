@@ -1,0 +1,8 @@
+{
+  "$comment": "Generated from packages/core/src by `npm run core`: edit the source, never this copy.",
+  "version": 1,
+  "dir": "telemetry",
+  "file": "spend-flag.json",
+  "flag_version": 1,
+  "stale_after_ms": 600000
+}

@@ -20,6 +20,8 @@ fail=0
 # The orchestrator's deck is the machine's, not the suite's: no case reads the one of the machine
 # the suite runs on. The cases of the question count name their own state directory.
 export ORCHESTRATOR_STATE_DIR="$WORK/no-orchestrator"
+# Nor the machine's spend flag: the status line is run with no configuration directory of the
+# machine's, unless a case of the spend flag's section names its own (SPEND_CONFIG_DIR).
 
 strip_ansi() { sed $'s/\033\\[[0-9;]*m//g'; }
 
@@ -34,7 +36,7 @@ config_with() {
 # check <name> <config> <payload> <expected multi-line output>
 check() {
   local name="$1" config="$2" payload="$3" expected="$4" actual
-  actual=$(printf '%s' "$payload" | STATUSBAR_CONFIG="$config" bash "$SCRIPT" | strip_ansi)
+  actual=$(printf '%s' "$payload" | CLAUDE_CONFIG_DIR="${SPEND_CONFIG_DIR:-${CLAUDE_CONFIG_DIR:-$WORK/no-config}}" STATUSBAR_CONFIG="$config" bash "$SCRIPT" | strip_ansi)
   if [ "$actual" = "$expected" ]; then
     printf '  ok   %s\n' "$name"
     pass=$((pass + 1))
@@ -827,6 +829,42 @@ if [ -z "$nonbool" ]; then
 else
   printf '  FAIL %s (%s)\n' "every plugin option is a boolean that defaults to on" "$nonbool"; fail=$((fail + 1))
 fi
+
+echo "== spend flag =="
+
+# Telemetry writes spend-flag.json under its state directory (core's spend-reader.json names the
+# file, its version and how old its stamp may be); while the machine's token spend is over its
+# threshold a third line shows the flag's line, in red. A flag absent, torn, of another version,
+# under the threshold, or stamped too long ago (or ahead) shows nothing.
+S_ONLY=$(config_with SHOW_DIRECTORY=1 SHOW_BRANCH=0 SHOW_PR=0 SHOW_MODEL=0 SHOW_SESSION_NAME=0 \
+  SHOW_CONTEXT=0 SHOW_USAGE=0 SHOW_LINES_CHANGED=0)
+S_PAYLOAD="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"}}"
+
+# spend_dir <name> <flag text> -> a configuration directory holding that flag
+spend_dir() {
+  mkdir -p "$WORK/spend-$1/telemetry"
+  printf '%s\n' "$2" > "$WORK/spend-$1/telemetry/spend-flag.json"
+  printf '%s' "$WORK/spend-$1"
+}
+# spend_text <over> <age in seconds> [<version>] [<line>]
+spend_text() {
+  jq -nc --argjson over "$1" --argjson at "$(( (NOW - $2) * 1000 ))" --argjson v "${3:-1}" --arg line "${4:-spend 860 \$/h over the last hour, past 400 \$/h — top: Orch: one 300 \$}" \
+    '{version: $v, at: $at, window_ms: 3600000, rate_usd_per_hour: 860, threshold_usd_per_hour: 400, over: $over, since: null, calls: 3, unpriced: 0, top: [], line: $line}'
+}
+check_spend() { # <name> <configuration directory> <expected output>
+  SPEND_CONFIG_DIR="$2" check "$1" "$S_ONLY" "$S_PAYLOAD" "$3"
+}
+
+check_spend "no flag file shows nothing" "$WORK/no-config" "plain"
+check_spend "a flag over its threshold shows its line on a third line" "$(spend_dir over "$(spend_text true 60)")" "plain
+⚠ spend 860 \$/h over the last hour, past 400 \$/h — top: Orch: one 300 \$"
+check_spend "a flag under its threshold shows nothing" "$(spend_dir under "$(spend_text false 60)")" "plain"
+check_spend "a flag stamped ten minutes ago or more is a frozen one: nothing" "$(spend_dir frozen "$(spend_text true 601)")" "plain"
+check_spend "a flag stamped well ahead of now is no live file: nothing" "$(spend_dir ahead "$(spend_text true -700)")" "plain"
+check_spend "a flag of another version shows nothing" "$(spend_dir version "$(spend_text true 60 2)")" "plain"
+check_spend "a torn flag shows nothing" "$(spend_dir torn '{"version":1,"over":tr')" "plain"
+check_spend "control characters of a session name never reach the terminal" "$(spend_dir cntrl "$(spend_text true 60 1 "$(printf 'spend x \033[2J y')")")" "plain
+⚠ spend x [2J y"
 
 # The hooks module's tests (hooks/tests/*.test.ts) run only in the host's kit. Without `claude`
 # the check fails: it does not skip.

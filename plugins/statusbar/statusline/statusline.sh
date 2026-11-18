@@ -343,6 +343,24 @@ open_questions() {
   return 0
 }
 
+# The spend flag telemetry writes under its state directory (spend-reader.json names the file, its version
+# and how old its stamp may be): its line while the machine's token spend is over its threshold. Nothing
+# when the file is absent, torn, of another version, stamped too long ago or ahead, or the spend is under.
+# The line carries session names: control characters are dropped so none can send an escape sequence.
+spend_alert() {
+  local reader="$here/../core/spend-reader.json" dir file version stale
+  [ -f "$reader" ] || return 0
+  IFS=' ' read -r dir file version stale <<<"$(jq -r '"\(.dir) \(.file) \(.flag_version) \(.stale_after_ms)"' "$reader" 2>/dev/null)"
+  [ -n "$stale" ] || return 0
+  file="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/$dir/$file"
+  [ -f "$file" ] || return 0
+  jq -r --argjson now "$(date +%s)" --argjson version "$version" --argjson stale "$stale" '
+    select(.version == $version and .over == true and (.at | type) == "number" and (.line | type) == "string")
+    | (($now * 1000) - .at) as $age
+    | select($age <= $stale and $age >= -$stale)
+    | .line' "$file" 2>/dev/null | tr -d '[:cntrl:]'
+}
+
 # >= 80% is roughly the auto-compaction threshold: context loss is close.
 if [ "$show_ctx" = "1" ]; then
   cpct=${ctx_pct%%.*}
@@ -394,5 +412,9 @@ if is_number "$q_open" && [ "$q_open" -gt 0 ]; then
   line1=$(join_sep "$line1" "${q_colour}${q_text}${RESET}")
 fi
 
+# A third line, only while the machine's token spend is over its threshold: a signal, red.
+spend_line=$(spend_alert)
+
 [ -n "$line1" ] && printf '%s\n' "$line1"
 [ -n "$line2" ] && printf '%s\n' "$line2"
+[ -n "$spend_line" ] && printf '%s\n' "${RED}⚠ ${spend_line}${RESET}"
