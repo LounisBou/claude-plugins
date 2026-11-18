@@ -35,9 +35,11 @@ const QUESTION = {
 }
 
 // One machine: the asker (s-ask) and the coordinator (s-coord) share the files; `as` picks whose $ it is.
-function machine(options: { refuse?: string } = {}) {
+function machine(options: { refuse?: string; drop?: string } = {}) {
   const files = new Map<string, string>([[`${SESSIONS}/s-ask`, row('orchestrator', ASKER)], [`${SESSIONS}/s-coord`, row('coordinator', COORD)]])
   const sent: { to: unknown; text: string }[] = []
+  // The prompts submitted to each session's own turn, by its session.
+  const submitted: { session: string; text: string }[] = []
   const as = (session: string): World => hostOf({
     plugin: { root: '/plugins/orch' },
     env: { get: async (key: string) => (key === 'HOME' ? HOME : undefined) },
@@ -50,7 +52,12 @@ function machine(options: { refuse?: string } = {}) {
     },
     clock: { sleep: async () => undefined },
     ui: { log: () => undefined, invalidate: () => undefined },
-    prompt: { submit: async () => undefined },
+    prompt: {
+      submit: async (input: { text: string }) => {
+        submitted.push({ session, text: input.text })
+        return options.drop ? { drop: options.drop } : undefined
+      },
+    },
     fs: {
       read: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
       write: async (p: string, text: string) => { files.set(p, text) },
@@ -71,7 +78,7 @@ function machine(options: { refuse?: string } = {}) {
       },
     },
   })
-  return { files, sent, asker: as('s-ask'), coordinator: as('s-coord'), as }
+  return { files, sent, submitted, asker: as('s-ask'), coordinator: as('s-coord'), as }
 }
 
 // A question the asker asked with `ask`, its id. Each asks its own, so that none is answered from
@@ -491,6 +498,34 @@ test('the pane\'s answer to a question asked here sends its asker the answer and
   await answerAskedFromPane(m.coordinator, id, 'B : acme/app#2 first', AT)
   expect(entryOf(m, id)).toMatchObject({ status: 'answered', answer: { by: 'pane' } })
   expect(m.sent.map(s => s.text)).toEqual([expect.stringMatching(/^\[module\] The operator answered your question/)])
+})
+
+// The pane is its own session's: a question that session asked itself cannot be reached by a
+// message (« no live session … has id »), so its answer is submitted to its own turn.
+test('the pane\'s answer to a question its own session asked is submitted to that session\'s turn, never sent by message', async () => {
+  const m = machine()
+  askTurnStarted()
+  askedCount += 1
+  const asking = await callAsk(m.coordinator, { ...QUESTION, context: `${QUESTION.context} (${askedCount})` }, NOW)
+  const id = /Asked as (\S+?):/.exec(asking.result)![1]!
+  expect(entryOf(m, id).sender).toMatchObject({ session: 's-coord' })
+  m.sent.length = 0
+  await answerAskedFromPane(m.coordinator, id, 'B : acme/app#2 first', AT)
+  expect(m.sent).toEqual([])
+  expect(m.submitted).toEqual([{ session: 's-coord', text: expect.stringMatching(/^\[module\] The operator answered your question .*B : acme\/app#2 first$/) }])
+  expect(entryOf(m, id)).toMatchObject({ status: 'answered', answer: { by: 'pane' }, delivery: { state: 'delivered', attempts: 1 } })
+})
+
+test('the pane\'s answer to its own session\'s question that the host drops is written failed with the host\'s reason', async () => {
+  const m = machine({ drop: 'the session is closing' })
+  askTurnStarted()
+  askedCount += 1
+  const asking = await callAsk(m.coordinator, { ...QUESTION, context: `${QUESTION.context} (${askedCount})` }, NOW)
+  const id = /Asked as (\S+?):/.exec(asking.result)![1]!
+  await answerAskedFromPane(m.coordinator, id, 'A : acme/app#1 first', AT)
+  expect(m.sent).toEqual([])
+  expect(m.submitted.map(s => s.session)).toEqual(['s-coord'])
+  expect(entryOf(m, id)).toMatchObject({ status: 'answered', delivery: { state: 'failed', reason: 'the session is closing' } })
 })
 
 test('an answer of the operator is kept in the journal as what was asked and how he answered, never his words; a withdrawal keeps none', async () => {

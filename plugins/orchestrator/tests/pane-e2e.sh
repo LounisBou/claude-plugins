@@ -16,7 +16,8 @@
 # the coordinator's turns — its wake, the module's notices that a question is settled — are the
 # module's own and are interrupted once they show. The last part starts a second host, an
 # orchestrator, whose banner is read the same way, and drives its model with project commands
-# that ask it to reply with a fixed text, and with one prompt typed in its tab.
+# that ask it to reply with a fixed text, and with one prompt typed in its tab; then a fresh
+# coordinator's model is driven by a project command that asks it to call the ask tool itself.
 # It skips itself without tmux, jq or the host.
 #
 # What it proves that the faked `$` cannot: how the host routes the keys and draws the card. A
@@ -167,6 +168,8 @@ start() {
   # commands, never in the host's user commands: `/orchestrator-supervision` below is the copy.
   ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" bash "$ROOT/short-commands.sh" install >/dev/null \
     || { echo "refused: the short names could not be written to $COMMANDS" >&2; exit 1; }
+  # A section's own project commands, written before the host starts: it reads them only then.
+  [ -n "${START_COMMANDS:-}" ] && "$START_COMMANDS"
   jq -n '{ tui: "fullscreen", remoteControlAtStartup: false }' > "$SANDBOX/settings.json"
   echo '{"name":"Coord: e2e"}' > "$SANDBOX/state/coordinator.json"
   [ -n "$ALIVE" ] && kill "$ALIVE" 2>/dev/null
@@ -366,7 +369,8 @@ typeahead() {
 # surface: (a) answered in the pane, (c) answered in the coordinator's tab, (e) a wait that asks
 # nothing answered from its field — the coordinator's host alone —, then, with a live orchestrator
 # host beside it, (d) a question with choices followed by a turn that asks nothing, both drawn,
-# and (b) a question answered in the orchestrator's own tab. The orchestrator's turns are its
+# and (b) a question answered in the orchestrator's own tab, then (f) a question the coordinator
+# asked itself answered in its own pane. The orchestrator's turns are its
 # model's: each is a project command asking it to reply with a fixed text, so its machine line is
 # known, and a slash command is no prompt the operator typed. `round` is run as the coordinator
 # runs it at each turn, which records the entries it was shown: the module closes such an entry
@@ -775,6 +779,41 @@ else
   check "(b) the coordinator, shown the question, is told once that it was answered in its sender's tab, within seconds of the turn's end" "1|yes" \
     "$(tab_count "Settled in Orch: flow's tab")|$(fluid "$(after "$told")")"
 fi
+
+# (f) The coordinator asks a question itself, with the ask tool, and the operator answers it in its
+# own pane: no message reaches the session that sends it (« no live session … has id »), so the
+# answer is submitted to the coordinator's own turn, and it is the one notice it gets. Its turn,
+# started by that prompt, is interrupted once the answer shows in its tab and is measured.
+echo "== (f) a question the coordinator asked itself, answered in its own pane (160x50)"
+coord_ask_command() { flow_ask_command coord-ask 'the order' 'Which page goes first?' 'the design' 'the README' 'the docs'; }
+START_COMMANDS=coord_ask_command start 50 flow
+coord_id() { jq -r 'select(.sender.name? == "Coord: e2e" and .subject == "the order") | .id' "$SANDBOX/state/round/"*.json 2>/dev/null | head -1; }
+coord_open() { [ -n "$(jq -r 'select(.sender.name? == "Coord: e2e" and .subject == "the order" and .status == "open") | .id' "$SANDBOX/state/round/"*.json 2>/dev/null)" ]; }
+tm send-keys -t "$SESSION" -l '/coord-ask'
+sleep 1
+tm send-keys -t "$SESSION" Enter
+asked=$(until_ms 120 coord_open)
+own=$(coord_id)
+[ -n "$own" ] || own=none
+# The asking turn ends on the model's reply « Asked » (its own line, not the tool's « Asked as »)
+# before the pane is answered.
+ended=$(until_ms 120 in_tab '⏺ Asked')
+sleep 2
+pane_has() { pane | grep -qF -- "$1"; }
+check "(f) the coordinator's own question is asked with the ask tool, its turn ended, and drawn in its pane" "yes|yes|drawn" \
+  "$([ "$asked" != never ] && echo yes)|$([ "$ended" != never ] && echo yes)|$([ "$(until_ms 25 pane_has 'Which page goes first?')" != never ] && echo drawn || echo missing)"
+coordround round >/dev/null
+keys_to_pane
+tm send-keys -t "$SESSION" Enter
+stamp=$(ms)
+read -r gone told <<< "$(since_answer "$stamp" 15 'Which page goes first?' "The operator answered your question $own")"
+record "(f) answered in the coordinator's own pane"
+delay f "$gone" "$told"
+# The first Escape gives the keys back to the prompt, the second interrupts the turn the answer started.
+press Escape Escape
+check "(f) answered once from the pane, delivered to the coordinator's own turn, no second notice, nothing « not delivered »" "answered|A : the design|delivered|yes|1|0|0|yes" \
+  "$(jq -r .status "$SANDBOX/state/round/$own.json")|$(jq -r .answer.text "$SANDBOX/state/round/$own.json")|$(jq -r .delivery.state "$SANDBOX/state/round/$own.json")|$(fluid "$gone")|$(tab_count "The operator answered your question $own")|$(tab_count 'Settled in the pane: Coord: e2e')|$(pane | grep -c 'not delivered')|$(fluid "$told")"
+
 echo "delays (from the answer; a figure ≤ ~${FLOOR_MS} ms sits on the poll's floor): $DELAYS"
 
 echo "pane-e2e: $pass passed, $fail failed, $known known defect$([ "$known" = 1 ] || echo s) of the pane"

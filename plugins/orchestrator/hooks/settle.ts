@@ -48,8 +48,11 @@ export type Asker = { session: string; name: string; remote: boolean }
 export type Plan = {
   entry: Fields
   asker: Asker
-  /** The answer sent to its asker now, or to its owner's machine from a replica. */
-  deliver: 'now' | 'remote' | null
+  /**
+   * The answer sent to its asker now, submitted to the closing session's own turn when it is the
+   * asker (`own`, which no message reaches), or sent to its owner's machine from a replica.
+   */
+  deliver: 'now' | 'own' | 'remote' | null
   consentBy: Answerer | null
   /** The words its consent is recorded from. */
   consentText: string
@@ -147,19 +150,19 @@ export function planRelayed(entry: Fields, request: SettleRequest, me: Me, at: s
 }
 
 // His answer given in the coordinator's pane to an object `ask` stored, open and not claimed in its
-// asker's tab (null leaves it): sent to its asker at once, or to its owner's machine from a replica,
-// whose seq stays the owner's.
+// asker's tab (null leaves it): sent to its asker at once — submitted to the pane's own session
+// when that session asked it — or to its owner's machine from a replica, whose seq stays the owner's.
 export function planPane(entry: Fields, text: string, me: Me, at: string): Plan | null {
   if (entry['status'] !== 'open' || entry['claimed']) return null
   const sender = fields(entry['sender'])
   const asker: Asker = { session: String(sender?.['session'] ?? ''), name: String(sender?.['name'] ?? ''), remote: false }
   const answer = { text, by: 'pane', at, settler: me.name }
-  const close = (written: Fields, deliver: 'now' | 'remote'): Plan => (
-    { entry: written, asker, deliver, consentBy: deliver === 'now' ? 'pane' : null, consentText: text, relayed: false, told: false }
+  const close = (written: Fields, deliver: 'now' | 'own' | 'remote'): Plan => (
+    { entry: written, asker, deliver, consentBy: deliver === 'remote' ? null : 'pane', consentText: text, relayed: false, told: false }
   )
   return entry['origin'] !== undefined
     ? close({ ...entry, status: 'answered', answer, delivery: { state: 'pending', at, attempts: 0 } }, 'remote')
-    : close({ ...entry, status: 'answered', answer, seq: Number(entry['seq'] ?? 0) + 1 }, 'now')
+    : close({ ...entry, status: 'answered', answer, seq: Number(entry['seq'] ?? 0) + 1 }, asker.session !== '' && asker.session === me.session ? 'own' : 'now')
 }
 
 // An object `ask` stored that his prompt claimed in its asker's tab, its turn ended: answered there

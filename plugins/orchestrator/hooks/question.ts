@@ -728,7 +728,7 @@ export async function settleWords($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'p
  * asker at once, a send not delivered written on the object, which the pane then shows. Answers
  * the object answered, or null when it was not.
  */
-export async function answerAskedFromPane($: Held, id: string, text: string, now: Date = new Date()): Promise<Asked | null> {
+export async function answerAskedFromPane($: Held & Host<'prompt'>, id: string, text: string, now: Date = new Date()): Promise<Asked | null> {
   const said = text.trim()
   if (said === '') return null
   const who = await whoAmI($)
@@ -740,7 +740,9 @@ export async function answerAskedFromPane($: Held, id: string, text: string, now
       const entry = current === undefined ? null : parseAsked(current)
       return entry === null ? null : planPane(entry, said, me, at)
     }, me, at, () => logLine($, 'question', `${id} answered in the pane`))
-    return closed === null || 'error' in closed ? null : parseAsked(JSON.stringify(closed.plan.entry))
+    if (closed === null || 'error' in closed) return null
+    if (closed.plan.deliver === 'own') await deliverSettled($, path, closed.plan, at, () => submitSettled($, closed.plan, me))
+    return parseAsked(JSON.stringify(closed.plan.entry))
   } catch (err) {
     await logLine($, 'question', `${id} not answered from the pane: ${messageOf(err)}`)
     return null
@@ -796,7 +798,8 @@ function consentEntryOf(entry: Fields): ConsentEntry | null {
  * typed in its asker's tab, its session's end: the entry read again and written under its lock as
  * `decide` plans it (null leaves it), `written` run once it is, then its consent recorded, the
  * relay's fingerprint forgotten, the coordinator here told, the answer sent to its asker or to its
- * owner's machine, and the object pushed to a coordinator on another machine. Answers the plan and
+ * owner's machine (an answer to the closing session's own question, `own`, is its caller's to
+ * submit: answerAskedFromPane), and the object pushed to a coordinator on another machine. Answers the plan and
  * what its steps said, the refusal, or null; a write that fails throws.
  */
 export async function closeRound(
@@ -829,7 +832,7 @@ export async function closeRound(
     const answer = done.entry['answer']
     if (told !== null && isRoundAnswer(answer)) await tellSettled($, [{ entry: told, answer }])
   }
-  if (done.deliver === 'now') said.push(await deliverSettled($, path, done, me, at))
+  if (done.deliver === 'now') said.push(await deliverSettled($, path, done, at, () => sendSettled($, done, me)))
   if (done.deliver === 'remote') {
     const refused = await sendReply($, String(done.entry['id']))
     said.push(refused === null ? `The answer goes to ${done.asker.name} on its machine now.` : `Not delivered yet to ${done.asker.name} (${refused}): the round's next readings send it again, or say it failed.`)
@@ -838,15 +841,27 @@ export async function closeRound(
   return { plan: done, said }
 }
 
-// The answer sent to its asker at once — its session while it has a row here (two sessions may share
-// a name), else its name — then its outcome written on the entry while it still holds that answer:
-// delivered, or failed with the host's reason, which the pane then shows.
-async function deliverSettled($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, path: string, done: Plan, me: Me, at: string): Promise<string> {
+// The answer sent to its asker by message — its session while it has a row here (two sessions may
+// share a name), else its name: the host's reason when it is not delivered, else null.
+async function sendSettled($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, done: Plan, me: Me): Promise<string | null> {
+  const live = done.asker.session !== '' && sessionKey(done.asker.session) in await readSessions($)
+  const sent = await $.session.send({ to: live ? { sessionId: done.asker.session } : done.asker.name, text: settledMessage(done.entry, me) })
+  return sent?.isDelivered ? null : sent?.reason ?? 'no answer'
+}
+
+// The answer submitted to this session's own turn, when it asked the question itself: no message
+// reaches the session that sends it. The host's reason when it drops the prompt, else null.
+async function submitSettled($: Host<'prompt'>, done: Plan, me: Me): Promise<string | null> {
+  const taken = await $.prompt.submit({ text: settledMessage(done.entry, me) })
+  return taken && typeof taken === 'object' && 'drop' in taken && taken.drop ? String(taken.drop) : null
+}
+
+// The answer taken to its asker at once by `send`, then its outcome written on the entry while it
+// still holds that answer: delivered, or failed with the host's reason, which the pane then shows.
+async function deliverSettled($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, path: string, done: Plan, at: string, send: () => Promise<string | null>): Promise<string> {
   let reason: string | null = null
   try {
-    const live = done.asker.session !== '' && sessionKey(done.asker.session) in await readSessions($)
-    const sent = await $.session.send({ to: live ? { sessionId: done.asker.session } : done.asker.name, text: settledMessage(done.entry, me) })
-    if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
+    reason = await send()
   } catch (err) {
     reason = messageOf(err)
   }
