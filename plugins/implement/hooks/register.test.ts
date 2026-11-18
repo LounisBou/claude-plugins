@@ -191,6 +191,15 @@ test('a phase run lets every outward command through', async ($, on) => {
   expect(ran.map(e => e['command'])).toEqual(commands)
 })
 
+test('a check lets every call through, a removal and a write included', async ($, on) => {
+  const { ran } = await world(on)
+  await start($)
+  await skill($, 'check')
+  const commands = ['rm -rf build', 'rmdir out', 'git add -A', 'git commit -m "x"', 'echo x > notes.md', 'cat f | sh']
+  for (const command of commands) expect((await bash($, command)).result).toBe('ran')
+  expect(ran.map(e => e['command'])).toEqual(commands)
+})
+
 test('the github tool\'s pull request writes and reads all run', async ($, on) => {
   await world(on)
   await start($)

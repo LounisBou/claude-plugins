@@ -1121,6 +1121,12 @@ test('norms hooks only its own commands, so no other command\'s run passes throu
   expect(reached.length).toBe(0)
 })
 
+test('norms hooks no edit, shell or subagent call, so none is held or refused during a check', () => {
+  const tools = mount(registerAll).filter(h => h.event === 'tool.call').map(h => String(h.matcher?.['tool']))
+  expect(tools.filter(t => !['Skill', 'Agent', 'SubagentHandback', 'mcp__norms__check_done'].includes(t))).toEqual([])
+  expect(tools).not.toContain('Bash')
+})
+
 test('the module registers one session.end hook, which the host would refuse twice without a matcher', () => {
   const ends = mount(registerAll).filter(h => h.event === 'session.end')
   expect(ends.length).toBe(1)
