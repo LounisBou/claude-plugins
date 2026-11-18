@@ -14,7 +14,7 @@ import { MODELS_DENY } from './models-guard.ts'
 import { configDir, logLine } from './module-io.ts'
 import { write, type Held, type Memory } from './observe.ts'
 export { STOP_GATE_CODE } from './observe.ts'
-import { findingsOf, NOT_ORCHESTRATOR, REVIEW_TOOL } from './review.ts'
+import { findingsOf, NOT_ORCHESTRATOR, REVIEW_TOOL, withIndexIds } from './review.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
 
 // What precedes the words of the command a kill refusal quotes, read off the guard's own builders.
@@ -47,7 +47,10 @@ async function observeTool($: Held, memory: Memory, e: Readonly<Record<string, u
       const verdict = String(e['verdict'] ?? '').trim()
       if (verdict === 'pass' || verdict === 'fail' || verdict === 'accepted') {
         const config = await configDir($)
-        await write($, memory, stamp => reviewEvents(stamp, { repo: e['repo'], pr: e['pr'], verdict, findings: findingsOf(e) }, answer, config))
+        // The findings index names each finding's id: a decision carries it, an index not read leaves it unknown.
+        const path = typeof e['findings'] === 'string' && e['findings'].startsWith('/') ? e['findings'] : null
+        const index = path === null ? null : await $.fs.read(path).catch(() => null)
+        await write($, memory, stamp => reviewEvents(stamp, { repo: e['repo'], pr: e['pr'], verdict, findings: withIndexIds(findingsOf(e), index) }, answer, config))
       }
     }
     if (answer !== null && tool === 'mcp__github__gh') await write($, memory, stamp => githubEvents(stamp, e, answer))

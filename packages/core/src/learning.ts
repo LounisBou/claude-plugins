@@ -936,9 +936,11 @@ export function retrospectiveStartArgv(root: string, configDir: string): string[
 // reads the kinds it knows.
 
 export const AUDIT_CONTRACT = {
-  version: 3,
+  version: 4,
   kinds: ['link', 'step', 'review', 'decision', 'wait', 'failure', 'dispatch'],
-  kind_versions: { link: 2, step: 2, review: 2, decision: 2, wait: 2, failure: 2, dispatch: 3 },
+  kind_versions: { link: 2, step: 2, review: 2, decision: 4, wait: 2, failure: 2, dispatch: 3 },
+  // A kind whose fact changed is still read at its earlier version, with that version's fields.
+  earlier: { decision: { version: 2, fact: ['decision', 'severity', 'file', 'line'] } },
   steps: ['implement', 'review', 'correction', 'ci-wait', 'merge'],
   edges: ['start', 'end'],
   verdicts: ['pass', 'fail', 'accepted'],
@@ -958,7 +960,7 @@ export const AUDIT_CONTRACT = {
     link: ['record', 'row', 'session', 'goal', 'prs'],
     step: ['step', 'edge', 'record', 'row', 'result'],
     review: ['verdict', 'kept', 'set_aside'],
-    decision: ['decision', 'severity', 'file', 'line'],
+    decision: ['decision', 'severity', 'file', 'line', 'finding_id', 'lens'],
     wait: ['wait', 'edge', 'span', 'on'],
     failure: ['failure', 'count', 'prs'],
     dispatch: ['sub', 'record', 'row', 'class', 'tier', 'model', 'effort', 'verdict'],
@@ -972,6 +974,9 @@ export const AUDIT_CONTRACT = {
     model: String.raw`^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79}$`,
     // A pull request named with its repository: `name#7` or `owner/name#7`.
     pr_ref: String.raw`^(?:[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+#[1-9][0-9]*$`,
+    // A review reader's lens, and a finding's id over its lens, file, line and claim (core's lens.ts).
+    lens: '^[a-z0-9][a-z0-9-]{0,29}$',
+    finding_id: '^[a-z0-9][a-z0-9-]{0,29}:[0-9a-f]{10}$',
   },
 } as const
 
@@ -997,7 +1002,15 @@ export interface Facts {
   readonly link: { readonly record: string | null; readonly row: number | null; readonly session: string | null; readonly goal: string | null; readonly prs: readonly string[] }
   readonly step: { readonly step: Step; readonly edge: Edge; readonly record: string | null; readonly row: number | null; readonly result: string | null }
   readonly review: { readonly verdict: Verdict; readonly kept: number; readonly set_aside: number }
-  readonly decision: { readonly decision: Decision; readonly severity: FindingSeverity | null; readonly file: string | null; readonly line: number | null }
+  readonly decision: {
+    readonly decision: Decision
+    readonly severity: FindingSeverity | null
+    readonly file: string | null
+    readonly line: number | null
+    /** Version 4: the finding's id and its reader's lens; absent from a version 2 decision. */
+    readonly finding_id?: string | null
+    readonly lens?: string | null
+  }
   readonly wait: { readonly wait: JournalWaitKind; readonly edge: Edge; readonly span: string | null; readonly on: WaitOn | null }
   readonly failure: { readonly failure: Failure; readonly count: number | null; readonly prs: readonly string[] }
   readonly dispatch: {
@@ -1012,7 +1025,8 @@ export interface Facts {
   }
 }
 
-export type AuditEvent = { [K in AuditKind]: Envelope & { readonly v: (typeof audit.kind_versions)[K]; readonly kind: K; readonly fact: Facts[K] } }[AuditKind]
+type EarlierVersion<K extends AuditKind> = K extends keyof typeof audit.earlier ? (typeof audit.earlier)[K]['version'] : never
+export type AuditEvent = { [K in AuditKind]: Envelope & { readonly v: (typeof audit.kind_versions)[K] | EarlierVersion<K>; readonly kind: K; readonly fact: Facts[K] } }[AuditKind]
 
 const AUDIT_PATTERNS = {
   goal: new RegExp(audit.patterns.goal),
@@ -1020,6 +1034,8 @@ const AUDIT_PATTERNS = {
   class: new RegExp(audit.patterns.class),
   model: new RegExp(audit.patterns.model),
   prRef: new RegExp(audit.patterns.pr_ref),
+  lens: new RegExp(audit.patterns.lens),
+  findingId: new RegExp(audit.patterns.finding_id),
 }
 
 const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0
@@ -1035,7 +1051,9 @@ const FACT_CHECKS: { readonly [K in AuditKind]: (fact: Fields) => boolean } = {
     && nullable(f['result'], (r): r is string => matches(AUDIT_PATTERNS.result, r)),
   review: f => isOneOf(audit.verdicts, f['verdict']) && isCount(f['kept']) && isCount(f['set_aside']),
   decision: f => isOneOf(audit.decisions, f['decision']) && nullable(f['severity'], (s): s is FindingSeverity => isOneOf(audit.finding_severities, s))
-    && nullable(f['file'], isPath) && nullable(f['line'], isLine),
+    && nullable(f['file'], isPath) && nullable(f['line'], isLine)
+    && (!('finding_id' in f) || nullable(f['finding_id'], (i): i is string => matches(AUDIT_PATTERNS.findingId, i)))
+    && (!('lens' in f) || nullable(f['lens'], (l): l is string => matches(AUDIT_PATTERNS.lens, l))),
   wait: f => isOneOf(audit.waits, f['wait']) && isOneOf(audit.edges, f['edge']) && nullable(f['span'], isId)
     && nullable(f['on'], (o): o is WaitOn => isOneOf(audit.wait_on, o)),
   failure: f => isOneOf(audit.failures, f['failure']) && nullable(f['count'], isCount) && isRefs(f['prs']),
@@ -1049,10 +1067,12 @@ const FACT_CHECKS: { readonly [K in AuditKind]: (fact: Fields) => boolean } = {
 export function parseAuditEvent(raw: unknown): AuditEvent | undefined {
   const kind = typeof raw === 'object' && raw !== null ? (raw as Fields)['kind'] : undefined
   if (!isOneOf(audit.kinds, kind)) return undefined
-  const version = audit.kind_versions[kind]
+  const earlier: { version: number; fact: readonly string[] } | undefined = kind in audit.earlier ? audit.earlier[kind as keyof typeof audit.earlier] : undefined
+  const isEarlier = earlier !== undefined && typeof raw === 'object' && raw !== null && (raw as Fields)['v'] === earlier.version
+  const version = isEarlier ? earlier.version : audit.kind_versions[kind]
   const read = envelopeOf(raw, version, ['fact'])
   if (!read) return undefined
-  const fact = fieldsOf(read.top['fact'], audit.facts[kind])
+  const fact = fieldsOf(read.top['fact'], isEarlier ? earlier.fact : audit.facts[kind])
   if (!fact || !FACT_CHECKS[kind](fact)) return undefined
   return { v: version, kind, ...read.envelope, fact } as AuditEvent
 }

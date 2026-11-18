@@ -7,6 +7,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { findingId } from '../../../core/lens.ts'
 import { backfillEvent, enrich, readSecrets, realCheck, realGh, realGit, realRepositoryAt, run, type Deps } from './telemetry.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
@@ -413,5 +414,22 @@ test('append: a subagent\'s run end is followed by one api_call per call of the 
     assert.deepEqual(lines.map(l => [l['event'], l['message'], l['agent']]), [['agent_closed', undefined, undefined], ['api_call', 'm2', 'a1'], ['api_call', 'm3', 'a1']])
     const call = lines[1] ?? {}
     assert.deepEqual([call['ts'], call['title'], call['role'], call['parent'], call['usage']], ['2026-11-17T11:10:02.000Z', 'Agent: x', 'agent', 'Orch: y', { input_tokens: 3, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 31000, new_field: 7 }])
+  })
+})
+
+test('append: a review reader\'s run end names its lens, pull request and range from its description, and its findings by severity with their ids from its last answer', () => {
+  harness((config, deps, setStdin) => {
+    const dir = join(config, 'projects', '-w', S, 'subagents')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(config, 'projects', '-w', `${S}.jsonl`), `${CALL_LINES}\n`)
+    const answer = { type: 'assistant', isSidechain: true, timestamp: '2026-11-17T11:10:09.500Z', message: { id: 'm4', model: 'claude-sonnet-5-5', content: [{ type: 'text', text: '[important] src/a.ts:12 — the lock is lost — never kept\n[minor] b.md:3 — a typo — never kept\nnever kept' }], usage: { input_tokens: 1, output_tokens: 1 } } }
+    writeFileSync(join(dir, 'agent-a1.jsonl'), `${SUBAGENT_LINES}\n${JSON.stringify(answer)}\n`)
+    writeFileSync(join(dir, 'agent-a1.meta.json'), JSON.stringify({ agentType: 'orchestrator:lens', description: 'lens correctness acme/thing#12 origin/main..0123456789ab' }))
+    setStdin(`${closedLine()}\n`)
+    assert.equal(run(['append', '--config', config], deps), 0)
+    const closed = JSON.parse(readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').split('\n')[0] ?? '{}') as Record<string, unknown>
+    assert.deepEqual([closed['lens'], closed['target'], closed['range'], closed['findings']], ['correctness', { repo: 'acme/thing', pr: 12 }, 'origin/main..0123456789ab', { critical: 0, important: 1, minor: 1 }])
+    assert.deepEqual(closed['finding_ids'], [findingId('correctness', 'src/a.ts', 12, 'the lock is lost'), findingId('correctness', 'b.md', 3, 'a typo')])
+    assert.ok(!readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').includes('never kept'))
   })
 })

@@ -11,6 +11,7 @@
 // findings index, the one reading the orchestrator makes of a round.
 import { ACCEPTANCE, acceptanceDetail, DETAIL_MAX } from '../core/pr-record.ts'
 import { AUDIT_CONTRACT, type Decision, type FindingSeverity } from '../core/learning.ts'
+import { parseFindingId } from '../core/lens.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import { isOrchestratorSession } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -210,6 +211,30 @@ export function findingsOf(input: Record<string, unknown>): { decision: Decision
     return typeof items === 'string' ? [] : items.map(({ file, line, severity }) => ({ decision, file, line, severity }))
   }
   return [...decided(input['kept'], 'kept'), ...decided(input['set_asides'], 'set-aside')]
+}
+
+// A finding of the review index (`<n>. [severity] file:line — title — <id> — <detail>`) that names its id.
+const INDEX_LINE = /^\s*\d+\.\s*\[(critical|important|minor)\]\s+`?([^\s`:]+):(\d+)/i
+
+type Decided = ReturnType<typeof findingsOf>[number]
+
+// Each decision with the id and lens of the index line it names, matched by file and line, then by
+// severity when several share them; each line names one decision. A decision with no file and line,
+// or none of the index's, keeps them unknown.
+export function withIndexIds(findings: readonly Decided[], index: string | null): (Decided & { finding_id: string | null; lens: string | null })[] {
+  const lines = (index ?? '').split('\n').flatMap(line => {
+    const m = INDEX_LINE.exec(line)
+    const id = parseFindingId(line)
+    return m === null || id === undefined ? [] : [{ severity: (m[1] ?? '').toLowerCase(), file: m[2] ?? '', line: Number(m[3]), ...id }]
+  })
+  const taken = new Set<number>()
+  return findings.map(finding => {
+    const same = lines.map((l, at) => ({ l, at })).filter(({ l, at }) => !taken.has(at) && l.file === finding.file && l.line === finding.line)
+    const match = same.find(({ l }) => l.severity === finding.severity) ?? same[0]
+    if (match === undefined) return { ...finding, finding_id: null, lens: null }
+    taken.add(match.at)
+    return { ...finding, finding_id: match.l.id, lens: match.l.lens }
+  })
 }
 
 // The record tool's answer as the tool's own: its text, an error when it refused or failed.

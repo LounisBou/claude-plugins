@@ -18,6 +18,7 @@ import { register as registerSupervision, registerWake, registerPaneTool, regist
 import { register as registerTodo } from './todo.ts'
 import { register as registerQuestion, registerSettle } from './question.ts'
 import { register as registerReview } from './review.ts'
+import { register as registerLensIds } from './lens-ids.ts'
 import { register as registerCommands, registerEnd as registerCommandsEnd } from './commands.ts'
 import { register as registerNaming } from './naming.ts'
 import { register as registerShortCommands } from './short-commands.ts'
@@ -54,6 +55,7 @@ export function register(on: On<Mod>): void {
   registerQuestion(on)
   registerSettle(on)
   registerReview(on)
+  registerLensIds(on)
   registerCommands(on)
   registerCommandsEnd(on)
   registerNaming(on)

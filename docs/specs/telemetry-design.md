@@ -53,7 +53,10 @@ session) closes with no rank. The writer reads the child's own transcript
 cost: its type and task (a review reader's lens), the models that answered, its last effort, its API
 calls and their token sums (`totals`), counted over the calls that began within the run's
 `duration_ms`, then one `api_call` per call of the run, naming the child (`agent`): with the session's own
-calls, every token the session spent is a timestamped fact, summed by hour by its reader. A transcript
+calls, every token the session spent is a timestamped fact, summed by hour by its reader. A review reader
+(`orchestrator:lens`, core's `lens.ts`) also names its lens, pull request and range, read from its
+description, and its findings by severity with their ids, read from its last answer, whose words are
+not kept. A transcript
 that cannot be read leaves the event as it came.
 
 **Escape candidates.** A `fix` pull request opened (the github tool's `pr-create`, or `gh pr create

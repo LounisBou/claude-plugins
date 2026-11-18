@@ -323,7 +323,21 @@ describe('the audit event, version 2 of the contract', () => {
       assert.deepEqual(parseAuditEvent(event), event, kind)
     }
     assert.deepEqual([...AUDIT_KINDS], ['link', 'step', 'review', 'decision', 'wait', 'failure', 'dispatch'])
-    assert.equal(AUDIT_VERSION, 3)
+    assert.equal(AUDIT_VERSION, 4)
+  })
+
+  it('reads a decision at version 4 with the finding\'s id and lens, and one at version 2 as it was written', () => {
+    const decision = { ...STEP, v: 4, kind: 'decision', fact: { decision: 'kept', severity: 'important', file: 'a.ts', line: 3, finding_id: 'correctness:0123456789', lens: 'correctness' } }
+    assert.deepEqual(parseAuditEvent(decision), decision)
+    assert.ok(parseAuditEvent({ ...decision, fact: { ...decision.fact, finding_id: null, lens: null } }))
+    assert.equal(parseAuditEvent({ ...decision, fact: { ...decision.fact, finding_id: 'not an id' } }), undefined)
+    assert.equal(parseAuditEvent({ ...decision, fact: { ...decision.fact, lens: 'Two Words' } }), undefined)
+    // A version 2 decision is read with its own four fields; a version 4 one needs all six.
+    const earlier = { ...STEP, kind: 'decision', fact: { decision: 'set-aside', severity: null, file: null, line: null } }
+    assert.deepEqual(parseAuditEvent(earlier), earlier)
+    assert.equal(parseAuditEvent({ ...earlier, v: 4 }), undefined)
+    assert.equal(parseAuditEvent({ ...decision, v: 2 }), undefined)
+    assert.equal(AUDIT_CONTRACT.kind_versions.decision, 4)
   })
 
   it('reads a fact whose every field is unknown, as null', () => {
