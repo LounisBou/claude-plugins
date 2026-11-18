@@ -4,6 +4,19 @@ Every change follows these. Each one exists because its absence produced a repea
 across the plugins; the defects are listed in `specs/program-design.md`. A convention is
 changed by a pull request that edits this file and the code it governs together.
 
+## What the method is
+
+The orchestration and claude-plugins work through the agents' tools and through sources of truth,
+read by loops that act on them; never through briefs or prompts. Two examples:
+
+- An agent is closed automatically when its pull request is ready: a loop reads the pull request's
+  state and closes the agent, with no line telling anyone to close it.
+- A to-do cannot be forgotten: the tool that records it requires who takes it, or what it waits on
+  and its date.
+
+A prompt or a brief carries a rule only where no loop can hold it, and the aim is briefs that empty
+out.
+
 ## One rule, one place
 
 - A fact (a path, a name shape, a threshold, a price, a version) is defined once and read
@@ -120,7 +133,8 @@ changed by a pull request that edits this file and the code it governs together.
   and those before that deploy. It runs on the operator's machine, reports, and blocks nothing.
 - A rule that enters a prompt replaces one.
 - `npm run rules` lists the rules a prompt states that neither code holds nor an eval names: a
-  rule left to prose alone is a candidate for a guard, an eval, or removal. It reports: a line of the
+  rule left to prose alone is a candidate for a mechanism (a tool, or a loop on a source of truth),
+an eval, or removal. It reports: a line of the
   weekly report, and CI's summary; it blocks nothing.
 
 ## Changes and releases
