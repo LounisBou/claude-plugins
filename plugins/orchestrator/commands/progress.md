@@ -39,7 +39,7 @@ whatever this command printed.
    `context_percent`, `context_tokens` and `context_window`.
 5. Present, in this order and nothing else:
    - **Goals** — the `goals met=m/n … open=…` line of
-     `dispatch-record.sh goals <record> status`, each open goal named with its phase.
+     `dispatch-record.sh goals <record> status`, each open goal named in its words, with its phase (`method:lifecycle`, « Reports »).
    - **Done** — phases merged, with PR numbers and what each delivered in one line.
    - **In flight** — phases with a PR open or an agent writing: agent name,
      head, review round, what is owed and by whom.
