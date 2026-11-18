@@ -52,7 +52,7 @@ import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts
 import { orchForm } from '../../../core/names.ts'
 import { sessionOrchestration } from '../../../core/session-orchestration.ts'
 import { parseSessionName } from '../../../core/names.ts'
-import { agentsOf, ledgerLines, prKey, statusText, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
+import { agentsOf, ledgerLines, prKey, statusText, subjectOf, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
 import { auditRun, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { GoalsFault, namedGoals, parseGoals } from './lib/goals-file.ts'
@@ -710,24 +710,27 @@ export function fallOf(blocker: string, facts: Artifacts): Fall {
  * « ruling » until its `until` date, then DEFERRED DUE; a row with no live agent reads its blocker checked on its artifact: `blocked: <blocker>` while it stands, then an open pull request it holds,
  * DISPATCHED, NO LIVE AGENT when its note names an agent the deck no longer lists, READY NOT STARTED
  * once its blocker has fallen, `blocker unread: <blocker>` when its artifact cannot be read; a row
- * with no blocker recorded reads NO OWNER.
+ * with no blocker recorded reads NO OWNER. Each line leads with the row's subject, its id in parentheses: `<subject> (<id>): <owner>`.
  */
 export function ownersOf(open: OpenState, fall: (blocker: string) => Fall = () => 'unread'): string[] {
   return open.rows.map(row => {
+    // The row leads with its subject, its id after it; a row whose label has no words leads with its id.
+    const subject = subjectOf(row.label ?? '')
+    const lead = subject === '' ? row.id : `${subject} (${row.id}):`
     // A deferred row waits for its revisit date, its `until` blocker; once it has come the row goes back to the operator.
-    if ((row.ruling ?? '') !== '') return `${row.id} ${row.blocker !== undefined && untilOf(row.blocker) !== undefined && fall(row.blocker) === 'fallen' ? 'DEFERRED DUE, ask the operator: relaunch or drop' : 'ruling'}`
+    if ((row.ruling ?? '') !== '') return `${lead} ${row.blocker !== undefined && untilOf(row.blocker) !== undefined && fall(row.blocker) === 'fallen' ? 'DEFERRED DUE, ask the operator: relaunch or drop' : 'ruling'}`
     const note = row.note ?? ''
     const seats: readonly LiveAgent[] = open.seats ?? open.agents.map(name => ({ name, tty: null }))
     const live = seats.filter(seat => (seat.row === undefined ? names(note, seat.name) : seat.row === row.id)).map(seat => seat.name)
-    if (live.length > 0) return `${row.id} ${live.map(bareName).join(', ')}`
+    if (live.length > 0) return `${lead} ${live.map(bareName).join(', ')}`
     // A blocker still standing says why nobody is on the row; once it fell, an open pull request the row holds is its owner.
     const fell = row.blocker === undefined ? undefined : fall(row.blocker)
-    if (fell === 'standing') return `${row.id} blocked: ${row.blocker}`
-    if ((row.linked ?? []).length > 0) return `${row.id} ${(row.linked ?? []).join(', ')}`
+    if (fell === 'standing') return `${lead} blocked: ${row.blocker}`
+    if ((row.linked ?? []).length > 0) return `${lead} ${(row.linked ?? []).join(', ')}`
     // Dispatched, and its agent gone from the deck: its pull request or branch is read before anyone is sent again.
-    if (/\bAgent:\s*\S/.test(note)) return `${row.id} DISPATCHED, NO LIVE AGENT`
-    if (row.blocker === undefined) return `${row.id} NO OWNER`
-    return `${row.id} ${fell === 'fallen' ? 'READY NOT STARTED' : `blocker unread: ${row.blocker}`}`
+    if (/\bAgent:\s*\S/.test(note)) return `${lead} DISPATCHED, NO LIVE AGENT`
+    if (row.blocker === undefined) return `${lead} NO OWNER`
+    return `${lead} ${fell === 'fallen' ? 'READY NOT STARTED' : `blocker unread: ${row.blocker}`}`
   })
 }
 

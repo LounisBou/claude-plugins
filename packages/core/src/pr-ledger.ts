@@ -393,12 +393,16 @@ const SUBJECT_MAX = 90
 const LOOSE_END = /(?:\s+[—–-]+)?[\s,]*$/u
 
 /**
- * What a row's label is about, in plain words: past its `KEYWORD:` lead, up to where its detail starts
+ * What a row's label is about, in plain words: past its lead (up to its first `:` before a space, whatever
+ * its words: `KEYWORD:`, `M7 SOURCE:`, `3-bis C:`), up to where its detail starts
  * (a `:` before a space or at the end, a `;`, or a `(` after a space; a `:` in a URL or a time stays), at most
  * SUBJECT_MAX characters cut at a word; '' for a label with no words.
  */
 export function subjectOf(label: string): string {
-  return atWord((label.trim().replace(/^[^\s:]+:(?:\s+|$)/u, '').split(/:(?=\s|$)|;|\s\(/u)[0] ?? ''))
+  const words = label.trim()
+  const lead = /:(?:\s+|$)/u.exec(words)
+  const subject = lead === null ? words : words.slice(lead.index + lead[0].length)
+  return atWord(subject.split(/:(?=\s|$)|;|\s\(/u)[0] ?? '')
 }
 
 /** A text on one line, its loose end dropped, at most `max` characters cut at a word with « … ». */

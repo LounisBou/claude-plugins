@@ -36,8 +36,6 @@ The operator's consent is a structured act (a dialog answer, a recorded ruling),
 
 A unit of work ends with a report as in `references/report.md`.
 
-Every text the operator reads names each item by its subject, a row id at most in parentheses after it.
-
 ## Questions to the operator
 
 One question per message, as in `references/questions.md`.

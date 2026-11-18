@@ -94,7 +94,7 @@ test('a takeover from the state alone: a state file, an earlier succession brief
   assert.equal(w.run(), 0)
   const alone = w.text()
   // What the state holds is all of it: the open rows, their owners, the pull requests, the agents, the open question.
-  for (const part of ['open=2 label=API: routes', '2 api; ', 'acme/app#12 en cours (agent Agent: pr)', 'Agent: api', '[q-2] **Question 1 of 1**\nWhich schema?'])
+  for (const part of ['open=2 label=API: routes', 'routes (2): api; ', 'acme/app#12 en cours (agent Agent: pr)', 'Agent: api', '[q-2] **Question 1 of 1**\nWhich schema?'])
     assert.ok(alone.includes(part), `the print holds ${part}`)
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(alone), 'every placeholder filled')
   // What a handover would leave, in the shape of what it would be read for, saying what the state does not. The
@@ -122,7 +122,7 @@ test('an orchestrator closed with no handover is taken up from the state alone: 
     'whom it succeeds': 'SUCCESSOR ORCHESTRATOR of `Orch: belt`',
     'the predecessor\'s close': 'close --tty /dev/ttys009 --expect-title "Orch: belt"',
     'the open rows': 'open=4 label=DOCS: guide blocker=row 1 closed note=start from the old guide',
-    'who owns each row': '- Row owners: 2 api; 3 ruling; 4 READY NOT STARTED; 5 READY NOT STARTED; 6 blocked: row 2 closed',
+    'who owns each row': '- Row owners: routes (2): api; pages (3): ruling; guide (4): READY NOT STARTED; cache (5): READY NOT STARTED; rules (6): blocked: row 2 closed',
     'the pull requests': 'acme/app#12 en cours (agent Agent: pr)',
     'the live agents': '- Agents running (name and reference, brief path): Agent: api',
     'the open question, verbatim': '[q-2] **Question 1 of 1**\nWhich schema?',
@@ -183,7 +183,7 @@ test('the Live state: the open rows at level 1, their owners by agent, ruling or
   assert.equal(w.run(), 0)
   const text = w.text()
   assert.match(text, /- Rows open \(id, label, what remains\): open=2 label=API: routes note=Dispatched: Agent: api; deferred=3 label=UI: pages ruling=ruling 4; open=4 label=DOCS: guide blocker=row 1 closed note=start from the old guide; open=5 label=PERF: cache blocker=PR acme\/app#12 merged; open=6 label=LINT: rules blocker=row 2 closed\n/)
-  assert.match(text, /- Row owners: 2 api; 3 ruling; 4 READY NOT STARTED; 5 READY NOT STARTED; 6 blocked: row 2 closed\n/)
+  assert.match(text, /- Row owners: routes \(2\): api; pages \(3\): ruling; guide \(4\): READY NOT STARTED; cache \(5\): READY NOT STARTED; rules \(6\): blocked: row 2 closed\n/)
   assert.match(text, /- Pull requests open \(number, head, where each stands\): acme\/app#12 en cours \(agent Agent: pr\)\n/)
   assert.match(text, /- Agents running \(name and reference, brief path\): Agent: api\n/)
   assert.ok(text.includes('[q-2] **Question 1 of 1**\nWhich schema?'))
@@ -306,8 +306,8 @@ test('ownersOf: a row whose until has passed reads READY NOT STARTED, a row on a
     { id: '2', line: '', label: 'SPEED: p95', blocker: 'measure p95 under 300 ms' },
   ]
   const at = (now: number) => (blocker: string) => fallOf(blocker, { rows: [], prState: () => undefined, installed: () => '', now })
-  assert.deepEqual(ownersOf({ rows, prs: [], agents: [], questions: [] }, at(MOMENT - 1)), ['1 blocked: until 2026-11-15T11:00:00Z', '2 blocked: measure p95 under 300 ms'])
-  assert.deepEqual(ownersOf({ rows, prs: [], agents: [], questions: [] }, at(MOMENT)), ['1 READY NOT STARTED', '2 blocked: measure p95 under 300 ms'])
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: [], questions: [] }, at(MOMENT - 1)), ['at eleven (1): blocked: until 2026-11-15T11:00:00Z', 'p95 (2): blocked: measure p95 under 300 ms'])
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: [], questions: [] }, at(MOMENT)), ['at eleven (1): READY NOT STARTED', 'p95 (2): blocked: measure p95 under 300 ms'])
 })
 
 test('ownersOf names each open row\'s live agent as its note names it, a deferred row\'s ruling, its fallen or standing blocker, and flags a row with none recorded', () => {
@@ -324,9 +324,9 @@ test('ownersOf names each open row\'s live agent as its note names it, a deferre
   const agents = ['Agent: takeoverlean', 'Agent: qredesign-removal-2', 'Agent: ab']
   const fall = (blocker: string) => (blocker === 'none' ? 'fallen' : blocker.includes('#3') ? 'standing' : 'unread') as 'fallen' | 'standing' | 'unread'
   assert.deepEqual(ownersOf({ rows, prs: [], agents, questions: [] }, fall), [
-    '1 takeoverlean', '2 qredesign-removal-2', '3 NO OWNER', '4 ruling', '5 NO OWNER', '6 READY NOT STARTED', '7 blocked: PR acme/app#3 merged', '8 blocker unread: PR acme/app#4 merged',
+    'a takeover reads less (1): takeoverlean', 'remove the old path (2): qredesign-removal-2', 'nobody works it (3): NO OWNER', 'parked (4): ruling', 'its label word is an agent\'s name, which owns nothing (5): NO OWNER', 'nobody on it (6): READY NOT STARTED', 'on a pull request (7): blocked: PR acme/app#3 merged', 'its forge is unreachable (8): blocker unread: PR acme/app#4 merged',
   ])
-  assert.deepEqual(ownersOf({ rows: [rows[5] ?? { id: '', line: '' }], prs: [], agents: [], questions: [] }), ['6 blocker unread: none'])
+  assert.deepEqual(ownersOf({ rows: [rows[5] ?? { id: '', line: '' }], prs: [], agents: [], questions: [] }), ['nobody on it (6): blocker unread: none'])
 })
 
 test('ownersOf reads a deferred row as ruling until its until date, then DEFERRED DUE, which goes back to the operator; a deferred row with no date stays ruling', () => {
@@ -337,8 +337,8 @@ test('ownersOf reads a deferred row as ruling until its until date, then DEFERRE
     { id: '3', line: '', label: 'THREE: old deferral', ruling: 'later', blocker: 'none' },
   ]
   const at = (now: number) => ownersOf({ rows, prs: [], agents: [], questions: [] }, blocker => fallOf(blocker, { rows: [], prState: () => undefined, installed: () => '', now }))
-  assert.deepEqual(at(DATE - 1), ['1 ruling', '2 ruling', '3 ruling'])
-  assert.deepEqual(at(DATE), ['1 DEFERRED DUE, ask the operator: relaunch or drop', '2 ruling', '3 ruling'])
+  assert.deepEqual(at(DATE - 1), ['1.0 (1): ruling', 'old deferral (2): ruling', 'old deferral (3): ruling'])
+  assert.deepEqual(at(DATE), ['1.0 (1): DEFERRED DUE, ask the operator: relaunch or drop', 'old deferral (2): ruling', 'old deferral (3): ruling'])
 })
 
 test('ownersOf reads the agent a row was dispatched to from its note: a live agent holds its row whatever its label, a shared label word gives no row to another agent', () => {
@@ -352,11 +352,11 @@ test('ownersOf reads the agent a row was dispatched to from its note: a live age
   const agents = ['Agent: ggf P17 status block', 'Agent: ggf P10 Android preview', 'Agent: ggf P1x']
   const fallen = () => 'fallen' as const
   assert.deepEqual(ownersOf({ rows, prs: [], agents, questions: [] }, fallen), [
-    '35 ggf P17 status block', '51 ggf P10 Android preview', '57 READY NOT STARTED', '58 DISPATCHED, NO LIVE AGENT',
+    'bloc d\'état après chaque étape (35): ggf P17 status block', 'P10 staging mobile builds (51): ggf P10 Android preview', 'systemdRestarts switched to per-unit restarts (57): READY NOT STARTED', 'P1 cleanup (58): DISPATCHED, NO LIVE AGENT',
   ])
   // A name is matched whole: « ggf P1 » in a note is not « ggf P17 status block », nor the reverse.
-  assert.deepEqual(ownersOf({ rows: [rows[3] ?? { id: '', line: '' }], prs: [], agents: ['Agent: ggf P17 status block'], questions: [] }, fallen), ['58 DISPATCHED, NO LIVE AGENT'])
-  assert.deepEqual(ownersOf({ rows: [rows[0] ?? { id: '', line: '' }], prs: [], agents: ['Agent: ggf P1'], questions: [] }, fallen), ['35 DISPATCHED, NO LIVE AGENT'])
+  assert.deepEqual(ownersOf({ rows: [rows[3] ?? { id: '', line: '' }], prs: [], agents: ['Agent: ggf P17 status block'], questions: [] }, fallen), ['P1 cleanup (58): DISPATCHED, NO LIVE AGENT'])
+  assert.deepEqual(ownersOf({ rows: [rows[0] ?? { id: '', line: '' }], prs: [], agents: ['Agent: ggf P1'], questions: [] }, fallen), ['bloc d\'état après chaque étape (35): DISPATCHED, NO LIVE AGENT'])
 })
 
 test('todoStray reads the open items only, each row they name once against the record', () => {
@@ -482,7 +482,7 @@ test('ownersOf binds a live agent to the row its brief was printed for, never to
     { name: 'Agent: archivesort', tty: null, row: '264' },
   ]
   assert.deepEqual(ownersOf({ rows, prs: [], agents: seats.map(seat => seat.name), seats, questions: [] }, () => 'fallen'), [
-    '259 takeoversense', '262 unhold', '264 archivesort', '265 READY NOT STARTED',
+    'the takeover reads (259): takeoversense', 'the stop gate (262): unhold', 'the archive (264): archivesort', 'the takeover defects (265): READY NOT STARTED',
   ])
 })
 
@@ -492,8 +492,8 @@ test('ownersOf: an agent whose brief names no row is bound by a note in the disp
     { id: '266', line: '', label: 'FOLLOW', blocker: 'none', note: 'Dispatched 2026-11-15T22:40Z: Agent: takeoversense (ttys000)' },
   ]
   const seats = [{ name: 'Agent: takeoversense', tty: null }]
-  assert.deepEqual(ownersOf({ rows, prs: [], agents: seats.map(seat => seat.name), seats, questions: [] }, () => 'fallen'), ['265 READY NOT STARTED', '266 takeoversense'])
-  assert.deepEqual(ownersOf({ rows, prs: [], agents: ['Agent: takeoversense'], questions: [] }, () => 'fallen'), ['265 READY NOT STARTED', '266 takeoversense'])
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: seats.map(seat => seat.name), seats, questions: [] }, () => 'fallen'), ['TAKEOVERPROMPT (265): READY NOT STARTED', 'FOLLOW (266): takeoversense'])
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: ['Agent: takeoversense'], questions: [] }, () => 'fallen'), ['TAKEOVERPROMPT (265): READY NOT STARTED', 'FOLLOW (266): takeoversense'])
 })
 
 test('the takeover reads each agent\'s row in the brief its launch named', () => {
@@ -511,12 +511,12 @@ test('the takeover reads each agent\'s row in the brief its launch named', () =>
   writeFileSync(join(w.state, 'prompts', 'launch-Agent--takeoversense-1700000000000.sh'), `#!/bin/sh\nexport ORCHESTRATOR_BRIEF='${join(w.briefs, 'takeoversense-brief.md')}' && run\n`)
   writeFileSync(join(w.state, 'prompts', 'launch-Agent--archivesort-1700000000000.sh'), `#!/bin/sh\nexport ORCHESTRATOR_BRIEF='${join(w.briefs, 'archivesort-rotation.md')}' && run\n`)
   assert.equal(w.run('--tty', '/dev/ttys009'), 0)
-  assert.match(w.text(), /- Row owners: 259 takeoversense; 264 archivesort; 265 READY NOT STARTED\n/)
+  assert.match(w.text(), /- Row owners: the takeover reads \(259\): takeoversense; the archive \(264\): archivesort; the takeover defects \(265\): READY NOT STARTED\n/)
   // A brief path that cannot be read (here a directory) binds no row, and the takeover still prints.
   writeFileSync(join(w.state, 'prompts', 'launch-Agent--archivesort-1700000009000.sh'), `#!/bin/sh\nexport ORCHESTRATOR_BRIEF='${w.briefs}' && run\n`)
   w.out.length = 0
   assert.equal(w.run('--tty', '/dev/ttys009'), 0)
-  assert.match(w.text(), /- Row owners: 259 takeoversense; 264 NO OWNER; 265 READY NOT STARTED\n/)
+  assert.match(w.text(), /- Row owners: the takeover reads \(259\): takeoversense; the archive \(264\): NO OWNER; the takeover defects \(265\): READY NOT STARTED\n/)
 })
 
 test('the deck and the launcher agreeing journal nothing; no list leaves the deck as it is', () => {
@@ -744,13 +744,13 @@ test('a takeover in a worktree names its project by origin, prints the not-insta
   const env = { ...i.env, ORCHESTRATOR_STATE_DIR: w.state }
   assert.equal(main(['takeover', w.record, '--mode', 'build', '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => new Date(i.merged.getTime() + 3_600_000), prState: () => undefined }), 0)
   assert.ok(out.join('').startsWith('# Orchestrator succession brief — acme/belt\n'))
-  assert.match(out.join(''), /- Row owners: 1 blocked: release installed\n/)
+  assert.match(out.join(''), /- Row owners: it \(1\): blocked: release installed\n/)
   assert.match(out.join(''), /; installed: 1 merged PRs not installed, oldest 1 h\n/)
   const tip = execFileSync('git', ['-C', i.repo, 'rev-parse', 'origin/main'], { encoding: 'utf8' }).trim()
   writeFileSync(join(i.env['CLAUDE_CONFIG_DIR'] ?? '', 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'orchestrator@acme': [{ gitCommitSha: tip }] } }))
   out.length = 0
   assert.equal(main(['takeover', w.record, '--mode', 'build', '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: () => undefined }), 0)
-  assert.match(out.join(''), /- Row owners: 1 READY NOT STARTED\n/)
+  assert.match(out.join(''), /- Row owners: it \(1\): READY NOT STARTED\n/)
 })
 
 test('a takeover that finds its pull requests missing from the machine\'s file says them unread and writes nothing beside the file', () => {
@@ -798,7 +798,7 @@ test('a record that names no pull request on its row: the open pull request it h
   const { code, text } = f.takeover()
   assert.equal(code, 0)
   assert.match(text, /- Pull requests open \(number, head, where each stands\): acme\/flow#31 open, no agent\n/)
-  assert.match(text, /- Row owners: 42 acme\/flow#31 open, no agent; 46 NO OWNER\n/)
+  assert.match(text, /- Row owners: pre-flight \(42\): acme\/flow#31 open, no agent; ggf P16 release in conflict with main \(46\): NO OWNER\n/)
   assert.deepEqual(f.asked, ['acme/flow'])
   assert.match(f.w.err.join(''), /takeover: .* prs=1 /)
 })
@@ -836,7 +836,7 @@ test('a short repository name two known repositories share names no pull request
   const out: string[] = []
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
   assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: () => undefined, openPrs: repo => forge[repo] }), 0)
-  assert.match(out.join(''), /- Row owners: 1 NO OWNER; 2 acme\/flow#7 open, no agent; 3 acme\/flow#9 open, no agent; 4 NO OWNER; 5 acme\/flow#6 open, no agent; 6 agent\n/)
+  assert.match(out.join(''), /- Row owners: AMBIG flow#5 two flows \(1\): NO OWNER; recorded abbreviated \(2\): acme\/flow#7 open, no agent; recorded longer than the forge \(3\): acme\/flow#9 open, no agent; too short to tell \(4\): NO OWNER; named there \(5\): acme\/flow#6 open, no agent; api has it \(6\): agent\n/)
 })
 
 test('a row\'s pull request named in its label by a short or a full repository, and the ledger\'s word on it; a repository the forge cannot read is said', () => {
@@ -853,7 +853,7 @@ test('a row\'s pull request named in its label by a short or a full repository, 
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
   assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: () => undefined, openPrs: forge }), 0)
   const text = out.join('')
-  assert.match(text, /- Row owners: 1 acme\/flow#30 en cours \(agent Agent: tokens\); 2 NO OWNER; 3 NO OWNER\n/)
+  assert.match(text, /- Row owners: FIX flow#30 tokens \(1\): acme\/flow#30 en cours \(agent Agent: tokens\); LATER acme\/site#7 footer \(2\): NO OWNER; NOTE other#9 not a known repository \(3\): NO OWNER\n/)
   assert.match(text, /- Pull requests open \(number, head, where each stands\): acme\/flow#30 en cours \(agent Agent: tokens\); acme\/site open pull requests unread\n/)
 })
 
@@ -868,11 +868,11 @@ test('a blocker still standing keeps its word over an open pull request the row 
   const out: string[] = []
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
   assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: (_repo, pr) => (pr === 31 ? 'MERGED' : 'OPEN'), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
-  assert.match(out.join(''), /- Row owners: 1 blocked: PR acme\/flow#30 merged; 2 NO OWNER\n/)
+  assert.match(out.join(''), /- Row owners: after flow#30 \(1\): blocked: PR acme\/flow#30 merged; FIX acme\/flow#31 merged since \(2\): NO OWNER\n/)
   // Opened since the file's last reading: absent from its open list, its ledger line still owns the row.
   out.length = 0
   assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: (_repo, pr) => (pr === 30 ? 'OPEN' : undefined), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
-  assert.match(out.join(''), /- Row owners: 1 blocked: PR acme\/flow#30 merged; 2 acme\/flow#31 en cours \(agent Agent: gone\)\n/)
+  assert.match(out.join(''), /- Row owners: after flow#30 \(1\): blocked: PR acme\/flow#30 merged; FIX acme\/flow#31 merged since \(2\): acme\/flow#31 en cours \(agent Agent: gone\)\n/)
 })
 
 test('an owner file that names none says on stderr that the session\'s own name stands in', () => {
@@ -957,7 +957,7 @@ test('a note several rows share is printed once, naming the rows; a note one row
   assert.equal(w.run(), 0)
   assert.equal(w.text().split('shared-ruling-text').length - 1, 1)
   assert.ok(w.text().includes('note of rows 1, 2: shared-ruling-text'))
-  assert.deepEqual(ownersOf({ rows: openRows([row(1, 'Agent: api'), row(2, 'Agent: api')]), prs: [], agents: ['Agent: api'], questions: [] }), ['1 api', '2 api'])
+  assert.deepEqual(ownersOf({ rows: openRows([row(1, 'Agent: api'), row(2, 'Agent: api')]), prs: [], agents: ['Agent: api'], questions: [] }), ['x (1): api', 'x (2): api'])
 })
 
 test('the project line prints the objective\'s first sentence and the goals count, without the history behind it', () => {

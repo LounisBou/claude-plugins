@@ -249,7 +249,7 @@ describe('an unattended pull request', () => {
 
     it('names a row with no keyword as such, and only its note can hold it', () => {
       assert.equal(readyRowsLine(ready(rowText({ label: undefined }))), 'Sujets prêts sans agent : no keyword (ligne 12)')
-      assert.equal(readyRowsLine(ready(rowText({ label: ': no word' }), { live: ['Agent: tokendrift'] })), 'Sujets prêts sans agent : no keyword (ligne 12)')
+      assert.equal(readyRowsLine(ready(rowText({ label: ': no word' }), { live: ['Agent: tokendrift'] })), 'Sujets prêts sans agent : no word (ligne 12)')
       assert.deepEqual(ready(rowText({ label: undefined, note: 'Agent: tokendrift' }), { live: ['Agent: tokendrift [a1b2c3]'] }), [])
     })
 
@@ -322,6 +322,9 @@ describe('an unattended pull request', () => {
       assert.equal(subjectOf('PANEE2E: pane-e2e.sh fails 5 checks on main (round-listed.json not written)'), 'pane-e2e.sh fails 5 checks on main')
       assert.equal(subjectOf('LEARNING: Q1 A, Q2 A; Q4-11 held'), 'Q1 A, Q2 A')
       assert.equal(subjectOf('FINISHLINE: the goal row — release 3.1 installed (here and there)'), 'the goal row — release 3.1 installed')
+      assert.equal(subjectOf('M7 SOURCE: no pull request grows the prompts; measured'), 'no pull request grows the prompts')
+      assert.equal(subjectOf('RELEASE 2026-11-18: release pull request for the plugins changed (since 3.1)'), 'release pull request for the plugins changed')
+      assert.equal(subjectOf('3-bis C: correction round on the gate'), 'correction round on the gate')
       assert.equal(subjectOf('Add the retry knob'), 'Add the retry knob')
       assert.equal(subjectOf('  TOKENDRIFT:   the   context  fills  '), 'the context fills')
       assert.equal(subjectOf('TOKENDRIFT'), 'TOKENDRIFT')
