@@ -7,7 +7,7 @@ import {
   agentClosed, agentSpawned, checkOf, Collector, firstRepository, firstTurn, mcpOf, originOf, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES, transcriptCallIds, transcriptToolEvents,
   turnEnd, usageFacts, type Event,
 } from './collect.ts'
-import { SELF_REVIEW_DESCRIPTION, SELF_REVIEW_SCHEMA, SELF_REVIEW_TOOL, selfReviewEvents } from './self-review.ts'
+import { SELF_REVIEW_DESCRIPTION, SELF_REVIEW_SCHEMA, SELF_REVIEW_TOOL, selfReviewEvents, selfReviewLine } from './self-review.ts'
 
 type Next = (e: unknown) => Promise<unknown>
 type Hook = ($: Host, e: Record<string, unknown>, next: Next) => Promise<unknown>
@@ -113,15 +113,14 @@ async function readRepository($: Host): Promise<string | undefined> {
   }
 }
 
-/** The `self_review` tool's answer: its events written at once, and the report's line, or why none was. */
+/** The `self_review` tool's answer: its events written at once, and the report's lines, one per finding, or why none was. */
 async function selfReview($: Host, collector: Collector, input: Record<string, unknown>): Promise<{ result: string; isError?: boolean }> {
   try {
     const built = selfReviewEvents(await $.clock.now(), await $.session.id(), input)
     if ('why' in built) return { result: `self-review: not recorded — ${built.why}`, isError: true }
     collector.push(...built.events)
     await flush($, collector)
-    const fixed = built.events.filter(event => event['outcome'] === 'fixed').length
-    return { result: `self-review: ${built.events.length} recorded, ${fixed} fixed, ${built.events.length - fixed} answered` }
+    return { result: built.events.map(selfReviewLine).join('\n') }
   } catch (error) {
     return { result: `self-review: not recorded — ${error instanceof Error ? error.message : String(error)}`, isError: true }
   }

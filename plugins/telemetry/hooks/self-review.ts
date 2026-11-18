@@ -8,7 +8,7 @@ export const SELF_REVIEW_TOOL = 'mcp__telemetry__self_review'
 
 export const SELF_REVIEW_DESCRIPTION =
   'Record the outcome of each finding of your self-review, once the gate is green: fixed, or answered with its reason. '
-  + 'Answers the line your report carries.'
+  + 'Answers your report\'s `self-review:` lines, one per finding.'
 
 const SEVERITIES = ['critical', 'important', 'minor'] as const
 const OUTCOMES = ['fixed', 'answered'] as const
@@ -60,4 +60,12 @@ export function selfReviewEvents(at: number, session: string, input: unknown): {
     events.push(makeEvent('self_review', at, session, { agent: text(e['agentId']), lens, file: text(finding['file']), line: positive(finding['line']), severity, outcome, reason, target }))
   }
   return { events }
+}
+
+/** A finding's line in the implementer's report: `self-review: <lens> [<severity>] <file>:<line> — fixed`, or `— answered: <reason>`. */
+export function selfReviewLine(event: Event): string {
+  const where = typeof event['file'] === 'string' ? ` ${event['file']}${typeof event['line'] === 'number' ? `:${event['line']}` : ''}` : ''
+  const severity = typeof event['severity'] === 'string' ? ` [${event['severity']}]` : ''
+  const outcome = event['outcome'] === 'answered' ? `answered: ${String(event['reason'])}` : 'fixed'
+  return `self-review: ${String(event['lens'])}${severity}${where} — ${outcome}`
 }

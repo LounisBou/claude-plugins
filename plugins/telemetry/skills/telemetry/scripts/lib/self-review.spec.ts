@@ -46,7 +46,7 @@ test('self_review: listed at the session\'s start, not deferred; a host that ref
   assert.match(refused.logs.join('\n'), /the self_review tool skipped: no tools/)
 })
 
-test('self_review: one event per finding, fixed or answered with its reason, naming its pull request and the session; the answer is the report\'s line', async () => {
+test('self_review: one event per finding, fixed or answered with its reason, naming its pull request and the session; the answer is the report\'s lines, one per finding', async () => {
   const { $, runs } = host()
   const hook = hooks()
   await hook('session.start')($, { session_title: 'Agent: x' }, async () => ({}))
@@ -57,7 +57,7 @@ test('self_review: one event per finding, fixed or answered with its reason, nam
       { lens: 'tests', severity: 'bogus', outcome: 'answered', reason: 'covered by the suite end to end' },
     ],
   }), unreached)
-  assert.deepEqual(answer, { result: 'self-review: 2 recorded, 1 fixed, 1 answered' })
+  assert.deepEqual(answer, { result: 'self-review: correctness [important] a.ts:3 — fixed\nself-review: tests — answered: covered by the suite end to end' })
   assert.equal(runs.length, 1)
   assert.deepEqual(runs[0]?.argv.slice(-3), ['append', '--config', '/home/u/.claude'])
   // The call writes at once, with what the session had buffered before it.
