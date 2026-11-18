@@ -10,13 +10,13 @@ import {
   checkWakeDone, deferredRows, goalsPaths, isDegradedPass, isOwnRecord, openRows, orchestrationOf, ownerOf, parseGoalsCheck,
   recordsWithOpenRows, waitLine, withDeadline, type DeclaredWait, type GoalsReading,
 } from './stop-gate.ts'
-import { RECORDS_DIR, WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
+import { WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
 import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject } from '../core/consent-record.ts'
 import { fieldsOf, messageOf, type Host, type On } from './host.ts'
 import { configDir, logLine, stateDir } from './module-io.ts'
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { RETROSPECTIVE_CONTRACT, retrospectiveStartArgv } from '../core/learning.ts'
-import { holdsDone, mergeWaits } from './unattended.ts'
+import { holdsDone, mergeWaits, projectRecords } from './unattended.ts'
 import { prKey, unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 import { holdsTodos, openFor, whoAmI } from './todo.ts'
 import { todoName } from './todo-format.ts'
@@ -154,9 +154,11 @@ export async function holdsRecord($: Held, wait: DeclaredWait): Promise<string |
     }
   }
   const state = await stateDir($)
-  const safe = (await $.session.id()).replace(/[^A-Za-z0-9._-]/g, '_')
-  const registered = String(await read(() => $.fs.read(`${state}/${RECORDS_DIR}/${safe}`), '')).split('\n').map(line => line.trim()).filter(Boolean)
   const own = orchestrationOf(me.name)
+  // The orchestration's records, not the session's registry alone: a successor that never read or wrote its record
+  // registered none, and declared done with 5 rows open in its predecessors' record (the operator's report of 2026-11-18).
+  const sessionId = await $.session.id()
+  const registered = await read(() => projectRecords($, state, sessionId, own), [] as string[])
   const records: string[] = []
   for (const path of registered) {
     if (isOwnRecord(ownerOf(String(await read(() => $.fs.read(`${path}.owner`), ''))), own)) records.push(path)
