@@ -29,4 +29,3 @@ export { defaultsOf, isCommand, LAUNCHER_ARGS_VERSION, LAUNCHER_COMMANDS, LAUNCH
 export { appendChain, chainOwned, chainPath, CHAINS_DIR, chainText, chainTtyOf, chainTtys, changeChain, dropFromChain, dropTabEverywhere, parseChain, readChain, repointTab, transferChain, type ChainEntry } from './chains.ts'
 export { answersChoice, givenAnswer, parseRoundQuestion, ROUND_ANSWERERS, ROUND_STATUSES, type RoundAnswerer, type RoundQuestion, type RoundStatus } from './round-question.ts'
 export { COST_RULE, messageCost, recordOf, recordOfEntry, type CostRule, type Price, type Prices, type RateName, type Rates, type TokenName, type UsageRecord } from './usage-cost.ts'
-export { parseSpendFlag, raisedFlag, SPEND_FLAG_DIR, SPEND_FLAG_EVERY_MS, SPEND_FLAG_FILE, SPEND_FLAG_STALE_AFTER_MS, SPEND_FLAG_VERSION, SPEND_READER_CONTRACT, SPEND_TOP_MAX, type SpendFlag, type Spender } from './spend-flag.ts'

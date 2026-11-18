@@ -51,14 +51,6 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   `question` event per settled question of the orchestrator's round, and one `dispatch` event per
   `dispatch` entry of the orchestrator's journal (`source: journal`, once per entry). A session's end starts it,
   detached, at most once a UTC day (`--auto`).
-- `telemetry.ts spend --config <dir>`: the spend flag, recomputed now. The writer also recomputes it
-  after an append, at most every five minutes, and writes `spend-flag.json` beside the events (core's
-  `spend-flag.ts`): the `api_call` events of the last hour, every session's and its subagents', priced at API
-  list prices by core's cost rule and the orchestrator's `routing/prices.json`, summed as dollars an hour,
-  against a threshold (`TELEMETRY_SPEND_ALERT_USD_PER_HOUR` in the environment or `~/.env`, 300 by default;
-  an equivalent at list prices, the machine being on a subscription), with the biggest spenders. A signal:
-  statusbar shows its line and the orchestrator tells it to the coordinator and each orchestrator; nothing
-  is refused.
 - `telemetry.ts report --config <dir> [--week <first day>] [--tool <owner/name>]...`: the weekly
   report, read-only, on the seven Paris days from `--week` (the seven ending today by default). It
   prints the spend of the tool against the products' and the unattributed (by repository, from the

@@ -61,14 +61,6 @@ that cannot be read leaves the event as it came.
 event with those names as written. Whether one was merged, and is where the defect came from, is its
 reader's join with the merges; a message read from a file is not read.
 
-**Spend flag.** Not an event: the writer, after an append and at most every five minutes, sums the last
-hour's `api_call` events (every session's, subagents included), prices each at API list prices (core's
-cost rule, the orchestrator's `routing/prices.json`), and writes `spend-flag.json` beside the events: the rate
-in dollars an hour, the threshold (`TELEMETRY_SPEND_ALERT_USD_PER_HOUR`, 300 by default), whether it is over
-and since when, the biggest spenders and the line that says it. Statusbar shows the line and the orchestrator
-tells it to the coordinator and each orchestrator, once per episode. A signal, never a refusal; contract in
-`docs/contracts.md`.
-
 **Self-review outcomes.** The module lists one tool of its own, `self_review`, at the session's
 start. An implementer calls it once its self-review is done, with each finding's lens, file, line,
 severity and outcome (`fixed`, or `answered` with its reason) and the pull request; each finding is a

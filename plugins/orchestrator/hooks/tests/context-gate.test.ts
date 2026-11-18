@@ -1,7 +1,6 @@
 // hooks/tests/context-gate.test.ts
 import { expect, test } from 'claude-code/testing'
-import { roleLine, gateAnnouncement, spendAnnouncement, versionAnnouncement, register as registerGuards } from '../guards.ts'
-import { SPEND_FLAG_STALE_AFTER_MS, type SpendFlag } from '../../core/spend-flag.ts'
+import { roleLine, gateAnnouncement, versionAnnouncement, register as registerGuards } from '../guards.ts'
 import { register as registerGauge, driftAnnouncement } from '../gauge.ts'
 import { logLineOf, blockOf, disk } from './fakes.ts'
 import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
@@ -47,7 +46,6 @@ test("the auditor's brief is named openably, from any cwd", () => {
 const HOME = '/tmp/h'
 const TRANSCRIPT = `${HOME}/.claude/projects/-a-project/s-gate.jsonl`
 const MEASURE = `${HOME}/.claude/claude-orchestrator/measure/s-gate.json`
-const SPEND_FLAG = `${HOME}/.claude/telemetry/spend-flag.json`
 
 // The transcript of a session a turn has answered; the rename on the last line
 // is padded — the unmeasured test below reads the session's name from it alone.
@@ -74,8 +72,6 @@ type Setup = {
   diff?: { exitCode: number; stdout: string }
   // What the installed launcher's home-reload answers; by default it succeeds.
   reload?: { exitCode: number; stdout: string; stderr: string }
-  // The spend flag file's text, when telemetry has written one.
-  spend?: string
 }
 
 function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: string[][] } {
@@ -101,7 +97,6 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
           return setup.measure
         }
         if (p === '/cfg/deploys/lounisbou/installed.json' && setup.installed !== undefined) return setup.installed
-        if (p === SPEND_FLAG && setup.spend !== undefined) return setup.spend
         throw new Error(`unread: ${p}`)
       },
       write: async () => undefined,
@@ -383,46 +378,4 @@ test('a session running the installed commit, an agent, and a session with no re
     expect((await submit(mounted(), dollar)).context).toBeUndefined()
     expect(written).toEqual([])
   }
-})
-
-// The machine's token spend, from telemetry's flag (core's spend-flag.ts): told once per episode over
-// its threshold to a coordinator and each orchestrator, never to an agent.
-const flagAt = (at: number, over: Partial<SpendFlag> = {}): SpendFlag => ({
-  version: 1, at, window_ms: 3_600_000, rate_usd_per_hour: 860, threshold_usd_per_hour: 400, over: true, since: at - 60_000, calls: 9, unpriced: 0,
-  top: [{ session: 's1', name: 'Orch: one', usd: 300 }], line: 'spend 860 $/h over the last hour, past 400 $/h — top: Orch: one 300 $', ...over,
-})
-
-test('the spend announcement is the flag\'s line while raised, once per episode, and nothing from a flag that is under, frozen or absent', () => {
-  const now = 10_000_000
-  const flag = flagAt(now)
-  expect(spendAnnouncement(flag, null, now)).toEqual({ text: `TOKEN SPEND: ${flag.line}`, since: flag.since })
-  expect(spendAnnouncement(flag, flag.since, now)).toBeNull()
-  expect(spendAnnouncement(flagAt(now, { since: now - 30_000 }), flag.since, now)?.since).toBe(now - 30_000)
-  expect(spendAnnouncement(flagAt(now, { over: false, since: null }), null, now)).toBeNull()
-  expect(spendAnnouncement(flagAt(now - SPEND_FLAG_STALE_AFTER_MS - 1), null, now)).toBeNull()
-  expect(spendAnnouncement(null, null, now)).toBeNull()
-})
-
-test('a coordinator and an orchestrator are told of the spend once, an agent never, a torn flag nothing', async () => {
-  const spend = JSON.stringify(flagAt(Date.now()))
-  for (const launchName of ['Coord: belt', 'Orch: belt']) {
-    const { dollar } = fakeDollar({ launchName, spend })
-    const handlers = mounted()
-    expect((await submit(handlers, dollar)).context).toEqual([`TOKEN SPEND: ${flagAt(0).line}`])
-    expect((await submit(handlers, dollar)).context).toBeUndefined()
-  }
-  expect((await submit(mounted(), fakeDollar({ launchName: 'Agent: belt', spend }).dollar)).context).toBeUndefined()
-  expect((await submit(mounted(), fakeDollar({ launchName: 'Orch: belt', spend: '{"version":1,' }).dollar)).context).toBeUndefined()
-})
-
-test('a new episode is told again, and the spend notice rides beside the gate\'s', async () => {
-  const setup: Setup = { launchName: 'Orch: belt', spend: JSON.stringify(flagAt(Date.now())), transcript: ANSWERED_RENAMED, measure: MEASURED_84 }
-  const { dollar } = fakeDollar(setup)
-  const handlers = mounted()
-  const first = (await submit(handlers, dollar)).context
-  expect(first).toHaveLength(2)
-  expect(first?.[0]).toBe(`TOKEN SPEND: ${flagAt(0).line}`)
-  expect(first?.[1]).toContain('CONTEXT GATE')
-  setup.spend = JSON.stringify(flagAt(Date.now(), { since: Date.now() + 1000 }))
-  expect((await submit(handlers, dollar)).context?.[0]).toBe(`TOKEN SPEND: ${flagAt(0).line}`)
 })

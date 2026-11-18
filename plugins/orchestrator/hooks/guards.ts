@@ -44,7 +44,6 @@ import { readAsked } from './question.ts'
 import { fieldsOf, messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
 import { asksTheMode } from './mode-dialog.ts'
 import { unnamedReport } from './relay.ts'
-import { parseSpendFlag, raisedFlag, SPEND_FLAG_DIR, SPEND_FLAG_FILE, type SpendFlag } from '../core/spend-flag.ts'
 import { shorten } from '../core/verdict.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
@@ -103,23 +102,6 @@ export function gateAnnouncement(gate: { tripped: boolean; words: string }, role
 // told to hand over, by its role's own line. The commits are named short, as the deploy's status does.
 export function versionAnnouncement(newer: Newer, role: string, root = ''): string {
   return `NEWER VERSION: commit ${newer.installed.slice(0, 7)} of the plugins is installed and this session still runs ${newer.own.slice(0, 7)}; only a successor runs the newer one. Hand over at the end of the step in progress, at once when a defect of the running version blocks you. ${roleLine(role, root)}`
-}
-
-// The machine's token spend as telemetry's flag says it (core's spend-flag.ts), told once per episode over
-// the threshold: the flag's own line, with the biggest spenders. A signal, never a refusal.
-export function spendAnnouncement(flag: SpendFlag | null, told: number | null, now: number): { text: string; since: number } | null {
-  const raised = raisedFlag(flag, now)
-  if (raised === null || raised.since === null || raised.since === told) return null
-  return { text: `TOKEN SPEND: ${raised.line}`, since: raised.since }
-}
-
-// The flag on file, or null: no file yet, torn, or of another version. Reading it never fails a prompt.
-async function readSpendFlag($: Host<'env' | 'fs'>): Promise<SpendFlag | null> {
-  try {
-    return parseSpendFlag(await $.fs.read(`${await configDir($)}/${SPEND_FLAG_DIR}/${SPEND_FLAG_FILE}`))
-  } catch {
-    return null
-  }
 }
 
 // A threshold the session's environment set is the gate, however low: a session
@@ -297,8 +279,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // /clear the id changes and no session.start fires, so a memo held across it
   // would name the old session's transcript. `toldCommit` is the newer commit last
   // decided (told, or found to change nothing the session runs), `announced` whether
-  // a version notice was given, `toldSpend` the start of the spend episode last told.
-  let memo: { sessionId: string; transcript: string | null; toldCommit: string | null; announced: boolean; toldSpend: number | null } | null = null
+  // a version notice was given.
+  let memo: { sessionId: string; transcript: string | null; toldCommit: string | null; announced: boolean } | null = null
   // The session id that handed over (it spawned its successor), the stop gate's
   // release: keyed by id like the memo above, a /clear's new session has not.
   let handedOverIn: string | null = null
@@ -342,7 +324,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     const answer = () => next(blocks.length === 0 ? e : { ...e, context: blocks.reduce<readonly string[]>(joinContext, e.context ?? []) })
     try {
       const sessionId = await $.session.id()
-      if (memo === null || memo.sessionId !== sessionId) memo = { sessionId, transcript: null, toldCommit: null, announced: false, toldSpend: null }
+      if (memo === null || memo.sessionId !== sessionId) memo = { sessionId, transcript: null, toldCommit: null, announced: false }
       if (memo.transcript === null) {
         // A miss is looked up again: a young session's transcript appears with
         // its first turn, and a memo of the miss would pin it forever.
@@ -371,14 +353,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           await reloadHomes($, newer)
         }
         if (newer) memo.toldCommit = newer.installed
-      }
-      // The machine's token spend, once per episode over its threshold, to the sessions that steer the others.
-      if (role === 'coordinator' || role === 'orchestrator') {
-        const spend = spendAnnouncement(await readSpendFlag($), memo.toldSpend, Date.now())
-        if (spend) {
-          blocks.push(spend.text)
-          memo.toldSpend = spend.since
-        }
       }
       if (!reading) return answer()
       const env = await gateEnv($)

@@ -10,7 +10,6 @@ ctx: 26% │ 5h: 47% ▓▓▓▓▓░░░░░ → 2h13 │ 7d: 50% ▓▓�
 
 **Line 1** — current directory · enriched git branch · open PR · model · session name · open questions
 **Line 2** — context consumed · 5-hour quota · 7-day quota · lines added/removed
-**Line 3** — only while the machine's token spend is over its threshold: `⚠` and the spend flag's line
 
 ## Install
 
@@ -168,13 +167,6 @@ total, the `round` of the machine's `deck.json`; when its stamp is older than th
 with `(U urgent)` while one is urgent. Any other session, a brand-new one included, shows nothing.
 Nothing shows when none is open, when the round is empty or absent, or, for a coordinator, when the deck
 is absent or torn, of another version, or stamped ahead past the bound. The files are only read.
-
-While the machine's token spend over the last hour is over its threshold, a third line, red, shows the
-spend flag's line: the rate in dollars an hour at API list prices (an equivalent, not a bill), the threshold
-and the biggest spenders. Telemetry writes the flag (`spend-flag.json` under its state directory) and core's
-`spend-reader.json` names its file, version and how old its stamp may be. Nothing shows when the flag is absent,
-torn, of another version, under the threshold, or stamped more than ten minutes ago or ahead. A signal, never
-a refusal.
 
 Reset times are formatted with BSD `date -r`, else GNU `date -d @…`, so they show on macOS and
 Linux alike.

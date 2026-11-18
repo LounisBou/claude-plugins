@@ -8,7 +8,6 @@ import { ORCHESTRATION_CONTRACT } from './orchestration.ts'
 import { PR_RECORD_CONTRACT } from './pr-record.ts'
 import { READINESS_CONTRACT } from './readiness.ts'
 import { ROUND_READER_CONTRACT } from './round-question.ts'
-import { SPEND_READER_CONTRACT } from './spend-flag.ts'
 import { STORE_CONTRACT } from './store-io.ts'
 
 export const DATA_FILES: Readonly<Record<string, object>> = {
@@ -21,6 +20,5 @@ export const DATA_FILES: Readonly<Record<string, object>> = {
   'pr-record.json': PR_RECORD_CONTRACT,
   'readiness.json': READINESS_CONTRACT,
   'round-reader.json': ROUND_READER_CONTRACT,
-  'spend-reader.json': SPEND_READER_CONTRACT,
   'store.json': STORE_CONTRACT,
 }
