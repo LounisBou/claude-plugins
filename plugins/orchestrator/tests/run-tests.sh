@@ -10001,7 +10001,7 @@ printf '%s\n' '{"name":"Orch: gone","pid":"999","waiting":"operator","blocks":"x
 printf '%s\n' '{"name":"Orch: beta","pid":"101","waiting":null,"blocks":null,"waiting_since":null}' > "$CSTORE/s-beta"
 printf 'not json\n' > "$CSTORE/s-broken"
 cfacts() {
-  CLAUDE_CONFIG_DIR="$CCFG" ORCHESTRATOR_STATE_DIR="${CSTATE:-$CS}" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli \
+  CLAUDE_CONFIG_DIR="$CCFG" ORCHESTRATOR_STATE_DIR="${CFSTATE:-$CS}" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli \
     COORDINATOR_PS_TABLE="${COORDINATOR_PS_TABLE:-$CF/ps}" COORDINATOR_CWDS="${COORDINATOR_CWDS:-$CF/cwds}" bash "$COORD" "$@"
 }
 cfacts_status() { cfacts "$@" >/dev/null 2>&1; echo "exit $?"; }
@@ -10096,9 +10096,9 @@ git -C "$CWS/app/b1" checkout -q feat/x
 cprs "$CF/state-down" 'HTTP 502'
 check "a pull request file whose last refresh failed is said, and exit 2" \
   "unread forge github.com/o/app: no current reading in the machine's pull request file|exit 2|exit 2" \
-  "$(CSTATE="$CF/state-down" cfacts facts 2>/dev/null | grep '^unread forge github.com/o/app')|$(CSTATE="$CF/state-down" cfacts_status facts)|$(CSTATE="$CF/state-down" cfacts_status owners)"
+  "$(CFSTATE="$CF/state-down" cfacts facts 2>/dev/null | grep '^unread forge github.com/o/app')|$(CFSTATE="$CF/state-down" cfacts_status facts)|$(CFSTATE="$CF/state-down" cfacts_status owners)"
 check "and the rest is still printed" "1" \
-  "$(CSTATE="$CF/state-down" cfacts facts 2>/dev/null | grep -c '^collision checkouts ')"
+  "$(CFSTATE="$CF/state-down" cfacts facts 2>/dev/null | grep -c '^collision checkouts ')"
 check "facts writes no wanted list beside the file" "absent" \
   "$([ -e "$CS/prs.wanted" ] && echo present || echo absent)"
 check "a process table that cannot be read is said, and exit 2" "unread processes: $CF/no-ps cannot be read|exit 2" \
