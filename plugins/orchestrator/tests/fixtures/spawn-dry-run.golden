@@ -780,8 +780,8 @@ home_conf=skills/iterm-agents/tmux/home.conf
 home_window0=Orch: w
 home_tab=right of self
 exit=0
-### resume without wake refused
-ERROR: spawn: refused: --resume is a wake's: it names the session a paused orchestrator resumes
+### resume of a session with no transcript refused
+ERROR: spawn: refused: no transcript for session abcdef12 under @WORK@/projects: nothing to resume, start a fresh agent from `brief.sh rotation`
 exit=1
 ### open
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server

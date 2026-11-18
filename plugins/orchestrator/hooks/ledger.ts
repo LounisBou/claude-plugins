@@ -6,7 +6,7 @@
 // when it is an agent's (orchestratorOn, the one mapping the relay uses). No model, no refusal, no
 // gate: the call has already succeeded, so a write that fails is one log line and the answer goes on.
 // A pull request of the orchestration merged or closed, wherever it was (the machine's pull request
-// file, pr-file.ts), and one entering the anomaly, wake the orchestrator once each: the module's tick
+// file, pr-file.ts), one that became Ready (its agent closes), and one entering the anomaly, wake the orchestrator once each: the module's tick
 // (guards.ts) submits the lines prWake gives, the ended lines then archived.
 import { prRefsOf } from '../core/learning.ts'
 import { isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
@@ -203,6 +203,29 @@ export function endedLine(ended: { repo: string; pr: number; state: 'MERGED' | '
   return `[module] ${key} ${what}: its agent ${ended.agent} ${holds.length > 0 ? `still holds ${holds.join(', ')}; tell it, do not close it` : 'is done with it, close it'}.`
 }
 
+// The line a pull request that became Ready wakes its orchestrator with: its agent is done with it and closes now, its
+// session id (`session`, read where the agent is still running) kept on the row to resume it from; when the agent still
+// holds another pull request (`holds`), to be told.
+export function readyAgentLine(ready: { repo: string; pr: number; agent: string; session?: string | undefined; holds?: readonly string[] }): string {
+  const head = `[module] ${prKey(ready.repo, ready.pr)} is Ready: its agent ${ready.agent}`
+  const holds = ready.holds ?? []
+  if (holds.length > 0) return `${head} still holds ${holds.join(', ')}; tell it, do not close it.`
+  return `${head} is done with it${ready.session === undefined ? '' : ` (session ${ready.session})`}, close it.`
+}
+
+// The session id of the agent a line names, from its row in the module's store: the newest row of that name.
+async function sessionOf($: Held, agent: string): Promise<string | undefined> {
+  const store = await storeOf($)
+  let found: { id: string; at: string } | undefined
+  for (const entry of await $.fs.list(`${store}/sessions`).catch((): FsEntry[] => [])) {
+    if (entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
+    const held = parseSessionRow(await readOr($, `${store}/sessions/${entry.name}`))
+    if (held?.role !== 'agent' || (held.name ?? '').replace(REFERENCED, '').trim() !== agent) continue
+    if (found === undefined || held.updated_at > found.at) found = { id: entry.name, at: held.updated_at }
+  }
+  return found?.id
+}
+
 // The line a pull request entering the anomaly wakes its orchestrator with.
 export function anomalyLine(u: Unattended): string {
   return `[module] ${prKey(u.repo, u.pr)} en anomalie (${u.conflict ? 'en conflit' : `sans agent depuis ${minuteOf(u.since)}`}) — reattach an agent, refresh its wait, or ask`
@@ -225,7 +248,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // archive that failed is not told again at every tick; what is no longer either is dropped.
   // The reading holds only the orchestration's own pull requests: one no record names is nobody's.
   const anomalies = reading.list.filter(u => u.waits === undefined)
-  const current = new Set([...anomalies.map(u => prKey(u.repo, u.pr)), ...reading.ended.map(e => `${prKey(e.line.repo, e.line.pr)} ended`)])
+  const current = new Set([...anomalies.map(u => prKey(u.repo, u.pr)), ...reading.ended.map(e => `${prKey(e.line.repo, e.line.pr)} ended`),
+    ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`)])
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
@@ -246,6 +270,15 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     lines.push(endedLine({ repo, pr, state: ended.state, agent: named, holds }))
     const relay = mergeRelayLine({ repo, pr }, waitingOn(ended))
     if (relay !== null) lines.push(relay)
+  }
+  // A Ready pull request's agent is done: told once per Ready head, so an agent resumed for a fix is told again only at the next head.
+  for (const line of reading.atReady) {
+    const key = `${prKey(line.repo, line.pr)} ready ${reading.readyHeads.get(prKey(line.repo, line.pr)) ?? ''}`
+    if (told.has(key)) continue
+    told.add(key)
+    const agent = line.agent ?? ''
+    const holds = reading.kept.filter(other => other.status === 'working' && other.agent === agent && !reading.readyHeads.has(prKey(other.repo, other.pr))).map(other => prKey(other.repo, other.pr))
+    lines.push(readyAgentLine({ repo: line.repo, pr: line.pr, agent, session: await sessionOf($, agent), holds }))
   }
   for (const u of anomalies) {
     if (told.has(prKey(u.repo, u.pr))) continue

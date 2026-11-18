@@ -677,7 +677,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       tick.watch = (await ledgerOf()).length > 0 || await fileWanted($, state, Date.now())
       if (busyNow.length > 0 || tick.watch) armTick($, tick, 0)
       // An idle agent whose pull request merged is delivered; one whose pull request is open
-      // lives until the merge, the kept findings its own to correct, and is never asked to stand down.
+      // is not asked to stand down: it receives the kept findings until its pull request is Ready.
       const delivered: string[] = []
       const awaitingMerge: string[] = []
       // What the pull requests read of each idle agent say its window should show (over, or Ready: done).

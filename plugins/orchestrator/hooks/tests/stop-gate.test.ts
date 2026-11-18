@@ -2975,8 +2975,8 @@ test('no refusal teaches a tool wait: what runs, or a busy agent, wakes the sess
   expect(busy.reason).toContain('An agent of yours is busy: declare no wait, its idle notice wakes you.')
 })
 
-// The fresh-eye plan A, item 4 (2026-11-14): the executor lives until its pull request merges and
-// receives the kept findings; the gate no longer flags it for its stand-down while that pull request is open.
+// The fresh-eye plan A, item 4 (2026-11-14): the executor receives the kept findings until its
+// pull request is Ready; the gate no longer flags it for its stand-down while that pull request is open.
 test('an idle agent whose pull request is open is not dismissed: with something armed the stop passes, logged apart; once merged it is delivered', async () => {
   const { handlers } = mounted()
   const pr = { listing: IDLE_ROW, chain: IDLE_OWNED, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n' }
@@ -2987,7 +2987,7 @@ test('an idle agent whose pull request is open is not dismissed: with something 
   expect(out.observed).toBeUndefined()
   expect(open.written.some(l => l.includes('idle-delivered') || l.includes('idle-agents') || l.includes('nothing-will-wake'))).toBe(false)
   expect(open.written.some(l => l.endsWith('| stop gate: warn awaiting-merge Agent: idle-p3'))).toBe(true)
-  // Its done is still held through the handler: it is still there until the merge.
+  // Its done is still held through the handler: it is still there while its pull request is open.
   const done = fakeDollar({ ...pr, prAnswer: '{"number":160,"state":"OPEN"}' })
   const held = await stop(handlers['classic.Stop'], done.dollar, stopEvent({ last_assistant_message: 'waiting: done', ...NOTHING_RUNS }))
   expect(String(held.observed)).toContain('Agent: idle-p3 is still there')

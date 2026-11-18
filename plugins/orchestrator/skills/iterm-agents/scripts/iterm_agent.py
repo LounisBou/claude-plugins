@@ -5412,6 +5412,8 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
         anchor = ""
     if anchor and anchor not in ("self", "leftmost") and not DRY_RUN:
         anchor = anchor_after_probe(term.can_place(anchor, side), anchor, own)
+    if args.resume and not (args.wake or args.open_):
+        refuse_stale_resume(args.resume)
     # BEFORE the tab exists, and BEFORE the prompt file is written: a refusal on the trust
     # question must leave nothing behind — a prompt file written ahead of it survived every
     # refusal and piled up under the state directory's prompts/ for a directory that was
@@ -5444,6 +5446,9 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
     # or the id it is given.
     home = args.wake or args.open_
     session_words, socket = (), ""
+    if args.resume and not home:
+        # A closed agent resumed in its own checkout: the same conversation, its next work as the prompt.
+        session_words = ("--resume", args.resume)
     if home:
         if args.resume:
             session_words = ("--resume", args.resume)
@@ -6982,6 +6987,28 @@ def old_host(old):
         return "its host ended"
     return ("its host (pid %s) still runs on %s, and no command of this tool ends it: end it "
             "with kill %s" % (host[0], old["tty"], host[0]))
+
+
+# How long after its last turn a closed agent is resumed: the host's prompt cache lives an hour
+# from the last turn, so a resume within it reads the cache and one past it pays the whole
+# context again, no less than a fresh agent from the resume brief does.
+try:
+    RESUME_WITHIN = float(os.environ.get("ORCHESTRATOR_RESUME_WITHIN", "3600"))
+except ValueError:
+    RESUME_WITHIN = 3600.0
+
+
+def refuse_stale_resume(session_id):
+    """Die unless the conversation `session_id` spoke within RESUME_WITHIN seconds: past it, a
+    fresh agent from `brief.sh rotation` costs no more and starts clean."""
+    path = transcript_of_session(session_id)
+    if path is None:
+        die("spawn: refused: no transcript for session %s under %s: nothing to resume, start a "
+            "fresh agent from `brief.sh rotation`" % (session_id, PROJECTS_DIR))
+    age = time.time() - os.path.getmtime(path)
+    if age > RESUME_WITHIN:
+        die("spawn: refused: session %s spoke last %d minutes ago, past the hour its cache "
+            "lives: a fresh agent from `brief.sh rotation` costs no more" % (session_id, age // 60))
 
 
 def transcript_of_session(sid):

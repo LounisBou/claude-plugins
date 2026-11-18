@@ -95,6 +95,8 @@ describe('a spawn prepared from its line', () => {
     ]
     for (const [words, expected] of cases) assert.match(await refusal(words), expected, words.join(' '))
     assert.match(await refusal(['--open', '--title', 'Orch: o'], { env: { ORCHESTRATOR_SELF_TTY: '/dev/ttys1' } }), /--open reads its caller/)
+    assert.equal(await refusal(['--title', 'Agent: a', '--tier', 'light', '--prompt', 'p', '--resume', 'abc-123']), 'prepared')
+    assert.match(await refusal(['--title', 'Agent: a', '--prompt', 'p', '--resume', 'a b']), /--resume needs a session id/)
     assert.match(await refusal(['--prompt', 'p'], { isDir: () => false }), /directory not found: \/w/)
     assert.equal(await refusal(['--prompt', 'p', '--tier', 'light']), 'prepared')
     assert.match(await refusal(['--prompt', 'p', '--tier', 'deepest']), /resolve-tier: unknown tier: deepest/)
