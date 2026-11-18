@@ -2,7 +2,7 @@
 // The `todo` tool: what the operator asks of a session that will not be done within the turn, or that
 // is for another session, recorded in the holder's own list (todo-format.ts, docs/contracts.md). The
 // model judges that a request is one and records it; code keeps the list, under the store's lock, and
-// holds the session's « done » while an item is open (the declared wait, the stop gate, the
+// holds the session's « done » while an item is open (the declared wait and the
 // coordinator's end). A request for another session is written into that session's list first, then
 // sent, in one call: no relay goes out unrecorded. A session on another machine is only sent the
 // message, and told so.

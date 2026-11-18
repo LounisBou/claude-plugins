@@ -15,8 +15,7 @@
 # What it does: reads the head once; waits, bounded, for checks to be registered on it (a
 # push is seen before its checks, and « no checks reported » right then is not a red); runs
 # `gh pr checks --watch --fail-fast`, its output in a log file under the state directory,
-# never on stdout, the arming session's id beside it (`<log>.session`, the key the stop gate tells a
-# session its own watches by); reads the pull request once more when the watch returns. The watch ends once
+# never on stdout, the arming session's id beside it (`<log>.session`); reads the pull request once more when the watch returns. The watch ends once
 # the checks it knows are done, maybe before a slower workflow's checks are registered: every
 # workflow run of the head is read, each unfinished one watched to its end (`gh run watch`),
 # and the checks watched again, until none is unfinished. The bound, CI_WATCH_REGISTER_WAIT, is

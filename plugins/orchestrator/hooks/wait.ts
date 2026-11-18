@@ -1,11 +1,11 @@
 // hooks/wait.ts
 // The declared wait: `declare_wait({kind, blocks})`, the structured act by which a turn says
-// what will wake it, read by the stop gate in place of the wording of the turn's last line
+// what will wake it, read at the turn's end in place of the wording of its last line
 // (docs/conventions.md, « Guards and consent »). A declaration belongs to the turn that made
 // it: the next turn's start makes it stale, and a stale one is never read.
 //
-// The gate's decisions live in stop-gate.ts and its handler in guards.ts, which reads the
-// declaration itself, as the turn's end does (supervision.ts). The model's own line decides nothing.
+// The refusals of a done or deferred wait live in stop-gate.ts; the turn's end reads the declaration
+// itself (supervision.ts). The model's own line decides nothing.
 import {
   checkWakeDone, deferredRows, goalsPaths, isDegradedPass, isOwnRecord, openRows, orchestrationOf, ownerOf, parseGoalsCheck,
   recordsWithOpenRows, waitLine, withDeadline, type DeclaredWait, type GoalsReading,
@@ -123,12 +123,11 @@ export const DECLARE_NOTHING = ' If you are waiting on an agent, a command or a 
   + 'it wakes you by itself when it ends or answers.'
 
 // What the orchestrator's dispatch record and the goals beside it still hold against a done or a
-// deferred wait, read as the stop gate reads them at the stop (checkWakeDone): an open row or goal
-// refuses a done; a deferred wait takes only rows, goals and to-dos the operator put off
-// (dispatch-record.sh defer, goals … defer, todo defer), counted as its blocks says, and is refused
-// when he put off none. Read at the declaration too, because the gate reads them only when nothing
-// else wakes the session: a done declared while an agent ran went through with its rows open. Only an
-// orchestrator's records are read, its own (the owner file); a read that fails or runs out of time
+// deferred wait (checkWakeDone): an open row or goal refuses a done; a deferred wait takes only rows,
+// goals and to-dos the operator put off (dispatch-record.sh defer, goals … defer, todo defer),
+// counted as its blocks says, and is refused when he put off none. Read at the declaration, the one
+// place they are read: a done declared while an agent ran once went through with its rows open. Only
+// an orchestrator's records are read, its own (the owner file); a read that fails or runs out of time
 // holds nothing, said in the log.
 export async function holdsRecord($: Held, wait: DeclaredWait): Promise<string | null> {
   if (wait.kind !== 'done' && wait.kind !== 'deferred') return null
@@ -171,7 +170,6 @@ export async function holdsRecord($: Held, wait: DeclaredWait): Promise<string |
   }
   const owed = await read(() => openFor($, me.name), { pending: [], deferred: [] })
   const held = checkWakeDone({
-    agents: [], checkouts: [],
     deferred: openRows(texts),
     deferredRows: deferredRows(texts),
     goalsOpen: goals.flatMap(g => g.open),
@@ -224,8 +222,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           + '`operator` (a question the operator must answer; blocks: what it blocks; urgent: true to have it presented at once), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
           + 'A command, monitor, subagent or agent you started wakes you by itself: declare nothing for it. '
-          + 'An `operator` wait waits on the questions this session asked with `ask`. '
-          + 'The stop gate reads the declaration in place of your last line.',
+          + 'An `operator` wait waits on the questions this session asked with `ask`.',
         inputSchema: {
           type: 'object',
           properties: {

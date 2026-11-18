@@ -4,7 +4,7 @@
 // one line per item, in the grammar of the dispatch record's rows (`id`, `opened`, `label`, `state`,
 // `deferred`, `verdict`) plus `words`, `said_at`, `from`, `images` and `rows`: the item keeps his words and the
 // dispatch rows it turned into, never their state, which is the rows' own. Written by the orchestrator's hooks module
-// alone, under the store's lock; read by its stop gate, its declared wait, its status command and the
+// alone, under the store's lock; read by its declared wait, its status command and the
 // coordinator's end (docs/contracts.md).
 import { ROLES } from '../core/names.ts'
 

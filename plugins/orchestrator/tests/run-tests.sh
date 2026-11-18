@@ -548,7 +548,7 @@ check "and removes the predecessor's file, what was never its own included" 'abs
   "$([ -e "$CHAINS/ttys900.jsonl" ] && echo present || echo absent)"
 check "a predecessor with no agents hands over an empty chain" "0|0" "$(transfer)|$(wc -l < "$CHAINS/ttys950.jsonl" | tr -d ' ')"
 # A RESIDENT agent stays idle by design while a background command of its own waits: the
-# stop gate must not count it as an agent to read or relaunch. `--resident` marks its entry;
+# turn end does not read its idle window for a pull request. `--resident` marks its entry;
 # an entry written before the mark existed reads as not resident, and a hand-over keeps it.
 check "--resident is said by the dry run, and its absence too" "1|1" \
   "$(chain_spawn --resident | grep -c '^resident=yes$')|$(chain_spawn | grep -c '^resident=no$')"
