@@ -452,6 +452,12 @@ export function successorKey(id: string): string {
   return `successors/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
 }
 
+// What an agent was last told of its orchestrator (`told/<agent session>`: the orchestrator's session
+// and the instant, in ms), written by whichever side told it first; it goes with the agent's row.
+export function toldKey(id: string): string {
+  return `told/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
+}
+
 export function parseWaitRecord(text: string): WaitRecord | null {
   try {
     return waitRecordOf(JSON.parse(text))
@@ -708,7 +714,7 @@ async function sweepGoneSenders($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pro
 export async function deleteSession($: Host<'env' | 'fs' | 'process'>, id: string): Promise<void> {
   const path = `${await storeOf($)}/${sessionKey(id)}`
   const store = await storeOf($)
-  const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`, `${store}/${rowKey(id)}`, `${store}/${successorKey(id)}`, `${store}/${answeredKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
+  const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`, `${store}/${rowKey(id)}`, `${store}/${successorKey(id)}`, `${store}/${answeredKey(id)}`, `${store}/${toldKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
   if (!done || done.exitCode !== 0) await $.fs.write(path, '')
 }
 
@@ -842,11 +848,11 @@ async function agentViews($: Host<'env' | 'fs' | 'process'>, tty: string): Promi
 
 // The live agents of the chain kept under `tty` (those `owner` launched, or every one when null),
 // each by the host's record of the session on its tty.
-async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner: string | null): Promise<(AgentView & { sessionId: string })[]> {
+async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner: string | null): Promise<(AgentView & { sessionId: string; startedAt: number | null })[]> {
   const config = await configDir($)
   const state = await stateDir($)
   const chain = String(await $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`).catch(() => ''))
-  const views: (AgentView & { sessionId: string })[] = []
+  const views: (AgentView & { sessionId: string; startedAt: number | null })[] = []
   for (const entry of chainEntries(chain)) {
     if (owner !== null && entry.owner !== owner) continue
     const ps = await $.process.run(['ps', '-t', entry.tty.replace(/^\/dev\//, ''), '-o', 'pid='])
@@ -856,7 +862,7 @@ async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner
       if (!record || !record.sessionId) continue
       const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(record.sessionId)}`).catch(() => '')))
       // The host's record says the agent lives: its row is shown whatever its age.
-      views.push({ name: record.name, status: record.status, row, sessionId: record.sessionId })
+      views.push({ name: record.name, status: record.status, row, sessionId: record.sessionId, startedAt: record.startedAt ?? null })
       break
     }
   }
@@ -868,12 +874,42 @@ export function successorText(successor: { name: string; session: string | null 
   return `[module] Your orchestrator is now ${successor.name}${successor.session ? ` (session ${successor.session})` : ''}: it confirmed the takeover. Send your reports, questions and deliveries to it; the previous one takes no more.`
 }
 
+// What an agent was last told of its orchestrator, or null when the store holds nothing.
+type Told = { session: string; at: number }
+function parseTold(text: string): Told | null {
+  try {
+    const value = JSON.parse(text) as { session?: unknown; at?: unknown }
+    return typeof value.session === 'string' && typeof value.at === 'number' ? { session: value.session, at: value.at } : null
+  } catch {
+    return null
+  }
+}
+
+// One agent sent the line that names its orchestrator now, and the fact recorded once it was
+// delivered: a refused or failed send is one log line, the agent left untold for the next try.
+async function tellAgent($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, agent: { name: string | null; sessionId: string }, successor: { name: string; session: string | null }): Promise<void> {
+  let sent: { isDelivered: boolean; reason?: string | undefined } | null | undefined
+  try {
+    sent = await $.session.send({ to: { sessionId: agent.sessionId }, text: successorText(successor) })
+  } catch (err) {
+    sent = { isDelivered: false, reason: messageOf(err) }
+  }
+  if (!sent?.isDelivered) {
+    await logLine($, 'supervision', `successor: ${agent.name ?? agent.sessionId} not told: ${sent?.reason ?? 'no answer'}`)
+    return
+  }
+  await writeAtomic($, `${await storeOf($)}/${toldKey(agent.sessionId)}`, JSON.stringify({ session: successor.session ?? '', at: Date.now() }) + '\n')
+}
+
+const toldOf = async ($: Host<'env' | 'fs'>, agentSession: string): Promise<Told | null> =>
+  parseTold(String(await $.fs.read(`${await storeOf($)}/${toldKey(agentSession)}`).catch(() => '')))
+
 /*
  * At a successor's « takeover confirmed », the agents of the chain are told who their orchestrator
  * is now: the chain the launcher handed to the successor's tty, and what is left under this
- * session's own. Each send refused is one log line.
+ * session's own. An agent the successor's own session was already recorded as telling is not told twice.
  */
-async function tellAgentsSuccessor($: Host<'env' | 'fs' | 'process' | 'session' | 'plugin'>, sessionId: string, successor: { name: string; session: string | null }): Promise<void> {
+async function tellAgentsSuccessor($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, successor: { name: string; session: string | null }): Promise<void> {
   const own = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   const theirs = successor.session ? parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(successor.session)}`).catch(() => ''))) : null
   const ttys = [...new Set([theirs?.tty, own?.tty].flatMap(tty => (tty ? [tty] : [])))]
@@ -882,9 +918,30 @@ async function tellAgentsSuccessor($: Host<'env' | 'fs' | 'process' | 'session' 
     for (const agent of await chainAgents($, tty, null)) {
       if (told.has(agent.sessionId) || roleOf(agent.name) !== 'agent') continue
       told.add(agent.sessionId)
-      const sent = await $.session.send({ to: { sessionId: agent.sessionId }, text: successorText(successor) })
-      if (!sent?.isDelivered) await logLine($, 'supervision', `successor: ${agent.name ?? agent.sessionId} not told: ${sent?.reason ?? 'no answer'}`)
+      if (successor.session !== null && (await toldOf($, agent.sessionId))?.session === successor.session) continue
+      await tellAgent($, agent, successor)
     }
+  }
+}
+
+/*
+ * A successor's own module tells the agents it inherited, the case the predecessor's never could:
+ * it died or was closed before it received « takeover confirmed ». The facts are the chain the
+ * launcher handed to its tty and the host's record of each agent's start: an agent that started
+ * before this session is inherited. One line each, recorded under `told/<agent session>`; an agent
+ * the predecessor's module told already (it recorded its successor's session, or the instant
+ * after this session started) is passed, and one the send did not reach is tried at the next measure.
+ */
+async function tellInheritedAgents($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, name: string, pid: string, tty: string): Promise<void> {
+  const config = await configDir($)
+  const mine = hostRecordOf(String(await $.fs.read(`${config}/sessions/${pid}.json`).catch(() => '')))
+  const started = mine?.startedAt
+  if (started === undefined) return
+  for (const agent of await chainAgents($, tty, null)) {
+    if (agent.sessionId === sessionId || roleOf(agent.name) !== 'agent' || agent.startedAt === null || agent.startedAt >= started) continue
+    const told = await toldOf($, agent.sessionId)
+    if (told !== null && (told.session === sessionId || (told.session === '' && told.at >= started))) continue
+    await tellAgent($, agent, { name, session: sessionId })
   }
 }
 
@@ -1710,6 +1767,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         })
         // The window's tab shows the gate crossed, or left.
         await showGate($, reading)
+        // A successor's agents are told who their orchestrator is when its predecessor could not.
+        if (walked.known && walked.tty && walked.pid && roleOf(walked.name) === 'orchestrator') {
+          const done = await withDeadline(tellInheritedAgents($, sessionId, walked.name!, walked.pid, walked.tty), RELAY_BOUND_MS)
+          if (isDegradedPass(done)) await logLine($, 'supervision', `successor: agents not told within ${RELAY_BOUND_MS} ms`)
+        }
         // An agent's measure past its gate: its orchestrator told once per crossing.
         if (walked.known && walked.tty && roleOf(walked.name) === 'agent') {
           const done = await withDeadline(reportGate($, sessionId, walked.name!, walked.tty, reading), RELAY_BOUND_MS)
