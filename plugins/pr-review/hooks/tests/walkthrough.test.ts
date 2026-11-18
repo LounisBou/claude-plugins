@@ -35,6 +35,7 @@ async function bandText($: Engine, surface: 'terminal' | 'desktop' = 'terminal')
 
 test('a skill\'s start opens the band, the words the user types close nothing', async ($, on) => {
   engine(on)
+  below(on)
   await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
   await say($, 'end review')
   expect(await bandText($)).toContain('pr-review · start-review')
@@ -42,6 +43,7 @@ test('a skill\'s start opens the band, the words the user types close nothing', 
 
 test('an interrupted turn takes the band down', async ($, on) => {
   engine(on)
+  below(on)
   await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
   expect(await bandText($)).toContain('start-review')
   await $.turn.complete({ reason: 'aborted', answer: '', isAborted: true, turnId: 't1', durationMs: 1 })
@@ -50,6 +52,7 @@ test('an interrupted turn takes the band down', async ($, on) => {
 
 test("the skill's closing line takes the band down", async ($, on) => {
   engine(on)
+  below(on)
   await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
   await $.turn.complete({ reason: 'answer', answer: 'x\n## Walkthrough complete\n', isAborted: false, turnId: 't1', durationMs: 1 })
   expect(await bandText($)).toBe('')
@@ -57,6 +60,7 @@ test("the skill's closing line takes the band down", async ($, on) => {
 
 test('a /clear takes the band down', async ($, on) => {
   engine(on)
+  below(on)
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
   await $.skill.prompt({ skill: 'pr-review:process-comments', text: '' })
   expect(await bandText($)).toContain('process-comments')

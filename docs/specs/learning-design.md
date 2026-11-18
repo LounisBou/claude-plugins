@@ -78,7 +78,7 @@ Verified against the repository. The design reuses each piece named here before 
 |---|---|
 | A guard's refusal | its text in the transcript and `$.ui.log` (`plugins/github/hooks/register.ts:180,244,411`); no stable code, no durable record; 34 `refused` strings in github's `register.ts`, 8 in `ready.ts`, 12 in the orchestrator's `hooks/guards.ts` |
 | A review pass's findings (severity, file, summary) | module memory (`plugins/pr-review/hooks/state.ts`, header: « nothing here outlives the session »), computed from the agents' blocks (`hooks/report.ts`) |
-| The operator's answer to a structured question (Allow or Deny on a push during a walkthrough) | the host dialog only (`plugins/norms/hooks/guards.ts`, header) |
+| The operator's answer to a structured question | the orchestrator's rulings, kept by `answerEvent` (core `learning.ts`); norms and pr-review ask none since their walkthrough guards were removed |
 | Which norms agents found what | the walkthrough's turn |
 
 ### Loops that already learn
