@@ -231,6 +231,9 @@ export function conflictLine(c: { repo: string; pr: number; base: string; agent?
 // The key a conflict is told under: once per head and base head.
 const conflictKey = (key: string, pr: FilePr): string => `${key} conflict ${pr.sha} ${pr.baseSha ?? ''}`
 
+// The key an anomaly is told under: by its cause, so one told without an agent is told again on turning conflicting.
+const anomalyKey = (u: Unattended): string => u.conflict ? `${prKey(u.repo, u.pr)} anomaly conflict` : prKey(u.repo, u.pr)
+
 // The line a pull request entering the anomaly wakes its orchestrator with.
 export function anomalyLine(u: Unattended): string {
   return `[module] ${prKey(u.repo, u.pr)} en anomalie (${u.conflict ? 'en conflit' : `sans agent depuis ${minuteOf(u.since)}`}) — reattach an agent, refresh its wait, or ask`
@@ -265,8 +268,15 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   const parked = new Set(reading.kept.filter(line => line.status === 'parked').map(line => prKey(line.repo, line.pr)))
   const conflicts = [...reading.forge].filter(([key, pr]) => pr.mergeable === 'CONFLICTING' && pr.baseSha !== undefined && !inAnomaly.has(key) && !parked.has(key))
   const unmerged = [...reading.forge].filter(([, pr]) => pr.mergeable !== 'MERGEABLE')
-  const current = new Set([...anomalies.map(u => prKey(u.repo, u.pr)), ...reading.ended.map(e => `${prKey(e.line.repo, e.line.pr)} ended`),
-    ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...unmerged.map(([key, pr]) => conflictKey(key, pr))])
+  // A file a session of an earlier version refreshed reads no base: what was told of the head stays, whatever its base head.
+  const unmergedKeys = unmerged.flatMap(([key, pr]) => pr.baseSha !== undefined ? [conflictKey(key, pr)]
+    : [...told].filter(toldKey => toldKey.startsWith(`${key} conflict ${pr.sha} `)))
+  // An anomaly keeps its bare key while it lasts, and its conflict key while the forge does not read it mergeable:
+  // still computing after its base moved, it is not told again without an agent, then again in conflict.
+  const anomalyKeys = anomalies.flatMap(u => reading.forge.get(prKey(u.repo, u.pr))?.mergeable === 'MERGEABLE'
+    ? [prKey(u.repo, u.pr)] : [prKey(u.repo, u.pr), `${prKey(u.repo, u.pr)} anomaly conflict`])
+  const current = new Set([...anomalyKeys, ...reading.ended.map(e => `${prKey(e.line.repo, e.line.pr)} ended`),
+    ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...unmergedKeys])
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
@@ -289,7 +299,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     if (relay !== null) lines.push(relay)
   }
   // A Ready pull request's agent is done: told once per Ready head, so an agent resumed for a fix is told again only at the next head.
+  // One the forge reads conflicting is no longer ready to merge: its agent is told to rebase it, not to close.
   for (const line of reading.atReady) {
+    if (reading.forge.get(prKey(line.repo, line.pr))?.mergeable === 'CONFLICTING') continue
     const key = `${prKey(line.repo, line.pr)} ready ${reading.readyHeads.get(prKey(line.repo, line.pr)) ?? ''}`
     if (told.has(key)) continue
     told.add(key)
@@ -306,7 +318,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     lines.push(conflictLine({ repo: pr.repo, pr: pr.pr, base: pr.base ?? '', agent, session: agent === undefined ? undefined : await sessionOf($, agent) }))
   }
   for (const u of anomalies) {
-    if (told.has(prKey(u.repo, u.pr))) continue
+    if (told.has(anomalyKey(u))) continue
+    told.add(anomalyKey(u))
     told.add(prKey(u.repo, u.pr))
     lines.push(anomalyLine(u))
   }
