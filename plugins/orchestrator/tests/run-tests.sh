@@ -8656,6 +8656,10 @@ class FakeIterm(ia.Terminal):
     def create(self, command, title, place, chain, made):
         calls.append("create %s" % title); return "/dev/ttys970", "NEW-TAB"
 ia.ITERM = FakeIterm()
+# The server's own `-f`, read on its process, names another deploy's conf (ignored once `home` no
+# longer reads it, and the reason a `home` that still did would move).
+ia.server_conf = lambda: "/cfg/deploys/lounisbou/0ld/plugins/orchestrator/skills/iterm-agents/tmux/home.conf"
+ia.start_home_follow = lambda *a: calls.append("follow")
 out = io.StringIO()
 code = 0
 try:
@@ -8692,8 +8696,8 @@ if command -v tmux >/dev/null 2>&1 && FT=$(mktemp -d /tmp/of.XXXXXX 2>/dev/null)
   check "home-reload has every home server read this commit's conf, the same server running, and no other server" \
     "0|home-reload: $FREL reloaded $ROOT/skills/iterm-agents/tmux/home.conf||$relpid|OLD" \
     "$rc|$out|$(ft -L "$FREL" show -gv status-left)|$(ft -L "$FREL" display -p '#{pid}')|$(ft -L "$FOTHER" show -gv status-left)"
-  check "the server whose -f deploy is pruned still makes a window, and has the new conf's bar" "1|1" \
-    "$(ft -L "$FREL" new-window -d -t home: -n after 2>&1 >/dev/null | grep -c .; ft -L "$FREL" list-windows -F '#W' | grep -cx after)|$(ft -L "$FREL" show -gv status-style | grep -c '#1c1c1c')"
+  check "the server whose -f deploy is pruned still makes a window, and draws the new conf's bar" "0|1|1" \
+    "$(ft -L "$FREL" new-window -d -t home: -n after 2>&1 | grep -c .)|$(ft -L "$FREL" list-windows -F '#W' | grep -cx after)|$(ft -L "$FREL" show -gv status-style | grep -c '#1c1c1c')"
   ft -L "$FREL" kill-server 2>/dev/null; ft -L "$FOTHER" kill-server 2>/dev/null
   pkill -fx "sleep $FMARK" 2>/dev/null
   rm -rf "$FT"
