@@ -281,9 +281,11 @@ const WORDS = {
 } as const
 const OTHER_LABEL = WORDS.other
 
-// How many rows tall the « Other answer » field is drawn, label included. The host's field
-// holds lines (a newline starts one) and cuts a line wider than its room with an ellipsis, never
-// wrapping it: the text typed is drawn again under the field, whole and wrapped.
+// How many rows tall the « Other answer » field is drawn, label included: a longer text scrolls
+// within it. The host's terminal field wraps its text, and places its caret, at the pane's whole
+// width less its label and its hint, whatever padding the boxes around it take: indented, its
+// lines were wider than its room, cut with « … », the caret rows below them. It is drawn at the
+// pane's left edge, where the width it wraps at is the one it has.
 const ANSWER_ROWS = 4
 
 // The mark of the recommended choice and of the recommendation's line.
@@ -940,16 +942,14 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
 // The pane as the module remembers it: what it was opened to list, and its clock, started by
 // the open and cancelled by any close. A coordinator's pane also keeps the questions whose
 // « other answer » was pressed (their ids: the hint is drawn under them), the questions whose
-// answer is in flight, so a second press on one does nothing,
-// the entry whose « Other answer » was picked, its text field drawn until the ring leaves it, and
-// the text typed in each field, which the pane draws again whole under it.
+// answer is in flight, so a second press on one does nothing, and
+// the entry whose « Other answer » was picked, its text field drawn until the ring leaves it.
 export type PaneMemory = {
   opened: { role: 'coordinator' | 'orchestrator'; tty: string | null; name: string } | null
   ticker: { cancel(): void } | null
   other: Set<string>
   writing: string | null
   answering: Set<string>
-  typed?: Map<string, string>
   // The content last drawn, as the module counts its rows, and the tree's height as the
   // person's last move measured it, with the content it measured.
   drawn?: string
@@ -1642,7 +1642,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // Module memory: the role the pane was opened in, the tty its agents are read
   // from — the render lists what the open asked for — and the open pane's clock.
   // A reload forgets it, and the pane then asks to be opened again.
-  const pane: PaneMemory = { opened: null, ticker: null, other: new Set(), writing: null, answering: new Set(), typed: new Map() }
+  const pane: PaneMemory = { opened: null, ticker: null, other: new Set(), writing: null, answering: new Set() }
   // The entry whose recommended choice was last asked the focus: once per entry, never at a redraw.
   let focusedFor: string | null = null
   // This session's own repository, read once it answers: its owner names the pull requests the
@@ -1963,7 +1963,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   on('ui.focus', { component: 'Pane', requestId: PANE_ID }, async ($, e, next) => {
     const result = await next(e)
     if (pane.writing !== null && !(isRecord(result) && result['deny']) && e.element !== answerKey(pane.writing)) {
-      pane.typed?.delete(pane.writing)
       pane.writing = null
       $.ui.invalidate('ui.render')
     }
@@ -2227,7 +2226,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         const at = width - indent
         const pick = (letter: string) => answerAsked(entry.id, `${letter} : ${entry.choices.find(c => c.letter === letter)!.text}`)
         const choosingAsked = entry.choices.length > 0
-        const controls: Drawn[] = []
+        // A control drawn at the pane's edge (`edge`) rather than under the question's indent.
+        const controls: (Drawn & { edge?: true })[] = []
         if (choosingAsked && Select) {
           controls.push({
             node: Select({
@@ -2260,7 +2260,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         }
         if (typeof el.Input === 'function') {
           if (!(picker && choosingAsked && pane.writing !== entry.id)) {
-            const typed = pane.typed?.get(entry.id) ?? ''
             controls.push({
               node: el.Input({
                 key: answerKey(entry.id),
@@ -2268,15 +2267,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
                 placeholder: WORDS.otherPlaceholder,
                 submitLabel: WORDS.send,
                 rows: ANSWER_ROWS,
-                onInput: (value: string) => {
-                  if (value === '') pane.typed?.delete(entry.id)
-                  else pane.typed?.set(entry.id, value)
-                  $.ui.invalidate('ui.render')
-                },
                 onSubmit: (value: string) => (value.trim() === '' ? undefined : answerAsked(entry.id, value)),
               }),
               rows: ANSWER_ROWS,
-            }, ...(typed === '' ? [] : [{ node: el.Text({ children: typed }), rows: rowsOf(typed, at) }]))
+              edge: true,
+            })
           }
         } else {
           const note = `type your answer in this tab, or in ${entry.sender.name}'s tab`
@@ -2292,7 +2287,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             rows: 1 + (noted ? rowsOf(note, at) : 0),
           })
         }
-        return controls.map(control => ({ node: el.Box({ paddingLeft: indent, children: [control.node] }), rows: control.rows }))
+        return controls.map(control => ({ node: el.Box({ paddingLeft: control.edge ? 0 : indent, children: [control.node] }), rows: control.rows }))
       }
       // The controls go right under the lines of the question they answer: its Blocks line, the first.
       const answeredEnd = answering === null ? -1 : askedDrawn.findIndex(line => line.look === 'label')
@@ -2324,7 +2319,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it.
-      const drawnKey = JSON.stringify([answering?.id ?? null, pending, asked.map(entry => entry.id), blocks, failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], [...(pane.typed ?? [])], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([answering?.id ?? null, pending, asked.map(entry => entry.id), blocks, failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
@@ -2639,7 +2634,6 @@ async function writeTabConsent($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proc
 // A question's « other answer » forgotten: its field and its note to answer in the session.
 function forgetDraft(pane: PaneMemory, key: string): void {
   pane.other.delete(key)
-  pane.typed?.delete(key)
   if (pane.writing === key) pane.writing = null
 }
 

@@ -189,7 +189,7 @@ start() {
     flow) : ;;
     *) questions_round "$now" ;;
   esac
-  tm new-session -d -s "$SESSION" -x 160 -y "$rows" -c "$SANDBOX/work" \
+  tm new-session -d -s "$SESSION" -x "${COLS:-160}" -y "$rows" -c "$SANDBOX/work" \
     env -i HOME="$HOME" USER="$USER" PATH="$PATH" TERM=xterm-256color FORCE_HYPERLINK=1 \
     ORCHESTRATOR_STATE_DIR="$SANDBOX/state" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" \
     ORCHESTRATOR_WORKSPACES="$SANDBOX/workspaces" \
@@ -561,6 +561,30 @@ check "Enter answers it, its sender reached by no session" "answered|A : tag it"
 notice=$(line_of 'not delivered:')
 check "the notice is one line at the section's foot, above the orchestrators" "1|1" "$(pane | grep -c 'not delivered:')|$([ -n "$notice" ] && [ "$notice" -lt "$(line_of 'Orchestrators')" ] && echo 1)"
 check "the section holds no question left, and still says who waits" "1|0|1" "$(pane | grep -c '^Questions for you$')|$(pane | grep -c 'Which page goes first')|$(pane | grep -c '^none in the pane — 1 orchestrator waits for you: ask the coordinator')"
+
+# The operator's report of 2026-11-18: a text longer than the field's line was drawn cut with
+# « … », the caret rows below at the column of a line not drawn, and the text drawn again under
+# the field. The text wraps in the field, once, and the caret (the terminal's cursor) follows its
+# last character, at 160 columns and at 100, where the pane is drawn over the transcript. The
+# caret's cell: the four cells before the terminal's cursor, a bar, and the cell under it, blank
+# or past the row's end (the screen's cells counted as characters, not bytes).
+caret_cell() {
+  local cx cy
+  cx=$(tm display -p -t "$SESSION" '#{cursor_x}'); cy=$(tm display -p -t "$SESSION" '#{cursor_y}')
+  screen | sed -n "$((cy + 1))p" | perl -CS -ne 'chomp; my $c = '"$cx"'; my $under = $c < length ? substr($_, $c, 1) : " "; print substr($_, $c - 4, 4), "|", ($under eq " " ? "blank" : $under)'
+}
+FIELD_TEXT="C, pas de tag pour l'instant mais les versions vont suivre celle du legacy : les corrections seront v32_33_cg1 pour corrections geonative 1, puis la suite jusqu'au bout"
+for cols in 160 100; do
+  echo "== a long text typed in the field (${cols}x50)"
+  COLS=$cols start 50 report
+  click 'Other answer'
+  wait_for '⏎ send' 5
+  tm send-keys -t "$SESSION" -l "$FIELD_TEXT"
+  sleep 1
+  record "a long text typed in the field, ${cols} columns"
+  check "the text wraps in the field, cut nowhere, drawn once ($cols columns)" "0|1|1" "$(pane | grep '^Other answer: ' | grep -c '…')|$(flat | grep -c 'v32_33_cg1 pour corrections geonative 1, puis la suite')|$(screen | grep -c 'v32_33_cg1')"
+  check "the caret follows the text's last character ($cols columns)" "bout|blank" "$(caret_cell)"
+done
 
 echo "== an orchestrator that asks two questions (160x50)"
 start 50 pair

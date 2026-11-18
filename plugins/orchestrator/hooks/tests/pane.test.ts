@@ -1420,6 +1420,37 @@ test('the Other answer of a question asked with ask is its field once picked, it
   expect(sent.length).toBe(1)
 })
 
+// The host's terminal field wraps its text, and places its caret, at the pane's whole width less
+// its label and its hint, whatever space the boxes around it take: a field drawn indented by four
+// columns had lines four columns wider than its room, which the host cut with « … », its caret
+// rows below at the column of a line it did not draw (the operator's report of 2026-11-18).
+const leftOf = (path: El[]) => path.reduce((sum, el) => {
+  const p = el.props
+  return sum + Number(p.paddingLeft ?? p['paddingX'] ?? p['padding'] ?? 0) + Number(p['marginLeft'] ?? p['marginX'] ?? p['margin'] ?? 0)
+}, 0)
+function pathTo(node: unknown, match: (node: El) => boolean): El[] | null {
+  if (!isEl(node)) return null
+  if (match(node)) return [node]
+  for (const kid of [node.props.children].flat()) {
+    const found = pathTo(kid, match)
+    if (found) return [node, ...found]
+  }
+  return null
+}
+
+test('the Other answer field is drawn at the pane\'s left edge, the text typed in it drawn there alone', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
+  const { render } = await askedPane([first])
+  await pick(await render(), 'other')
+  const tree = await render()
+  const path = pathTo(tree, n => n.type === 'Input')!
+  expect(leftOf(path)).toBe(0)
+  const typed = "C, pas de tag pour l'instant mais les versions vont suivre celle du legacy"
+  const onInput = input(tree).props['onInput'] as ((value: string) => void) | undefined
+  onInput?.(typed)
+  expect(texts(await render()).filter(text => text.includes(typed))).toEqual([])
+})
+
 test('a question asked with ask without choices takes the field at once', async () => {
   const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z', { choices: [], recommended: null, why: null })
   const { render } = await askedPane([first])
