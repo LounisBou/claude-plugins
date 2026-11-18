@@ -144,8 +144,9 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   const readyHeads = readyHeadsOf(file?.prs ?? [])
   const agents = kept.some(line => readyHeads.has(prKey(line.repo, line.pr))) ? await running() : null
   const atReady = kept.filter(line => line.status === 'working' && agents?.has(line.agent ?? '') === true && readyHeads.has(prKey(line.repo, line.pr)))
+  // A repository the forge did not list is unknown, not closed: its lines stay listed until the file reads them merged or closed.
   const openNow = new Set(open.map(pr => prKey(pr.repo, pr.pr)))
-  const openKeys = kept.map(line => prKey(line.repo, line.pr)).filter(key => openNow.has(key))
+  const openKeys = kept.filter(line => unread.includes(line.repo) || openNow.has(prKey(line.repo, line.pr))).map(line => prKey(line.repo, line.pr))
   return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, wanted, openKeys }
 }
 
@@ -190,6 +191,16 @@ export async function holdsDone($: Held, wait: DeclaredWait): Promise<string | n
 export async function mergeWaits($: Held): Promise<Unattended[]> {
   const reading = await boundedReading($, await $.session.id())
   return waitingOnMerge(reading?.list ?? [])
+}
+
+// The reading as the session's row says it, written when it differs from what the row holds: the module's tick
+// keeps the row's pull requests current while the session waits, with no turn end to do it.
+export async function republish($: Held, sessionId: string, reading: Reading): Promise<void> {
+  const row = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`))
+  const held = row?.unattended
+  const same = held !== undefined && held !== null && held.line === reading.line
+    && JSON.stringify([held.prs, held.unread, held.open]) === JSON.stringify([reading.list, reading.unread, reading.openKeys])
+  if (row !== null && !same) await publishUnattended($, sessionId, { at: new Date().toISOString(), line: reading.line, prs: reading.list, unread: reading.unread, open: reading.openKeys })
 }
 
 // The lines each turn end leaves for the next turn's context, by session.

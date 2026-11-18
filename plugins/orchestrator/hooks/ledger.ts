@@ -19,7 +19,7 @@ import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type N
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
 import { holdsOf, readyAgentLine } from './ready-agent.ts'
-import { archive, boundedReading, readOr, registered } from './unattended.ts'
+import { archive, boundedReading, readOr, registered, republish } from './unattended.ts'
 
 // The nouns a write holds.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
@@ -234,6 +234,8 @@ export function anomalyLine(u: Unattended): string {
 export async function prWake($: Held, told: Set<string>, now: number = Date.now()): Promise<{ lines: string[]; watching: boolean; settle: () => Promise<void> }> {
   const reading = await boundedReading($, await $.session.id(), now)
   if (reading === null) return { lines: [], watching: true, settle: async () => undefined }
+  // The row's pull requests follow the forge between turn ends: a session waiting on the operator's merge takes no turn.
+  await republish($, await $.session.id(), reading).catch(err => logLine($, 'ledger', `row not republished: ${messageOf(err)}`))
   const lines: string[] = []
   // What is told now: the anomalies and the ended pull requests, the latter keyed apart so an
   // archive that failed is not told again at every tick; what is no longer either is dropped.

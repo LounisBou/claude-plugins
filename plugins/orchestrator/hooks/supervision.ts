@@ -39,7 +39,7 @@ import { answerAskedFromPane, askedAsEntry, closeRound, moveAsked, nameMovedAske
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
-  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, PRS_CAP, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
+  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLines, splitLines, seqOf, type QAck, type QEvent } from './remote-round.ts'
@@ -2964,8 +2964,7 @@ async function prsOf($: Host<'env' | 'fs'>, sessionId: string, repo: string | nu
 // dispatch record holds (the row's `unattended.open`, set at its last turn end), each once, as `owner/name#n`,
 // sorted and cut to the row's cap. A successor owns none of its predecessor's watches; the record is what it keeps.
 async function pullRequestsOf($: Host<'env' | 'fs'>, sessionId: string, row: SessionRow): Promise<string[]> {
-  const held = new Set([...await prsOf($, sessionId, row.repo), ...(row.unattended?.open ?? []).filter(prShaped)])
-  return [...held].sort().slice(0, PRS_CAP)
+  return capPrs([...await prsOf($, sessionId, row.repo), ...(row.unattended?.open ?? []).filter(prShaped)])
 }
 
 // An orchestrator's row, for a coordinator on another machine when it is news

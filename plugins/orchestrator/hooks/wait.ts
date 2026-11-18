@@ -26,8 +26,7 @@ import { readAsked } from './question.ts'
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock' | 'settings'>
 
 // Why an operator wait is refused with no question of the session's open.
-export const ASK_FIRST = 'An operator wait waits on the questions this session asked with `ask`, and none is open: ask the question first with `ask`, then declare the wait. If you ask him nothing, declare another kind. '
-  + 'The one wait that needs no question names, in blocks, the open pull requests of your record that wait on his merge.'
+export const ASK_FIRST = 'An operator wait waits on the questions this session asked with `ask`, and none is open: ask the question first with `ask`, then declare the wait. If you ask him nothing, declare another kind.'
 
 // Whether blocks names a pull request, as `owner/name#n` or `name#n`, not followed by another digit.
 const namesPr = (blocks: string, u: Unattended): boolean =>
@@ -64,15 +63,13 @@ export function parseDeclaration(input: unknown, asked: readonly { id: string; b
   }
   if (kind === 'operator' && asked.length === 0 && merging.length === 0) return { error: ASK_FIRST }
   const named = String(e.blocks ?? '').replace(/\s+/g, ' ').trim()
-  if (kind === 'operator' && asked.length === 0) {
-    const line = unattendedLine(merging, []) ?? ''
-    if (named !== '' && !merging.some(u => namesPr(named, u))) {
-      return { error: `An operator wait with no question of yours open names in blocks the pull requests waiting on his merge: ${line}` }
-    }
-    const blocks = (named === '' ? line : named).slice(0, BLOCKS_MAX)
-    return { wait: { kind, blocks, ...(e.urgent === true ? { urgent: true as const } : {}), ...(consent ? { consent } : {}), asked: [] } }
+  // With no question of the session's open, an operator wait waits on the pull requests that wait on his merge: it names every one, or none and says them itself.
+  const unnamed = named === '' ? [] : merging.filter(u => !namesPr(named, u))
+  if (kind === 'operator' && asked.length === 0 && unnamed.length > 0) {
+    return { error: `An operator wait with no question of yours open names in blocks every pull request waiting on his merge: ${unattendedLine(unnamed, []) ?? ''}` }
   }
-  const blocks = named === '' && kind === 'operator' ? asked.map(question => question.blocks).join('; ').slice(0, BLOCKS_MAX) : named
+  const standing = kind === 'operator' && asked.length === 0 && named === '' ? (unattendedLine(merging, []) ?? '').slice(0, BLOCKS_MAX) : ''
+  const blocks = named === '' && kind === 'operator' ? standing || asked.map(question => question.blocks).join('; ').slice(0, BLOCKS_MAX) : named
   if (kind === 'done') return { wait: { kind, blocks: '' } }
   if (blocks === '') return { error: `a ${kind} wait names in blocks ${KIND_NEEDS[kind]}` }
   if (blocks.length > BLOCKS_MAX) return { error: `blocks holds at most ${BLOCKS_MAX} characters` }
@@ -231,7 +228,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           + 'A command, monitor, subagent or agent you started wakes you by itself: declare nothing for it. '
           + 'An operator question that asks his consent to waive E2E or norms on a pull request, to exempt a repository from E2E, to put it in or out of auto-merge, or of auto-deploy in one environment, '
           + 'names it in consent_kind and consent_repo: "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env. '
-          + 'An `operator` wait waits on the questions this session asked with `ask`, or, with none open, on the pull requests of your record that wait on his merge (blocks names them). '
+          + 'An `operator` wait waits on the questions this session asked with `ask`. '
           + 'The stop gate reads the declaration in place of your last line.',
         inputSchema: {
           type: 'object',

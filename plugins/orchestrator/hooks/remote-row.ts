@@ -99,7 +99,7 @@ export function machineLabel(raw: string): string {
 }
 
 // The row out of the session's store row (its wait merged in) and the pull requests in
-// flight (prsInFlight): null for any session that is no named orchestrator — only an
+// flight (prsInFlight, and the record's open ones, supervision.ts pullRequestsOf): null for any session that is no named orchestrator — only an
 // orchestrator's row travels. The repository is the store row's own, or none when it is not
 // the receiver's shape.
 export function remoteRowOf(row: SessionRow | null, machine: string, prs: readonly string[] = [], held: readonly HeldQuestion[] | null = null): RemoteRow | null {
@@ -155,7 +155,12 @@ export function prsInFlight(names: readonly string[], owners: ReadonlyMap<string
     const pr = prOf(slug, n, repo)
     if (pr !== null) found.add(pr)
   }
-  return [...found].sort().slice(0, PRS_CAP)
+  return capPrs(found)
+}
+
+// The pull requests of a row: each once, sorted, cut to the cap.
+export function capPrs(prs: Iterable<string>): string[] {
+  return [...new Set(prs)].sort().slice(0, PRS_CAP)
 }
 
 // A slug and a number as `owner/name#<n>`, or null when the slug names no repository: the
