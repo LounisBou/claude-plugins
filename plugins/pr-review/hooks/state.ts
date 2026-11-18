@@ -2,32 +2,46 @@
 // What the module remembers for the session, shared by the files that hook it.
 // Module memory, not $.state: nothing here outlives the session, and a hot
 // reload during development starting from a clean slate is the safe direction
-// (no walkthrough active means no guard refuses anything).
-import type { Skill } from './policy.ts'
+// (no walkthrough active means no band is drawn).
 import type { Finding } from './report.ts'
 import { REVIEW_ROUNDS } from '../core/readiness.ts'
 
+export type Skill = 'start-review' | 'process-comments' | 'auto-fix-loop'
+
+// The skills this plugin ships, by the key skill.prompt carries.
+export const SKILL_KEYS: Record<string, Skill> = {
+  'pr-review:start-review': 'start-review',
+  'pr-review:process-comments': 'process-comments',
+  'pr-review:auto-fix-loop': 'auto-fix-loop',
+}
+
+// The github plugin's tool, which the loop and the triage read the pull request through.
+export const GH_TOOL = 'mcp__github__gh'
+
 export type Walkthrough = {
-  // The skill whose rules hold, or null when none runs.
+  // The skill the band follows, or null when none runs.
   skill: Skill | null
-  // The user's own last prompt since the skill started: the only source of a grant.
-  lastPrompt: string
   // The PR scratch directory the walkthrough wrote to, once seen.
   scratchDir?: string | undefined
 }
 
-export const walkthrough: Walkthrough = { skill: null, lastPrompt: '' }
+export const walkthrough: Walkthrough = { skill: null }
 
 export function startWalkthrough(skill: Skill): void {
   walkthrough.skill = skill
-  walkthrough.lastPrompt = ''
   walkthrough.scratchDir = undefined
 }
 
 export function endWalkthrough(): void {
   walkthrough.skill = null
-  walkthrough.lastPrompt = ''
   walkthrough.scratchDir = undefined
+}
+
+// The closing lines the two skills print at their end: the walkthrough is over.
+export function endsWalkthrough(skill: Skill, answer: string): boolean {
+  if (skill === 'start-review') return /^## Walkthrough complete\s*$/m.test(answer)
+  if (skill === 'process-comments') return /All PR comments have been addressed\./.test(answer)
+  return false
 }
 
 export type Fix = { key: string; sha: string; description: string; reverted: boolean }

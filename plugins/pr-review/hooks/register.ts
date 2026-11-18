@@ -1,7 +1,7 @@
 // hooks/register.ts
 // Entry point of the pr-review hooks module. Each file owns one concern:
 //   session.ts      the lifecycle: tools registered, a skill's start, the user's words
-//   walkthrough.ts  the Iron Rules of start-review and process-comments, and the band
+//   walkthrough.ts  the band above the prompt: a walkthrough or the loop holds the session
 //   triage.ts       the open_comments tool process-comments starts with
 //   loop.ts         auto-fix-loop's state tool
 //   commands.ts     doctor and install with no model turn, the preflight once

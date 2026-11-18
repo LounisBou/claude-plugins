@@ -7,7 +7,7 @@
 import { configDirOf } from '../core/env.ts'
 import { reasonOf, type Host } from '../core/host.ts'
 import { appendEventOver, randomPart, type JournalIo } from '../core/journal.ts'
-import { answerEvent, journalDir, learningEvent, subjectOf, type Known, type LearningEvent } from '../core/learning.ts'
+import { journalDir, learningEvent, subjectOf, type Known, type LearningEvent } from '../core/learning.ts'
 
 export const PLUGIN = 'pr-review'
 const SESSION = /^[A-Za-z0-9._-]{1,80}$/
@@ -16,7 +16,7 @@ const SESSION = /^[A-Za-z0-9._-]{1,80}$/
 export type JournalHost = Host<'env' | 'fs' | 'process'> & {
   session: Pick<Host<'session'>['session'], 'id'>
   clock: Pick<Host<'clock'>['clock'], 'sleep'>
-  ui: Pick<Host<'ui'>['ui'], 'log' | 'ask'>
+  ui: Pick<Host<'ui'>['ui'], 'log'>
 }
 
 // The journal is pruned once per process, at its first line.
@@ -93,25 +93,4 @@ export function observed($: JournalHost, code: string, now?: () => Date): Promis
     const { plugin, ...rest } = known()
     return [learningEvent({ ...rest, source: { plugin, code }, trust: 'computed', evidence: [{ type: 'refusal', code }], kind: 'escape' })]
   }, now)
-}
-
-/** The operator's own answer to a grant the module asked of them (`asked` names it): one event of their trust. */
-export function answered($: JournalHost, asked: string, granted: boolean, now?: () => Date): Promise<void> {
-  return journal($, (known) => [answerEvent({ ...known(), given: { asked, granted } })], now)
-}
-
-/**
- * Asks the operator to allow an act and answers what they chose, undefined when nobody answered (a
- * session with no one to ask, a dialog dismissed). Their own Allow or Deny is kept in the journal.
- */
-export async function askAllow($: JournalHost, asked: string, question: string): Promise<boolean | undefined> {
-  let answer: string
-  try {
-    answer = await $.ui.ask(question, ['Allow', 'Deny'])
-  } catch {
-    return undefined
-  }
-  if (answer !== 'Allow' && answer !== 'Deny') return undefined
-  await answered($, asked, answer === 'Allow')
-  return answer === 'Allow'
 }

@@ -97,21 +97,6 @@ lives in the github plugin (`plugins/github/engine/REFERENCE.md`).
 skills cannot do without it: under `claude -p` or an older host it does not load,
 and every skill keeps its own route.
 
-- **The Iron Rules, watched.** While `start-review` or `process-comments` runs, a code
-  change waits for the user's own `fix` (process-comments: `1` or `3`, or an
-  alias carrying `fix`), a publication on the PR for `post now`, a resolve in
-  process-comments for `1` or `4`, and `git push` for `push`. A call made without the
-  word goes through, and the journal (`<config>/pr-review/journal/`) keeps one `escape`
-  line under the rule's code. Only the irreversible stays refused: a forced or
-  deleting push (a push whose line sets a variable or runs `env` counts as forced), until
-  the user allows it when asked (their Allow or Deny is kept in the journal as one `answer`
-  line, `pr-review.answer.push.granted` or `pr-review.answer.push.refused`), a deleted comment, and a review submitted with an event
-  other than `COMMENT`, in either skill, and also through the Bash route while the github
-  tool is listed. The walkthrough's own files under
-  `/tmp/claude-pr-review-*` are never noted.
-- **Never a trap.** `end review` typed by the user, an interrupted turn (Esc), a
-  `/clear` and the skill's own closing line each end those rules at once.
-  `auto-fix-loop` is autonomous and runs under none of them.
 - **`mcp__pr-review__open_comments`.** process-comments' triage in one call: the
   PR, its comments, reviews and open threads read through `mcp__github__gh`, then
   `skills/process-comments/scripts/triage.py` — the same script the Bash route
@@ -122,8 +107,7 @@ and every skill keeps its own route.
 - **Findings kept past the session.** Each pass the loop accepts leaves its Critical and
   Important findings in the journal, one `finding` line each (`pr-review.finding`): the
   severity, the file, the pull request and its head, and nothing of the finding's text. The
-  pull request is asked of `mcp__github__gh` once per loop; the lines of a walkthrough name
-  the one `open_comments` read.
+  pull request is asked of `mcp__github__gh` once per loop.
 - **The review record.** When a reviewer's loop (`review_only`) ends, it leaves a review record at the pull
   request's head, written through the github plugin's `mcp__github__record`, for that
   plugin's ready guard. The fix loop writes none: its session wrote the code, and github refuses
@@ -147,17 +131,13 @@ and every skill keeps its own route.
   timeout or a dropped connection is asked again up to three times after a short pause;
   if GitHub still fails, the verdict is kept and the answer says the record is still owed:
   the next `findings` or `status` writes it.
-- **The band.** A line above the prompt while a skill holds the session: which one,
-  the comments kept, the prepared commits waiting for `commit` or `drop`, the pass.
+- **The band.** A line above the prompt while a skill runs: which one, the comments kept, the
+  prepared commits waiting for `commit` or `drop`, the pass. An interrupted turn (Esc), a `/clear`
+  and the skill's own closing line take it down. Nothing is held or refused at a call: the Iron Rules are
+  the skills' own, written in them.
 - **`/pr-review:doctor` and `/pr-review:install`** answer with `install.sh`'s output
   (`--check` for doctor) and the remedy for its exit code, with no model turn; the preflight runs once per
   session and each skill reads that it passed.
-
-The matcher reads the command an answer starts with, after an optional `ok,` or
-`yes,`. It notes consent given in other words (`go ahead`, `yes`, `please apply
-it`) as no grant, as the skills themselves do, and a command inside a negation, an aside or a
-question (`don't fix this one`, `why not post now`, `fix?`). `hooks/tests/policy.test.ts`
-pins each of those cases.
 
 ## Tests
 
