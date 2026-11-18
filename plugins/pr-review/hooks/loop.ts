@@ -14,7 +14,7 @@ import { findingEvent } from '../core/learning.ts'
 import { REVIEW_ROUNDS, reviewRounds } from '../core/readiness.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
 import { journal, noteSubject, notedSubject, observed, resetSubject } from './observe.ts'
-import { REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, passFindings, reportOf } from './report.ts'
+import { REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, launchedAgent, passFindings, reportOf } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
 
@@ -71,6 +71,7 @@ export function act(e: Events['tool.call'], dir?: { dir: string } | { why: strin
     loop.isReviewing = true
     loop.reports = []
     loop.readers = []
+    loop.awaiting = new Map()
     loop.lastFindings = 0
     loop.lastBlocking = undefined
     return { pass: loop.pass, max_passes: loop.maxPasses, next: 'run the review, each review agent\'s prompt ending with report_request verbatim, then report findings', report_request: REPORT_REQUEST.trim() }
@@ -79,6 +80,11 @@ export function act(e: Events['tool.call'], dir?: { dir: string } | { why: strin
     // A clean exit records a pass: it must follow a review the loop counted, never the start.
     if (loop.pass === 0) return { error: 'no review pass has begun: call begin_pass, run the review, then report its findings' }
     const keys = strings(e['keys'])
+    // The verdict is computed once every reader the host runs in the background has handed back;
+    // until then the pass is open, nothing is refused and nothing is counted.
+    if (loop.awaiting.size > 0) {
+      return { pending: loop.awaiting.size, next: 'the review agents run in the background: wait for their hand-back, then call findings again' }
+    }
     // A verdict, whether a clean exit, a reviewer's or the fix loop's last pass, is computed from
     // the agents' blocks: none without an agent.
     if (loop.reports.length === 0) {
@@ -132,6 +138,15 @@ export function act(e: Events['tool.call'], dir?: { dir: string } | { why: strin
     return { pass: loop.pass, reverted: fix ? fix.sha : null }
   }
   return { error: `unknown action: ${action}` }
+}
+
+// A background reader of the pass has handed its report back: its block fills its place, read once.
+// A report with no readable block leaves its place null: the pass is never clean.
+function settle(id: string, report: ReturnType<typeof reportOf>): void {
+  const place = loop.awaiting.get(id)
+  if (place === undefined || !loop.isActive || !loop.isReviewing) return
+  loop.reports[place] = report
+  loop.awaiting.delete(id)
 }
 
 // The review agents of the pass whose findings block is missing or unreadable, by the name they
@@ -423,6 +438,8 @@ async function verdictFor($: Host<'env' | 'process'>, exit: string, repo: string
 // Every agent a pass launches is a reader of it, whatever its type, but a norms agent: the norms
 // check runs beside the review and its agents report no findings block.
 const isReader = (type: unknown): boolean => !String(type ?? '').startsWith('norms:')
+// The tool a subagent calls, in its own loop, to hand its final report back to the session.
+const HANDBACK_TOOL = 'SubagentHandback'
 // The host's agent when the call names none.
 const DEFAULT_AGENT = 'general-purpose'
 
@@ -432,7 +449,7 @@ export function register(on: On<LoopHost>): void {
   // call before the hooks run, and refuses one a hook rewrote. A reader whose prompt lacks the
   // request runs all the same, and leaves one line in the journal.
   // The agent runs once: a failure is its answer, and leaves the pass without a count; an agent
-  // the host runs in the background hands back no report here, and leaves it the same; a call
+  // the host runs in the background keeps its place, filled by its hand-back (below); a call
   // that the host refused for a hook's rewrite never ran, and is no agent of the pass; any other
   // refusal is the agent's answer.
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
@@ -449,17 +466,35 @@ export function register(on: On<LoopHost>): void {
       return { result: reasonOf(err), isError: true }
     }
     let report: ReturnType<typeof reportOf> = null
+    let agent: string | undefined
     try {
       const text = answerText(answer) || (answerOf(answer).deny ?? '')
       if (isRefusedRewrite(text)) return answer
       const failed = isFailed(answer)
       report = failed ? null : reportOf(agentText(answer))
+      agent = report === null && !failed ? launchedAgent(answer) : undefined
     } catch {
       // Unreadable: no count.
     }
     if (loop.isReviewing) {
+      if (agent !== undefined) loop.awaiting.set(agent, loop.reports.length)
       loop.reports.push(report)
       loop.readers.push(reader)
+    }
+    return answer
+  }).catch(async (_$, e, next) => next(e))
+
+  // The report of a review agent the host ran in the background, read where the module sees it: the
+  // agent's own SubagentHandback call, in its loop (`agentId`, the id its launch named), once core
+  // says the report reached the session. The call goes on as it came.
+  on('tool.call', { tool: HANDBACK_TOOL }, async (_$, e, next) => {
+    const answer = await next(e)
+    try {
+      const id = typeof e['agentId'] === 'string' ? e['agentId'] : ''
+      const message = e['message']
+      if (fieldsOf(answerOf(answer).result)?.['success'] === true && typeof message === 'string') settle(id, reportOf(message))
+    } catch {
+      // Unreadable: the place stays open.
     }
     return answer
   }).catch(async (_$, e, next) => next(e))

@@ -130,8 +130,9 @@ and every skill keeps its own route.
   plugin's ready guard. The fix loop writes none: its session wrote the code, and github refuses
   a review record written by the session that pushed the head. The verdict is computed, not reported: during a pass, each
   agent the session launches is asked to end with a JSON block of its findings, and
-  the module reads them. An agent the host runs in the background hands its report back
-  to the session, not to the module: it is read as no block. A clean exit needs every
+  the module reads them. An agent the host runs in the background is read from its own
+  hand-back (its `SubagentHandback` call); `findings` answers `pending` until every one has
+  handed back, and a hand-back with no block is no block. A clean exit needs every
   agent of the pass to report no Critical or Important finding, and a reviewer's verdict needs at least one agent;
   an agent without a readable block (or one that fails) leaves the severity unknown, and the
   record's detail names that agent by its `subagent_type`: a reviewer's loop records `fail`,

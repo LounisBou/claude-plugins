@@ -61,11 +61,11 @@ export function answerText(answer: unknown): string {
 }
 
 // Core answers an Agent call with the tool's record in `result`, an object, beside the text the
-// model reads: the record of an agent that completed, or of one launched in the background, whose
-// report is not read.
+// model reads: the record of an agent that completed, or of one launched in the background.
 // `recordOf` is the one validator: it narrows what the host answered to the fields read below.
 type AgentRecord = {
   status: unknown
+  agentId: unknown
   handback: unknown
   // The text of the report the agent's hand-back tool delivered, when it has one.
   reportText: string | undefined
@@ -84,7 +84,7 @@ const recordOf = (answer: unknown): AgentRecord | undefined => {
   const content = Array.isArray(result['content'])
     ? result['content'].map((part: unknown) => (isObject(part) && typeof part['text'] === 'string' ? part['text'] : ''))
     : undefined
-  return { status: result['status'], handback: result['handback'], reportText, content }
+  return { status: result['status'], agentId: result['agentId'], handback: result['handback'], reportText, content }
 }
 
 // What an agent answered: a completed record's report (the one its hand-back tool delivered, else its
@@ -97,6 +97,13 @@ export function agentText(answer: unknown): string {
   if (delivered && record.reportText !== undefined) return record.reportText
   if (record.handback === 'withheld' || record.content === undefined) return ''
   return record.content.join('\n')
+}
+
+// The id of an agent the host launched in the background: only from core's record of the launch.
+export function launchedAgent(answer: unknown): string | undefined {
+  const record = recordOf(answer)
+  const id = record?.status === 'async_launched' ? record.agentId : undefined
+  return typeof id === 'string' && id !== '' ? id : undefined
 }
 
 // A refusal of the host's auto-mode classifier: the hook changed the call after it was reviewed,

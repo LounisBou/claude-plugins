@@ -782,16 +782,95 @@ function wireBackground(on: TestOn, stubs: Stubs, findings?: { severity: string 
 const backgroundReview = ($: Engine): Promise<Reply> =>
   $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff' + REPORT_REQUEST, run_in_background: true })
 
-test('a background review agent hands back no report here: its pass is a fail verdict, never clean', async ($, on) => {
+// A background reader of a pass: the host answers its launch with core's record, and the agent
+// hands its report back by calling SubagentHandback in its own loop; core says whether it arrived.
+function wireHandback(on: TestOn, stubs: Stubs, answer: unknown = { result: { success: true } }) {
+  stubs.agent = (e) => (e['run_in_background'] ? coreLaunch(String(e['description'])) : { result: agentAnswer([]) })
+  wireRecord(on, stubs)
+  on('tool.call', { tool: 'SubagentHandback' }, () => answer)
+}
+
+const launchReader = ($: Engine, id: string): Promise<Reply> =>
+  $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff' + REPORT_REQUEST, run_in_background: true, description: id })
+
+const handBack = ($: Engine, id: string, message: string): Promise<Reply> =>
+  $.tool.call({ tool: 'SubagentHandback', agentId: id, message })
+
+test('a background reader whose hand-back carries a clean block passes the pass', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
-  wireBackground(on, stubs, [])
+  wireHandback(on, stubs)
   await loopCall($, { action: 'start', review_only: true })
   await loopCall($, { action: 'begin_pass' })
-  await backgroundReview($)
+  await launchReader($, 'a1')
+  await handBack($, 'a1', PASS2_REPORT)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(out.isError).toBeUndefined()
+  expect(String(out.result)).toContain('"exit": "clean"')
+  expect(stubs.records.map((r) => fieldsOf(r)?.['result'])).toEqual(['pass'])
+})
+
+test('a background reader whose hand-back carries no block is a fail verdict, no refusal', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  await handBack($, 'a1', 'No findings')
   const out = await loopCall($, { action: 'findings', keys: [] })
   expect(out.isError).toBeUndefined()
   expect(String(out.result)).toContain('"exit": "reviewed"')
   expect(stubs.records.map((r) => [fieldsOf(r)?.['result'], fieldsOf(r)?.['detail']])).toEqual([['fail', 'reviewed: 0 findings, severity unknown: no findings block from code-reviewer']])
+})
+
+test('the verdict waits for every launched reader: findings before a hand-back ends nothing and is no error', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  await launchReader($, 'a2')
+  await handBack($, 'a1', PASS2_REPORT)
+  const early = await loopCall($, { action: 'findings', keys: [] })
+  expect(early.isError).toBeUndefined()
+  expect(String(early.result)).toContain('"pending": 1')
+  expect(String(early.result)).not.toContain('"exit"')
+  expect(stubs.records).toEqual([])
+  await handBack($, 'a2', agentAnswer([{ severity: 'important' }]))
+  const out = await loopCall($, { action: 'findings', keys: ['f0::s'] })
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  expect(stubs.records.map((r) => fieldsOf(r)?.['result'])).toEqual(['fail'])
+})
+
+test('a hand-back that reached no one, or came from no reader of the pass, fills no place', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs, { result: { success: false } })
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  await handBack($, 'a1', PASS2_REPORT)
+  await handBack($, 'other', PASS2_REPORT)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"pending": 1')
+})
+
+test('a fix loop\'s background reader hand-back with a clean block ends the loop clean', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  await handBack($, 'a1', PASS2_REPORT)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"exit": "clean"')
+  expect(stubs.records).toEqual([])
+})
+
+test('a second pass forgets the readers the last pass still awaited', () => {
+  act({ action: 'start' })
+  act({ action: 'begin_pass' })
+  loop.awaiting.set('a1', 0)
+  act({ action: 'begin_pass' })
+  expect(loop.awaiting.size).toBe(0)
 })
 
 test('an agent launched outside a review pass keeps its background flag', async ($, on) => {

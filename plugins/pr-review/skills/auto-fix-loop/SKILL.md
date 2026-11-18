@@ -188,8 +188,8 @@ Run the review (Skill tool or review agents):
 - Optionally add comment-analyzer, pr-test-analyzer, code-simplifier
 - End each agent's prompt with `begin_pass`'s `report_request`, verbatim
 
-Run the agents in the foreground, wait for all of them, aggregate. An unreadable findings
-block is never clean.
+Wait for all of them (a `findings` answer of `pending` means a hand-back is still due), aggregate.
+An unreadable findings block is never clean.
 
 ### Step 4: Check for clean exit
 
