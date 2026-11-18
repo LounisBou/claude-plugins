@@ -64,26 +64,16 @@ export type Loop = {
   reports: (Finding[] | null)[]
   // The name each review agent of the pass was launched under, at its place in `reports`.
   readers: string[]
-  // The review agents the host runs in the background: their id, and the place in `reports`
-  // their hand-back fills.
+  // The background readers of the pass not yet handed back, by agentId, with their place in `reports`.
   awaiting: Map<string, number>
-  // The awaited agents whose hand-back carried no findings block, not yet asked again for it,
-  // and those asked again: a second hand-back without the block settles as silent.
-  blockless: Set<string>
-  reasked: Set<string>
-  // The awaited agents whose turn ended once: a later end of an agent asked again is its second run's.
-  ended: Set<string>
-  // How many waits `findings` answered « still running » in this pass: one per hand-back event.
-  waits: number
-  // The hand-back events of the session so far, and their count at the last wait counted.
-  handbacks: number
-  waitedAt: number
+  // The reports handed back before their launch was registered, by agentId.
+  early: Map<string, Finding[] | null>
 }
 
 // The rounds a review runs at most: core's cap on a check plan's review rounds.
 export const MAX_PASSES: number = REVIEW_ROUNDS.cap
 
-export const loop: Loop = { isActive: false, pass: 0, maxPasses: MAX_PASSES, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isRecordPending: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), ended: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
+export const loop: Loop = { isActive: false, pass: 0, maxPasses: MAX_PASSES, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isRecordPending: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), early: new Map() }
 
 export function resetLoop(testCommand: string, isReviewOnly = false, dir?: string, dirWhy?: string, maxPasses = MAX_PASSES): void {
   loop.isActive = true
@@ -105,11 +95,7 @@ export function resetLoop(testCommand: string, isReviewOnly = false, dir?: strin
   loop.reports = []
   loop.readers = []
   loop.awaiting = new Map()
-  loop.blockless = new Set()
-  loop.reasked = new Set()
-  loop.ended = new Set()
-  loop.waits = 0
-  loop.waitedAt = -1
+  loop.early = new Map()
 }
 
 // The successful preflight, once per session: a skill started again skips it.

@@ -68,7 +68,7 @@ async function write(home: string, logged: string[]): Promise<void> {
   noteNorms({ repo: 'Acme/App', pr: 1, head: 'a'.repeat(40) })
   noteReview({ repo: 'Acme/App', pr: 2, head: 'b'.repeat(40) })
   await observedByNorms($, 'norms.edit.ungranted', () => NOW)
-  await observedByReview($, 'pr-review.stop.loop-open', () => NOW)
+  await observedByReview($, 'pr-review.reader.no-request', () => NOW)
 }
 
 describe('the learning plugin disabled', () => {
