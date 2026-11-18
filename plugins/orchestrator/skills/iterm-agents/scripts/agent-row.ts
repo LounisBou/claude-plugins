@@ -1,12 +1,13 @@
 // agent-row — the launcher puts an agent on its row: a spawn or a rotation given a brief reads the row
 // the brief was printed for (`Row: <id>`, hooks/row-owner.ts) and has `dispatch-record.sh agent` write the
 // agent's name on that row of the dispatch record, the one fact every reader of « who holds this row »
-// reads against the live sessions. The record is the orchestration's own: a record the calling session
-// registered (core's registry) that holds the row open, the one beside the brief first.
+// reads against the live sessions. The record is the orchestration's own: one that holds the row open among
+// those the calling session registered (core's registry) and those beside the brief, the one beside the
+// brief first. A successor orchestrator registered none: the brief's own directory finds the record for it.
 //
-// The agent is already running when this is said: a record that cannot be written is told on stderr and
-// the launch stays what it was.
-import { dirname } from 'node:path'
+// The agent is already running when this is said: a record that cannot be written, or a brief that cannot
+// be read, is told on stderr and the launch stays what it was.
+import { dirname, join } from 'node:path'
 import type { LauncherRequest } from '../../../core/launcher.ts'
 import { recordsRegistryPath } from '../../../core/orchestration.ts'
 import { setting, type Env } from '../../../core/paths.ts'
@@ -19,6 +20,8 @@ export interface RowDeps {
   readonly env: Env
   /** A file's text, or null when no file is there. */
   readonly read: (path: string) => string | null
+  /** The names of the files of a directory, empty when it cannot be read. */
+  readonly list: (dir: string) => readonly string[]
   readonly run: Run
   /** `dispatch-record.sh`. */
   readonly script: string
@@ -53,15 +56,22 @@ export async function recordAgent(request: LauncherRequest, deps: RowDeps): Prom
   const brief = typeof options?.['start_brief'] === 'string' ? options['start_brief'] : ''
   const title = typeof options?.['title'] === 'string' ? options['title'] : ''
   if (brief === '' || !title.startsWith('Agent: ')) return
-  const row = rowOfBrief(deps.read(brief) ?? undefined)
+  const text = deps.read(brief)
+  if (text === null) {
+    deps.warn(`spawn: warning: ${title} is on no row: its brief ${brief} cannot be read; put it there with dispatch-record.sh agent <record> <id> "${title}"`)
+    return
+  }
+  const row = rowOfBrief(text)
   if (row === undefined) return
   const session = setting(deps.env, 'CLAUDE_CODE_SESSION_ID') ?? ''
   const registry = session === '' ? '' : deps.read(recordsRegistryPath(stateRoot(deps.env), session)) ?? ''
-  const holding = registry.split('\n').map(path => path.trim()).filter(path => path !== '' && holdsOpen(deps.read(path) ?? '', Number(row)))
-  const beside = holding.filter(path => dirname(path) === dirname(brief))
-  const record = beside.length === 1 ? beside[0] : holding.length === 1 ? holding[0] : undefined
+  const beside = deps.list(dirname(brief)).filter(name => name.endsWith('.jsonl') && !name.endsWith('.archive.jsonl')).map(name => join(dirname(brief), name))
+  const known = registry.split('\n').map(path => path.trim()).filter(path => path !== '')
+  const holding = [...new Set([...known, ...beside])].filter(path => holdsOpen(deps.read(path) ?? '', Number(row)))
+  const nearest = holding.filter(path => dirname(path) === dirname(brief))
+  const record = nearest.length === 1 ? nearest[0] : holding.length === 1 ? holding[0] : undefined
   if (record === undefined) {
-    deps.warn(`spawn: warning: ${title} is on no row: ${holding.length === 0 ? `no dispatch record this session registered holds row ${row} open` : `row ${row} is open in ${holding.join(', ')}`}; put it there with dispatch-record.sh agent <record> ${row} "${title}"`)
+    deps.warn(`spawn: warning: ${title} is on no row: ${holding.length === 0 ? `no dispatch record this session registered or beside its brief holds row ${row} open` : `row ${row} is open in ${holding.join(', ')}`}; put it there with dispatch-record.sh agent <record> ${row} "${title}"`)
     return
   }
   const said = await deps.run(['bash', deps.script, 'agent', record, row, title], { stderr: 'pipe' })

@@ -15,6 +15,7 @@ const deps = (files: Record<string, string>, over: Partial<RowDeps> = {}): RowDe
   return {
     env: { CLAUDE_CODE_SESSION_ID: 'sess-1', ORCHESTRATOR_STATE_DIR: STATE }, warned, ran, script: '/x/dispatch-record.sh',
     read: path => files[path] ?? null,
+    list: dir => Object.keys(files).filter(path => path.startsWith(`${dir}/`) && !path.slice(dir.length + 1).includes('/')).map(path => path.slice(dir.length + 1)),
     run: async argv => {
       ran.push([...argv])
       return { status: 0, stdout: '', stderr: '' }
@@ -47,18 +48,25 @@ describe('an agent put on its row by the launcher', () => {
     assert.deepEqual(d.ran, [['bash', '/x/dispatch-record.sh', 'agent', '/b/record.jsonl', '355', 'Agent: row knows 2']])
   })
 
+  it('finds the record beside the brief for a successor that registered none', async () => {
+    const d = deps({ [BRIEF]: PHASE, '/b/dispatch-record.jsonl': open(355), '/b/dispatch-record.archive.jsonl': open(355), '/b/notes.md': open(355) })
+    await recordAgent(spawned('Agent: a'), d)
+    assert.deepEqual(d.ran, [['bash', '/x/dispatch-record.sh', 'agent', '/b/dispatch-record.jsonl', '355', 'Agent: a']])
+    assert.deepEqual(d.warned, [])
+  })
+
   it('says it, and launches nothing more, when no registered record holds the row open or two do', async () => {
     const none = deps({ [BRIEF]: PHASE, [REGISTRY]: '/r/a.jsonl\n', '/r/a.jsonl': `${JSON.stringify({ id: 355, state: 'closed' })}\nnot json\n` })
     await recordAgent(spawned('Agent: a'), none)
     assert.deepEqual(none.ran, [])
-    assert.match(none.warned[0] ?? '', /Agent: a is on no row: no dispatch record this session registered holds row 355 open/)
+    assert.match(none.warned[0] ?? '', /Agent: a is on no row: no dispatch record this session registered or beside its brief holds row 355 open/)
     const two = deps({ [BRIEF]: PHASE, [REGISTRY]: '/r/a.jsonl\n/r/b.jsonl\n', '/r/a.jsonl': open(355), '/r/b.jsonl': open(355) })
     await recordAgent(spawned('Agent: a'), two)
     assert.deepEqual(two.ran, [])
     assert.match(two.warned[0] ?? '', /row 355 is open in \/r\/a\.jsonl, \/r\/b\.jsonl/)
     const anon = deps({ [BRIEF]: PHASE }, { env: { ORCHESTRATOR_STATE_DIR: STATE } })
     await recordAgent(spawned('Agent: a'), anon)
-    assert.match(anon.warned[0] ?? '', /no dispatch record this session registered/)
+    assert.match(anon.warned[0] ?? '', /no dispatch record this session registered or beside its brief/)
   })
 
   it('says a refused write', async () => {
@@ -73,9 +81,16 @@ describe('an agent put on its row by the launcher', () => {
     assert.match(d.warned[0] ?? '', /Agent: a was not put on row 355 of \/b\/record\.jsonl/)
   })
 
+  it('says an unreadable brief, and writes nothing', async () => {
+    const d = deps({ [REGISTRY]: '/b/record.jsonl\n', '/b/record.jsonl': open(355) })
+    await recordAgent(spawned('Agent: a', '/b/missing.md'), d)
+    assert.deepEqual(d.ran, [])
+    assert.match(d.warned[0] ?? '', /Agent: a is on no row: its brief \/b\/missing\.md cannot be read/)
+  })
+
   it('writes nothing for a launch with no brief, a title that is no agent\'s, a brief with no row, or another command', async () => {
     const files = { [BRIEF]: PHASE, '/b/review.md': '# review\nNo row here.\n', [REGISTRY]: '/b/record.jsonl\n', '/b/record.jsonl': open(355) }
-    for (const request of [spawned('Agent: a', ''), spawned('Audit: a'), spawned('Agent: a', '/b/review.md'), spawned('Agent: a', '/b/missing.md'), parseLauncherArgs('close', ['--tty', '/dev/ttys1']), parseLauncherArgs('rotate', ['--old-tty', '/dev/ttys1'])]) {
+    for (const request of [spawned('Agent: a', ''), spawned('Audit: a'), spawned('Agent: a', '/b/review.md'), parseLauncherArgs('close', ['--tty', '/dev/ttys1']), parseLauncherArgs('rotate', ['--old-tty', '/dev/ttys1'])]) {
       const d = deps(files)
       await recordAgent(request, d)
       assert.deepEqual([d.ran, d.warned], [[], []])

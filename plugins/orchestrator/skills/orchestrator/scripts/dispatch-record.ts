@@ -969,6 +969,7 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
   // agent: the session working the open row, a fact the launcher writes at the spawn of its brief's row.
   if (cmd === 'agent') {
     if (rowOf(ctx, id)['state'] !== 'open') die(ctx, `agent: row ${id} is not open`)
+    if (truthy(rowOf(ctx, id)['deferred'])) die(ctx, `agent: row ${id} is deferred: undefer it first`)
     const name = args[0] ?? ''
     if (args.length !== 1 || parseSessionName(name)?.role !== 'agent') die(ctx, `agent: give the session's name, one argument, \`Agent: <subject>\`, got: ${args.join(' ')}`)
     return rewrite(ctx, id, row => { row['agent'] = name })
@@ -980,7 +981,11 @@ async function dispatch(ctx: Context, argv: readonly string[]): Promise<void> {
   // The blocker is the revisit date: on that date the row goes back to the operator, relaunched or dropped.
   const blocker = rowOf(ctx, id)['blocker']
   if (typeof blocker !== 'string' || untilOf(blocker) === undefined) die(ctx, `defer: row ${id} needs a revisit date first: dispatch-record.sh blocker <record> ${id} "until <ISO UTC time>"`)
-  return rewrite(ctx, id, row => { row['deferred'] = ruling })
+  // A deferred row has no agent: a stale one would hide it from the ready rows once its date falls.
+  return rewrite(ctx, id, row => {
+    row['deferred'] = ruling
+    delete row['agent']
+  })
 }
 
 /** Runs `argv`; returns the exit code. */

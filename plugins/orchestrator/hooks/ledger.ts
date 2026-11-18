@@ -438,7 +438,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   }
   // A Ready pull request's agent is done with it: acted on once per Ready head, so an agent resumed for a fix is closed again only at
   // the next head; one not done yet is tried again at the next tick. One the forge reads conflicting is no longer ready to merge.
-  // It holds another pull request, or a row its note names besides the row of its brief: told, not closed.
+  // It holds another pull request, or a row naming it in its `agent` field besides the row of its brief: told, not closed.
   for (const line of reading.atReady) {
     if (reading.forge.get(prKey(line.repo, line.pr))?.mergeable === 'CONFLICTING') continue
     const pk = prKey(line.repo, line.pr)

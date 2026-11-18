@@ -16,7 +16,7 @@
 // SIGTERM and SIGHUP sent to this process are passed on; SIGINT is not, since the terminal sends
 // it to the whole group and the adapter handles its own.
 import { spawn } from 'node:child_process'
-import { readFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { constants } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -59,6 +59,13 @@ export function rowDeps(env: NodeJS.ProcessEnv, io: Io): RowDeps {
   return {
     env, run, script: DISPATCH_RECORD, warn: line => io.err(`${line}\n`),
     read: path => (kindOf(path) === 'file' ? readFileSync(path, 'utf8') : null),
+    list: dir => {
+      try {
+        return readdirSync(dir)
+      } catch {
+        return []
+      }
+    },
   }
 }
 
