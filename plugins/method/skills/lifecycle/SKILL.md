@@ -20,8 +20,8 @@ description: The development method every role follows - the lifecycle, definiti
 Once the gate is green, before the pull request opens, the implementer reviews its change: the
 review round's lenses (correctness, tests,
 silent failures, spec conformity, security if relevant) over `origin/<base>...HEAD`, each a
-read-only `orchestrator:lens`. A finding is fixed or answered in the implementer's report, one line
-each, as `self-review:` lines after `files:`; the pull request description carries no such section. The outside review reads those lines first.
+read-only `orchestrator:lens`. Its findings, fixed or answered, go to `mcp__telemetry__self_review`; its answer, one line
+each, goes after `files:` in the implementer's report, not the pull request. The outside review reads those lines first.
 
 ## Done means ready
 
