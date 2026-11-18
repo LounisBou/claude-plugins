@@ -49,7 +49,7 @@ import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashW
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
 import { openFor } from './todo.ts'
 import {
-  MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, refused, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
+  MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
 } from './observe.ts'
 import { todoName } from './todo-format.ts'
 import { prWake } from './ledger.ts'
@@ -524,8 +524,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // classic events carry the settings payload's own fields — the shipped types give
   // classic.Stop the transcript path, the cwd and the last assistant message beside the
   // module's — so the scope and the message are read off the event itself. Since the
-  // operator's ruling of 2026-11-15 the gate refuses nothing but one stop (a choice put to him in prose, below):
-  // each other stop it would have held passes, with one `let through` log line and one escape in the journal. The shell gate
+  // operator's ruling of 2026-11-15 the gate refuses no stop:
+  // each stop it would have held passes, with one `let through` log line and one escape in the journal. The shell gate
   // that once answered the same stops is gone with the cutover — this handler is the only
   // stop gate.
   on('classic.Stop', async ($, e, next) => {

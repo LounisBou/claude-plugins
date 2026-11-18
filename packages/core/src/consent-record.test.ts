@@ -44,7 +44,7 @@ describe('consent records', () => {
 
   it('takes words around « Accorder » for no choice, so that they grant nothing: a consent is its choice alone', () => {
     const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
-    for (const answer of ['Accorder, merci', 'accorder et fusionner', 'ACCORDER — go !', 'Accorder pour acme/app#7', "Accorder jusqu'au 16/11/2026 12h00", 'Refuser, pas ce soir']) {
+    for (const answer of ['A - but not yet', 'A. sauf prod', 'a : not now', 'Accorder, merci', 'accorder et fusionner', 'ACCORDER — go !', 'Accorder pour acme/app#7', "Accorder jusqu'au 16/11/2026 12h00", 'Refuser, pas ce soir']) {
       assert.equal(consentAnswer(answer, choices), answer, answer)
       assert.equal(grants(consentAnswer(answer, choices)), false, answer)
     }

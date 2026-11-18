@@ -24,13 +24,6 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 
 // --- the decision shapes -----------------------------------------------------------------
 
-// The classic decision `{"decision":"block","reason":…}` answers through the module's own field:
-// `block` carries the reason text (the shipped types' ClassicResult documents exactly this mapping,
-// and a field of the wrong shape fails the hook, which is skipped: the stop would pass untold).
-export function refuse(reason: string): { block: string } {
-  return { block: reason }
-}
-
 // One race, the whole gate's own law: stop_gate.py runs under a single deadline
 // checked between its external calls, and a read that cannot answer in time
 // lets the stop pass. The degraded answer is a value told apart from the work's

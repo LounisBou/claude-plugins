@@ -104,6 +104,8 @@ test('a call names its entry, its outcome and what that outcome needs; anything 
   expect(parseSettle({ id: 'q-1', outcome: 'answered-here', answer: 'B, and port it', work: 'port the fix to next' })).toEqual({ request: request('q-1', { text: 'B, and port it', work: 'port the fix to next' }) })
   for (const [input, refusal] of [
     [{ outcome: 'answered-here', answer: 'A' }, /id is the id/],
+    // A consent he typed with no question before it is no entry: a consent is the choice of a question asked with ask.
+    [{ consent_kind: 'auto-merge', consent_repo: 'acme/app', outcome: 'answered-here', answer: "Accorder l'auto-merge sur acme/app" }, /id is the id/],
     [{ id: '../x', outcome: 'answered-here', answer: 'A' }, /id is the id/],
     [{ id: 'q-1', outcome: 'closed', answer: 'A' }, /outcome is one of/],
     [{ id: 'q-1', outcome: 'answered-here' }, /answer is his answer/],
@@ -320,6 +322,7 @@ test('the coordinator settling its own ask that asks consent takes the same path
   const id = /Asked as (\S+?):/.exec(made.result)![1]!
   await settle(m.coordinator, request(id, { text: LIMIT_WORDS }), AT)
   expect(recordsOf(m).map(r => grants(r.answer))).toEqual([false])
+  expect((await settle(m.coordinator, request(id, { text: 'A' }), AT)).result).toContain('is answered already')
   askTurnStarted()
   const second = /Asked as (\S+?):/.exec((await callAsk(m.coordinator, { ...QUESTION, context: 'second', ...CONSENT_ASK }, NOW)).result)![1]!
   await settle(m.coordinator, request(second, { text: 'Accorder' }), AT)
@@ -559,12 +562,12 @@ test('his words of 2026-11-18 typed in place of a choice, settled by its asker o
     const m = decideMachine(null)
     const id = await asked(m, consent)
     expect((await settle(m.asker, request(id, { text }), AT)).isError).toBeUndefined()
-    expect(recorded(m, id)).not.toContain('Accorder')
+    expect(recorded(m, id).some(grants)).toBe(false)
   }
   const m = decideMachine(RUNNING)
   const id = await asked(m, consent)
   expect((await settle(m.coordinator, request(id, { text: typedWords }), AT)).isError).toBeUndefined()
-  expect(recorded(m, id)).not.toContain('Accorder')
+  expect(recorded(m, id).some(grants)).toBe(false)
   expect(entryOf(m, id)).toMatchObject({ answer: { text: typedWords, by: 'coordinator' } })
   expect(m.sent[0]?.text).toContain('LAnce le push forcé go !')
 })

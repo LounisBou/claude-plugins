@@ -137,8 +137,8 @@ export function givenAnswer(answer: string, choices: readonly { letter: string; 
 export function consentAnswer(answer: string, choices: readonly { letter: string; text: string }[]): string {
   const chosen = answersChoice(answer, choices)
   if (chosen) return chosen.text.trim()
-  const given = givenAnswer(answer, choices)
-  return given.letter === null && LETTERED.test(given.text) ? '' : given.text
+  const given = answer.trim()
+  return givenAnswer(given, choices).letter === null && LETTERED.test(given) ? '' : given
 }
 
 /**

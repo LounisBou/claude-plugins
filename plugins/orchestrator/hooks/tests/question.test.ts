@@ -515,6 +515,8 @@ test('words around « Accorder » typed in any session\'s own tab record no cons
     expect(await records(me, 'Accorder la dispense et fusionner, merci')).toEqual([])
     expect(await records(me, "Ok Accorder pour l'auto-merge !!! \n\nLAnce le push forcé go !")).toEqual([])
     expect(await records(me, 'Accorder ?')).toEqual([])
+    expect(await records(me, 'Refuser')).toEqual([])
+    expect(await records(me, 'Accorder pour acme/other')).toEqual([])
   }
 })
 

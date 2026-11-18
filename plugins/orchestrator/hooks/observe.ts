@@ -7,7 +7,7 @@
 import { appendEventOver, randomPart, type JournalIo } from '../core/journal.ts'
 import { journalDir } from '../core/learning.ts'
 import { parseSessionName } from '../core/names.ts'
-import { observedEvent, refusalEvent, PLUGIN, stampOf, type Built, type Stamp, type WaitSeen } from './audit-events.ts'
+import { observedEvent, PLUGIN, stampOf, type Built, type Stamp, type WaitSeen } from './audit-events.ts'
 import { messageOf, type Host } from './host.ts'
 import { configDir, logLine, storeIo } from './module-io.ts'
 import { moduleDirOf } from './module-log.ts'
@@ -81,10 +81,3 @@ export async function observed($: Held, code: string): Promise<void> {
   await write($, observing, stamp => observedEvent(stamp, code))
 }
 
-/*
- * A guard of this module that refuses: the journal holds one refusal under the guard's stable code.
- * Never throws: a journal that cannot be written is one line in the module's log.
- */
-export async function refused($: Held, code: string): Promise<void> {
-  await write($, observing, stamp => refusalEvent(stamp, code))
-}

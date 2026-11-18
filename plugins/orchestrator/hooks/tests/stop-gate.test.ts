@@ -108,6 +108,8 @@ test('a turn that ends on a choice in prose, or on the block of a question still
       expect(fieldsIn(answer).block).toBeUndefined()
       expect(passed).not.toBeNull()
       expect(fx.journal().filter(line => line.startsWith('refusal'))).toEqual([])
+      const told = await stop(handlers['classic.Stop'], fakeDollar({ launchName, round }).dollar, stopEvent({ last_assistant_message: message }))
+      expect(String(told.observed ?? '')).not.toMatch(/Already in the round|in prose/)
     }
   }
 })

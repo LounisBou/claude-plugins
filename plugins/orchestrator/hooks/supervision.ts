@@ -2613,7 +2613,7 @@ export async function writeConsent($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   if (!entry.consent) return null
   const record = consentRecordOf({ subject: entry.consent, entry: entry.id, question: entry.question, answer: text, choices: entry.choices, by, at })
   if (!record) {
-    const why = `« ${text.trim()} » names none of its choices: a consent is answered by its letter`
+    const why = `« ${text.trim()} » names none of its choices`
     await logLine($, 'supervision', `round: the consent of ${entry.id} (${subjectLabel(entry.consent)}) was not recorded: ${why}`)
     return why
   }
