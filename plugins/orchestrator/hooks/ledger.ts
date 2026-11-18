@@ -18,6 +18,7 @@ import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from
 import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
+import { holdsOf, readyAgentLine } from './ready-agent.ts'
 import { archive, boundedReading, readOr, registered } from './unattended.ts'
 
 // The nouns a write holds.
@@ -203,16 +204,6 @@ export function endedLine(ended: { repo: string; pr: number; state: 'MERGED' | '
   return `[module] ${key} ${what}: its agent ${ended.agent} ${holds.length > 0 ? `still holds ${holds.join(', ')}; tell it, do not close it` : 'is done with it, close it'}.`
 }
 
-// The line a pull request that became Ready wakes its orchestrator with: its agent is done with it and closes now, its
-// session id (`session`, read where the agent is still running) kept on the row to resume it from; when the agent still
-// holds another pull request (`holds`), to be told.
-export function readyAgentLine(ready: { repo: string; pr: number; agent: string; session?: string | undefined; holds?: readonly string[] }): string {
-  const head = `[module] ${prKey(ready.repo, ready.pr)} is Ready: its agent ${ready.agent}`
-  const holds = ready.holds ?? []
-  if (holds.length > 0) return `${head} still holds ${holds.join(', ')}; tell it, do not close it.`
-  return `${head} is done with it${ready.session === undefined ? '' : ` (session ${ready.session})`}, close it.`
-}
-
 // The session id of the agent a line names, from its row in the module's store: the newest row of that name.
 async function sessionOf($: Held, agent: string): Promise<string | undefined> {
   const store = await storeOf($)
@@ -277,7 +268,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     if (told.has(key)) continue
     told.add(key)
     const agent = line.agent ?? ''
-    const holds = reading.kept.filter(other => other.status === 'working' && other.agent === agent && !reading.readyHeads.has(prKey(other.repo, other.pr))).map(other => prKey(other.repo, other.pr))
+    const holds = holdsOf(reading.kept, other => other === agent, key => reading.readyHeads.has(key))
     lines.push(readyAgentLine({ repo: line.repo, pr: line.pr, agent, session: await sessionOf($, agent), holds }))
   }
   for (const u of anomalies) {

@@ -37,7 +37,7 @@ function deckOf(orchestrators: object[]): object {
 }
 
 /** A machine whose state holds open what an orchestration in flight holds, and no succession brief anywhere. */
-function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string>; windows?: Record<string, number>; listed?: ListedRow[]; movesHome?: boolean } = {}) {
+function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string>; windows?: Record<string, number>; listed?: ListedRow[]; movesHome?: boolean; readyHead?: (repo: string, pr: number) => string | undefined } = {}) {
   const journaled: unknown[] = []
   const state = join(dir, 'state')
   const briefs = join(dir, 'briefs', 'belt')
@@ -72,7 +72,7 @@ function world(over: { rows?: string; deck?: object; round?: object[]; todo?: st
   const err: string[] = []
   const io = { out: (t: string) => { out.push(t) }, err: (t: string) => { err.push(t) } }
   const prs = over.prs ?? { 'acme/app#12': 'MERGED' }
-  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`], paneWindow: tty => over.windows?.[tty], list: () => over.listed, journal: event => { journaled.push(event) }, movesHome: over.movesHome ?? false })
+  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`], paneWindow: tty => over.windows?.[tty], list: () => over.listed, ...(over.readyHead === undefined ? {} : { readyHead: over.readyHead }), journal: event => { journaled.push(event) }, movesHome: over.movesHome ?? false })
   return { state, briefs, record, out, err, run, journaled, text: () => out.join('') }
 }
 
@@ -378,6 +378,56 @@ test('the deck and the round are read as data: a remote orchestrator, a malforme
 const seated = (name: string, tty: string, agents: string[]) => ({ ...orchestrator(name, null, [], agents), tty })
 /** A row of the launcher's `list`. */
 const row = (tty: string, name: string, self = false): ListedRow => ({ tty, name, self })
+
+test('the takeover says of each running agent whose pull request is Ready that it is done and closes: Ready: close it', () => {
+  const ready = (repo: string, pr: number): string | undefined => (['acme/app#12', 'acme/app#31', 'acme/app#40'].includes(`${repo}#${pr}`) ? 'a'.repeat(40) : undefined)
+  const rows = [
+    ledger('acme/app', 12, 'Agent: done'), ledger('acme/app', 20, 'Agent: fixing'),
+    ledger('acme/app', 31, 'Agent: both'), ledger('acme/lib', 5, 'Agent: both'), ledger('acme/app', 40, 'Agent: gone'),
+    // Merged: the line is no longer open and holds nobody.
+    ledger('acme/app', 41, 'Agent: gone'),
+  ].join('\n') + '\n'
+  const w = world({
+    rows, prs: { 'acme/app#41': 'MERGED' }, readyHead: ready,
+    listed: [row('/dev/ttys005', NAME), row('/dev/ttys004', 'Agent: done'), row('/dev/ttys006', 'Agent: fixing'), row('/dev/ttys007', 'Agent: both'), row('/dev/ttys008', 'Agent: gone')],
+    deck: deckOf([seated(NAME, '/dev/ttys005', ['Agent: done', 'Agent: fixing', 'Agent: both', 'Agent: gone'])]),
+  })
+  assert.equal(w.run('--tty', '/dev/ttys005'), 0)
+  const agents = /- Agents running \(name and reference, brief path\): (.*)\n/.exec(w.text())?.[1] ?? ''
+  assert.equal(agents, [
+    'Agent: done (ttys004) — Ready: close it (acme/app#12)',
+    'Agent: fixing (ttys006)',
+    'Agent: both (ttys007) — Ready acme/app#31, still holds acme/lib#5: tell it, do not close it',
+    'Agent: gone (ttys008) — Ready: close it (acme/app#40)',
+  ].join('; '))
+})
+
+test('the takeover reads Ready in the machine\'s pull request file by itself: two Ready pull requests of one agent, a name matched whatever its case, and no word for a wait, another label or a repository unread', () => {
+  const waiting = JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr: 34, status: 'waiting', on: 'the operator', since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:00:00Z' })
+  const rows = [ledger('acme/app', 31, 'Agent: duo'), ledger('acme/app', 32, 'Agent: duo'), ledger('acme/app', 33, 'Agent: held'), waiting, ledger('acme/lib', 7, 'Agent: far')].join('\n') + '\n'
+  const w = world({
+    rows, prs: {},
+    listed: [row('/dev/ttys005', NAME), row('/dev/ttys004', 'Agent: Duo'), row('/dev/ttys006', 'Agent: held'), row('/dev/ttys007', 'Agent: far')],
+    deck: deckOf([seated(NAME, '/dev/ttys005', ['Agent: Duo', 'Agent: held', 'Agent: far'])]),
+  })
+  const at = (n: number, label: string) => ({ repo: 'acme/app', pr: n, state: 'OPEN', draft: false, head: `b${n}`, sha: `${n}`.repeat(7), author: null, createdAt: null, labels: [label], mergeable: null, fork: null })
+  writeFileSync(join(w.state, 'prs.json'), JSON.stringify({ v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), viewer: 'me', repos: ['acme/app'], unread: ['acme/lib'], prs: [at(31, 'Ready'), at(32, 'Ready'), at(33, 'Not Ready'), at(34, 'Ready')] }))
+  assert.equal(w.run('--tty', '/dev/ttys005'), 0)
+  const agents = /- Agents running \(name and reference, brief path\): (.*)\n/.exec(w.text())?.[1] ?? ''
+  assert.equal(agents, 'Agent: Duo (ttys004) — Ready: close it (acme/app#31, acme/app#32); Agent: held (ttys006); Agent: far (ttys007)')
+})
+
+test('the takeover names no agent to close that the launcher\'s listing does not show running, nor any when the listing cannot be read', () => {
+  const ready = (): string => 'a'.repeat(40)
+  const rows = [ledger('acme/app', 31, 'Agent: shown'), ledger('acme/app', 32, 'Agent: unlisted')].join('\n') + '\n'
+  const deck = deckOf([seated(NAME, '/dev/ttys005', ['Agent: shown', 'Agent: unlisted'])])
+  const listed = world({ rows, deck, readyHead: ready, listed: [row('/dev/ttys005', NAME), row('/dev/ttys004', 'Agent: shown')] })
+  assert.equal(listed.run('--tty', '/dev/ttys005'), 0)
+  assert.match(listed.text(), /: Agent: shown \(ttys004\) — Ready: close it \(acme\/app#31\); Agent: unlisted\n/)
+  const unread = world({ rows, deck, readyHead: ready })
+  assert.equal(unread.run('--tty', '/dev/ttys005'), 0)
+  assert.match(unread.text(), /: Agent: shown; Agent: unlisted\n/)
+})
 
 test('two orchestrators of one name during a handover: the deck row on the predecessor\'s tty is read, the successor\'s is not', () => {
   const deck = JSON.stringify(deckOf([seated(NAME, '/dev/ttys009', []), seated(NAME, '/dev/ttys005', ['Agent: p10', 'Agent: p17'])]))
@@ -942,7 +992,7 @@ test('a quotation a to-do item holds is named by its item through the takeover; 
 test('the takeover reads pull requests in the machine\'s pull request file, never the forge: a state, the open ones with their heads, nothing where it holds no current reading', () => {
   const state = mkdtempSync(join(tmpdir(), 'succession-prs-'))
   const pr = (n: number, st: string) => ({ repo: 'acme/app', pr: n, state: st, head: `b${n}`, sha: `${n}`.repeat(7) })
-  const file = { v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), viewer: 'me', repos: ['acme/app'], unread: ['acme/lib'], prs: [pr(7, 'OPEN'), pr(8, 'MERGED'), { ...pr(9, 'OPEN'), repo: 'acme/lib' }] }
+  const file = { v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), viewer: 'me', repos: ['acme/app'], unread: ['acme/lib'], prs: [{ ...pr(7, 'OPEN'), labels: [' ready '] }, { ...pr(8, 'MERGED'), labels: ['Ready'] }, { ...pr(9, 'OPEN'), repo: 'acme/lib', labels: ['Ready'] }] }
   writeFileSync(join(state, 'prs.json'), JSON.stringify(file))
   const read = filePrs({ ORCHESTRATOR_STATE_DIR: state }, NOW.getTime())
   assert.equal(read.state('acme/app', 8), 'MERGED')
@@ -950,6 +1000,8 @@ test('the takeover reads pull requests in the machine\'s pull request file, neve
   assert.equal(read.state('acme/lib', 9), undefined)
   assert.deepEqual(read.open('acme/app'), [{ repo: 'acme/app', pr: 7, head: '7777777' }])
   assert.equal(read.open('acme/lib'), undefined)
+  // Ready is the label at the head of an open pull request of a repository read now; a merged one, another label or an unread repository is none.
+  assert.deepEqual([read.ready('acme/app', 7), read.ready('acme/app', 8), read.ready('acme/app', 99), read.ready('acme/lib', 9)], ['7777777', undefined, undefined, undefined])
   writeFileSync(join(state, 'prs.json'), JSON.stringify({ ...file, error: 'HTTP 502' }))
   assert.equal(filePrs({ ORCHESTRATOR_STATE_DIR: state }, NOW.getTime()).open('acme/app'), undefined)
   rmSync(state, { recursive: true, force: true })

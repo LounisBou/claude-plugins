@@ -6,7 +6,7 @@
 // the orchestrator on a pull request merged, closed or entering the anomaly. Every read is bounded;
 // one that fails is said, never a refusal.
 import {
-  archiveOf, ledgerLines, prKey, READY_LABEL, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
+  archiveOf, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
@@ -17,6 +17,7 @@ import { messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { fileWanted, readPrFile, refreshPrFile } from './pr-file.ts'
 import { prsOfRepo, type PrFile } from './pr-file-format.ts'
+import { readyHeadsOf } from './ready-agent.ts'
 import type { RecordText } from './row-owner.ts'
 
 // The nouns a reading holds.
@@ -138,10 +139,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   // The head each of the session's open lines carries Ready at, whoever runs on it: told once per head, so an agent resumed
   // for a fix on a pull request still Ready is not told to close mid-fix. Running agents are read on the launcher's own
   // listing only: one that failed names no agent to close.
-  const readyHeads = new Map<string, string>()
-  for (const pr of file?.prs ?? []) {
-    if (pr.state === 'OPEN' && pr.labels.some(name => name.trim().toLowerCase() === READY_LABEL.toLowerCase())) readyHeads.set(prKey(pr.repo, pr.pr), pr.sha)
-  }
+  const readyHeads = readyHeadsOf(file?.prs ?? [])
   const agents = kept.some(line => readyHeads.has(prKey(line.repo, line.pr))) ? await running() : null
   const atReady = kept.filter(line => line.status === 'working' && agents?.has(line.agent ?? '') === true && readyHeads.has(prKey(line.repo, line.pr)))
   return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, wanted }

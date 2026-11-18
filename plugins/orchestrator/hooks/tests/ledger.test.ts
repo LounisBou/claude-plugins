@@ -401,6 +401,17 @@ test('a pull request that becomes Ready wakes its orchestrator with its agent to
   expect((await prWake(world.dollar, told)).lines).toEqual([])
 })
 
+test('a successor or a restarted module, its told empty, names the agent of a pull request already Ready once, as one that saw it become Ready; its next tick says nothing', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  const first = new Set<string>()
+  const line = '[module] acme/app#17 is Ready: its agent Agent: p17 is done with it (session s-p17), close it.'
+  expect((await prWake(world.dollar, first)).lines).toEqual([line])
+  // The module restarts: nothing is remembered, and the agent still runs, so it is told again, once.
+  const restarted = new Set<string>()
+  expect((await prWake(world.dollar, restarted)).lines).toEqual([line])
+  expect((await prWake(world.dollar, restarted)).lines).toEqual([])
+})
+
 test('a pull request that is not Ready, or whose agent the launcher no longer lists, says nothing to close', async () => {
   const notReady = JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Not Ready' }] }])
   const waiting = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION }, forge: { 'acme/app': notReady }, launcher: running('Agent: p17') })
