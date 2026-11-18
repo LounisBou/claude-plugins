@@ -122,7 +122,7 @@ test('a measure moves only a window at rest, onto the gate and back', () => {
 // --- the wiring over a faked $ ------------------------------------------------------------
 
 // script: per call, in order, whether it fails (true) or succeeds; once exhausted, calls succeed.
-type Over = { tmux?: boolean; home?: boolean; fail?: 'set' | 'home'; script?: { home?: boolean[]; set?: boolean[] }; pane: string; tokens?: number }
+type Over = { tmux?: boolean; home?: boolean; fail?: 'set' | 'home'; script?: { home?: boolean[]; set?: boolean[] }; pane: string; tokens?: number; shown?: string }
 
 function fake(over: Over) {
   const files = new Map<string, string>()
@@ -168,7 +168,8 @@ function fake(over: Over) {
           const reading = argv[3] === 'display-message'
           if (over.fail === (reading ? 'home' : 'set')) throw new Error('tmux: no server running')
           if (over.script?.[reading ? 'home' : 'set']?.shift()) throw new Error('tmux: no server running')
-          return { exitCode: 0, stdout: reading ? (over.home === false ? '|plain:@0.%0\n' : '1|home:@3.%7\n') : '', stderr: '' }
+          const listing = argv[3] === 'list-panes'
+          return { exitCode: 0, stdout: reading ? (over.home === false ? '|plain:@0.%0\n' : '1|home:@3.%7\n') : listing ? `/dev/ttys005 ${over.pane} ${over.shown ?? ''}\n` : '', stderr: '' }
         }
         const [verb, , from = '', to = ''] = argv
         if (verb === 'mv' && files.has(from)) {
@@ -387,5 +388,81 @@ test('a turn ends with ✋ while a question its session asked is open, whatever 
     await drive(chains, 'turn.start', fx.dollar, {})
     await drive(chains, 'turn.complete', fx.dollar, turnEnd('Which one?'))
     expect(fx.states().at(-1)).toBe(shown)
+  }
+})
+
+// A session that starts (fresh or resumed) and takes no turn still shows a state on its window.
+const started = { cwd: '/work' }
+
+test('a session that starts and takes no turn shows idle from its start', async () => {
+  const chains = mounted()
+  const fx = fake({ pane: '%41' })
+  await drive(chains, 'session.start', fx.dollar, started)
+  expect(fx.states()).toEqual(['idle'])
+  expect(fx.calls.find(c => c[3] === 'set-option')).toEqual(['tmux', '-S', SOCKET, 'set-option', '-w', '-t', '%41', '@state', 'idle'])
+})
+
+for (const [waiting, shown] of [['delivered', 'review'], ['question', 'held']] as const) {
+  test(`a session that starts on a ${waiting} wait shows ${shown}, as a turn's end would`, async () => {
+    const chains = mounted()
+    const fx = fake({ pane: '%42' })
+    fx.files.set(`${STATE}/store/waits/s-one`, JSON.stringify({ name: 'Agent: belt-p3', pid: '501', waiting }))
+    await drive(chains, 'session.start', fx.dollar, started)
+    expect(fx.states()).toEqual([shown])
+  })
+}
+
+test('a session that starts with a question of its own open shows asks', async () => {
+  const chains = mounted()
+  const fx = fake({ pane: '%43' })
+  fx.files.set(`${STATE}/round/q-s-one-1.json`, askedFile('s-one', 'open'))
+  await drive(chains, 'session.start', fx.dollar, started)
+  expect(fx.states()).toEqual(['asks'])
+})
+
+test('a repeated start writes once, and the first turn still goes busy', async () => {
+  const chains = mounted()
+  const fx = fake({ pane: '%44' })
+  await drive(chains, 'session.start', fx.dollar, started)
+  await drive(chains, 'session.start', fx.dollar, started)
+  await drive(chains, 'turn.start', fx.dollar, {})
+  expect(fx.states()).toEqual(['idle', 'busy'])
+})
+
+test('a start outside a home session writes nothing', async () => {
+  const chains = mounted()
+  const outside = fake({ pane: '%45', tmux: false })
+  await drive(chains, 'session.start', outside.dollar, started)
+  expect(outside.calls).toEqual([])
+  const plain = fake({ pane: '%46', home: false })
+  await drive(chains, 'session.start', plain.dollar, started)
+  expect(plain.states()).toEqual([])
+  expect(plain.logged.filter(l => l.includes('tab-state'))).toEqual([])
+})
+
+for (const fail of ['set', 'home'] as const) {
+  test(`a failing tmux call (${fail}) at the start does not fail the hook, and is logged once`, async () => {
+    const chains = mounted()
+    const fx = fake({ pane: `%${fail === 'set' ? 47 : 50}`, fail })
+    expect(await drive(chains, 'session.start', fx.dollar, started)).toBe(started)
+    expect(fx.logged.filter(l => l.includes('tab-state')).length).toBe(1)
+  })
+}
+
+test('a start that finds the window with no state, then a measure past the gate, shows the gate', async () => {
+  const chains = mounted()
+  const fx = fake({ pane: '%49' })
+  await drive(chains, 'session.start', fx.dollar, started)
+  fx.usage.context.tokens = 310000
+  await drive(chains, 'session.measure', fx.dollar, measured)
+  expect(fx.states()).toEqual(['idle', 'gate'])
+})
+
+test('a start leaves a window that already shows a state as it is: a reload in a turn keeps busy', async () => {
+  for (const shown of ['busy', 'review', 'over']) {
+    const chains = mounted()
+    const fx = fake({ pane: '%48', shown })
+    await drive(chains, 'session.start', fx.dollar, started)
+    expect(fx.states()).toEqual([])
   }
 })

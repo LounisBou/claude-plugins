@@ -342,6 +342,14 @@ if state_is "$ONE_PANE" idle 30; then SECOND_IDLE=idle; else SECOND_IDLE=$(state
 check "the window reads idle after it" "idle" "$SECOND_IDLE"
 
 echo "== close =="
+# The first agent's session, kept for the resume that takes no turn below.
+sid_on() { # <tty>: the session a host process on the tty registered
+  local pid
+  pid=$(ps -t "${1#/dev/}" -o pid=,command= 2>/dev/null | awk '/--setting-sources project/ { print $1; exit }')
+  [ -n "$pid" ] && jq -r '.sessionId // empty' "$HOSTDIR/sessions/$pid.json" 2>/dev/null
+}
+ONE_SID=$(sid_on "$ONE")
+[ -n "$ONE_SID" ] || { echo "refused: the first agent's session was not read from the registry" >&2; exit 1; }
 launcher 20 close --tty "$ONE" --expect-title "Agent: e2e two"
 check "a close whose expected words the window's name does not hold is refused, and the window stays" "1|1|1" \
   "$(rc)|$(grep -c "close: refused: the window on $ONE is named 'Agent: e2e one'" "$STEP.err")|$(windows | grep -c ' Agent: e2e one ')"
@@ -366,12 +374,7 @@ check "the chain holds the replacement's window alone" "tmux:$SOCKET:$W3 $THREE"
   "$(chain | jq -r '"\(.tab_id) \(.tty)"' | paste -sd'|' -)"
 check "window 0 is still the current window" "0 orch 1" "$(windows | awk '$1 == 0 { print $1, $3, $4 }')"
 
-# The session a host process on a tty registered, and how many live processes hold it.
-sid_on() { # <tty>
-  local pid
-  pid=$(ps -t "${1#/dev/}" -o pid=,command= 2>/dev/null | awk '/--setting-sources project/ { print $1; exit }')
-  [ -n "$pid" ] && jq -r '.sessionId // empty' "$HOSTDIR/sessions/$pid.json" 2>/dev/null
-}
+# The session a host process on a tty registered: sid_on, defined before the close; live_rows counts the live processes that hold one.
 live_rows() { # <session id>: the registry's live entries for it, and the name of the last
   local f pid rows=0 name=""
   for f in "$HOSTDIR"/sessions/*.json; do
@@ -537,6 +540,23 @@ check "the successor replied within 90s, and the chain still holds the agent und
 audit_rc
 check "no test host came up in Remote Control: each command line carries remoteControlAtStartup=false and none carries --remote-control" "0|ok" \
   "$([ "$RC_SEEN" -ge 6 ] && echo 0 || echo "seen only $RC_SEEN")|$([ ${#RC_BAD[@]} -eq 0 ] && echo ok || printf '%s; ' "${RC_BAD[@]}")"
+
+echo "== a resumed session that takes no turn shows its state from its start =="
+# The first agent's session resumed into a new window of the home session with no prompt: nothing
+# is typed, so no turn runs, and the module's session start alone writes the window's state.
+assistant_lines() { jq -c 'select(.type == "assistant")' "$TRANSCRIPTS/$1.jsonl" 2>/dev/null | wc -l | tr -d ' '; }
+BEFORE_ASSISTANT=$(assistant_lines "$ONE_SID")
+printf '#!/bin/sh\nexec %q --model %q --permission-mode acceptEdits --resume %q\n' "$WRAPPER" "$MODEL" "$ONE_SID" > "$SANDBOX/run/resume.sh"
+tm new-window -d -t home: -n resumed -c "$WORKDIR" "/bin/sh $SANDBOX/run/resume.sh"
+RESUMED_PANE=$(tm display -p -t home:resumed '#{pane_id}')
+RESUMED_TTY=$(tm display -p -t home:resumed '#{pane_tty}')
+if wait_host "$RESUMED_TTY" 60; then RESUMED_UP=1; else RESUMED_UP=0; fi
+check "the first agent's session runs again, resumed in a window of the home session" "1" "$RESUMED_UP"
+resumed_or_exit "$RESUMED_PANE"
+audit_rc
+if state_is "$RESUMED_PANE" idle 60; then RESUMED_STATE=idle; else RESUMED_STATE=$(state_of "$RESUMED_PANE"); fi
+check "its window reads idle although no turn ran" "idle" "$RESUMED_STATE"
+check "no turn ran: its transcript holds no assistant line more" "$BEFORE_ASSISTANT" "$(assistant_lines "$ONE_SID")"
 
 echo "== the end =="
 tm kill-server 2>/dev/null
