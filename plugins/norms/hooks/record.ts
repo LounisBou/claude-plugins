@@ -13,7 +13,7 @@ import { endSkillCheck, spawned } from './guards.ts'
 import { answerOf, fieldsOf, reasonOf, type Host, type Events, type On } from '../core/host.ts'
 import { findingEvent } from '../core/learning.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
-import { agentText, noteReport, reportOf, reported, resetReports, type Found } from './findings.ts'
+import { agentText, launchedId, noteHandback, noteRun, reportOf, reported, resetReports, type Found } from './findings.ts'
 import { journal, noteSubject, resetSubject } from './observe.ts'
 
 export type RecordHost = Host<'env' | 'fs' | 'process' | 'session' | 'state' | 'ui' | 'tool' | 'clock'>
@@ -21,6 +21,8 @@ export type RecordHost = Host<'env' | 'fs' | 'process' | 'session' | 'state' | '
 export const CHECK_DONE_TOOL = 'mcp__norms__check_done'
 const GH_TOOL = 'mcp__github__gh'
 const RECORD_TOOL = 'mcp__github__record'
+// The tool a subagent calls, in its own loop, to hand its final report back to the session.
+const HANDBACK_TOOL = 'SubagentHandback'
 const GIT_TIMEOUT_MS = 30_000
 
 export const CHECK_DONE_DESCRIPTION =
@@ -370,8 +372,9 @@ export function register(on: On<RecordHost>): void {
   }).catch(async (_$, e, next) => next(e))
 
   // The findings of each norms agent, read from its answer. The hook never changes the call's input.
-  // An agent that fails, is launched in the background or answers without a readable block leaves
-  // its findings unknown; its answer reaches the session as it came, and it runs once.
+  // An agent that fails or answers without a readable block leaves its findings unknown; its answer
+  // reaches the session as it came, and it runs once. An agent launched in the background answers
+  // with its launch alone: its findings stay unknown until its hand-back, read below.
   on('tool.call', { tool: 'Agent' }, async (_$, e, next) => {
     const type = String(e['subagent_type'] ?? '')
     if (!type.startsWith('norms:')) return next(e)
@@ -379,14 +382,30 @@ export function register(on: On<RecordHost>): void {
     try {
       answer = await next(e)
     } catch (err) {
-      noteReport(type, null)
+      noteRun(type, null)
       return { result: reasonOf(err), isError: true }
     }
     try {
       const read = answerOf(answer)
-      noteReport(type, read.isError || read.deny !== undefined ? null : reportOf(agentText(answer)))
+      const isFailed = read.isError || read.deny !== undefined
+      noteRun(type, isFailed ? null : reportOf(agentText(answer)), isFailed ? undefined : launchedId(answer))
     } catch {
-      noteReport(type, null)
+      noteRun(type, null)
+    }
+    return answer
+  }).catch(async (_$, e, next) => next(e))
+
+  // The report of a norms agent the host ran in the background, read where the module sees it: the
+  // agent's own SubagentHandback call, in its loop (`agentId`, the id its launch named), with whether
+  // core says the report reached the session (findings.ts reads which count). The call goes on as it came.
+  on('tool.call', { tool: HANDBACK_TOOL }, async (_$, e, next) => {
+    const answer = await next(e)
+    try {
+      const message = e['message']
+      const isDelivered = fieldsOf(answerOf(answer).result)?.['success'] === true
+      if (typeof e['agentId'] === 'string' && typeof message === 'string') noteHandback(e['agentId'], message, isDelivered)
+    } catch {
+      // Unreadable: the agent's findings stay unknown.
     }
     return answer
   }).catch(async (_$, e, next) => next(e))
