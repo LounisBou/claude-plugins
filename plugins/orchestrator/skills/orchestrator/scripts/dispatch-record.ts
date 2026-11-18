@@ -17,7 +17,7 @@ import { isEntry, processIo, run, type Io, type Run } from './lib/process.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { auditRun, fullHead, pointerOf, scriptJournal, writeAudit, writeEscape, type Journal } from './lib/audit.ts'
 import { AUDIT_CONTRACT, prRefsOf, type Edge, type Facts, type Step } from '../../../core/learning.ts'
-import { archiveOf, isLedgerMarked, ledgerLineOf, ledgerLines, parsePrRef, prKey, statusText, untilOf, withArchived, withLine, withoutLines, type LedgerSet } from '../../../core/pr-ledger.ts'
+import { archiveOf, isLedgerMarked, ledgerLineOf, ledgerLines, parsePrRef, prKey, statusText, untilOf, withArchived, withLine, withoutEarlier, withoutLines, type LedgerSet } from '../../../core/pr-ledger.ts'
 
 export const USAGE =
   'usage: dispatch-record.sh {open|round|review|verdict|fixed|surface|audit|ready|close|defer|undefer|blocker|note|escaped|cost|summary|goals|pr|pr-archive} <record> [...] (see header)'
@@ -890,7 +890,8 @@ function setPr(ctx: Context, args: readonly string[]): void {
       const previous = ledgerLines(current ?? '').find(line => line.repo === repo && line.pr === pr)
       const line = ledgerLineOf(set, ctx.deps.now(), previous)
       written = `${prKey(repo, pr)} ${statusText(line)}`
-      return withLine(current ?? '', line)
+      // The agent put to work here no longer works on the record's other pull requests.
+      return withLine(set.status === 'working' ? withoutEarlier(current ?? '', detail) : current ?? '', line)
     })
   } catch {
     die(ctx, `could not update ${ctx.record}`)

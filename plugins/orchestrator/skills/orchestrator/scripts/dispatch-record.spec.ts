@@ -637,6 +637,16 @@ test('a pull request put to work on another agent keeps the one before it on its
   assert.equal(await cli(['pr', r, 'acme/app#12', '--working', 'Agent: review 12 r1']), '0|acme/app#12 en cours (agent Agent: review 12 r1)\n|')
   const held = readFileSync(r, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>).find(line => line['pr'] === 12)
   assert.deepEqual([held?.['agent'], held?.['earlier']], ['Agent: review 12 r1', ['Agent: versioning']])
+  // The implementer put on another pull request no longer works on the first one.
+  assert.equal(await cli(['pr', r, 'acme/app#13', '--working', 'Agent: versioning']), '0|acme/app#13 en cours (agent Agent: versioning)\n|')
+  const moved = readFileSync(r, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>).find(line => line['pr'] === 12)
+  assert.deepEqual([moved?.['agent'], moved?.['earlier']], ['Agent: review 12 r1', undefined])
+  // A wait set on another pull request moves nobody.
+  assert.equal(await cli(['pr', r, 'acme/app#12', '--working', 'Agent: versioning']), '0|acme/app#12 en cours (agent Agent: versioning)\n|')
+  assert.equal(await cli(['pr', r, 'acme/app#12', '--working', 'Agent: review 12 r2']), '0|acme/app#12 en cours (agent Agent: review 12 r2)\n|')
+  await cli(['pr', r, 'acme/app#13', '--waiting', 'Agent: versioning'])
+  const waited = readFileSync(r, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>).find(line => line['pr'] === 12)
+  assert.deepEqual(waited?.['earlier'], ['Agent: versioning', 'Agent: review 12 r1'])
 })
 
 test('a pull request\'s line in the ledger: set, kept beside the rows, archived beside the record', async () => {

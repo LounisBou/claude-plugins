@@ -287,12 +287,13 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     const key = `${prKey(ended.line.repo, ended.line.pr)} ended`
     if (told.has(key)) continue
     told.add(key)
-    const { repo, pr, agent } = ended.line
-    // Its agent is named only while it runs (the launcher's listing, where the close command ends it) and holds nothing else.
-    const named = ended.line.status === 'working' && agent !== undefined && reading.live.has(agent) ? agent : undefined
+    const { repo, pr } = ended.line
+    // Its agent is named only while it runs (the launcher's listing, where the close command ends it) and holds nothing else:
+    // the one put on it last, else one before it still running.
+    const named = agentsOf(ended.line).find(name => reading.live.has(name))
     const holds = named === undefined ? [] : [
       ...(await rowsHeldBy($, named, reading.records)).map(row => `row ${row.id} (${dirOf(row.path).split('/').pop()})`),
-      ...reading.kept.filter(line => line.status === 'working' && line.agent === named).map(line => prKey(line.repo, line.pr)),
+      ...reading.kept.filter(line => agentsOf(line).includes(named)).map(line => prKey(line.repo, line.pr)),
     ]
     lines.push(endedLine({ repo, pr, state: ended.state, agent: named, holds }))
     const relay = mergeRelayLine({ repo, pr }, waitingOn(ended))

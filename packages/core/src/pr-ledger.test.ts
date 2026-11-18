@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   archiveOf, endedLines, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_EARLIER_KEPT, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
-  blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, unattended, unattendedLine, unattendedPaneLines, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutLines, type LedgerLine,
+  blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, unattended, unattendedLine, unattendedPaneLines, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutEarlier, withoutLines, type LedgerLine,
 } from './pr-ledger.ts'
 
 const AT = '2026-11-14T10:00:00Z'
@@ -86,6 +86,24 @@ describe('the pull request ledger', () => {
     assert.deepEqual(parseLedgerLine(JSON.parse(JSON.stringify(fix))), JSON.parse(JSON.stringify(fix)))
     assert.deepEqual(parseLedgerLine({ ...fix, earlier: 'Agent: author' })?.earlier, undefined)
     assert.deepEqual(parseLedgerLine({ ...fix, earlier: ['Agent: author', ' ', 3] })?.earlier, ['Agent: author'])
+  })
+
+  it('an agent the orchestrator puts to work on a pull request leaves the earlier list of every other line: it no longer works there', () => {
+    const row = JSON.stringify({ id: 1, state: 'open' })
+    const other = line({ pr: 8, agent: 'Agent: review r1', earlier: ['Agent: author', 'Agent: fix'] })
+    const alone = line({ pr: 9, agent: 'Agent: review r2', earlier: ['Agent: author'] })
+    const text = `${row}\n${JSON.stringify(other)}\n${JSON.stringify(alone)}\n`
+    const set = withoutEarlier(text, 'Agent: author')
+    const lines = set.split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+    assert.deepEqual(lines.map(l => [l['pr'] ?? 'row', l['earlier']]), [['row', undefined], [8, ['Agent: fix']], [9, undefined]])
+    // The line keeps its place, its times and its other fields, read or not.
+    assert.deepEqual(lines[1], { ...JSON.parse(JSON.stringify(other)), earlier: ['Agent: fix'] })
+    const extra = `${JSON.stringify({ ...other, note: 'kept' })}\n`
+    assert.equal((JSON.parse(withoutEarlier(extra, 'Agent: author').trim()) as Record<string, unknown>)['note'], 'kept')
+    // An agent in no list, and a record with no line, are left as they were; writing a line prunes nobody.
+    assert.equal(withoutEarlier(text, 'Agent: nobody'), text)
+    assert.equal(withoutEarlier(`${row}\nnot json\n`, 'Agent: author'), `${row}\nnot json\n`)
+    assert.equal(withLine(text, line({ agent: 'Agent: author' })), `${text}${JSON.stringify(line({ agent: 'Agent: author' }))}\n`)
   })
 
   it('sets one line per pull request in a record, rows and other lines untouched, and takes lines out', () => {

@@ -489,6 +489,23 @@ test('a conflict names the agent put on the pull request before when the one nam
   expect((await prWake(world.dollar, new Set())).lines).toEqual([CONFLICT_LINE])
 })
 
+// A line put on a reviewer after its implementer: the implementer kept in `earlier`.
+const reviewedLine = (pr: number, repo = 'acme/app') => JSON.stringify({ v: 1, ledger: 'pr', repo, pr, status: 'working', agent: `Agent: review ${pr} r1`, earlier: ['Agent: p17'], since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:30:00Z' })
+
+test('a merge names the agent put on the pull request before when the one named last no longer runs', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${reviewedLine(17)}\n` }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 is done with it, close it.'])
+})
+
+test('a pull request an agent still attends through its earlier list holds it: a merge or a Ready of another one says to tell it, not to close it', async () => {
+  const merged = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(18, 'working', { agent: 'Agent: p17' })}\n${reviewedLine(21, 'acme/lib')}\n` },
+    forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
+  expect((await prWake(merged.dollar, new Set())).lines).toEqual(['[module] acme/app#18 merged: its agent Agent: p17 still holds acme/lib#21; tell it, do not close it.'])
+  const ready = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n${reviewedLine(21, 'acme/lib')}\n`, ...P17_SESSION },
+    forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Ready' }] }]), 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
+  expect((await prWake(ready.dollar, new Set())).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 still holds acme/lib#21; tell it, do not close it.'])
+})
+
 test('a mergeability the forge still computes (UNKNOWN) is no conflict: nothing is told', async () => {
   expect((await prWake(conflicting('UNKNOWN').dollar, new Set())).lines).toEqual([])
   expect((await prWake(conflicting('MERGEABLE').dollar, new Set())).lines).toEqual([])

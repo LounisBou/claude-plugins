@@ -186,6 +186,24 @@ export function withLine(text: string, line: LedgerLine): string {
   return `${withoutLines(text, [prKey(line.repo, line.pr)])}${JSON.stringify(line)}\n`
 }
 
+/*
+ * The text with `agent` taken out of every line's earlier list: put to work by the orchestrator on a
+ * pull request, it no longer works on the others. Every line keeps its place and its other fields; a
+ * list left empty goes.
+ */
+export function withoutEarlier(text: string, agent: string): string {
+  return text.split('\n').map(raw => {
+    if (keyOfText(raw) === undefined) return raw
+    const line = JSON.parse(raw) as Record<string, unknown>
+    const earlier = line['earlier']
+    if (!Array.isArray(earlier) || !earlier.includes(agent)) return raw
+    const kept = earlier.filter(other => other !== agent)
+    if (kept.length > 0) line['earlier'] = kept
+    else delete line['earlier']
+    return JSON.stringify(line)
+  }).join('\n')
+}
+
 /** The archive beside a record: `<record>.archive.jsonl`, the record's own `.jsonl` dropped first. */
 export function archiveOf(record: string): string {
   return `${record.replace(/\.jsonl$/, '')}${PR_LEDGER_CONTRACT.archive_suffix}`
