@@ -8,8 +8,8 @@ import type { WaitKind } from './relay.ts'
 // One word each: a turn started, a turn ended with nothing pending, a wait on the operator
 // written, a wait on the orchestrator written (held), a delivery whose pull request is not known
 // Ready (under review), a delivery whose pull request carries Ready (done: it waits for the
-// merge), the delivered pull request merged or closed (the agent's work is over and its
-// orchestrator owes its close), the context past its gate. `asks` is the operator's alone, and
+// merge), the delivered pull request merged or closed (the agent's work is over and the
+// module closes it), the context past its gate. `asks` is the operator's alone, and
 // shown only while the session has an open round entry: a window that waits on its orchestrator is
 // `held`, and an operator wait no entry is open for is at rest.
 export type TabState = 'busy' | 'idle' | 'asks' | 'held' | 'review' | 'done' | 'over' | 'gate'

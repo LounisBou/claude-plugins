@@ -379,7 +379,7 @@ const seated = (name: string, tty: string, agents: string[]) => ({ ...orchestrat
 /** A row of the launcher's `list`. */
 const row = (tty: string, name: string, self = false): ListedRow => ({ tty, name, self })
 
-test('the takeover says of each running agent whose pull request is Ready that it is done and closes: Ready: close it', () => {
+test('the takeover says of each running agent whose pull request is Ready that it is done and the module closes it', () => {
   const ready = (repo: string, pr: number): string | undefined => (['acme/app#12', 'acme/app#31', 'acme/app#40'].includes(`${repo}#${pr}`) ? 'a'.repeat(40) : undefined)
   const rows = [
     ledger('acme/app', 12, 'Agent: done'), ledger('acme/app', 20, 'Agent: fixing'),
@@ -395,10 +395,10 @@ test('the takeover says of each running agent whose pull request is Ready that i
   assert.equal(w.run('--tty', '/dev/ttys005'), 0)
   const agents = /- Agents running \(name and reference, brief path\): (.*)\n/.exec(w.text())?.[1] ?? ''
   assert.equal(agents, [
-    'Agent: done (ttys004) — Ready: close it (acme/app#12)',
+    'Agent: done (ttys004) — Ready (acme/app#12): the module closes it once done',
     'Agent: fixing (ttys006)',
-    'Agent: both (ttys007) — Ready acme/app#31, still holds acme/lib#5: tell it, do not close it',
-    'Agent: gone (ttys008) — Ready: close it (acme/app#40)',
+    'Agent: both (ttys007) — Ready acme/app#31, still holds acme/lib#5: tell it',
+    'Agent: gone (ttys008) — Ready (acme/app#40): the module closes it once done',
   ].join('; '))
 })
 
@@ -414,7 +414,7 @@ test('the takeover reads Ready in the machine\'s pull request file by itself: tw
   writeFileSync(join(w.state, 'prs.json'), JSON.stringify({ v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), viewer: 'me', repos: ['acme/app'], unread: ['acme/lib'], prs: [at(31, 'Ready'), at(32, 'Ready'), at(33, 'Not Ready'), at(34, 'Ready')] }))
   assert.equal(w.run('--tty', '/dev/ttys005'), 0)
   const agents = /- Agents running \(name and reference, brief path\): (.*)\n/.exec(w.text())?.[1] ?? ''
-  assert.equal(agents, 'Agent: Duo (ttys004) — Ready: close it (acme/app#31, acme/app#32); Agent: held (ttys006); Agent: far (ttys007)')
+  assert.equal(agents, 'Agent: Duo (ttys004) — Ready (acme/app#31, acme/app#32): the module closes it once done; Agent: held (ttys006); Agent: far (ttys007)')
 })
 
 test('the takeover names no agent to close that the launcher\'s listing does not show running, nor any when the listing cannot be read', () => {
@@ -423,7 +423,7 @@ test('the takeover names no agent to close that the launcher\'s listing does not
   const deck = deckOf([seated(NAME, '/dev/ttys005', ['Agent: shown', 'Agent: unlisted'])])
   const listed = world({ rows, deck, readyHead: ready, listed: [row('/dev/ttys005', NAME), row('/dev/ttys004', 'Agent: shown')] })
   assert.equal(listed.run('--tty', '/dev/ttys005'), 0)
-  assert.match(listed.text(), /: Agent: shown \(ttys004\) — Ready: close it \(acme\/app#31\); Agent: unlisted\n/)
+  assert.match(listed.text(), /: Agent: shown \(ttys004\) — Ready \(acme\/app#31\): the module closes it once done; Agent: unlisted\n/)
   const unread = world({ rows, deck, readyHead: ready })
   assert.equal(unread.run('--tty', '/dev/ttys005'), 0)
   assert.match(unread.text(), /: Agent: shown; Agent: unlisted\n/)
@@ -1010,7 +1010,7 @@ test('the takeover reads pull requests in the machine\'s pull request file, neve
 test('a Ready note names the agent put on the pull request before as well as the one put on it last', () => {
   const line = { v: 1, ledger: 'pr', repo: 'acme/app', pr: 17, status: 'working', agent: 'Agent: review 17 r1', earlier: ['Agent: p17'], since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:30:00Z' } as const
   const ready = (repo: string, pr: number): string | undefined => repo === 'acme/app' && pr === 17 ? 'a'.repeat(40) : undefined
-  assert.equal(readyNote('Agent: p17', [line], () => false, ready), 'Ready: close it (acme/app#17)')
-  assert.equal(readyNote('Agent: review 17 r1', [line], () => false, ready), 'Ready: close it (acme/app#17)')
+  assert.equal(readyNote('Agent: p17', [line], () => false, ready), 'Ready (acme/app#17): the module closes it once done')
+  assert.equal(readyNote('Agent: review 17 r1', [line], () => false, ready), 'Ready (acme/app#17): the module closes it once done')
   assert.equal(readyNote('Agent: other', [line], () => false, ready), undefined)
 })

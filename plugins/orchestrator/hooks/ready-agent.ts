@@ -20,16 +20,21 @@ export function holdsOf(kept: readonly LedgerLine[], isAgent: (agent: string) =>
 }
 
 /*
- * The line a pull request of the orchestration that became Ready, merged or closed tells of its agent: closed by the
- * module (close-agent.ts), its session kept to resume it; left open, with the fact that kept it open; or still holding
- * another pull request or row (`holds`), to be told. `what` is what the pull request did.
+ * The line a pull request of the orchestration that became Ready, merged or closed tells of its agent: done, and closed
+ * by the module once the line is delivered (close-agent.ts), its session kept to resume it; left open, with the fact
+ * that keeps it open (`open`), or until it is done (`waits`); or still holding another pull request or row (`holds`),
+ * to be told. `what` is what the pull request did.
  */
-export function agentLine(a: { key: string; what: string; agent: string; session?: string | undefined; holds?: readonly string[]; closed?: { cost: string | null }; open?: string }): string {
+export function agentLine(a: { key: string; what: string; agent: string; session?: string | undefined; holds?: readonly string[]; open?: string; waits?: string }): string {
   const head = `[module] ${a.key} ${a.what}: its agent ${a.agent}`
   const holds = a.holds ?? []
   if (holds.length > 0) return `${head} still holds ${holds.join(', ')}; tell it.`
   if (a.open !== undefined) return `${head} left open: ${a.open}.`
-  const unrecorded = a.closed?.cost ?? null
-  const cost = unrecorded === null ? '' : `; its cost not recorded: ${unrecorded}`
-  return `${head} closed by the module (session ${a.session ?? '?'}, resumable within the hour)${cost}.`
+  if (a.waits !== undefined) return `${head} left open until it is done and idle (${a.waits}).`
+  return `${head} is done: the module closes it now (session ${a.session ?? '?'}, resumable within the hour).`
+}
+
+/** The line a close that failed after its wake tells at the next tick. */
+export function closeFailedLine(agent: string, key: string, why: string): string {
+  return `[module] ${agent} (${key}): ${why}.`
 }
