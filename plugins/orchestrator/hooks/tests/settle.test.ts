@@ -241,15 +241,18 @@ test('an answer that asks work records it as a to-do of the asker, in its list, 
   expect(m.sent.length).toBe(2)
 })
 
-test('the work an answer asks carries who takes it or what it waits on; without either it is not recorded, and the settle stands', async () => {
+test('the work an answer asks carries who takes it or what it waits on; its asker\'s own work without either is not recorded, and the settle stands', async () => {
   expect(parseSettle({ id: 'q-1', outcome: 'answered-here', answer: 'B', work: 'port it', row: 12, why: 'w' })).toEqual({ request: request('q-1', { text: 'B', work: 'port it', owner: { row: 12, why: 'w' } }) })
   const m = machine()
   const id = await asked(m)
-  const answer = await settle(m.coordinator, request(id, { text: 'B, and port it', work: 'port the fix to next' }), AT)
-  expect(answer.result).toContain('The work it asks is not recorded')
-  expect(answer.result).toContain('who takes it')
-  expect(entryOf(m, id).status).toBe('answered')
-  expect(m.files.has(todoPath(MODULE, ASKER))).toBe(false)
+  const handed = await settle(m.coordinator, request(id, { text: 'B, and port it', work: 'port the fix to next' }), AT)
+  expect(handed.result).toContain('Recorded as to-do 1 in the list of')
+  const own = await asked(m)
+  const mine = await settle(m.asker, request(own, { work: 'write the runbook' }), AT)
+  expect(mine.result).toContain('The work it asks is not recorded')
+  expect(mine.result).toContain('who takes it')
+  expect(entryOf(m, own).status).toBe('answered')
+  expect(m.files.get(todoPath(MODULE, ASKER))).not.toContain('write the runbook')
 })
 
 // --- a closing proposal the relay wrote --------------------------------------------------------------------

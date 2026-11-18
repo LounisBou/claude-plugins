@@ -148,9 +148,10 @@ export function parseWait(e: Record<string, unknown>): { waits?: TodoWait } | { 
 
 /**
  * Who takes an item, or what it waits on, read from a call's flat fields: `row` (a dispatch row),
- * `agent` (an agent's session name, never the list's holder), or the wait (parseWait).
+ * `agent` (an agent's session name, never the list's holder), or the wait (parseWait). An item written
+ * to another session (`handed`) is that session's to take: it needs none of them.
  */
-export function parseOwner(e: Record<string, unknown>, holder: string): { owner: TodoOwner } | { error: string } {
+export function parseOwner(e: Record<string, unknown>, holder: string, handed = false): { owner: TodoOwner } | { error: string } {
   const row = e['row']
   if (row !== undefined && !isRowId(row)) return { error: 'row is the dispatch row that takes it, a positive integer.' }
   const agent = e['agent']
@@ -158,7 +159,7 @@ export function parseOwner(e: Record<string, unknown>, holder: string): { owner:
   if (filled(agent) && holderOf(agent) === holderOf(holder)) return { error: 'agent names another session than the one whose list keeps it: a to-do its holder takes itself is left aside.' }
   const wait = parseWait(e)
   if ('error' in wait) return wait
-  if (row === undefined && !filled(agent) && wait.waits === undefined) {
+  if (!handed && row === undefined && !filled(agent) && wait.waits === undefined) {
     return { error: 'a to-do names who takes it, `row` (a dispatch row) or `agent` (an agent\'s session name), or what it waits on: waits_on, why, until and deadline.' }
   }
   return { owner: { ...(isRowId(row) ? { rows: [row] } : {}), ...(filled(agent) ? { agent: agent.trim() } : {}), ...(wait.waits ? { waits: wait.waits } : {}) } }

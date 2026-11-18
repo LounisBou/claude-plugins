@@ -500,8 +500,17 @@ test('add to another session records the owner in its list', async () => {
   expect((await bare(dollar, { action: 'add', words: 'run the audit', to: 'Coord: general', ...WAIT })).isError).toBe(undefined)
   expect(listOf(files, 'Coord: general').map(item => item.waits?.on)).toEqual([WAIT.waits_on])
   expect((await bare(dollar, { action: 'add', words: 'yours', to: 'Coord: general', agent: 'Coord: general [ref-2]' })).isError).toBe(true)
-  expect((await bare(dollar, { action: 'add', words: 'no owner', to: 'Coord: general' })).isError).toBe(true)
   expect(listOf(files, 'Coord: general')).toHaveLength(1)
+})
+
+test('add to another session needs no owner: the session it is written to takes it; to the caller\'s own name it does', async () => {
+  const { dollar, files, sent } = world()
+  const handed = await bare(dollar, { action: 'add', words: 'run the audit', to: 'Coord: general [ref-2]' })
+  expect(handed.isError).toBe(undefined)
+  expect(listOf(files, 'Coord: general').map(item => [item.words, item.rows, item.agent, item.waits])).toEqual([['run the audit', undefined, undefined, undefined]])
+  expect(sent).toHaveLength(1)
+  expect((await bare(dollar, { action: 'add', words: 'mine', to: 'Orch: billing [ref-1]' })).isError).toBe(true)
+  expect(listOf(files, 'Orch: billing')).toEqual([])
 })
 
 // A world whose clock and prompt the surfacing reads: the prompts it was given, and a submit that may drop.

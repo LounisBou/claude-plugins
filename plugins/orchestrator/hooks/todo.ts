@@ -145,7 +145,7 @@ async function add($: Held, me: { name: string }, e: Record<string, unknown>, no
   if (images !== undefined && !isImageList(images)) return refuse(`images lists the absolute paths of the images he gave, at most ${TODO_IMAGES_MAX}.`)
   const from = holderOf(me.name)
   const to = typeof e['to'] === 'string' ? e['to'].trim() : null
-  const owned = parseOwner(e, to ?? me.name)
+  const owned = parseOwner(e, to ?? me.name, to !== null && holderOf(to) !== from)
   if ('error' in owned) return refuse(owned.error)
   const set = {
     words, said_at: typeof e['said_at'] === 'string' ? e['said_at'].trim() : `${now.toISOString().slice(0, 19)}Z`, from,
@@ -340,7 +340,7 @@ export function register(on: On<Held>): void {
         isDeferred: false,
         description: "Records, as the operator said it, a request of his that will not be done within this turn or that is for another session, and closes it later; it holds this session's `done` while one is open. "
           + 'action: `add` (words: his words as given; said_at: when he said them; to: another session, whose list is written first and which is then sent the message; label: a short name; images: the absolute paths of the images he gave with it; '
-          + 'and who takes it, row: a dispatch row or agent: an agent\'s session name, or what it waits on, waits_on, why, until and deadline: ISO instants; the module surfaces it when either passes), '
+          + 'and, unless to names another session, which then takes it, who takes it, row: a dispatch row or agent: an agent\'s session name, or what it waits on, waits_on, why, until and deadline: ISO instants; the module surfaces it when either passes), '
           + '`row` (id, row: a dispatch row it turned into), `wait` (id, waits_on, why, until, deadline: a new wait), `done` (id, outcome: the proof, a pull request, a file or a row), `drop` (id, words: his words that drop it), `defer` (id, words: his ruling that puts it off), `list`. '
           + 'Only for an orchestrator, a coordinator or an auditor.',
         inputSchema: {
