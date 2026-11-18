@@ -1603,13 +1603,15 @@ export function registerPaneTool(on: On<Held>): void {
 
 // The window's state written at the session's start, fresh or resumed, as a turn's end would write
 // it: a session that takes no turn (a `--resume` that is only re-homed) shows its state all the
-// same, never an empty tab. Mounted beside the supervision like the wake and the pane's tool, whose
+// same, never an empty tab. Only a window that shows none is written: a reload (the host's
+// session.start fires at one too) in the middle of a turn keeps its `busy`, and a window a pull
+// request's read put at `review` or `over` keeps that. Mounted beside the supervision like the wake and the pane's tool, whose
 // register holds no start handler. Bounded, as the first start is awaited; outside a home session
 // nothing is written, and a failure is logged and never fails the start.
 export function registerStartState(on: On<Held>): void {
   on('session.start', {}, async ($, e, next) => {
     try {
-      const shown = await withDeadline(showTurnEnd($), RELAY_BOUND_MS)
+      const shown = await withDeadline(showStartState($), RELAY_BOUND_MS)
       if (isDegradedPass(shown)) await logLine($, 'supervision', `tab-state: did not finish within ${RELAY_BOUND_MS} ms`)
     } catch (err) {
       await logLine($, 'supervision', `tab-state: ${messageOf(err)}`)
@@ -1619,6 +1621,17 @@ export function registerStartState(on: On<Held>): void {
     await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
+}
+
+// A start's write, only on a window that shows no state yet: its own pane is read from the
+// server's panes, the way showPrStates reads them.
+async function showStartState($: Host<'env' | 'fs' | 'plugin' | 'process' | 'session'>): Promise<void> {
+  const tab = await tabOf($)
+  if (!tab) return
+  const listed = await $.process.run(panesArgv(tab.bin, tab.target.socket), { timeoutMs: TMUX_TIMEOUT_MS })
+  if (!listed || listed.exitCode !== 0) throw new Error(`tmux exited ${listed?.exitCode ?? 'without answer'} listing the panes`)
+  if (panesOf(String(listed.stdout ?? '')).some(pane => pane.pane === tab.target.pane && pane.shown !== '')) return
+  await showTurnEnd($)
 }
 
 // `declarations`: the waits this session's turns declared and its successor's spawn (wait.ts), which the turn's end reads.

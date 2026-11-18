@@ -342,10 +342,14 @@ if state_is "$ONE_PANE" idle 30; then SECOND_IDLE=idle; else SECOND_IDLE=$(state
 check "the window reads idle after it" "idle" "$SECOND_IDLE"
 
 echo "== close =="
-# The first agent's session, kept for the resume that takes no turn below (its sid_on is defined
-# further down, so the registry is read here the same way).
-ONE_HOST=$(ps -t "${ONE#/dev/}" -o pid=,command= 2>/dev/null | awk '/--setting-sources project/ { print $1; exit }')
-ONE_SID=$([ -n "$ONE_HOST" ] && jq -r '.sessionId // empty' "$HOSTDIR/sessions/$ONE_HOST.json" 2>/dev/null)
+# The first agent's session, kept for the resume that takes no turn below.
+sid_on() { # <tty>: the session a host process on the tty registered
+  local pid
+  pid=$(ps -t "${1#/dev/}" -o pid=,command= 2>/dev/null | awk '/--setting-sources project/ { print $1; exit }')
+  [ -n "$pid" ] && jq -r '.sessionId // empty' "$HOSTDIR/sessions/$pid.json" 2>/dev/null
+}
+ONE_SID=$(sid_on "$ONE")
+[ -n "$ONE_SID" ] || { echo "refused: the first agent's session was not read from the registry" >&2; exit 1; }
 launcher 20 close --tty "$ONE" --expect-title "Agent: e2e two"
 check "a close whose expected words the window's name does not hold is refused, and the window stays" "1|1|1" \
   "$(rc)|$(grep -c "close: refused: the window on $ONE is named 'Agent: e2e one'" "$STEP.err")|$(windows | grep -c ' Agent: e2e one ')"
@@ -370,12 +374,7 @@ check "the chain holds the replacement's window alone" "tmux:$SOCKET:$W3 $THREE"
   "$(chain | jq -r '"\(.tab_id) \(.tty)"' | paste -sd'|' -)"
 check "window 0 is still the current window" "0 orch 1" "$(windows | awk '$1 == 0 { print $1, $3, $4 }')"
 
-# The session a host process on a tty registered, and how many live processes hold it.
-sid_on() { # <tty>
-  local pid
-  pid=$(ps -t "${1#/dev/}" -o pid=,command= 2>/dev/null | awk '/--setting-sources project/ { print $1; exit }')
-  [ -n "$pid" ] && jq -r '.sessionId // empty' "$HOSTDIR/sessions/$pid.json" 2>/dev/null
-}
+# The session a host process on a tty registered: sid_on, defined before the close; live_rows counts the live processes that hold one.
 live_rows() { # <session id>: the registry's live entries for it, and the name of the last
   local f pid rows=0 name=""
   for f in "$HOSTDIR"/sessions/*.json; do
