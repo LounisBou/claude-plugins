@@ -22,6 +22,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { findingCounts, findingId, parseLensDescription, parseLensFindings } from '../../../core/lens.ts'
 import { moduleDirOf } from '../../../core/orchestration.ts'
 import { firstRepository, makeEvent, remoteUrlsArgv, type Event } from '../../../hooks/collect.ts'
 import { planArchive } from './lib/archive.ts'
@@ -118,7 +119,9 @@ function enrichTurn(line: string, event: Event, config: string): string {
  * transcript (`<session>/subagents/agent-<id>.jsonl`), the calls of the run that ended (those that
  * began within its `duration_ms` of the event, every call before it when it has none): their count,
  * models, last effort and token sums, then one `api_call` line per call, naming the child (`agent`).
- * As it came when the transcript cannot be read.
+ * A review reader (core's lens.ts) also names its lens, pull request and range, read from its
+ * description, and its findings by severity with their ids, read from its last answer, whose words
+ * are not kept. As it came when the transcript cannot be read.
  */
 function enrichSubagent(line: string, event: Event, child: string, config: string): string {
   const path = transcriptOf(config, event.session)
@@ -128,8 +131,8 @@ function enrichSubagent(line: string, event: Event, child: string, config: strin
     const ended = Date.parse(event.ts)
     const duration = event['duration_ms']
     const from = typeof duration === 'number' ? ended - duration - END_SLACK_AFTER_MS : -Infinity
-    const calls = apiCalls(readFileSync(join(dir, `agent-${child}.jsonl`), 'utf8'), { sidechain: true })
-      .filter(call => call.start >= from && call.end <= ended + END_SLACK_AFTER_MS)
+    const body = readFileSync(join(dir, `agent-${child}.jsonl`), 'utf8')
+    const calls = apiCalls(body, { sidechain: true }).filter(call => call.start >= from && call.end <= ended + END_SLACK_AFTER_MS)
     let meta: Record<string, unknown> = {}
     try {
       const parsed: unknown = JSON.parse(readFileSync(join(dir, `agent-${child}.meta.json`), 'utf8'))
@@ -139,6 +142,9 @@ function enrichSubagent(line: string, event: Event, child: string, config: strin
     const models = [...new Set(calls.map(call => call.model).filter((model): model is string => model !== undefined))].sort()
     const stamps = Object.fromEntries(STAMPS.filter(key => event[key] !== undefined).map(key => [key, event[key]]))
     const lines = calls.map(call => JSON.stringify(makeEvent('api_call', call.start, event.session, { agent: child, ...stamps, ...callFields(call) })))
+    const description = string(event['description']) ?? string(meta['description'])
+    const facts = description === undefined ? undefined : parseLensDescription(description)
+    const reader = facts === undefined ? {} : readerFacts(facts, lastAnswer(body, from, ended + END_SLACK_AFTER_MS))
     return [JSON.stringify({
       ...event,
       subagent_type: string(event['subagent_type']) ?? string(meta['agentType']),
@@ -147,9 +153,39 @@ function enrichSubagent(line: string, event: Event, child: string, config: strin
       effort: calls.map(call => call.effort).filter(effort => effort !== undefined).at(-1),
       calls: calls.length,
       totals: callTotals(calls),
+      ...reader,
     }), ...lines].join('\n')
   } catch {
     return line
+  }
+}
+
+/** The text of the last answer a subagent's transcript holds between `from` and `to`; empty when none. */
+function lastAnswer(body: string, from: number, to: number): string {
+  let last = ''
+  for (const line of body.split('\n')) {
+    if (!line.includes('"assistant"')) continue
+    try {
+      const entry = JSON.parse(line) as Record<string, unknown>
+      const at = Date.parse(String(entry['timestamp'] ?? ''))
+      const content = (entry['message'] as Record<string, unknown> | undefined)?.['content']
+      if (entry['type'] !== 'assistant' || !(at >= from && at <= to) || !Array.isArray(content)) continue
+      const text = content.flatMap(block => (typeof block === 'object' && block !== null && (block as Record<string, unknown>)['type'] === 'text' ? [String((block as Record<string, unknown>)['text'] ?? '')] : [])).join('\n')
+      if (text !== '') last = text
+    } catch { /* a line that is no JSON is no answer */ }
+  }
+  return last
+}
+
+/** What a review reader's run end names: its lens, pull request and range, and its findings by severity with their ids. */
+function readerFacts(facts: NonNullable<ReturnType<typeof parseLensDescription>>, answer: string): Record<string, unknown> {
+  const findings = parseLensFindings(answer)
+  return {
+    lens: facts.lens,
+    target: { repo: facts.repo, pr: facts.pr },
+    range: `${facts.base}..${facts.head}`,
+    findings: findingCounts(findings),
+    finding_ids: findings.map(finding => findingId(facts.lens, finding.file, finding.line, finding.claim)),
   }
 }
 

@@ -134,12 +134,31 @@ test('a fail is the review with its counts and the decision on each finding, poi
   const evidence = [{ type: 'record', path: `pr-records/acme/thing/${HEAD}/review-1.json` }]
   expect(events.map(e => [e.v, e.kind, e.fact, e.subject, e.evidence, e.context.role])).toEqual([
     [2, 'review', { verdict: 'fail', kept: 2, set_aside: 1 }, subject, evidence, 'orchestrator'],
-    [2, 'decision', { decision: 'kept', severity: 'critical', file: 'src/a.ts', line: 3 }, subject, evidence, 'orchestrator'],
-    [2, 'decision', { decision: 'kept', severity: null, file: null, line: null }, subject, evidence, 'orchestrator'],
-    [2, 'decision', { decision: 'set-aside', severity: 'minor', file: null, line: null }, subject, evidence, 'orchestrator'],
+    [4, 'decision', { decision: 'kept', severity: 'critical', file: 'src/a.ts', line: 3, finding_id: null, lens: null }, subject, evidence, 'orchestrator'],
+    [4, 'decision', { decision: 'kept', severity: null, file: null, line: null, finding_id: null, lens: null }, subject, evidence, 'orchestrator'],
+    [4, 'decision', { decision: 'set-aside', severity: 'minor', file: null, line: null, finding_id: null, lens: null }, subject, evidence, 'orchestrator'],
   ])
   for (const event of events) expect(parseJournalEvent(event)).toEqual(event)
   expect(JSON.stringify(events).includes('secret')).toBe(false)
+})
+
+test('a decision names the finding\'s id and lens its line of the findings index gives, matched by file and line, then severity', async () => {
+  const fx = fake({ name: 'Orch: belt' })
+  const index = '/tmp/review/index.md'
+  fx.files[index] = [
+    '1. [critical] src/a.ts:3 — the lock is lost — correctness:0123456789 — 1.md',
+    '2. [minor] src/a.ts:3 — a name — tests:abcdefabcd — 2.md',
+    '3. [important] src/c.ts:9 — no id here — 3.md',
+  ].join('\n')
+  const m = mounted()
+  const call = { ...FAIL, findings: index, record: '/r/dispatch.jsonl', row: 4, kept: [{ point: 'x', file: 'src/a.ts', line: 3, severity: 'minor' }, { point: 'y', file: 'src/a.ts', line: 3 }, { point: 'z', file: 'src/c.ts', line: 9 }], set_asides: undefined }
+  await m.on('tool.call', fx.dollar, call, { result: WRITTEN })
+  const decisions = fx.journal().filter(e => e.kind === 'decision').map(e => [e.fact.finding_id, e.fact.lens])
+  expect(decisions).toEqual([['tests:abcdefabcd', 'tests'], ['correctness:0123456789', 'correctness'], [null, null]])
+  // An index that cannot be read leaves the ids unknown, never the decisions.
+  const other = fake({ name: 'Orch: belt' })
+  await m.on('tool.call', other.dollar, call, { result: WRITTEN })
+  expect(other.journal().filter(e => e.kind === 'decision').map(e => e.fact.finding_id)).toEqual([null, null, null])
 })
 
 test('an acceptance over a failed review is the verdict overridden, the method\'s failure', async () => {

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { main, parseArgs, placeholdersOf, TEMPLATE, USAGE } from './review-brief.ts'
+import { parseLensDescription } from '../../../core/lens.ts'
 
 let dir = ''
 const savedMap = process.env['ORCHESTRATOR_MODELS_MAP']
@@ -246,4 +247,14 @@ test('the model follows the tier from the map, is host-default when the tier is 
   const refused = run([...FIELDS(), '--lens', 'tests'])
   assert.equal(refused.code, 2)
   assert.match(refused.err, /^review-brief: resolve-tier: .*does not read as a tier map/)
+})
+
+test('the readers\' description names their pull request and range as facts the module reads, the lens left to the session; none with no lens', () => {
+  assert.equal(run([...FIELDS(), '--lens', 'silent failures', '--base', 'origin/main']).code, 0)
+  const description = readFileSync(join(dir, 'review-12.md'), 'utf8').match(/with the description `([^`]*)`/)?.[1] ?? ''
+  assert.equal(description, 'lens <lens> acme/app#12 origin/main..0123456789ab')
+  assert.deepEqual(parseLensDescription(description.replace('<lens>', 'silent-failures')), { lens: 'silent-failures', repo: 'acme/app', pr: 12, base: 'origin/main', head: '0123456789ab' })
+  rmSync(join(dir, 'review-12.md'))
+  assert.equal(run(FIELDS()).code, 0)
+  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /with the description `none`/)
 })

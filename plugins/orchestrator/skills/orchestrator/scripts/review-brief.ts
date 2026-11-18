@@ -30,6 +30,7 @@ import { isEntry, processIo, type Io } from './lib/process.ts'
 import { fill } from './succession.ts'
 import { diffFiles, modelOf, tierOf, type Tier } from './lens-model.ts'
 import { Refused } from '../../iterm-agents/scripts/tier.ts'
+import { LENS_HEAD_CHARS } from '../../../core/lens.ts'
 
 export const USAGE =
   'usage: review-brief.sh --out <path> --repo <owner/name> --pr <n> --title "<delivery>" --spec <path> --index <path> --delivery-report <path> --branch <b> --head <sha> '
@@ -128,6 +129,8 @@ function values(f: Fields): Record<string, string> {
     ROUND_SIZE_REASON: f.reason,
     LENS_TIER: lensed ? tier : 'none',
     LENS_MODEL: lensed ? modelOf(tier) : 'none',
+    // Core's reader description (lens.ts): the module reads the lens, pull request and range from it.
+    LENS_DESCRIPTION: lensed ? `lens <lens> ${f.repo}#${f.pr} ${f.base}..${f.head.slice(0, LENS_HEAD_CHARS).toLowerCase()}` : 'none',
     LENSES: lensed ? [f.lenses.map(lens => `- ${lens}`).join('\n'), ...(f.scope === '' ? [] : [f.scope])].join('\n\n') : f.scope === '' ? 'none' : `none\n\n${f.scope}`,
     SCREENSHOT_CHECKLIST: CHECKLIST,
     REPORT_PATH: f.index,

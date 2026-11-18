@@ -91,7 +91,7 @@ export interface ReviewSeen {
   readonly repo: unknown
   readonly pr: unknown
   readonly verdict: Verdict
-  readonly findings: readonly { readonly decision: Decision; readonly file: string | null; readonly line: number | null; readonly severity: FindingSeverity | null }[]
+  readonly findings: readonly { readonly decision: Decision; readonly file: string | null; readonly line: number | null; readonly severity: FindingSeverity | null; readonly finding_id?: string | null; readonly lens?: string | null }[]
 }
 
 /**
@@ -108,7 +108,7 @@ export function reviewEvents(stamp: Stamp, seen: ReviewSeen, answer: string, con
   return [
     ...audit(stamp, 'review', 'orchestrator.review.verdict', { verdict: seen.verdict, kept: count('kept'), set_aside: count('set-aside') }, extra),
     ...seen.findings.flatMap(finding => {
-      const fact = { decision: finding.decision, severity: finding.severity, file: finding.file, line: finding.line }
+      const fact = { decision: finding.decision, severity: finding.severity, file: finding.file, line: finding.line, finding_id: finding.finding_id ?? null, lens: finding.lens ?? null }
       // A file the contract does not take as a path is left out rather than losing the decision.
       const written = audit(stamp, 'decision', 'orchestrator.review.decision', fact, extra)
       return written.length > 0 ? written : audit(stamp, 'decision', 'orchestrator.review.decision', { ...fact, file: null }, extra)
