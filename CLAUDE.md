@@ -23,9 +23,11 @@ A monorepo of independent Claude Code plugins under `plugins/<name>/`.
   `npm run marketplace` (`npm run version-bump -- <last-release-ref>` checks it). Never edit the
   catalogue's `plugins` list by hand.
 - Conventional commits, scoped by plugin (`fix(github): …`) or repository part (`ci`, `core`, `docs`).
-- This repository is in auto-merge: the session that opens a pull request merges it, with a
-  merge commit, once the repository rules and the blocking suites (`ci/plugins.json`) pass. What
-  CI runs, and when, is in `docs/architecture.md`, « What CI holds ».
+- This repository is in auto-merge, with a merge commit, once the repository rules and the blocking
+  suites (`ci/plugins.json`) pass. A pull request dispatched by an orchestrator is merged by that
+  orchestrator, never by its agent; a session working alone merges its own. The method is in
+  `docs/conventions.md`, « What the method is »; what CI runs, and when, is in
+  `docs/architecture.md`, « What CI holds ».
 - The repository's objectives are `docs/objectives.md`; changes here are made in simple sessions (one session per change: tests, pull request, `/code-review`, merge on green CI).
 - Each change is one pull request, with one review, green CI and auto-merge.
 - A friction met only while working on claude-plugins becomes no new rule, guard, gate or check of
