@@ -460,6 +460,16 @@ from ghlib import fmt
 ci = fmt.gate_ci({"statuses": [{"context": "legacy", "state": "success"}]}, [], False, {})
 print(ci["result"], ci["total"])
 ' "$GHDIR")"
+# The checks it counted, each with its bucket and link: the one reading its callers classify, never a second read of CI.
+check "gate_ci lists each check it counted with its bucket and link" "a:pass:https://x/actions/runs/1/job/1 b:fail:https://x/actions/runs/2/job/2 n:skipping: c:pending: legacy:pass:https://s" \
+  "$(python3 -c '
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+runs = json.loads(sys.argv[2])
+ci = fmt.gate_ci({"statuses": [{"context": "legacy", "state": "success", "target_url": "https://s"}]}, runs, False, {})
+print(" ".join("%s:%s:%s" % (c["name"], c["bucket"], c["link"]) for c in ci["checks"]))
+' "$GHDIR" '[{"id":1,"name":"a","status":"completed","conclusion":"success","details_url":"https://x/actions/runs/1/job/1"},{"id":2,"name":"b","status":"completed","conclusion":"cancelled","details_url":"https://x/actions/runs/2/job/2"},{"id":3,"name":"n","status":"completed","conclusion":"skipped"},{"id":4,"name":"c","status":"queued"}]')"
 check "open-threads keeps only unresolved" "1" \
   "$(render open-threads '[{"id":"a","isResolved":false},{"id":"b","isResolved":true}]' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 check "resolve-status" "resolved" "$(render resolve-status '{"resolveReviewThread":{"thread":{"isResolved":true}}}')"

@@ -10,7 +10,7 @@ import { setting, stateDir, type Env } from '../../../core/paths.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { ENV } from '../../../core/env.ts'
 import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
-import { CI_WATCH_DIR, ciWatchLogPath, MODULE_DIR } from '../../../core/orchestration.ts'
+import { CI_GATE_DIR, ciGatePath, CI_WATCH_DIR, ciWatchLogPath, MODULE_DIR } from '../../../core/orchestration.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import { auditRun, fullHead, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 
@@ -147,12 +147,48 @@ export function logPath(options: Options, base: boolean): string {
   return ciWatchLogPath(options.stateDir, options.repo, options.pr, base)
 }
 
-/** Counts the `bucket<TAB>name` lines of `buckets` in `bucket`, among `names` when given. */
-export function countBucket(buckets: string, bucket: string, names?: ReadonlySet<string>): number {
-  return buckets.split('\n').filter(line => {
-    const [b, name = ''] = line.split('\t')
-    return b === bucket && (names === undefined || names.has(name))
-  }).length
+/** One check the gate counted: its name and bucket (pass, fail, pending, skipping). */
+export interface GateCheck { readonly name: string; readonly bucket: string }
+
+/** Counts the gate's checks in `bucket`, among `names` when given. */
+export function countBucket(checks: readonly GateCheck[], bucket: string, names?: ReadonlySet<string>): number {
+  return checks.filter(check => check.bucket === bucket && (names === undefined || names.has(check.name))).length
+}
+
+/** The gate's reading of CI at a head, as the watch decides on it. */
+export interface GateCi {
+  /** The repository the gate read, `owner/name`, when it names one. */
+  readonly repo?: string
+  /** The head the gate read. */
+  readonly head: string | undefined
+  readonly result: string
+  readonly running: number
+  readonly unverified: boolean
+  readonly failed: readonly string[]
+  readonly checks: readonly GateCheck[]
+  /** The answer as the gate gave it, for the draft guard's stdin. */
+  readonly raw: string
+}
+
+/** The gate's JSON answer read; null when it has no CI result. */
+export function parseGate(stdout: string): GateCi | null {
+  interface Answer { readonly repo?: unknown; readonly head?: unknown; readonly ci?: { readonly result?: unknown; readonly running?: unknown; readonly unverified?: unknown; readonly failed?: unknown; readonly checks?: unknown } }
+  let gate: Answer | null = null
+  try {
+    gate = JSON.parse(stdout) as Answer | null
+  } catch {
+    return null
+  }
+  const ci = gate?.ci
+  if (typeof ci?.result !== 'string' || typeof ci.running !== 'number') return null
+  const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
+  const checks = Array.isArray(ci.checks)
+    ? (ci.checks as { readonly name?: unknown; readonly bucket?: unknown }[]).flatMap(check => (typeof check?.name === 'string' && typeof check.bucket === 'string' ? [{ name: check.name, bucket: check.bucket }] : []))
+    : []
+  return {
+    ...(typeof gate?.repo === 'string' ? { repo: gate.repo } : {}), head: typeof gate?.head === 'string' ? gate.head : undefined, result: ci.result, running: ci.running,
+    unverified: strings(ci.unverified).length > 0, failed: strings(ci.failed), checks, raw: stdout,
+  }
 }
 
 export interface Deps {
@@ -190,42 +226,50 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     return parseView(out)
   }
 
-  const draftGuard = async (...args: string[]): Promise<string> => {
+  // The draft guard classifies the gate's answer, given on its stdin: it reads no check itself.
+  const draftGuard = async (gate: GateCi, ...args: string[]): Promise<string> => {
     const name = resolved
     if (name === undefined || name === '') throw unread(pr, 'gh repo view failed: no repository read')
-    const ran = await deps.run([...deps.draftGuard, name, pr, ...args], { stderr: 'pipe' })
+    const ran = await deps.run([...deps.draftGuard, name, pr, ...args], { stderr: 'pipe', input: gate.raw })
     if (ran.status !== 0) throw unread(pr, firstLine(ran.stderr) || 'draft guard failed')
     return chomp(ran.stdout)
   }
 
-  // Whether the head's CI is still to come, as the github plugin's gate counts it: its result is
-  // PENDING and a check runs (a required check not yet reported being one), or the gate could not
-  // read the checks the base requires (`unverified`: green cannot be told), or it speaks of another
-  // head than the one watched. A head with a third-party check alone (a secret scanner) answers yes
-  // until the repository's own run has registered.
-  const awaitsCi = async (name: string, head: string): Promise<boolean> => {
+  // CI at the head, as the github plugin's gate reads it: the one reading the watch decides on.
+  const readCi = async (name: string): Promise<GateCi> => {
     const ran = await deps.gate(name, pr)
     if (ran.status !== 0) throw unread(pr, `pr-gate failed: ${firstLine(ran.stderr) || 'no answer'}`)
-    interface Gate { readonly head?: unknown; readonly ci?: { readonly result?: unknown; readonly running?: unknown; readonly unverified?: unknown } }
-    let gate: Gate | null = null
-    try {
-      gate = JSON.parse(ran.stdout) as Gate | null
-    } catch {
-      // As an answer with no `ci`: refused below.
-    }
-    const ci = gate?.ci
-    if (typeof ci?.result !== 'string' || typeof ci.running !== 'number') throw unread(pr, 'pr-gate failed: an answer with no ci result')
-    // A verdict of another head is none: the head is read again before the gate is asked once more.
-    if (typeof gate?.head === 'string' && gate.head.toLowerCase() !== head.toLowerCase()) return true
-    return ci.result === 'PENDING' && (ci.running > 0 || (Array.isArray(ci.unverified) && ci.unverified.length > 0))
+    const ci = parseGate(ran.stdout)
+    if (ci === null) throw unread(pr, 'pr-gate failed: an answer with no ci result')
+    keepGate(ci, name)
+    return ci
   }
 
-  const failingNames = async (): Promise<string> =>
-    (await gh(['pr', 'checks', pr, '--json', 'name,bucket', '--jq', '.[] | select(.bucket == "fail" or .bucket == "cancel") | .name'])).stdout
+  /*
+   * The gate's answer kept whole, the last one replacing the one before (core's ciGatePath): the
+   * delivery's facts line reads CI there and asks GitHub nothing. A write that fails stops no watch;
+   * the facts line then finds no reading at the head and says CI unread.
+   */
+  const keepGate = (ci: GateCi, name: string): void => {
+    try {
+      mkdirSync(join(options.stateDir, CI_GATE_DIR), { recursive: true })
+      writeAtomic(ciGatePath(options.stateDir, ci.repo ?? name, pr), ci.raw)
+    } catch {
+      // Said by the facts line, which finds no reading at the head.
+    }
+  }
 
-  const checksWatch = async (draft: boolean, append: boolean): Promise<number> => {
-    const ran = await gh(['pr', 'checks', pr, '--watch', ...(draft ? [] : ['--fail-fast']), '--interval', interval], { log: { path: log, append } })
-    return ran.status ?? 1
+  // Whether the head's CI is still to come: the gate speaks of another head than the one watched (it
+  // is read again), or no verdict is in and a check runs (a required check not yet reported being
+  // one) or the checks the base requires are unread (`unverified`: green cannot be told). A head with
+  // a third-party check alone (a secret scanner) answers yes until the repository's own run has registered.
+  const awaitsCi = (ci: GateCi, head: string): boolean =>
+    (ci.head !== undefined && ci.head.toLowerCase() !== head.toLowerCase())
+    || (ci.result !== 'SUCCESS' && ci.result !== 'NONE' && (ci.running > 0 || ci.unverified))
+
+  // `gh pr checks --watch` only waits: its exit code decides nothing, the gate's reading does.
+  const checksWatch = async (draft: boolean, append: boolean): Promise<void> => {
+    await gh(['pr', 'checks', pr, '--watch', ...(draft ? [] : ['--fail-fast']), '--interval', interval], { log: { path: log, append } })
   }
 
   const ensureLogDir = (): void => {
@@ -309,18 +353,6 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     }
   }
 
-  // After a watch that exited non-zero on a draft: when at least one check fails and every failing
-  // one is a draft guard, the watch counts as a pass and the green path goes on. A watch that
-  // failed with no failing check (an API error) is no pass: it takes the path of a non-draft.
-  // `settled` records that a draft was settled on its guards: its green then needs a job behind one.
-  const settleDraft = async (code: number, current: PullRequest): Promise<number> => {
-    if (code === 0 || !current.draft) return code
-    if ((await draftGuard()) !== '') return code
-    if (chomp(await failingNames()) === '') return code
-    settled = true
-    return 0
-  }
-
   // The pull request read again: closed, merged or moved ends the watch here.
   const reread = async (first: string): Promise<PullRequest> => {
     const current = await readPr()
@@ -375,21 +407,31 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   } else {
     rmSync(`${log}.session`, { force: true })
   }
-  let code = await checksWatch(current.draft, false)
-
+  await checksWatch(current.draft, false)
   // One read, now that the watch returned: the pull request may have been closed or moved.
   current = await reread(first)
-  code = await settleDraft(code, current)
 
-  // The watch returns once the checks it knows are done, and a slower workflow's checks may not
-  // be registered yet: every workflow run of the head is read, each one unfinished is watched to
-  // its end, and once none is, the checks are watched again, a late one read like the others.
-  // The bound restarts whenever a run is watched for the first time; a run already watched and
-  // still listed unfinished is polled within it.
+  // The gate decides: a failure is a red at once, unless the pull request is a draft and every
+  // failing check is a draft guard (`settled`: its green then needs a job behind one). The watch
+  // returns once the checks it knows are done, and a slower workflow's checks may not be
+  // registered yet: every workflow run of the head is read, each one unfinished is watched to its
+  // end, and once none is, the checks are watched again. The bound restarts whenever a run is
+  // watched for the first time; a run already watched and still listed unfinished is polled within it.
   deadline = deps.now() + options.registerWait * 1000
   const seen = new Set<string>()
   let waited = false
-  while (code === 0) {
+  let ci: GateCi
+  for (;;) {
+    ci = await readCi(resolved)
+    // A verdict of another head is none: the head is read again before the gate is asked once more.
+    const ours = ci.head === undefined || ci.head.toLowerCase() === current.head.toLowerCase()
+    settled = false
+    if (ours && ci.result === 'FAILURE') {
+      const names = joinNames(current.draft ? await draftGuard(ci) : ci.failed.join('\n'))
+      if (names !== '') return new Said(`red ${pr} ${current.head} ${names}`, 1)
+      if (!current.draft) throw unread(pr, 'pr-gate read FAILURE with no failing check named')
+      settled = true
+    }
     const listing = await gh(['run', 'list', '--commit', current.head, '--json', 'databaseId,status', '--jq', '.[] | select(.status != "completed") | .databaseId'], { stderr: 'pipe' })
     if (listing.status !== 0) throw fail('gh run list', listing)
     const pending = listing.stdout.split(/\s+/).filter(Boolean)
@@ -413,58 +455,39 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
       }
       continue
     }
-    if (!waited) {
-      // Every run listed is done and the checks passed: green only once the gate awaits no more CI.
-      // The head may move meanwhile, and the bound is the one a run is waited for within.
-      if (!(await awaitsCi(resolved, current.head))) break
-      if (deps.now() >= deadline) return new Said(`no-checks ${pr} ${current.head}`, 2)
-      await sleep(deadline)
+    if (waited) {
+      waited = false
+      await checksWatch(current.draft, true)
       current = await reread(first)
       continue
     }
-    waited = false
-    code = await checksWatch(current.draft, true)
+    // Every run listed is done: the verdict once the gate awaits no more CI, within the bound.
+    if (!awaitsCi(ci, current.head)) break
+    if (deps.now() >= deadline) return new Said(`no-checks ${pr} ${current.head}`, 2)
+    await sleep(deadline)
     current = await reread(first)
-    code = await settleDraft(code, current)
   }
 
-  let names: string
-  if (code === 0) {
-    // The watch exits 0 when no check is in the `fail` bucket, a cancelled one included: a check
-    // whose job was never run is no green, so the buckets are read once before saying so.
-    const read = await gh(['pr', 'checks', pr, '--json', 'name,bucket', '--jq', '.[] | .bucket + "\\t" + .name'], { stderr: 'pipe' })
-    const buckets = chomp(read.stdout)
-    if (read.status !== 0 || buckets === '') throw fail('gh pr checks', read)
-    names = joinNames(buckets.split('\n').filter(line => line.split('\t')[0] === 'cancel').map(line => line.split('\t')[1] ?? '').join('\n'))
-    // Nor is a head where no check passed: every one skipped, or failed as a draft guard the
-    // draft settled, means nothing ran, and that is said as no checks.
-    let passed = countBucket(buckets, 'pass')
-    const skipped = countBucket(buckets, 'skipping')
-    if (settled && current.draft) {
-      // A draft settled on its guards: a check that needs none of them proves nothing ran.
-      passed = countBucket(buckets, 'pass', new Set((await draftGuard('--dependents')).split('\n').filter(Boolean)))
+  // GitHub starts no workflow run on a conflicting pull request: what passed is an external check
+  // at most, and the suites never ran. Auto-merge will never merge it either, so no wait.
+  if (current.conflicting) return new Said(`no-checks ${pr} ${current.head} conflicting`, 2)
+  if (options.base && current.auto) {
+    // Auto-merge will merge: wait for it, bounded, and follow the base branch.
+    const until = deps.now() + options.mergeWait * 1000
+    while (deps.now() < until) {
+      await sleep(until)
+      current = await reread(first)
+      if (!current.auto) break
     }
-    if (names === '') {
-      // GitHub starts no workflow run on a conflicting pull request: what passed is an external check
-      // at most, and the suites never ran. Auto-merge will never merge it either, so no wait.
-      if (current.conflicting) return new Said(`no-checks ${pr} ${current.head} conflicting`, 2)
-      if (options.base && current.auto) {
-        // Auto-merge will merge: wait for it, bounded, and follow the base branch.
-        const until = deps.now() + options.mergeWait * 1000
-        while (deps.now() < until) {
-          await sleep(until)
-          current = await reread(first)
-          if (!current.auto) break
-        }
-      }
-      if (passed <= 0) return new Said(`no-checks ${pr} ${current.head} skipped=${skipped}`, 2)
-      return new Said(`green ${pr} ${current.head} ${gateCall(pr, options.repo)}`, 0)
-    }
-  } else {
-    names = joinNames(current.draft ? await draftGuard() : await failingNames())
-    if (names === '') throw unread(pr, `gh pr checks --watch exited ${code} with no failing check named (log: ${log})`)
   }
-  return new Said(`red ${pr} ${current.head} ${names}`, 1)
+  const skipped = countBucket(ci.checks, 'skipping')
+  // A draft settled on its guards: green only when a check that needs one of them passed. Any
+  // other head is green only as the gate reads it: one where nothing proved anything is no checks.
+  const green = settled
+    ? countBucket(ci.checks, 'pass', new Set((await draftGuard(ci, '--dependents')).split('\n').filter(Boolean))) > 0
+    : ci.result === 'SUCCESS'
+  if (!green) return new Said(`no-checks ${pr} ${current.head} skipped=${skipped}`, 2)
+  return new Said(`green ${pr} ${current.head} ${gateCall(pr, options.repo)}`, 0)
 }
 
 /**

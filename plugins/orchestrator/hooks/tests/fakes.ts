@@ -124,7 +124,7 @@ export function prQueryRun(
     const node = (item: { number: number; createdAt?: string; labels?: { name: string }[]; mergeable?: string; sha?: string; base?: string; baseSha?: string }, state = 'OPEN') => ({
       number: item.number, state, isDraft: false, createdAt: item.createdAt ?? null, headRefName: `b${item.number}`, headRefOid: item.sha ?? 'a'.repeat(40),
       baseRefName: item.base ?? 'main', baseRefOid: item.baseSha ?? 'c'.repeat(40),
-      mergeable: item.mergeable ?? null, author: { login: 'me' }, labels: { nodes: item.labels ?? [] }, commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] },
+      mergeable: item.mergeable ?? null, author: { login: 'me' }, labels: { nodes: item.labels ?? [] },
     })
     const answer: Record<string, unknown> = { open: { pageInfo: { hasNextPage: false }, nodes: items.map(item => node(item)) } }
     for (const [, n = ''] of part.matchAll(/\bn(\d+):pullRequest/g)) {

@@ -4274,9 +4274,11 @@ rm -rf "$SWEEP"
 echo "== draft guard =="
 # A failing check of a draft pull request is a draft guard when the job that produced it tests
 # the draft flag in its own definition. `draft-guard.sh` reads the run behind the check's link,
-# the workflow file at the run's head and, for a local reusable workflow, the called file. A fake
-# `gh` answers from files: `api` from DGA (the run, the contents), `pr view` and `pr checks` from
-# the files of DG. The fixtures are shared with the cases of ci-watch and of the stop gate below.
+# the workflow file at the run's head and, for a local reusable workflow, the called file. It reads
+# no check itself: the github gate's answer comes on its stdin, built here from the files of DG
+# (`view`, the draft flag; `checks`, the gate's `ci.checks`, whose `fail` and `cancel` names are its
+# `ci.failed`). A fake `gh` answers `api` from DGA (the run, the contents). The fixtures are shared
+# with the cases of ci-watch and of the stop gate below.
 DG="$WORK/draft-guard"; DGA="$DG/api"; DGB="$DG/bin"; DGS="$DG/state"
 mkdir -p "$DGA" "$DGB" "$DGS"
 DGSCRIPT="$ROOT/skills/orchestrator/scripts/draft-guard.sh"
@@ -4345,8 +4347,6 @@ cat > "$DGB/gh" <<EOF
 #!/bin/bash
 echo "\$*" >> "$DG/gh-calls"
 case "\$1 \$2" in
-  "pr view") [ -f "$DG/view" ] || { echo "gh: HTTP 502" >&2; exit 1; }; cat "$DG/view" ;;
-  "pr checks") [ -f "$DG/checks" ] || { echo "gh: HTTP 502" >&2; exit 1; }; cat "$DG/checks" ;;
   "api "*) f="$DGA/\$(printf '%s' "\$2" | tr '/?=@' '____')"; [ -f "\$f" ] && cat "\$f" || { echo "gh: HTTP 404" >&2; exit 1; } ;;
   *) exit 1 ;;
 esac
@@ -4354,7 +4354,12 @@ EOF
 chmod +x "$DGB/gh"
 # dg_raw: the command's stdout, its exit code; dg <draft: true|false> <checks, a JSON array>: the
 # names it printed joined by `, `, then the exit code.
-dg_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" bash "$DGSCRIPT" acme/thing 7 2>"$DG/stderr"; }
+# dg_gate: the gate's answer from `view` and `checks`, nothing when either is missing.
+dg_gate() {
+  [ -f "$DG/view" ] && [ -f "$DG/checks" ] || return 0
+  jq -c --slurpfile c "$DG/checks" '{draft: .isDraft, ci: {failed: [$c[0][] | select(.bucket == "fail" or .bucket == "cancel") | .name], checks: $c[0]}}' "$DG/view"
+}
+dg_raw() { dg_gate | env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" bash "$DGSCRIPT" acme/thing 7 2>"$DG/stderr"; }
 dg() {
   local out rc
   printf '{"isDraft": %s}\n' "$1" > "$DG/view"; printf '%s\n' "$2" > "$DG/checks"
@@ -4410,7 +4415,7 @@ check "an entry older than seven days is removed when one is written, a fresh on
 dg_reset
 printf '[%s]\n' "$C_WIP" > "$DG/checks"
 dg_out=$(dg_raw); dg_rc=$?
-check "gh failing (the draft flag unread): exit 5, nothing on stdout, one line on stderr" "|5|1" \
+check "no gate answer on stdin: exit 5, nothing on stdout, one line on stderr" "|5|1" \
   "$dg_out|$dg_rc|$(grep -c . "$DG/stderr")"
 
 # A trailing comment is no part of the definition; a draft test written only in one is no guard.
@@ -4520,7 +4525,7 @@ C_BUILD_N=$(dg_pass build 570 9101); C_LINT_N=$(dg_pass lint 570 9102); C_DEPLOY
 C_DOCS_N=$(dg_pass docs 570 9104)
 C_EXT_P='{"name": "secrets", "bucket": "pass", "link": "https://ci.example.com/scan/4"}'
 C_NOREAD_P=$(dg_pass build 558 9105)
-dg_dep_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" bash "$DGSCRIPT" acme/thing 7 --dependents 2>"$DG/stderr"; }
+dg_dep_raw() { dg_gate | env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" bash "$DGSCRIPT" acme/thing 7 --dependents 2>"$DG/stderr"; }
 dg_dep() {  # <draft: true|false> <checks, a JSON array>: the names printed joined by `, `, then the exit code
   local out rc
   printf '{"isDraft": %s}\n' "$1" > "$DG/view"; printf '%s\n' "$2" > "$DG/checks"
@@ -4548,7 +4553,7 @@ check "--dependents on a pull request that is no draft: nothing printed, no run 
 dg_reset
 printf '[%s]\n' "$C_BUILD_N" > "$DG/checks"
 dg_out=$(dg_dep_raw); dg_rc=$?
-check "--dependents with gh failing: exit 5, nothing on stdout, one line on stderr" "|5|1" \
+check "--dependents with no gate answer on stdin: exit 5, nothing on stdout, one line on stderr" "|5|1" \
   "$dg_out|$dg_rc|$(grep -c . "$DG/stderr")"
 
 echo "== ci-watch =="
@@ -4640,17 +4645,40 @@ case "\$1 \$2" in
 esac
 EOF
 chmod +x "$CWB/gh"
-# The github plugin's engine, as the script finds it (CLAUDE_GITHUB_ROOT): its `pr-gate` answers
-# `<RESULT>:<running>` from the file `gate` beside it, as the gate's JSON, `fail` for a failed read.
+# The github plugin's engine, as the script finds it (CLAUDE_GITHUB_ROOT): its `pr-gate` is the one
+# reading of CI the watch decides on. It answers from the files beside it: `gate`, one line per read,
+# the last one repeated (`<RESULT>:<running>`, `fail` for a failed read, or empty), and the fixture's
+# `buckets`, `failing`, `checks-link` (the links of the checks) and `view` (the draft flag). Its
+# `ci.checks` are the `buckets` (a cancelled one a failure) and the `failing` names, each with its
+# link from `checks-link`; its `ci.failed` the failed ones; an empty `gate` line reads FAILURE on a
+# failure, PENDING when nothing passed and something was skipped, SUCCESS otherwise.
 mkdir -p "$CW/github/engine"
 cat > "$CW/github/engine/gh.py" <<'GATEPY'
 import json, os, sys
-answer = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gate")).read().strip()
+here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+cw = os.path.join(here, "..")
+def lines(name):
+    path = os.path.join(cw, name)
+    return [l for l in open(path).read().split("\n") if l] if os.path.exists(path) else []
+reads = open(os.path.join(here, "gate")).read().split("\n")[:-1] or [""]
+count = os.path.join(here, "gate-n")
+n = int(open(count).read()) if os.path.exists(count) else 0
+open(count, "w").write(str(n + 1))
+answer = reads[min(n, len(reads) - 1)].strip()
 if answer == "fail":
     sys.stderr.write("error: no GitHub token\n")
     sys.exit(3)
-result, running = answer.split(":")
-print(json.dumps({"ci": {"result": result, "running": int(running)}}))
+links = {c["name"]: c.get("link", "") for c in json.load(open(os.path.join(cw, "checks-link")))} if os.path.exists(os.path.join(cw, "checks-link")) else {}
+named = [(l.rpartition(":")[0], l.rpartition(":")[2]) for l in lines("buckets")] + [(n, "fail") for n in lines("failing")]
+checks = [{"name": n, "bucket": "fail" if b == "cancel" else b, "link": links.get(n, "")} for n, b in named]
+failed = list(dict.fromkeys(c["name"] for c in checks if c["bucket"] == "fail"))
+result, _, running = answer.partition(":")
+if not result:
+    passed = any(c["bucket"] == "pass" for c in checks)
+    skipped = any(c["bucket"] == "skipping" for c in checks)
+    result = "FAILURE" if failed else "PENDING" if skipped and not passed else "SUCCESS"
+draft = any("draft" in l for l in lines("view")[-1:])
+print(json.dumps({"draft": draft, "ci": {"result": result, "running": int(running or 0), "failed": failed if result == "FAILURE" else [], "checks": checks}}))
 GATEPY
 HA=aaaa1111bbbb2222cccc3333dddd4444eeee5555
 HB=bbbb2222cccc3333dddd4444eeee5555ffff6666
@@ -4678,7 +4706,7 @@ cw() {
   [ -z "$reg" ] || printf '%b\n' "$reg" > "$CW/reg"
   [ -z "$failing" ] || printf '%b\n' "$failing" > "$CW/failing"
   printf '%b\n' "$code" > "$CW/watch-code"
-  printf '%s\n' "${CW_GATE:-SUCCESS:0}" > "$CW/github/gate"
+  printf '%b\n' "${CW_GATE:-}" > "$CW/github/gate"; rm -f "$CW/github/gate-n"
   out=$(env -u CLAUDE_CODE_SESSION_ID ${sid[@]+"${sid[@]}"} PATH="$CWB:$PATH" CLAUDE_GITHUB_ROOT="$CW/github" ORCHESTRATOR_STATE_DIR="$CWS" CI_WATCH_REGISTER_WAIT="${CW_WAIT:-2}" \
     CI_WATCH_BASE_WAIT="${CW_BASE_WAIT:-2}" CI_WATCH_MERGE_WAIT="${CW_MERGE_WAIT:-4}" CI_WATCH_BASE_WORKFLOWS="${CW_BASE_WORKFLOWS:-}" bash "$CWSCRIPT" "$@" 2>/dev/null); rc=$?
   printf '%s|%s' "$out" "$rc"
@@ -4705,18 +4733,18 @@ check "a conflicting pull request over a passing external check is no green: no-
   "$(CW_BUCKETS="GitGuardian:pass" cw "OPEN $HA conflicting" "1" 0 "" 7 --interval 1)"
 # A head whose only check is a third-party one (a secret scanner) is no green while the gate still
 # counts a required check as running: the repository's own run has not registered, so after the
-# bound the line is no-checks, not green; with nothing awaited it is green, and a failed gate read is unread.
+# bound the line is no-checks, not green; with nothing awaited and no SUCCESS it is no-checks too, and a failed gate read is unread.
 check "a head with a third-party check alone, the gate awaiting the required one: no-checks, exit 2" "ci-watch: no-checks 7 $HA|2" \
   "$(CW_GATE="PENDING:1" CW_BUCKETS="GitGuardian:pass" cw "OPEN $HA" "1" 0 "" 7 --interval 1)"
-check "the gate awaiting nothing, though PENDING: green" "ci-watch: green 7 $HA $CWGATE|0" \
+check "the gate awaiting nothing, though PENDING: no green, no-checks, exit 2" "ci-watch: no-checks 7 $HA skipped=0|2" \
   "$(CW_GATE="PENDING:0" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 check "a gate read that fails is unread, exit 5" "ci-watch: unread 7 pr-gate failed: error: no GitHub token|5" \
   "$(CW_GATE="fail" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 # A slower workflow's checks are not registered yet when a faster one's are done: the watch
 # exits 0 over the checks it knows, so the head's workflow runs are read before any green, and
 # a run still going is watched to its end, then the checks are watched again.
-check "a run of the head unfinished at a passing watch, then a failing check: red, exit 1" "ci-watch: red 7 $HA e2e|1" \
-  "$(CW_HEAD_RUNS="201:completed;202:in_progress\n201:completed;202:completed" cw "OPEN $HA" "2" "0\n1" "e2e" 7 --interval 1)"
+check "a run of the head unfinished while the gate awaits it, then a failure the gate reads: red, exit 1" "ci-watch: red 7 $HA e2e|1" \
+  "$(CW_GATE="PENDING:1\nPENDING:1\nFAILURE:0" CW_HEAD_RUNS="201:completed;202:in_progress\n201:completed;202:completed" cw "OPEN $HA" "2" 0 "e2e" 7 --interval 1)"
 check "the unfinished run is watched, then the checks once more" "1|0|2" \
   "$(grep -c '^run watch 202' "$CW/gh-calls")|$(grep -c '^run watch 201' "$CW/gh-calls")|$(grep -c -e '--watch' "$CW/gh-calls")"
 check "the head's runs are read at the head" "2" "$(grep -c "^run list --commit $HA --json databaseId,status" "$CW/gh-calls")"
@@ -4740,8 +4768,9 @@ check "the head's run watch never reaches stdout, it lands in the pull request's
   "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA" "2" 0 "" 7 --interval 1 | grep -c RUN-WATCH-MARKER)|$(grep -c RUN-WATCH-MARKER "$CWS/ci-watch/here-pr7.log")"
 # The base branch's checks below count the logs holding a run watch's output: start them clean.
 rm -rf "$CWS/ci-watch"
-check "unread: the buckets cannot be read after the watch, exit 5" "ci-watch: unread 7 gh pr checks failed: gh: HTTP 502|5" \
-  "$(CW_BUCKETS=fail cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
+# The verdict is the gate's alone: gh pr checks counts the checks registered and waits, nothing more.
+check "no bucket read after the watch: gh pr checks counts and watches only" "ci-watch: green 7 $HA $CWGATE|0|0" \
+  "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep '^pr checks' "$CW/gh-calls" | grep -vc -e '--json name --jq length' -e '--watch')"
 check "no checks within the bound: exit 2" "ci-watch: no-checks 7 $HA|2" \
   "$(cw "OPEN $HA" "none" 0 "" 7 --interval 1)"
 check "and the watch never started" "0" "$(grep -c -e '--watch' "$CW/gh-calls")"
@@ -4838,8 +4867,12 @@ check "unread: the pull request cannot be read, exit 5" "ci-watch: unread 7 gh p
   "$(cw "" "2" 0 "" 7 --interval 1)"
 check "unread: the registration read fails, exit 5" "ci-watch: unread 7 gh pr checks failed: error connecting to api.github.com|5" \
   "$(cw "OPEN $HA" "fail" 0 "" 7 --interval 1)"
-check "unread: the watch fails with no failing check named, exit 5" "5" \
+check "a watch that fails with no failure the gate reads decides nothing: green" "0" \
   "$(cw "OPEN $HA" "2" 4 "" 7 --interval 1 | sed 's/.*|//')"
+# A rerun the gate leaves out (cancelled, superseded by a newer run of its workflow) fails the
+# --fail-fast watch, and gh pr checks still names it failing: the gate reads the head green.
+check "a cancelled run the gate leaves out is no red: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
+  "$(CW_GATE="SUCCESS:0" CW_BUCKETS="build:cancel\nbuild:pass" cw "OPEN $HA" "2" 1 "build" 7 --interval 1)"
 check "the repository is passed on to every gh call" "0" \
   "$(cw "OPEN $HA" "2" 0 "" 7 --repo o/r --interval 1 >/dev/null; grep -vc -e '-R o/r' "$CW/gh-calls")"
 check "the repository is passed on to every gh call of the base branch's follow" "0" \
@@ -4891,16 +4924,14 @@ check "the same failures on a pull request that is no draft: red naming both, --
   "$(rm -rf "$CWS/draft-guard"; cw "OPEN $HA" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1)|$(grep -c -e '--fail-fast' "$CW/gh-calls")|$(grep -c '^api' "$CW/gh-calls")"
 check "a pull request made ready during the watch reads its guard as a red" "ci-watch: red 7 $HA wip-check / wip-check, tests|1" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD\nOPEN $HA" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1)"
-# A watch that exits non-zero names no failing check when `gh` itself failed (an API error): that is
-# no draft guard, so it must not settle to a pass.
+# The watch's exit code decides nothing: a draft whose watch exits non-zero with no failure the gate
+# reads is the gate's green.
 printf '[%s]\n' "$C_PASS" > "$CW/checks-link"
-check "a draft whose watch exits non-zero with no failing check is not green: unread, exit 5" "5" \
+check "a draft whose watch exits non-zero with no failure the gate reads: green, exit 0" "0" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "" 7 --interval 1 | sed 's/.*|//')"
-check "and its report never says green" "0" \
-  "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "" 7 --interval 1 | grep -c 'ci-watch: green')"
 rm -f "$CW/checks-link"
-check "a draft whose failing checks cannot be classified: unread, exit 5" "ci-watch: unread 7 draft_guard|5" \
-  "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1 | sed 's/\(draft_guard\).*|/\1|/')"
+check "a draft whose failing check cannot be classified is no guard: a red naming it, exit 1" "ci-watch: red 7 $HA wip-check / wip-check|1" \
+  "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
 
 # The owner file: the session that armed a watch, beside its log, is the key the stop gate tells a
 # session its own watches by. A watch armed by no session leaves no owner file behind.

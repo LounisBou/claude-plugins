@@ -26,6 +26,8 @@ export interface RunOptions {
   readonly cwd?: string
   /** Variables added to this process's own environment for the command. */
   readonly env?: Readonly<Record<string, string>>
+  /** What the command reads on its stdin; none, it reads nothing. */
+  readonly input?: string
 }
 
 export type Run = (argv: readonly [string, ...string[]], options?: RunOptions) => Promise<Ran>
@@ -44,7 +46,7 @@ export const run: Run = (argv, options = {}) =>
       }
     }
     const child = spawn(command, args, {
-      stdio: fd === undefined ? ['ignore', 'pipe', options.stderr ?? 'ignore'] : ['ignore', fd, fd],
+      stdio: [options.input === undefined ? 'ignore' : 'pipe', fd ?? 'pipe', fd ?? options.stderr ?? 'ignore'],
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       ...(options.env === undefined ? {} : { env: { ...process.env, ...options.env } }),
@@ -60,6 +62,10 @@ export const run: Run = (argv, options = {}) =>
       settled = true
       resolve({ status, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') })
     }
+    child.stdin?.on('error', () => {
+      // A command that exits without reading its stdin: its status says what happened.
+    })
+    child.stdin?.end(options.input)
     child.on('error', () => settle(null))
     child.on('close', code => settle(code))
   })

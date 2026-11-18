@@ -203,40 +203,38 @@ test('dependents: the passed checks whose job needs a guard of the same file and
 })
 
 /** The command over a fake gh: `pr view` and `pr checks` from the answers, `api` from the fixtures. */
-function cli(argv: string[], view: string | null, checks: string | null): string {
+function cli(argv: string[], gate: string): string {
   const out: string[] = []
   const err: string[] = []
   const fake = api(FILES, RUNS)
   const deps: Deps = {
     io: { out: t => out.push(t), err: t => err.push(t) },
     cacheDir: join(dir, 'cache'),
-    gh: (args, tolerated = []) => {
-      if (args[0] === 'api') return fake.gh(args)
-      const answer = args[1] === 'view' ? view : checks
-      if (answer === null) throw new Unread(`gh pr ${args[1]} failed: gh: HTTP 502`)
-      assert.deepEqual(tolerated, args[1] === 'checks' ? [1, 8] : [])
-      return answer
+    gh: args => {
+      assert.equal(args[0], 'api')
+      return fake.gh(args)
     },
+    stdin: () => gate,
   }
   const code = main(argv, deps)
   return `${code}|${out.join('')}|${err.join('')}`
 }
 
-test('the command: usage, gh failing, the names that are no guard, and --dependents', () => {
-  const both = JSON.stringify([check('wip-check / wip-check', 'fail', 570), check('tests', 'fail', 570), check('build', 'pass', 570), check('gone', 'cancel', 570)])
-  assert.equal(cli([], '', ''), `5||${USAGE}\n`)
-  assert.equal(cli(['acme', '7'], '', ''), `5||${USAGE}\n`)
-  assert.equal(cli(['acme/thing', 'x'], '', ''), `5||${USAGE}\n`)
-  assert.equal(cli(['acme/thing', '7', '--other'], '', ''), `5||${USAGE}\n`)
-  assert.equal(cli(['acme/thing', '7'], null, both), '5||draft_guard: gh pr view failed: gh: HTTP 502\n')
-  assert.equal(cli(['acme/thing', '7'], '{"isDraft": true}', null), '5||draft_guard: gh pr checks failed: gh: HTTP 502\n')
-  for (const [view, checks] of [['not json', both], ['[]', both], ['{}', both], ['{"isDraft": true}', '{}']]) {
-    assert.equal(cli(['acme/thing', '7'], view ?? '', checks ?? ''), '5||draft_guard: gh answered with something else than the expected JSON\n')
+test('the command: usage, no gate answer, the gate\'s failing names that are no guard, and --dependents', () => {
+  const checks = [check('wip-check / wip-check', 'fail', 570), check('tests', 'fail', 570), check('build', 'pass', 570), check('gone', 'fail', 570)]
+  const gate = (draft: boolean): string => JSON.stringify({ draft, ci: { result: 'FAILURE', failed: ['wip-check / wip-check', 'tests', 'gone', 'legacy'], checks } })
+  assert.equal(cli([], ''), `5||${USAGE}\n`)
+  assert.equal(cli(['acme', '7'], ''), `5||${USAGE}\n`)
+  assert.equal(cli(['acme/thing', 'x'], ''), `5||${USAGE}\n`)
+  assert.equal(cli(['acme/thing', '7', '--other'], ''), `5||${USAGE}\n`)
+  for (const answer of ['', 'not json', '[]', '{}', '{"draft": true}', '{"draft": true, "ci": {"failed": []}}', '{"draft": "yes", "ci": {"failed": [], "checks": []}}']) {
+    assert.equal(cli(['acme/thing', '7'], answer), '5||draft_guard: stdin holds no pr-gate answer (draft, ci.failed, ci.checks)\n')
   }
-  assert.equal(cli(['acme/thing', '7'], '{"isDraft": true}', both), '0|tests\ngone\n|')
-  assert.equal(cli(['acme/thing', '7'], '{"isDraft": false}', both), '0|wip-check / wip-check\ntests\ngone\n|')
-  assert.equal(cli(['acme/thing', '7', '--dependents'], '{"isDraft": true}', both), '0|build\n|')
-  assert.equal(cli(['acme/thing', '7', '--dependents'], '{"isDraft": false}', both), '0||')
+  // The names are the gate's: a failed status (`legacy`) has no check run and is never a guard.
+  assert.equal(cli(['acme/thing', '7'], gate(true)), '0|tests\ngone\nlegacy\n|')
+  assert.equal(cli(['acme/thing', '7'], gate(false)), '0|wip-check / wip-check\ntests\ngone\nlegacy\n|')
+  assert.equal(cli(['acme/thing', '7', '--dependents'], gate(true)), '0|build\n|')
+  assert.equal(cli(['acme/thing', '7', '--dependents'], gate(false)), '0||')
   assert.equal(cacheDirOf({ ORCHESTRATOR_STATE_DIR: '/s' }), '/s/draft-guard')
   assert.equal(cacheDirOf({ CLAUDE_CONFIG_DIR: '/c' }), '/c/claude-orchestrator/draft-guard')
 })

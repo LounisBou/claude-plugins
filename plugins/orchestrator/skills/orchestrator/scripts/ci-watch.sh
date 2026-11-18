@@ -14,37 +14,29 @@
 #
 # What it does: reads the head once; waits, bounded, for checks to be registered on it (a
 # push is seen before its checks, and « no checks reported » right then is not a red); runs
-# `gh pr checks --watch --fail-fast`, its output in a log file under the state directory,
-# never on stdout, the arming session's id beside it (`<log>.session`, the key the stop gate tells a
-# session its own watches by); reads the pull request once more when the watch returns. The watch ends once
-# the checks it knows are done, maybe before a slower workflow's checks are registered: every
-# workflow run of the head is read, each unfinished one watched to its end (`gh run watch`),
-# and the checks watched again, until none is unfinished. The bound, CI_WATCH_REGISTER_WAIT, is
-# no limit on how long a run may take: it bounds how long a run already watched may stay listed
-# unfinished (the listing's lag), restarts at each run watched, and past it the watch is unread.
+# `gh pr checks --watch --fail-fast` as a wait only (its exit code decides nothing), its output in a
+# log file under the state directory, never on stdout, the arming session's id beside it
+# (`<log>.session`, the key the stop gate tells a session its own watches by); reads the pull
+# request once more when the watch returns. Then the github plugin's `pr-gate` decides (its engine,
+# found where the host installed the plugin, or at the checkout the override names): it is the one
+# reading of CI, and the watch counts nothing of its own. Each answer read is kept whole, the last
+# one replacing the one before, in `<state>/ci-gate/<owner_name>-pr<n>.json`: the hooks module's
+# facts line of a delivery reads CI there and runs no gate itself. Its `ci.result` FAILURE is a `red` naming
+# its `ci.failed`. While no failure is read, every workflow run of the head is read, each unfinished
+# one watched to its end (`gh run watch`), the checks watched again, and the gate read again; once
+# none is unfinished, the watch goes on while the gate's result is PENDING with a check running (a
+# required check not yet reported counts as running), or with checks the base requires unread
+# (`ci.unverified`), or speaks of another head. The bound, CI_WATCH_REGISTER_WAIT, restarts at each
+# run watched; past it a run still listed unfinished is `unread`, and a gate still awaiting CI is
+# `no-checks` (a head with a third-party check alone, before the repository's own run registers).
+# Green is the gate's SUCCESS; any other settled result (nothing proved anything: every check
+# skipped) is `no-checks` with the count skipped. A gate that cannot be read is `unread`.
 # A draft pull request may carry a draft guard: a job that fails on purpose while the pull request
-# is a draft, recognised by its definition testing the draft flag (`draft-guard.ts`). A red whose
-# every failing check is one is no red, so on a draft the watch runs without `--fail-fast` (it
-# would stop on the guard before the real checks finish) and the failing names are classified
-# when it returns: none left, the rest of the green path; some left, `red` naming only those. A
-# pull request that is no draft, or no longer one, keeps the path above exactly.
-# A green carries evidence: one check at least passed. A head whose checks all ended skipped, or
-# failed as a draft guard — a draft whose every real job depends on its guard, or jobs each
-# conditioned out — had nothing run, and says `no-checks` with the count skipped, never green.
-# The count leaves the guards out, so a draft whose only checks are its guards says `skipped=0`.
-# On a draft the watch settled on its guards, a check that depends on no guard (a secret scanner)
-# is no evidence either: only a passed check whose job needs a guard counts (`draft-guard.ts
-# --dependents`), else `no-checks` with the count skipped.
-# Nor is a head whose CI has not started: once every run listed is done, the github plugin's `pr-gate`
-# is read (its engine, found where the host installed the plugin, or at the checkout the override names), and
-# while its `ci.result` is PENDING with a check running — a required check not yet reported counts as
-# running there — or with checks the base requires it could not read (`ci.unverified`), or speaks of
-# another head, the watch goes on, bounded by CI_WATCH_REGISTER_WAIT (restarted whenever a run is
-# watched for the first time), runs and checks read again. A head with a third-party check alone (a
-# secret scanner) is that case until the repository's own run registers, when the repository requires
-# it; past the bound it says `no-checks`. A repository that requires no check gets the gate's answer,
-# green as before. The gate is the one definition of « CI is still to come »: the watch counts nothing
-# of its own. A gate that cannot be read is `unread`.
+# is a draft, recognised by its definition testing the draft flag (`draft-guard.ts`, given the gate's
+# answer). On a draft the watch runs without `--fail-fast`, and a failure whose every failing check
+# is a guard is no red: the draft is green only when a passed check's job needs a guard
+# (`draft-guard.ts --dependents`), else `no-checks` with the count skipped. A pull request that is
+# no draft, or no longer one, keeps the path above exactly.
 # Nor is a pull request GitHub reports as conflicting: it starts no workflow run, so what passed is an
 # external check at most, and the suites never ran. It says `no-checks` with the word `conflicting`,
 # before any wait for a merge: the head is rebased, never reported ready.
@@ -63,18 +55,16 @@
 # stdout, one line, and the exit code the caller reads without opening the log:
 #   ci-watch: green <pr> <head> next: mcp__github__gh pr-gate {"pr": <pr>} [on <owner/repo>]
 #                                                               0  every workflow run of the head completed and
-#                                                                  every check passed, one at least; with
-#                                                                  auto-merge: no merge within the bound
-#   ci-watch: red <pr> <head> <failing check names>             1
-#                                                                  (a cancelled check is one, though the watch
-#                                                                  exits 0 over it)
+#                                                                  the gate reads SUCCESS; with auto-merge: no
+#                                                                  merge within the bound
+#   ci-watch: red <pr> <head> <failing check names>             1  the gate reads FAILURE
 #   ci-watch: no-checks <pr> <head>                             2  none registered within the bound, or a
 #                                                                  required check still to come at its end
 #   ci-watch: no-checks <pr> <head> conflicting                 2  the pull request conflicts with its base: its
 #                                                                  suites never ran
-#   ci-watch: no-checks <pr> <head> skipped=<n>                 2  every check done and none passed: each one
-#                                                                  skipped or a draft guard; with auto-merge: no
-#                                                                  merge within the bound
+#   ci-watch: no-checks <pr> <head> skipped=<n>                 2  every check done and the gate reads no
+#                                                                  SUCCESS (each one skipped, or a draft guard);
+#                                                                  with auto-merge: no merge within the bound
 #   ci-watch: moved <pr> <old head> <new head>                  3  re-arm on the new head
 #   ci-watch: closed <pr> CLOSED                                4  closed without merge
 #   ci-watch: closed <pr> MERGED                                4  merged, with --no-base only

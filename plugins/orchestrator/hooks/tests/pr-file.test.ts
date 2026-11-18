@@ -61,14 +61,15 @@ test('the pull requests the records on the machine name are gathered by reposito
   expect([...await trackedPrs(dollar, STATE)]).toEqual([['acme/app', [7, 8]], ['acme/lib', [3]]])
 })
 
-test('one query asks every repository its open pull requests and each recorded one by its number, with its checks', () => {
+test('one query asks every repository its open pull requests and each recorded one by its number, and no CI: that is the gate\'s', () => {
   const query = prQuery(new Map([['acme/app', [7, 8]], ['acme/lib', []]]))
   expect(query.startsWith('query{viewer{login} rateLimit{cost remaining} ')).toBe(true)
   expect(query).toContain('r0:repository(owner:"acme",name:"app"){open:pullRequests(states:OPEN,first:100,orderBy:{field:CREATED_AT,direction:DESC})')
   expect(query).toContain('n7:pullRequest(number:7)')
   expect(query).toContain('n8:pullRequest(number:8)')
   expect(query).toContain('r1:repository(owner:"acme",name:"lib")')
-  expect(query.match(/statusCheckRollup/g)?.length).toBe(2)
+  expect(query).not.toContain('statusCheckRollup')
+  expect(query).not.toContain('commits(')
   expect(query).toContain('ended:pullRequests(states:[MERGED,CLOSED],first:50,orderBy:{field:UPDATED_AT,direction:DESC})')
 })
 
@@ -78,7 +79,7 @@ test('the answer keeps every open pull request, the last ones ended, every recor
   })
   const answer = parsePrAnswer(new Map([['acme/app', [8]], ['acme/lib', []]]), JSON.stringify({ data: {
     viewer: { login: 'me' }, rateLimit: { cost: 2 },
-    r0: { open: { pageInfo: { hasNextPage: true }, nodes: [node(7, 'OPEN', 'me'), node(9, 'OPEN', 'someone', { isCrossRepository: true, headRepositoryOwner: { login: 'fan' } }), {}] }, ended: { nodes: [node(5, 'CLOSED', 'me')] }, n8: node(8, 'MERGED', 'someone', { commits: { nodes: [{ commit: { statusCheckRollup: null } }] } }) },
+    r0: { open: { pageInfo: { hasNextPage: true }, nodes: [node(7, 'OPEN', 'me'), node(9, 'OPEN', 'someone', { isCrossRepository: true, headRepositoryOwner: { login: 'fan' } }), {}] }, ended: { nodes: [node(5, 'CLOSED', 'me')] }, n8: node(8, 'MERGED', 'someone', { commits: { nodes: [{ commit: { statusCheckRollup: { state: 'FAILURE' } } }] } }) },
     r1: null,
   } }))
   expect(answer?.viewer).toBe('me')
@@ -91,7 +92,7 @@ test('the answer keeps every open pull request, the last ones ended, every recor
     { repo: 'acme/app', pr: 5, state: 'CLOSED', head: 'b5', author: 'me', fork: null, ...common },
     { repo: 'acme/app', pr: 7, state: 'OPEN', head: 'b7', author: 'me', fork: null, ...common },
     { repo: 'acme/app', pr: 9, state: 'OPEN', head: 'b9', author: 'someone', fork: 'fan', ...common, draft: true },
-    { repo: 'acme/app', pr: 8, state: 'MERGED', head: 'b8', author: 'someone', fork: null, ...common, ci: 'none' },
+    { repo: 'acme/app', pr: 8, state: 'MERGED', head: 'b8', author: 'someone', fork: null, ...common },
   ])
   expect(parsePrAnswer(new Map(), 'not json')).toBe(undefined)
   expect(parsePrAnswer(new Map(), '{"errors":[{"message":"rate limited"}]}')).toBe(undefined)
@@ -101,16 +102,17 @@ test('the answer keeps every open pull request, the last ones ended, every recor
 const pr = (n: number, state: FilePr['state'], more: Partial<FilePr> = {}): FilePr =>
   ({ repo: 'acme/app', pr: n, state, draft: false, head: `b${n}`, sha: 's', author: 'me', createdAt: null, labels: [], mergeable: null, fork: null, ...more })
 
-test('the change log says each state change once, one line each, and nothing on the first file', () => {
-  const before: PrFile = { v: 1, at: 'x', tried: 'x', viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(7, 'OPEN', { draft: true, ci: 'pending' }), pr(8, 'OPEN'), pr(9, 'OPEN'), pr(10, 'CLOSED')] }
-  const after = [pr(7, 'OPEN', { ci: 'success' }), pr(8, 'MERGED'), pr(10, 'OPEN'), pr(11, 'OPEN')]
+test('the change log says each state change once, one line each, nothing on the first file and no CI', () => {
+  const before: PrFile = { v: 1, at: 'x', tried: 'x', viewer: 'me', repos: ['acme/app'], unread: [], prs: [pr(7, 'OPEN', { draft: true, ci: 'pending' } as Partial<FilePr>), pr(8, 'OPEN'), pr(9, 'OPEN'), pr(10, 'CLOSED')] }
+  // A CI word an older file or answer still carries makes no line: CI is the gate's.
+  const after = [pr(7, 'OPEN', { ci: 'success' } as Partial<FilePr>), pr(8, 'MERGED'), pr(10, 'OPEN'), pr(11, 'OPEN')]
   expect(changeLines(before, after, ['acme/app'], 'T')).toEqual([
-    'T acme/app#7 ready for review', 'T acme/app#7 ci success', 'T acme/app#8 merged', 'T acme/app#10 reopened', 'T acme/app#11 opened', 'T acme/app#9 no longer open',
+    'T acme/app#7 ready for review', 'T acme/app#8 merged', 'T acme/app#10 reopened', 'T acme/app#11 opened', 'T acme/app#9 no longer open',
   ])
   expect(changeLines(before, after, [], 'T')).not.toContain('T acme/app#9 no longer open')
   expect(changeLines(undefined, after, ['acme/app'], 'T')).toEqual([])
   // A pull request first seen already ended (the ended page) is no change: no line.
-  expect(changeLines(before, [...after, pr(20, 'MERGED'), pr(21, 'CLOSED')], ['acme/app'], 'T')).toHaveLength(6)
+  expect(changeLines(before, [...after, pr(20, 'MERGED'), pr(21, 'CLOSED')], ['acme/app'], 'T')).toHaveLength(5)
   expect(withLogLines('a\nb\n', ['c'])).toBe('a\nb\nc\n')
   expect(withLogLines(Array.from({ length: LOG_KEPT }, (_, i) => `l${i}`).join('\n'), ['last']).split('\n').filter(Boolean).length).toBe(LOG_KEPT)
 })
@@ -123,6 +125,8 @@ test('the file is fresh within its interval, and one that breaks the shape is no
   expect(parsePrFile('{"v":2,"tried":"t","prs":[]}')).toBe(undefined)
   expect(parsePrFile('nope')).toBe(undefined)
   expect(parsePrFile('{"v":1,"tried":"t","prs":[{"repo":"a/b","pr":0,"state":"OPEN"},{"repo":"a/b","pr":3,"state":"OPEN"}]}')?.prs.map(p => p.pr)).toEqual([3])
+  // A file written when it still held a CI word reads without it.
+  expect(parsePrFile('{"v":1,"tried":"t","prs":[{"repo":"a/b","pr":3,"state":"OPEN","ci":"failure"}]}')?.prs[0]).not.toHaveProperty('ci')
 })
 
 test('two sessions reading in the same interval make one forge call; past the interval, one more, its changes on the log', async () => {
