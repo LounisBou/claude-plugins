@@ -77,6 +77,7 @@ skills/iterm-agents/scripts/iterm_agent.py   the adapter: the request performed,
 skills/iterm-agents/tmux/home.conf          a home server's tmux configuration, read through -f
 skills/orchestrator/scripts/brief-lint.sh   lints a brief before it is dispatched, warning on its findings
 skills/orchestrator/scripts/review-brief.sh, skills/orchestrator/scripts/review-brief.ts, skills/orchestrator/scripts/review-brief.spec.ts  a review round's brief filled from its fields: the template's text is never retyped, a field it gained and the command does not fill is refused
+skills/orchestrator/scripts/lens-model.sh, skills/orchestrator/scripts/lens-model.ts, skills/orchestrator/scripts/lens-model.spec.ts  the model of a review's readers: the tier the diff's class calls for, read through the operator's tier map
 skills/orchestrator/scripts/brief.sh, skills/orchestrator/scripts/brief.ts, skills/orchestrator/scripts/brief.spec.ts  the phase and audit briefs and the coordinator's and auditor's takeovers, printed from the state: the row, the plan's phase, the to-do list, the notes
 skills/orchestrator/scripts/ci-watch.sh      the one wait on a pull request's checks, in the background, ending in one line and a code
 skills/orchestrator/scripts/draft-guard.sh, skills/orchestrator/scripts/draft-guard.ts, skills/orchestrator/scripts/draft-guard.spec.ts  which failing checks of a draft pull request are draft guards, read from the job's own definition
