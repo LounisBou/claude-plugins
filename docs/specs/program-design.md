@@ -214,7 +214,7 @@ cap is the operator's.
 - The context gate's arithmetic in `plugins/statusbar/statusline/statusline.sh:253-265`, and
   bugs-bot's third copy of the thresholds in `gate.py`. **Done**: core's `orchestration.ts`;
   statusbar shows the measure file's gate, `gate.py` reads the percentage as data.
-- The cost rule in `plugins/orchestrator/skills/model-routing/scripts/routing.py` and `hooks/usage.ts`. **Done**: the rule is data in `hooks/usage.ts`, read by `routing.py`; one price table, `routing/prices.json` under the orchestrator's state directory.
+- The cost rule in `plugins/orchestrator/skills/model-routing/scripts/routing.py` and `hooks/usage.ts`. **Done**: the rule is data in core's `usage-cost.ts`, read by `routing.py` (the plugin's copy) and by the orchestrator's `hooks/usage.ts`; one price table, `routing/prices.json` under the orchestrator's state directory.
 - The negative-phrase list in `plugins/github/engine/ghlib/assets.py:25` and `hooks/writing.ts`. **Done** (#199): one file, `engine/negative-phrases.json`, read by both.
 - The read/write classification in `plugins/cloudflare/hooks/register.ts` and its Python parser. **Done**: the list is data in `hooks/register.ts` (`READS`), read by `engine/cf.py`.
 - `logLine` ×9, `configDir` ×6, `stateDir` ×3, `writeAtomic` ×2, `gateEnv` ×2 inside the orchestrator's hooks. **Done**: one module, `hooks/module-io.ts`, imported by every hook file.

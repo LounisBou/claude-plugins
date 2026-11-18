@@ -28,3 +28,4 @@ export { agentsOf, archiveOf, endedLines, isLedgerMarked, LEDGER_EARLIER_KEPT, L
 export { defaultsOf, isCommand, LAUNCHER_ARGS_VERSION, LAUNCHER_COMMANDS, LAUNCHER_CONTRACT, LAUNCHER_USAGE, LauncherArgsError, parseLauncherArgs, type CommandName, type LauncherCommand, type LauncherOption, type LauncherRequest, type OptionKind, type OptionValue, type Unknown } from './launcher.ts'
 export { appendChain, chainOwned, chainPath, CHAINS_DIR, chainText, chainTtyOf, chainTtys, changeChain, dropFromChain, dropTabEverywhere, parseChain, readChain, repointTab, transferChain, type ChainEntry } from './chains.ts'
 export { answersChoice, givenAnswer, parseRoundQuestion, ROUND_ANSWERERS, ROUND_STATUSES, type RoundAnswerer, type RoundQuestion, type RoundStatus } from './round-question.ts'
+export { COST_RULE, messageCost, recordOf, recordOfEntry, type CostRule, type Price, type Prices, type RateName, type Rates, type TokenName, type UsageRecord } from './usage-cost.ts'
