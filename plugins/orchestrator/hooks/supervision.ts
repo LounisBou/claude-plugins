@@ -1842,6 +1842,13 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         await writeWait($, sessionId, clearedWait(wait))
         await refreshDeck($)
       }
+      // A closing proposal says nothing is left to do: the session working again ends it, its own or one
+      // a predecessor's succession moved to it, and its turn's end enters a new one if it still is done.
+      if (!e.agentId) {
+        const done = await withDeadline(withdrawStale($, sessionId, null, WORKS_AGAIN, entry => entry.kind !== 'done'), RELAY_BOUND_MS)
+        if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${RELAY_BOUND_MS} ms`)
+        else await tellSettled($, done)
+      }
     } catch (err) {
       await logLine($, 'supervision', `relay: ${messageOf(err)}`)
     }
@@ -2688,16 +2695,17 @@ export async function isOrchestratorSession($: Host<'env' | 'fs' | 'process'>, s
   return (await sessionRole($, sessionId)) === 'orchestrator'
 }
 
-// An orchestrator's turn ended on a machine line other than the wait an open entry of its own
-// holds: that entry is no longer what it waits on, so it is withdrawn by the sender, leaves the
-// pane and its count, and its fingerprint is forgotten. A turn with no machine line says nothing
-// of its wait and withdraws nothing. The same withdrawal closes every open entry of a session
-// that ended, or that handed over (`current` null).
+// An orchestrator's closing proposal whose session starts a turn again is no longer what it waits
+// on (WORKS_AGAIN): it is withdrawn by the sender and leaves the pane and its count. The same
+// withdrawal closes every open entry of a session that ended (`current` null).
 // `current` is the id of the entry this turn's wait has, kept open; `why` the withdrawal's answer
 // text; `kept` the entries left open besides. An entry the
 // coordinator on this machine was shown is closed instead, its answer « withdrawn: <why> », and returned so the caller tells it once
 // every write is done. Each withdrawal is one log line; one that cannot be written is one too,
 // and the relay goes on.
+// Why a closing proposal is withdrawn when its session's next turn starts.
+export const WORKS_AGAIN = 'its sender works again'
+
 async function withdrawStale($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, current: string | null, why: string, kept?: (entry: RoundEntry) => boolean): Promise<Settled[]> {
   const settled: Settled[] = []
   for (const { path, entry } of await readRound($)) {
