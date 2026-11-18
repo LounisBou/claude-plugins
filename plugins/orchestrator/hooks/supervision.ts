@@ -46,7 +46,7 @@ import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLi
 import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
-import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { configDir, gateEnv, githubGateArgv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { unattendedPaneLines, type Unattended, type UnattendedPaneLine } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ROUND_DIR } from '../core/orchestration.ts'
@@ -2330,7 +2330,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 // write, the coordinator's record and the send queued. Well inside a handler's ten seconds.
 const RELAY_BOUND_MS = 5000
 
-// The bound on each read of a delivery's facts (git's three and gh's one, run at once): inside the relay's.
+// The bound on each read of a delivery's facts (git's three and gh's one, run at once with the gate's, which has its own): inside the relay's.
 const FACTS_BOUND_MS = 3000
 
 // Whether a session of this role puts its operator questions into the round: an orchestrator, a
@@ -2466,7 +2466,7 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   const checkout = wait?.kind === 'delivered' ? await $.session.root().then(root => root || $.session.cwd()).catch(() => '') : ''
   if (wait?.kind === 'delivered' && !checkout) await logLine($, 'supervision', `relay: ${name}'s checkout is unread: its delivery goes without facts`)
   const facts = checkout
-    ? factsLine(await readDeliveryFacts(argv => $.process.run(argv, { timeoutMs: FACTS_BOUND_MS, cwd: checkout }), whole))
+    ? factsLine(await readDeliveryFacts((argv, timeoutMs) => $.process.run(argv, { timeoutMs: timeoutMs ?? FACTS_BOUND_MS, cwd: checkout }), whole, await githubGateArgv($)))
     : null
   const text = wait ? relayText(name, wait, patch!.waiting_since!, context, facts) : noStatusText(name, context, answer)
   const sent = orchestrating ? await sendToCoordinator($, coordinator!, text) : await $.session.send({ to, text })

@@ -91,10 +91,12 @@ export function heldReport(answer: string): string {
 // read, and adds them to the report as one line, so the orchestrator neither takes them on the
 // agent's word nor checks them by hand. A read that fails is said unread, never guessed.
 
-// A process run as the handler hands it in: its answer, or null when it could not run in time.
-export type FactsRun = (argv: readonly string[]) => Promise<{ exitCode: number; stdout?: unknown } | null>
+// A process run as the handler hands it in, within `timeoutMs` (its own default when none): its
+// answer, or null when it could not run in time.
+export type FactsRun = (argv: readonly string[], timeoutMs?: number) => Promise<{ exitCode: number; stdout?: unknown } | null>
 
-export type CiState = 'green' | 'failing' | 'pending' | 'none'
+// What the github gate reads of CI at a head (its `ci.result`), in one word, or `unread` with why.
+export type CiState = 'green' | 'failing' | 'pending' | 'none' | 'unread'
 
 export type DeliveryFacts = {
   /** Paths `git status --porcelain` lists; null unread. */
@@ -102,24 +104,35 @@ export type DeliveryFacts = {
   /** Commits of HEAD on no remote branch; null unread. */
   unpushed: number | null
   head: string | null
-  /** The pull request gh reads, the one the verdict line names or else the branch's; null unread. */
-  pr: { number: number; head: string; ci: CiState } | null
+  /** The pull request gh reads, the one the verdict line names or else the branch's; null unread. `ciWhy` says why `ci` is unread. */
+  pr: { number: number; head: string; ci: CiState; ciWhy?: string } | null
   /** The pull request and head the agent's verdict line names, if it names one. */
   claimed: { pr: number; head: string } | null
 }
 
-type Check = { status?: unknown; conclusion?: unknown; state?: unknown }
+// The gate's `ci.result` as a word of the facts line. The gate (github's `pr-gate`) is the one
+// reading of CI: it keeps the latest run of each check, which a rollup of every run does not.
+const GATE_CI: Readonly<Record<string, CiState>> = { SUCCESS: 'green', FAILURE: 'failing', PENDING: 'pending', NONE: 'none' }
 
-const FAILED = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
-const PASSED = new Set(['SUCCESS', 'NEUTRAL', 'SKIPPED'])
+// The longest the gate's read may take: it makes five or so GitHub reads and answers in about
+// 3.3 s, over a read's own bound and inside the relay's, which it shares with the other reads.
+export const GATE_BOUND_MS = 4200
 
-// The checks of a head as gh's statusCheckRollup lists them, in one word: a check that failed
-// makes it failing, all passed green, none at all none, anything else pending.
-export function ciState(rollup: readonly Check[]): CiState {
-  if (rollup.length === 0) return 'none'
-  const outcomes = rollup.map(c => String(c.conclusion || c.state || '').toUpperCase())
-  if (outcomes.some(o => FAILED.has(o))) return 'failing'
-  return outcomes.every(o => PASSED.has(o)) ? 'green' : 'pending'
+// The gate's JSON answer for `head`, in one word of CI or why it is unread. Never a guess: a
+// read that failed, ran out of time, answered another head or answered no known result is unread.
+export function gateCi(done: Awaited<ReturnType<FactsRun>>, head: string): { ci: CiState; why?: string } {
+  if (done === null) return { ci: 'unread', why: `the gate did not answer within ${GATE_BOUND_MS} ms` }
+  if (done.exitCode !== 0) return { ci: 'unread', why: `the gate failed (exit ${done.exitCode})` }
+  let read: { head?: unknown; ci?: { result?: unknown } | null }
+  try {
+    read = JSON.parse(String(done.stdout ?? '')) as typeof read
+  } catch {
+    return { ci: 'unread', why: 'the gate answered no JSON' }
+  }
+  if (typeof read.head === 'string' && read.head !== head) return { ci: 'unread', why: `the gate read head ${read.head.slice(0, 7)}, not ${head.slice(0, 7)}` }
+  const result = read.ci?.result
+  const ci = typeof result === 'string' ? GATE_CI[result] : undefined
+  return ci ? { ci } : { ci: 'unread', why: `the gate answered no CI result` }
 }
 
 const lineOf = (done: Awaited<ReturnType<FactsRun>>): string | null => (done && done.exitCode === 0 ? String(done.stdout ?? '').trim() : null)
@@ -127,33 +140,40 @@ const lineOf = (done: Awaited<ReturnType<FactsRun>>): string | null => (done && 
 const countOf = (text: string | null): number | null => (text !== null && /^\d+$/.test(text) ? Number(text) : null)
 
 // The facts of the delivery `report` claims, every read at once: git's three in the checkout,
-// gh's one on the pull request the verdict line names (verdictOf), else on the branch's.
-export async function readDeliveryFacts(run: FactsRun, report: string): Promise<DeliveryFacts> {
+// gh's one on the pull request the verdict line names (verdictOf), else on the branch's, and, when
+// the verdict line names the pull request and the github engine (`gate`, its argv up to the
+// pull request) is found, the gate's, which says CI. A branch's pull request has no number until
+// gh has read it, and the gate would then outrun the relay: its CI is said unread, with why.
+export async function readDeliveryFacts(run: FactsRun, report: string, gate: readonly string[] | null = null): Promise<DeliveryFacts> {
   const named = verdictOf(report)
-  const quiet = (argv: readonly string[]) => run(argv).catch(() => null)
+  const quiet = (argv: readonly string[], timeoutMs?: number) => run(argv, timeoutMs).catch(() => null)
+  const gating = named && gate ? quiet([...gate, String(named.pr), '--json'], GATE_BOUND_MS)
+    : named ? 'the github plugin is not found' : 'the report names no pull request, so the gate has none to read'
   const [status, head, unpushed, view] = await Promise.all([
     quiet(['git', 'status', '--porcelain']),
     quiet(['git', 'rev-parse', 'HEAD']),
     quiet(['git', 'rev-list', '--count', 'HEAD', '--not', '--remotes']),
     // One --json argument, the fields comma-joined: gh reads a second word as a positional.
-    quiet(['gh', 'pr', 'view', ...(named ? [String(named.pr)] : []), '--json', 'number,headRefOid,statusCheckRollup']),
+    quiet(['gh', 'pr', 'view', ...(named ? [String(named.pr)] : []), '--json', 'number,headRefOid']),
   ])
   const porcelain = status && status.exitCode === 0 ? String(status.stdout ?? '') : null
   return {
     dirty: porcelain === null ? null : porcelain.split('\n').filter(line => line.trim() !== '').length,
     unpushed: countOf(lineOf(unpushed)),
     head: lineOf(head) || null,
-    pr: pullRequestOf(lineOf(view)),
+    pr: pullRequestOf(lineOf(view), typeof gating === 'string' ? gating : await gating),
     claimed: named ? { pr: named.pr, head: named.head } : null,
   }
 }
 
-function pullRequestOf(json: string | null): DeliveryFacts['pr'] {
+// The pull request gh read; its CI is the gate's answer, or unread for the reason the gate was not asked.
+function pullRequestOf(json: string | null, gated: Awaited<ReturnType<FactsRun>> | string): DeliveryFacts['pr'] {
   if (!json) return null
   try {
-    const read = JSON.parse(json) as { number?: unknown; headRefOid?: unknown; statusCheckRollup?: unknown }
+    const read = JSON.parse(json) as { number?: unknown; headRefOid?: unknown }
     if (typeof read.number !== 'number' || typeof read.headRefOid !== 'string') return null
-    return { number: read.number, head: read.headRefOid, ci: ciState(Array.isArray(read.statusCheckRollup) ? read.statusCheckRollup as Check[] : []) }
+    const ci = typeof gated === 'string' ? { ci: 'unread' as const, why: gated } : gateCi(gated, read.headRefOid)
+    return { number: read.number, head: read.headRefOid, ...(ci.why === undefined ? { ci: ci.ci } : { ci: ci.ci, ciWhy: ci.why }) }
   } catch {
     return null
   }
@@ -180,7 +200,7 @@ export function factsLine(f: DeliveryFacts): string {
   const head = !f.head ? 'head unread'
     : !f.pr ? `head ${h7(f.head)}, pull request unread`
     : f.head === f.pr.head ? `head ${h7(f.head)} = #${f.pr.number}'s head` : `head ${h7(f.head)} ≠ #${f.pr.number}'s head ${h7(f.pr.head)}`
-  const ci = f.pr ? `, CI ${f.pr.ci} at ${h7(f.pr.head)}` : ''
+  const ci = f.pr ? `, CI ${f.pr.ci}${f.pr.ciWhy ? ` (${f.pr.ciWhy})` : ''} at ${h7(f.pr.head)}` : ''
   const wrong = falseClaims(f)
   const said = wrong.length > 0 ? `FALSE CLAIM of delivery (${wrong.join('; ')}) — ` : ''
   return `facts (read by the module): ${said}${tree}, ${pushed}, ${head}${ci}`

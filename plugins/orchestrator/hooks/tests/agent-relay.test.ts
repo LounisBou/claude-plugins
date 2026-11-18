@@ -6,7 +6,7 @@
 // agent, and a send that fails logged without holding the turn.
 import { expect, test } from 'claude-code/testing'
 import { DECLARATIONS } from '../wait.ts'
-import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, hostStopOf, stopInTail, stopText, chainOwnerTty, RELAY_CAP, heldReport, ciState, readDeliveryFacts, factsLine, falseClaims, type DeliveryFacts, type FactsRun } from '../relay.ts'
+import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, hostStopOf, stopInTail, stopText, chainOwnerTty, RELAY_CAP, heldReport, readDeliveryFacts, gateCi, GATE_BOUND_MS, factsLine, falseClaims, type DeliveryFacts, type FactsRun } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
@@ -60,15 +60,11 @@ test('the messages: a header, the reply address, then the text cut past the cap'
 
 const SHA = 'abcdef0123456789abcdef0123456789abcdef01'
 const OTHER = '9999999123456789abcdef0123456789abcdef01'
+// The gate's answer at a head, as github's `pr-gate --json` gives it (only what the facts read).
+const gateOf = (head: string, result: string) => JSON.stringify({ head, ci: { result, failed: [], running: 0, total: 7 } })
+const GATE_ARGV = ['python3', '/g/gh.py', 'pr-gate']
+const GATE_KEY = 'python3 /plugins/github/engine/gh.py pr-gate'
 const FACTS: DeliveryFacts = { dirty: 0, unpushed: 0, head: SHA, pr: { number: 12, head: SHA, ci: 'green' }, claimed: { pr: 12, head: 'abcdef0' } }
-
-test('the checks of a head read as one word: failing, green, pending or none', () => {
-  expect(ciState([])).toBe('none')
-  expect(ciState([{ status: 'COMPLETED', conclusion: 'SUCCESS' }, { state: 'SUCCESS' }, { conclusion: 'SKIPPED' }])).toBe('green')
-  expect(ciState([{ status: 'IN_PROGRESS', conclusion: '' }, { conclusion: 'SUCCESS' }])).toBe('pending')
-  expect(ciState([{ status: 'IN_PROGRESS' }, { state: 'FAILURE' }])).toBe('failing')
-  expect(ciState([{ conclusion: 'CANCELLED' }])).toBe('failing')
-})
 
 test('the facts line says each fact, and a false claim of delivery plainly, first', () => {
   expect(factsLine(FACTS)).toBe('facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12\'s head, CI green at abcdef0')
@@ -86,31 +82,123 @@ test('the facts are read from git in the checkout and gh on the pull request the
     'git status --porcelain': ' M a.ts\n?? b.ts\n',
     'git rev-parse HEAD': `${SHA}\n`,
     'git rev-list --count HEAD --not --remotes': '0\n',
-    'gh pr view 12 --json number,headRefOid,statusCheckRollup': JSON.stringify({ number: 12, headRefOid: SHA, statusCheckRollup: [{ conclusion: 'SUCCESS' }] }),
+    'gh pr view 12 --json number,headRefOid': JSON.stringify({ number: 12, headRefOid: SHA }),
+    'python3 /g/gh.py pr-gate 12 --json': gateOf(SHA, 'SUCCESS'),
   }
   const run: FactsRun = async argv => {
     calls.push(argv.join(' '))
     const out = answers[argv.join(' ')]
     return out === undefined ? { exitCode: 1, stdout: '' } : { exitCode: 0, stdout: out }
   }
-  const facts = await readDeliveryFacts(run, `Done.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR`)
+  const facts = await readDeliveryFacts(run, `Done.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR`, GATE_ARGV)
   expect(facts).toEqual({ dirty: 2, unpushed: 0, head: SHA, pr: { number: 12, head: SHA, ci: 'green' }, claimed: { pr: 12, head: 'abcdef0' } })
   // No verdict line: gh reads the branch's pull request; a run that throws is unread.
   calls.length = 0
   const bare = await readDeliveryFacts(async argv => { if (argv[0] === 'gh') throw new Error('no gh'); return run(argv) }, 'status: done')
   expect(bare.pr).toBeNull()
   expect(bare.claimed).toBeNull()
-  expect(calls.includes('gh pr view --json number,headRefOid,statusCheckRollup')).toBe(false)
+  expect(calls.includes('gh pr view --json number,headRefOid')).toBe(false)
   expect((await readDeliveryFacts(async () => ({ exitCode: 0, stdout: 'not json' }), 'status: done')).pr).toBeNull()
+})
+
+// The facts line's CI is the github gate's reading (latest run of each check), never a reduction of
+// the head's rollup: geonative-api#1868 at 4a41f0a held four failed `wip-check` runs of a draft
+// guard beside the passing runs of the re-triggered workflow, and read « CI failing » where the
+// gate read SUCCESS. The rollup below is that shape; gh is asked for none of it.
+const REPORT = 'Done.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR'
+const STALE_ROLLUP = [
+  { workflowName: 'Application', name: 'wip-check / wip-check', conclusion: 'FAILURE', detailsUrl: 'https://github.com/o/a/actions/runs/44148519423/job/1' },
+  { workflowName: 'Application', name: 'wip-check / wip-check', conclusion: 'SUCCESS', detailsUrl: 'https://github.com/o/a/actions/runs/44148718394/job/2' },
+  { workflowName: 'Application', name: 'build', conclusion: 'CANCELLED', detailsUrl: 'https://github.com/o/a/actions/runs/44148519423/job/3' },
+]
+
+const factsWith = async (gate: { exitCode: number; stdout?: unknown } | null | 'throws', argv: readonly string[] | null = GATE_ARGV) => {
+  const asked: { argv: string; timeoutMs: number | undefined }[] = []
+  const run: FactsRun = async (a, timeoutMs) => {
+    asked.push({ argv: a.join(' '), timeoutMs })
+    if (a[0] === 'python3') {
+      if (gate === 'throws') throw new Error('spawn failed')
+      return gate
+    }
+    if (a[0] === 'gh') return { exitCode: 0, stdout: JSON.stringify({ number: 12, headRefOid: SHA, statusCheckRollup: STALE_ROLLUP }) }
+    return { exitCode: 0, stdout: a[1] === 'status' ? '' : a[1] === 'rev-parse' ? SHA : '0\n' }
+  }
+  return { facts: await readDeliveryFacts(run, REPORT, argv), asked }
+}
+
+test("the facts line's CI is the gate's reading: an older failed or cancelled run of a re-triggered workflow does not make it failing", async () => {
+  const { facts, asked } = await factsWith({ exitCode: 0, stdout: gateOf(SHA, 'SUCCESS') })
+  expect(facts.pr).toEqual({ number: 12, head: SHA, ci: 'green' })
+  expect(factsLine(facts)).toContain(', CI green at abcdef0')
+  // The gate is asked for the pull request the verdict line names, on its own bound.
+  expect(asked.find(a => a.argv.startsWith('python3'))).toEqual({ argv: 'python3 /g/gh.py pr-gate 12 --json', timeoutMs: GATE_BOUND_MS })
+})
+
+test("the gate's other results stay what the gate says: a failing latest run fails, a rerun going is pending, no CI is none", async () => {
+  for (const [result, ci] of [['FAILURE', 'failing'], ['PENDING', 'pending'], ['NONE', 'none'], ['SUCCESS', 'green']] as const) {
+    expect((await factsWith({ exitCode: 0, stdout: gateOf(SHA, result) })).facts.pr?.ci, result).toBe(ci)
+  }
+})
+
+// A gate that gave no answer says CI is unread, with the reason: never the head's rollup reduced again.
+test('a gate that fails, runs out of time, answers badly or reads another head says CI unread with why, never a rollup reading', async () => {
+  const unread = async (gate: Parameters<typeof factsWith>[0], argv?: readonly string[] | null) => (await factsWith(gate, argv)).facts.pr
+  expect(await unread(null)).toEqual({ number: 12, head: SHA, ci: 'unread', ciWhy: `the gate did not answer within ${GATE_BOUND_MS} ms` })
+  expect((await unread('throws'))?.ciWhy).toBe(`the gate did not answer within ${GATE_BOUND_MS} ms`)
+  expect(await unread({ exitCode: 1, stdout: '' })).toMatchObject({ ci: 'unread', ciWhy: 'the gate failed (exit 1)' })
+  expect(await unread({ exitCode: 0, stdout: 'not json' })).toMatchObject({ ci: 'unread', ciWhy: 'the gate answered no JSON' })
+  expect(await unread({ exitCode: 0, stdout: JSON.stringify({ head: SHA, ci: {} }) })).toMatchObject({ ci: 'unread', ciWhy: 'the gate answered no CI result' })
+  expect(await unread({ exitCode: 0, stdout: gateOf(OTHER, 'SUCCESS') })).toMatchObject({ ci: 'unread', ciWhy: 'the gate read head 9999999, not abcdef0' })
+  expect(await unread({ exitCode: 0, stdout: gateOf(SHA, 'SUCCESS') }, null)).toMatchObject({ ci: 'unread', ciWhy: 'the github plugin is not found' })
+  const line = factsLine((await factsWith({ exitCode: 1, stdout: '' })).facts)
+  expect(line).toBe("facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12's head, CI unread (the gate failed (exit 1)) at abcdef0")
+  expect(gateCi({ exitCode: 0, stdout: gateOf(SHA, 'SUCCESS') }, SHA)).toEqual({ ci: 'green' })
+})
+
+test('a report that names no pull request has no number for the gate: CI is unread, and the gate is not run', async () => {
+  const asked: string[] = []
+  const run: FactsRun = async argv => { asked.push(argv.join(' ')); return argv[0] === 'gh' ? { exitCode: 0, stdout: JSON.stringify({ number: 12, headRefOid: SHA }) } : { exitCode: 0, stdout: '0\n' } }
+  const facts = await readDeliveryFacts(run, 'status: done', GATE_ARGV)
+  expect(facts.pr).toEqual({ number: 12, head: SHA, ci: 'unread', ciWhy: 'the report names no pull request, so the gate has none to read' })
+  expect(asked.some(a => a.startsWith('python3'))).toBe(false)
+})
+
+test('a delivery says CI unread when the github plugin is not found, and reads the gate where it is', async () => {
+  const report = 'All green.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
+  const view = JSON.stringify({ number: 12, headRefOid: SHA })
+  const repo = { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view, [GATE_KEY]: gateOf(SHA, 'FAILURE') }
+  const failing = fake({ repo })
+  await drive(mounted(), 'turn.complete', failing.dollar, turnEnd(report))
+  expect(failing.sent[0]!.text.split('\n')[1]).toContain('CI failing at abcdef0')
+  const absent = fake({ repo, noGithub: true })
+  await drive(mounted(), 'turn.complete', absent.dollar, turnEnd(report))
+  expect(absent.sent[0]!.text.split('\n')[1]).toContain('CI unread (the github plugin is not found) at abcdef0')
+})
+
+test("the github plugin is found where the host's install record puts it, the engine's file being there", async () => {
+  const report = 'All green.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
+  const repo = { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': JSON.stringify({ number: 12, headRefOid: SHA }), 'python3 /cache/github/engine/gh.py pr-gate': gateOf(SHA, 'PENDING') }
+  const record = (path: string) => JSON.stringify({ plugins: { 'github@lounisbou': [{ installPath: path }] } })
+  const found = fake({ repo, noGithub: true })
+  found.files.set(`${HOME}/.claude/plugins/installed_plugins.json`, record('/cache/github'))
+  found.files.set('/cache/github/engine/gh.py', '')
+  await drive(mounted(), 'turn.complete', found.dollar, turnEnd(report))
+  expect(found.sent[0]!.text.split('\n')[1]).toContain('CI pending at abcdef0')
+  // A record naming a directory with no engine in it is a plugin not found.
+  const empty = fake({ repo, noGithub: true })
+  empty.files.set(`${HOME}/.claude/plugins/installed_plugins.json`, record('/cache/gone'))
+  await drive(mounted(), 'turn.complete', empty.dollar, turnEnd(report))
+  expect(empty.sent[0]!.text.split('\n')[1]).toContain('CI unread (the github plugin is not found) at abcdef0')
 })
 
 test('a delivery reaches the orchestrator with its facts read on the repository, a false claim said', async () => {
   const report = 'All green.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
-  const view = (head: string) => JSON.stringify({ number: 12, headRefOid: head, statusCheckRollup: [{ conclusion: 'SUCCESS' }] })
-  const clean = fake({ repo: { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view(SHA) } })
+  const view = (head: string) => JSON.stringify({ number: 12, headRefOid: head })
+  const gate = gateOf(SHA, 'SUCCESS')
+  const clean = fake({ repo: { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view(SHA), [GATE_KEY]: gate } })
   await drive(mounted(), 'turn.complete', clean.dollar, turnEnd(report))
   expect(clean.sent[0]!.text.split('\n')[1]).toBe('facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12\'s head, CI green at abcdef0')
-  const dirty = fake({ repo: { 'git status --porcelain': ' M a.ts\n', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view(OTHER) } })
+  const dirty = fake({ repo: { 'git status --porcelain': ' M a.ts\n', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view(OTHER), [GATE_KEY]: gateOf(OTHER, 'SUCCESS') } })
   await drive(mounted(), 'turn.complete', dirty.dollar, turnEnd(report))
   expect(dirty.sent[0]!.text.split('\n')[1]).toContain('FALSE CLAIM of delivery (tree dirty; local head is not the pull request\'s)')
   // A question carries no facts line: nothing is claimed delivered.
@@ -124,11 +212,11 @@ test('a delivery reaches the orchestrator with its facts read on the repository,
 // FALSE CLAIM of two clean deliveries.
 test("a delivery's facts are read in the agent's own checkout, not in the module's directory", async () => {
   const report = 'All green.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
-  const view = JSON.stringify({ number: 12, headRefOid: SHA, statusCheckRollup: [{ conclusion: 'SUCCESS' }] })
+  const view = JSON.stringify({ number: 12, headRefOid: SHA })
   const clean = fake({
     checkout: '/w/takeoversense',
-    repo: { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view },
-    elsewhere: { 'git status --porcelain': ' M settings.json\n', 'git rev-parse HEAD': OTHER, 'git rev-list --count': '0', 'gh pr view': view },
+    repo: { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': view, [GATE_KEY]: gateOf(SHA, 'SUCCESS') },
+    elsewhere: { 'git status --porcelain': ' M settings.json\n', 'git rev-parse HEAD': OTHER, 'git rev-list --count': '0', 'gh pr view': view, [GATE_KEY]: gateOf(SHA, 'SUCCESS') },
   })
   await drive(mounted(), 'turn.complete', clean.dollar, turnEnd(report))
   expect(clean.sent[0]!.text.split('\n')[1]).toBe('facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12\'s head, CI green at abcdef0')
@@ -170,7 +258,7 @@ test('a chain whose owner is not live is not counted, however recently it was wr
 // agent's record carrying another.
 // `reportsTo`: the orchestrator the launch recorded. `alive`: the pids the process table lists,
 // none read when absent. `registry`: the host's registry records of other sessions.
-type Over = { repo?: Record<string, string>; elsewhere?: Record<string, string>; checkout?: string; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
+type Over = { noGithub?: boolean; repo?: Record<string, string>; elsewhere?: Record<string, string>; checkout?: string; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
 
 // The tab and the run: the agent's host process (501) on ttys005, launched with its
 // --name; its shell (850) and the run (900) on no tty. The module's shell is a child of
@@ -189,6 +277,8 @@ function fake(over: Over = {}) {
   const usage = { context: { tokens: 120000, window: 1000000, percent: 12 } }
   const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: 'hostcli' }
   if (over.gateTokens) env['ORCHESTRATOR_CONTEXT_GATE_TOKENS'] = over.gateTokens
+  // The github plugin's checkout, which the facts read the gate from (CLAUDE_GITHUB_ROOT).
+  if (!over.noGithub) { env['CLAUDE_GITHUB_ROOT'] = '/plugins/github'; files.set('/plugins/github/engine/gh.py', '') }
   if (over.reportsTo) env['ORCHESTRATOR_REPORTS_TO'] = over.reportsTo
   for (const r of over.registry ?? []) files.set(`${HOME}/.claude/sessions/${r.pid}.json`, JSON.stringify({ pid: Number(r.pid), sessionId: r.sessionId, name: r.name, startedAt: r.startedAt, kind: 'interactive', entrypoint: 'cli' }))
   const name = over.name ?? AGENT

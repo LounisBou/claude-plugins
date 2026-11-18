@@ -5,6 +5,7 @@
 // lists what a module reads; the rules themselves are core's (env.ts, store-io.ts) and
 // module-log.ts's.
 import { configDirOf, gateThresholds } from '../core/env.ts'
+import { recordedInstallPaths } from '../core/install-record.ts'
 import { writeAtomicOver, type StoreIo } from '../core/store-io.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import type { Host } from './host.ts'
@@ -12,6 +13,25 @@ import type { Host } from './host.ts'
 /** The host's configuration directory: CLAUDE_CONFIG_DIR, else `.claude` under HOME. */
 export async function configDir($: Host<'env'>): Promise<string> {
   return configDirOf({ CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') }, (await $.env.get('HOME')) ?? '')
+}
+
+/**
+ * The argv that runs the github plugin's engine, up to the subcommand's operands (`python3 <engine>
+ * pr-gate`), or null when the plugin is not found: in the checkout CLAUDE_GITHUB_ROOT names, else
+ * where the host's install record puts it, never a path built by hand (docs/contracts.md).
+ */
+export async function githubGateArgv($: Host<'env' | 'fs'>): Promise<string[] | null> {
+  try {
+    const forced = await $.env.get('CLAUDE_GITHUB_ROOT')
+    const recorded = forced ? { paths: [forced] } : recordedInstallPaths(await $.fs.read(`${await configDir($)}/plugins/installed_plugins.json`), 'github', ['lounisbou'])
+    for (const root of 'problem' in recorded ? [] : recorded.paths) {
+      const engine = `${root}/engine/gh.py`
+      if (await $.fs.exists(engine)) return ['python3', engine, 'pr-gate']
+    }
+  } catch {
+    // An unreadable record is a plugin not found: the facts line says CI unread.
+  }
+  return null
 }
 
 /**
