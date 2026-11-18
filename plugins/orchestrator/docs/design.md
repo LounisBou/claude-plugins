@@ -579,7 +579,7 @@ The orchestrator's core loop — plan, brief, launch, verify, review, terminate,
 - **Launch.** `workspace.sh create` makes the phase's checkout (section 30); `iterm-agent.sh spawn --brief` lints the brief, builds the one-line startup prompt and opens the agent's place — a window of the orchestrator's home session, or a tab beside the orchestrator's — at the tier the brief names, with the servers chosen for the agent, in a checkout the host trusts (sections 12, 21, 31, 42): `references/agents.md`, « The agents' lifecycle is yours », and `skills/iterm-agents/SKILL.md`, « Safety order for a launch ».
 - **Verify.** The launcher waits for the host CLI on the tty and reads the mode the session came up in (section 43); the orchestrator reads the tab, the process and the listing, then relies on the module's reports: the agent's status line, its gate crossing, and a turn ended without a status line.
 - **Control.** An agent reports its measured context as it nears the gate, and the number is read against it: `SKILL.md`, « The principles ».
-- **Terminate.** An implementer is stood down when its pull request merges, the kept review findings sent to it until then (section 45), its window or tab closed by tty and proved gone on the process table (section 46), its checkout deleted: `references/agents.md`, step 4, and `skills/iterm-agents/SKILL.md`, « Window and tab hygiene ».
+- **Terminate.** An implementer is stood down when its pull request becomes Ready, the kept review findings sent to it until then (section 45), its window or tab closed by tty and proved gone on the process table (section 46), its checkout kept until the merge, work that comes back resuming it within the hour: `references/agents.md`, step 4, and `skills/iterm-agents/SKILL.md`, « Window and tab hygiene ».
 
 ### 9.2 The review round
 
@@ -783,7 +783,7 @@ The host starts remote control for every new interactive session when nothing is
 
 One round closed everything the live rounds had deferred, each item fixed or closed with its reason.
 
-- **An implementer lives until its pull request merges** and receives only the kept review findings (`skills/orchestrator/references/agents.md`, step 4). The brief lint's check 9, which refused a brief keeping it after its delivery, is retired with it.
+- **An implementer lives until its pull request is Ready** and receives only the kept review findings (`skills/orchestrator/references/agents.md`, step 4). The brief lint's check 9, which refused a brief keeping it after its delivery, is retired with it.
 - **A subject neither starts nor ends on a space**, so a listing never shows a name that reads as empty or one the operator cannot tell from its trimmed twin (`skills/iterm-agents/references/commands.md`).
 - **The files a launch leaves carry their kind in their names.** A launch leaves three files under `prompts/` — `launch-<title>-<ms>.sh`, `mcp-<title>-<ms>.json` and `prompt-<title>-<ms>.txt` — so the three sort by kind and a directory listing says what each file is.
 - **The library's stderr noise is filtered at its source** (section 29).

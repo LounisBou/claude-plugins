@@ -477,7 +477,7 @@ export type Held = { case: string; reason: string }
 // flight, and never puts the question again.
 //
 // An idle agent of its own whose pull request is open (`awaitingMerge`, by label) is not stood
-// down: the executor lives until its pull request merges and receives the kept findings. The log
+// down: the executor lives until its pull request is Ready and receives the kept findings. The log
 // names it apart (`awaiting-merge`), never among the idle agents, until the done line reads it. An
 // open pull request is no wake source: with nothing else armed (no subscription, no watch, no task
 // of the host, no open question), the turn ends on « nothing will wake you » like any other.

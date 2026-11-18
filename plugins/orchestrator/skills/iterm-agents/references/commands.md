@@ -163,6 +163,10 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     #   without its effort is refused. Lands immediately right of you, joins no chain (chain=none) and
     #   comes up under remote control under its name. Refuses --successor, --auditor, an
     #   anchor, --title-free, --tier, --inherit-model, --resident and --no-remote-control.
+    # --resume <session>: a closed agent resumed in its checkout (`--dir`, `--title "Agent: <subject>"`, a --tier or
+    #   --model and a startup prompt, its next work): the same conversation, placed as any agent. Refused when the
+    #   session's last turn is past the hour its cache lives (`ORCHESTRATOR_RESUME_WITHIN`, in seconds), or its
+    #   transcript is not found: a fresh agent from `brief.sh rotation` does the work.
     # --open: a new orchestrator opened on the operator's order, by the session that carries
     #   it out, never by an agent. `--open` comes right after `spawn`. Needs
     #   --title "Orch: <subject>" without a reference and a prompt (--prompt or --prompt-file).

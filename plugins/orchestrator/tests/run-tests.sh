@@ -4065,6 +4065,19 @@ check "a wake on its recorded pair says so" "1|record" \
   "$(e7l "$E7ORCH" --wake --title 'Orch: w' --model a-model --effort high | grep -c -- '--model a-model --effort high')|$(e7f "$(e7 "$E7ORCH" --wake --title 'Orch: w' --model a-model --effort high)" pair_source)"
 check "a wake without a recorded effort is refused" "1|1" \
   "$(e7 "$E7ORCH" --wake --title 'Orch: w' --model a-model >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --wake --title 'Orch: w' --model a-model | grep -c 'never guesses the effort')"
+# A closed agent resumed in its checkout (closed when its pull request became Ready): its own
+# conversation within the hour of its last turn; past the hour, or with no transcript, a refusal
+# naming the fresh agent, and a resume stays a wake's or an agent's.
+pair_transcript s-e7-closed r-model high
+E7RES=$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-closed)
+check "a closed agent resumed within the hour launches on its own conversation, under its name" "1|1|0" \
+  "$(printf '%s' "$E7RES" | sed -n 's/^launch=//p' | grep -cE "'--resume' s-e7-closed ")|$(printf '%s' "$E7RES" | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent: x'")|$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-closed >/dev/null 2>&1; echo $?)"
+pair_transcript s-e7-cold r-model high
+touch -t 202001010000 "$ORCHESTRATOR_PROJECTS_DIR/p/s-e7-cold.jsonl"
+check "a closed agent whose last turn is past the hour is refused, a fresh agent named" "1|1|0" \
+  "$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-cold >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-cold | grep -c 'a fresh agent from `brief.sh rotation`')|$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-cold | grep -c '^launch=')"
+check "a resume with no transcript is refused, and a resume of no agent or wake is refused" "1|1|1|1" \
+  "$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-none >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-none | grep -c 'no transcript for session s-e7-none')|$(e7 "$E7ORCH" --successor --resume s-e7-closed | grep -c "is a wake's or an agent's")|$(e7 "$E7ORCH" --title 'Audit: x' --auditor --resume s-e7-closed >/dev/null 2>&1; echo $?)"
 # An agent's pair is its orchestrator's: a tier, or a model with its effort. The plugin ships
 # the tier efforts the map does not bind (standard high, light medium); deep runs at the
 # calling orchestrator's own effort; an effort the map binds wins over both.

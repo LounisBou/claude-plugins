@@ -105,7 +105,7 @@ show "coordinator successor" spawn --coordinator-successor --title "Coord: c" --
 export ORCHESTRATOR_PS_TABLE="$PS_ORCH"
 show "wake" spawn --wake --title "Orch: w" --prompt p --model a-model --effort high
 show "a resumed wake" spawn --wake --title "Orch: w" --prompt p --model a-model --effort high --resume abcdef12-3456-4789-8abc-def012345678
-show "resume without wake refused" spawn --tier light --title "Agent: a" --prompt p --resume abcdef12
+show "resume of a session with no transcript refused" spawn --tier light --title "Agent: a" --prompt p --resume abcdef12
 show "open" spawn --open --title "Orch: o" --prompt p
 show "open, tier" spawn --open --title "Orch: o" --prompt p --tier deep
 export ORCHESTRATOR_MODELS_MAP="$WORK/models.json"
