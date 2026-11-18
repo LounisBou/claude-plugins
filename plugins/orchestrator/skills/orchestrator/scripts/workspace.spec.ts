@@ -7,6 +7,9 @@ import { test } from 'node:test'
 import { run, type Ran, type Run, type RunOptions } from './lib/process.ts'
 import type { FilePr } from '../../../hooks/pr-file-format.ts'
 import {
+  archivePath, bareName, callerOf, ledgerPath, ledgerText, liveSessions, makerOf, parseEntry, parseLedger, type WorkspaceEntry,
+} from './lib/workspace-ledger.ts'
+import {
   ancestors, branchFacts, copyable, copyFiles, copyList, encode, leavesRepository, main, manifestPath, neverCopied, parseCwds,
   settingsRules, underRoot, USAGE, type Deps,
 } from './workspace.ts'
@@ -853,4 +856,303 @@ test('list: one line per checkout under the root, the trash and loose files left
   const short = (p: string): string => g(p, 'rev-parse', '--short', 'HEAD')
   assert.equal((await ws(w, 'list')).out,
     `${join(dir, 'root')}/proj/c | feat/c | ${short(c)} | clean | unpushed\n${join(dir, 'root')}/proj/d | feat/d | ${short(d)} | dirty | pushed\n`)
+})
+
+// --- the ledger of the checkouts ---------------------------------------------------------------
+
+/** The host's registry under the world's HOME: one record per session, `live` the pids that answer. */
+function registry(w: World, sessions: readonly { pid: number; name: string; cwd: string }[], live: ReadonlySet<number>): void {
+  const at = join(dir, 'home', '.claude', 'sessions')
+  rmSync(at, { recursive: true, force: true })
+  mkdirSync(at, { recursive: true })
+  for (const x of sessions) writeFileSync(join(at, `${x.pid}.json`), JSON.stringify({ pid: x.pid, sessionId: `s${x.pid}`, name: x.name, cwd: x.cwd }))
+  w.deps = { ...w.deps, alive: pid => live.has(pid) }
+}
+
+const lines = (w: World): WorkspaceEntry[] => parseLedger(existsSync(ledgerPath(join(dir, 'root'))) ? readFileSync(ledgerPath(join(dir, 'root')), 'utf8') : '')
+const lineOf = (w: World, path: string): WorkspaceEntry | undefined => lines(w).find(e => e.path === path)
+const archived = (): Record<string, unknown>[] => {
+  const a = archivePath(join(dir, 'root'))
+  return existsSync(a) ? readFileSync(a, 'utf8').split('\n').filter(l => l !== '').map(l => JSON.parse(l) as Record<string, unknown>) : []
+}
+
+/** A command run without the pull request file `ws` writes, whose GitHub origins no push may reach. */
+async function bare(w: World, ...argv: string[]): Promise<{ code: number; out: string; err: string }> {
+  w.stdout.length = 0
+  w.stderr.length = 0
+  const code = await main(argv, w.deps)
+  return { code, out: w.stdout.join(''), err: w.stderr.join('') }
+}
+
+const HOUR = 60 * 60 * 1000
+
+/** Rewrites one line of the world's ledger, as another writer would. */
+function changeEntryOf(path: string, change: (e: WorkspaceEntry) => WorkspaceEntry): void {
+  const at = ledgerPath(join(dir, 'root'))
+  writeFileSync(at, ledgerText(parseLedger(readFileSync(at, 'utf8')).map(e => (e.path === path ? change(e) : e))))
+}
+
+test('the ledger\'s readings: a line, the text, a name without its reference, the maker, the live sessions', () => {
+  const e: WorkspaceEntry = { v: 1, path: '/r/p/a', kind: 'clone', repo: 'o/p', branch: 'b', orchestrator: 'Orch: X', agent: null, created: '2026-01-01T00:00:00.000Z' }
+  assert.deepEqual(parseEntry(JSON.stringify(e)), e)
+  for (const bad of ['', '{', '[]', JSON.stringify({ ...e, v: 2 }), JSON.stringify({ ...e, kind: 'other' }), JSON.stringify({ ...e, path: '' }), JSON.stringify({ ...e, agent: 3 })]) {
+    assert.equal(parseEntry(bad), null, bad)
+  }
+  const z = { ...e, path: '/r/p/z' }
+  assert.deepEqual(parseLedger(`${ledgerText([z, e])}garbage\n`), [e, z])
+  assert.equal(bareName('Orch: Some project [5860a1]'), 'Orch: Some project')
+  assert.equal(bareName('Agent: x'), 'Agent: x')
+  const orch = { name: 'Orch: X', session: 's1', cwd: '/w', pid: 1 }
+  const agent = { name: 'Agent: y', session: 's2', cwd: '/r/p/a', pid: 2 }
+  assert.deepEqual(makerOf(orch, undefined), { orchestrator: 'Orch: X', agent: null })
+  assert.deepEqual(makerOf(agent, 'Orch: X [abc123]'), { orchestrator: 'Orch: X', agent: 'Agent: y' })
+  assert.deepEqual(makerOf(null, ''), { orchestrator: null, agent: null })
+  assert.deepEqual(makerOf(null, 'Orch: X [abc123]'), { orchestrator: 'Orch: X', agent: null })
+  assert.deepEqual(makerOf(agent, undefined), { orchestrator: null, agent: 'Agent: y' })
+  assert.equal(parseEntry(JSON.stringify({ ...e, reason_at: 3 })), null)
+  assert.equal(parseEntry(JSON.stringify({ ...e, adopted: 'yes' })), null)
+  assert.equal(callerOf([orch, agent], 's2'), agent)
+  assert.equal(callerOf([orch, agent], 'x'), null)
+  assert.equal(callerOf([orch, agent], ''), null)
+  assert.equal(callerOf([orch, agent], undefined), null)
+  const config = join(dir, 'config')
+  assert.equal(liveSessions(config, () => true), null, 'a registry that cannot be read is no « nobody lives »')
+  mkdirSync(join(config, 'sessions'), { recursive: true })
+  writeFileSync(join(config, 'sessions', '1.json'), JSON.stringify({ pid: 1, sessionId: 's1', name: 'Orch: X [ab12cd]', cwd: '/w' }))
+  writeFileSync(join(config, 'sessions', '6.json'), JSON.stringify({ name: 'Orch: no id', cwd: '/v' }))
+  writeFileSync(join(config, 'sessions', '2.json'), JSON.stringify({ pid: 2, name: 'Agent: gone', cwd: '/r' }))
+  writeFileSync(join(config, 'sessions', '3.json'), JSON.stringify({ pid: 3, peerToken: 'no name' }))
+  writeFileSync(join(config, 'sessions', '4.json'), '{')
+  writeFileSync(join(config, 'sessions', '5.key'), 'not a record')
+  assert.deepEqual(liveSessions(config, pid => pid !== 2), [{ name: 'Orch: X', session: 's1', cwd: '/w', pid: 1 }, { name: 'Orch: no id', session: '', cwd: '/v', pid: 6 }])
+})
+
+test('create and pin open a line naming the maker; delete closes it into the archive, saying how it ended', async () => {
+  const src = pushed('proj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41', ORCHESTRATOR_REPORTS_TO: 'Orch: Elsewhere [aaa111]' })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const c = await clone(w, src, 'c', 'feat/c')
+  const made = lineOf(w, c)
+  assert.deepEqual({ ...made, created: '' }, { v: 1, path: c, kind: 'clone', repo: join(dir, 'proj.git'), branch: 'main', orchestrator: 'Orch: Maker', agent: null, created: '' })
+  assert.equal(made?.created, new Date(w.clock).toISOString())
+  w.deps = { ...w.deps, env: { ...w.deps.env, CLAUDE_CODE_SESSION_ID: 's42' } }
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }, { pid: 42, name: 'Agent: reviewer', cwd: src }], new Set([41, 42]))
+  assert.equal((await ws(w, 'pin', src, 'p', 'main')).code, 0)
+  const p = join(dir, 'root', 'proj', 'p')
+  const pinned = lineOf(w, p)
+  assert.deepEqual([pinned?.kind, pinned?.branch, pinned?.orchestrator, pinned?.agent], ['pin', g(src, 'rev-parse', 'main'), 'Orch: Elsewhere', 'Agent: reviewer'])
+  assert.equal((await ws(w, 'delete', c)).code, 0)
+  assert.equal((await ws(w, 'delete', p, '--discard')).code, 0)
+  assert.deepEqual(lines(w), [])
+  assert.deepEqual(archived().map(a => [a['path'], a['end'], typeof a['closed']]), [[c, 'removed', 'string'], [p, 'discarded', 'string']])
+})
+
+test('delete --push puts the branches on the origin first, never a long-lived one, and refuses what cannot reach it', async () => {
+  const src = pushed('proj')
+  const w = world()
+  const c = await clone(w, src, 'c', 'feat/c', 'unpushed')
+  const tip = g(c, 'rev-parse', 'HEAD')
+  assert.deepEqual(await bare(w, 'delete', c, '--push'), { code: 0, out: `pushed feat/c of ${c}\ndeleted ${c}\n`, err: '' })
+  assert.equal(g(join(dir, 'proj.git'), 'rev-parse', 'refs/heads/feat/c'), tip, 'the branch is on the origin')
+  assert.deepEqual(archived().map(a => a['end']), ['pushed and removed'])
+  const m = (await ws(w, 'create', src, 'm', '--base', 'main')).out.trim()
+  g(m, 'commit', '-q', '--allow-empty', '-m', 'On main')
+  assert.deepEqual(await bare(w, 'delete', m, '--push'), { code: 1, out: '', err: `workspace: delete: commits on main, a long-lived branch the sweep never pushes (pass --discard to remove it anyway): ${m}\n` })
+  const n = await clone(w, src, 'n', 'feat/n', 'unpushed')
+  g(n, 'remote', 'set-url', 'origin', join(dir, 'missing.git'))
+  const r = await bare(w, 'delete', n, '--push')
+  assert.equal(r.code, 1)
+  assert.match(r.err, /^workspace: delete: cannot push feat\/n: .+ \(pass --discard/)
+  const o = await clone(w, src, 'o', 'feat/o', 'unpushed')
+  g(o, 'remote', 'remove', 'origin')
+  assert.equal((await bare(w, 'delete', o, '--push')).err, `workspace: delete: commits on no remote branch, and no origin to push them to (pass --discard to remove it anyway): ${o}\n`)
+  // What holds the checkout anyway is read before anything is published.
+  const d = await clone(w, src, 'd', 'feat/d', 'unpushed')
+  writeFileSync(join(d, 'loose.txt'), 'uncommitted')
+  assert.equal((await bare(w, 'delete', d, '--push')).err, `workspace: delete: the tree is dirty (pass --discard to remove it anyway): ${d}\n`)
+  assert.throws(() => g(join(dir, 'proj.git'), 'rev-parse', '--verify', '-q', 'refs/heads/feat/d'), 'nothing pushed')
+  assert.equal((await bare(w, 'delete', d, '--push', '--discard')).err, 'workspace: delete: --push and --discard do not go together\n')
+  // A branch the origin took since the last fetch is not moved: the push is a creation.
+  const t = await clone(w, src, 't', 'feat/t', 'unpushed')
+  const other = join(dir, 'other')
+  execFileSync('git', ['clone', '-q', join(dir, 'proj.git'), other])
+  g(other, 'checkout', '-q', '-b', 'feat/t')
+  g(other, 'commit', '-q', '--allow-empty', '-m', 'Someone else')
+  g(other, 'push', '-q', 'origin', 'feat/t')
+  const theirs = g(other, 'rev-parse', 'HEAD')
+  const refused = await bare(w, 'delete', t, '--push')
+  assert.equal(refused.code, 1)
+  assert.match(refused.err, /^workspace: delete: cannot push feat\/t: /)
+  assert.equal(g(join(dir, 'proj.git'), 'rev-parse', 'refs/heads/feat/t'), theirs)
+  assert.ok(existsSync(m) && existsSync(n) && existsSync(o) && existsSync(d) && existsSync(t))
+})
+
+test('sweep: a checkout whose orchestrator and agent are gone is pushed and removed; what cannot be keeps its reason on its line', async () => {
+  const src = pushed('proj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41' })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const done = await clone(w, src, 'done', 'feat/done')
+  const ahead = await clone(w, src, 'ahead', 'feat/ahead', 'unpushed')
+  const dirty = await clone(w, src, 'dirty', 'feat/dirty', 'dirty')
+  const local = await clone(w, src, 'local', 'feat/local', 'unpushed')
+  g(local, 'remote', 'remove', 'origin')
+  const moved = await clone(w, src, 'moved', 'feat/moved')
+  g(moved, 'commit', '-q', '--allow-empty', '-m', 'Past the pushed head')
+  const main_ = (await ws(w, 'create', src, 'on-main', '--base', 'main')).out.trim()
+  g(main_, 'commit', '-q', '--allow-empty', '-m', 'On main')
+  const pin = join(dir, 'root', 'proj', 'pin')
+  assert.equal((await ws(w, 'pin', src, 'pin', 'main')).code, 0)
+  // Within the first hour, the checkout is its maker's whoever lives: the pull requests decide.
+  registry(w, [], new Set())
+  w.cwds = lsofOf('/elsewhere')
+  assert.match((await bare(w, 'sweep')).out, new RegExp(`^kept ${done}: pull requests unreadable`, 'm'))
+  // Its orchestrator alive: still the pull requests.
+  w.clock += 2 * HOUR
+  registry(w, [{ pid: 51, name: 'Orch: Maker', cwd: src }], new Set([51]))
+  assert.match((await bare(w, 'sweep')).out, new RegExp(`^kept ${done}: pull requests unreadable`, 'm'))
+  // Gone: the dry run says what it would do, pushes nothing, writes nothing.
+  registry(w, [], new Set())
+  const before = readFileSync(ledgerPath(join(dir, 'root')), 'utf8')
+  const dry = await bare(w, 'sweep', '--dry-run')
+  const gone = '(no live orchestrator or agent)'
+  assert.deepEqual(dry.out.split('\n').filter(l => l !== ''), [
+    `would delete ${ahead}: no live orchestrator or agent, after pushing feat/ahead`,
+    `kept ${dirty}: the tree is dirty ${gone}`,
+    `would delete ${done}: no live orchestrator or agent`,
+    `kept ${local}: commits on no remote branch, and no origin to push them to ${gone}`,
+    `kept ${moved}: commits past origin/feat/moved, a branch the origin holds: only its agent moves it ${gone}`,
+    `kept ${main_}: commits on main, a long-lived branch the sweep never pushes ${gone}`,
+    `would delete ${pin}: no live orchestrator or agent`,
+  ])
+  assert.equal(readFileSync(ledgerPath(join(dir, 'root')), 'utf8'), before)
+  assert.throws(() => g(join(dir, 'proj.git'), 'rev-parse', '--verify', '-q', 'refs/heads/feat/ahead'))
+  // The sweep itself.
+  const tip = g(ahead, 'rev-parse', 'HEAD')
+  const r = await bare(w, 'sweep')
+  assert.equal(r.code, 0, r.err)
+  assert.ok(r.err.includes(`workspace: ledger: ${dirty} stays: the tree is dirty (orchestrator Orch: Maker, agent none)\n`), r.err)
+  assert.deepEqual(r.out.split('\n').filter(l => l !== '' && !l.startsWith(`deleted ${join(dir, 'host')}`)), [
+    `pushed feat/ahead of ${ahead}`,
+    `deleted ${ahead}`,
+    `kept ${dirty}: the tree is dirty ${gone}`,
+    `deleted ${done}`,
+    `kept ${local}: commits on no remote branch, and no origin to push them to ${gone}`,
+    `kept ${moved}: commits past origin/feat/moved, a branch the origin holds: only its agent moves it ${gone}`,
+    `kept ${main_}: commits on main, a long-lived branch the sweep never pushes ${gone}`,
+    `deleted ${pin}`,
+  ])
+  assert.equal(g(join(dir, 'proj.git'), 'rev-parse', 'refs/heads/feat/ahead'), tip)
+  assert.ok(!existsSync(ahead) && !existsSync(done) && !existsSync(pin) && existsSync(dirty) && existsSync(local) && existsSync(main_))
+  assert.deepEqual(lines(w).map(e => [e.path, e.reason]), [
+    [dirty, 'the tree is dirty'],
+    [local, 'commits on no remote branch, and no origin to push them to'],
+    [moved, 'commits past origin/feat/moved, a branch the origin holds: only its agent moves it'],
+    [main_, 'commits on main, a long-lived branch the sweep never pushes'],
+  ])
+  assert.deepEqual(archived().map(a => [a['path'], a['end']]), [[ahead, 'pushed and removed'], [done, 'removed'], [pin, 'removed']])
+  // A reason is dated when it is first seen, and kept as long as it holds.
+  const at = lineOf(w, dirty)?.reason_at
+  w.clock += HOUR
+  assert.ok(!(await bare(w, 'sweep')).err.includes('ledger:'), 'said once, when first written')
+  assert.equal(lineOf(w, dirty)?.reason_at, at)
+  // A registry that cannot be read ends nothing.
+  rmSync(join(dir, 'home', '.claude', 'sessions'), { recursive: true, force: true })
+  const blind = await bare(w, 'sweep')
+  assert.ok(blind.out.includes(`kept ${dirty}: the session registry cannot be read\n`), blind.out)
+  // Its agent alive by name, wherever it started: no reason is owed.
+  registry(w, [{ pid: 71, name: 'Agent: elsewhere', cwd: '/elsewhere' }], new Set([71]))
+  changeEntryOf(dirty, e => ({ ...e, agent: 'Agent: elsewhere' }))
+  await bare(w, 'sweep')
+  assert.deepEqual([lineOf(w, dirty)?.reason, lineOf(w, dirty)?.reason_at], [undefined, undefined])
+  changeEntryOf(dirty, e => ({ ...e, agent: null }))
+  registry(w, [], new Set())
+  await bare(w, 'sweep')
+  assert.equal(lineOf(w, dirty)?.reason, 'the tree is dirty')
+  // Its orchestrator back (a successor carries its name): no reason is owed any more.
+  registry(w, [{ pid: 61, name: 'Orch: Maker', cwd: src }], new Set([61]))
+  await bare(w, 'sweep')
+  assert.deepEqual([lineOf(w, dirty)?.reason, lineOf(w, dirty)?.reason_at], [undefined, undefined])
+})
+
+test('sweep: an agent working in a checkout keeps it and is named on its line; a checkout with no line is adopted, a line with no checkout closed', async () => {
+  const src = pushed('proj')
+  const w = world()
+  const a = await clone(w, src, 'a', 'feat/a')
+  const b = await clone(w, src, 'b', 'feat/b')
+  // b was made before the ledger: it has no line; a line names a checkout removed by hand.
+  const root = join(dir, 'root')
+  const kept = lines(w).filter(e => e.path !== b)
+  const ghost: WorkspaceEntry = { v: 1, path: join(root, 'proj', 'ghost'), kind: 'clone', repo: '', branch: 'x', orchestrator: null, agent: null, created: new Date(0).toISOString() }
+  writeFileSync(ledgerPath(root), ledgerText([...kept, ghost]))
+  w.clock += 2 * HOUR
+  w.cwds = lsofOf('/elsewhere')
+  registry(w, [{ pid: 7, name: 'Agent: worker', cwd: join(a, 'sub') }], new Set([7]))
+  // A dry run adopts nothing and closes nothing.
+  const ledgerBefore = readFileSync(ledgerPath(root), 'utf8')
+  const dry = await bare(w, 'sweep', '--dry-run')
+  assert.ok(dry.out.includes(`would delete ${b}: no live orchestrator or agent`), dry.out)
+  assert.equal(readFileSync(ledgerPath(root), 'utf8'), ledgerBefore)
+  assert.deepEqual(archived(), [])
+  const listed = await bare(w, 'ledger')
+  assert.deepEqual(listed.out.split('\n').filter(l => l !== ''), [
+    `${a} | ${join(dir, 'proj.git')} | main | orchestrator none | agent Agent: worker (live) | `,
+    `${ghost.path} | - | x | orchestrator none | agent none | `,
+    `${b} | no line: the next sweep adopts it`,
+  ])
+  const r = await bare(w, 'sweep')
+  assert.equal(r.out.split('\n')[0], `kept ${a}: agent Agent: worker works in it`)
+  assert.ok(existsSync(a))
+  assert.equal(lineOf(w, a)?.agent, 'Agent: worker')
+  // b is adopted, dated from its directory's birth: past its first hour on the clock, owned by no
+  // one alive, clean and pushed, it goes.
+  assert.ok(!existsSync(b))
+  assert.deepEqual(archived().filter(x => x['path'] === b).map(x => [x['adopted'], x['orchestrator'], x['end']]), [[true, null, 'removed']])
+  assert.deepEqual(archived().filter(x => x['path'] === ghost.path).map(x => x['end']), ['gone'])
+  assert.ok(lineOf(w, ghost.path) === undefined)
+  assert.equal((await bare(w, 'ledger', 'x')).err, 'workspace: ledger: usage: ledger\n')
+})
+
+test('sweep: an adoption never overwrites a line written since the ledger was read; a sibling sharing a prefix is no agent of it; a date that does not read keeps the grace', async () => {
+  const src = pushed('proj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41' })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const a = await clone(w, src, 'a', 'feat/a')
+  const ab = await clone(w, src, 'ab', 'feat/ab')
+  const root = join(dir, 'root')
+  const made = lineOf(w, a)
+  assert.equal(made?.orchestrator, 'Orch: Maker')
+  // The sweep's reading of the ledger misses a's line (written after it), b's line is unreadable.
+  writeFileSync(ledgerPath(root), ledgerText([{ ...(lineOf(w, ab) as WorkspaceEntry), created: 'not a date' }]))
+  w.clock += 2 * HOUR
+  w.cwds = lsofOf('/elsewhere')
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }, { pid: 8, name: 'Agent: next door', cwd: ab }], new Set([41, 8]))
+  // a's line lands between the sweep's read and its adoption: the maker's line stands.
+  const real = w.deps.run
+  let once = false
+  w.deps = { ...w.deps, run: async (argv, options) => {
+    if (!once && argv.includes('symbolic-ref') && argv.includes(a)) {
+      once = true
+      writeFileSync(ledgerPath(root), ledgerText([...lines(w), made as WorkspaceEntry]))
+    }
+    return real(argv, options)
+  } }
+  const r = await bare(w, 'sweep')
+  assert.equal(r.code, 0, r.err)
+  assert.equal(lineOf(w, a)?.orchestrator, 'Orch: Maker', 'the adoption did not overwrite the maker')
+  assert.ok(r.out.includes(`kept ${ab}: agent Agent: next door works in it`), r.out)
+  assert.ok(!r.out.includes(`kept ${a}: agent`), 'ab is no subdirectory of a')
+  assert.ok(existsSync(a) && existsSync(ab))
+  // No agent in ab any more, its orchestrator gone: its date does not read, so the grace holds it.
+  changeEntryOf(ab, e => ({ ...e, orchestrator: null }))
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const graced = await bare(w, 'sweep')
+  assert.match(graced.out, new RegExp(`^kept ${ab}: pull requests unreadable`, 'm'))
+  assert.ok(existsSync(ab))
+  // The ledger names each owner live or gone, and the reason a checkout stays.
+  changeEntryOf(a, e => ({ ...e, orchestrator: 'Orch: Gone', agent: 'Agent: past', reason: 'the tree is dirty' }))
+  const listed = (await bare(w, 'ledger')).out.split('\n').find(l => l.startsWith(`${a} |`))
+  assert.equal(listed, `${a} | ${join(dir, 'proj.git')} | main | orchestrator Orch: Gone (gone) | agent Agent: past (gone) | the tree is dirty`)
+  changeEntryOf(a, e => ({ ...e, orchestrator: 'Orch: Maker' }))
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  assert.ok((await bare(w, 'ledger')).out.includes(`${a} | ${join(dir, 'proj.git')} | main | orchestrator Orch: Maker (live) | agent Agent: past (gone) |`))
 })

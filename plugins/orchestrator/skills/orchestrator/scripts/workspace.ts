@@ -2,12 +2,22 @@
 //
 //   workspace.sh create <source-repo> <name> [--base <branch|origin/branch>]   prints the checkout's path; --base <branch> starts from origin/<branch>, the local branch only when origin has none
 //   workspace.sh pin <source-repo> <name> <ref> [--pr <n>]     a detached worktree at that commit, of the local material only the global excludes' files; prints its path
-//   workspace.sh delete <path> [--discard]                     refuses unpushed work unless told; also removes the host's
-//                                                              temporary directory of the path when no live process uses it
+//   workspace.sh delete <path> [--discard] [--push]            refuses unpushed work unless told; --push pushes its branches
+//                                                              first; also removes the host's temporary directory of the
+//                                                              path when no live process uses it
 //   workspace.sh sweep [--deadline <seconds>] [--dry-run]      the leftovers, decided on facts: one line per item,
-//                                                              "deleted <path>" | "kept <path>: <reason>" (a dry run says "would delete")
+//                                                              "deleted <path>" | "kept <path>: <reason>" (a dry run says "would delete"),
+//                                                              "pushed <branch> of <path>" before a checkout no one lives in goes
 //   workspace.sh list [<repo>]                                 one line per checkout under the root (a pin reads HEAD … pinned);
 //                                                              given a repository (its name or `owner/name`), only its checkouts
+//   workspace.sh ledger                                        the ledger: one line per checkout, its owners alive or gone,
+//                                                              the reason it stays; a checkout it does not name, said
+//
+// Ledger: <root>/.workspaces.jsonl (lib/workspace-ledger.ts), one line per checkout, its
+// orchestrator and its agent; `create` and `pin` open it, `delete` closes it into the archive
+// beside it, the sweep adopts a checkout it does not name. A checkout past its first hour whose
+// orchestrator and agent no longer live is ended by the sweep: its branches pushed, then removed;
+// what cannot be is kept with its reason written on its line.
 //
 // Root: ORCHESTRATOR_WORKSPACES, else ~/dev/workspaces. A checkout lives at
 // <root>/<basename of the source>/<name>.
@@ -50,12 +60,17 @@ import {
   readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, appendFileSync, writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
-import { setting, stateDir, type Env } from '../../../core/paths.ts'
+import { ENV } from '../../../core/env.ts'
+import { configDir, setting, stateDir, type Env } from '../../../core/paths.ts'
 import { readText, update } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted, type FilePr, type PrFile } from '../../../hooks/pr-file-format.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
+import {
+  adoptEntry, callerOf, changeEntry, closeEntry, GRACE_MS, liveSessions, makerOf, pidAlive, putEntry, readLedger,
+  type LiveSession, type WorkspaceEntry,
+} from './lib/workspace-ledger.ts'
 
-export const USAGE = 'usage: workspace.sh {create|pin|delete|sweep|list} ... (see header)'
+export const USAGE = 'usage: workspace.sh {create|pin|delete|sweep|list|ledger} ... (see header)'
 
 /** How long the process table is given to answer. */
 export const LSOF_MS = 20_000
@@ -70,6 +85,8 @@ export interface Deps {
   /** The directory relative paths are read against, as the shell's logical `pwd` names it. */
   readonly cwd: string
   readonly uid: number
+  /** Whether a process lives; the system's answer when not given. */
+  readonly alive?: (pid: number) => boolean
 }
 
 /** A refusal: said on stderr as `workspace: <message>`, exit 1. */
@@ -83,6 +100,7 @@ interface Context {
   readonly signal?: AbortSignal
   cwds?: readonly string[] | null
   liveNames?: ReadonlySet<string> | null
+  sessions?: readonly LiveSession[] | null
 }
 
 function say(ctx: Context, text: string): void {
@@ -264,7 +282,7 @@ function liveWhy(state: Live): string {
 }
 
 /** Why the checkout or pin at `real` may not be deleted, or '' when nothing holds it. */
-export async function refusal(ctx: Context, real: string): Promise<string> {
+export async function refusal(ctx: Context, real: string, pushable = false): Promise<string> {
   const read = async (args: readonly string[]): Promise<string | { readonly why: string }> => {
     const r = await gitRead(ctx, real, args)
     if (r.status === 0) return chomp(r.stdout)
@@ -283,7 +301,11 @@ export async function refusal(ctx: Context, real: string): Promise<string> {
     // on none either. (A pin shares its source's stash, so it is not asked there.)
     const unpushed = await read(['log', 'HEAD', '--branches', '--not', '--remotes', '--oneline'])
     if (typeof unpushed !== 'string') return unpushed.why
-    if (unpushed !== '') return 'commits on no remote branch'
+    // A dry run's reading of a checkout whose branches it would push first: only what is on no
+    // branch at all (a detached head's own commits) stays unpushed then.
+    const lost = pushable ? await read(['log', 'HEAD', '--not', '--branches', '--remotes', '--oneline']) : unpushed
+    if (typeof lost !== 'string') return lost.why
+    if (lost !== '') return 'commits on no remote branch'
     const stash = await read(['for-each-ref', '--count=1', 'refs/stash'])
     if (typeof stash !== 'string') return stash.why
     if (stash !== '') return 'a stash is held'
@@ -291,6 +313,126 @@ export async function refusal(ctx: Context, real: string): Promise<string> {
   const inside = await liveInside(ctx, real)
   if (inside === null) return 'the process table cannot be read'
   return inside ? 'a live process has its working directory inside' : ''
+}
+
+// --- the ledger: one line per checkout, its owners, and why it stays ----------------------------
+
+/** The host's live sessions, read once per run; null when its registry cannot be read. */
+function sessionsOf(ctx: Context): readonly LiveSession[] | null {
+  if (ctx.sessions !== undefined) return ctx.sessions
+  ctx.sessions = liveSessions(configDir(ctx.deps.env, setting(ctx.deps.env, 'HOME')), ctx.deps.alive ?? pidAlive)
+  return ctx.sessions
+}
+
+/** The live session working in the checkout at `real`, by the directory it started in. */
+function agentIn(ctx: Context, real: string): LiveSession | undefined {
+  return (sessionsOf(ctx) ?? []).find(s => {
+    const cwd = realOf(s.cwd)
+    return cwd === real || cwd.startsWith(`${real}/`)
+  })
+}
+
+/** Whether a live session carries the name: an orchestrator's successor carries it too. */
+function namedLive(ctx: Context, name: string | null): boolean {
+  return name !== null && (sessionsOf(ctx) ?? []).some(s => s.name === name)
+}
+
+const iso = (ms: number): string => new Date(ms).toISOString()
+
+/** The repository a checkout's origin names: `owner/name` on GitHub, else the origin itself. */
+async function repoOfCheckout(ctx: Context, real: string): Promise<string> {
+  const url = (await gitOut(ctx, real, ['remote', 'get-url', 'origin'])) ?? ''
+  return repoOfOrigin(url) ?? url
+}
+
+/** A ledger write that fails is said, never a failure of the command. */
+function ledgerWrite(ctx: Context, what: string, write: () => void): void {
+  try {
+    write()
+  } catch (error) {
+    say(ctx, `ledger: ${what} not written: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/** The line `create` or `pin` opens for the checkout it made, naming its maker. */
+async function openEntry(ctx: Context, target: string, kind: 'clone' | 'pin', branch: string): Promise<void> {
+  const real = realOf(target)
+  const env = ctx.deps.env
+  const maker = makerOf(callerOf(sessionsOf(ctx) ?? [], setting(env, 'CLAUDE_CODE_SESSION_ID')), setting(env, ENV.reportsTo))
+  const entry: WorkspaceEntry = {
+    v: 1, path: real, kind, repo: await repoOfCheckout(ctx, real), branch, ...maker, created: iso(ctx.deps.now()),
+  }
+  ledgerWrite(ctx, `the line of ${real}`, () => putEntry(ctx.root, entry))
+}
+
+/** The line of a checkout the ledger does not name, born when its directory was. */
+async function adoptedEntry(ctx: Context, real: string): Promise<WorkspaceEntry> {
+  const pin = isFile(join(real, '.git'))
+  const branch = pin
+    ? (await gitOut(ctx, real, ['rev-parse', 'HEAD'])) ?? ''
+    : (await gitOut(ctx, real, ['symbolic-ref', '--short', '-q', 'HEAD'])) ?? ''
+  let born = ctx.deps.now()
+  try {
+    const st = statSync(real)
+    born = st.birthtimeMs > 0 ? st.birthtimeMs : st.mtimeMs
+  } catch {
+    // Unreadable: born now, so the grace keeps it.
+  }
+  return {
+    v: 1, path: real, kind: pin ? 'pin' : 'clone', repo: await repoOfCheckout(ctx, real), branch,
+    orchestrator: null, agent: null, created: iso(born), adopted: true,
+  }
+}
+
+/** Branches never pushed by a sweep: a commit there is the operator's to publish. */
+async function protectedBranch(ctx: Context, real: string, branch: string): Promise<boolean> {
+  if ((LONG_LIVED as readonly string[]).includes(branch)) return true
+  return (await gitOut(ctx, real, ['symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD'])) === `origin/${branch}`
+}
+
+/** How long one push is given. */
+export const PUSH_MS = 60_000
+
+/**
+ * The checkout's work put on its origin before it goes: every local branch holding a commit no
+ * remote branch holds, and that the origin does not hold yet, is pushed under its own name, never
+ * forced, with no hook of the checkout's run. A pin carries no branch of its own. A dry run pushes nothing and names what it would push.
+ * The reason is '' when nothing stands in the way, else why the work cannot reach the origin.
+ */
+export async function pushWork(ctx: Context, real: string, dry: boolean): Promise<{ readonly pushed: readonly string[]; readonly reason: string }> {
+  if (isFile(join(real, '.git'))) return { pushed: [], reason: '' }
+  const heads = await gitRead(ctx, real, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'])
+  if (heads.status !== 0) return { pushed: [], reason: `git cannot read the checkout: ${heads.stderr.split('\n')[0] ?? ''}` }
+  const ahead: string[] = []
+  for (const b of chomp(heads.stdout).split('\n').filter(l => l !== '')) {
+    if (((await gitOut(ctx, real, ['rev-list', '-1', `refs/heads/${b}`, '--not', '--remotes'])) ?? '') !== '') ahead.push(b)
+  }
+  if (ahead.length === 0) return { pushed: [], reason: '' }
+  if ((await gitOut(ctx, real, ['remote', 'get-url', 'origin'])) === undefined) {
+    return { pushed: [], reason: 'commits on no remote branch, and no origin to push them to' }
+  }
+  for (const b of ahead) {
+    if (await protectedBranch(ctx, real, b)) return { pushed: [], reason: `commits on ${b}, a long-lived branch the sweep never pushes` }
+    // A branch the origin holds may carry an open pull request: its head is moved by its agent,
+    // never by a sweep that would publish commits no one asked to.
+    if ((await gitRead(ctx, real, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${b}`])).status === 0) {
+      return { pushed: [], reason: `commits past origin/${b}, a branch the origin holds: only its agent moves it` }
+    }
+  }
+  if (dry) return { pushed: ahead, reason: '' }
+  const pushed: string[] = []
+  for (const b of ahead) {
+    const signals = [AbortSignal.timeout(PUSH_MS), ...(ctx.signal === undefined ? [] : [ctx.signal])]
+    // The empty lease makes the push a creation: a branch the origin took since the last fetch refuses it.
+    const r = await gitRead(ctx, real, ['push', '--quiet', `--force-with-lease=refs/heads/${b}:`, 'origin', `refs/heads/${b}:refs/heads/${b}`], AbortSignal.any(signals), { GIT_TERMINAL_PROMPT: '0' })
+    if (r.status !== 0) {
+      const why = r.status === null ? 'no answer in time' : (r.stderr.trim().split('\n')[0] ?? '') || `git exited ${r.status}`
+      return { pushed, reason: `cannot push ${b}: ${why}` }
+    }
+    pushed.push(b)
+    out(ctx, `pushed ${b} of ${real}`)
+  }
+  return { pushed, reason: '' }
 }
 
 // The trashes: a removal first moves its directory into one, in a single rename (each trash
@@ -675,6 +817,7 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
     }
     say(ctx, missing.length > 0 ? `manifest: ${copied} copied, missing: ${missing.join(' ')}` : `manifest: ${copied} copied, 0 missing`)
   }
+  await openEntry(ctx, target, 'clone', (await gitOut(ctx, target, ['symbolic-ref', '--short', '-q', 'HEAD'])) ?? '')
   out(ctx, target)
 }
 
@@ -722,6 +865,7 @@ export async function pin(ctx: Context, argv: readonly string[]): Promise<void> 
     }
   }
   say(ctx, `pinned ${(await gitOut(ctx, src, ['rev-parse', '--short', sha])) ?? ''} from ${ref}`)
+  await openEntry(ctx, target, 'pin', sha)
   out(ctx, target)
 }
 
@@ -731,7 +875,7 @@ export function underRoot(real: string, root: string): boolean {
 }
 
 export async function remove(ctx: Context, argv: readonly string[]): Promise<void> {
-  const { pos, opts } = parseLine(argv, 'delete', [], ['--discard'], 1)
+  const { pos, opts } = parseLine(argv, 'delete', [], ['--discard', '--push'], 1)
   const [path = ''] = pos
   if (path === '') throw new Refused('delete: usage: delete <path> [--discard]')
   // A relative path is read against the caller's directory, both ways the shell read it: the
@@ -752,6 +896,18 @@ export async function remove(ctx: Context, argv: readonly string[]): Promise<voi
   // no branch of the source »: a reader that committed in its copy is the one way to lose work
   // here, the pinned commit itself living in the source. A live process inside is read last,
   // and `--discard` is the operator's word over all of them.
+  // --push: the work goes to the origin first, so the guard below finds nothing unpushed.
+  let pushed: readonly string[] = []
+  if (opts.has('--push') && opts.has('--discard')) throw new Refused('delete: --push and --discard do not go together')
+  if (opts.has('--push')) {
+    // What holds the checkout whatever is pushed (a dirty tree, a stash, a live process) is read
+    // before anything is published.
+    const held = await refusal(ctx, real, true)
+    if (held !== '') throw new Refused(`delete: ${held} (pass --discard to remove it anyway): ${path}`)
+    const work = await pushWork(ctx, real, false)
+    pushed = work.pushed
+    if (work.reason !== '') throw new Refused(`delete: ${work.reason} (pass --discard to remove it anyway): ${path}`)
+  }
   if (!opts.has('--discard')) {
     const reason = await refusal(ctx, real)
     if (reason !== '') throw new Refused(`delete: ${reason} (pass --discard to remove it anyway): ${path}`)
@@ -769,6 +925,8 @@ export async function remove(ctx: Context, argv: readonly string[]): Promise<voi
     say(ctx, `the source still lists the worktree ${real}; \`git worktree prune\` in it drops it`)
   }
   if (present(real)) throw new Refused(`delete: still there after the removal: ${real}`)
+  const end = opts.has('--discard') ? 'discarded' : pushed.length > 0 ? 'pushed and removed' : 'removed'
+  ledgerWrite(ctx, `the close of ${real}`, () => closeEntry(ctx.root, real, end, iso(ctx.deps.now())))
   out(ctx, `deleted ${real}`)
   await removeHostTmp(ctx, [real, logical])
 }
@@ -793,6 +951,31 @@ export async function list(ctx: Context, argv: readonly string[] = []): Promise<
       ? 'pinned'
       : chomp((await gitRead(ctx, d, ['log', '--branches', '--not', '--remotes', '--oneline'])).stdout) === '' ? 'pushed' : 'unpushed'
     out(ctx, `${d} | ${br} | ${head} | ${state} | ${pushed}`)
+  }
+}
+
+/**
+ * The ledger as it stands: one line per checkout it names, `<path> | <repo> | <branch> |
+ * orchestrator <name> (live|gone) | agent <name> (live|gone) | <reason>`, then each checkout under
+ * the root it does not name (`<path> | no line: the next sweep adopts it`).
+ */
+export async function ledger(ctx: Context, argv: readonly string[] = []): Promise<void> {
+  if (argv.length > 0) throw new Refused('ledger: usage: ledger')
+  const entries = readLedger(ctx.root)
+  const named = new Set(entries.map(e => e.path))
+  const owner = (role: string, name: string | null, live: boolean): string => (name === null ? `${role} none` : `${role} ${name} (${live ? 'live' : 'gone'})`)
+  for (const e of entries) {
+    const agent = agentIn(ctx, e.path)
+    const agentName = agent?.name ?? e.agent
+    out(ctx, [
+      e.path, e.repo === '' ? '-' : e.repo, e.branch === '' ? '-' : e.branch,
+      owner('orchestrator', e.orchestrator, namedLive(ctx, e.orchestrator)),
+      owner('agent', agentName, agent !== undefined || namedLive(ctx, agentName)),
+      e.reason ?? '',
+    ].join(' | '))
+  }
+  for (const d of isDir(ctx.root) ? checkoutDirs(ctx.root) : []) {
+    if (present(join(d, '.git')) && !named.has(realOf(d))) out(ctx, `${realOf(d)} | no line: the next sweep adopts it`)
   }
 }
 
@@ -823,6 +1006,8 @@ interface Sweep {
   readonly wanted: Set<string>
   /** Each repository's list, or the reason it cannot be read, once per run. */
   readonly prs: Map<string, readonly FilePr[] | { readonly why: string }>
+  /** The ledger's lines by path, read once per run. */
+  readonly ledger: ReadonlyMap<string, WorkspaceEntry>
 }
 
 function spent(s: Sweep): boolean {
@@ -919,21 +1104,15 @@ export async function decide(s: Sweep, real: string): Promise<Verdict> {
   }
 }
 
-/** Decide, then delete (or say what would be) and prove it. */
-async function sweepOne(s: Sweep, d: string): Promise<void> {
+/** A removal run inside the sweep: its lines held, said once it is known whether it completed. */
+async function removeInSweep(s: Sweep, real: string, flags: readonly string[] = []): Promise<{ readonly done: boolean; readonly lines: string; readonly err: string }> {
   const ctx = s.ctx
-  const real = realOf(d)
-  const verdict = await decide(s, real)
-  if (!verdict.delete) return keep(ctx, real, verdict.reason)
-  const reason = await refusal(ctx, real)
-  if (reason !== '') return keep(ctx, real, reason)
-  if (s.dry) return out(ctx, `would delete ${real}: ${verdict.reason}`)
   const lines: string[] = []
   const errs: string[] = []
   const inner: Context = { ...ctx, deps: { ...ctx.deps, io: { out: t => lines.push(t), err: t => errs.push(t) } } }
   let done = true
   try {
-    await remove(inner, [real])
+    await remove(inner, [real, ...flags])
   } catch (error) {
     if (!(error instanceof Refused)) throw error
     errs.push(`workspace: ${error.message}\n`)
@@ -944,10 +1123,85 @@ async function sweepOne(s: Sweep, d: string): Promise<void> {
   if (inner.liveNames !== undefined) ctx.liveNames = inner.liveNames
   const err = errs.join('')
   if (err !== '') ctx.deps.io.err(err)
-  if (!done || present(real)) {
-    return keep(ctx, real, `the delete did not complete (${(err.split('\n')[0] ?? '').replace(/^workspace: /, '')})`)
+  return { done: done && !present(real), lines: lines.join(''), err }
+}
+
+/** The first line a refused removal said, without its prefixes and the --discard hint. */
+const refusedWhy = (err: string): string =>
+  (err.split('\n')[0] ?? '').replace(/^workspace: (delete: )?/, '').replace(/ \(pass --discard.*$/, '')
+
+/** Decide, then delete (or say what would be) and prove it. */
+async function sweepOne(s: Sweep, d: string): Promise<void> {
+  const ctx = s.ctx
+  const real = realOf(d)
+  // The ledger's line: the checkout's own, or one adopted for a checkout it does not name.
+  let entry = s.ledger.get(real)
+  if (entry === undefined) {
+    const adopted = await adoptedEntry(ctx, real)
+    entry = adopted
+    // A line `create` wrote since the ledger was read wins over the adoption.
+    if (!s.dry) ledgerWrite(ctx, `the line of ${real}`, () => { entry = adoptEntry(ctx.root, adopted) })
   }
-  ctx.deps.io.out(lines.join(''))
+  const agent = agentIn(ctx, real)
+  if (agent !== undefined) {
+    if (!s.dry && entry.agent !== agent.name) ledgerWrite(ctx, `the agent of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, agent: agent.name })))
+    return keep(ctx, real, `agent ${agent.name} works in it`)
+  }
+  // A date that does not read keeps the grace: the safe side.
+  const born = Date.parse(entry.created)
+  const young = Number.isNaN(born) || ctx.deps.now() - born < GRACE_MS
+  if (young || namedLive(ctx, entry.orchestrator) || namedLive(ctx, entry.agent)) {
+    if (!s.dry && entry.reason !== undefined) {
+      ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, ({ reason: _r, reason_at: _a, ...e }) => e))
+    }
+    return sweepOwned(s, real)
+  }
+  return sweepEnded(s, real, entry)
+}
+
+/** A checkout its orchestrator still holds, or in its first hour: it goes once its pull request is over. */
+async function sweepOwned(s: Sweep, real: string): Promise<void> {
+  const ctx = s.ctx
+  const verdict = await decide(s, real)
+  if (!verdict.delete) return keep(ctx, real, verdict.reason)
+  const reason = await refusal(ctx, real)
+  if (reason !== '') return keep(ctx, real, reason)
+  if (s.dry) return out(ctx, `would delete ${real}: ${verdict.reason}`)
+  const removed = await removeInSweep(s, real)
+  if (!removed.done) return keep(ctx, real, `the delete did not complete (${(removed.err.split('\n')[0] ?? '').replace(/^workspace: /, '')})`)
+  ctx.deps.io.out(removed.lines)
+}
+
+/**
+ * A checkout whose orchestrator and agent no longer live: its use is over. Its work goes to the
+ * origin, then the checkout goes; the next session recreates it from git. What holds it — work
+ * that cannot be pushed, uncommitted changes, a live process — is its line's reason, said.
+ */
+async function sweepEnded(s: Sweep, real: string, entry: WorkspaceEntry): Promise<void> {
+  const ctx = s.ctx
+  const stays = (reason: string): void => {
+    if (!s.dry && entry.reason !== reason) {
+      const at = iso(ctx.deps.now())
+      ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, reason, reason_at: at })))
+      // Said once, when first recorded: the stop gate logs it for whoever reads the module's log.
+      say(ctx, `ledger: ${real} stays: ${reason} (orchestrator ${entry.orchestrator ?? 'unknown'}, agent ${entry.agent ?? 'none'})`)
+    }
+    keep(ctx, real, `${reason} (no live orchestrator or agent)`)
+  }
+  // Who lives is read in the registry: one that cannot be read ends nothing.
+  if (sessionsOf(ctx) === null) return keep(ctx, real, 'the session registry cannot be read')
+  if (s.dry) {
+    const work = await pushWork(ctx, real, true)
+    if (work.reason !== '') return stays(work.reason)
+    const reason = await refusal(ctx, real, work.pushed.length > 0)
+    if (reason !== '') return stays(reason)
+    const push = work.pushed.length > 0 ? `, after pushing ${work.pushed.join(' ')}` : ''
+    return out(ctx, `would delete ${real}: no live orchestrator or agent${push}`)
+  }
+  // `delete --push`: what it pushed is said whether the removal completes or not.
+  const removed = await removeInSweep(s, real, ['--push'])
+  ctx.deps.io.out(removed.lines)
+  if (!removed.done) return stays(refusedWhy(removed.err))
 }
 
 /**
@@ -1058,12 +1312,18 @@ export async function sweep(ctx: Context, argv: readonly string[]): Promise<void
   const sctx: Context = { ...ctx, ...(signal === undefined ? {} : { signal }) }
   const env = ctx.deps.env
   const state = setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir('claude-orchestrator', env, setting(env, 'HOME'))
-  const s: Sweep = { ctx: sctx, dry, deadline, t0, file: parsePrFile(readText(prFilePath(state)) ?? ''), wanted: new Set(), prs: new Map() }
+  const s: Sweep = { ctx: sctx, dry, deadline, t0, file: parsePrFile(readText(prFilePath(state)) ?? ''), wanted: new Set(), prs: new Map(), ledger: new Map(readLedger(ctx.root).map(e => [e.path, e])) }
   try {
     // The trashes, then the orphans — local and cheap — then the checkouts, which read the pull
     // requests: a sweep cut by its deadline has done the cheap part first.
     if (!(await sweepTrash(s))) return
     if (!(await sweepOrphans(s, root))) return
+    // A line whose checkout is no longer there (removed by hand) is closed: the ledger names what exists.
+    if (!dry) {
+      for (const e of s.ledger.values()) {
+        if (!present(e.path)) ledgerWrite(ctx, `the close of ${e.path}`, () => closeEntry(ctx.root, e.path, 'gone', iso(ctx.deps.now())))
+      }
+    }
     for (const d of checkoutDirs(ctx.root)) {
       if (!present(join(d, '.git'))) continue
       if (spent(s)) return sayDeadline(s)
@@ -1095,6 +1355,7 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
     else if (cmd === 'delete') await remove(ctx, rest)
     else if (cmd === 'sweep') await sweep(ctx, rest)
     else if (cmd === 'list') await list(ctx, rest)
+    else if (cmd === 'ledger') await ledger(ctx, rest)
     else throw new Refused(`unknown command: ${cmd}`)
   } catch (error) {
     if (!(error instanceof Refused)) throw error
