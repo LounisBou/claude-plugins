@@ -2,7 +2,7 @@
 // What says an agent is done with a Ready pull request, read from the artifact (the label at the pull
 // request's head), so any reader that learns of it late, the module's tick of a fresh session or the
 // takeover's print, names the same agents to close. Pure: the reading of the files is the caller's.
-import { prKey, READY_LABEL, type LedgerLine } from '../core/pr-ledger.ts'
+import { agentsOf, prKey, READY_LABEL, type LedgerLine } from '../core/pr-ledger.ts'
 import type { FilePr } from './pr-file-format.ts'
 
 /** The head (sha) each open pull request carries Ready at, by `<repo>#<n>`. */
@@ -14,9 +14,9 @@ export function readyHeadsOf(prs: readonly FilePr[]): Map<string, string> {
   return heads
 }
 
-/** The pull requests an agent still holds besides its Ready ones: its other working lines, among `kept` (the lines still open). */
+/** The pull requests an agent still holds besides its Ready ones: its other working lines, put on it last or before, among `kept` (the lines still open). */
 export function holdsOf(kept: readonly LedgerLine[], isAgent: (agent: string) => boolean, isReady: (key: string) => boolean): string[] {
-  return kept.filter(other => other.status === 'working' && isAgent(other.agent ?? '') && !isReady(prKey(other.repo, other.pr))).map(other => prKey(other.repo, other.pr))
+  return kept.filter(other => agentsOf(other).some(isAgent) && !isReady(prKey(other.repo, other.pr))).map(other => prKey(other.repo, other.pr))
 }
 
 // The line a pull request that is Ready wakes its orchestrator with: its agent is done with it and closes now, its

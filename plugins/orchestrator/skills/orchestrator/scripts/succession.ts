@@ -52,7 +52,7 @@ import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts
 import { orchForm } from '../../../core/names.ts'
 import { sessionOrchestration } from '../../../core/session-orchestration.ts'
 import { parseSessionName } from '../../../core/names.ts'
-import { ledgerLines, prKey, statusText, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
+import { agentsOf, ledgerLines, prKey, statusText, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
 import { auditRun, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { GoalsFault, parseGoals } from './lib/goals-file.ts'
@@ -287,7 +287,7 @@ export function readyNote(
   const kept = ledger.filter(line => !ended(line.repo, line.pr))
   if (bareName(agent) === '') return undefined
   const mine = (name: string): boolean => bareName(name).toLowerCase() === bareName(agent).toLowerCase()
-  const ready = kept.filter(line => line.status === 'working' && mine(line.agent ?? '') && readyHead(line.repo, line.pr) !== undefined)
+  const ready = kept.filter(line => agentsOf(line).some(mine) && readyHead(line.repo, line.pr) !== undefined)
   if (ready.length === 0) return undefined
   const holds = holdsOf(kept, mine, key => ready.some(line => prKey(line.repo, line.pr) === key))
   const names = ready.map(line => prKey(line.repo, line.pr)).join(', ')

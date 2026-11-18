@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  archiveOf, endedLines, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
-  blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, unattended, unattendedLine, unattendedPaneLines, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutLines, type LedgerLine,
+  archiveOf, endedLines, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_EARLIER_KEPT, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
+  blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, unattended, unattendedLine, unattendedPaneLines, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutEarlier, withoutLines, type LedgerLine,
 } from './pr-ledger.ts'
 
 const AT = '2026-11-14T10:00:00Z'
@@ -67,6 +67,45 @@ describe('the pull request ledger', () => {
     assert.equal(ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: other' }, later, first).since, '2026-11-14T10:20:00Z')
   })
 
+  it('keeps every agent put to work on it before, the newest first, each once, and none past a wait or a parking', () => {
+    const first = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: author' }, new Date(AT))
+    assert.equal(first.earlier, undefined)
+    const review = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: review r1' }, new Date(AT), first)
+    assert.deepEqual(review.earlier, ['Agent: author'])
+    const fix = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: fix' }, new Date(AT), review)
+    assert.deepEqual(fix.earlier, ['Agent: review r1', 'Agent: author'])
+    // The author put back on it leaves the list it was in; the same agent again changes nothing.
+    assert.deepEqual(ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: author' }, new Date(AT), fix).earlier, ['Agent: fix', 'Agent: review r1'])
+    assert.deepEqual(ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: fix' }, new Date(AT), fix).earlier, fix.earlier)
+    assert.equal(ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'waiting', on: 'CI' }, new Date(AT), fix).earlier, undefined)
+    // Bounded: the oldest fall off.
+    let held = first
+    for (let n = 0; n < 12; n++) held = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: `Agent: ${n}` }, new Date(AT), held)
+    assert.equal(held.earlier?.length, LEDGER_EARLIER_KEPT)
+    // Read back from the record; a list that breaks its shape is dropped, the line kept.
+    assert.deepEqual(parseLedgerLine(JSON.parse(JSON.stringify(fix))), JSON.parse(JSON.stringify(fix)))
+    assert.deepEqual(parseLedgerLine({ ...fix, earlier: 'Agent: author' })?.earlier, undefined)
+    assert.deepEqual(parseLedgerLine({ ...fix, earlier: ['Agent: author', ' ', 3] })?.earlier, ['Agent: author'])
+  })
+
+  it('an agent the orchestrator puts to work on a pull request leaves the earlier list of every other line: it no longer works there', () => {
+    const row = JSON.stringify({ id: 1, state: 'open' })
+    const other = line({ pr: 8, agent: 'Agent: review r1', earlier: ['Agent: author', 'Agent: fix'] })
+    const alone = line({ pr: 9, agent: 'Agent: review r2', earlier: ['Agent: author'] })
+    const text = `${row}\n${JSON.stringify(other)}\n${JSON.stringify(alone)}\n`
+    const set = withoutEarlier(text, 'Agent: author')
+    const lines = set.split('\n').filter(Boolean).map(l => JSON.parse(l) as Record<string, unknown>)
+    assert.deepEqual(lines.map(l => [l['pr'] ?? 'row', l['earlier']]), [['row', undefined], [8, ['Agent: fix']], [9, undefined]])
+    // The line keeps its place, its times and its other fields, read or not.
+    assert.deepEqual(lines[1], { ...JSON.parse(JSON.stringify(other)), earlier: ['Agent: fix'] })
+    const extra = `${JSON.stringify({ ...other, note: 'kept' })}\n`
+    assert.equal((JSON.parse(withoutEarlier(extra, 'Agent: author').trim()) as Record<string, unknown>)['note'], 'kept')
+    // An agent in no list, and a record with no line, are left as they were; writing a line prunes nobody.
+    assert.equal(withoutEarlier(text, 'Agent: nobody'), text)
+    assert.equal(withoutEarlier(`${row}\nnot json\n`, 'Agent: author'), `${row}\nnot json\n`)
+    assert.equal(withLine(text, line({ agent: 'Agent: author' })), `${text}${JSON.stringify(line({ agent: 'Agent: author' }))}\n`)
+  })
+
   it('sets one line per pull request in a record, rows and other lines untouched, and takes lines out', () => {
     const row = JSON.stringify({ id: 1, state: 'open' })
     const text = `${row}\n${JSON.stringify(line())}\n${JSON.stringify(line({ pr: 8 }))}\n`
@@ -105,6 +144,13 @@ describe('an unattended pull request', () => {
   it('is one whose agent no longer runs, since its line was last set', () => {
     assert.deepEqual(unattended({ open: [open(7)], lines: [line()], live: new Set(), now: NOW }), [{ repo: 'acme/app', pr: 7, since: AT }])
     assert.deepEqual(unattended({ open: [open(7)], lines: [line()], live: new Set(['Agent: seven']), now: NOW }), [])
+  })
+
+  it('is never one an agent put to work on it before still runs, though the agent named last is gone', () => {
+    // An implementer still running, a reviewer put on its line then closed.
+    const reviewed = line({ agent: 'Agent: review r1', earlier: ['Agent: author'] })
+    assert.deepEqual(unattended({ open: [open(7)], lines: [reviewed], live: new Set(['Agent: author']), now: NOW }), [])
+    assert.deepEqual(unattended({ open: [open(7)], lines: [reviewed], live: new Set(), now: NOW }), [{ repo: 'acme/app', pr: 7, since: AT }])
   })
 
   it('is one whose wait was not set again within the threshold', () => {
@@ -167,6 +213,8 @@ describe('an unattended pull request', () => {
       assert.deepEqual(ready(rowText({ note: 'other-claude-plugins#7 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }).length, 1)
       assert.deepEqual(ready(rowText({ note: 'claude-plugins#71 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }).length, 1)
       assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: other' })] }).length, 1)
+      // An agent put on the pull request before the last one holds it too.
+      assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: review r1', earlier: ['Agent: tokendrift'] })] }), [])
     })
 
     it('is not named with a blocker, a deferral that has no date, a closed state, or no blocker said', () => {

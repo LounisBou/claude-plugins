@@ -103,6 +103,17 @@ test('an open pull request of the record with no live agent or a stale wait is u
   expect(reading?.line).toBe('En anomalie : acme/app#8 (sans agent depuis 2026-11-14T10:00Z), acme/app#9 (sans agent depuis 2026-11-14T10:50Z)')
 })
 
+test('a pull request whose line names a reviewer since closed is attended while the implementer put on it before still runs', async () => {
+  // beltv5_fw_legacy#12, 2026-11-18: the reviewer put on the line at 16:08, closed at 16:19, the implementer running all along.
+  const reviewed = JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr: 11, status: 'working', agent: 'Agent: review 11 r1', earlier: ['Agent: seven'], since: '2026-11-14T10:00:00Z', updated: '2026-11-14T10:00:00Z' })
+  const forge = { 'acme/app': JSON.stringify([7, 8, 6, 9, 10, 11].map(n => ({ number: n, createdAt: '2026-11-11T08:00:00Z' }))) }
+  const { dollar } = world({ forge, extra: [reviewed] })
+  expect((await readUnattended(dollar, 's-orch', NOW))?.list.map(u => u.pr)).toEqual([8, 9])
+  // The implementer gone too: the pull request is nobody's.
+  const { dollar: gone } = world({ forge, extra: [reviewed], launcher: 'w1/t2 | /dev/ttys002 | zsh | Agent: five' })
+  expect((await readUnattended(gone, 's-orch', NOW))?.list.map(u => u.pr)).toEqual([7, 8, 9, 11])
+})
+
 // The forge's list of the world's pull requests, each with the labels given (Not Ready unless said).
 const labelled = (labels: Record<number, string[]>, numbers: number[] = [7, 8, 6, 9, 10]) =>
   ({ 'acme/app': JSON.stringify(numbers.map(n => ({ number: n, createdAt: `2026-11-1${n % 10}T08:00:00Z`, labels: (labels[n] ?? ['Not Ready']).map(name => ({ name })) }))) })

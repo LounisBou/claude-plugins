@@ -6,7 +6,7 @@
 // the orchestrator on a pull request merged, closed or entering the anomaly. Every read is bounded;
 // one that fails is said, never a refusal.
 import {
-  archiveOf, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
+  agentsOf, archiveOf, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
@@ -31,7 +31,7 @@ export const UNATTENDED_BOUND_MS = 20_000
 // `live`: the names of the agents the launcher lists running, among those a line names (every one when its listing could not be read).
 // `wanted`: whether the sweep asks the file to hold a repository (`prs.wanted`).
 // `openKeys`: the session's lines still open on the forge as `owner/name#n`, attended or not: the deck lists them.
-// `atReady`: the lines still open whose pull request carries Ready and whose agent the launcher lists running: that agent is done and closes now. `readyHeads`: the head each open pull request carries Ready at.
+// `atReady`: the lines still open whose pull request carries Ready and whose agent, put on it last or before, the launcher lists running: that agent is done and closes now. `readyHeads`: the head each open pull request carries Ready at.
 // `forge`: the file's current reading of each of the session's lines still open, by `owner/name#n`: its head, its base and its `mergeable`.
 export type Reading = {
   list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
@@ -151,7 +151,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
     if (seen === null) await logLine($, 'unattended', "the launcher's listing unread: every agent a line names is taken for running, no row is named ready")
     return seen
   }
-  const named = new Set([...kept, ...ended.map(e => e.line)].flatMap(line => (line.status === 'working' && line.agent ? [line.agent] : [])))
+  const named = new Set([...kept, ...ended.map(e => e.line)].flatMap(agentsOf))
   const live = named.size > 0 ? await running() ?? named : named
   const list = unattended({ open, lines: kept, live, now })
   const texts = own.map(record => record.text)
@@ -165,7 +165,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   // listing only: one that failed names no agent to close.
   const readyHeads = readyHeadsOf(file?.prs ?? [])
   const agents = kept.some(line => readyHeads.has(prKey(line.repo, line.pr))) ? await running() : null
-  const atReady = kept.filter(line => line.status === 'working' && agents?.has(line.agent ?? '') === true && readyHeads.has(prKey(line.repo, line.pr)))
+  const atReady = kept.filter(line => agentsOf(line).some(name => agents?.has(name) === true) && readyHeads.has(prKey(line.repo, line.pr)))
   // A repository the forge did not list is unknown, not closed: its lines stay listed until the file reads them merged or closed.
   const openNow = new Set(open.map(pr => prKey(pr.repo, pr.pr)))
   const openKeys = kept.filter(line => unread.includes(line.repo) || openNow.has(prKey(line.repo, line.pr))).map(line => prKey(line.repo, line.pr))

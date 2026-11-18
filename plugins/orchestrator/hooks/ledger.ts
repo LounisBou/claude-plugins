@@ -9,7 +9,7 @@
 // file, pr-file.ts), one that became Ready (its agent closes), one entering the anomaly, and one its agent still holds turned conflicting with its base (its agent rebases), wake the orchestrator once each: the module's tick
 // (guards.ts) submits the lines prWake gives, the ended lines then archived.
 import { prRefsOf } from '../core/learning.ts'
-import { isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
+import { agentsOf, isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
 import { simpleCommands, unwrapPath } from '../core/shell.ts'
 import { updateOver } from '../core/store-io.ts'
 import { answerText, PULL_URL } from './audit-events.ts'
@@ -287,12 +287,13 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     const key = `${prKey(ended.line.repo, ended.line.pr)} ended`
     if (told.has(key)) continue
     told.add(key)
-    const { repo, pr, agent } = ended.line
-    // Its agent is named only while it runs (the launcher's listing, where the close command ends it) and holds nothing else.
-    const named = ended.line.status === 'working' && agent !== undefined && reading.live.has(agent) ? agent : undefined
+    const { repo, pr } = ended.line
+    // Its agent is named only while it runs (the launcher's listing, where the close command ends it) and holds nothing else:
+    // the one put on it last, else one before it still running.
+    const named = agentsOf(ended.line).find(name => reading.live.has(name))
     const holds = named === undefined ? [] : [
       ...(await rowsHeldBy($, named, reading.records)).map(row => `row ${row.id} (${dirOf(row.path).split('/').pop()})`),
-      ...reading.kept.filter(line => line.status === 'working' && line.agent === named).map(line => prKey(line.repo, line.pr)),
+      ...reading.kept.filter(line => agentsOf(line).includes(named)).map(line => prKey(line.repo, line.pr)),
     ]
     lines.push(endedLine({ repo, pr, state: ended.state, agent: named, holds }))
     const relay = mergeRelayLine({ repo, pr }, waitingOn(ended))
@@ -305,7 +306,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     const key = `${prKey(line.repo, line.pr)} ready ${reading.readyHeads.get(prKey(line.repo, line.pr)) ?? ''}`
     if (told.has(key)) continue
     told.add(key)
-    const agent = line.agent ?? ''
+    // The agent put on it last that still runs, else one put on it before, as a merge names it.
+    const agent = agentsOf(line).find(name => reading.live.has(name)) ?? line.agent ?? ''
     const holds = holdsOf(reading.kept, other => other === agent, key => reading.readyHeads.has(key))
     lines.push(readyAgentLine({ repo: line.repo, pr: line.pr, agent, session: await sessionOf($, agent), holds }))
   }
@@ -313,8 +315,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     if (told.has(conflictKey(key, pr))) continue
     told.add(conflictKey(key, pr))
     const line = reading.kept.find(kept => prKey(kept.repo, kept.pr) === key)
-    // Its agent is named only while the launcher lists it running, as a merge names it.
-    const agent = line?.status === 'working' && line.agent !== undefined && reading.live.has(line.agent) ? line.agent : undefined
+    // Its agent is named only while the launcher lists it running, as a merge names it: the last one put on it, else one before it still running.
+    const agent = line === undefined ? undefined : agentsOf(line).find(name => reading.live.has(name))
     lines.push(conflictLine({ repo: pr.repo, pr: pr.pr, base: pr.base ?? '', agent, session: agent === undefined ? undefined : await sessionOf($, agent) }))
   }
   for (const u of anomalies) {
