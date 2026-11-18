@@ -669,7 +669,7 @@ async function readStore($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' |
       // and keeps the successor it learnt for its own later end.
       const known = text === '' || !!row?.pid
       if (known) gone.set(`sessions/${name}`, parseSuccessor(String(await $.fs.read(`${await storeOf($)}/successors/${name}`).catch(() => ''))))
-      dead.push(`${dir}/${name}`, `${await storeOf($)}/waits/${name}`, `${await storeOf($)}/gates/${name}`, `${await storeOf($)}/rows/${name}`)
+      dead.push(`${dir}/${name}`, `${await storeOf($)}/waits/${name}`, `${await storeOf($)}/gates/${name}`, `${await storeOf($)}/rows/${name}`, `${await storeOf($)}/told/${name}`)
       if (known) dead.push(`${await storeOf($)}/successors/${name}`)
     }
   }
@@ -898,7 +898,11 @@ async function tellAgent($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' |
     await logLine($, 'supervision', `successor: ${agent.name ?? agent.sessionId} not told: ${sent?.reason ?? 'no answer'}`)
     return
   }
-  await writeAtomic($, `${await storeOf($)}/${toldKey(agent.sessionId)}`, JSON.stringify({ session: successor.session ?? '', at: Date.now() }) + '\n')
+  try {
+    await writeAtomic($, `${await storeOf($)}/${toldKey(agent.sessionId)}`, JSON.stringify({ session: successor.session ?? '', at: Date.now() }) + '\n')
+  } catch (err) {
+    await logLine($, 'supervision', `successor: ${agent.name ?? agent.sessionId} told, not recorded: ${messageOf(err)}`)
+  }
 }
 
 const toldOf = async ($: Host<'env' | 'fs'>, agentSession: string): Promise<Told | null> =>

@@ -636,8 +636,9 @@ for (const [name, role] of [['Coord: ops', 'coordinator'], ['Audit: method', 'au
 // 2000. The predecessor never received « takeover confirmed »: no line came from it.
 const INHERITED = `[module] Your orchestrator is now Orch: belt-2 (session s-one): it confirmed the takeover. Send your reports, questions and deliveries to it; the previous one takes no more.`
 function successorWorld(agentStart: number, over: Over = {}) {
-  const fx = fake(Object.assign(over, { name: 'Orch: belt-2', role: 'orchestrator' }))
-  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: 'Orch: belt-2', status: 'busy', startedAt: 2000 }))
+  Object.assign(over, { name: over.name ?? 'Orch: belt-2', role: over.role ?? 'orchestrator' })
+  const fx = fake(over)
+  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: over.name, status: 'busy', startedAt: 2000 }))
   fx.files.set(`${STATE}/chains/ttys005.jsonl`, JSON.stringify({ tab_id: 'tab-p4', tty: '/dev/ttys011', owner: 'w9' }) + '\n')
   fx.files.set(`${HOME}/.claude/sessions/9011.json`, JSON.stringify({ pid: 9011, sessionId: 's-agent', name: 'Agent: belt-p4', status: 'idle', startedAt: agentStart }))
   const run = fx.dollar.process.run
@@ -680,6 +681,31 @@ test('a line the agent did not receive is sent again at the next measure', async
   delete over.send
   await drive(chains, 'session.measure', fx.dollar, MEASURED)
   expect(fx.sent).toEqual([{ to: { sessionId: 's-agent' }, text: INHERITED }])
+})
+
+test('a send that is rejected, or a record that cannot be written, never fails the measure and leaves the others told', async () => {
+  const chains = mounted()
+  const rejected = successorWorld(1000, { send: 'reject' })
+  const e = await drive(chains, 'session.measure', rejected.dollar, MEASURED)
+  expect(e).toBe(MEASURED)
+  expect(rejected.logged.some(l => l.includes('successor: Agent: belt-p4 not told: the send was rejected'))).toBe(true)
+  const unwritable = successorWorld(1000)
+  const write = unwritable.dollar.fs.write
+  unwritable.dollar.fs.write = async (p: string, text: string) => { if (p.includes('/told/')) throw new Error('disk full'); return write(p, text) }
+  await drive(chains, 'session.measure', unwritable.dollar, MEASURED)
+  expect(unwritable.sent.length).toBe(1)
+  expect(unwritable.logged.some(l => l.includes('told, not recorded'))).toBe(true)
+})
+
+test('a record naming no start passes the agent, and a session that is no orchestrator tells nobody', async () => {
+  const chains = mounted()
+  const blind = successorWorld(1000)
+  blind.files.set(`${HOME}/.claude/sessions/9011.json`, JSON.stringify({ pid: 9011, sessionId: 's-agent', name: 'Agent: belt-p4', status: 'idle' }))
+  await drive(chains, 'session.measure', blind.dollar, MEASURED)
+  expect(blind.sent).toEqual([])
+  const agent = successorWorld(1000, { name: AGENT, role: 'agent' })
+  await drive(chains, 'session.measure', agent.dollar, MEASURED)
+  expect(agent.sent).toEqual([])
 })
 
 for (const failure of ['reject', 'refuse'] as const) {
