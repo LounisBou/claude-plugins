@@ -299,7 +299,7 @@ Never « external terminal ».
 `--disable-auto`), `gh api` `PUT`/`POST` on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql`
 naming `mergePullRequest`, `markPullRequestReadyForReview` or `enablePullRequestAutoMerge`; the
 engine's same subcommands from Bash. The gate puts `Ready` just before the act, which runs on it,
-or without it, observed (`github.ready.no-record`), when only records are absent at the head. CI
+or without it, when only records are absent at the head. CI
 not green, a failed record, or a `--match-head-commit` or `--sha` off the head refuse it before any
 question, naming what is missing. Refused too: a shell merge or undraft naming no repository
 (`-R`, `--repo`, a URL), a GraphQL merge or undraft, a GraphQL query the line does not show
