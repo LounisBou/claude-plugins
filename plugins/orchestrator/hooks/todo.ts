@@ -266,6 +266,8 @@ async function roleAtStart($: Held): Promise<string | null> {
 /** How often the module reads its holder's list for a wait date passed. */
 export const SURFACE_TICK_MS = 5 * 60_000
 
+const toldKey = ({ item, date }: DueTodo): string => `${item.id} ${date} ${item.waits?.until} ${item.waits?.deadline}`
+
 /** The line the holder is told for the items a wait date of which passed. */
 export function surfaceText(due: readonly DueTodo[]): string {
   return [`[module] ${due.length === 1 ? 'A to-do of your list is' : `${due.length} to-dos of your list are`} due:`,
@@ -283,9 +285,10 @@ export async function surfaceDue($: Surfacing, name: string, now: number = Date.
   if (due.length === 0) return []
   const taken: unknown = await $.prompt.submit({ text: surfaceText(due) })
   if (typeof taken === 'object' && taken !== null && 'drop' in taken && taken.drop) throw new Error(`the host dropped the wake: ${String(taken.drop)}`)
-  const ids = new Set(due.map(entry => entry.item.id))
+  // Marked only as told: the same item, date and wait. One whose wait was set anew meanwhile is left due.
+  const told = new Set(due.map(entry => toldKey(entry)))
   await updateOver(storeIo($), todoPath(await stateDir($), name), current => current === undefined ? undefined
-    : surfaceTodos(current, dueTodos(todoItems(current), now).filter(entry => ids.has(entry.item.id))))
+    : surfaceTodos(current, dueTodos(todoItems(current), now).filter(entry => told.has(toldKey(entry)))))
   return due
 }
 

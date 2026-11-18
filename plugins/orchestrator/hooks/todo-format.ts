@@ -122,6 +122,10 @@ const isWait = (value: unknown): value is TodoWait => {
   return filled(o['on']) && filled(o['why']) && filled(o['until']) && filled(o['deadline'])
 }
 
+// An ISO instant with its zone, `Z` or an offset: one without would be read in the machine's own zone.
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/
+const instant = (value: unknown): number => (typeof value === 'string' && ISO_INSTANT.test(value.trim()) ? Date.parse(value.trim()) : NaN)
+
 const WAIT_FIELDS = ['waits_on', 'why', 'until', 'deadline'] as const
 
 /** The flat fields of a call that name who takes an item or what it waits on (parseOwner). */
@@ -135,8 +139,8 @@ export function parseWait(e: Record<string, unknown>): { waits?: TodoWait } | { 
   if (WAIT_FIELDS.every(field => e[field] === undefined)) return {}
   const missing = WAIT_FIELDS.filter(field => !filled(e[field]))
   if (missing.length > 0) return { error: `a wait names all of waits_on, why, until and deadline: ${missing.join(', ')} missing.` }
-  const until = Date.parse(String(e['until']))
-  const deadline = Date.parse(String(e['deadline']))
+  const until = instant(e['until'])
+  const deadline = instant(e['deadline'])
   if (!Number.isFinite(until) || !Number.isFinite(deadline)) return { error: 'until and deadline are ISO instants, 2026-11-20T09:00:00Z.' }
   if (deadline < until) return { error: 'the deadline falls before the wait ends: deadline is the later date.' }
   return { waits: { on: String(e['waits_on']).trim(), why: String(e['why']).trim(), until: stampOf(until), deadline: stampOf(deadline) } }

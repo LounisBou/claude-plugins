@@ -470,6 +470,8 @@ test('add refuses an item that names neither who takes it nor what it waits on, 
   for (const input of [
     { waits_on: 'x', why: 'y', until: '2026-11-15T09:00:00Z' },
     { ...WAIT, until: 'tomorrow' },
+    { ...WAIT, until: '2026-11-15T09:00:00' },
+    { ...WAIT, deadline: 'Nov 20 2026' },
     { ...WAIT, deadline: '2026-11-15T08:00:00Z' },
     { row: 0 },
     { agent: '  ' },
@@ -497,6 +499,9 @@ test('add to another session records the owner in its list', async () => {
   const { dollar, files } = world()
   expect((await bare(dollar, { action: 'add', words: 'run the audit', to: 'Coord: general', ...WAIT })).isError).toBe(undefined)
   expect(listOf(files, 'Coord: general').map(item => item.waits?.on)).toEqual([WAIT.waits_on])
+  expect((await bare(dollar, { action: 'add', words: 'yours', to: 'Coord: general', agent: 'Coord: general [ref-2]' })).isError).toBe(true)
+  expect((await bare(dollar, { action: 'add', words: 'no owner', to: 'Coord: general' })).isError).toBe(true)
+  expect(listOf(files, 'Coord: general')).toHaveLength(1)
 })
 
 // A world whose clock and prompt the surfacing reads: the prompts it was given, and a submit that may drop.
@@ -539,6 +544,19 @@ test('a wake the host drops marks nothing: the item is told again at the next re
   await expect(surfaceDue(dollar, 'Orch: billing', Date.parse('2026-11-15T10:00:00Z'))).rejects.toThrow('dropped')
   expect(listOf(files, 'Orch: billing')[0]?.surfaced).toBe(undefined)
   expect(prompts).toHaveLength(1)
+})
+
+test('an item whose wait is set anew while it is told is not marked for the new wait: it is told again', async () => {
+  const { dollar, files, prompts } = surfacing()
+  await bare(dollar, { action: 'add', words: 'port the fix', ...WAIT })
+  dollar.prompt.submit = async ({ text }: { text: string }) => {
+    prompts.push(text)
+    await bare(dollar, { action: 'wait', id: 1, ...WAIT, until: '2026-11-15T09:30:00Z' })
+    return undefined
+  }
+  await surfaceDue(dollar, 'Orch: billing', Date.parse('2026-11-15T10:00:00Z'))
+  expect(listOf(files, 'Orch: billing')[0]?.surfaced).toBe(undefined)
+  expect((await surfaceDue(dollar, 'Orch: billing', Date.parse('2026-11-15T10:00:00Z'))).map(due => due.item.waits?.until)).toEqual(['2026-11-15T09:30:00Z'])
 })
 
 test('wait sets a new wait on an open item and starts its surfacing over; a closed item or a partial wait is refused', async () => {
