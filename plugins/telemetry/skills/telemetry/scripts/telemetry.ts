@@ -20,12 +20,12 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { moduleDirOf } from '../../../core/orchestration.ts'
 import { firstRepository, makeEvent, remoteUrlsArgv, type Event } from '../../../hooks/collect.ts'
 import { planArchive } from './lib/archive.ts'
-import { apiCalls, callFields, lastTurn } from './lib/cache.ts'
+import { apiCalls, callFields, callTotals, END_SLACK_AFTER_MS, lastTurn } from './lib/cache.ts'
 import { runAuto } from './lib/auto.ts'
 import { exportExclusive, logsRepo, machineName, type Git } from './lib/export.ts'
 import { parseOptions, report, type Check, type Gh } from './lib/report.ts'
@@ -76,12 +76,14 @@ export function readSecrets(env: Deps['env']): { secrets: EnvSecrets } | { error
 
 /**
  * A session_end enriched with what its transcript holds; a turn_end of the session's own loop
- * followed by the `api_call` lines of the calls of the turn it ends; any other event as it came.
+ * followed by the `api_call` lines of the calls of the turn it ends; a subagent's `agent_closed` with
+ * what its own transcript says of the run that ended; any other event as it came.
  */
 export function enrich(line: string, config: string): string {
   const event = parseEvent(line)
   if (typeof event === 'string') return line
   if (event.event === 'turn_end' && event['agent'] === undefined) return enrichTurn(line, event, config)
+  if (event.event === 'agent_closed' && event['kind'] === 'subagent' && typeof event['child'] === 'string') return enrichSubagent(line, event, event['child'], config)
   if (event.event !== 'session_end') return line
   const path = transcriptOf(config, event.session)
   if (path === undefined) return line
@@ -106,6 +108,43 @@ function enrichTurn(line: string, event: Event, config: string): string {
     const calls = lastTurn(path, ended, { startedAt: typeof duration === 'number' ? ended - duration : undefined }) ?? []
     const stamps = Object.fromEntries(STAMPS.filter(key => event[key] !== undefined).map(key => [key, event[key]]))
     return [line, ...calls.map(call => JSON.stringify(makeEvent('api_call', call.start, event.session, { ...stamps, ...callFields(call) })))].join('\n')
+  } catch {
+    return line
+  }
+}
+
+/**
+ * A subagent's run end with its type and task (the host's `agent-<id>.meta.json`), and, from its
+ * transcript (`<session>/subagents/agent-<id>.jsonl`), the calls of the run that ended (those that
+ * began within its `duration_ms` of the event, every call before it when it has none): their count,
+ * models, last effort and token sums. As it came when the transcript cannot be read.
+ */
+function enrichSubagent(line: string, event: Event, child: string, config: string): string {
+  const path = transcriptOf(config, event.session)
+  if (path === undefined || !/^[\w-]+$/.test(child)) return line
+  const dir = join(dirname(path), event.session, 'subagents')
+  try {
+    const ended = Date.parse(event.ts)
+    const duration = event['duration_ms']
+    const from = typeof duration === 'number' ? ended - duration - END_SLACK_AFTER_MS : -Infinity
+    const calls = apiCalls(readFileSync(join(dir, `agent-${child}.jsonl`), 'utf8'), { sidechain: true })
+      .filter(call => call.start >= from && call.end <= ended + END_SLACK_AFTER_MS)
+    let meta: Record<string, unknown> = {}
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(join(dir, `agent-${child}.meta.json`), 'utf8'))
+      if (typeof parsed === 'object' && parsed !== null) meta = parsed as Record<string, unknown>
+    } catch { /* no type or task, still the run's figures */ }
+    const string = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+    const models = [...new Set(calls.map(call => call.model).filter((model): model is string => model !== undefined))].sort()
+    return JSON.stringify({
+      ...event,
+      subagent_type: string(event['subagent_type']) ?? string(meta['agentType']),
+      description: string(event['description']) ?? string(meta['description']),
+      models,
+      effort: calls.map(call => call.effort).filter(effort => effort !== undefined).at(-1),
+      calls: calls.length,
+      totals: callTotals(calls),
+    })
   } catch {
     return line
   }
