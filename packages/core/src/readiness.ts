@@ -64,6 +64,8 @@ export type HeadEvidence = {
   readonly ciGreen: boolean
   // Whether a check failed at the head (a stacked pull request blocks on it).
   readonly ciFailed?: boolean
+  // Whether the repository has no CI at all: green stands for no check, and so over no failed local run.
+  readonly ciNone?: boolean
   // Whether the pull request is stacked: its base is the head branch of another open pull request.
   readonly stacked?: boolean
   // Whether the repository has no light CI, unconfigured or turned off by the operator: a stacked pull request needs no tests record.
@@ -123,11 +125,12 @@ export function missingEvidence(evidence: HeadEvidence): Missing[] {
   const stacked = evidence.stacked === true
   for (const kind of KINDS) {
     const record = evidence.latest.get(kind)
-    // The light CI is a stacked pull request's alone, and none where the operator turned it off.
+    // The light CI is a stacked pull request's alone, and none where the repository has none, unconfigured or off.
     if (kind === 'tests' && (!stacked || evidence.lightCiOff)) continue
     if (record && accepts(record)) continue
-    // The required checks green at its head stand for the tests of a stacked pull request, over a failed local run.
-    if (kind === 'tests' && evidence.ciGreen) continue
+    // The required checks green at its head stand for the tests of a stacked pull request, and over a failed local
+    // run unless the repository has no check at all.
+    if (kind === 'tests' && evidence.ciGreen && (!record || !evidence.ciNone)) continue
     if (record?.result === 'fail') {
       missing.push({ condition: kind, holder: holderOf(kind), record })
       continue

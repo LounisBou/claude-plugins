@@ -3735,6 +3735,14 @@ test('a stacked pull request whose checks are green at its head is ready over a 
   expect(seen.pull?.labels).toEqual(['Ready'])
 })
 
+test('a failed local run keeps a stacked pull request of a repository with no CI at all not ready', async ($, on) => {
+  const seen = await world($, on, { stacked: true, tree: LIGHT_CI_ON, ci: { result: 'NONE' },
+    records: { ...FOUR, ...Object.fromEntries([record('tests', 'fail', '2026-11-01T10:00:00Z', { producer: 'light-ci', detail: 'npm test — exit 1 — 4s' })]) } })
+  const out = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.result).toEndWith('Missing: tests: fail at 0123456 by light-ci, npm test — exit 1 — 4s.')
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
 test('a stacked pull request of a repository with no light CI file is ready on its review, the line saying so', async ($, on) => {
   const seen = await world($, on, { ...PENDING, stacked: true })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
@@ -3743,7 +3751,7 @@ test('a stacked pull request of a repository with no light CI file is ready on i
 })
 
 test('a check that failed at a stacked pull request\'s head blocks it though its tests passed, and the gate refuses its merge', async ($, on) => {
-  await world($, on, { stacked: true, autoMerge: ['acme/thing'], ci: { result: 'FAILURE', failed: ['lint'] },
+  await world($, on, { stacked: true, tree: LIGHT_CI_ON, autoMerge: ['acme/thing'], ci: { result: 'FAILURE', failed: ['lint'] },
     records: { ...FOUR, ...Object.fromEntries([record('tests', 'pass', '2026-11-01T10:00:00Z', { producer: 'light-ci' })]) } })
   const out = await $.tool.call(gh('pr-merge', { pr: 12 }))
   expect(out.deny).toBe('github: pr-merge refused on acme/thing#12 at 0123456: not ready. Missing: CI failed: lint.' + REFUSAL_END)
@@ -3764,7 +3772,7 @@ test('a stacked pull request of a repository whose light CI the operator refused
   expect(seen.logs).toEqual([READY_BEFORE_CI + ' the operator\'s refusal of light CI for this repository (2026-11-14) hold at its head.'])
 })
 
-test('a light CI file that holds a command, or cannot be read, refuses nothing', async ($, on) => {
+test('a light CI file that cannot be read refuses nothing', async ($, on) => {
   const seen = await world($, on, { ...PENDING, stacked: true,
     tree: { [LIGHT_CI_FILE]: { kind: 'file', mtimeMs: 0, text: '{"off": ' } } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))

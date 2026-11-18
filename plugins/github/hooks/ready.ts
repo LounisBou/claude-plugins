@@ -677,6 +677,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
     // A repository with no CI configured has no CI to wait for.
     ciGreen: ci.result === 'SUCCESS' || ci.result === NO_CI,
     ciFailed: ci.result === 'FAILURE',
+    ciNone: ci.result === NO_CI,
     stacked: gate.stacked === true,
     lightCiOff: lightCiOff !== undefined,
   })
