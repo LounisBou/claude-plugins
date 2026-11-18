@@ -7,7 +7,7 @@
 import { expect, test } from 'claude-code/testing'
 import { declaredWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, openQuestions, withdrawalText, confirmsTakeover, RELAY_CAP } from '../relay.ts'
 import { roundEntry, type RoundEntry } from '../round.ts'
-import { settledText, successorText, parseSessionRow, paneRows, withWait, writeSession, readSessions, WORKS_AGAIN, type SessionRow } from '../supervision.ts'
+import { settledText, successorText, parseSessionRow, paneRows, withWait, writeSession, readSessions, WORKS_AGAIN, HANDED_ON, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { answerAskedFromPane, askTurnStarted, callAsk, settle } from '../question.ts'
 import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
@@ -506,12 +506,16 @@ test('a turn the operator did not start, ending on deferred, withdraws the closi
 
 // --- a sender that is gone or handed over ----------------------------------------------------
 
-// A sender with one open closing proposal in the round, beside another session's and a settled one.
+// A sender with one open operator question in the round, beside another session's and a settled one. Its
+// turn ended on a closing proposal, whose entry gives way to the question: a closing proposal is never moved.
 async function senderWithEntries() {
   const chains = mounted()
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(PROPOSAL))
-  const asked = only(entries(fx))
+  const proposal = only(entries(fx))
+  fx.files.delete(`${ROUND}/${proposal.id}.json`)
+  const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, proposal.since, proposal.at)
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch: other' }
   const settled: RoundEntry = { ...asked, id: 'already-closed', status: 'closed', answer: { text: 'x', by: 'coordinator', at: 'T' } }
   for (const kept of [other, settled]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
@@ -531,13 +535,13 @@ function expectWithdrawn(fx: ReturnType<typeof fake>, asked: RoundEntry, other: 
 // orchestrator has nothing left to do: the moment its session works again, its turn starting,
 // the proposal is no longer what it waits on, and its own turn end enters a new one if it is.
 test('a turn that starts withdraws the session\'s open closing proposal, moved to it or its own, and nothing else', async () => {
-  const { chains, fx, asked, other, settled } = await senderWithEntries()
-  const moved: RoundEntry = { ...asked, id: 's-zero-moved', since: '2026-11-18T13:01:19.813Z', movedFrom: 's-zero' }
-  const question: RoundEntry = { ...asked, id: 's-one-question', kind: 'operator', blocks: 'phase 3', question: QUESTION }
-  for (const kept of [moved, question]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
+  const { chains, fx, asked: question, other, settled } = await senderWithEntries()
+  const own: RoundEntry = { ...question, id: 's-one-done', kind: 'done', blocks: null, question: 'Everything merged.' }
+  const moved: RoundEntry = { ...own, id: 's-zero-moved', since: '2026-11-18T13:01:19.813Z', movedFrom: 's-zero' }
+  for (const kept of [own, moved]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
   await drive(chains, 'turn.start', fx.dollar, {})
   const after = new Map(entries(fx).map(e => [e.id, e]))
-  for (const done of [asked, moved]) {
+  for (const done of [own, moved]) {
     expect([after.get(done.id)!.status, after.get(done.id)!.answer?.text, after.get(done.id)!.answer?.by]).toEqual(['withdrawn', WORKS_AGAIN, 'sender'])
   }
   expect(after.get(question.id)).toEqual(question)
@@ -545,7 +549,7 @@ test('a turn that starts withdraws the session\'s open closing proposal, moved t
   expect(after.get(settled.id)).toEqual(settled)
   // The turn ends on done again: a new proposal, open.
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(PROPOSAL))
-  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
+  expect(entries(fx).filter(e => e.kind === 'done' && e.status === 'open').length).toBe(1)
 })
 
 test('the sender\'s session ending withdraws its open entries, and no other session\'s', async () => {
@@ -640,6 +644,29 @@ for (const [label, end] of [
     expect(entries(fx).find(e => e.id === asked.id)?.session).toBe('s-two')
   })
 }
+
+// The operator's report of 2026-11-18: a closing proposal moved through two successions stayed open
+// while the orchestration worked on. The successor working, the proposal is withdrawn at the hand-over.
+test('at the hand-over a closing proposal is withdrawn, never moved, and the open questions move', async () => {
+  const { chains, fx, asked, other, settled } = await senderWithEntries()
+  const proposal: RoundEntry = { ...asked, id: 's-one-done', kind: 'done', blocks: null, question: 'Everything merged.' }
+  fx.files.set(`${ROUND}/${proposal.id}.json`, JSON.stringify(proposal) + '\n')
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
+  DECLARATIONS.handOver('s-one')
+  try {
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd('Takeover confirmed by the successor.'))
+  } finally {
+    DECLARATIONS.handOver('')
+  }
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect([after.get(proposal.id)!.session, after.get(proposal.id)!.status, after.get(proposal.id)!.answer?.text, after.get(proposal.id)!.answer?.by])
+    .toEqual(['s-one', 'withdrawn', HANDED_ON, 'sender'])
+  expect(after.get(proposal.id)!.movedFrom).toBeUndefined()
+  expect(after.get(asked.id)).toEqual({ ...asked, session: 's-two', from: 'Orch: belt-2', movedFrom: 's-one' })
+  expect(after.get(other.id)).toEqual(other)
+  expect(after.get(settled.id)).toEqual(settled)
+})
 
 test('a session that spawned its successor hands it the open entries at its « takeover confirmed », and tells its agents who it is', async () => {
   const { chains, fx, asked, other, settled } = await senderWithEntries()

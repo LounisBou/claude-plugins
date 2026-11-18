@@ -2576,6 +2576,7 @@ async function relayStop($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' |
 async function handOver($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, successor: LearntSuccessor): Promise<void> {
   const done = await withDeadline(moveToSuccessor($, sessionId, successor), RELAY_BOUND_MS)
   if (isDegradedPass(done)) await logLine($, 'supervision', `round: did not finish within ${RELAY_BOUND_MS} ms`)
+  else await tellSettled($, done)
 }
 
 // The held question's entry in the round: that session's open operator question with the same
@@ -2705,6 +2706,8 @@ export async function isOrchestratorSession($: Host<'env' | 'fs' | 'process'>, s
 // and the relay goes on.
 // Why a closing proposal is withdrawn when its session's next turn starts.
 export const WORKS_AGAIN = 'its sender works again'
+// Why a closing proposal is withdrawn at its sender's hand-over, never moved to the successor.
+export const HANDED_ON = 'its sender handed over: the successor works on'
 
 async function withdrawStale($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, current: string | null, why: string, kept?: (entry: RoundEntry) => boolean): Promise<Settled[]> {
   const settled: Settled[] = []
@@ -2968,14 +2971,16 @@ async function readSuccessor($: Host<'env' | 'fs'>, sessionId: string): Promise<
 
 // The session's open entries rewritten in place for its successor: its session and name become
 // theirs and the status stays open. The successor's own fingerprint is left as it is. Each move
-// is one log line; one that cannot be written is one too, and the others go on. Nothing is
-// settled: the coordinator is told nothing.
-async function moveToSuccessor($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, successor: LearntSuccessor): Promise<Settled[]> {
+// is one log line; one that cannot be written is one too, and the others go on. A closing
+// proposal is withdrawn instead (HANDED_ON): the one settlement the coordinator is told of.
+async function moveToSuccessor($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, successor: LearntSuccessor): Promise<Settled[]> {
   // A successor the registry did not name alone at its « takeover confirmed » is looked up again:
   // its record may have landed since. One still unnamed is drawn on its name (hostedSuccessors).
   const session = successor.session ?? (await registeredSession($, successor.name, '', { exclude: sessionId, pid: successorPid(successor) }))?.sessionId ?? ''
+  // A closing proposal is never handed on: the successor works, so the orchestration is not done.
+  const settled = await withdrawStale($, sessionId, null, HANDED_ON, entry => entry.kind !== 'done')
   for (const { path, entry } of await readRound($)) {
-    if (entry.session !== sessionId || entry.status !== 'open') continue
+    if (entry.session !== sessionId || entry.status !== 'open' || entry.kind === 'done') continue
     try {
       const written = await changeEntry($, path, fresh =>
         !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : { ...fresh, session, from: successor.name, movedFrom: sessionId })
@@ -2986,7 +2991,7 @@ async function moveToSuccessor($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proc
   }
   // The questions asked with `ask` follow, their asker now the successor.
   await moveAsked($, sessionId, { session, name: successor.name })
-  return []
+  return settled
 }
 
 // The host name, read once per module load: the machine label a row carries.
