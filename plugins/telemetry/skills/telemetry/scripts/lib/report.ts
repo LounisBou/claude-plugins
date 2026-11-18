@@ -142,6 +142,8 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       s.project = text(e['project']) ?? s.project
       s.role = text(e['role']) ?? s.role
       if (kind === 'api_call') {
+        // A subagent's call is its own loop's: it makes no turn of the session.
+        if (e['agent'] !== undefined) continue
         // A call read by the live writer and again by a backfill is one: it is keyed by its message.
         const call = callOf(e)
         if (call !== undefined) (calls.get(id) ?? calls.set(id, new Map()).get(id))?.set(call.message, call)
