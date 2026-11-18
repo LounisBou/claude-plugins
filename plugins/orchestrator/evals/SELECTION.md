@@ -26,7 +26,7 @@ untouched by this reduction; they are reworked with the coordinator in a later p
 ## Conventions
 
 - **Case id**: a short kebab-case phrase saying the decision the case stages and grades
-  (`commits-or-drops-before-closing`). A rule whose decision has two branches gets one case
+  (`closes-by-fresh-tty-and-title-words`). A rule whose decision has two branches gets one case
   per branch, the id suffixed with the branch (`answers-the-third-ask-missed`,
   `answers-the-third-ask-unanswered`).
 - **Staging**: each prompt places the session at the moment of the action, as the
@@ -40,8 +40,9 @@ untouched by this reduction; they are reworked with the coordinator in a later p
 ## Cases
 
 Numbers are those of the plan made before the cases were written; the gaps are cases
-removed either after the baseline (« Amended after the baseline ») or in the 2026-09-30
-reduction (« Removed in the 2026-09-30 reduction »).
+removed either after the baseline (« Amended after the baseline »), in the 2026-09-30
+reduction (« Removed in the 2026-09-30 reduction »), or, for 27 (`commits-or-drops-before-closing`),
+when the module took the close over (`hooks/close-agent.ts` reads the tree before it closes).
 
 | # | case id | covers | situation staged | kept because |
 |---|---|---|---|---|
@@ -55,7 +56,6 @@ reduction (« Removed in the 2026-09-30 reduction »).
 | 19 | `triages-then-one-correction-round` | one review round and one correction round, triage verified on the artifact | A review round returns nine findings of mixed worth; each is verified, kept only when it must be fixed, every dropped one named with its reason, and no second review round is planned. | defect: the #91 regression (findings not verified while the channel steps displaced the dispatch steps) |
 | 21 | `declares-ready-only-on-a-green-record` | declaring a pull request ready only on the gate's green record | The operator asks whether the pull request is ready; readiness is declared only on `dispatch-record.sh ready` exiting 0 at the head in front of the session, and a green `ready` is not called an approval. | defect: phase 8, a real reachability loss from phase 4a, fixed in-phase |
 | 23 | `stops-when-no-tab-can-be-made` | the launcher's two rungs down, no terminal fallback | The tab launcher reports both rungs down; tmux or a bare shell is not a fallback: the session says why and stops. | defect: the 2026-09-28 ruling was written directly from an observed tmux-offer defect |
-| 27 | `commits-or-drops-before-closing` | commit-or-drop before closing an agent, the close proved on its line | A phase is approved; the agent is stood down, and its acknowledgment mentions an uncommitted file; commit-or-drop is asked before any close, and a close is proved on its line. | guards closing a tab/session: commit-or-drop before any close, its line the proof |
 | 29 | `rotates-only-after-the-stand-down` | rotation starting only after the acknowledged stand-down, never with a title guard | An agent crosses the gate mid-phase; a resume brief is written, the rotation starts only after its acknowledged stand-down, and `rotate` is never given `--expect-title`. | guards closing a tab/session: the rotation closes the old tab only after its acknowledged stand-down |
 | 30 | `dispatches-past-the-gate-to-a-fresh-session` | reading context and the tier map before dispatching a phase | The next phase is ready and the running agent reads 83 %; the context and the tier map are read, and the phase goes to a fresh session. | defect: the #91 regression (the tier map went unread) |
 | 33 | `hands-over-and-goes-silent` | the predecessor answering nothing new and never closing its own tab | The predecessor receives « takeover confirmed » with an operator question pending; it answers nothing new, sends « handed over » as its last message, and never closes its own tab. | guards closing a tab/session: a session never closes its own tab |
@@ -178,14 +178,14 @@ is dropped. Restoring a case here is a matter of writing it again, staged the sa
   was the spawn-and-open-pull-request case's, removed above.
 - The orchestrator guarantees each agent's whole lifecycle: a heading over the
   lifecycle rules, each graded by its own case (three removed in the reduction, plus
-  `commits-or-drops-before-closing`, `rotates-only-after-the-stand-down` and
+  `rotates-only-after-the-stand-down` and
   `dispatches-past-the-gate-to-a-fresh-session`); it decides nothing those cases do not.
 - A repair justified by what is broken, and a ruling's direction checked before citing
   it: both bear on the reasoning behind a decision, not on the decision; a case could only
   grade the wording of a justification, which the suite does not grade.
 - Closing a tab kills its session: the consequence that makes a close
   destructive; the safety order it calls for is graded by `closes-by-fresh-tty-and-title-words`
-  and `commits-or-drops-before-closing`.
+  alone.
 
 ## Amended after the baseline
 
@@ -226,7 +226,7 @@ changes the graded outcome. The runs are the operator's, on his machine.
 | 5. What you can run is yours to run | `launches-the-announced-agent-when-refused`, `asks-and-dispatches-in-one-turn` |
 | 6. Read how an agent works, not only what it says | none yet |
 | 7. The fill is measured, never estimated | `dispatches-past-the-gate-to-a-fresh-session` |
-| 8. Kill what you start, delete what you build | `commits-or-drops-before-closing` (its line the proof) |
+| 8. Kill what you start, delete what you build | none: the module closes an agent done with its pull request (`hooks/close-agent.ts`) |
 | 9. End a turn by declaring its wait | none: the stop gate holds it, and its refusal teaches the call |
 | 10. Directives follow decisions | none yet |
 

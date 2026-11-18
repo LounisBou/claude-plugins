@@ -164,7 +164,7 @@ export interface LiveAgent {
   readonly brief?: string
   /** The row its brief was printed for (rowOfBrief); undefined when no brief names one. */
   readonly row?: string
-  /** What its Ready pull request says of it, `Ready: close it` or the pull requests it still holds; undefined when none of its pull requests is Ready. */
+  /** What its Ready pull request says of it, `Ready (<prs>): the module closes it once done` or the pull requests it still holds; undefined when none of its pull requests is Ready. */
   readonly ready?: string
 }
 
@@ -276,8 +276,8 @@ export function agentLine(agent: LiveAgent): string {
 }
 
 /**
- * What the Ready pull requests of an agent say of it, the module's wake read from the same artifact: `Ready: close it`
- * when every pull request its lines name is Ready or ended, `Ready <pr>, still holds <pr>: tell it, do not close it`
+ * What the Ready pull requests of an agent say of it, the module's wake read from the same artifact: `Ready (<pr>): the module
+ * closes it once done` when every pull request its lines name is Ready or ended, `Ready <pr>, still holds <pr>: tell it`
  * when another open pull request of its own is not. Undefined when none of its pull requests is Ready.
  * `ledger` is the record's lines, `ended` whether the forge reads a pull request merged or closed, `readyHead` its Ready head.
  */
@@ -291,7 +291,7 @@ export function readyNote(
   if (ready.length === 0) return undefined
   const holds = holdsOf(kept, mine, key => ready.some(line => prKey(line.repo, line.pr) === key))
   const names = ready.map(line => prKey(line.repo, line.pr)).join(', ')
-  return holds.length === 0 ? `Ready: close it (${names})` : `Ready ${names}, still holds ${holds.join(', ')}: tell it, do not close it`
+  return holds.length === 0 ? `Ready (${names}): the module closes it once done` : `Ready ${names}, still holds ${holds.join(', ')}: tell it`
 }
 
 /** The launcher's `list`, its rows; undefined when it cannot be run. */

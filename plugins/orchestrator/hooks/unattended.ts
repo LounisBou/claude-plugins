@@ -11,7 +11,7 @@ import {
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
 import { launcherOf, RECORDS_DIR, recordsRegistryPath } from '../core/orchestration.ts'
-import { isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, ownerOf, withDeadline, type DeclaredWait } from './stop-gate.ts'
+import { tabsOf, isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, ownerOf, withDeadline, type DeclaredWait } from './stop-gate.ts'
 import { parseSessionRow, publishUnattended, sessionKey, storeOf } from './supervision.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
@@ -28,14 +28,15 @@ export const UNATTENDED_BOUND_MS = 20_000
 
 // `ready`: the open rows whose blocker has fallen (`none`, or an `until` past) that no live agent and no open pull request holds; `readyLine` says them.
 // `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `kept`: its lines still open; `records`: its records, each with its path and its text.
-// `live`: the names of the agents the launcher lists running, among those a line names (every one when its listing could not be read).
+// `live`: the names of the agents the launcher lists running, among those a line names (every one when its listing could not be read);
+// `tabs`: the tabs it lists running, by name, on the whole machine, each with its tty and whether it is idle (none when its listing was not read or could not be).
 // `wanted`: whether the sweep asks the file to hold a repository (`prs.wanted`).
 // `openKeys`: the session's lines still open on the forge as `owner/name#n`, attended or not: the deck lists them.
-// `atReady`: the lines still open whose pull request carries Ready and whose agent, put on it last or before, the launcher lists running: that agent is done and closes now. `readyHeads`: the head each open pull request carries Ready at.
+// `atReady`: the lines still open whose pull request carries Ready and whose agent, put on it last or before, the launcher lists running: the module closes that agent once it is done (close-agent.ts). `readyHeads`: the head each open pull request carries Ready at.
 // `forge`: the file's current reading of each of the session's lines still open, by `owner/name#n`: its head, its base and its `mergeable`.
 export type Reading = {
   list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
-  ended: Ended[]; kept: LedgerLine[]; atReady: LedgerLine[]; readyHeads: ReadonlyMap<string, string>; records: RecordText[]; live: ReadonlySet<string>; wanted: boolean
+  ended: Ended[]; kept: LedgerLine[]; atReady: LedgerLine[]; readyHeads: ReadonlyMap<string, string>; records: RecordText[]; live: ReadonlySet<string>; tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]>; wanted: boolean
   openKeys: string[]; forge: ReadonlyMap<string, FilePr>
 }
 export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
@@ -144,10 +145,13 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   // row is ready; one that cannot be read takes every agent a line names for running, so no pull
   // request is called unattended on a read that failed, and names no row ready.
   let seen: ReadonlySet<string> | null | undefined
+  let tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]> = new Map()
   const running = async (): Promise<ReadonlySet<string> | null> => {
     if (seen !== undefined) return seen
     const launched = await $.process.run(['bash', launcherOf($.plugin.root), 'list'], { timeoutMs: UNATTENDED_BOUND_MS }).catch(() => null)
-    seen = launched && launched.exitCode === 0 ? liveNames(listing(String(launched.stdout ?? ''))) : null
+    const rows = launched && launched.exitCode === 0 ? listing(String(launched.stdout ?? '')) : null
+    seen = rows === null ? null : liveNames(rows)
+    if (rows !== null) tabs = tabsOf(rows)
     if (seen === null) await logLine($, 'unattended', "the launcher's listing unread: every agent a line names is taken for running, no row is named ready")
     return seen
   }
@@ -160,8 +164,8 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
     const agents = await running()
     if (agents !== null) ready = readyRows({ texts, lines: kept, live: agents, now })
   }
-  // The head each of the session's open lines carries Ready at, whoever runs on it: told once per head, so an agent resumed
-  // for a fix on a pull request still Ready is not told to close mid-fix. Running agents are read on the launcher's own
+  // The head each of the session's open lines carries Ready at, whoever runs on it: acted on once per head, so an agent resumed
+  // for a fix on a pull request still Ready is not closed mid-fix. Running agents are read on the launcher's own
   // listing only: one that failed names no agent to close.
   const readyHeads = readyHeadsOf(file?.prs ?? [])
   const agents = kept.some(line => readyHeads.has(prKey(line.repo, line.pr))) ? await running() : null
@@ -172,7 +176,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   const keptKeys = new Set(kept.map(line => prKey(line.repo, line.pr)))
   const forge = new Map(repos.filter(repo => !unread.includes(repo)).flatMap(repo => prsOfRepo(file, repo, now) ?? [])
     .filter(pr => pr.state === 'OPEN' && keptKeys.has(prKey(pr.repo, pr.pr))).map(pr => [prKey(pr.repo, pr.pr), pr] as const))
-  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, wanted, openKeys, forge }
+  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, tabs, wanted, openKeys, forge }
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.

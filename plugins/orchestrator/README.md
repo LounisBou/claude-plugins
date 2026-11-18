@@ -208,7 +208,7 @@ tab, where it is drawn in a small dark block.
 | ⏸ | waits on its orchestrator | The agent waits for a decision or an event only its orchestrator gives; nothing to do. | grey |
 | ⧖ | delivered, under review | The agent delivered, but a pull request entrusted to it does not carry `Ready` yet (review or correction, draft or not); nothing to do, the orchestrator reviews. | lilac |
 | ✓ | delivered, waits for the merge | The agent delivered and every open pull request entrusted to it carries `Ready`: merge them, or let the orchestrator merge them. | pale green |
-| ⏹ | over, to close | The pull request is merged or closed: the agent's work is over and its orchestrator owes its close. | red |
+| ⏹ | over, to close | The pull request is merged or closed: the agent's work is over and the module closes it. | red |
 | ⚠ | past the context gate | The agent's context is past its gate: it finishes its unit and stops, and is replaced by a fresh one. | pink |
 
 The module writes the state on each window when a turn starts or ends. The
