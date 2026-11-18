@@ -400,7 +400,7 @@ export async function claimAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pr
 
 /**
  * The asker's turn ended: each question claimed in it is answered in its tab with his words, its
- * consent recorded when they name « Accorder » alone (in the coordinator's tab, when they open with it), unless the turn's operator wait keeps it
+ * consent recorded when their first line or sentence grants « Accorder » plainly, whatever instruction follows, unless the turn's operator wait keeps it
  * (`kept`): then it is open again, drawn again.
  */
 export async function settleClaimed($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, kept: readonly string[], now: Date = new Date()): Promise<void> {
@@ -412,15 +412,13 @@ export async function settleClaimed($: Host<'clock' | 'env' | 'fs' | 'plugin' | 
     return { ...rest, seq: entry.seq + 1 }
   })
   const takes = (entry: Asked) => entry.sender.session === session && !!entry.claimed && !kept.includes(entry.id)
-  // In the coordinator's own tab every order of his counts: words that open with a choice answer it.
-  const coordinator = await sessionRole($, session) === 'coordinator'
   for (const id of await openAskedIds($, takes)) {
     let refused = false
     // Read before the lock, as the lock cannot: whether the coordinator here was shown it.
     const shown = await closesItself($, id)
     const done = await closeOwnAsked($, id, takes, at, asked => {
       const typed = asked.claimed?.typed ?? ''
-      const chosen = asked.consent ? answersChoice(typed, asked.choices) ?? (coordinator && asked.consent ? leadingChoice(typed, asked.choices, asked.consent, asked.ask) : undefined) : null
+      const chosen = asked.consent ? answersChoice(typed, asked.choices) ?? leadingChoice(typed, asked.choices, asked.consent, asked.ask) : null
       refused = !!asked.consent && (!chosen || !grants(chosen.text))
       return planClaimed(asked, chosen && !refused ? `${chosen.letter} : ${chosen.text}` : null, at, shown)
     })

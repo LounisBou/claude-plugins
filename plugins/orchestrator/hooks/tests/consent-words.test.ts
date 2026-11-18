@@ -290,6 +290,17 @@ test('a plain grant holds only the grant, the subject and the limit: an instruct
   expect('ok' in judged("Accorder l'auto-merge de acme/guide, merci"), 'a plain grant with thanks').toBe(true)
 })
 
+test('a plain grant followed by a separate instruction stays a grant: the instruction is kept whole in the question; a condition, a limit or another subject after it refuses', () => {
+  const judged = (said: string) => judgeWords(words({ subject: { kind: 'auto-merge', repo: 'acme/guide' }, until: null, said }), NOW.getTime())
+  const merged = judged("Ok Accorder l'auto-merge de acme/guide !!!\n\nLance le push forcé go !")
+  expect('ok' in merged && merged.ok).toMatchObject({ answer: 'Accorder', question: expect.stringContaining('Lance le push forcé go !') })
+  expect('ok' in judged("Accorder l'auto-merge de acme/guide. Lance le push")).toBe(true)
+  for (const said of [
+    "Accorder l'auto-merge de acme/guide\n\nsauf acme/guide#3", "Accorder l'auto-merge de acme/guide. Valable jusqu'à vendredi", "Accorder l'auto-merge de acme/guide.\nLance le push de acme/other",
+    "Accorder l'auto-merge de acme/guide ? Lance le push", "Accorder l'auto-merge de acme/guide. Lance le push ?", "Accorder l'auto-merge de acme/guide. Refuser le reste",
+  ]) expect('refuse' in judged(said), said).toBe(true)
+})
+
 test('an environment is named whole: pre-prod is no prod; the words of github\'s exemption list and a pull request\'s url are read', () => {
   const deploy = judgeWords(words({ subject: { kind: 'auto-deploy', repo: 'acme/guide', env: 'prod' }, until: null, said: "Accorder l'auto-deploy de acme/guide en pre-prod" }), NOW.getTime())
   expect('refuse' in deploy).toBe(true)

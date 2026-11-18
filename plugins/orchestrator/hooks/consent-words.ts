@@ -11,7 +11,7 @@
 // grant it; a limit they state is the exemption's `until`, and no other; anything else — another
 // repository or pull request, a question, a condition, a limit that is not the one passed — writes
 // nothing, and the refusal says why.
-import { CONSENT_GRANT, CONSENT_VERSION, DEPLOY_ENVS, parseConsentRecord, parseConsentSubject, type Answerer, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
+import { apart, CONSENT_GRANT, CONSENT_VERSION, DEPLOY_ENVS, HEDGED, LIMIT_LEFT, parseConsentRecord, parseConsentSubject, plainInstruction, splitGrant, type Answerer, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
 
 export type Fields = Record<string, unknown>
 
@@ -63,15 +63,8 @@ export function parseWords(e: Fields): { words: Words } | { error: string } {
 const folded = (value: string): string => value.replace(/\s+/g, ' ').trim()
 const lowered = (value: string): string => folded(value).toLowerCase().replace(/[’‘]/g, "'")
 
-// A word, not the middle of a longer one: letters and digits join, accents included.
-const apart = (pattern: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])(?:${pattern})(?![\\p{L}\\p{N}])`, 'u')
-
 // How his words open when they grant: « Accorder … », or a plain yes with the subject then named.
 const GRANTING = new RegExp(`^["«“]?\\s*(?:j'accorde|accord(?:er|ez|e|é|ée)?|d'accord|oui|ok|okay|go|yes|vas-y|allez-y|valide[rz]?)(?![\\p{L}\\p{N}])`, 'u')
-
-// What makes words no plain grant: a question, a condition, an exception, a restriction, a refusal.
-// Fail-closed: the asker asks again, with the limit or the condition in the question.
-const HEDGED = apart("pas|non|jamais|sauf|mais|attend\\p{L}*|wait|not|don't|dont|no|never|refus\\p{L}*|annul\\p{L}*|cancel|stop|si|if|unless|only|seulement|uniquement|plut[oô]t|rather|avant|before|apr[eè]s|after|sinon|otherwise|r[eé]voqu\\p{L}*|retir\\p{L}*|revok\\p{L}*|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|monday|tuesday|wednesday|thursday|friday|saturday|sunday")
 
 /** What each kind's words must also say, so that a plain « oui » naming a repository grants the kind the caller names and not another. */
 const WAIVING = "dispens\\p{L}*|exempt\\p{L}*|exon[eèé]r\\p{L}*|waiv\\p{L}*|d[eé]rogation"
@@ -102,15 +95,6 @@ const LEAD = "(?:valable\\s+)?(?:(?:jusqu'?\\s*(?:au|à|a)|until|le)\\s+)?"
 const FRENCH_INSTANT = new RegExp(`${LEAD}(\\d{1,2})/(\\d{1,2})/(\\d{4})\\s*(?:à|a|at|,)?\\s*(\\d{1,2})\\s*(?:h|:)\\s*(\\d{2})?(?:\\s*(heure de paris|heure paris|paris|utc|gmt|z))?(?![\\p{L}\\p{N}])`, 'gu')
 // « until 2026-11-16T11:00:00Z »: the instant itself, in UTC.
 const ISO_INSTANT = new RegExp(`${LEAD}(\\d{4})-(\\d{2})-(\\d{2})t(\\d{2}):(\\d{2})(?::(\\d{2}))?\\s*(?:z|utc)(?![\\p{L}\\p{N}])`, 'gu')
-// A limit left in his words once the instants read are removed: one the call cannot hold, so it refuses.
-const LIMIT_LEFT = new RegExp(
-  "jusqu|until|ce soir|tonight|expir|valable|demain|tomorrow|aujourd'hui|today|\\d{1,2}/\\d{1,2}|\\d{4}-\\d{2}-\\d{2}|(?<![\\p{L}\\p{N}])\\d{1,2}\\s?h(?:\\d{2})?(?![\\p{L}\\p{N}])"
-  // A duration, a period, a moment, a zone: any other way of limiting is a limit this call cannot read.
-  + "|(?<![\\p{L}\\p{N}])(?:pendant|durant|during|for|semaines?|weeks?|week-?end|jours?|journ[eé]es?|days?|heures?|hours?|minutes?|mois|months?|ans|ann[eé]es?|years?|temporair\\p{L}*|provisoire\\p{L}*|temporar\\p{L}*|moment|fois|once|am|pm|pst|cst|cet|cest|bst|gmt|utc|locale|local)(?![\\p{L}\\p{N}])"
-  + "|(?<![\\p{L}\\p{N}])[+-]\\s?\\d",
-  'u',
-)
-
 /** The limits his words state, as instants, and what is left of them once those are read; null instants when one cannot be read. */
 function limitsOf(said: string): { instants: number[]; left: string } | null {
   const instants: number[] = []
@@ -195,11 +179,16 @@ const labelOf = (subject: ConsentSubject, until: string | null): string =>
  */
 export function judgeWords(words: Words, now: number): Judged {
   const { subject, until, said } = words
-  const said_ = lowered(said)
+  // His message is its grant, the first line or sentence, and what he said after it: an instruction for the asker, which core judges.
+  const { grant, following } = splitGrant(said, subject)
+  const said_ = lowered(grant)
   const no = (refuse: string): Judged => ({ refuse: `nothing recorded: ${refuse}` })
   if (subject.kind === 'e2e-exemption' && folded(said).length > EXEMPTION_WORDS_MAX) return no(`an exemption quotes his sentence whole, and github takes at most ${EXEMPTION_WORDS_MAX} characters of it: his message is longer.`)
   if (!GRANTING.test(said_)) return no('his message does not grant: it opens neither with « Accorder » nor with a plain yes (oui, ok, go). A question, a refusal or an instruction is no consent.')
   if (/[?;]/.test(said_) || HEDGED.test(said_)) return no('his message holds a question, a condition, an exception or a refusal (pas, non, sauf, si, seulement, ?…): it is no plain grant, ask him again.')
+  if (following !== '' && !plainInstruction(following, subject)) {
+    return no(LIMIT_LEFT.test(lowered(following)) ? `his message states a limit, and a ${subject.kind} takes none.` : 'what he said after the grant holds a question, a condition, a refusal or another repository or pull request: it is no plain instruction, ask him again.')
+  }
   if (!namesRepository(said_, subject.repo)) return no(`his message does not name ${subject.repo}.`)
   const others = otherRepositories(said_, subject.repo)
   if (others.length > 0) return no(`his message names another repository (${others.join(', ')}) than ${subject.repo}.`)

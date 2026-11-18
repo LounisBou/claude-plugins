@@ -539,6 +539,30 @@ test('with no coordinator live, another orchestrator settles an open question an
   expect(JSON.parse(record![1]).by).toBe('tab')
 })
 
+test('his plain grant followed by another instruction, settled by its asker or by the coordinator, records the grant and sends the instruction whole to the asker', async () => {
+  const typedWords = "Ok Accorder pour l'auto-merge !!!\n\nLAnce le push forcé go !"
+  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' }
+  const recorded = (m: ReturnType<typeof decideMachine>, id: string) => [...m.files.entries()].filter(([p]) => p.includes(`/consents/acme/app/${id}`)).map(([, text]) => JSON.parse(text).answer)
+  // His first line alone, as its asker relayed it on 2026-11-18, and his words whole.
+  for (const text of ["Ok Accorder pour l'auto-merge !!!", typedWords]) {
+    const m = decideMachine(null)
+    const id = await asked(m, consent)
+    expect((await settle(m.asker, request(id, { text }), AT)).isError).toBeUndefined()
+    expect(recorded(m, id)).toEqual(['Accorder'])
+  }
+  const m = decideMachine(RUNNING)
+  const id = await asked(m, consent)
+  expect((await settle(m.coordinator, request(id, { text: typedWords }), AT)).isError).toBeUndefined()
+  expect(recorded(m, id)).toEqual(['Accorder'])
+  expect(entryOf(m, id)).toMatchObject({ answer: { text: typedWords, by: 'coordinator' } })
+  expect(m.sent[0]?.text).toContain('LAnce le push forcé go !')
+  // A condition after the grant records no grant: what the tab typed is kept raw, which github does not read as one.
+  const refused = decideMachine(null)
+  const other = await asked(refused, consent)
+  await settle(refused.asker, request(other, { text: "Ok Accorder pour l'auto-merge !!!\n\nsauf acme/app#3" }), AT)
+  expect(recorded(refused, other)).not.toContain('Accorder')
+})
+
 test('a coordinator record whose process is gone, or now on another tty, is no coordinator live; a record of a process that runs, one with no pid, and a listing that fails are', async () => {
   for (const gone of [decideMachine({ ...RUNNING, pid: 31337 }), decideMachine({ ...RUNNING, tty: '/dev/ttys777' })]) {
     expect((await settle(gone.other, request(await asked(gone)), AT)).isError).toBeUndefined()
