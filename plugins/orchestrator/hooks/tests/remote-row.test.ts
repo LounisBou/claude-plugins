@@ -219,12 +219,47 @@ test('the wait relay uses the learnt coordinator when none is registered here', 
   for (const hook of hooksOn(chains, 'turn.complete')) {
     await hook.handler(fx.dollar, { answer: 'Everything merged.', reason: 'answer', isAborted: false, turnId: 't' }, async e => e)
   }
-  const report = fx.sent.find(s => parseQ(s.text)?.event.kind === 'ask')
-  expect(report?.to).toBe(COORD_FROM)
-  expect((parseQ(report!.text)!.event as { entry: { kind: string; blocks: string | null } }).entry).toMatchObject({ kind: 'done', blocks: null })
-  // The same turn's end carried the row, its wait included.
-  const row = fx.sent.find(s => s.text.startsWith(ROW_MARKER))
-  expect(parseRemoteRow(row!.text)!.waiting).toBe('done')
+  // One message carries the entry and the row, one line each: a turn's end is one message.
+  expect(fx.sent.length).toBe(1)
+  expect(fx.sent[0]!.to).toBe(COORD_FROM)
+  const [report, rowLine, ...rest] = fx.sent[0]!.text.split('\n')
+  expect(rest).toEqual([])
+  expect((parseQ(report!)!.event as { entry: { kind: string; blocks: string | null } }).entry).toMatchObject({ kind: 'done', blocks: null })
+  expect(parseRemoteRow(rowLine!)!.waiting).toBe('done')
+})
+
+test('a turn that changes nothing the coordinator holds sends nothing, and the next one that changes it sends once', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const endTurn = async () => {
+    DECLARATIONS.turnStarted()
+    for (const hook of hooksOn(chains, 'turn.complete')) {
+      await hook.handler(fx.dollar, { answer: 'Waiting.', reason: 'answer', isAborted: false, turnId: 't' }, async e => e)
+    }
+  }
+  await endTurn()
+  expect(fx.sent.length).toBe(1)
+  await endTurn()
+  await endTurn()
+  expect(fx.sent.length).toBe(1)
+  fx.files.set(ROW, storeRow({ context_percent: 31, context_tokens: 310000 }))
+  await endTurn()
+  expect(fx.sent.length).toBe(2)
+})
+
+test('the fill a turn end sends is the host\'s own, not the store row\'s one turn old', async () => {
+  const fx = fake()
+  fx.dollar.session.usage = async () => ({ context: { tokens: 400000, window: 1000000, percent: 40 } })
+  await sendRow(fx.dollar, 's-one')
+  const row = parseRemoteRow(fx.sent[0]!.text)!
+  expect([row.context_percent, row.context_tokens]).toEqual([40, 400000])
+})
+
+test('a row sent ten minutes ago is not sent again; one older than half the stale bound is refreshed', () => {
+  const now = Date.now()
+  const row = remote()
+  expect(rowIsNews(row, rowSent(row, now - 10 * 60 * 1000 - 1000), now)).toBe(false)
+  expect(rowIsNews(row, rowSent(row, now - REMOTE_STALE_AFTER_MS / 2 - 1000), now)).toBe(true)
 })
 
 // --- the receive -----------------------------------------------------------------------
@@ -257,6 +292,27 @@ test('a marked delivery is consumed and written as a remote row; an unmarked one
   expect(fx.files.has(`${STORE}/remote/Orch__bare`)).toBe(true)
   const plain = await receive(chains, fx.dollar, envelope('a [module-row] mention inside a sentence'))
   expect(plain.queued).toEqual([envelope('a [module-row] mention inside a sentence')])
+})
+
+test('a message of several marked lines is read line by line, each consumed and written', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const batch = [rowText(remote({ name: 'Orch: one' })), rowText(remote({ name: 'Orch: two', context_percent: 30 }))].join('\n')
+  const { result, queued } = await receive(chains, fx.dollar, envelope(batch, 'Orch: one'))
+  expect(typeof result?.['consumed']).toBe('string')
+  expect(queued.length).toBe(0)
+  expect(JSON.parse(fx.files.get(`${STORE}/remote/Orch__one`)!).name).toBe('Orch: one')
+  expect(JSON.parse(fx.files.get(`${STORE}/remote/Orch__two`)!).context_percent).toBe(30)
+})
+
+test('a message that mixes a marked line with other text is no batch: refused whole, nothing written', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const mixed = `${rowText(remote({ name: 'Orch: one' }))}\nplease read this`
+  const { result, queued } = await receive(chains, fx.dollar, envelope(mixed, 'Orch: one'))
+  expect(typeof result?.['consumed']).toBe('string')
+  expect(queued.length).toBe(0)
+  expect(fx.files.has(`${STORE}/remote/Orch__one`)).toBe(false)
 })
 
 for (const [label, body] of [

@@ -17,7 +17,7 @@ import type { DeclaredWait } from '../stop-gate.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Host, type Noun, type SessionSendResult } from '../../core/host.ts'
-import { Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf } from '../remote-round.ts'
+import { Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf, splitLines } from '../remote-round.ts'
 
 // The lines written between machines: the event line (remote-round.ts) and its acknowledgment.
 const askLine = qAskLine
@@ -170,6 +170,8 @@ test('the withdrawal names the sender, the question and where it was answered', 
 function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: string | null; remote?: boolean; send?: 'reject' | 'refuse'; roundWrite?: 'fail'; refuseInto?: string; staleAt?: string } = {}) {
   const files = new Map<string, string>()
   const sent: Parameters<World['session']['send']>[0][] = []
+  // The messages as sent, a turn's end being one of several lines.
+  const messages: string[] = []
   const logged: string[] = []
   const later: { ms: number; fn: () => unknown; cancelled: boolean }[] = []
   const invalidated: string[] = []
@@ -186,7 +188,9 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
         if (over.send === 'reject') throw new Error('the send was rejected')
         if (over.send === 'refuse') return { isDelivered: false, reason: 'nobody by that name' }
         if (over.staleAt !== undefined && args.to === over.staleAt) return { isDelivered: false, reason: `Failed to send to ${over.staleAt}: HTTP 409 — the peer session may have ended or restarted, so this bridge ID is stale.` }
-        sent.push(args)
+        // A turn's end is one message of several lines: each line is read as a send of its own here.
+        messages.push(args.text)
+        for (const text of splitLines(args.text) ?? [args.text]) sent.push({ ...args, text })
         return { isDelivered: true }
       },
     },
@@ -240,7 +244,7 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
     },
     ui: { invalidate: (what: string) => { invalidated.push(what) } },
   })
-  return { dollar, files, sent, logged, later, invalidated, row: () => withWait(parseSessionRow(files.get(ROW) ?? '')!, files.get(WAIT) ?? '') }
+  return { dollar, files, sent, messages, logged, later, invalidated, row: () => withWait(parseSessionRow(files.get(ROW) ?? '')!, files.get(WAIT) ?? '') }
 }
 
 // The round's entries as the files hold them, in the order their files were first written; a
@@ -1033,6 +1037,29 @@ test('a remote wait becomes an entry on the coordinator\'s machine, and is acked
   expect(entry).toEqual({ ...asked, at: entry.at, origin: { machine: 'unknown', address: SENDER_AT } })
   expect(coordinator.files.has(`${ROUND}/${asked.id}.json`)).toBe(true)
   expect(acks(coordinator)).toEqual([{ to: SENDER_AT, text: ackLine(asked.id, since) }])
+})
+
+test('a turn end is one message, and received whole it enters the entry, stores the row and is acked once', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  const coordinator = coordinatorMachine()
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(PROPOSAL))
+  expect(sender.messages.length).toBe(1)
+  expect(sender.sent.length).toBe(2)
+  const consumed = await receive(chains, coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(sender.messages)))
+  expect(typeof consumed.consumed).toBe('string')
+  expect(entries(coordinator).length).toBe(1)
+  expect([...coordinator.files.keys()].some(k => k.includes('/remote/'))).toBe(true)
+  expect(coordinator.sent.length).toBe(1)
+})
+
+test('a turn end the coordinator did not take records nothing as delivered: the entry is no longer pending, the row is sent again', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true, send: 'refuse' })
+  await drive(chains, 'turn.complete', sender.dollar, turnEnd(PROPOSAL))
+  expect(waitOf(sender).pending ?? null).toBeNull()
+  expect([...sender.files.keys()].some(k => k.includes('/rows/'))).toBe(false)
+  expect(sender.logged.filter(l => l.includes('not delivered')).length).toBe(2)
 })
 
 test('the ack sets relayed and clears pending on the sender', async () => {

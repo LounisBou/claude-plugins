@@ -42,6 +42,8 @@ type Fx = {
   written: string[]
   usage: { context: { tokens: number; window: number; percent: number } }
   env: Record<string, string>
+  // What the session sent to another session, in order.
+  sent: { to: unknown; text: string }[]
 }
 
 function fakeDollar(over: {
@@ -58,6 +60,7 @@ function fakeDollar(over: {
   const ran: string[] = []
   const written: string[] = []
   const usage = { context: { tokens: 30000, window: 100000, percent: 30 } }
+  const sent: { to: unknown; text: string }[] = []
   const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: 'hostcli' }
   if (over.transcript !== undefined) files.set(`${PROJECTS}/-a-project/s-one.jsonl`, over.transcript)
   const dollar = hostOf({
@@ -65,6 +68,10 @@ function fakeDollar(over: {
       id: async () => 's-one',
       usage: async () => usage,
       model: async () => 'a-model',
+      send: async (args: { to: unknown; text: string }) => {
+        sent.push(args)
+        return { isDelivered: true }
+      },
     },
     env: { get: async (name: string) => env[name] },
     plugin: { root: '/plugins/orch-root' },
@@ -152,7 +159,7 @@ function fakeDollar(over: {
     },
     ui: { toast: () => undefined, invalidate: () => undefined },
   })
-  return { dollar, files, mtimes, ran, written, usage, env }
+  return { dollar, files, mtimes, ran, written, usage, env, sent }
 }
 
 test('two sessions writing at once keep both rows', async () => {
@@ -423,6 +430,16 @@ test('the composed register writes the row the gauge just measured', async () =>
   expect(row.name).toBe('Agent: belt-p3')
   expect(row.repo).toBe('me/belt')
   expect(row.pid).toBe('501')
+})
+
+test('a measure of an orchestrator whose coordinator runs elsewhere sends it nothing: the row goes at the turn\'s end', async () => {
+  const chains = mounted(register)
+  const fx = fakeDollar({ origin: 'git@github.com:me/belt.git', launchName: 'Orch: belt' })
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/store/coordinator-learnt`, JSON.stringify({ name: 'Coord: ops', from: 'bridge:session_01AbCdEf', at: 'T' }) + '\n')
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  fx.usage.context.percent = 45
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  expect(fx.sent).toEqual([])
 })
 
 // The processes a measure spawns once the session is known: the walk's two reads of its own
