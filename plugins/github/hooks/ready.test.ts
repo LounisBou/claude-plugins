@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashLabellings, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, toolLabelling, touchesRecords, onlyReads, writesRecords, deletes, deletesRecords,
+  bashActs, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, touchesRecords, onlyReads, deletes, deletesRecords,
   recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove, stackedCi,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -398,48 +398,6 @@ test('a line the shell reader cannot read is no read', () => {
   expect(onlyReads('ls {1..9}{1..9}{1..9}{1..9}')).toBe(false)
 })
 
-test('the records guard refuses a write into the records or their writer, never a read', () => {
-  expect(writesRecords('ls ~/.claude/pr-records/o/r/' + HEAD + '/')).toBe(false)
-  expect(writesRecords('cat /cfg/records/x | jq .', '/cfg/records')).toBe(false)
-  expect(writesRecords('rm ~/.claude/pr-records/x')).toBe(true)
-  expect(writesRecords('echo x > ~/.claude/pr-records/o/r/x.json')).toBe(true)
-  expect(writesRecords('python3 /p/engine/record.py --repo o/r')).toBe(true)
-  expect(writesRecords('git status')).toBe(false)
-})
-
-test('the records observation skips a command that only reads them, however it waits or silences its errors', () => {
-  const dir = '~/.claude/pr-records/o/r/' + HEAD
-  for (const line of [
-    'ls ' + dir + ' 2>/dev/null',
-    'ls ' + dir + ' 2>&1 | tail -3',
-    'cat ' + dir + '/x.json &>/dev/null',
-    'until ls ' + dir + '/e2e.json; do sleep 2; done',
-    'for f in ' + dir + '/*; do cat $f; done',
-    'sleep 5; ls ' + dir,
-    'if [ -f ' + dir + '/x.json ]; then cat ' + dir + '/x.json; fi',
-    'grep -n records plugins/github/engine/record.py 2>/dev/null',
-  ]) {
-    expect(writesRecords(line), line).toBe(false)
-  }
-})
-
-test('the records observation still fires on a write hidden among reads or behind a quiet redirection', () => {
-  const dir = '~/.claude/pr-records/o/r/' + HEAD
-  for (const line of [
-    'ls ' + dir + ' 2>/dev/null; rm ' + dir + '/x.json',
-    'for f in ' + dir + '/*; do rm $f; done',
-    'for f in $(rm ' + dir + '/x.json); do cat $f; done',
-    'sleep $(rm ' + dir + '/x.json)',
-    'cd /w && echo x > ' + dir + '/x.json',
-    'echo x >/dev/null/../' + dir + '/x.json',
-    'cat ' + dir + '/x.json >&' + dir + '/y.json',
-    'python3 /p/engine/record.py --repo o/r 2>/dev/null',
-    'until ls ' + dir + '/x.json; do touch ' + dir + '/x.json; done',
-  ]) {
-    expect(writesRecords(line), line).toBe(true)
-  }
-})
-
 test('a deletion is a line that is no read and deletes: rm, unlink, find -delete, a move out, an interpreter\'s call', () => {
   const names = (text: string) => text.includes('/d/')
   for (const line of [
@@ -504,33 +462,6 @@ test('the gate moves the label: Ready when the three hold, Not Ready back when R
   // A closed or merged pull request keeps its labels.
   expect(labelMove(gate({ state: 'merged' }), [])).toBeUndefined()
   expect(labelMove(gate({ state: 'closed', labels: ['Ready'] }), ['the pull request is closed'])).toBeUndefined()
-})
-
-test('the labels a command puts on, takes off, renames or deletes are read with their repository', () => {
-  expect(bashLabellings('gh pr edit 12 -R o/r --add-label a,b --remove-label c')).toEqual([{ name: 'gh pr edit', repo: 'o/r', labels: ['a', 'b', 'c'] }])
-  expect(bashLabellings('gh issue create -l a')).toEqual([{ name: 'gh issue create', labels: ['a'] }])
-  expect(bashLabellings('gh label edit old -R o/r --name new')).toEqual([{ name: 'gh label edit', repo: 'o/r', labels: ['old', 'new'] }])
-  expect(bashLabellings('gh label clone src/x -R o/r')).toEqual([{ name: 'gh label clone', repo: 'o/r', labels: [], opaque: true }])
-  expect(bashLabellings('python3 engine/gh.py --repo o/r label-remove 12 a')).toEqual([{ name: 'gh.py label-remove', repo: 'o/r', labels: ['a'] }])
-  expect(bashLabellings("gh api repos/o/r/issues/12/labels -f 'labels[]=a'")).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['a'] }])
-  expect(bashLabellings('gh api -X DELETE repos/o/r/issues/12/labels/no%2De2e')).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['no-e2e'] }])
-  expect(bashLabellings('gh api -X DELETE repos/o/r/issues/12/labels')).toEqual([{ name: 'gh api', repo: 'o/r', labels: [], opaque: true }])
-  expect(bashLabellings("gh api -X PATCH repos/o/r/labels/old -f new_name=a")).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['old', 'a'] }])
-  expect(bashLabellings('gh api graphql -F query=@q.graphql')).toEqual([{ name: 'gh api graphql', labels: [], opaque: true }])
-  for (const line of ['gh pr edit 12 --title t', 'gh api repos/o/r/issues/12/labels', 'gh pr view 12', "git commit -m 'gh pr edit 1 --add-label a'"]) {
-    expect(bashLabellings(line), line).toEqual([])
-  }
-  expect(toolLabelling('label-add', { pr: 3, label: ['a', 'b'] })).toEqual({ name: 'label-add', labels: ['a', 'b'] })
-  expect(toolLabelling('label-remove', { pr: 3, name: 'a' })).toEqual({ name: 'label-remove', labels: ['a'] })
-  expect(toolLabelling('pr-comment', { pr: 3, body: 'a' })).toBeUndefined()
-})
-
-test('labels gh api reads from a file (-F name=@file) are opaque: any label may move', () => {
-  expect(bashLabellings("gh api repos/o/r/issues/12/labels -F 'labels[]=@f'")).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['@f'], opaque: true }])
-  expect(bashLabellings('gh api -X PATCH repos/o/r/pulls/12 -F labels[]=@f')).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['@f'], opaque: true }])
-  expect(bashLabellings('gh api -X PATCH repos/o/r/labels/old -F new_name=@n')).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['old', '@n'], opaque: true }])
-  // -f sends `@f` as it is: a label named so, read on the line.
-  expect(bashLabellings("gh api repos/o/r/issues/12/labels -f 'labels[]=@f'")).toEqual([{ name: 'gh api', repo: 'o/r', labels: ['@f'] }])
 })
 
 // A check plan that requires norms keeps them as E2E is kept; with no plan, or a plan that does not, norms stay on demand.

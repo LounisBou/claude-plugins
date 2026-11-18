@@ -12,19 +12,19 @@ import {
 import { ACCEPTANCE, DETAIL_MAX, KINDS, SCRIPTED, type PrRecord } from '../core/pr-record.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
-  covers, EXEMPT_DIR, exemptingLabels, expired, expiryLine, exemptionLine, exemptionPath, isExpiryLine, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
+  covers, EXEMPT_DIR, expired, expiryLine, exemptionLine, exemptionPath, isExpiryLine, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { normalise } from './guards.ts'
 import { isCatchable, observe, OBSERVED, REFUSED } from './observe.ts'
 import {
-  acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
+  acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
-  kindRefusal, recordKindFor, toolAct, toolLabelling, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, writesRecords,
+  kindRefusal, recordKindFor, toolAct, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
   RECORDS_REFUSAL, deletes, deletesRecords,
-  type Act, type Carried, type Gate, type HeadRead, type Labelling, type RecordFile,
+  type Act, type Carried, type Gate, type HeadRead, type RecordFile,
 } from './ready.ts'
 
 // The host's nouns the module calls.
@@ -141,8 +141,8 @@ async function runGh(
  * settings allow. The mechanical writing rules are the engine's: pr-create and
  * pr-update refuse a text that breaks one.
  *
- * Outside auto-merge, leaving draft (a CI undraft aside) is observed, then asked: it is the
- * person's act on GitHub, after their review, and the readiness gate refuses one not ready.
+ * Outside auto-merge, leaving draft (a CI undraft aside) is asked: it is the person's act on
+ * GitHub, after their review, and the readiness gate refuses one not ready.
  *
  * In a repository in auto-merge no write is put to the person: the reserved
  * approvals lift and an ask with no rule behind it runs. A deny and an ask
@@ -173,10 +173,8 @@ async function permit(
 
   // Read once per call, for a write only.
   const autoMerge = !READS.has(e.command) && await inAutoMerge($, e)
-  // Outside auto-merge, leaving draft is the operator's on GitHub: observed, and asked below as
-  // any write no rule allows. The readiness gate above still refuses a pull request not ready.
-  if (!autoMerge && leavesDraft(e.command)) await observed($, OBSERVED.draftLeave)
-
+  // Outside auto-merge, leaving draft is the operator's on GitHub: asked below as any write no rule
+  // allows. The readiness gate above still refuses a pull request not ready.
   const reserved = reservedToPerson(e.command, autoMerge)
   if (reserved) return ask($, reserved + ' ' + describe(e) + '?', ['Allow', 'Deny'], e.command)
 
@@ -241,11 +239,6 @@ export function reservedToPerson(command: string, autoMerge = false): string | u
   if (autoMerge) return undefined
   if (command === 'pr-merge') return 'Merge a pull request:'
   return undefined
-}
-
-// A call that takes a pull request out of draft; opening one out of draft is observed where the act is read (toolReady, bashReady).
-export function leavesDraft(command: string): boolean {
-  return command === 'pr-ready'
 }
 
 // The repositories in auto-merge, as owner/name: there no write is put to the
@@ -688,7 +681,7 @@ export async function diagnose($: Mod, check = false): Promise<string> {
  * draft and merging it are refused while its CI is not green or a record failed at the head, through
  * the tool and through Bash alike; a record only absent there is observed, and the act goes on without
  * the Ready label, which the gate puts when the whole contract holds. In a repository not in
- * auto-merge, leaving draft is observed on every route, and a merge is refused through Bash: the
+ * auto-merge, leaving draft meets the same gate on every route, and a merge is refused through Bash: the
  * tool asks the person for it. A pull request that carries Not Ready and none of whose checks has
  * passed yet may leave draft for its CI to run, still Not Ready, in every repository.
  */
@@ -1017,44 +1010,17 @@ async function readExemption($: Mod, repo: string): Promise<Exemption | undefine
   }
 }
 
-// Whether an exemption with an expiry has run out on the module's clock. A clock that cannot be read answers
-// `unreadable`: the gate runs it out (the exemption the operator limited excuses only while it is known to stand),
-// the labels keep it standing (a session never frees them on a clock that fails). One with no expiry never reads the clock.
-async function runOut($: Mod, exemption: Exemption, unreadable = true): Promise<boolean> {
+// Whether an exemption with an expiry has run out on the module's clock. A clock that cannot be read runs it out
+// (the exemption the operator limited excuses only while it is known to stand).
+// One with no expiry never reads the clock.
+async function runOut($: Mod, exemption: Exemption): Promise<boolean> {
   if (exemption.until === undefined) return false
   try {
     const now = Number(await $.clock.now())
-    return Number.isFinite(now) ? expired(exemption, now) : unreadable
+    return Number.isFinite(now) ? expired(exemption, now) : true
   } catch {
-    return unreadable
+    return true
   }
-}
-
-// Whether a labelling is observed: it puts or takes off a label the repository's exemption names, which
-// would cover or uncover pull requests without the operator. A labelling that may move any label
-// (opaque) is observed when the exemption names one. A repository that cannot be named has no
-// exemption file to read, as an exemption that cannot be read covers nothing.
-const REPO_PLACEHOLDER = /\{owner\}|\{repo\}|:owner\b|:repo\b/g
-
-/*
- * The repository a Bash labelling targets: the one it names, its {owner}, {repo}, :owner and :repo
- * placeholders filled from the checkout's repository as gh api fills them, or the checkout's own
- * when it names none.
- */
-async function labellingRepo($: Mod, named: string | undefined): Promise<string | undefined> {
-  if (named && !named.match(REPO_PLACEHOLDER)) return named
-  const checkout = await targetRepo($, {}).catch(() => undefined)
-  if (!named || !checkout) return checkout
-  const [owner = '', name = ''] = checkout.split('/')
-  return named.replace(REPO_PLACEHOLDER, (part) => (part.includes('owner') ? owner : name))
-}
-
-async function movesExemptLabel($: Mod, labelling: Labelling, repo: string | undefined): Promise<boolean> {
-  if (!repo) return false
-  const read = await readExemption($, repo)
-  const exemption = read && (await runOut($, read, false)) ? undefined : read
-  const named = labelling.opaque && exemption?.exempt ? [...exemption.labels] : exemptingLabels(exemption, labelling.labels)
-  return named.length > 0
 }
 
 // The line of the operator's exemption that covers this pull request, or undefined. Any doubt (a
@@ -1343,7 +1309,6 @@ function toolReady($: Mod, e: GhCall, act: Act) {
   }
   return {
     async beforeAsk(): Promise<string | undefined> {
-      if (act.kind === 'create') await observed($, OBSERVED.draftOpen)
       if (!gated) return undefined
       const found = await evaluate()
       if (!found) {
@@ -1378,12 +1343,10 @@ function engineName(act: Act): string | undefined {
   return act.name.startsWith('gh.py ') ? act.name : undefined
 }
 
-// The Bash act's refusal, or undefined; what must follow its success goes in after, what is observed in observations
-// (journaled by the caller once no act of the line is refused).
-async function bashReady($: Mod, act: Act, after: Array<(result: unknown) => Promise<void>>, observations: string[]): Promise<string | undefined> {
+// The Bash act's refusal, or undefined; what must follow its success goes in after.
+async function bashReady($: Mod, act: Act, after: Array<(result: unknown) => Promise<void>>): Promise<string | undefined> {
   if (act.stdin) return STDIN_REFUSAL
   if (act.kind === 'create' || act.kind === 'create-draft') {
-    if (act.kind === 'create') observations.push(OBSERVED.draftOpen)
     after.push(async (result) => {
       const made = createdPr(stdoutOf(result))
       if (made) await labelNotReady($, made.repo, made.pr)
@@ -1421,8 +1384,6 @@ async function bashReady($: Mod, act: Act, after: Array<(result: unknown) => Pro
     }
   }
   const r: Readiness = pr === undefined ? { missing: [], error: lookup } : await readiness($, repo, pr, act.sha)
-  // Leaving draft outside auto-merge is observed once the gate lets it through.
-  let leaving = false
   if (act.kind === 'undraft') {
     // The engine leaves draft for CI only when told to (--for-ci): without it, it puts Ready on.
     if (r.gate && ciUndraft(r.gate) && pr !== undefined && act.forCi !== false) {
@@ -1430,12 +1391,10 @@ async function bashReady($: Mod, act: Act, after: Array<(result: unknown) => Pro
       after.push(async () => note($, ciUndraftLine(repo, n)))
       return undefined
     }
-    leaving = !listed
   }
   if (pr === undefined) return unverifiedRefusal(repo, '?', r.error ?? '')
   const held = (await gateHeld($, act.name, repo, pr, r, true))?.refusal
   if (!held && act.kind === 'merge' && !act.sha && r.gate) return unpinnedMergeRefusal(act.name, repo, pr, r.gate.head)
-  if (!held && leaving) observations.push(OBSERVED.draftLeave)
   return held
 }
 
@@ -2237,33 +2196,23 @@ export function register(on: On<Mod>): void {
       // A line the reader cannot read: the ready guard below reads it again and refuses it.
     }
     try {
-      // The records and the exemptions are refused a deletion (irreversible); any other write to them is observed.
+      // The records and the exemptions are refused a deletion (irreversible); any other write to the exemptions is observed.
       const root = await recordsRoot($)
       if (deletesRecords(line, root)) return await refuse($, REFUSED.recordsDelete, RECORDS_REFUSAL)
       const exempt = await touchesExemptions($, line)
       if (exempt && deletes(line, namesExemptions)) return await refuse($, REFUSED.exemptionDelete, EXEMPT_REFUSAL)
-      if (writesRecords(line, root)) observations.push(OBSERVED.records)
       if (exempt && !onlyReads(line)) observations.push(OBSERVED.exemption)
     } catch {
       // A line the reader cannot read: the ready guard below reads it again and refuses it.
     }
     const undeployed = await bashDeployRefusal($, line)
     if (undeployed) return await refuse($, REFUSED.deploy, undeployed)
-    let labellings: Labelling[] = []
-    try {
-      labellings = bashLabellings(line)
-    } catch {
-      // A line that cannot be read moves no label it shows.
-    }
-    for (const labelling of labellings) {
-      if (await movesExemptLabel($, labelling, await labellingRepo($, labelling.repo))) observations.push(OBSERVED.exemptLabel)
-    }
     const after: Array<(result: unknown) => Promise<void>> = []
     let current: Act | undefined
     try {
       for (const act of bashActs(line)) {
         current = act
-        const refused = await bashReady($, act, after, observations)
+        const refused = await bashReady($, act, after)
         if (refused) return await refuse($, REFUSED.ready, refused)
       }
     } catch (err) {
@@ -2292,14 +2241,10 @@ export function register(on: On<Mod>): void {
     return refusal === null ? next(e) : await refuse($, REFUSED.net, refusal)
   })
 
-  // The auto-merge and deploy lists are written by their tools only; a write to the records or the exemptions is observed.
+  // The auto-merge and deploy lists are written by their tools only; a write to the exemptions is observed.
   for (const tool of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit']) {
     on('tool.call', { tool }, async ($, e, next) => {
-      const root = await recordsRoot($)
       const path = normalise(String(e['file_path'] ?? e['notebook_path'] ?? ''), String(await $.session.cwd()))
-      if ((root && (path === root || path.startsWith(root + '/'))) || path.includes('/.claude/pr-records/')) {
-        await observed($, OBSERVED.records)
-      }
       const data = await dataDir($)
       if ((data && path === normalise(data + '/' + AUTO_MERGE_FILE)) || AUTO_MERGE_PATH.test(path)) {
         return await refuse($, REFUSED.autoMergeList, AUTO_MERGE_REFUSAL)
@@ -2355,8 +2300,6 @@ export function register(on: On<Mod>): void {
       }
     }
     const e: GhCall = { ...raw, args: withHouseDefaults(raw.command, raw.args ?? {}) }
-    const labelling = toolLabelling(e.command, e.args)
-    if (labelling && await movesExemptLabel($, labelling, await targetRepo($, e).catch(() => undefined))) await observed($, OBSERVED.exemptLabel)
     const act = toolAct(e.command, e.args)
     const ready = act ? toolReady($, e, act) : undefined
     const label = ready ? undefined : readyLabelCall($, e)

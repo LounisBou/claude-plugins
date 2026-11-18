@@ -349,12 +349,12 @@ test('a not-ready pr-ready outside auto-merge is refused before anyone is asked'
 })
 
 
-test('a ready pr-ready outside auto-merge goes through, observed, never asked', async ($, on) => {
+test('a ready pr-ready outside auto-merge goes through, never asked', async ($, on) => {
   const seen = await world($, on, { labels: ['Ready'] })
   const out = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(out).toEqual({ result: 'ok' })
   expect(seen.asked.length).toBe(0)
-  expect(seen.journal).toEqual(['github.draft.leave'])
+  expect(seen.journal).toEqual([])
   expect(commands(seen)).toEqual(['pr-gate', 'pr-ready'])
 })
 
@@ -564,15 +564,15 @@ test('a Bash merge through gh api pinned to a head that moved is refused', async
 
 
 for (const [where, autoMerge] of [['outside auto-merge', []], ['in auto-merge', ['acme/thing']]] as const) {
-  test('a pull request opened out of draft goes through ' + where + ', observed, a draft is not', async ($, on) => {
+  test('a pull request opened out of draft goes through ' + where + ', a draft too', async ($, on) => {
     const seen = await world($, on, { autoMerge: [...autoMerge] })
     const out = await $.tool.call(gh('pr-create', { title: 'fix: x', draft: false }))
     expect(out).toEqual({ result: 'ok' })
-    expect(seen.journal).toEqual(['github.draft.open-out'])
+    expect(seen.journal).toEqual([])
     expect(seen.asked.length).toBe(0)
     const draft = await $.tool.call(gh('pr-create', { title: 'fix: x' }))
     expect(draft).toEqual({ result: 'ok' })
-    expect(seen.journal).toEqual(['github.draft.open-out'])
+    expect(seen.journal).toEqual([])
   })
 }
 
@@ -632,13 +632,13 @@ test('a Bash undraft outside auto-merge whose guard throws is refused as an unve
 
 
 for (const [where, autoMerge] of [['outside auto-merge', 'acme/other'], ['in auto-merge', 'acme/thing']] as const) {
-  test('a Bash pull request opened out of draft ' + where + ' goes through, observed, whatever the readiness read gives', async ($, on) => {
+  test('a Bash pull request opened out of draft ' + where + ' goes through, whatever the readiness read gives', async ($, on) => {
     const seen = await world($, on, { gate: BROKEN_GATE, autoMerge: [autoMerge] })
     const line = 'gh pr create -R acme/thing -t "fix: x" -b ' + BODY_OK
     const out = await $.tool.call(bash(line))
     expect(out.deny).toBeUndefined()
     expect(seen.bash).toEqual([line])
-    expect(seen.journal).toEqual(['github.draft.open-out'])
+    expect(seen.journal).toEqual([])
     expect(commands(seen)).toEqual([])
   })
 }
@@ -664,19 +664,19 @@ test('a CI undraft through the tool passes outside auto-merge too, with no quest
 })
 
 
-test('an undraft in auto-merge, or a ready one anywhere but outside it, writes no draft.leave line', async ($, on) => {
+test('an undraft in auto-merge goes through with nothing journaled', async ($, on) => {
   const seen = await world($, on, { labels: ['Ready'], autoMerge: ['acme/thing'] })
   const out = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(out).toEqual({ result: 'ok' })
   expect(seen.journal).toEqual([])
 })
 
-test('an undraft outside auto-merge that is no CI undraft goes through when ready, observed, never asked', async ($, on) => {
+test('an undraft outside auto-merge that is no CI undraft goes through when ready, never asked', async ($, on) => {
   const seen = await world($, on, { labels: ['Ready'], answer: 'Allow' })
   const out = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(out).toEqual({ result: 'ok' })
   expect(seen.asked).toHaveLength(0)
-  expect(seen.journal).toEqual(['github.draft.leave'])
+  expect(seen.journal).toEqual([])
   expect(commands(seen)).toEqual(['pr-gate', 'pr-ready'])
 })
 
@@ -807,7 +807,7 @@ test('a Bash merge outside auto-merge is refused with the tool call to make, an 
   const ready = await $.tool.call(bash('gh pr ready 12 -R acme/thing'))
   expect(ready.deny).toBeUndefined()
   expect(seen.bash).toEqual(['gh pr ready 12 -R acme/thing'])
-  expect(seen.journal).toEqual(['github.ready.held', 'github.ready.held', 'github.draft.leave'])
+  expect(seen.journal).toEqual(['github.ready.held', 'github.ready.held'])
 })
 
 test('a Bash merge without a repository is refused, so is a GraphQL merge', async ($, on) => {
@@ -867,17 +867,17 @@ test('a Bash merge of the current branch\'s pull request reads it with pr-get', 
 })
 
 
-test('a Bash pull request opened out of draft goes through outside auto-merge, observed', async ($, on) => {
+test('a Bash pull request opened out of draft goes through outside auto-merge', async ($, on) => {
   const seen = await world($, on)
   const line = 'gh pr create -R acme/thing -t "fix: x" -b ' + BODY_OK
   const out = await $.tool.call(bash(line))
   expect(out.deny).toBeUndefined()
   expect(seen.bash).toEqual([line])
-  expect(seen.journal).toEqual(['github.draft.open-out'])
+  expect(seen.journal).toEqual([])
 })
 
 
-test('a Bash gh pr create --draft=false is observed outside auto-merge, like one with no --draft, and goes through', async ($, on) => {
+test('a Bash gh pr create --draft=false goes through outside auto-merge, like one with no --draft', async ($, on) => {
   const seen = await world($, on)
   const body = '"Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"'
   for (const flag of ['--draft=false', '--draft=0']) {
@@ -885,32 +885,32 @@ test('a Bash gh pr create --draft=false is observed outside auto-merge, like one
     expect(out.deny, flag).toBeUndefined()
   }
   expect(seen.bash.length).toBe(2)
-  expect(seen.journal).toEqual(['github.draft.open-out', 'github.draft.open-out'])
+  expect(seen.journal).toEqual([])
   for (const flag of ['--draft=true', '--draft']) {
     const out = await $.tool.call(bash('gh pr create -R acme/thing ' + flag + ' -t "fix: x" -b ' + body))
     expect(out.deny, flag).toBeUndefined()
   }
-  expect(seen.journal).toEqual(['github.draft.open-out', 'github.draft.open-out'])
+  expect(seen.journal).toEqual([])
 })
 
 
-test('a Bash pull request opened out of draft goes through in auto-merge too, observed', async ($, on) => {
+test('a Bash pull request opened out of draft goes through in auto-merge too', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['acme/thing'] })
   const line = 'gh pr create -R acme/thing -t "fix: x" -b ' + BODY_OK
   const out = await $.tool.call(bash(line))
   expect(out.deny).toBeUndefined()
   expect(seen.bash).toEqual([line])
-  expect(seen.journal).toEqual(['github.draft.open-out'])
+  expect(seen.journal).toEqual([])
 })
 
 
-test('a Bash pull request opened out of draft with no repository named goes through, observed', async ($, on) => {
+test('a Bash pull request opened out of draft with no repository named goes through', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['acme/thing'] })
   const line = 'gh pr create -t "fix: x" -b ' + BODY_OK
   const out = await $.tool.call(bash(line))
   expect(out.deny).toBeUndefined()
   expect(seen.bash).toEqual([line])
-  expect(seen.journal).toEqual(['github.draft.open-out'])
+  expect(seen.journal).toEqual([])
 })
 
 // The engine run through Bash, as the github-curl skill runs it.
@@ -956,16 +956,16 @@ test('a Bash undraft through gh.py passes for CI with --for-ci, any other meets 
   expect(seen.bash.length).toBe(1)
 })
 
-test('a Bash pr-create through gh.py without --draft goes through outside auto-merge, observed, with --draft it is not', async ($, on) => {
+test('a Bash pr-create through gh.py without --draft goes through outside auto-merge, with --draft too', async ($, on) => {
   const seen = await world($, on)
   const out = await $.tool.call(bash(ENGINE + ' pr-create --repo acme/thing --title "fix: x"'))
   expect(out.deny).toBeUndefined()
   expect(seen.bash.length).toBe(1)
-  expect(seen.journal).toEqual(['github.draft.open-out'])
+  expect(seen.journal).toEqual([])
   const draft = await $.tool.call(bash(ENGINE + ' pr-create --repo acme/thing --title "fix: x" --draft'))
   expect(draft.deny).toBeUndefined()
   expect(seen.bash.length).toBe(2)
-  expect(seen.journal).toEqual(['github.draft.open-out'])
+  expect(seen.journal).toEqual([])
 })
 
 test('a Bash merge through gh.py with a global --repo or python -W before the script is read as a merge', async ($, on) => {
@@ -1064,11 +1064,11 @@ test('a Bash draft opened gets Not Ready from the URL gh printed', async ($, on)
   expect(seen.runs.map((r) => [r.command, r.repo, r.args])).toEqual([['pr-readiness', 'acme/thing', { pr: 31, state: 'not-ready' }]])
 })
 
-test('a Bash pull request opened out of draft is observed and gets Not Ready from the URL gh printed', async ($, on) => {
+test('a Bash pull request opened out of draft gets Not Ready from the URL gh printed', async ($, on) => {
   const seen = await world($, on, { bashResult: { result: { stdout: 'https://github.com/acme/thing/pull/31\n', stderr: '', interrupted: false } } })
   const out = await $.tool.call(bash('gh pr create -t "fix: x" -b "Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"'))
   expect(out.deny).toBeUndefined()
-  expect(seen.journal).toEqual(['github.draft.open-out'])
+  expect(seen.journal).toEqual([])
   expect(seen.runs.map((r) => [r.command, r.repo, r.args])).toEqual([['pr-readiness', 'acme/thing', { pr: 31, state: 'not-ready' }]])
 })
 
@@ -1076,7 +1076,7 @@ for (const [name, labels, line] of [
   ['an opening out of draft', ['Not Ready'], 'gh pr create -t "fix: x" -b "Adds the reset." && gh pr merge 12 -R acme/thing'],
   ['a pull request left out of draft', ['Ready'], 'gh pr ready 12 -R acme/thing && gh pr merge 12 -R acme/thing'],
 ] as const) {
-  test('a Bash line whose first act is observed and whose second is refused leaves no line: ' + name, async ($, on) => {
+  test('a Bash line whose first act passes and whose second is refused journals the refusal alone: ' + name, async ($, on) => {
     const seen = await world($, on, { labels: [...labels] })
     const out = await $.tool.call(bash(line))
     expect(out.deny).toContain('refused')
@@ -1158,7 +1158,7 @@ test('a push of the current branch reads it in the session\'s checkout', async (
 // ---- the records guard ----
 
 
-test('the records are written through Write, Edit and Bash, each observed, a Read of one is not', async ($, on) => {
+test('the records are written through Write, Edit and Bash with nothing journaled, as a Read of one is', async ($, on) => {
   const seen = await world($, on)
   const calls = [
     { tool: 'Write', file_path: RECORDS + '/acme/thing/' + HEAD + '/e2e.x.json', content: '{}' },
@@ -1172,43 +1172,43 @@ test('the records are written through Write, Edit and Bash, each observed, a Rea
     const out = await $.tool.call(call)
     expect(out.deny, JSON.stringify(call)).toBeUndefined()
   }
-  expect(seen.journal).toEqual(calls.map(() => 'github.records.write'))
+  expect(seen.journal).toEqual([])
   const read = await $.tool.call({ tool: 'Read', file_path: HEAD_DIR + '/e2e.x.json' })
   expect(read.deny).toBeUndefined()
   const other = await $.tool.call({ tool: 'Write', file_path: '/work/notes.md', content: 'x' })
   expect(other.deny).toBeUndefined()
-  expect(seen.journal.length).toBe(calls.length)
+  expect(seen.journal).toEqual([])
   expect(seen.bash).toEqual(calls.slice(4).map((call) => fieldsOf(call)?.['command']))
 })
 
 
-test('the event an observed guard journals is core\'s refusal event under the guard\'s code, with no command in it', async ($, on) => {
+test('the event a guard journals is core\'s refusal event under the guard\'s code, with no command in it', async ($, on) => {
   const seen = await world($, on)
-  const command = 'touch ~/.claude/pr-records/secret-name'
+  const command = 'rm ~/.claude/pr-records/secret-name'
   await $.tool.call(bash(command))
   expect(seen.events.length).toBe(1)
   const event = parseLearningEvent(JSON.parse(String(seen.events[0])))
   expect(event?.kind).toBe('refusal')
-  expect(event?.source).toEqual({ plugin: 'github', code: 'github.records.write' })
-  expect(event?.evidence).toEqual([{ type: 'refusal', code: 'github.records.write' }])
+  expect(event?.source).toEqual({ plugin: 'github', code: 'github.records.delete' })
+  expect(event?.evidence).toEqual([{ type: 'refusal', code: 'github.records.delete' }])
   expect(seen.events[0]).not.toContain('secret-name')
 })
 
-test('a command that only mentions the records in its text passes unobserved, a path to them is observed, a deletion in them is refused', async ($, on) => {
+test('a command that only mentions the records in its text passes, a write to them passes unjournaled, a deletion in them is refused', async ($, on) => {
   const seen = await world($, on)
   const commit = await $.tool.call(bash('git commit -m "docs: mention pr-records in the README"'))
   expect(commit.deny).toBeUndefined()
   expect(seen.journal).toEqual([])
   const touch = await $.tool.call(bash('touch ~/.claude/pr-records/x'))
   expect(touch.deny).toBeUndefined()
-  expect(seen.journal).toEqual(['github.records.write'])
+  expect(seen.journal).toEqual([])
   const rm = await $.tool.call(bash('rm ~/.claude/pr-records/x'))
   expect(rm.deny).toBe(RECORDS_REFUSAL)
-  expect(seen.journal).toEqual(['github.records.write', 'github.records.delete'])
+  expect(seen.journal).toEqual(['github.records.delete'])
   expect(seen.bash).toEqual(['git commit -m "docs: mention pr-records in the README"', 'touch ~/.claude/pr-records/x'])
 })
 
-test('a journal that cannot be written leaves each decision standing: the deletion refused, the write observed and let through, one log line each', async ($, on) => {
+test('a journal that cannot be written leaves each decision standing: the deletion refused, the write let through, one log line for the deletion', async ($, on) => {
   const seen = await world($, on, { journalFails: 'ENOSPC: no space left on device' })
   const rm = await $.tool.call(bash('rm ~/.claude/pr-records/x'))
   expect(rm.deny).toBe(RECORDS_REFUSAL)
@@ -1217,9 +1217,8 @@ test('a journal that cannot be written leaves each decision standing: the deleti
   expect(seen.bash).toEqual(['touch ~/.claude/pr-records/x'])
   expect(seen.journal).toEqual([])
   const lines = seen.logs.filter((line) => line.includes('ENOSPC'))
-  expect(lines.length).toBe(2)
+  expect(lines.length).toBe(1)
   expect(lines[0]).toContain('github.records.delete')
-  expect(lines[1]).toContain('github.records.write')
 })
 
 const RECORDS_READS = [
@@ -1247,7 +1246,7 @@ for (const command of RECORDS_READS) {
   })
 }
 
-// A read that waits, loops or silences its errors is still a read: nothing is observed.
+// A read that waits, loops or silences its errors is still a read: nothing is journaled.
 const RECORDS_QUIET_READS = [
   'ls ~/.claude/pr-records/o/r/' + HEAD + ' 2>/dev/null',
   'cat ~/.claude/pr-records/o/r/x.json 2>&1 | jq .result',
@@ -1328,11 +1327,11 @@ for (const command of RECORDS_DELETIONS) {
 }
 
 for (const command of RECORDS_WRITES) {
-  test('a Bash command that writes into the records is observed, one line: ' + command.slice(0, 40), async ($, on) => {
+  test('a Bash command that writes into the records goes through, nothing journaled: ' + command.slice(0, 40), async ($, on) => {
     const seen = await world($, on)
     const out = await $.tool.call(bash(command))
     expect(out.deny).toBeUndefined()
-    expect(seen.journal).toEqual(['github.records.write'])
+    expect(seen.journal).toEqual([])
     expect(seen.bash).toEqual([command])
   })
 }
@@ -1768,7 +1767,7 @@ test('words with no date are no consent: auto-merge-set is refused and writes no
 
 
 
-test('auto-merge-set off takes the repository out, whatever its case, and its pr-ready is observed again', async ($, on) => {
+test('auto-merge-set off takes the repository out, whatever its case, and its pr-ready is asked again', async ($, on) => {
   const words = '« thing sort de l\'auto-merge », 2026-11-18T19:40Z'
   const seen = await world($, on, mergeWorld(CONSENT_GRANT, { autoMerge: ['Acme/Thing', 'acme/other'] }))
   const out = await $.tool.call(setAutoMerge(false, words))
@@ -1777,7 +1776,7 @@ test('auto-merge-set off takes the repository out, whatever its case, and its pr
   expect(seen.journal).toEqual([])
   const ready = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(ready.deny).toBeUndefined()
-  expect(seen.journal).toEqual(['github.draft.leave'])
+  expect(seen.journal).toEqual([])
 })
 
 test('the list is written whole to a temporary file then moved in place, leaving no temporary file', async ($, on) => {
@@ -1917,11 +1916,11 @@ test('auto-merge-set accepts his dated words inside a wrapping', async ($, on) =
 const LEAVE_DRAFT = 'leaving draft meets the readiness gate, which needs the pull request named'
 
 
-test('a pr-ready outside auto-merge is observed, then asked write no rule allows', async ($, on) => {
+test('a pr-ready outside auto-merge is asked write no rule allows', async ($, on) => {
   const seen = await world($, on, { verdict: { decision: 'ask' } })
   const out = await $.tool.call(gh('pr-ready', { pr: 12 }))
   expect(out).toEqual({ result: 'ok' })
-  expect(seen.journal).toEqual(['github.draft.leave'])
+  expect(seen.journal).toEqual([])
   expect(seen.asked.length).toBe(1)
   expect(commands(seen)).toContain('pr-ready')
 })
@@ -1934,28 +1933,28 @@ test('a pr-ready outside auto-merge that the person denies runs nothing', async 
 })
 
 
-test('a pr-create out of draft outside auto-merge is observed, then asked write no rule allows', async ($, on) => {
+test('a pr-create out of draft outside auto-merge is asked write no rule allows', async ($, on) => {
   const seen = await world($, on, { verdict: { decision: 'ask' } })
   const out = await $.tool.call(gh('pr-create', { title: 'fix: x', body: 'Adds the reset.\n\n' + SECTIONS, draft: false }))
   expect(out).toEqual({ result: 'ok' })
-  expect(seen.journal).toEqual(['github.draft.open-out'])
+  expect(seen.journal).toEqual([])
   expect(seen.asked.length).toBe(1)
   expect(commands(seen)).toEqual(['pr-create'])
 })
 
 
-test('gh pr ready and the engine leaving draft outside auto-merge are observed, a GraphQL one that names no pull request is refused', async ($, on) => {
+test('gh pr ready and the engine leaving draft outside auto-merge go through, a GraphQL one that names no pull request is refused', async ($, on) => {
   const seen = await world($, on, { labels: ['Ready'] })
   const ready = await $.tool.call(bash('gh pr ready 12 -R acme/thing'))
   expect(ready.deny).toBeUndefined()
   const engine = await $.tool.call(bash('python3 ' + ROOT + '/engine/gh.py pr-ready 12 --repo acme/thing'))
   expect(engine.deny).toBeUndefined()
-  expect(seen.journal).toEqual(['github.draft.leave', 'github.draft.leave'])
+  expect(seen.journal).toEqual([])
   expect(seen.bash.length).toBe(2)
   const graphql = await $.tool.call(bash('gh api graphql -f query=\'mutation{markPullRequestReadyForReview(input:{pullRequestId:"x"}){clientMutationId}}\''))
   expect(graphql.deny).toContain(LEAVE_DRAFT)
   expect(seen.bash.length).toBe(2)
-  expect(seen.journal.length).toBe(3)
+  expect(seen.journal).toEqual(['github.ready.held'])
   expect(seen.asked).toEqual([])
 })
 
@@ -2163,26 +2162,26 @@ test('a norms record written from the norms module puts Ready through the record
 // ---- the routes around leaving draft and around the gate ----
 
 
-test('a pr-create out of draft outside auto-merge is observed, asked write', async ($, on) => {
+test('a pr-create out of draft outside auto-merge is asked write', async ($, on) => {
   const seen = await world($, on, { verdict: { decision: 'ask' }, answer: 'Allow' })
   const call = gh('pr-create', { title: 'fix: x', body: 'no sections', draft: false }, 'geonativefr/thing')
   const out = await $.tool.call(call)
   expect(out).toEqual({ result: 'ok' })
-  expect(seen.journal).toEqual(['github.draft.open-out'])
+  expect(seen.journal).toEqual([])
   expect(seen.asked.length).toBe(1)
   expect(commands(seen)).toEqual(['pr-create'])
 })
 
 
-test('gh pr ready --undo=false leaves draft and is observed outside auto-merge, --undo=true goes back to draft', async ($, on) => {
+test('gh pr ready --undo=false leaves draft outside auto-merge, --undo=true goes back to draft', async ($, on) => {
   const seen = await world($, on, { labels: ['Ready'] })
   const out = await $.tool.call(bash('gh pr ready 12 -R acme/thing --undo=false'))
   expect(out.deny).toBeUndefined()
   expect(seen.bash).toEqual(['gh pr ready 12 -R acme/thing --undo=false'])
-  expect(seen.journal).toEqual(['github.draft.leave'])
+  expect(seen.journal).toEqual([])
   const back = await $.tool.call(bash('gh pr ready 12 -R acme/thing --undo=true'))
   expect(back.deny).toBeUndefined()
-  expect(seen.journal).toEqual(['github.draft.leave'])
+  expect(seen.journal).toEqual([])
   expect(readinessRuns(seen)).toEqual([])
 })
 
@@ -2426,14 +2425,6 @@ test('the labels of an exemption past its expiry are the operator\'s no more', a
   expect(seen.journal).toEqual([])
 })
 
-test('the labels of an exemption ahead of its expiry stay the operator\'s: a move is observed, with one line', async ($, on) => {
-  mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { exemption: { ...LABELLED, until: AHEAD } })
-  const held = await $.tool.call(gh('label-add', { pr: 12, label: ['no-e2e'] }))
-  expect(held.deny).toBeUndefined()
-  expect(seen.journal).toEqual(['github.exempt-label.move'])
-})
-
 test('a failed E2E record holds a pull request of an exempted repository', async ($, on) => {
   const seen = await world($, on, { records: { ...TWO, ...Object.fromEntries([record('e2e', 'fail')]) }, exemption: EXEMPT })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
@@ -2601,87 +2592,19 @@ test('an exemption of a repository named with a dot segment is refused before an
 const LABELLED = { ...EXEMPT, labels: ['no-e2e'] }
 
 
-test('a label an exemption names is observed on the tool, on or off, and goes through like another label', async ($, on) => {
+test('a label an exemption names goes through like another label, on or off, nothing journaled', async ($, on) => {
   const seen = await world($, on, { exemption: LABELLED })
   const added = await $.tool.call(gh('label-add', { pr: 12, label: ['bug', 'No-E2E'] }))
   expect(added.deny).toBeUndefined()
-  expect(seen.journal).toEqual(['github.exempt-label.move'])
+  expect(seen.journal).toEqual([])
   const removed = await $.tool.call(gh('label-remove', { pr: 12, name: 'no-e2e' }))
   expect(removed.deny).toBeUndefined()
-  expect(seen.journal).toEqual(['github.exempt-label.move', 'github.exempt-label.move'])
+  expect(seen.journal).toEqual([])
   const other = await $.tool.call(gh('label-add', { pr: 12, label: ['bug'] }))
   expect(other.deny).toBeUndefined()
-  expect(seen.journal.length).toBe(2)
+  expect(seen.journal).toEqual([])
   expect(seen.runs.filter((r) => r.command).map((r) => r.command)).toEqual(['label-add', 'label-remove', 'label-add'])
 })
-
-test('a label an exemption names is observed on Bash, on any route, and goes through like another label', async ($, on) => {
-  const seen = await world($, on, { exemption: LABELLED, git: { 'remote get-url origin': { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n' } } })
-  for (const command of [
-    'gh pr edit 12 -R acme/thing --add-label no-e2e',
-    'gh pr edit 12 --remove-label bug,no-e2e',
-    'gh issue edit 12 -R acme/thing --add-label NO-E2E',
-    'gh pr create -R acme/thing --draft --label no-e2e',
-    ENGINE + ' --repo acme/thing label-add 12 no-e2e',
-    ENGINE + ' label-remove 12 no-e2e',
-    'gh api -X POST repos/acme/thing/issues/12/labels -f \'labels[]=no-e2e\'',
-    'gh api -X DELETE repos/acme/thing/issues/12/labels/no-e2e',
-    'gh api -X DELETE repos/acme/thing/issues/12/labels',
-    'gh api -X POST repos/acme/thing/issues/12/labels --input body.json',
-    'gh api -X POST repos/acme/thing/issues/12/labels -F \'labels[]=@labels.txt\'',
-    'gh api repos/acme/thing/issues/12/labels -F labels[]=@labels.txt',
-    'gh api -X PATCH repos/acme/thing/issues/12 -F \'labels[]=@labels.txt\'',
-    'gh api -X PATCH repos/acme/thing/pulls/12 -f \'labels[]=no-e2e\'',
-    'gh label edit bug -R acme/thing --name no-e2e',
-    'gh api graphql -f query=\'mutation { addLabelsToLabelable(input: {labelableId: "x", labelIds: ["y"]}) { clientMutationId } }\'',
-  ]) {
-    const out = await $.tool.call(bash(command))
-    expect(out.deny, command).toBeUndefined()
-    expect(seen.journal, command).toEqual(['github.exempt-label.move'])
-    seen.journal.length = 0
-  }
-  const other = await $.tool.call(bash('gh pr edit 12 -R acme/thing --add-label bug'))
-  expect(other.deny).toBeUndefined()
-  expect(seen.journal).toEqual([])
-  expect(seen.bash.length).toBe(17)
-})
-
-test('a gh api field joined to its flag is read as a spaced one: a label an exemption names is observed', async ($, on) => {
-  const seen = await world($, on, { exemption: LABELLED })
-  for (const command of [
-    'gh api -X POST repos/acme/thing/issues/12/labels -f labels[]=no-e2e',
-    'gh api -X POST repos/acme/thing/issues/12/labels -flabels[]=no-e2e',
-    'gh api -X POST repos/acme/thing/issues/12/labels -Flabels[]=no-e2e',
-    'gh api -X POST repos/acme/thing/issues/12/labels -Flabels[]=@labels.txt',
-    'gh api -XPATCH repos/acme/thing/issues/12 -Flabels[]=@labels.txt',
-    'gh api repos/acme/thing/issues/12/labels --raw-field=labels[]=no-e2e',
-    'gh api repos/acme/thing/issues/12/labels --field=labels[]=no-e2e',
-    'gh api repos/acme/thing/issues/12/labels --field=labels[]=@labels.txt',
-  ]) {
-    const out = await $.tool.call(bash(command))
-    expect(out.deny, command).toBeUndefined()
-    expect(seen.journal, command).toEqual(['github.exempt-label.move'])
-    seen.journal.length = 0
-  }
-  expect(seen.bash.length).toBe(8)
-})
-
-test('a gh api path whose repository is a placeholder is read as the checkout\'s repository, its exempt label observed', async ($, on) => {
-  const seen = await world($, on, { exemption: LABELLED, git: { 'remote get-url origin': { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n' } } })
-  for (const command of [
-    'gh api -X POST \'repos/{owner}/{repo}/issues/12/labels\' -f labels[]=no-e2e',
-    'gh api -X POST repos/:owner/:repo/issues/12/labels -f labels[]=no-e2e',
-    'gh api -X POST "repos/{owner}/thing/issues/12/labels" -f labels[]=no-e2e',
-    'gh api -X DELETE \'repos/{owner}/{repo}/issues/12/labels/no-e2e\'',
-  ]) {
-    const out = await $.tool.call(bash(command))
-    expect(out.deny, command).toBeUndefined()
-    expect(seen.journal, command).toEqual(['github.exempt-label.move'])
-    seen.journal.length = 0
-  }
-  expect(seen.bash.length).toBe(4)
-})
-
 
 test('the exemption files are written through Write, Edit and Bash, each observed, a deletion in them is refused', async ($, on) => {
   const seen = await world($, on)

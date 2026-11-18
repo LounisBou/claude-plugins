@@ -13,11 +13,7 @@ export const PLUGIN = 'github'
 
 // The stable code of each guard now observed.
 export const OBSERVED = {
-  records: 'github.records.write',
   exemption: 'github.exemption.write',
-  exemptLabel: 'github.exempt-label.move',
-  draftOpen: 'github.draft.open-out',
-  draftLeave: 'github.draft.leave',
   // An E2E pass or fail written with no run the record tool performed or observed: recorded as stated.
   e2eStated: 'github.record.e2e-stated',
 } as const

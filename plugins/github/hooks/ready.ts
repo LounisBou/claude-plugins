@@ -192,9 +192,6 @@ const MERGE_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/merge\/?$/
 // The shape of a merge path whose repository or number the line does not show (`$PR`, `${PR}`,
 // `$REPO`, which may stand for owner/name, a substitution): an opaque merge.
 const MERGE_SHAPE = /^\/?repos\/(?:[^/]*\/){1,2}pulls\/[^/]*\/merge\/?$/
-const LABELS_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/issues\/(\d+)\/labels\/?$/
-// An issue or a pull request itself, whose PATCH may set its labels.
-const ISSUE_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/(?:issues|pulls)\/(\d+)\/?$/
 // The API's own host before a REST path: api.github.com, or a server's /api/v3.
 const API_HOST = /^https?:\/\/[^/]+(?:\/api\/v3)?\//
 const GRAPHQL = /^(?:https?:\/\/[^/]+(?:\/api)?\/|\/)?graphql\/?$/
@@ -208,18 +205,6 @@ function apiFields(parsed: Parsed): Array<{ name: string; value: string; typed: 
       const at = text.indexOf('=')
       return [{ name: at === -1 ? text : text.slice(0, at), value: at === -1 ? '' : text.slice(at + 1), typed: flag === '-F' || flag === '--field' }]
     })
-}
-
-// The labels one field's value names: a JSON list (`["Ready"]`), or names split on commas.
-function labelsIn(value: string): string[] {
-  try {
-    const parsed: unknown = JSON.parse(value)
-    if (Array.isArray(parsed)) return parsed.map((item: unknown) => (typeof item === 'string' ? item : String((isRecord(item) ? item['name'] : undefined) ?? '')))
-    if (typeof parsed === 'string') return [parsed]
-  } catch {
-    // Not JSON: names split on commas.
-  }
-  return value.split(',').map((name) => name.trim().replace(/^["'[]+|["'\]]+$/g, ''))
 }
 
 // The GraphQL query the command line shows, or undefined when it does not: read from a file or
@@ -329,117 +314,6 @@ export function toolAct(command: string, args: Record<string, unknown>): Act | u
   if (command === 'pr-merge') return at('merge', typeof args['sha'] === 'string' ? { sha: args['sha'] } : {})
   if (command === 'pr-create') return { kind: args['draft'] === false ? 'create' : 'create-draft', name: command }
   return undefined
-}
-
-// ---- labels put on or taken off ----
-
-// A label put on, taken off, renamed or deleted, as far as the command shows it: the names it
-// moves, or opaque when it may move any (a body read from a file, every label of a pull request
-// deleted, a GraphQL query). repo: owner/name as the command names it, when it does.
-export type Labelling = { name: string; repo?: string; labels: string[]; opaque?: boolean }
-
-const LABEL_VALUED = ['-n', '--name', '-c', '--color', '-d', '--description']
-const ONE_LABEL_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/issues\/\d+\/labels\/([^/?]+)\/?$/
-const REPO_LABEL_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/labels\/([^/?]+)\/?$/
-const LABEL_MUTATION = /\b(addLabelsToLabelable|removeLabelsFromLabelable|clearLabelsFromLabelable|updateLabel|deleteLabel)\b/
-
-const splitLabels = (list: string[]): string[] => list.flatMap((value) => value.split(',')).map((label) => label.trim()).filter((label) => label !== '')
-
-function decoded(part: string): string {
-  try {
-    return decodeURIComponent(part)
-  } catch {
-    return part
-  }
-}
-
-// What one gh command does to labels: gh pr|issue edit and create, gh label, gh api.
-function ghLabelling(argv: string[]): Labelling | undefined {
-  if (argv[1] === 'api') return apiLabelling(argv)
-  let k = 1
-  const named: number[] = []
-  while (k < argv.length && named.length < 2) {
-    const word = argv[k] ?? ''
-    if (word === '-R' || word === '--repo') { k += 2; continue }
-    if (word.startsWith('-')) { k++; continue }
-    named.push(k++)
-  }
-  const [nounAt, verbAt] = named
-  if (nounAt === undefined || verbAt === undefined) return undefined
-  const noun = argv[nounAt] ?? ''
-  const verb = argv[verbAt] ?? ''
-  const words = argv.filter((_w, i) => i > 0 && i !== nounAt && i !== verbAt)
-  const name = 'gh ' + noun + ' ' + verb
-  if (noun === 'label') {
-    if (verb !== 'edit' && verb !== 'delete' && verb !== 'clone') return undefined
-    const parsed = parseWords(words, LABEL_VALUED)
-    const repo = parsed.repo ? { repo: repoOf(parsed.repo) ?? parsed.repo } : {}
-    // A clone copies the labels of another repository, any of them.
-    if (verb === 'clone') return { name, ...repo, labels: [], opaque: true }
-    return { name, ...repo, labels: [...parsed.positionals.slice(0, 1), ...values(parsed, '-n', '--name')] }
-  }
-  if (noun !== 'pr' && noun !== 'issue') return undefined
-  const parsed = parseWords(words, VALUED[verb] ?? [])
-  const labels = verb === 'edit' ? splitLabels(values(parsed, '--add-label', '--remove-label'))
-    : verb === 'create' ? splitLabels(values(parsed, '-l', '--label')) : []
-  if (labels.length === 0) return undefined
-  return { name, ...(parsed.repo ? { repo: repoOf(parsed.repo) ?? parsed.repo } : {}), labels }
-}
-
-// What one gh api command does to labels: a write on a pull request's labels, on the pull request
-// itself naming labels, on a label of the repository, or a GraphQL label mutation.
-function apiLabelling(argv: string[]): Labelling | undefined {
-  const parsed = parseWords(argv.slice(2), API_VALUED)
-  const endpoint = parsed.positionals[0]
-  if (endpoint === undefined) return undefined
-  const fields = apiFields(parsed)
-  const input = has(parsed, '--input')
-  const explicit = values(parsed, '-X', '--method')[0]
-  const method = (explicit ?? (fields.length > 0 || input ? 'POST' : 'GET')).toUpperCase()
-  if (GRAPHQL.test(endpoint)) {
-    const query = inlineQuery(parsed, fields)
-    return query === undefined || LABEL_MUTATION.test(query) ? { name: 'gh api graphql', labels: [], opaque: true } : undefined
-  }
-  if (method === 'GET' || method === 'HEAD') return undefined
-  const path = endpoint.replace(API_HOST, '')
-  const at = (match: RegExpExecArray, labels: string[], opaque = false): Labelling =>
-    ({ name: 'gh api', repo: match[1] + '/' + match[2], labels, ...(opaque ? { opaque } : {}) })
-  const naming = (prefix: string) => fields.filter((field) => field.name.startsWith(prefix))
-  const named = (prefix: string) => naming(prefix).flatMap((field) => labelsIn(field.value))
-  // A -F value `@file` is read from the file: its labels are not on the line.
-  const unread = (...prefixes: string[]) => input || prefixes.some((prefix) => naming(prefix).some((field) => field.typed && field.value.startsWith('@')))
-  const one = ONE_LABEL_PATH.exec(path) ?? REPO_LABEL_PATH.exec(path)
-  if (one) return at(one, [decoded(one[3] ?? ''), ...named('new_name'), ...named('name')], unread('new_name', 'name'))
-  const all = LABELS_PATH.exec(path)
-  if (all) return at(all, named('labels'), unread('labels') || method === 'DELETE')
-  const issue = ISSUE_PATH.exec(path)
-  if (issue && method === 'PATCH' && (input || named('labels').length > 0)) return at(issue, named('labels'), unread('labels'))
-  return undefined
-}
-
-// The engine's own label commands run from Bash.
-function engineLabelling(call: EngineCall): Labelling | undefined {
-  if (call.command !== 'label-add' && call.command !== 'label-remove') return undefined
-  const rest = /^#?\d+$/.test(call.positionals[0] ?? '') ? call.positionals.slice(1) : call.positionals
-  return { name: 'gh.py ' + call.command, ...(call.repo ? { repo: repoOf(call.repo) ?? call.repo } : {}), labels: splitLabels(rest) }
-}
-
-// Every labelling of a Bash command line, read word by word as bashActs reads its acts.
-export function bashLabellings(line: string): Labelling[] {
-  const found: Labelling[] = []
-  for (const argv of simpleCommands(line)) {
-    const engine = engineCall(argv)
-    const labelling = engine ? engineLabelling(engine) : GH.test(argv[0] ?? '') ? ghLabelling(argv) : undefined
-    if (labelling) found.push(labelling)
-  }
-  return found
-}
-
-// The labelling of a call of the tool: label-add and label-remove.
-export function toolLabelling(command: string, args: Record<string, unknown>): Labelling | undefined {
-  if (command !== 'label-add' && command !== 'label-remove') return undefined
-  const named = [args['label'], args['names'], args['name']].flatMap((v): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v]))
-  return { name: command, labels: splitLabels(named.map(String)) }
 }
 
 // ---- pushes ----
@@ -927,39 +801,9 @@ export function onlyReads(line: string): boolean {
   }
 }
 
-// What a command line that only reads may also hold, for the observation of a write to the records
-// (and for it alone: the refusals keep onlyReads): a redirection that writes nothing, to /dev/null or
-// to another descriptor (`2>/dev/null`, `2>&1`, `>&2`), and the shell's own words around a read, which
-// run no program that writes (`sleep`, and the loop `for … do … done`, `if … fi` that hold the
-// reads; the commands inside them are read one by one).
-const QUIET_REDIRECT = /(?:^|\s)(?:\d*|&)>>?\s*\/dev\/null(?=$|[\s;&|)])|(?:^|\s)\d*>&\d(?=$|[\s;&|)])/g
-const QUIET_WORDS: ReadonlySet<string> = new Set(['sleep', 'for', 'done', 'fi'])
-
-// Whether a command line only reads, as onlyReads says it, once what a read may hold around it is set aside.
-function onlyObservesReads(line: string): boolean {
-  const bare = line.replace(QUIET_REDIRECT, ' ')
-  try {
-    if (bare.includes('>')) return false
-    return readCommands(bare).every(({ argv }) => {
-      const program = argv[0] ?? ''
-      if (argv.length === 0 || QUIET_WORDS.has(program)) return true
-      if (!READERS.has(program)) return false
-      return program !== 'find' || !argv.some((word) => FIND_WRITES.test(word))
-    })
-  } catch {
-    return false
-  }
-}
-
-// Whether a Bash command line writes into the records or runs their writer: it names them
-// (touchesRecords) and is not a line that only reads (onlyObservesReads).
-export function writesRecords(line: string, root?: string): boolean {
-  return touchesRecords(line, root) && !onlyObservesReads(line)
-}
-
 // The programs that delete, bare or by path, and the options and calls that delete inside another
 // program. A deletion is irreversible: a command line that deletes the records, the E2E exemptions or
-// the check plans is refused, where any other write to them is observed.
+// the check plans is refused, where any other write to the exemptions or the plans is observed.
 const DELETER_WORD = /(?:^|[\s;&|(){}`'"=])(?:[^\s;&|(){}`'"=]*\/)?(?:rm|rmdir|unlink|shred|srm|trash)(?=$|[\s;&|(){}`'"$])/
 const DELETE_OPTION = /(?:^|\s)(?:-delete|--(?:delete[\w-]*|del|remove-files|remove-source-files))(?=\s|=|$)/
 const DELETE_CALL = /\b(?:os\.(?:remove|removedirs|unlink|rmdir|rename|replace)|shutil\.(?:rmtree|move)|rmtree|rmSync|rmdirSync|unlinkSync|renameSync|fs\.(?:rm|rmdir|unlink|rename)|File\.(?:delete|unlink|rename)|FileUtils\.(?:rm|mv|remove)\w*)\b|\.(?:unlink|rmdir)\s*\(/

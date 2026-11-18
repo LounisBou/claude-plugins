@@ -62,8 +62,8 @@ it. `/github:doctor` then confirms everything is ready.
   stdin (`--stdin-json`) is refused from Bash, as nothing on the line shows it.
   `pr-create` opens a
   draft unless the call says otherwise. Opening out of draft (`draft: false`)
-  is observed; outside a repository in auto-merge (below), so is leaving draft
-  (`pr-ready`), the operator's act on GitHub after their review, and it is asked
+  goes through; outside a repository in auto-merge (below), leaving draft
+  (`pr-ready`) is the operator's act on GitHub after their review, and it is asked
   as any write no rule allows, the readiness gate refusing a pull request whose CI is
   not green or whose record failed (« Ready pull requests »); a merge
   (`pr-merge`) is asked outside auto-merge, whatever the rules allow, and runs inside it once
@@ -135,7 +135,7 @@ follows. There, opening a pull request out of draft, `pr-ready`, a merge
 and every other write run without a question, which ends agents held on a
 dialog nobody answers in a repository that merges on its own. A deny rule
 still refuses, an ask from an explicit rule still asks, and the writing
-rules still apply. Elsewhere leaving draft is observed and asked, and every other write
+rules still apply. Elsewhere leaving draft is asked, and every other write
 is asked as before. An absent file
 lists no repository; an unreadable or malformed one lists none either and
 says so in one transcript line.
@@ -266,7 +266,7 @@ record that failed at the head) the act is refused before anyone is asked, and a
 github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. What Ready needs is core's readiness contract (core/readiness.ts).
 ```
 
-A pull request opened out of draft is not gated, only observed (`github.draft.open-out`), and a
+A pull request opened out of draft is not gated, and a
 readiness GitHub did not answer is refused with `github: readiness of <owner/name>#<n> unverified: <error>`. Going back to
 draft (`pr-draft`, `gh pr ready --undo`) always passes and moves no label, and the gate never does it: Ready follows the records at the
 head, never the draft state; `gh pr create --draft` puts `Not Ready` on the new pull request. A merge or an undraft in the
@@ -277,7 +277,7 @@ always refused, with the tool call to run instead.
 **Auto-merge split.** In the shell, a merge runs only in a
 repository listed in `auto-merge.json`, and the ready guard applies on top.
 Elsewhere it is refused, so the operator is asked in the
-conversation through the tool (leaving draft there is observed, and meets the ready guard):
+conversation through the tool (leaving draft there meets the ready guard):
 
 ```
 github: gh pr merge refused on <owner/name>: this repository is not in auto-merge, so a merge needs the operator's explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": <n>} on <owner/name>: it checks that the pull request is ready, then asks them in the conversation.
@@ -287,8 +287,7 @@ A CI undraft, as above, is the exception, through the shell and the tool alike.
 
 **Records.** The records are written by their producers alone. A Write, an Edit,
 a MultiEdit or a NotebookEdit under the records root, and a shell command that names it,
-a `pr-records/` path or `engine/record.py`, go through and are observed
-(`github.records.write`); a shell command that deletes in them (`rm`, `unlink`, `find -delete`, a `mv` out
+a `pr-records/` path or `engine/record.py`, go through; a shell command that deletes in them (`rm`, `unlink`, `find -delete`, a `mv` out
 of them, an interpreter's `os.remove`) stays refused, a deletion being irreversible:
 
 ```
@@ -296,7 +295,7 @@ github: records are written by their producers' tools, and E2E by mcp__github__r
 ```
 
 The command is read as text and word by word with the shell's quotes removed (so
-`rec""ord.py` is `record.py`); reading a record with the Read tool is not observed.
+`rec""ord.py` is `record.py`).
 `mcp__github__record` writes at the head the
 checkout and the pull request share, on a clean tree, one kind per caller: E2E
 for a session, each other kind for the plugin the record contract names its
@@ -315,11 +314,7 @@ written is one line in the transcript, and the call still goes through.
 
 | Code | A call that |
 |---|---|
-| `github.records.write` | writes under the records root or runs `engine/record.py` |
 | `github.exemption.write` | writes an E2E exemption or a check plan by hand |
-| `github.exempt-label.move` | puts or takes off a label an E2E exemption names |
-| `github.draft.open-out` | opens a pull request out of draft |
-| `github.draft.leave` | takes a pull request out of draft outside auto-merge, once the gate lets it |
 | `github.record.e2e-stated` | records an E2E pass or fail with no run the tool performed or observed |
 
 A refusal that protects something writes one refusal event too, under its own code (`REFUSED` in
