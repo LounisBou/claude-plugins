@@ -761,6 +761,7 @@ test('a fix loop\'s agent whose block is unreadable is no refusal and no clean e
   expect(out.isError).toBeUndefined()
   expect(String(out.result)).not.toContain('"exit"')
   expect(String(out.result)).toContain('call begin_pass: the loop goes on')
+  expect(String(out.result)).toContain('"unread": "severity unknown: no findings block from code-reviewer"')
   const next = await loopCall($, { action: 'begin_pass' })
   expect(String(next.result)).toContain('"pass": 2')
   expect(stubs.records).toEqual([])

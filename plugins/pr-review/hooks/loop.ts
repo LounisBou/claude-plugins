@@ -117,6 +117,8 @@ export function act(e: Events['tool.call'], dir?: { dir: string } | { why: strin
       pass: loop.pass,
       new: fresh,
       seen,
+      // A block that could not be read is said, so the pass's empty list is not taken for a quiet review.
+      ...(loop.lastBlocking === undefined ? { unread: unknownSeverity() } : {}),
       next: 'fix the actionable new findings, commit each, run the tests, then call begin_pass: the loop goes on',
     }
   }
