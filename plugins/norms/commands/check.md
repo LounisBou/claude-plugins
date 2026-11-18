@@ -55,7 +55,7 @@ The arguments end with a `<norms-scope>` block, computed by the plugin before th
 - A block with a `refused:` line: print that line to the user as it is, and stop.
 - No block: the plugin did not compute the scope. Say so and stop. Compute no scope yourself: the default branch would hand the agents files the pull request does not change.
 
-When the block says `requested agents: named inside free text`, pick the agents from the words with these shortcuts:
+When the block says `requested agents: named inside free text`, pick the agents from the words with these shortcuts, among the block's `applicable agents` only:
 
 - `pattern` or `conformity` → norms-pattern-conformity
 - `naming` or `variables` → norms-variable-naming

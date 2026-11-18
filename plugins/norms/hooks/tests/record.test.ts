@@ -260,6 +260,7 @@ test('the head is read at the call: a commit made after the scope does not refus
   const m = mounted()
   await m.scope($)
   const afterScope = argvs.filter(a => a === 'git rev-parse HEAD').length
+  const ranAtScope = argvs.length
   // The fix commit of check.md 7.4 lands between the scope and the record.
   ;($).process.run = async (argv: readonly string[]) => {
     const key = argv.join(' ')
@@ -268,11 +269,12 @@ test('the head is read at the call: a commit made after the scope does not refus
     if (key === 'git status --porcelain -uno') return { exitCode: 0, stdout: '', stderr: '' }
     if (key === 'git remote get-url origin') return { exitCode: 0, stdout: 'https://github.com/o/r.git\n', stderr: '' }
     if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'feature\n', stderr: '' }
-    if (key === `git diff --name-only ${HEAD} ${NEW_HEAD}`) return { exitCode: 0, stdout: 'src/a.ts\n', stderr: '' }
     return { exitCode: 1, stdout: '', stderr: 'unexpected run: ' + key }
   }
   const out = await m.done($, { open: 0, fixed: 1, passed: 0 })
   expect(argvs.filter(a => a === 'git rev-parse HEAD').length).toBe(afterScope + 1)
+  // The files the commits touched are not consulted: the record is written at the head of the call.
+  expect(argvs.slice(ranAtScope).filter(a => a.startsWith('git diff'))).toEqual([])
   expect(fieldsOf(out)?.['result']).toBe('record: ' + WRITTEN)
   // The finding said fixed has its commit: it counts as fixed.
   expect(recordCalls(calls).map(c => [c['result'], c['detail']])).toEqual([['pass', '1 fixed, 0 passed, 0 open']])
@@ -288,22 +290,10 @@ test('a finding said fixed with no commit since the check is open: the record fa
   expect(recordCalls(calls).map(c => [c['result'], c['detail']])).toEqual([['fail', '0 fixed, 1 passed, 2 open (2 said fixed with no commit since the check)']])
 })
 
-test('a commit after the scope that touches a file the check did not read is recorded at the call\'s head', async () => {
-  resetCache()
+test('without a scope, findings said fixed are recorded as given: no head to compare them with', async () => {
   const calls: Call[] = []
   const { $ } = setup({}, {}, calls)
-  const m = mounted()
-  await m.scope($)
-  ;($).process.run = async (argv: readonly string[]) => {
-    const key = argv.join(' ')
-    if (key === 'git rev-parse HEAD') return { exitCode: 0, stdout: NEW_HEAD + '\n', stderr: '' }
-    if (key === 'git status --porcelain -uno') return { exitCode: 0, stdout: '', stderr: '' }
-    if (key === 'git remote get-url origin') return { exitCode: 0, stdout: 'https://github.com/o/r.git\n', stderr: '' }
-    if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'feature\n', stderr: '' }
-    return { exitCode: 1, stdout: '', stderr: 'unexpected run: ' + key }
-  }
-  const out = await m.done($, { open: 0, fixed: 1, passed: 0 })
-  expect(fieldsOf(out)?.['result']).toBe('record: ' + WRITTEN)
+  await mounted().done($, { open: 0, fixed: 1, passed: 0 })
   expect(recordCalls(calls).map(c => [c['result'], c['detail']])).toEqual([['pass', '1 fixed, 0 passed, 0 open']])
 })
 
