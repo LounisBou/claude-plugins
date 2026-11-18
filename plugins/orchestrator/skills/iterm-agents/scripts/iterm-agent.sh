@@ -61,15 +61,7 @@
 #     takeover turn (no --name: the session's own, read on its tty): a home server of
 #     its own (-L orch-<id>, -f the plugin's tmux/home.conf) whose window 0 resumes the same
 #     session once it has ended in its tab, and a tab right of that one showing it. Prints
-#     `moved: …` or `stay: <why>`; nothing is ended, and a failure leaves the session in place.
-#     A session already in a home server started from another deploy's conf (a successor of
-#     one told of the newer install) moves too, into a server of this commit, its tab right of
-#     the old server's, and starts `home-follow` for the old server's agents
-#   iterm-agent.sh home-follow --from <old server> --to <new server> --session <id> [--tty <old pane> --owner <old owner>]
-#     started by `home`, never by hand: once the orchestrator's session is proved in window 0
-#     of the new server, each session of the old one is resumed there between two of its turns
-#     (its host idle), its old window killed and its process proved ended; the old server
-#     ends once no session runs in it, and its tab closes. Its lines go to close.log
+#     `moved: …` or `stay: <why>`; nothing is ended, and a failure leaves the session in place
 #   iterm-agent.sh home-reload
 #     run by the hooks module of a session told of a newer install, with the installed
 #     commit's launcher: every live home server sources that commit's tmux/home.conf, with no

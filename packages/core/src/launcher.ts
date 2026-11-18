@@ -90,10 +90,6 @@ export const LAUNCHER_COMMANDS = {
     unknown: 'ignore',
   },
   'home-watch': { options: [value('--socket', 'socket'), value('--tty', 'tty')], unknown: 'ignore' },
-  'home-follow': {
-    options: [value('--from', 'from_'), value('--to', 'to'), value('--tty', 'tty'), value('--owner', 'owner'), value('--session', 'session')],
-    unknown: 'ignore',
-  },
   'home-reload': { options: [], unknown: 'refuse' },
   'takeover': { options: [value('--tty', 'tty'), value('--expect-title', 'expect')], unknown: 'refuse' },
   'bench-open': {
