@@ -8,7 +8,7 @@
 // decide as if it were not there. An observer: a journal that cannot be written is one line in
 // the module's log, and the call's answer stands. The events are built in audit-events.ts.
 import { answerText, githubEvents, refusalEvent, reviewEvents, waitEvents, type WaitSeen } from './audit-events.ts'
-import { guardFallback, killDecision } from './guards.ts'
+import { killDecision } from './guards.ts'
 import { messageOf, type Caught, type Next, type On } from './host.ts'
 import { MODELS_DENY } from './models-guard.ts'
 import { configDir, logLine } from './module-io.ts'
@@ -18,12 +18,10 @@ import { DECLARATIONS, type Declarations } from './wait.ts'
 
 // What precedes the words of the command a kill refusal quotes, read off the guard's own builders.
 const KILL_PREFIX = (killDecision('1', 'pkill x')?.deny ?? '').split('Seen:')[0] ?? ''
-const UNREAD_MARK_PREFIX = (guardFallback(undefined, 'pkill x', '\u0000')?.deny ?? '').split('(\u0000)')[0] ?? ''
 
 // Each refusal of this module's guards, by the stable code the journal holds it under.
 const REFUSALS: readonly (readonly [string, (deny: string) => boolean])[] = [
   ['orchestrator.kill.pattern', deny => KILL_PREFIX !== '' && deny.startsWith(KILL_PREFIX)],
-  ['orchestrator.kill.unread-mark', deny => UNREAD_MARK_PREFIX !== '' && deny.startsWith(UNREAD_MARK_PREFIX)],
   ['orchestrator.models.map-write', deny => deny === MODELS_DENY],
 ]
 
