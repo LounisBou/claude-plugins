@@ -5,6 +5,8 @@
 // The file is Markdown: `# Goals`, a header (`spec:`, `repo:`, `aim:`), then one table row per
 // goal, `| id | status | goal | plan | evidence or ruling |`. A literal `|` in a cell is `\|`.
 
+import { atWord } from '../../../../core/pr-ledger.ts'
+
 export const STATUSES = ['open', 'met', 'ruled-out', 'deferred'] as const
 export const HEADER = '| id | status | goal (verbatim from the spec) | plan | evidence or ruling |'
 export const RULE = '|---|---|---|---|---|'
@@ -89,6 +91,22 @@ export function parseGoals(text: string, path: string): GoalsFile {
 /** One row as the table writes it. */
 export function rowLine(row: GoalRow): string {
   return `| ${CELLS.map(key => escape(row[key])).join(' | ')} |`
+}
+
+/** The most of a goal's text its name keeps, cut at a word. */
+const GOAL_WORDS_MAX = 60
+
+/**
+ * The goals still to reach, each by its words with its id after them, as the operator reads them:
+ * « open: <words> (G2, plan: <phase>) ; <words> (G3, no phase) », then « — deferred: <words> (G4) ; … »
+ * when one is deferred; « open: none » when none is open.
+ */
+export function namedGoals(rows: readonly GoalRow[]): string {
+  const words = (row: GoalRow): string => atWord(row.goal, GOAL_WORDS_MAX) || row.id
+  const open = rows.filter(row => row.status === 'open')
+    .map(row => `${words(row)} (${row.id}, ${row.plan.trim() === '' ? 'no phase' : `plan: ${collapse(row.plan)}`})`)
+  const deferred = rows.filter(row => row.status === 'deferred').map(row => `${words(row)} (${row.id})`)
+  return `open: ${open.join(' ; ') || 'none'}${deferred.length === 0 ? '' : ` — deferred: ${deferred.join(' ; ')}`}`
 }
 
 /** The table: its header, its rule and one line per row. */

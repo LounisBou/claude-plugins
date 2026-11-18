@@ -42,7 +42,7 @@ import { homedir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
 import { getSystemErrorMap } from 'node:util'
 import {
-  collapse, GoalsFault, goalsTable, parseGoals, renderGoals, STATUSES,
+  collapse, GoalsFault, goalsTable, namedGoals, parseGoals, renderGoals, STATUSES,
   type GoalRow, type GoalsFile, type GoalsHead,
 } from './lib/goals-file.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
@@ -208,6 +208,11 @@ export interface Assessment {
 }
 
 export function assess(path: string, env: NodeJS.ProcessEnv): Assessment {
+  return assessed(path, env).a
+}
+
+/** The assessment of a goals file, beside the rows it read. */
+function assessed(path: string, env: NodeJS.ProcessEnv): { a: Assessment; rows: readonly GoalRow[] } {
   const { head, rows } = readGoals(path)
   const faults: string[] = []
   const notes: string[] = []
@@ -246,18 +251,18 @@ export function assess(path: string, env: NodeJS.ProcessEnv): Assessment {
   }
   const open = ids(row => row.status === 'open')
   const deferred = ids(row => row.status === 'deferred')
-  return {
+  const a: Assessment = {
     ok: open.length === 0 && deferred.length === 0 && faults.length === 0,
     open, deferred, unplanned: ids(row => row.status === 'open' && row.plan.trim() === ''), faults, notes,
     rows: rows.length, met: ids(row => row.status === 'met').length, ruled_out: ids(row => row.status === 'ruled-out').length,
     aim: head.aim, spec: head.spec, table: goalsTable(rows),
   }
+  return { a, rows }
 }
 
-export function summaryLine(a: Assessment): string {
-  const list = (ids: readonly string[]): string => ids.join(',') || 'none'
-  const line = `goals met=${a.met}/${a.rows} ruled_out=${a.ruled_out} open=${list(a.open)} unplanned=${list(a.unplanned)}`
-  return a.deferred.length > 0 ? `${line} deferred=${a.deferred.join(',')}` : line
+/** The goals line: the counts, then the goals still to reach by their words (`namedGoals`). */
+export function summaryLine(a: Assessment, rows: readonly GoalRow[]): string {
+  return `goals met=${a.met}/${a.rows} ruled_out=${a.ruled_out} ${namedGoals(rows)}`
 }
 
 // --- the commands ------------------------------------------------------------------------------
@@ -342,9 +347,9 @@ function cmdInit(ctx: Context, path: string, argv: readonly string[]): void {
   say(ctx, `goals: ${rows.length} goal(s) written to ${path}`)
 }
 
-function assessOrDie(ctx: Context, path: string): Assessment {
+function assessOrDie(ctx: Context, path: string): { a: Assessment; rows: readonly GoalRow[] } {
   try {
-    return assess(path, ctx.env)
+    return assessed(path, ctx.env)
   } catch (error) {
     if (error instanceof GoalsFault) die(ctx, error.message)
     throw error
@@ -352,13 +357,13 @@ function assessOrDie(ctx: Context, path: string): Assessment {
 }
 
 function cmdStatus(ctx: Context, path: string): void {
-  const a = assessOrDie(ctx, path)
+  const { a, rows } = assessOrDie(ctx, path)
   say(ctx, `aim: ${a.aim || 'none'}`)
   say(ctx, `spec: ${a.spec}`)
   say(ctx, a.table)
   for (const fault of a.faults) say(ctx, `fault: ${fault}`)
   for (const note of a.notes) say(ctx, `note: ${note}`)
-  say(ctx, summaryLine(a))
+  say(ctx, summaryLine(a, rows))
 }
 
 /** Reads the file, hands the goal's row to `change`, writes the file back. */
@@ -392,8 +397,8 @@ function rulingWords(ctx: Context, given: string | undefined, command: string): 
 const COMMANDS: Readonly<Record<string, (ctx: Context, path: string, argv: readonly string[]) => void>> = {
   init: cmdInit,
   status: (ctx, path) => cmdStatus(ctx, path),
-  line: (ctx, path) => say(ctx, summaryLine(assessOrDie(ctx, path))),
-  unplanned: (ctx, path) => { for (const id of assessOrDie(ctx, path).unplanned) say(ctx, id) },
+  line: (ctx, path) => { const { a, rows } = assessOrDie(ctx, path); say(ctx, summaryLine(a, rows)) },
+  unplanned: (ctx, path) => { for (const id of assessOrDie(ctx, path).a.unplanned) say(ctx, id) },
   plan: (ctx, path, argv) => {
     const id = goalId(ctx, argv, 'plan')
     const phase = options(ctx, argv.slice(1), { phase: 'one' }).one['phase'] ?? ''
@@ -441,8 +446,9 @@ function cmdCheck(ctx: Context, path: string, argv: readonly string[]): void {
   const asJson = argv.length === 1 && argv[0] === '--json'
   if (argv.length > 0 && !asJson) die(ctx, `check: unknown argument ${argv[0]}`)
   let a: Assessment
+  let rows: readonly GoalRow[]
   try {
-    a = assess(path, ctx.env)
+    ({ a, rows } = assessed(path, ctx.env))
   } catch (error) {
     if (!(error instanceof GoalsFault)) throw error
     if (asJson) say(ctx, JSON.stringify({ ok: false, error: error.message }))
@@ -455,7 +461,7 @@ function cmdCheck(ctx: Context, path: string, argv: readonly string[]): void {
     if (a.deferred.length > 0) say(ctx, `deferred: ${a.deferred.join(', ')}`)
     for (const fault of a.faults) say(ctx, `fault: ${fault}`)
     for (const note of a.notes) say(ctx, `note: ${note}`)
-    say(ctx, summaryLine(a))
+    say(ctx, summaryLine(a, rows))
   }
   throw new Exit(a.ok ? 0 : 1)
 }

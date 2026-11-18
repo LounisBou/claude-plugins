@@ -1147,7 +1147,7 @@ test('a stop with nothing to wake the orchestrator passes, the log naming nothin
 const readyRow = (id: number, label: string, more: Record<string, unknown> = {}) =>
   `${JSON.stringify({ id, state: 'open', label, blocker: 'none', ...more })}\n`
 const OPEN_PR_LINE = (agent: string) => `${JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr: 9, status: 'working', agent, since: '2026-11-15T07:00:00Z', updated: '2026-11-15T07:00:00Z' })}\n`
-const READY = 'Lignes prêtes sans agent : 12 TOKENDRIFT'
+const READY = 'Sujets prêts sans agent : the context fills (ligne 12)'
 
 test('a stop that passes with a ready row nobody is on warns, the log naming it, and journals no escape', async () => {
   const { handlers } = mounted()

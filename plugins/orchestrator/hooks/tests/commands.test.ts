@@ -109,18 +109,20 @@ test('a dispatch row is one JSON line, and a line that is no row is no row', () 
   expect(parseDispatchRow('{"id":"three"}')).toBeNull()
 })
 
-test('progress names the open rows and the tally, or says no record stands', () => {
+test('progress names the open rows by their subject, the id after it, and the tally, or says no record stands', () => {
   const lines = progressLines([
     [
       { id: 1, label: 'Belt the parser', state: 'closed', rounds: 1 },
       { id: 2, label: 'Add the retry knob', state: 'open', rounds: 2 },
       { id: 3, label: '', state: 'open', rounds: 0 },
+      { id: 4, label: 'SUBJECTS: every orchestrator names subjects, never rows: the rule (to-do 52)', state: 'open', rounds: 0 },
     ],
   ])
   expect(lines).toEqual([
-    'open=2 label=Add the retry knob',
-    'open=3 label=no label',
-    'dispatches=3 closed=1 rounds_avg=1',
+    'open: Add the retry knob (row 2)',
+    'open: no label (row 3)',
+    'open: every orchestrator names subjects, never rows (row 4)',
+    'dispatches=4 closed=1 rounds_avg=0.8',
   ])
   expect(progressLines([])).toEqual(['no dispatch record registered'])
   expect(progressLines([[{ id: 1, label: 'x', state: 'closed', rounds: 0 }]], ['goals met=3/5 ruled_out=1 open=G3 unplanned=none']))
@@ -137,9 +139,9 @@ test('a deferred row is printed as deferred with the operator\'s ruling, never a
     { id: 7, label: '', state: 'open', rounds: 0, deferred: '2026-10-29: later' },
   ]])
   expect(lines).toEqual([
-    'deferred=5 label=mini-tech ruling=2026-10-29: B, later',
-    'open=6 label=live',
-    'deferred=7 label=no label ruling=2026-10-29: later',
+    'deferred: mini-tech (row 5) — ruling: 2026-10-29: B, later',
+    'open: live (row 6)',
+    'deferred: no label (row 7) — ruling: 2026-10-29: later',
     'dispatches=3 closed=0 rounds_avg=0',
   ])
 })
@@ -514,7 +516,7 @@ test('progress answers the records this session registered, under the side-read 
   const answer = await progress.handler(fx.dollar, { command: 'orchestrator:orchestrator-progress', args: '' })
   expect(answer).toEqual({
     text: [
-      'open=2 label=Add the retry knob',
+      'open: Add the retry knob (row 2)',
       'dispatches=2 closed=1 rounds_avg=1.5',
     ].join('\n'),
   })
@@ -537,7 +539,7 @@ test('the registry is read under the state override, and under the config dir wi
     '{"id":2,"opened":"2026-10-08T10:00:00Z","class":"feature","tier":"light","label":"Add the retry knob","rounds":2,"state":"open","verdict":"","cascade":false}',
     '',
   ].join('\n')
-  const expected = { text: ['open=2 label=Add the retry knob', 'dispatches=2 closed=1 rounds_avg=1.5'].join('\n') }
+  const expected = { text: ['open: Add the retry knob (row 2)', 'dispatches=2 closed=1 rounds_avg=1.5'].join('\n') }
   // The override set: the registry is found under it...
   const over = fakeDollar()
   over.env['ORCHESTRATOR_STATE_DIR'] = `${HOME}/elsewhere`
