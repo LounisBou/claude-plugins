@@ -8,7 +8,7 @@ import { expect, test } from 'claude-code/testing'
 import { register, refusalCode } from '../audit.ts'
 import { observed, END_TODO_OPEN_CODE } from '../observe.ts'
 import { PULL_URL } from '../audit-events.ts'
-import { killDecision } from '../guards.ts'
+import { guardFallback, killDecision } from '../guards.ts'
 import { MODELS_DENY } from '../models-guard.ts'
 import { NOT_ORCHESTRATOR } from '../review.ts'
 import { Declarations } from '../wait.ts'
@@ -68,6 +68,7 @@ const codes = (events: { kind: string; source: { code: string } }[]) => events.m
 test('each refusal of the module\'s guards has its stable code; any other answer has none', () => {
   const cases: [unknown, string | null][] = [
     [killDecision('1', 'pkill -f agent'), 'orchestrator.kill.pattern'],
+    [guardFallback(undefined, 'killall node', 'no environment'), 'orchestrator.kill.unread-mark'],
     [{ deny: MODELS_DENY }, 'orchestrator.models.map-write'],
     [{ deny: 'github: refused by another plugin' }, null],
     [{ result: 'fine' }, null],

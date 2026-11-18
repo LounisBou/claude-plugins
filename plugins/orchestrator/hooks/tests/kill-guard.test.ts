@@ -5,7 +5,7 @@
 // the pid it recorded in a file; `kill <pid>`, `kill $pid` and `kill $(cat <file>)`
 // are that, and pass.
 import { expect, test } from 'claude-code/testing'
-import { killDecision, register as registerGuards } from '../guards.ts'
+import { guardFallback, killDecision, register as registerGuards } from '../guards.ts'
 import { detectPatternKills } from '../pattern-kills.ts'
 import { logLineOf } from './fakes.ts'
 import { capture, hooksOn, hostOf } from '../../core/capture.ts'
@@ -713,6 +713,22 @@ test('an unmarked session and a kill by pid both pass', () => {
   expect(killDecision('1', '')).toBeNull()
 })
 
+test('a mark never read refuses a kill by pattern with the reason the guard did not finish', () => {
+  const d = guardFallback(undefined, 'pkill -f vite', 'the marker cannot be read')
+  expect(d?.deny).toContain('kill refused')
+  expect(d?.deny).toContain('the marker cannot be read')
+  expect(d?.deny).toContain('Seen: pkill')
+  expect(guardFallback(undefined, 'kill 1234', 'the marker cannot be read')).toBeNull()
+  expect(guardFallback(undefined, 'kill $(cat server.pid)', 'the marker cannot be read')).toBeNull()
+  expect(guardFallback(undefined, 'kill -9 -1', 'the marker cannot be read')?.deny).toContain('Seen: kill of all processes or a process group')
+  expect(guardFallback(undefined, 'git status', 'the marker cannot be read')).toBeNull()
+})
+
+test('a mark as last read decides the fallback: closed when marked, open when the operator\'s own', () => {
+  expect(guardFallback('1', 'pkill -f vite', 'x')?.deny).toContain(DENY_START)
+  expect(guardFallback(null, 'pkill -f vite', 'x')).toBeNull()
+})
+
 // A line the reader cannot read (a brace expansion past its limit) may hide a kill: it is refused
 // where a kill by pattern is.
 const UNREADABLE = ['{pkill,-f}{1..1001} vite', 'echo ok; kill $(pgrep x){1..100000}', 'echo {1..100000}']
@@ -726,6 +742,16 @@ test('a marked session refuses a line the reader cannot read, an unmarked one do
     expect(killDecision('1', c)?.deny, c).toContain(`${DENY_START}`)
     expect(killDecision('1', c)?.deny, c).toContain('Seen: a line the reader cannot read.')
     expect(killDecision(undefined, c), c).toBeNull()
+  }
+})
+
+test('a mark never read refuses a line the reader cannot read, and a mark as read decides otherwise', () => {
+  for (const c of UNREADABLE) {
+    const d = guardFallback(undefined, c, 'the marker cannot be read')
+    expect(d?.deny, c).toContain('kill refused')
+    expect(d?.deny, c).toContain('Seen: a line the reader cannot read.')
+    expect(guardFallback('1', c, 'x')?.deny, c).toContain(DENY_START)
+    expect(guardFallback(null, c, 'x'), c).toBeNull()
   }
 })
 
@@ -831,14 +857,17 @@ test("a marked session's forced push reaches the tool: the forge refuses it, not
   expect(answer).toBe(e)
 })
 
-test('a handler that cannot read its marker decides on the mark as last read: none read yet, the call goes through', async () => {
+test('a handler that cannot read its marker refuses a kill by pattern alone, with the reason', async () => {
   const { handlers } = mounted()
   const { dollar, written } = fakeDollar({ noEnv: true })
-  const e = bashCall('pkill -f vite')
-  const killed = await callBash(handlers['tool.call'], dollar, e)
-  expect(killed.answer).toBe(e)
-  expect(killed.passedThrough).toBe(e)
+  const killed = await callBash(handlers['tool.call'], dollar, bashCall('pkill -f vite'))
+  expect(denyOf(killed.answer)).toContain('kill refused')
+  expect(denyOf(killed.answer)).toContain('the marker cannot be read')
+  expect(killed.passedThrough).toBeNull()
   expect(written.length).toBe(1)
+  const e = bashCall('kill 1234')
+  const byPid = await callBash(handlers['tool.call'], dollar, e)
+  expect(byPid.answer).toBe(e)
 })
 
 // The registered net: a re-entered call, or one past its budget, decides on the mark

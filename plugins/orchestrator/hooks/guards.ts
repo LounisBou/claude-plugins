@@ -121,6 +121,17 @@ export function killDecision(spawned: string | null | undefined, command: string
   return { deny: `kill refused: this session was spawned by the launcher, and it kills only what it started, by the pid it recorded in a file (start it with \`cmd & echo $! > <file>\`, end it with \`kill $(cat <file>)\`). A kill by name or pattern can end other sessions' processes. Seen: ${kills.join(', ')}.` }
 }
 
+// The kill guard's answer when it could not run whole: the mark as last read decides.
+// A session the launcher marked refuses its kills by pattern as the guard would; a mark
+// never read refuses them with the reason the guard did not finish — the safe side when
+// nothing says which session this is; an operator's own session is left alone.
+export function guardFallback(mark: string | null | undefined, command: string, why: string): { deny: string } | null {
+  if (mark !== undefined) return killDecision(mark, command)
+  const kills = detectPatternKills(command)
+  if (kills.length === 0) return null
+  return { deny: `kill refused: the kill guard could not read whether the launcher spawned this session (${why}), and a kill by name or pattern waits until it can. Seen: ${kills.join(', ')}.` }
+}
+
 // prompt.submit's `context` is a list of blocks: what the model reads beside the
 // prompt, each entry one block after the prompt as typed, and never shown the
 // user. The announcement is one block appended after whatever the chain above
@@ -394,9 +405,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     try {
       spawnedMark = (await $.env.get('ORCHESTRATOR_SPAWNED')) ?? null
     } catch (err) {
-      // The mark cannot be read: the decision falls to the mark as last read.
+      // The mark cannot be read: the decision falls to what is known of it.
       await logLine($, 'guards', messageOf(err))
-      return killDecision(spawnedMark, command) ?? next(e)
+      const fallback = guardFallback(spawnedMark, command, messageOf(err))
+      if (fallback) return fallback
+      return next(e)
     }
     const decision = killDecision(spawnedMark, command)
     if (decision) return decision
@@ -414,10 +427,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     // call already run beneath is let through (next is replay-safe in a catch).
     // One not run yet — a re-entry, a guard past its budget — is decided on the
     // launcher's mark as last read: closed in a spawned session, open in one the
-    // operator started or whose mark was never read.
+    // operator started, and a kill by pattern refused while the mark is unknown.
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     if (next.called) return next(e)
-    return killDecision(spawnedMark, String(e['command'] ?? '')) ?? next(e)
+    const fallback = guardFallback(spawnedMark, String(e['command'] ?? ''), next.error?.message ?? 'the guard did not finish')
+    return fallback ?? next(e)
   })
 
   // An orchestrator's turn end: the module acts and decides nothing of the stop, which always
