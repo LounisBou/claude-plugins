@@ -32,16 +32,12 @@ import {
 import { launcherOf, recordsRegistryPath } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { agentsOf, ledgerLines } from '../core/pr-ledger.ts'
-import { coordinatorAddress, REFERENCED, refreshRowAndDeck, showPrStates } from './supervision.ts'
+import { REFERENCED, refreshRowAndDeck, showPrStates } from './supervision.ts'
 import { pullRequestsRead } from './tab-state.ts'
 import { fieldsOf, messageOf, reasonOf, type Host, type On, type ProcessRunResult } from './host.ts'
-import { asksTheMode } from './mode-dialog.ts'
 import { shorten } from '../core/verdict.ts'
-import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
+import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, bashWritesTheMap } from './models-guard.ts'
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
-import {
-  MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, REPORT_UNNAMED_CODE, WAITED_ON_DIALOG_CODE,
-} from './observe.ts'
 import { prWake } from './ledger.ts'
 import { projectRecords } from './unattended.ts'
 import { PR_FILE_INTERVAL_MS } from './pr-file-format.ts'
@@ -358,19 +354,13 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     let sending = e
     if (to && typeof message === 'string' && roleOf(to.replace(REFERENCED, '').trim()) === 'orchestrator') {
       const short = shorten(message)
-      if (short.kind !== 'whole') {
+      if (short.kind === 'cut') {
         try {
           const sessionId = await $.session.id()
           const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
           if (roleOf(name) === 'agent') {
-            if (short.kind === 'unnamed') {
-              // Observed, not refused: the message goes whole, and the journal holds the escape.
-              await logLine($, 'guards', `a message of ${short.length} characters to ${to} names no report file: let through`)
-              await observed($, REPORT_UNNAMED_CODE)
-            } else {
-              await logLine($, 'guards', `a message of ${message.length} characters to ${to} cut, its report at ${short.path}`)
-              sending = { ...e, message: short.text }
-            }
+            await logLine($, 'guards', `a message of ${message.length} characters to ${to} cut, its report at ${short.path}`)
+            sending = { ...e, message: short.text }
           }
         } catch (err) {
           await logLine($, 'guards', `the sender of a message to ${to} could not be read: ${messageOf(err)}`)
@@ -384,59 +374,23 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   })
 
   // The tier map's guard: a session of the orchestration (one whose name gives it a role)
-  // that writes the operator's map is observed when it is a Write, Edit or MultiEdit on it (the
-  // call goes through with one escape in the journal), and refused when it is a Bash line that
-  // overwrites it (a redirection, `tee`, `sed -i`, `mv`, `cp`, `install`, `ln`): that destroys his
-  // bindings with no backup, the deletion class. Unless the last prompt he typed in this session
-  // names the map or a tier: then the binding is his word on the point. Mounted before the
-  // kill guard, so a Bash call reaches it first; the session's role is read only for a call
-  // that writes the map. Never `ask`.
-  on('tool.call', { tool: ['Write', 'Edit', 'MultiEdit', 'Bash'] }, async ($, e, next) => {
+  // that runs a Bash line overwriting the operator's map (a redirection, `tee`, `sed -i`, `mv`,
+  // `cp`, `install`, `ln`) is refused: that destroys his bindings with no backup, the deletion
+  // class. Unless the last prompt he typed in this session names the map or a tier: then the
+  // binding is his word on the point. Mounted before the kill guard, so a Bash call reaches it
+  // first; the session's role is read only for a call that writes the map. Never `ask`.
+  on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const maps = mapPaths(await stateDir($), await configDir($))
-    const writes = e['tool'] === 'Bash'
-      ? bashWritesTheMap(String(e['command'] ?? ''), maps)
-      : editsTheMap(String(e['file_path'] ?? ''), maps)
-    if (!writes) return next(e)
+    if (!bashWritesTheMap(String(e['command'] ?? ''), maps)) return next(e)
     const sessionId = await $.session.id()
     if (lastTyped && lastTyped.sessionId === sessionId && namesTheMap(lastTyped.text)) return next(e)
     const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
     if (!roleOf(name)) return next(e)                // the operator's own sessions: untouched
-    // A Bash overwrite destroys the bindings: refused. A file tool's write is observed.
-    if (e['tool'] === 'Bash') {
-      await logLine($, 'guards', 'models guard: a Bash write of the tier map denied')
-      return { deny: MODELS_DENY }
-    }
-    // Observed, not refused: the write goes through, and the journal holds the escape.
-    await logLine($, 'guards', `models guard: a write of the tier map let through (${e['tool']})`)
-    await observed($, MAP_WRITE_CODE)
-    return next(e)
+    await logLine($, 'guards', 'models guard: a Bash write of the tier map denied')
+    return { deny: MODELS_DENY }
   }).catch(async ($, e, next) => {
     // A guard that could not read lets the call through, and the log says why: the map is
     // the operator's file, and a session held on the guard's own failure helps nobody.
-    await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
-
-  // A dialog in the session's own tab reaches neither the coordinator's pane nor a `waiting:` line,
-  // so nothing tells the operator the session is blocked on him. The mode question is never a
-  // dialog: an orchestrator's that offers `build` and `investigate` is observed. While a coordinator
-  // runs, an orchestrator and the coordinator are waited on: any dialog of theirs is observed. Both
-  // open, each with one escape in the journal.
-  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
-    const sessionId = await $.session.id()
-    const role = roleOf((await readName($, await transcriptPathOf($, sessionId), sessionId)).name)
-    if (role === 'orchestrator' && asksTheMode({ questions: e['questions'] })) {
-      // Observed, not refused: the dialog opens, and the journal holds the escape.
-      await logLine($, 'guards', 'mode dialog let through: the mode is asked in the question format, never by dialog')
-      await observed($, MODE_DIALOG_CODE)
-      return next(e)
-    }
-    if ((role !== 'orchestrator' && role !== 'coordinator') || !(await coordinatorAddress($))) return next(e)
-    await logLine($, 'guards', `dialog let through: a ${role} is waited on while a coordinator runs`)
-    await observed($, WAITED_ON_DIALOG_CODE)
-    return next(e)
-  }).catch(async ($, e, next) => {
-    // A guard that could not read lets the dialog through, and the log says why.
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })

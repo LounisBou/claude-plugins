@@ -1,11 +1,10 @@
 // hooks/tests/models-guard.test.ts
-// The tier map's guard: a session of the orchestration that writes the operator's map, whatever
-// tool it reaches for, is observed (one escape in the journal) when it writes with a file tool, and
-// refused when a Bash line overwrites it, unless the last prompt he typed names the map or a tier.
+// The tier map's guard: a session of the orchestration whose Bash line overwrites the operator's
+// map is refused, unless the last prompt he typed names the map or a tier. It watches Bash only.
 // A plan once told an orchestrator to bind the tiers in models.json, against the routing
 // skill's rule, and the rule — prose alone — lost.
 import { expect, test } from 'claude-code/testing'
-import { bashWritesTheMap, editsTheMap, mapPaths, MODELS_DENY, namesTheMap, typedByOperator } from '../models-guard.ts'
+import { bashWritesTheMap, mapPaths, MODELS_DENY, namesTheMap, typedByOperator } from '../models-guard.ts'
 import { register as registerGuards } from '../guards.ts'
 import { journalled, logLineOf } from './fakes.ts'
 import { capture, hooksOn, hostOf } from '../../core/capture.ts'
@@ -19,10 +18,7 @@ const HOME = '/tmp/h'
 const MAP = `${HOME}/.claude/claude-orchestrator/models.json`
 const MAPS = mapPaths(`${HOME}/.claude/claude-orchestrator`, `${HOME}/.claude`)
 
-test('the map is the state dir\'s models.json, an edit elsewhere is not', () => {
-  expect(editsTheMap(MAP, MAPS)).toBe(true)
-  expect(editsTheMap(`${HOME}/.claude//claude-orchestrator/models.json`, MAPS)).toBe(true)
-  expect(editsTheMap('/tmp/project/models.json', MAPS)).toBe(false)
+test('the map is the state dir\'s models.json and the config dir\'s default beside it', () => {
   expect(mapPaths('/s', '/c')).toEqual(['/s/models.json', '/c/claude-orchestrator/models.json'])
 })
 
@@ -89,10 +85,10 @@ function fakeDollar(launchName: string | null): { dollar: World; written: string
   return { dollar, written }
 }
 
-// The guard's own registration, told apart from the kill guard's by its matcher.
+// The guard's own registration: the first of the two hooks on Bash, the kill guard's the second.
 function mounted(): { guard: Guard; matcher: Matcher | undefined; prompt: Hook<World, Events['prompt.submit']> } {
   const hooks = capture<World>(on => registerGuards(on))
-  const found = hooksOn(hooks, 'tool.call').filter(h => Array.isArray(h.matcher?.['tool'])).at(-1)
+  const found = hooksOn(hooks, 'tool.call').filter(h => h.matcher?.['tool'] === 'Bash')[0]
   const prompt = hooksOn(hooks, 'prompt.submit').at(-1)?.handler ?? (async () => undefined)
   return { guard: found?.handler ?? (async () => undefined), matcher: found?.matcher, prompt }
 }
@@ -103,26 +99,11 @@ async function call(guard: Guard, dollar: World, e: Events['tool.call']) {
   return { answer, passed }
 }
 
-const write = { tool: 'Write', tool_use_id: 't1', file_path: MAP, content: '{}' }
-const edit = { tool: 'Edit', tool_use_id: 't2', file_path: MAP, old_string: 'a', new_string: 'b' }
 const bash = (command: string) => ({ tool: 'Bash', tool_use_id: 't3', command })
 const typed = (text: string, kind = 'composer') => ({ text, origin: { kind }, wait: false })
 
-test('the guard mounts on the file tools and Bash', () => {
-  expect(mounted().matcher).toEqual({ tool: ['Write', 'Edit', 'MultiEdit', 'Bash'] })
-})
-
-const ESCAPE = 'escape orchestrator.models.map-write'
-
-test("an orchestrator's Write or Edit of the map goes through, with one escape in the journal each", async () => {
-  const { guard } = mounted()
-  const fx = journalled(fakeDollar('Orch: belt').dollar)
-  for (const e of [write, edit]) {
-    const out = await call(guard, fx.dollar, e)
-    expect(out.passed).toBe(e)
-    expect(out.answer).toBe(e)
-  }
-  expect(fx.journal()).toEqual([ESCAPE, ESCAPE])
+test('the guard mounts on Bash alone', () => {
+  expect(mounted().matcher).toEqual({ tool: 'Bash' })
 })
 
 test('a Bash overwrite of the map is refused with the rule and writes no escape, a read of it passes with none', async () => {
@@ -158,25 +139,9 @@ test('the operator\'s typed word on the map lifts the Bash refusal; a peer\'s de
   expect(fx.journal()).toEqual([])
 })
 
-test('the operator\'s typed word on the map writes no escape; a peer\'s delivery does', async () => {
-  const { guard, prompt } = mounted()
-  const fx = journalled(fakeDollar('Orch: belt').dollar)
-  await prompt(fx.dollar, typed('bind standard to a-model in models.json, please', 'peer'), async (x: unknown) => x)
-  await call(guard, fx.dollar, write)
-  expect(fx.journal()).toEqual([ESCAPE])
-  await prompt(fx.dollar, typed('bind standard to a-model'), async (x: unknown) => x)
-  const lifted = await call(guard, fx.dollar, write)
-  expect(lifted.answer).toBe(lifted.passed)
-  expect(fx.journal()).toEqual([ESCAPE])
-  // His next typed prompt, on something else, puts the observation back.
-  await prompt(fx.dollar, typed('go on with the next phase'), async (x: unknown) => x)
-  await call(guard, fx.dollar, write)
-  expect(fx.journal()).toEqual([ESCAPE, ESCAPE])
-})
-
 test("the operator's own session, with no role, is untouched", async () => {
   const { guard } = mounted()
   const { dollar } = fakeDollar(null)
-  const out = await call(guard, dollar, write)
+  const out = await call(guard, dollar, bash(`mv x ${MAP}`))
   expect(out.answer).toBe(out.passed)
 })
