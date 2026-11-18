@@ -948,6 +948,63 @@ test('a new scope forgets the agents running in the background', async () => {
   expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 4 })))?.['result']).toContain('no norms agent has reported')
 })
 
+test('the norms agents of a check run in the background together, each read from its own hand-back', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  const b = background(m)
+  await m.scope($)
+  await m.agent($, PATTERN, launch(PATTERN_ID, 'Norms: pattern conformity'))
+  await m.agent($, SCOPE_AGENT, launch('a708d9f1fe0e312e8', 'Norms: diff scope'))
+  await b.handBack($, 'a708d9f1fe0e312e8', block([finding('error', 9)]))
+  expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 1 })))?.['result']).toContain(`${PATTERN} returned no readable findings block`)
+  await b.handBack($, PATTERN_ID, PATTERN_REPORT)
+  await m.raw($, { open: 0, fixed: 0, passed: 5 })
+  expect(recordCalls(calls).length).toBe(1)
+})
+
+test('a report read stays through a later turn of its agent; an agent asked again for its block is read from it', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  const b = background(m)
+  await m.scope($)
+  await m.agent($, PATTERN, launch(PATTERN_ID, 'Norms: pattern conformity'))
+  await b.handBack($, PATTERN_ID, PATTERN_REPORT)
+  await b.ended($, PATTERN_ID, '')
+  // Asked a question afterwards, it answers without a block: its report stands.
+  await b.ended($, PATTERN_ID, 'The warning is about the double flush.')
+  // The diff-scope agent hands back no block; asked again, core refuses its second hand-back, which carries the block.
+  await m.agent($, SCOPE_AGENT, launch('a7bdad4b3b46ee92f', 'Norms: diff scope'))
+  await b.handBack($, 'a7bdad4b3b46ee92f', BLOCKLESS_REPORT)
+  await b.ended($, 'a7bdad4b3b46ee92f', '')
+  expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 4 })))?.['result']).toContain(`${SCOPE_AGENT} returned no readable findings block`)
+  await b.handBack($, 'a7bdad4b3b46ee92f', block([]), NOT_SENT)
+  await m.raw($, { open: 0, fixed: 0, passed: 4 })
+  expect(recordCalls(calls).length).toBe(1)
+})
+
+test('a later run in the foreground replaces a background one, and a failed launch is no background run', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  const b = background(m)
+  await m.scope($)
+  await m.agent($, PATTERN, launch('old', 'Norms: pattern conformity'))
+  await m.agent($, PATTERN, reply([]))
+  await b.handBack($, 'old', PATTERN_REPORT)
+  // A launch record that comes back as an error names no run to read.
+  await m.agent($, SCOPE_AGENT, { ...launch('failed', 'Norms: diff scope'), isError: true })
+  await b.handBack($, 'failed', block([]))
+  expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 0 })))?.['result']).toContain(`${SCOPE_AGENT} returned no readable findings block`)
+  await m.agent($, SCOPE_AGENT, reply([]))
+  await m.raw($, { open: 0, fixed: 0, passed: 0 })
+  expect(recordCalls(calls).length).toBe(1)
+})
+
 test('an agent of another plugin is not a norms agent: its answer is passed on unread', async () => {
   resetCache()
   const { $ } = setup()

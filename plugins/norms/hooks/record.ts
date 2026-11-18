@@ -396,14 +396,14 @@ export function register(on: On<RecordHost>): void {
   }).catch(async (_$, e, next) => next(e))
 
   // The report of a norms agent the host ran in the background, read where the module sees it: the
-  // agent's own SubagentHandback call, in its loop (`agentId`, the id its launch named), once core
-  // says the report reached the session. The call goes on as it came.
+  // agent's own SubagentHandback call, in its loop (`agentId`, the id its launch named), with whether
+  // core says the report reached the session (findings.ts reads which count). The call goes on as it came.
   on('tool.call', { tool: HANDBACK_TOOL }, async (_$, e, next) => {
     const answer = await next(e)
     try {
       const message = e['message']
       const isDelivered = fieldsOf(answerOf(answer).result)?.['success'] === true
-      if (isDelivered && typeof e['agentId'] === 'string' && typeof message === 'string') noteHandback(e['agentId'], message)
+      if (typeof e['agentId'] === 'string' && typeof message === 'string') noteHandback(e['agentId'], message, isDelivered)
     } catch {
       // Unreadable: the agent's findings stay unknown.
     }

@@ -73,10 +73,12 @@ export function launchedId(answer: unknown): string | undefined {
 // pr-review's loop: a restart loses it, and check_done then asks for the agents again.
 const reports = new Map<string, Finding[] | null>()
 
-// The agents of the running check the host runs in the background, by id: their type, and whether
-// their current turn already handed its report back. Their Agent call answered only with their
-// launch; the report comes later, from the agent's own loop.
-const background = new Map<string, { agent: string; isHandedBack: boolean }>()
+// The agents of the running check the host runs in the background, by id: their type, whether
+// they handed a report back already, and whether their current turn did. Their Agent call answered
+// only with their launch; the report comes later, from the agent's own loop. A run whose report was
+// read is done: a later turn of the agent (a question it is asked again) changes nothing.
+type Run = { agent: string; hasHandedBack: boolean; isTurnHandedBack: boolean }
+const background = new Map<string, Run>()
 
 export function noteReport(agent: string, findings: Finding[] | null): void {
   reports.set(agent, findings)
@@ -89,16 +91,27 @@ export function noteReport(agent: string, findings: Finding[] | null): void {
  */
 export function noteRun(agent: string, findings: Finding[] | null, launched?: string): void {
   for (const [id, run] of background) if (run.agent === agent) background.delete(id)
-  if (launched !== undefined) background.set(launched, { agent, isHandedBack: false })
+  if (launched !== undefined) background.set(launched, { agent, hasHandedBack: false, isTurnHandedBack: false })
   noteReport(agent, findings)
 }
 
-/** The report a background agent of the check handed back from its own loop, and core delivered. */
-export function noteHandback(id: string, report: string): void {
+// A background run's report: a readable one ends the run.
+function settle(id: string, run: Run, findings: Finding[] | null): void {
+  noteReport(run.agent, findings)
+  if (findings !== null) background.delete(id)
+}
+
+/**
+ * The report a background agent of the check handed back from its own loop. Core delivers one
+ * report per agent and refuses the next: the refused one of an agent that handed back before (one
+ * asked again for its block) is read all the same; a first one that reached no one is not.
+ */
+export function noteHandback(id: string, report: string, isDelivered: boolean): void {
   const run = background.get(id)
-  if (run === undefined) return
-  run.isHandedBack = true
-  noteReport(run.agent, reportOf(report))
+  if (run === undefined || (!isDelivered && !run.hasHandedBack)) return
+  run.hasHandedBack = true
+  run.isTurnHandedBack = true
+  settle(id, run, reportOf(report))
 }
 
 /**
@@ -109,11 +122,11 @@ export function noteHandback(id: string, report: string): void {
 export function noteEnd(id: string, reason: string, answer: string): void {
   const run = background.get(id)
   if (run === undefined) return
-  if (run.isHandedBack) {
-    run.isHandedBack = false
+  if (run.isTurnHandedBack) {
+    run.isTurnHandedBack = false
     return
   }
-  noteReport(run.agent, reason === 'answer' ? reportOf(answer) : null)
+  settle(id, run, reason === 'answer' ? reportOf(answer) : null)
 }
 
 export function resetReports(): void {
