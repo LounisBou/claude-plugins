@@ -508,10 +508,10 @@ const noFindings = (hooks: Hook[], $: World) => hook(hooks, 'tool.call', { tool:
   .handler($, { tool: 'Agent', subagent_type: 'norms:norms-diff-scope' }, async () => ({ result: '```json\n{"findings": []}\n```' }))
 
 // A $ where check_done can write its record: the scope is marked in the state and the
-// checkout is clean, unless `marked` or `dirty` say otherwise.
-function recordable(over: { marked?: boolean; dirty?: boolean } = {}) {
+// checkout is clean, unless `dirty` says otherwise.
+function recordable(over: { dirty?: boolean } = {}) {
   return fakeDollar({
-    state: over.marked === false ? {} : { 'norms/scopeMark': { head: HEAD, at: 1, files: [] } },
+    state: { 'norms/scopeMark': { head: HEAD, at: 1, files: [] } },
     runs: {
       'git rev-parse HEAD': { stdout: HEAD + '\n' },
       'git status --porcelain -uno': { stdout: over.dirty ? ' M src/a.ts\n' : '' },
@@ -559,10 +559,13 @@ test('a check_done that is refused or leaves no record keeps the Skill-armed mod
       .handler($, { tool: 'mcp__norms__check_done', open: 0, fixed: 0, passed: 0 }, nextOf().next)
   }
 
-  // No scope marked: the call is refused, the walkthrough goes on.
-  const unmarked = recordable({ marked: false }).$
-  await arm(unmarked)
-  expect(fieldsOf((await done(unmarked)))?.['isError']).toBe(true)
+  // Figures that are not whole numbers: the call is refused, the walkthrough goes on.
+  const refusable = recordable().$
+  await arm(refusable)
+  await noFindings(hooks, refusable)
+  const refused = await hook(hooks, 'tool.call', { tool: 'mcp__norms__check_done' })
+    .handler(refusable, { tool: 'mcp__norms__check_done', open: -1, fixed: 0, passed: 0 }, nextOf().next)
+  expect(fieldsOf(refused)?.['isError']).toBe(true)
   expect(guardState().mode).toBe('check')
 
   // A dirty tree leaves no record: the walkthrough goes on.

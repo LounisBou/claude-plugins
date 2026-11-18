@@ -1,14 +1,14 @@
 // hooks/check.ts
-// N1: /norms:check's Steps 1 to 3 run here, before the command's markdown
+// N1: /norms:check's scope is computed here, before the command's markdown
 // expands, whether the person typed it (command.run) or the model ran it
-// through the Skill tool (tool.call), and land as a <norms-scope> block appended to its arguments
+// through the Skill tool (tool.call), and lands as a <norms-scope> block appended to its arguments
 // ($ARGUMENTS). The base comes from scripts/resolve_base.sh, the same script
-// the markdown runs, so both paths agree on it.
+// the command ran by hand, so both paths agree on it.
 // N2: every norms agent spawned gets the diff of its own files and its own
 // CONTRIBUTING.md sections appended to its prompt, written once here rather
 // than pasted by the model into each Task call.
-// Either hook that fails passes the event on unchanged: the markdown and the
-// agents still carry today's instructions for doing the work themselves.
+// Either hook that fails passes the event on unchanged: the command then has no scope block
+// and stops, and an agent works from its own instructions.
 import {
   classifyAll, projectTypes, parseCheckArgs, scopeBlock, filesFor, contextBlock,
   DIFF_INLINE_MAX, type Scope, type ReferencePaths,
@@ -129,7 +129,7 @@ export function resetCache(): void {
 // in no other skill's chain.
 export const SKILL_MATCHER = { tool: 'Skill', skill: /^\/?norms:check$/ }
 
-// Steps 1 to 3 for one run of /norms:check: the scope is computed, cached for
+// The scope of one run of /norms:check: computed, cached for
 // the agents and marked for the record, and its block appended to the words.
 async function withScope($: CheckHost, words: string): Promise<string> {
   const args = parseCheckArgs(words)

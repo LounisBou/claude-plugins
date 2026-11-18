@@ -1,7 +1,6 @@
 // hooks/scope.ts
-// The pure half of /norms:check's scope: what commands/check.md Steps 1 to 3
-// ask the model to work out by hand (project type, file classes, applicable
-// agents, the shortcut words, the reference paths), and the blocks the module
+// The pure half of /norms:check's scope: what the plugin computes before commands/check.md runs
+// (project type, file classes, applicable agents, the shortcut words, the reference paths), and the blocks the module
 // appends for the command and for each norms agent. No $ here: check.ts runs
 // the git and file reads and hands the facts in.
 
@@ -44,7 +43,7 @@ const DOTFILE_CONFIG = /^\.(git(ignore|attributes|modules)|editorconfig|npmrc|nv
 const OTHER_EXT = /\.(md|markdown|rst|txt|adoc|png|jpe?g|gif|svg|ico|webp|pdf|lock)$/i
 const OTHER_NAMES = /^(LICENSE|LICENCE|COPYING|NOTICE|AUTHORS|CODEOWNERS)(\..*)?$/i
 
-// check.md Step 2: test is `*.test.*`, `*.spec.*`, `*_test.*`, `*/tests/*`,
+// The file classes: test is `*.test.*`, `*.spec.*`, `*_test.*`, `*/tests/*`,
 // `*/test/*`; config is `*.json`, `*.yml`, `*.yaml`, `*.toml`, `*.xml`, `*.env*`.
 export function classify(path: string): Category {
   const parts = path.split('/')
@@ -66,7 +65,7 @@ export function classifyAll(files: readonly string[]): Classified {
   return out
 }
 
-// check.md Step 1, from the names at the project root.
+// The project types, from the names at the project root.
 const TYPE_MARKERS: [RegExp, string][] = [
   [/^package\.json$/, 'JavaScript/TypeScript'],
   [/^composer\.json$/, 'PHP'],
@@ -137,7 +136,7 @@ export function parseCheckArgs(args: string): CheckArgs {
 
 export type Applicability = { run: string[]; skipped: [string, string][] }
 
-// check.md Step 3's table.
+// The agents each class of file calls for.
 export function applicable(files: Classified, hasTestInfra: boolean): Applicability {
   const hasSource = files.source.length > 0
   const hasTest = files.test.length > 0
@@ -173,14 +172,13 @@ export type Scope = {
 
 export type ReferencePaths = { found: string[]; missing: string[] }
 
-// The block appended to /norms:check's arguments. commands/check.md reads it
-// in place of Steps 1 to 3.
+// The block appended to /norms:check's arguments, which commands/check.md reads.
 export function scopeBlock(scope: Scope, args: CheckArgs, refs: ReferencePaths, automatic = false): string {
   const list = (xs: string[]) => (xs.length ? xs.join(', ') : 'none')
   const { run, skipped } = applicable(scope.files, scope.hasTestInfra)
   const lines = [
     '<norms-scope>',
-    'Precomputed by the norms plugin: Steps 1 to 3 are done. Use these values as given.',
+    'Precomputed by the norms plugin. Use these values as given.',
     `base: ${scope.base}${scope.baseArg ? ` (from base=${scope.baseArg})` : ''}`,
     `head: ${scope.head}`,
     `branch: ${scope.branch}`,
