@@ -40,8 +40,9 @@ untouched by this reduction; they are reworked with the coordinator in a later p
 ## Cases
 
 Numbers are those of the plan made before the cases were written; the gaps are cases
-removed either after the baseline (« Amended after the baseline ») or in the 2026-09-30
-reduction (« Removed in the 2026-09-30 reduction »).
+removed either after the baseline (« Amended after the baseline »), in the 2026-09-30
+reduction (« Removed in the 2026-09-30 reduction »), or, for 27 (`commits-or-drops-before-closing`),
+when the module took the close over (`hooks/close-agent.ts` reads the tree before it closes).
 
 | # | case id | covers | situation staged | kept because |
 |---|---|---|---|---|

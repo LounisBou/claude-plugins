@@ -213,12 +213,16 @@ export function liveNames(rows: readonly Row[]): Set<string> {
   return new Set(rows.filter(row => activity(row.title) !== null).map(labelOf))
 }
 
-// The ttys of the sessions the listing shows idle, by their label: where the module closes an agent done with its work.
-// The listing is the machine's: a label may sit on several ttys, each orchestration's own (the caller keeps its chain's).
-export function idleTtys(rows: readonly Row[]): Map<string, string[]> {
-  const idle = new Map<string, string[]>()
-  for (const row of rows) if (activity(row.title) === 'idle') idle.set(labelOf(row), [...(idle.get(labelOf(row)) ?? []), row.tty])
-  return idle
+// The tabs the listing shows running an agent, by their label, each with its tty and whether it is idle: where the module
+// closes an agent done with its work. The listing is the machine's: a label may sit on several ttys, each orchestration's
+// own (the caller keeps its chain's).
+export function tabsOf(rows: readonly Row[]): Map<string, { tty: string; idle: boolean }[]> {
+  const tabs = new Map<string, { tty: string; idle: boolean }[]>()
+  for (const row of rows) {
+    const state = activity(row.title)
+    if (state !== null) tabs.set(labelOf(row), [...(tabs.get(labelOf(row)) ?? []), { tty: row.tty, idle: state === 'idle' }])
+  }
+  return tabs
 }
 
 // --- the orchestrator's own agents (stop_gate.py:224-247) --------------------------------

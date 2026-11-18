@@ -44,8 +44,9 @@ type Over = {
   // What `git status --porcelain` prints in an agent's checkout, and how many commits `git rev-list` counts unpushed.
   dirty?: string
   unpushed?: number
-  // The agents' ttys in the orchestrator's own chain (ttys000 and ttys001 when not given).
-  ownChain?: string[]
+  // The orchestrator's chain owner (`own` when not given; null, none), and whether its chain file fails to read.
+  owner?: string | null
+  chainFails?: boolean
 }
 
 // The orchestrator s-orch (its record registered, owned), the agent s-agent on /dev/ttys005 launched for it.
@@ -58,10 +59,10 @@ function fake(over: Over = {}) {
     [RECORD, ROWS],
     [`${HOME}/.claude/sessions/400.json`, JSON.stringify({ pid: 400, sessionId: 's-orch', name: ORCH, startedAt: 1 })],
   ])
-  // The orchestrator's chain (its owner `own`): the agents the launcher lists on ttys000 and ttys001 are its own, unless `ownChain` says
-  // otherwise; with `chain`, the agent s-agent on ttys005 too.
-  const chained = [...(over.ownChain ?? ['/dev/ttys000', '/dev/ttys001']), ...(over.chain ? ['/dev/ttys005'] : [])]
-  if (over.chain || chained.length > 0) files.set(`${STATE}/chains/ttys001.jsonl`, chained.map((tty, n) => `${JSON.stringify({ tab_id: `tab-${n}`, tty, owner: 'own' })}\n`).join(''))
+  // The orchestrator's chain (its owner `own`): the agents the launcher lists on ttys000 and ttys001 (\`running\`) are its own;
+  // with `chain`, the agent s-agent on ttys005 too.
+  const chained = ['/dev/ttys000', '/dev/ttys001', ...(over.chain ? ['/dev/ttys005'] : [])]
+  files.set(`${STATE}/chains/ttys001.jsonl`, chained.map((tty, n) => `${JSON.stringify({ tab_id: `tab-${n}`, tty, owner: 'own' })}\n`).join(''))
   for (const [path, text] of Object.entries(over.rows ?? {})) files.set(path, text)
   const logged: string[] = []
   const runs: string[][] = []
@@ -69,11 +70,12 @@ function fake(over: Over = {}) {
   let listed = over.launcher
   const dollar = hostOf({
     plugin: { root: '/plugins/orch' },
-    env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'ORCHESTRATOR_REPORTS_TO' ? reportsTo ?? undefined : name === 'ITERM_SESSION_ID' ? 'w0t0p0:own' : undefined) },
+    env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'ORCHESTRATOR_REPORTS_TO' ? reportsTo ?? undefined : name === 'ITERM_SESSION_ID' ? (over.owner === undefined ? 'w0t0p0:own' : over.owner === null ? undefined : `w0t0p0:${over.owner}`) : undefined) },
     session: { id: async () => over.session ?? 's-agent' },
     clock: { sleep: async () => undefined },
     fs: {
       read: async (p: string) => {
+        if (over.chainFails && p.includes('/chains/')) throw new Error(`EACCES: ${p}`)
         if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
         const text = files.get(p)!
         if (over.race !== undefined && p === RECORD && !text.includes(over.race)) files.set(p, `${text}${over.race}\n`)
@@ -417,7 +419,7 @@ test('a merge says nothing of closing an agent the close command already closed:
 test('a merge says its agent still holds the open row that waits on it, or another pull request of its own, and closes nothing', async () => {
   const other = ledgerLine(21, 'working', { agent: 'Agent: p17' }, 'acme/lib')
   const holds = JSON.stringify({ id: 8, state: 'open', label: 'P17 follow-up', blocker: 'PR acme/app#17 merged', note: 'Dispatched 2026-11-15: Agent: p17' })
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${holds}\n${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n${other}\n`, ...launched('/briefs/app', 'Agent: p17', 2) }, forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${holds}\n${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n${other}\n` }, forge: { 'acme/app': '[]', 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
   const woke = await prWake(world.dollar, new Set())
   expect(woke.lines[0]).toBe('[module] acme/app#17 merged: its agent Agent: p17 still holds row 8 (app), acme/lib#21; tell it.')
   expect(closes(world.runs)).toEqual([])
@@ -554,6 +556,50 @@ test('an agent is closed on the tab of this orchestration\'s chain: another orch
   await said.settle()
   expect([said.lines, closes(alone.runs)]).toEqual([['[module] acme/app#17 is Ready: its agent Agent: p17 left open: its tab on /dev/ttys007 is on no chain of this orchestration.'], []])
   expect((await prWake(alone.dollar, told)).lines).toEqual([])
+})
+
+test('an agent whose own tab is busy waits, whatever tab of the same name another orchestration leaves idle', async () => {
+  const foreign = 'w2/t7 | /dev/ttys007 | ✳ Agent: p17 | Agent: p17'
+  const rows = { [RECORD]: `${P17_LINE}\n`, ...P17_DONE, [`${STATE}/store/sessions/s-x17`]: row('agent', 'Agent: p17 [ffffff]', '/dev/ttys007') }
+  const world = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: `w1/t0 | /dev/ttys000 | ⠂ Agent: p17 | Agent: p17\n${foreign}` })
+  const told = new Set<string>()
+  const woke = await prWake(world.dollar, told)
+  await woke.settle()
+  expect([woke.lines, closes(world.runs)]).toEqual([[], []])
+  // Idle at last on its own tab: closed there.
+  const idle = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: `${running('Agent: p17')}\n${foreign}` })
+  const then = await prWake(idle.dollar, told)
+  await then.settle()
+  expect([then.lines, closes(idle.runs)]).toEqual([[closedLine('acme/app#17', 'is Ready')], ['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout']])
+})
+
+test('a session with no chain owner closes nothing and says why once; a chain that cannot be read waits for a later tick, logged', async () => {
+  const rows = { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }
+  const ownerless = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17'), owner: null })
+  const told = new Set<string>()
+  const woke = await prWake(ownerless.dollar, told)
+  await woke.settle()
+  expect([woke.lines, closes(ownerless.runs)]).toEqual([['[module] acme/app#17 is Ready: its agent Agent: p17 left open: this session has no chain owner (ITERM_SESSION_ID, or TMUX and TMUX_PANE, unset).'], []])
+  expect((await prWake(ownerless.dollar, told)).lines).toEqual([])
+  const unread = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17'), chainFails: true })
+  const later = await prWake(unread.dollar, new Set())
+  await later.settle()
+  expect([later.lines, closes(unread.runs)]).toEqual([[], []])
+  expect(unread.logged.some(line => line.includes('the chain of /dev/ttys001 unread'))).toBe(true)
+})
+
+test('an agent whose tree turned dirty between its wake and the close is left open and told once; its merged line is archived', async () => {
+  const over: Over = { session: 's-orch', reportsTo: null, rows: { [RECORD]: `${mergedLine}\n`, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') }
+  const world = fake(over)
+  const told = new Set<string>()
+  const woke = await prWake(world.dollar, told)
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'merged')])
+  over.dirty = ' M a.ts\n'
+  await woke.settle()
+  expect(closes(world.runs)).toEqual([])
+  expect(world.files.get(RECORD)).not.toContain('"pr":17')
+  expect((await prWake(world.dollar, told)).lines).toEqual(['[module] Agent: p17 (acme/app#17): left open: tree not clean in /work/s-p17 (1 paths changed, 0 commits unpushed).'])
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
 })
 
 test('an agent whose host is busy, whose host record is missing, or whose session row is on another tty is not closed: tried again later', async () => {
