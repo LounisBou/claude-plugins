@@ -817,6 +817,137 @@ test('an agent that fails, runs in the background or is refused leaves its findi
   expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 0 })))?.['result']).toContain('returned no readable findings block')
 })
 
+// ── an agent the host ran in the background ──
+// The shapes of the review session of geonative-api#1878 (2026-11-18): each norms agent was
+// launched in the background, the Agent call answered with core's launch record, and the agent
+// handed its report back by calling SubagentHandback in its own loop, its id as `agentId`, its
+// report as `message`; core answered whether the report reached the session.
+
+const PATTERN = 'norms:norms-pattern-conformity'
+const PATTERN_ID = 'aa6b9ab1d01edda59'
+const launch = (agentId: string, description: string) => ({
+  ref: 1,
+  result: { isAsync: true, status: 'async_launched', agentId, description, resolvedModel: 'claude-sonnet-5-5' },
+})
+const DELIVERED = { ref: 1, result: { success: true, message: 'Report delivered to your caller.' }, text: '{"success":true,"message":"Report delivered to your caller."}' }
+const NOT_SENT = { ref: 1, result: { success: false, message: 'Nothing was sent: an earlier report of yours was already delivered.' }, text: 'Nothing was sent.' }
+// The pattern agent's hand-back, its prose cut short; its block as it came.
+const PATTERN_REPORT = [
+  'The changed code follows the established patterns, with one warning and three infos. I changed nothing.',
+  '',
+  '### WARNING [project] [api-platform] Processors delegate persistence to the wrapped PersistProcessor, `src/Admin/Api/State/SmsDispatchProcessor.php:67-71,98`',
+  '- **Suggestion**: Inject `PersistProcessor $persister` and call `$this->persister->process(...)` for both writes.',
+  '',
+  '```json',
+  '{"findings": [',
+  '{"severity": "warning", "file": "src/Admin/Api/State/SmsDispatchProcessor.php", "summary": "[project] [api-platform] Processor persists and flushes the entity manager itself"},',
+  '{"severity": "info", "file": "src/Admin/Api/State/SmsDispatchProcessor.php", "summary": "[project] [commits-and-comments] Class docblock is a ~14-line design explanation"},',
+  '{"severity": "info", "file": "src/Admin/Api/Validator/SmsDispatch/HasOneRecipient.php", "summary": "[project] [code-rules] New CLASS_CONSTRAINT getTargets() has no unit test"},',
+  '{"severity": "info", "file": "src/Admin/Api/State/SmsDispatchProcessor.php", "summary": "[project] [commits-and-comments] Inline literals \'application/problem+json\' / \'about:blank\'"}',
+  ']}',
+  '```',
+].join('\n')
+// The first run's diff-scope hand-back: a report without a block.
+const BLOCKLESS_REPORT = 'COMPLIANT: All changes are minimal and related to the branch purpose.\nFiles changed: 17 (all relevant).'
+
+function background(m: ReturnType<typeof mounted>) {
+  return {
+    handBack: (d: World, agentId: string, message: string, answer: unknown = DELIVERED) =>
+      hook(m.hooks, 'tool.call', { tool: 'SubagentHandback' }).handler(d, { tool: 'SubagentHandback', agentId, message }, async () => answer),
+    // Every turn.complete hook of the module, as the host runs them at the end of the agent's turn.
+    ended: async (d: World, agentId: string, answer: string, reason = 'answer') => {
+      for (const h of hooksOn(m.hooks, 'turn.complete')) await h.handler(d, { agentId, reason, answer, turnId: 't' }, nextOf().next)
+    },
+  }
+}
+
+test('an agent run in the background is read from its SubagentHandback call: its findings are the record\'s', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  const b = background(m)
+  await m.scope($)
+  const launched = launch(PATTERN_ID, 'Norms: pattern conformity')
+  expect(await m.agent($, PATTERN, launched)).toBe(launched)
+  // Still running: its findings are not known yet.
+  expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 0 })))?.['isError']).toBe(true)
+  const answer = await b.handBack($, PATTERN_ID, PATTERN_REPORT)
+  expect(answer).toBe(DELIVERED)
+  // Its turn ends after the hand-back, on a last answer that holds no block: the report stands.
+  await b.ended($, PATTERN_ID, 'Report handed back.')
+  const lie = await m.raw($, { open: 0, fixed: 0, passed: 0 })
+  expect(fieldsOf(lie)?.['result']).toContain('the agents reported 4 finding(s)')
+  await m.raw($, { open: 0, fixed: 0, passed: 4 })
+  expect(recordCalls(calls).map(c => c['result'])).toEqual(['pass'])
+})
+
+test('an agent run in the background that ends its turn without a hand-back is read from its last answer', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  const b = background(m)
+  await m.scope($)
+  await m.agent($, PATTERN, launch(PATTERN_ID, 'Norms: pattern conformity'))
+  await b.ended($, PATTERN_ID, PATTERN_REPORT)
+  await m.raw($, { open: 0, fixed: 0, passed: 4 })
+  expect(recordCalls(calls).length).toBe(1)
+})
+
+test('a background agent that hands back no block, fails, or whose hand-back reached no one leaves its findings unknown', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  const b = background(m)
+  await m.scope($)
+  const unknown = async () => fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 0 })))?.['result']
+  await m.agent($, SCOPE_AGENT, launch('a7bdad4b3b46ee92f', 'Norms: diff scope'))
+  await b.handBack($, 'a7bdad4b3b46ee92f', BLOCKLESS_REPORT)
+  await b.ended($, 'a7bdad4b3b46ee92f', '')
+  expect(await unknown()).toContain(`${SCOPE_AGENT} returned no readable findings block`)
+  // A turn that ends in error is no report.
+  await m.agent($, SCOPE_AGENT, launch('a2', 'Norms: diff scope'))
+  await b.ended($, 'a2', block([]), 'error')
+  expect(await unknown()).toContain(`${SCOPE_AGENT} returned no readable findings block`)
+  // A hand-back core did not deliver is not read.
+  await m.agent($, SCOPE_AGENT, launch('a3', 'Norms: diff scope'))
+  await b.handBack($, 'a3', block([]), NOT_SENT)
+  expect(await unknown()).toContain(`${SCOPE_AGENT} returned no readable findings block`)
+  expect(recordCalls(calls)).toEqual([])
+})
+
+test('a hand-back of an agent the check did not launch, or one a later run replaced, fills no report', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  const b = background(m)
+  await m.scope($)
+  await m.agent($, PATTERN, launch('old', 'Norms: pattern conformity'))
+  await m.agent($, PATTERN, launch(PATTERN_ID, 'Norms: pattern conformity'))
+  // The first run's late hand-back, and one of an agent of no check, are not the check's.
+  await b.handBack($, 'old', block([]))
+  await b.handBack($, 'stranger', block([]))
+  expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 0 })))?.['result']).toContain(`${PATTERN} returned no readable findings block`)
+  await b.handBack($, PATTERN_ID, PATTERN_REPORT)
+  await m.raw($, { open: 0, fixed: 0, passed: 4 })
+  expect(recordCalls(calls).length).toBe(1)
+})
+
+test('a new scope forgets the agents running in the background', async () => {
+  resetCache()
+  const { $ } = setup()
+  const m = mounted()
+  const b = background(m)
+  await m.scope($)
+  await m.agent($, PATTERN, launch(PATTERN_ID, 'Norms: pattern conformity'))
+  await m.scope($)
+  await b.handBack($, PATTERN_ID, PATTERN_REPORT)
+  expect(fieldsOf((await m.raw($, { open: 0, fixed: 0, passed: 4 })))?.['result']).toContain('no norms agent has reported')
+})
+
 test('an agent of another plugin is not a norms agent: its answer is passed on unread', async () => {
   resetCache()
   const { $ } = setup()

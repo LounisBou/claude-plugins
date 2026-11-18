@@ -61,17 +61,64 @@ export function agentText(answer: unknown): string {
   return body['handback'] === 'withheld' ? '' : textParts(body['content'])
 }
 
+// The id of an agent the host launched in the background, from core's record of the launch.
+export function launchedId(answer: unknown): string | undefined {
+  const body = isObject(answer) ? answer['result'] : undefined
+  const id = isObject(body) && body['status'] === 'async_launched' ? body['agentId'] : undefined
+  return typeof id === 'string' && id !== '' ? id : undefined
+}
+
 // The reports of the running check, by agent type: null for an agent whose answer held no readable
 // block. An agent that runs again replaces its report. Memory of the module, like the pass of
 // pr-review's loop: a restart loses it, and check_done then asks for the agents again.
 const reports = new Map<string, Finding[] | null>()
 
+// The agents of the running check the host runs in the background, by id: their type, and whether
+// their current turn already handed its report back. Their Agent call answered only with their
+// launch; the report comes later, from the agent's own loop.
+const background = new Map<string, { agent: string; isHandedBack: boolean }>()
+
 export function noteReport(agent: string, findings: Finding[] | null): void {
   reports.set(agent, findings)
 }
 
+/**
+ * A run of a norms agent, its report read from the Agent call's answer (null until a background
+ * agent hands it back). The run replaces any earlier one of its type still in the background: a
+ * late report of the earlier run is not the check's.
+ */
+export function noteRun(agent: string, findings: Finding[] | null, launched?: string): void {
+  for (const [id, run] of background) if (run.agent === agent) background.delete(id)
+  if (launched !== undefined) background.set(launched, { agent, isHandedBack: false })
+  noteReport(agent, findings)
+}
+
+/** The report a background agent of the check handed back from its own loop, and core delivered. */
+export function noteHandback(id: string, report: string): void {
+  const run = background.get(id)
+  if (run === undefined) return
+  run.isHandedBack = true
+  noteReport(run.agent, reportOf(report))
+}
+
+/**
+ * The end of a background agent's turn: a turn that handed its report back is read already; one
+ * that ended without a hand-back reports its last answer, and one that ended otherwise (an error,
+ * an abort) reports nothing.
+ */
+export function noteEnd(id: string, reason: string, answer: string): void {
+  const run = background.get(id)
+  if (run === undefined) return
+  if (run.isHandedBack) {
+    run.isHandedBack = false
+    return
+  }
+  noteReport(run.agent, reason === 'answer' ? reportOf(answer) : null)
+}
+
 export function resetReports(): void {
   reports.clear()
+  background.clear()
 }
 
 // A finding with the agent type that reported it.
