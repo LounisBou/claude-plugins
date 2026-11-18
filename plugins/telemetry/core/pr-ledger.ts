@@ -16,6 +16,9 @@ export const PR_LEDGER_CONTRACT = {
 
 export const LEDGER_VERSION = PR_LEDGER_CONTRACT.version
 
+/** How many agents put to work on a pull request before its last one a working line keeps. */
+export const LEDGER_EARLIER_KEPT = 8
+
 /** A wait not set again within this long no longer attends its pull request. */
 export const UNATTENDED_AFTER_MS = 30 * 60 * 1000
 
@@ -30,6 +33,12 @@ export interface LedgerLine {
   readonly status: LedgerStatus
   /** working: the agent's session name. */
   readonly agent?: string
+  /**
+   * working: the agents put to work on it before `agent`, the newest first, each once (a reviewer
+   * put on the line of an implementer still running leaves the implementer here): while any runs,
+   * the pull request is attended.
+   */
+  readonly earlier?: readonly string[]
   /** waiting: what it waits on. */
   readonly on?: string
   /** parked: the operator's words, dated. */
@@ -114,7 +123,8 @@ export function parseLedgerLine(raw: unknown): LedgerLine | undefined {
   const key = DETAIL[status]
   const detail = r[key]
   if (!filled(detail)) return undefined
-  return { v, ledger: 'pr', repo, pr, status, [key]: detail, since, updated }
+  const earlier = status === 'working' && Array.isArray(r['earlier']) ? r['earlier'].filter(filled) : []
+  return { v, ledger: 'pr', repo, pr, status, [key]: detail, ...(earlier.length > 0 ? { earlier } : {}), since, updated }
 }
 
 /** The ledger lines of a record's text, the last one of each pull request standing; rows and broken lines left out. */
@@ -145,7 +155,13 @@ export function ledgerLineOf(set: LedgerSet, now: Date, previous?: LedgerLine): 
   const detail = (set as unknown as Record<string, string>)[key] ?? ''
   const same = previous !== undefined && previous.status === set.status && previous[key] === detail
   const at = stamp(now)
-  return { v: LEDGER_VERSION, ledger: 'pr', repo: set.repo, pr: set.pr, status: set.status, [key]: detail, since: same ? previous.since : at, updated: at }
+  // A working line put on another agent keeps the one before it, and those it kept, the new one left out.
+  const before = previous?.status === 'working' && set.status === 'working' ? [previous.agent ?? '', ...(previous.earlier ?? [])] : []
+  const earlier = [...new Set(before.filter(agent => agent !== '' && agent !== detail))].slice(0, LEDGER_EARLIER_KEPT)
+  return {
+    v: LEDGER_VERSION, ledger: 'pr', repo: set.repo, pr: set.pr, status: set.status, [key]: detail, ...(earlier.length > 0 ? { earlier } : {}),
+    since: same ? previous.since : at, updated: at,
+  }
 }
 
 function keyOfText(raw: string): string | undefined {
@@ -201,6 +217,11 @@ export const HOLD_LABEL = 'On Hold'
 
 const hasLabel = (open: OpenPr, label: string): boolean => (open.labels ?? []).some(name => name.trim().toLowerCase() === label.toLowerCase())
 
+/** The agents a working line names: its agent, then those put to work on it before; none for any other status. */
+export function agentsOf(line: LedgerLine): string[] {
+  return line.status === 'working' ? [line.agent ?? '', ...(line.earlier ?? [])].filter(agent => agent !== '') : []
+}
+
 /** Whether a wait's words name the operator: his merge, his gesture, his ruling. */
 export function waitsOnOperator(on: string | undefined): boolean {
   return /(?<![\p{L}])(operator|opérateur|operateur|ton|toi|his|him)(?![\p{L}])/iu.test(on ?? '')
@@ -233,7 +254,7 @@ export function unattended(input: {
     if (open === undefined || line.status === 'parked') continue
     const onHim = line.status === 'waiting' && waitsOnOperator(line.on)
     if (!onHim) {
-      if (line.status === 'working' && input.live.has(line.agent ?? '')) continue
+      if (line.status === 'working' && agentsOf(line).some(agent => input.live.has(agent))) continue
       if (isFreshWait(line, input.now)) continue
     }
     const conflict = open.mergeable === 'CONFLICTING'

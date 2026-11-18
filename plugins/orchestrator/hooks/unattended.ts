@@ -6,7 +6,7 @@
 // the orchestrator on a pull request merged, closed or entering the anomaly. Every read is bounded;
 // one that fails is said, never a refusal.
 import {
-  archiveOf, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
+  agentsOf, archiveOf, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
@@ -151,7 +151,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
     if (seen === null) await logLine($, 'unattended', "the launcher's listing unread: every agent a line names is taken for running, no row is named ready")
     return seen
   }
-  const named = new Set([...kept, ...ended.map(e => e.line)].flatMap(line => (line.status === 'working' && line.agent ? [line.agent] : [])))
+  const named = new Set([...kept, ...ended.map(e => e.line)].flatMap(agentsOf))
   const live = named.size > 0 ? await running() ?? named : named
   const list = unattended({ open, lines: kept, live, now })
   const texts = own.map(record => record.text)

@@ -482,6 +482,13 @@ test('a conflict is told once per head and base head, again only when either mov
   expect((await prWake(conflicting('MERGEABLE', 'e'.repeat(40), 'd'.repeat(40)).dollar, told)).lines).toEqual([])
 })
 
+test('a conflict names the agent put on the pull request before when the one named last no longer runs', async () => {
+  const reviewed = JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr: 17, status: 'working', agent: 'Agent: review 17 r1', earlier: ['Agent: p17'], since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:30:00Z' })
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${reviewed}\n`, ...P17_SESSION },
+    forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', mergeable: 'CONFLICTING' }]) }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([CONFLICT_LINE])
+})
+
 test('a mergeability the forge still computes (UNKNOWN) is no conflict: nothing is told', async () => {
   expect((await prWake(conflicting('UNKNOWN').dollar, new Set())).lines).toEqual([])
   expect((await prWake(conflicting('MERGEABLE').dollar, new Set())).lines).toEqual([])

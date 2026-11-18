@@ -629,6 +629,16 @@ test('a journal that cannot be written is said, and the command stands', async (
   assert.match(d.err.join(''), /audit: the journal could not be written/)
 })
 
+test('a pull request put to work on another agent keeps the one before it on its line: a reviewer does not drop the implementer', async () => {
+  await withGoals()
+  const r = rec()
+  await cli(['open', r, '--class', 'c', '--tier', 'deep'])
+  assert.equal(await cli(['pr', r, 'acme/app#12', '--working', 'Agent: versioning']), '0|acme/app#12 en cours (agent Agent: versioning)\n|')
+  assert.equal(await cli(['pr', r, 'acme/app#12', '--working', 'Agent: review 12 r1']), '0|acme/app#12 en cours (agent Agent: review 12 r1)\n|')
+  const held = readFileSync(r, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>).find(line => line['pr'] === 12)
+  assert.deepEqual([held?.['agent'], held?.['earlier']], ['Agent: review 12 r1', ['Agent: versioning']])
+})
+
 test('a pull request\'s line in the ledger: set, kept beside the rows, archived beside the record', async () => {
   await withGoals()
   const r = rec()
