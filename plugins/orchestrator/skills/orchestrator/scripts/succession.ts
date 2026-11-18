@@ -285,6 +285,7 @@ export function readyNote(
   agent: string, ledger: readonly LedgerLine[], ended: (repo: string, pr: number) => boolean, readyHead: (repo: string, pr: number) => string | undefined,
 ): string | undefined {
   const kept = ledger.filter(line => !ended(line.repo, line.pr))
+  if (bareName(agent) === '') return undefined
   const mine = (name: string): boolean => bareName(name).toLowerCase() === bareName(agent).toLowerCase()
   const ready = kept.filter(line => line.status === 'working' && mine(line.agent ?? '') && readyHead(line.repo, line.pr) !== undefined)
   if (ready.length === 0) return undefined
@@ -616,7 +617,9 @@ export function readOpen(
     .flatMap(tty => parseChain(readText(chainPath(state, tty))).map(entry => entry.tty))
   const live = liveAgents(deck.agents, chained, listed)
   const seats = live.agents.map(agent => {
-    const ready = readyNote(agent.name, ledger, (repo, pr) => ['MERGED', 'CLOSED'].includes(prState?.(repo, pr) ?? ''), readyHead)
+    // Named only for an agent the launcher's listing shows running, as the module's wake does: one it does not show, or no listing, closes nothing.
+    const shown = listed?.some(one => one.name === agent.name || (agent.tty !== null && ttyName(one.tty) === ttyName(agent.tty))) === true
+    const ready = shown ? readyNote(agent.name, ledger, (repo, pr) => ['MERGED', 'CLOSED'].includes(prState?.(repo, pr) ?? ''), readyHead) : undefined
     const said = ready === undefined ? agent : { ...agent, ready }
     const brief = briefOf(state, agent.name)
     if (brief === undefined) return said

@@ -402,6 +402,33 @@ test('the takeover says of each running agent whose pull request is Ready that i
   ].join('; '))
 })
 
+test('the takeover reads Ready in the machine\'s pull request file by itself: two Ready pull requests of one agent, a name matched whatever its case, and no word for a wait, another label or a repository unread', () => {
+  const waiting = JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr: 34, status: 'waiting', on: 'the operator', since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:00:00Z' })
+  const rows = [ledger('acme/app', 31, 'Agent: duo'), ledger('acme/app', 32, 'Agent: duo'), ledger('acme/app', 33, 'Agent: held'), waiting, ledger('acme/lib', 7, 'Agent: far')].join('\n') + '\n'
+  const w = world({
+    rows, prs: {},
+    listed: [row('/dev/ttys005', NAME), row('/dev/ttys004', 'Agent: Duo'), row('/dev/ttys006', 'Agent: held'), row('/dev/ttys007', 'Agent: far')],
+    deck: deckOf([seated(NAME, '/dev/ttys005', ['Agent: Duo', 'Agent: held', 'Agent: far'])]),
+  })
+  const at = (n: number, label: string) => ({ repo: 'acme/app', pr: n, state: 'OPEN', draft: false, head: `b${n}`, sha: `${n}`.repeat(7), author: null, createdAt: null, labels: [label], mergeable: null, fork: null })
+  writeFileSync(join(w.state, 'prs.json'), JSON.stringify({ v: 1, at: NOW.toISOString(), tried: NOW.toISOString(), viewer: 'me', repos: ['acme/app'], unread: ['acme/lib'], prs: [at(31, 'Ready'), at(32, 'Ready'), at(33, 'Not Ready'), at(34, 'Ready')] }))
+  assert.equal(w.run('--tty', '/dev/ttys005'), 0)
+  const agents = /- Agents running \(name and reference, brief path\): (.*)\n/.exec(w.text())?.[1] ?? ''
+  assert.equal(agents, 'Agent: Duo (ttys004) — Ready: close it (acme/app#31, acme/app#32); Agent: held (ttys006); Agent: far (ttys007)')
+})
+
+test('the takeover names no agent to close that the launcher\'s listing does not show running, nor any when the listing cannot be read', () => {
+  const ready = (): string => 'a'.repeat(40)
+  const rows = [ledger('acme/app', 31, 'Agent: shown'), ledger('acme/app', 32, 'Agent: unlisted')].join('\n') + '\n'
+  const deck = deckOf([seated(NAME, '/dev/ttys005', ['Agent: shown', 'Agent: unlisted'])])
+  const listed = world({ rows, deck, readyHead: ready, listed: [row('/dev/ttys005', NAME), row('/dev/ttys004', 'Agent: shown')] })
+  assert.equal(listed.run('--tty', '/dev/ttys005'), 0)
+  assert.match(listed.text(), /: Agent: shown \(ttys004\) — Ready: close it \(acme\/app#31\); Agent: unlisted\n/)
+  const unread = world({ rows, deck, readyHead: ready })
+  assert.equal(unread.run('--tty', '/dev/ttys005'), 0)
+  assert.match(unread.text(), /: Agent: shown; Agent: unlisted\n/)
+})
+
 test('two orchestrators of one name during a handover: the deck row on the predecessor\'s tty is read, the successor\'s is not', () => {
   const deck = JSON.stringify(deckOf([seated(NAME, '/dev/ttys009', []), seated(NAME, '/dev/ttys005', ['Agent: p10', 'Agent: p17'])]))
   assert.deepEqual(deckOpen(deck, NAME, '/dev/ttys005').agents.map(a => a.name), ['Agent: p10', 'Agent: p17'])
