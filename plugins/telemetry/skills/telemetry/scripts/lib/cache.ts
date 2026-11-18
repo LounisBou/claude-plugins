@@ -18,6 +18,8 @@ export interface ApiCall {
   readonly message: string
   readonly request: string | undefined
   readonly model: string | undefined
+  /** The reasoning effort its entry names; not an `api_call` field. */
+  readonly effort?: string | undefined
   stopReason: string | undefined
   readonly start: number
   end: number
@@ -30,10 +32,11 @@ const ENTRY = /"type": ?"(?:assistant|user)"/
 
 /**
  * The calls of a transcript's lines, in order. A response written in several entries (one per content
- * block) is one call. A call whose entry has no timestamp, a synthetic answer, a subagent's entry and
- * a call before any prompt are left out.
+ * block) is one call. A call whose entry has no timestamp, a synthetic answer, a subagent's entry
+ * (unless `sidechain`: a subagent's own transcript, all of whose entries are one) and a call before
+ * any prompt are left out.
  */
-export function apiCalls(lines: string): ApiCall[] {
+export function apiCalls(lines: string, { sidechain = false }: { sidechain?: boolean } = {}): ApiCall[] {
   const calls = new Map<string, ApiCall>()
   let prompt: string | undefined
   for (const line of lines.split('\n')) {
@@ -44,7 +47,7 @@ export function apiCalls(lines: string): ApiCall[] {
     } catch {
       continue
     }
-    if (entry['isSidechain'] === true) continue
+    if (entry['isSidechain'] === true && !sidechain) continue
     if (entry['type'] === 'user') {
       prompt = text(entry['promptId']) ?? prompt
       continue
@@ -69,7 +72,7 @@ export function apiCalls(lines: string): ApiCall[] {
       seen.tools.push(...tools)
       continue
     }
-    calls.set(id, { prompt, message: id, request: text(entry['requestId']), model, stopReason, start: at, end: at, usage, tools })
+    calls.set(id, { prompt, message: id, request: text(entry['requestId']), model, effort: text(entry['effort']), stopReason, start: at, end: at, usage, tools })
   }
   return [...calls.values()]
 }
@@ -80,6 +83,13 @@ export function callFields(call: ApiCall): Fields {
     prompt: call.prompt, message: call.message, request: call.request, model: call.model, stop_reason: call.stopReason, end: new Date(call.end).toISOString(),
     usage: call.usage, ...(call.tools.length > 0 ? { tools: call.tools } : {}),
   }
+}
+
+/** The token sums of `calls`, as a session's `totals` name them. */
+export function callTotals(calls: readonly ApiCall[]): { in: number; out: number; cache_read: number; cache_write: number } {
+  const count = (call: ApiCall, key: string): number => (typeof call.usage[key] === 'number' && Number.isFinite(call.usage[key]) ? call.usage[key] : 0)
+  const sum = (key: string): number => calls.reduce((total, call) => total + count(call, key), 0)
+  return { in: sum('input_tokens'), out: sum('output_tokens'), cache_read: sum('cache_read_input_tokens'), cache_write: sum('cache_creation_input_tokens') }
 }
 
 /** The tail read starts at this size and doubles while the turn is not wholly in it. */

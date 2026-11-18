@@ -373,3 +373,30 @@ test('backfill --calls: one api_call per call of the transcript beside the summa
     assert.equal(events.filter(e => e['event'] === 'session_summary').length, 2)
   })
 })
+
+/** The same two turns, as a subagent's transcript writes them: every entry a sidechain one, with its effort. */
+const SUBAGENT_LINES = CALL_LINES.split('\n').map(l => JSON.stringify({ ...JSON.parse(l) as Record<string, unknown>, isSidechain: true, agentId: 'a1', effort: 'low' })).join('\n')
+const closedLine = (extra: Record<string, unknown> = {}): string => JSON.stringify({ v: 1, ts: '2026-11-17T11:10:10.000Z', event: 'agent_closed', session: S, kind: 'subagent', child: 'a1', run: 2, duration_ms: 20_000, reason: 'answer', role: 'agent', ...extra })
+
+test('append: a subagent\'s agent_closed takes its type, task, model, effort and the token sums of the run that ended, from its transcript; one the transcript does not hold is as it came', () => {
+  harness((config, deps, setStdin) => {
+    const dir = join(config, 'projects', '-w', S, 'subagents')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(config, 'projects', '-w', `${S}.jsonl`), `${CALL_LINES}\n`)
+    writeFileSync(join(dir, 'agent-a1.jsonl'), `${SUBAGENT_LINES}\n`)
+    writeFileSync(join(dir, 'agent-a1.meta.json'), JSON.stringify({ agentType: 'orchestrator:lens', description: 'Lens: correctness', pickedEffortModel: 'claude-opus-5-5' }))
+    for (const line of [closedLine({ child: 'a9' }), closedLine({ kind: 'session', child: undefined, title: 'Agent: x' }), closedLine({ session: '00000000-0000-0000-0000-000000000000' })]) assert.equal(enrich(line, config), line)
+    const first = JSON.parse(enrich(closedLine({ ts: '2026-11-17T10:00:03.000Z', run: 1, duration_ms: 5_000 }), config)) as Record<string, unknown>
+    assert.deepEqual([first['calls'], first['totals']], [1, { in: 2, out: 9, cache_read: 0, cache_write: 30000 }])
+    setStdin(`${closedLine()}\n`)
+    assert.equal(run(['append', '--config', config], deps), 0)
+    const lines = readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    assert.equal(lines.length, 1)
+    const closed = lines[0] ?? {}
+    assert.deepEqual(
+      [closed['subagent_type'], closed['description'], closed['models'], closed['effort'], closed['calls'], closed['totals'], closed['role']],
+      ['orchestrator:lens', 'Lens: correctness', ['claude-opus-5-5'], 'low', 2, { in: 6, out: 25, cache_read: 31000, cache_write: 31200 }, 'agent'],
+    )
+    assert.ok(!JSON.stringify(lines).includes('never kept'))
+  })
+})
