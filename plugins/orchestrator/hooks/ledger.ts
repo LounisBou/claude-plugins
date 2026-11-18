@@ -135,7 +135,7 @@ function namesMerged(ref: string, merged: { repo: string | null; pr: number }): 
 }
 
 // The open rows of a record's text that wait on the merged pull request: their blocker or their
-// note names it. A row the operator deferred has no agent to tell.
+// note names it, each with the agent its `agent` field names. A row the operator deferred has no agent to tell.
 export function waitingRows(text: string, merged: { repo: string | null; pr: number }): { id: number; label: string; agent: string | null }[] {
   const found: { id: number; label: string; agent: string | null }[] = []
   for (const line of text.split('\n')) {
@@ -146,11 +146,11 @@ export function waitingRows(text: string, merged: { repo: string | null; pr: num
       continue
     }
     if (typeof row !== 'object' || row === null || isLedgerMarked(row)) continue
-    const { id, label, state, blocker, note, deferred } = row as Record<string, unknown>
+    const { id, label, state, blocker, note, deferred, agent: held } = row as Record<string, unknown>
     if (typeof id !== 'number' || state !== 'open' || (typeof deferred === 'string' && deferred.trim() !== '')) continue
     const said = [blocker, note].filter((part): part is string => typeof part === 'string').join(' ')
     if (!prRefsOf(said).some(ref => namesMerged(ref, merged))) continue
-    const agent = typeof note === 'string' ? /\bAgent: [^,;()«»]+/.exec(note)?.[0].trim() ?? null : null
+    const agent = typeof held === 'string' && held.trim() !== '' ? held.trim() : null
     found.push({ id, label: typeof label === 'string' ? label : '', agent })
   }
   return found
@@ -219,10 +219,10 @@ const holdsRow = (text: string, id: number): boolean => text.split('\n').some(li
 })
 
 /*
- * The open rows whose note names the agent (`Held by Agent: <name>`, `Dispatched …: Agent: <name>`) besides its own:
+ * The open rows whose `agent` field names the agent (`dispatch-record.sh agent`) besides its own:
  * another subject it was put on, which keeps it open at the Ready or the merge of its pull request. Its own row is the
  * one its brief was printed for, as the takeover reads it (in the record beside that brief, else of that id in any
- * record); an agent whose brief names no row owns the one row its note names that waits on no blocker (one that waits is a
+ * record); an agent whose brief names no row owns the one row that names it and waits on no blocker (one that waits is a
  * follow-up), and of several, none is told apart.
  */
 async function otherRowsOf($: Held, agent: string, records: readonly RecordText[]): Promise<HeldRow[]> {
@@ -438,7 +438,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   }
   // A Ready pull request's agent is done with it: acted on once per Ready head, so an agent resumed for a fix is closed again only at
   // the next head; one not done yet is tried again at the next tick. One the forge reads conflicting is no longer ready to merge.
-  // It holds another pull request, or a row its note names besides the row of its brief: told, not closed.
+  // It holds another pull request, or a row naming it in its `agent` field besides the row of its brief: told, not closed.
   for (const line of reading.atReady) {
     if (reading.forge.get(prKey(line.repo, line.pr))?.mergeable === 'CONFLICTING') continue
     const pk = prKey(line.repo, line.pr)

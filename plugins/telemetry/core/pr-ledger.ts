@@ -447,10 +447,12 @@ export function blockerFallen(blocker: unknown, now: number): boolean {
 /**
  * The open rows ready with nobody on them: a fallen blocker (`blockerFallen`, at `now`), and neither a live
  * agent (`live`, the session names the launcher lists running) nor an open pull request (`lines`, the ledger's)
- * naming the row. A row the operator deferred is listed, flagged `deferred`, only once its `until` blocker has
- * passed; with any other blocker it is never listed. A session or a pull request names a row by the row's keyword in the
- * agent's subject (a whole word of it), or by the row's note: `Agent: <subject>` of a live session, `<repo>#<n>` of a
- * line. `texts` are the dispatch records' texts; the ledger's lines and any other line are no row.
+ * on the row. A row names its agent in its `agent` field, written by the launcher at the spawn of its brief
+ * (`dispatch-record.sh agent`): the agent holds the row while a live session bears that name, and the pull
+ * requests it is put on (`agent`, `earlier`) hold it too; a row whose note names a pull request, `<repo>#<n>` of
+ * a line, is held by it. A row the operator deferred is listed, flagged `deferred`, only once its `until` blocker
+ * has passed; with any other blocker it is never listed. `texts` are the dispatch records' texts; the ledger's
+ * lines and any other line are no row.
  */
 export function readyRows(input: {
   readonly texts: readonly string[]
@@ -479,12 +481,9 @@ export function readyRows(input: {
       const words = typeof label === 'string' ? label.trim() : ''
       const keyword = /^[^\s:]+/u.exec(words)?.[0] ?? ''
       const held = (typeof note === 'string' ? note : '').toLowerCase()
-      const wanted = keyword.toLowerCase()
-      // A whole word of the agent's subject: `fix` is not held by `address-bug`.
-      const spelled = (text: string): string => ` ${text.replace(/[^a-z0-9]+/g, ' ').trim()} `
-      const named = (subject: string | null): boolean => subject !== null && wanted !== '' && spelled(subject).includes(spelled(wanted))
-      if (alive.some(subject => named(subject) || spelled(held).includes(spelled(`agent: ${subject}`)))) continue
-      if (input.lines.some(line => agentsOf(line).some(agent => named(agentSubject(agent))) || new RegExp(`(?<![a-z0-9._-])${(line.repo.split('/')[1] ?? '').replace(/\./g, '\\.')}#${line.pr}(?![0-9])`, 'i').test(held))) continue
+      const agent = agentSubject(typeof row['agent'] === 'string' ? row['agent'] : undefined)
+      if (agent !== null && alive.includes(agent)) continue
+      if (input.lines.some(line => (agent !== null && agentsOf(line).some(name => agentSubject(name) === agent)) || new RegExp(`(?<![a-z0-9._-])${(line.repo.split('/')[1] ?? '').replace(/\./g, '\\.')}#${line.pr}(?![0-9])`, 'i').test(held))) continue
       ready.push({ id, keyword: keyword === '' ? 'no keyword' : keyword, subject: subjectOf(words), ...(putOff ? { deferred: true as const } : {}) })
     }
   }
