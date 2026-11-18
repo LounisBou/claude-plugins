@@ -257,13 +257,16 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // archive that failed is not told again at every tick; what is no longer either is dropped.
   // The reading holds only the orchestration's own pull requests: one no record names is nobody's.
   const anomalies = reading.list.filter(u => u.waits === undefined)
-  // A conflict the anomaly does not already say: the pull request its agent still works on, or a fresh wait holds.
-  // One the forge still computes (`UNKNOWN`, after its base moved) keeps what was told of its head and base head.
+  // A conflict the anomaly does not already say: the pull request its agent still works on, or a fresh wait holds;
+  // one the operator parked is his; one a file written before the base was read waits for its next refresh.
+  // What was told of a head and base head is kept while the forge does not read it mergeable: still computing
+  // (`UNKNOWN`, after its base moved), or in the anomaly for a while.
   const inAnomaly = new Set(anomalies.map(u => prKey(u.repo, u.pr)))
-  const conflicts = [...reading.forge].filter(([key, pr]) => pr.mergeable === 'CONFLICTING' && !inAnomaly.has(key))
-  const computing = [...reading.forge].filter(([, pr]) => pr.mergeable !== 'CONFLICTING' && pr.mergeable !== 'MERGEABLE')
+  const parked = new Set(reading.kept.filter(line => line.status === 'parked').map(line => prKey(line.repo, line.pr)))
+  const conflicts = [...reading.forge].filter(([key, pr]) => pr.mergeable === 'CONFLICTING' && pr.baseSha !== undefined && !inAnomaly.has(key) && !parked.has(key))
+  const unmerged = [...reading.forge].filter(([, pr]) => pr.mergeable !== 'MERGEABLE')
   const current = new Set([...anomalies.map(u => prKey(u.repo, u.pr)), ...reading.ended.map(e => `${prKey(e.line.repo, e.line.pr)} ended`),
-    ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...[...conflicts, ...computing].map(([key, pr]) => conflictKey(key, pr))])
+    ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...unmerged.map(([key, pr]) => conflictKey(key, pr))])
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
@@ -298,7 +301,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     if (told.has(conflictKey(key, pr))) continue
     told.add(conflictKey(key, pr))
     const line = reading.kept.find(kept => prKey(kept.repo, kept.pr) === key)
-    const agent = line?.status === 'working' ? line.agent : undefined
+    // Its agent is named only while the launcher lists it running, as a merge names it.
+    const agent = line?.status === 'working' && line.agent !== undefined && reading.live.has(line.agent) ? line.agent : undefined
     lines.push(conflictLine({ repo: pr.repo, pr: pr.pr, base: pr.base ?? '', agent, session: agent === undefined ? undefined : await sessionOf($, agent) }))
   }
   for (const u of anomalies) {
