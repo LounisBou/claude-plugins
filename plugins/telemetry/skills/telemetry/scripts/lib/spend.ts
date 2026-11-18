@@ -89,12 +89,18 @@ export function titleOfSession(config: string, session: string): string | undefi
   }
 }
 
-const shorten = (name: string): string => (name.length > SPENDER_NAME_MAX ? `${name.slice(0, SPENDER_NAME_MAX - 1)}…` : name)
+/** A name for the line: control characters (a title is the operator's text, read back into a prompt and a terminal) made spaces, cut to SPENDER_NAME_MAX. */
+const shorten = (name: string): string => {
+  const plain = name.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+  return plain.length > SPENDER_NAME_MAX ? `${plain.slice(0, SPENDER_NAME_MAX - 1)}…` : plain
+}
 
 /** The one line: the rate against the threshold, and the biggest spenders. */
-export function spendLine(rate: number, threshold: number, over: boolean, top: readonly Spender[]): string {
+export function spendLine(rate: number, threshold: number, over: boolean, top: readonly Spender[], unpriced = 0): string {
   const head = `spend ${Math.round(rate)} $/h over the last hour, ${over ? 'past' : 'under'} ${Math.round(threshold)} $/h`
-  return top.length === 0 || !over ? head : `${head} — top: ${top.map(s => `${shorten(s.name)} ${Math.round(s.usd)} $`).join(', ')}`
+  const spenders = top.length === 0 || !over ? head : `${head} — top: ${top.map(s => `${shorten(s.name)} ${Math.round(s.usd)} $`).join(', ')}`
+  // A model with no price is left out of the rate: said, so a missing price table is not read as a quiet machine.
+  return unpriced === 0 ? spenders : `${spenders} — ${unpriced} call(s) with no price, left out`
 }
 
 export interface SpendInput {
@@ -141,7 +147,7 @@ export function computeSpend({ events, prices, now, threshold, previous, nameOf 
   const continued = previous !== null && previous.over && previous.since !== null && now - previous.at <= SPEND_FLAG_STALE_AFTER_MS
   return {
     version: SPEND_FLAG_VERSION, at: now, window_ms: SPEND_WINDOW_MS, rate_usd_per_hour: rate, threshold_usd_per_hour: threshold, over,
-    since: over ? (continued ? (previous.since ?? now) : now) : null, calls, unpriced, top, line: spendLine(rate, threshold, over, top),
+    since: over ? (continued ? (previous.since ?? now) : now) : null, calls, unpriced, top, line: spendLine(rate, threshold, over, top, unpriced),
   }
 }
 

@@ -77,6 +77,8 @@ test('the line names the spenders only while the rate is over', () => {
   assert.equal(spendLine(55.4, 100, false, [{ session: A, name: 'x', usd: 55 }]), 'spend 55 $/h over the last hour, under 100 $/h')
   assert.equal(spendLine(500, 100, true, []), 'spend 500 $/h over the last hour, past 100 $/h')
   assert.match(spendLine(500, 100, true, [{ session: A, name: 'n'.repeat(60), usd: 400 }]), /n{39}… 400 \$$/)
+  assert.equal(spendLine(500, 100, true, [{ session: A, name: 'a\nb\u001b[2Jc', usd: 400 }]), 'spend 500 $/h over the last hour, past 100 $/h — top: a b [2Jc 400 $')
+  assert.equal(spendLine(0, 100, false, [], 3), 'spend 0 $/h over the last hour, under 100 $/h — 3 call(s) with no price, left out')
 })
 
 test('an episode keeps its start while it lasts, and starts again after a gap or a drop', () => {
