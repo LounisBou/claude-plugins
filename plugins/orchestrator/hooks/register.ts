@@ -15,7 +15,7 @@ import { register as registerUnattended } from './unattended.ts'
 import { register as registerLedger } from './ledger.ts'
 import { register as registerGateRecheck } from './gate-recheck.ts'
 import { register as registerSupervision, registerWake, registerPaneTool, registerStartState } from './supervision.ts'
-import { register as registerTodo } from './todo.ts'
+import { register as registerTodo, registerSurface as registerTodoSurface } from './todo.ts'
 import { register as registerQuestion, registerSettle } from './question.ts'
 import { register as registerReview } from './review.ts'
 import { register as registerLensIds } from './lens-ids.ts'
@@ -52,6 +52,7 @@ export function register(on: On<Mod>): void {
   registerPaneTool(on)
   registerStartState(on)
   registerTodo(on)
+  registerTodoSurface(on)
   registerQuestion(on)
   registerSettle(on)
   registerReview(on)

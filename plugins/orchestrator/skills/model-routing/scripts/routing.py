@@ -28,9 +28,9 @@ DEFAULTS_DIR = os.environ.get("ORCHESTRATOR_ROUTING_DEFAULTS") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "defaults")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TIERS = ("deep", "standard", "light")
-# The cost rule, as data the hooks module prices the deck with: the JSON value after the marker.
+# The cost rule, as data the hooks module prices the deck with (core's usage-cost.ts, the plugin's copy): the JSON value after the marker.
 COST_RULE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))))), "hooks", "usage.ts")
+    os.path.abspath(__file__))))), "core", "usage-cost.ts")
 COST_RULE_MARKER = "export const COST_RULE: CostRule = "
 
 
@@ -72,7 +72,7 @@ def session_transcripts(session):
 
 
 def cost_rule():
-    """COST_RULE of hooks/usage.ts, checked to name what the arithmetic below reads."""
+    """COST_RULE of core/usage-cost.ts, checked to name what the arithmetic below reads."""
     try:
         with open(COST_RULE_FILE) as fh:
             text = fh.read()

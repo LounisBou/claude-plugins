@@ -40,7 +40,7 @@ words.
 2. **Verify on the artifact, never on a report.** « Written », « green » and « repaired » are
    claims until the repository, the process table or the running artifact reads clean, the
    measurement that found a fault taken again. A delivery is read by its review session and
-   the gate: you read their verdict line, never a diff or a finding. A fact you did not read
+   the gate: you decide its findings through `mcp__orchestrator__review`, never from the diff. A fact you did not read
    is not stated; a figure relayed from an agent says « per the agent's report ». A delivery's
    tree, unpushed commits, head against its pull request's and CI come read on its `facts` line:
    never re-checked by hand; a `FALSE CLAIM` there sends the delivery back.
@@ -49,7 +49,7 @@ words.
    choice, authorises a change. His explicit instruction on the point replaces this skill:
    say the contradiction in one line and carry it out. His terms are the specification; a
    method he names is a format, opened before you present. Told you erred, check your own
-   doing first. Asked a third time, repeat the answer alone, at the top. A request of his for later or for another session is a `todo`; once it is planned, `todo row` names its row.
+   doing first. Asked a third time, repeat the answer alone, at the top.
 4. **Re-read before you ask, propose or report.** He acts between your turns: an item's state
    and a question's premise are read on the artifact in the same turn, never from a note
    or memory. An item found done is reported done, with its evidence. A
