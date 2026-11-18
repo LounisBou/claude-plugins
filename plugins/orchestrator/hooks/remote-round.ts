@@ -15,7 +15,7 @@ import { cutQuestion, RELAY_CAP } from './relay.ts'
 import { parseChoices } from '../core/method.ts'
 import type { RoundEntry } from './round.ts'
 import { roleOf } from './session-name.ts'
-import { BLOCKS_CAP, cleanBlocks } from './remote-row.ts'
+import { BLOCKS_CAP, cleanBlocks, ROW_MARKER } from './remote-row.ts'
 import { parseConsentSubject } from '../core/consent-record.ts'
 
 // The receiver's caps on each field: a line past any of them is refused whole, never cut.
@@ -170,6 +170,18 @@ export function qAskedLine(object: { id: string; seq: number }): string | null {
 /** The answer or withdrawal given on the replica's machine, sent to the owner, at the seq the replica held. */
 export function qReplyLine(id: string, seq: number, reply: QReply): string {
   return Q_MARKER + JSON.stringify({ id, seq, event: { kind: 'reply', reply: { ...reply, text: reply.text.slice(0, REPLY_TEXT_CAP) } } })
+}
+
+// The marked lines a message holds when it carries several, in the order they were sent: a
+// turn's end sends the coordinator one message whatever it has to say (the entry of its wait, its
+// row). Each line is one JSON object on one line; a text that holds any other line is no batch.
+export function joinLines(lines: readonly string[]): string {
+  return lines.join('\n')
+}
+
+export function splitLines(body: string): string[] | null {
+  const lines = body.trim().split('\n')
+  return lines.length > 1 && lines.every(line => line.startsWith(ROW_MARKER) || line.startsWith(Q_MARKER)) ? lines : null
 }
 
 export function isQ(body: string): boolean {

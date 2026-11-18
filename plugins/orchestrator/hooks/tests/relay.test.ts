@@ -17,7 +17,7 @@ import type { DeclaredWait } from '../stop-gate.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Host, type Noun, type SessionSendResult } from '../../core/host.ts'
-import { Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf } from '../remote-round.ts'
+import { Q_MARKER, qAskLine, qAckLine, qReplyLine, parseQ, parseQAck, seqOf, splitLines } from '../remote-round.ts'
 
 // The lines written between machines: the event line (remote-round.ts) and its acknowledgment.
 const askLine = qAskLine
@@ -186,7 +186,8 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
         if (over.send === 'reject') throw new Error('the send was rejected')
         if (over.send === 'refuse') return { isDelivered: false, reason: 'nobody by that name' }
         if (over.staleAt !== undefined && args.to === over.staleAt) return { isDelivered: false, reason: `Failed to send to ${over.staleAt}: HTTP 409 — the peer session may have ended or restarted, so this bridge ID is stale.` }
-        sent.push(args)
+        // A turn's end is one message of several lines: each line is read as a send of its own here.
+        for (const text of splitLines(args.text) ?? [args.text]) sent.push({ ...args, text })
         return { isDelivered: true }
       },
     },
