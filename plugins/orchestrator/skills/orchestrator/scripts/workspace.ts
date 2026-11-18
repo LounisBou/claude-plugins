@@ -394,8 +394,8 @@ export const PUSH_MS = 60_000
 
 /**
  * The checkout's work put on its origin before it goes: every local branch holding a commit no
- * remote branch holds is pushed under its own name, never forced, with no hook of the checkout's
- * run. A pin carries no branch of its own. A dry run pushes nothing and names what it would push.
+ * remote branch holds, and that the origin does not hold yet, is pushed under its own name, never
+ * forced, with no hook of the checkout's run. A pin carries no branch of its own. A dry run pushes nothing and names what it would push.
  * The reason is '' when nothing stands in the way, else why the work cannot reach the origin.
  */
 export async function pushWork(ctx: Context, real: string, dry: boolean): Promise<{ readonly pushed: readonly string[]; readonly reason: string }> {
@@ -412,6 +412,11 @@ export async function pushWork(ctx: Context, real: string, dry: boolean): Promis
   }
   for (const b of ahead) {
     if (await protectedBranch(ctx, real, b)) return { pushed: [], reason: `commits on ${b}, a long-lived branch the sweep never pushes` }
+    // A branch the origin holds may carry an open pull request: its head is moved by its agent,
+    // never by a sweep that would publish commits no one asked to.
+    if ((await gitRead(ctx, real, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${b}`])).status === 0) {
+      return { pushed: [], reason: `commits past origin/${b}, a branch the origin holds: only its agent moves it` }
+    }
   }
   if (dry) return { pushed: ahead, reason: '' }
   const pushed: string[] = []

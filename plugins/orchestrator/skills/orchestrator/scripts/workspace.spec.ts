@@ -968,6 +968,8 @@ test('sweep: a checkout whose orchestrator and agent are gone is pushed and remo
   const dirty = await clone(w, src, 'dirty', 'feat/dirty', 'dirty')
   const local = await clone(w, src, 'local', 'feat/local', 'unpushed')
   g(local, 'remote', 'remove', 'origin')
+  const moved = await clone(w, src, 'moved', 'feat/moved')
+  g(moved, 'commit', '-q', '--allow-empty', '-m', 'Past the pushed head')
   const main_ = (await ws(w, 'create', src, 'on-main', '--base', 'main')).out.trim()
   g(main_, 'commit', '-q', '--allow-empty', '-m', 'On main')
   const pin = join(dir, 'root', 'proj', 'pin')
@@ -990,6 +992,7 @@ test('sweep: a checkout whose orchestrator and agent are gone is pushed and remo
     `kept ${dirty}: the tree is dirty ${gone}`,
     `would delete ${done}: no live orchestrator or agent`,
     `kept ${local}: commits on no remote branch, and no origin to push them to ${gone}`,
+    `kept ${moved}: commits past origin/feat/moved, a branch the origin holds: only its agent moves it ${gone}`,
     `kept ${main_}: commits on main, a long-lived branch the sweep never pushes ${gone}`,
     `would delete ${pin}: no live orchestrator or agent`,
   ])
@@ -1005,6 +1008,7 @@ test('sweep: a checkout whose orchestrator and agent are gone is pushed and remo
     `kept ${dirty}: the tree is dirty ${gone}`,
     `deleted ${done}`,
     `kept ${local}: commits on no remote branch, and no origin to push them to ${gone}`,
+    `kept ${moved}: commits past origin/feat/moved, a branch the origin holds: only its agent moves it ${gone}`,
     `kept ${main_}: commits on main, a long-lived branch the sweep never pushes ${gone}`,
     `deleted ${pin}`,
   ])
@@ -1013,6 +1017,7 @@ test('sweep: a checkout whose orchestrator and agent are gone is pushed and remo
   assert.deepEqual(lines(w).map(e => [e.path, e.reason]), [
     [dirty, 'the tree is dirty'],
     [local, 'commits on no remote branch, and no origin to push them to'],
+    [moved, 'commits past origin/feat/moved, a branch the origin holds: only its agent moves it'],
     [main_, 'commits on main, a long-lived branch the sweep never pushes'],
   ])
   assert.deepEqual(archived().map(a => [a['path'], a['end']]), [[ahead, 'pushed and removed'], [done, 'removed'], [pin, 'removed']])
