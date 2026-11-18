@@ -1,13 +1,11 @@
 // hooks/loop.ts
-// auto-fix-loop's state held by the module, and its two exit conditions watched
-// at the Stop event. The skill reports each pass to the loop tool; the tool says
-// which findings are new, counts the passes and says when the loop is over.
-// While a loop runs and neither exit condition has been met, a stop goes through
-// and leaves one line in the journal. Each pass the loop accepts leaves its Critical and Important
-// findings there too, one event each (hooks/observe.ts), so they outlive the session.
+// auto-fix-loop's state held by the module. The skill reports each pass to the loop tool; the
+// tool says which findings are new, counts the passes and says when the loop is over. Each pass
+// the loop accepts leaves its Critical and Important findings in the journal, one event each
+// (hooks/observe.ts), so they outlive the session. A reviewer's loop (`review_only`) writes the
+// review record at its end; the fix loop writes none.
 //
-// Never a trap: the stop is never refused, and any prompt the user types, an
-// interrupted turn or a /clear ends the loop's watch.
+// Never a trap: any prompt the user types, an interrupted turn or a /clear releases the loop.
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
 import { isSpawned } from '../core/env.ts'
@@ -16,7 +14,7 @@ import { findingEvent } from '../core/learning.ts'
 import { REVIEW_ROUNDS, reviewRounds } from '../core/readiness.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
 import { journal, noteSubject, notedSubject, observed, resetSubject } from './observe.ts'
-import { REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
+import { REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, passFindings, reportOf } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
 
@@ -32,8 +30,8 @@ export const LOOP_DESCRIPTION =
   + 'keys are new and which were seen; an empty list, or keys whose agents reported no Critical or Important finding, answers exit clean, '
   + 'the count being read from the agents\' own blocks); fixed {key, sha, '
   + 'description} after each commit; reverted {key, sha} after a revert; status for the summary. '
-  + 'The answer that carries an exit also carries a record line: the review record left for the '
-  + 'github plugin\'s ready guard, or why none was.'
+  + 'In a review_only loop, the answer that carries an exit also carries a record line: the review record '
+  + 'left for the github plugin\'s ready guard, or why none was. A fix loop writes none.'
 
 function summary(): Record<string, unknown> {
   return {
@@ -73,12 +71,6 @@ export function act(e: Events['tool.call'], dir?: { dir: string } | { why: strin
     loop.isReviewing = true
     loop.reports = []
     loop.readers = []
-    loop.awaiting = new Map()
-    loop.blockless = new Set()
-    loop.reasked = new Set()
-    loop.ended = new Set()
-    loop.waits = 0
-    loop.waitedAt = -1
     loop.lastFindings = 0
     loop.lastBlocking = undefined
     return { pass: loop.pass, max_passes: loop.maxPasses, next: 'run the review, each review agent\'s prompt ending with report_request verbatim, then report findings', report_request: REPORT_REQUEST.trim() }
@@ -87,50 +79,21 @@ export function act(e: Events['tool.call'], dir?: { dir: string } | { why: strin
     // A clean exit records a pass: it must follow a review the loop counted, never the start.
     if (loop.pass === 0) return { error: 'no review pass has begun: call begin_pass, run the review, then report its findings' }
     const keys = strings(e['keys'])
-    // A background agent whose hand-back carried no block is asked for it once, its place kept;
-    // its waits start over, the ones counted before it was asked are not its own.
-    if (loop.blockless.size > 0) {
-      const ids = [...loop.blockless]
-      ids.forEach((id) => loop.reasked.add(id))
-      loop.blockless.clear()
-      loop.waits = 0
-      loop.waitedAt = -1
-      return { error: ids.map(reaskLine).join('\n') }
-    }
-    // The pass's verdict waits for every agent the host runs in the background, whatever the keys.
-    // One wait per hand-back event: calls with none between them are one wait, not several. Once
-    // every awaited agent was asked again, each call is one wait: no other hand-back may come.
-    const running = loop.awaiting.size
-    if (running > 0) {
-      const isAllReasked = [...loop.awaiting.keys()].every((id) => loop.reasked.has(id))
-      if (isAllReasked || loop.waitedAt !== loop.handbacks) {
-        loop.waits += 1
-        loop.waitedAt = loop.handbacks
-      }
-      if (loop.waits <= MAX_WAITS) return { error: `${running} review agents are still running in the background: wait for their hand-back, then report` }
-      // An agent asked twice for its block that never answered is silent, its place left null; one
-      // never heard from leaves the pass unread.
-      const unheard = [...loop.awaiting.keys()].filter((id) => !loop.reasked.has(id)).length
-      loop.awaiting = new Map()
-      if (unheard > 0) return { error: `${unheard} review agents never handed back after ${MAX_WAITS} waits: the pass cannot be found clean; call begin_pass and run the review again` }
-    }
     // A verdict, whether a clean exit, a reviewer's or the fix loop's last pass, is computed from
     // the agents' blocks: none without an agent.
     if (loop.reports.length === 0) {
       return { error: 'no review agent ran in this pass: the verdict is computed from the agents\' findings; launch the review agents (a call the host or a hook refused did not run: issue it again), then report' }
     }
     const found = passFindings(loop.reports)
-    if (keys.length === 0 && found === undefined) {
-      const silent = silentReaders()
-      return { error: `${silent.length} of ${loop.reports.length} review agents ended without their findings block (${silent.join(', ')}): the pass cannot be found clean; call begin_pass and run the review again` }
-    }
     if (keys.length === 0 && found !== undefined && found.length > 0) {
       return { error: `the review agents reported ${found.length} finding(s) in this pass: report their keys` }
     }
     loop.isReviewing = false
     loop.lastFindings = found?.length ?? keys.length
     loop.lastBlocking = found?.filter(isBlocking).length
-    if (keys.length === 0) {
+    // A block that cannot be read leaves the severity unknown: the pass is never clean, and a
+    // reviewer's loop records fail.
+    if (keys.length === 0 && found !== undefined) {
       loop.isActive = false
       loop.exit = 'clean'
       return { exit: 'clean', ...summary() }
@@ -169,14 +132,7 @@ export function act(e: Events['tool.call'], dir?: { dir: string } | { why: strin
   return { error: `unknown action: ${action}` }
 }
 
-// What `findings` answers for an agent whose hand-back carried no block: ask it once more.
-function reaskLine(id: string): string {
-  const reader = loop.readers[loop.awaiting.get(id) ?? -1] ?? 'a review agent'
-  return `${reader} (agentId ${id}) handed back no findings block: SendMessage to '${id}' asking only for `
-    + 'its closing ```json findings block (an empty list when it found nothing), wait for its hand-back, then report again'
-}
-
-// The review agents of the pass that handed back no readable findings block, by the name they
+// The review agents of the pass whose findings block is missing or unreadable, by the name they
 // were launched under.
 function silentReaders(): string[] {
   return loop.reports.flatMap((r, i) => (r === null ? [loop.readers[i] ?? `review agent ${i + 1}`] : []))
@@ -188,59 +144,11 @@ function unknownSeverity(): string {
   return silent.length > 0 ? `severity unknown: no findings block from ${silent.join(', ')}` : 'severity unknown: no review agent\'s findings block was read'
 }
 
-// The code of the stop the loop would once have held, or null when the stop is plain.
-// A pass whose agents still run in the background ends its turn: their hand-back wakes the session.
-// An agent that handed back no block runs no more: until `findings` has it asked again, nothing
-// would wake the session. The stop goes through either way, and the journal keeps one line.
-export function stopCode(stopHookActive: boolean): string | null {
-  if (stopHookActive || !loop.isActive) return null
-  if (loop.isReviewing && loop.blockless.size > 0) return 'pr-review.stop.reader-blockless'
-  if (loop.isReviewing && loop.awaiting.size > 0) return null
-  return 'pr-review.stop.loop-open'
-}
-
 export function releaseLoop(): void {
   if (loop.isActive) {
     loop.isActive = false
     loop.exit = 'released'
   }
-}
-
-// The tool a subagent calls, in its own loop, to hand its final report back to the session.
-const HANDBACK_TOOL = 'SubagentHandback'
-
-// A hand-back event, of an agent of the pass or not: the waits of `findings` are counted between them.
-function handedBack(): void {
-  loop.handbacks += 1
-}
-
-// A background agent of the pass has answered: its report fills its place once. An answer without
-// a block keeps the place until the agent was asked again for its block; then it is silent. A turn
-// that ended without an answer (`isFinal`) is silent at once: there is no one to ask again.
-function settle(id: string, report: Finding[] | null, isFinal = false): void {
-  const place = loop.awaiting.get(id)
-  if (place === undefined || !loop.isActive || !loop.isReviewing) return
-  if (report === null && !isFinal && !loop.reasked.has(id)) {
-    loop.blockless.add(id)
-    return
-  }
-  loop.blockless.delete(id)
-  loop.reports[place] = report
-  loop.awaiting.delete(id)
-}
-
-// A background agent of the pass that ended its turn without a hand-back: its last answer is its report;
-// a turn that ended in error or aborted, none, and the agent is silent at once. The first run's
-// answer that comes after the agent was asked again, without a block, is no answer to the request:
-// the place waits for the second run.
-export function agentEnded(id: string, reason: string, answer: string): void {
-  handedBack()
-  if (!loop.awaiting.has(id)) return
-  const isFirstEnd = !loop.ended.has(id)
-  loop.ended.add(id)
-  const report = reason === 'answer' ? reportOf(answer) : null
-  if (reason === 'answer' && report === null && isFirstEnd && loop.reasked.has(id)) return
-  settle(id, report, reason !== 'answer')
 }
 
 function redraw($: Host<'ui'>): void {
@@ -282,7 +190,7 @@ function repoOf(url: string): string | undefined {
   return m ? m[1] : undefined
 }
 
-// The review record's result and detail for the exit the loop just reached.
+// The review record's result and detail for the exit a reviewer's loop just reached.
 export function verdict(exit: string): { result: 'pass' | 'fail'; detail: string } | null {
   if (exit === 'clean') {
     const none = loop.lastFindings === 0 ? 'no finding' : 'no Critical or Important finding'
@@ -294,10 +202,7 @@ export function verdict(exit: string): { result: 'pass' | 'fail'; detail: string
     if (loop.lastBlocking === undefined) return { result: 'fail', detail: `reviewed: ${found}, ${unknownSeverity()}`.slice(0, 500) }
     return { result: 'fail', detail: `reviewed: ${found}, ${loop.lastBlocking} Critical or Important: ${loop.seen.join('; ')}`.slice(0, 500) }
   }
-  if (exit !== 'max_passes') return null
-  const left = `${loop.lastFindings} findings left after ${loop.pass} passes`
-  if (loop.lastBlocking === undefined) return { result: 'fail', detail: `${left}, ${unknownSeverity()}`.slice(0, 500) }
-  return { result: 'fail', detail: `${left}, ${loop.lastBlocking} Critical or Important` }
+  return null
 }
 
 // The text a tool answered, its refusal when it answered none.
@@ -524,9 +429,8 @@ export function register(on: On<LoopHost>): void {
   // its answer is read. The hook never changes the call's input: the host's auto mode reviews the
   // call before the hooks run, and refuses one a hook rewrote. A reader whose prompt lacks the
   // request runs all the same, and leaves one line in the journal.
-  // The host may run the agent in the background: core's record of the launch then names the
-  // agent, and its hand-back, read below, fills its place in the pass.
-  // The agent runs once: a failure is its answer, and leaves the pass without a count; a call
+  // The agent runs once: a failure is its answer, and leaves the pass without a count; an agent
+  // the host runs in the background hands back no report here, and leaves it the same; a call
   // that the host refused for a hook's rewrite never ran, and is no agent of the pass; any other
   // refusal is the agent's answer.
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
@@ -543,59 +447,17 @@ export function register(on: On<LoopHost>): void {
       return { result: reasonOf(err), isError: true }
     }
     let report: ReturnType<typeof reportOf> = null
-    let agent: string | undefined
     try {
       const text = answerText(answer) || (answerOf(answer).deny ?? '')
       if (isRefusedRewrite(text)) return answer
       const failed = isFailed(answer)
       report = failed ? null : reportOf(agentText(answer))
-      agent = report === null && !failed ? launchedAgent(answer) : undefined
     } catch {
       // Unreadable: no count.
     }
     if (loop.isReviewing) {
-      if (agent !== undefined) loop.awaiting.set(agent, loop.reports.length)
       loop.reports.push(report)
       loop.readers.push(reader)
-    }
-    return answer
-  }).catch(async (_$, e, next) => next(e))
-
-  // The hand-back of a review agent the host ran in the background, as a delivery that carries
-  // the hand-back's origin: its report, read for the pass it belongs to. The host of 2026-11
-  // gives session.receive no such origin; the agent's own SubagentHandback call, below, is read. Only the host's own delivery counts: a peer origin flagged as a hand-back,
-  // from an agent launched in this pass, on the main session's event. The message goes on to the
-  // model as it came.
-  on('session.receive', {}, async (_$, e, next) => {
-    try {
-      const o = fieldsOf(e['origin']) ?? {}
-      const id = typeof o['from'] === 'string' ? o['from'] : ''
-      const text = o['handbackReportText']
-      if (!e['agentId'] && o['kind'] === 'peer' && o['handback'] === true && typeof text === 'string'
-        && loop.isActive && loop.isReviewing) {
-        handedBack()
-        if (loop.awaiting.has(id)) settle(id, reportOf(text))
-      }
-    } catch {
-      // Unreadable: no count.
-    }
-    return next(e)
-  }).catch(async (_$, e, next) => next(e))
-
-  // The report of a review agent the host ran in the background, read where the module sees it:
-  // the agent's own SubagentHandback call, in its loop (`agentId`, the id its launch named), once
-  // core says the report reached the session. A hand-back that reached no one is not read, but
-  // for an agent asked again for its block: core delivers one report per agent, and refuses the second.
-  on('tool.call', { tool: HANDBACK_TOOL }, async (_$, e, next) => {
-    const answer = await next(e)
-    try {
-      const id = typeof e['agentId'] === 'string' ? e['agentId'] : ''
-      handedBack()
-      const read = fieldsOf(answerOf(answer).result)?.['success'] === true || loop.reasked.has(id)
-      const message = e['message']
-      if (read && typeof message === 'string') settle(id, reportOf(message))
-    } catch {
-      // Unreadable: no count.
     }
     return answer
   }).catch(async (_$, e, next) => next(e))
@@ -616,9 +478,10 @@ export function register(on: On<LoopHost>): void {
     // The pass the loop just accepted: its findings are kept past the session.
     const isAccepted = action === 'findings' && wasReviewing && !loop.isReviewing
     const text = JSON.stringify(answer, null, 2)
-    // The record is first written at the call that ends the loop, at the head the loop ended on.
-    // It is owed from before the write: a write interrupted is written again at the next call.
-    const isFirst = before === undefined && loop.exit !== undefined && !loop.isRecorded
+    // A reviewer's loop writes the record, at the call that ends it, at the head the loop ended on;
+    // the fix loop's session wrote the code, and writes none. The record is owed from before the
+    // write: a write interrupted is written again at the next call.
+    const isFirst = loop.isReviewOnly && before === undefined && loop.exit !== undefined && !loop.isRecorded
     // A pass the loop goes on from asks for its pull request itself; the one that ends the loop
     // takes the record's.
     if (isAccepted && !isFirst) await journalPass($)
@@ -636,10 +499,4 @@ export function register(on: On<LoopHost>): void {
     }
     return { result: text, ...(answer['error'] ? { isError: true } : {}) }
   }).catch(async () => ({ result: 'pr-review loop tool failed in the module: keep the loop state yourself, as the skill describes.', isError: true }))
-
-  on('classic.Stop', async ($, e, next) => {
-    const code = stopCode(Boolean(e['stop_hook_active']))
-    if (code) await observed($, code)
-    return next(e)
-  }).catch(async (_$, e, next) => next(e))
 }

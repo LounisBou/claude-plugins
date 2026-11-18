@@ -81,9 +81,9 @@ test('a pass the loop goes on from leaves its Critical and Important findings, e
   await pass($, FOUND.slice(0, 1), ['a'])
   expect(seen.gh).toEqual(['pr-get'])
   expect(journal().length).toBe(3)
-  // A stop the loop would once have held names the same pull request.
+  // A stop in the middle of the loop leaves no line of its own.
   await $.classic.Stop({ stop_hook_active: false })
-  expect(journal().at(-1)).toMatchObject({ ...observedAs('pr-review.stop.loop-open'), subject: SUBJECT })
+  expect(journal().length).toBe(3)
 })
 
 test('the pass that ends the loop takes the pull request the record read: no call of its own', async ($, on) => {
