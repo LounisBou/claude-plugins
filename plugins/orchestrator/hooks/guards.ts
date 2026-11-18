@@ -53,6 +53,7 @@ import {
 } from './observe.ts'
 import { todoName } from './todo-format.ts'
 import { prWake } from './ledger.ts'
+import { projectRecords } from './unattended.ts'
 import { PR_FILE_INTERVAL_MS } from './pr-file-format.ts'
 import { fileWanted } from './pr-file.ts'
 
@@ -615,11 +616,14 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         await logLine($, 'guards', 'stop gate: ITERM_SESSION_ID is not set: no chain entry is counted')
       }
       const entries = parseChain(String(chain))
+      // The orchestration's records, scanned once per stop whichever read needs them first.
+      let recordsOnce: Promise<string[]> | undefined
+      const recordsOf = () => (recordsOnce ??= registeredRecords($, state, sessionId, orchestrationOf(name), until))
       let readyOnce: string | null | undefined
       readiness = async () => {
         if (readyOnce !== undefined) return readyOnce
         try {
-          const records = await ownRecords($, await registeredRecords($, state, sessionId, until), orchestrationOf(name), until)
+          const records = await ownRecords($, await recordsOf(), orchestrationOf(name), until)
           const texts = await readRecords($, records, until)
           readyOnce = readyRowsLine(readyRows({ texts, lines: texts.flatMap(text => ledgerLines(text)), live: liveNames(rows) }))
         } catch (err) {
@@ -633,7 +637,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const ledgerOf = async () => {
         if (ledgerOnce !== undefined) return ledgerOnce
         try {
-          const records = await ownRecords($, await registeredRecords($, state, sessionId, until), orchestrationOf(name), until)
+          const records = await ownRecords($, await recordsOf(), orchestrationOf(name), until)
           ledgerOnce = (await readRecords($, records, until)).flatMap(text => ledgerLines(text))
         } catch (err) {
           await logLine($, 'guards', `stop gate: ledger unread: ${reasonOf(err)}`)
@@ -706,7 +710,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         // The done line: the facts are read only now, as the shell gate read them lazily.
         const top = await projectTop($, String(e.cwd ?? ''), until)
         const checkouts = projectCheckouts(top, await mustRun($, ['bash', `${root}/skills/orchestrator/scripts/workspace.sh`, 'list'], 'workspace.sh list', until))
-        const records = await ownRecords($, await registeredRecords($, state, sessionId, until), orchestrationOf(name), until)
+        const records = await ownRecords($, await recordsOf(), orchestrationOf(name), until)
         // The ending is the wait the turn declared: done, or deferred with the items it names.
         const declared = declarations.current()
         const ids = declared?.kind === 'deferred' ? declared.blocks : null
@@ -1130,11 +1134,17 @@ async function projectTop($: Held, cwd: string, until: number): Promise<string> 
   return top || cwd
 }
 
-// open_rows()'s reads (stop_gate.py:315-337): the register this session's records were
-// filed under, one path a line, then each record file. A read that fails is no row.
-async function registeredRecords($: Held, state: string, sessionId: string, until: number): Promise<string[]> {
+// open_rows()'s reads (stop_gate.py:315-337): the records of the session's orchestration (unattended.ts
+// projectRecords), the session's own register and those another session of the machine registered that
+// its orchestration owns: a successor that never read or wrote its record registered none, and must
+// still answer for its rows and goals. A read that fails is no row.
+// The session's own register is read first, on its own: a scan of the others that does not finish keeps it, said in the log.
+async function registeredRecords($: Held, state: string, sessionId: string, own: string | null, until: number): Promise<string[]> {
   const register = await quietly($, () => $.fs.read(recordsRegistryPath(state, sessionId)), until, '')
-  return String(register).split('\n').map(line => line.trim()).filter(Boolean)
+  const mine = String(register).split('\n').map(line => line.trim()).filter(Boolean)
+  const scanned = await quietly<string[] | null>($, () => projectRecords($, state, sessionId, own), until, null)
+  if (scanned === null) await logLine($, 'guards', "stop gate: the orchestration's records unread: the session's own register alone is read")
+  return scanned ?? mine
 }
 
 // The registered records that are this session's own: no owner file yet, or the owner file names

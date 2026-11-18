@@ -521,8 +521,9 @@ test('a row that cannot be written never blocks the measure, and is said', async
 const ROUND = `${STATE}/round`
 const SENT = '2026-11-03T10:00:00.000Z'
 
-function openEntry(files: Map<string, string>, session: string, kind: 'done', over: Record<string, unknown> = {}): string {
-  const entry = { ...roundEntry(session, `Orch: ${session}`, { kind, question: 'which one?' }, SENT, SENT), ...over }
+function openEntry(files: Map<string, string>, session: string, kind: 'done' | 'operator', over: Record<string, unknown> = {}): string {
+  const wait = kind === 'done' ? { kind, question: 'which one?' } : { kind, blocks: 'phase 3', question: 'which one?' }
+  const entry = { ...roundEntry(session, `Orch: ${session}`, wait, SENT, SENT), ...over }
   files.set(`${ROUND}/${entry.id}.json`, JSON.stringify(entry) + '\n')
   return entry.id
 }
@@ -551,12 +552,13 @@ test('a read of the store closes the open entries of a sender whose row it remov
 })
 
 // A sender that learnt its successor and was killed before its hand-over or its session end: the
-// read that removes its row moves its open entries to the successor, as its end would have.
+// read that removes its row moves its open questions to the successor, as its end would have (a
+// closing proposal is withdrawn instead, never moved).
 test('a read of the store moves the open entries of a removed sender that learnt its successor, and withdraws none', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'] })
   await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch: killed', pid: '502' })
   files.set(`${STATE}/store/successors/killed`, JSON.stringify({ name: 'Orch: next', from: null, session: 'next', at: SENT }) + '\n')
-  const id = openEntry(files, 'killed', 'done')
+  const id = openEntry(files, 'killed', 'operator')
   await readSessions(dollar)
   const after = parseRoundEntry(files.get(`${ROUND}/${id}.json`)!)
   expect([after?.status, after?.session, after?.from, after?.movedFrom]).toEqual(['open', 'next', 'Orch: next', 'killed'])
@@ -589,7 +591,7 @@ test('a row removed for idleness alone keeps its learnt successor, and its later
   const idle = new Date(Date.now() - 2 * 3600000).toISOString()
   await writeSession(dollar, 'idle', { role: 'orchestrator', name: 'Orch: idle', updated_at: idle })
   files.set(`${STATE}/store/successors/idle`, JSON.stringify({ name: 'Orch: next', from: null, session: 'next', at: SENT }) + '\n')
-  const id = openEntry(files, 'idle', 'done')
+  const id = openEntry(files, 'idle', 'operator')
   await readSessions(dollar)
   expect(files.has(`${SESSIONS}/idle`)).toBe(false)
   expect(files.has(`${STATE}/store/successors/idle`)).toBe(true)

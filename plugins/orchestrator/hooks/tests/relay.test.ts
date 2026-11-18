@@ -7,7 +7,7 @@
 import { expect, test } from 'claude-code/testing'
 import { declaredWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, openQuestions, withdrawalText, confirmsTakeover, RELAY_CAP } from '../relay.ts'
 import { roundEntry, type RoundEntry } from '../round.ts'
-import { settledText, successorText, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
+import { settledText, successorText, parseSessionRow, paneRows, withWait, writeSession, readSessions, WORKS_AGAIN, HANDED_ON, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { answerAskedFromPane, askTurnStarted, callAsk, settle } from '../question.ts'
 import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
@@ -489,24 +489,33 @@ test('a later turn that ends on no machine line leaves the sender\'s open entrie
   expect(fx.logged.some(l => l.includes('round: withdrawn by the sender'))).toBe(false)
 })
 
-test('a turn the operator did not start, ending on deferred, leaves every open entry open and enters none', async () => {
+test('a turn the operator did not start, ending on deferred, withdraws the closing proposal alone, leaves every other open entry open and enters none', async () => {
   const { chains, fx } = await relayedProposal()
-  const asked = only(entries(fx))
+  const proposal = only(entries(fx))
+  const question: RoundEntry = { ...proposal, id: 's-one-question', kind: 'operator', blocks: 'phase 3', question: QUESTION }
+  fx.files.set(`${ROUND}/${question.id}.json`, JSON.stringify(question) + '\n')
   await drive(chains, 'turn.start', fx.dollar, {})
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Nothing left to move.', 'waiting: deferred — G5, G6')))
-  expect(entries(fx)).toEqual([asked])
-  expect(fx.logged.some(l => l.includes('round: withdrawn by the sender'))).toBe(false)
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect(after.size).toBe(2)
+  expect(after.get(question.id)).toEqual(question)
+  expect([after.get(proposal.id)!.status, after.get(proposal.id)!.answer?.text, after.get(proposal.id)!.answer?.by]).toEqual(['withdrawn', WORKS_AGAIN, 'sender'])
+  expect(fx.logged.filter(l => l.includes('round: withdrawn by the sender')).map(l => l.slice(l.indexOf('round:')))).toEqual([`round: withdrawn by the sender: ${proposal.id}`])
   expect(fx.row().waiting ?? null).toBeNull()
 })
 
 // --- a sender that is gone or handed over ----------------------------------------------------
 
-// A sender with one open closing proposal in the round, beside another session's and a settled one.
+// A sender with one open operator question in the round, beside another session's and a settled one. Its
+// turn ended on a closing proposal, whose entry gives way to the question: a closing proposal is never moved.
 async function senderWithEntries() {
   const chains = mounted()
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(PROPOSAL))
-  const asked = only(entries(fx))
+  const proposal = only(entries(fx))
+  fx.files.delete(`${ROUND}/${proposal.id}.json`)
+  const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, proposal.since, proposal.at)
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch: other' }
   const settled: RoundEntry = { ...asked, id: 'already-closed', status: 'closed', answer: { text: 'x', by: 'coordinator', at: 'T' } }
   for (const kept of [other, settled]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
@@ -520,6 +529,28 @@ function expectWithdrawn(fx: ReturnType<typeof fake>, asked: RoundEntry, other: 
   expect(after.get(other.id)).toEqual(other)
   expect(after.get(settled.id)).toEqual(settled)
 }
+
+// The operator's report of 2026-11-18: Orch: Blitz's closing proposal of 13:01Z, moved through two
+// successions, was still presented at 19:14Z while its third session worked. A done says the
+// orchestrator has nothing left to do: the moment its session works again, its turn starting,
+// the proposal is no longer what it waits on, and its own turn end enters a new one if it is.
+test('a turn that starts withdraws the session\'s open closing proposal, moved to it or its own, and nothing else', async () => {
+  const { chains, fx, asked: question, other, settled } = await senderWithEntries()
+  const own: RoundEntry = { ...question, id: 's-one-done', kind: 'done', blocks: null, question: 'Everything merged.' }
+  const moved: RoundEntry = { ...own, id: 's-zero-moved', since: '2026-11-18T13:01:19.813Z', movedFrom: 's-zero' }
+  for (const kept of [own, moved]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
+  await drive(chains, 'turn.start', fx.dollar, {})
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  for (const done of [own, moved]) {
+    expect([after.get(done.id)!.status, after.get(done.id)!.answer?.text, after.get(done.id)!.answer?.by]).toEqual(['withdrawn', WORKS_AGAIN, 'sender'])
+  }
+  expect(after.get(question.id)).toEqual(question)
+  expect(after.get(other.id)).toEqual(other)
+  expect(after.get(settled.id)).toEqual(settled)
+  // The turn ends on done again: a new proposal, open.
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(PROPOSAL))
+  expect(entries(fx).filter(e => e.kind === 'done' && e.status === 'open').length).toBe(1)
+})
 
 test('the sender\'s session ending withdraws its open entries, and no other session\'s', async () => {
   const { chains, fx, asked, other, settled } = await senderWithEntries()
@@ -613,6 +644,29 @@ for (const [label, end] of [
     expect(entries(fx).find(e => e.id === asked.id)?.session).toBe('s-two')
   })
 }
+
+// The operator's report of 2026-11-18: a closing proposal moved through two successions stayed open
+// while the orchestration worked on. The successor working, the proposal is withdrawn at the hand-over.
+test('at the hand-over a closing proposal is withdrawn, never moved, and the open questions move', async () => {
+  const { chains, fx, asked, other, settled } = await senderWithEntries()
+  const proposal: RoundEntry = { ...asked, id: 's-one-done', kind: 'done', blocks: null, question: 'Everything merged.' }
+  fx.files.set(`${ROUND}/${proposal.id}.json`, JSON.stringify(proposal) + '\n')
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
+  DECLARATIONS.handOver('s-one')
+  try {
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd('Takeover confirmed by the successor.'))
+  } finally {
+    DECLARATIONS.handOver('')
+  }
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect([after.get(proposal.id)!.session, after.get(proposal.id)!.status, after.get(proposal.id)!.answer?.text, after.get(proposal.id)!.answer?.by])
+    .toEqual(['s-one', 'withdrawn', HANDED_ON, 'sender'])
+  expect(after.get(proposal.id)!.movedFrom).toBeUndefined()
+  expect(after.get(asked.id)).toEqual({ ...asked, session: 's-two', from: 'Orch: belt-2', movedFrom: 's-one' })
+  expect(after.get(other.id)).toEqual(other)
+  expect(after.get(settled.id)).toEqual(settled)
+})
 
 test('a session that spawned its successor hands it the open entries at its « takeover confirmed », and tells its agents who it is', async () => {
   const { chains, fx, asked, other, settled } = await senderWithEntries()
@@ -820,6 +874,37 @@ test('several sessions share the successor\'s name besides the receiver: the rep
 const LISTED = `${HOME}/.claude/claude-orchestrator/round-listed.json`
 const DROP = 'Already closed: drop it, never ask or relay it again, present the next.'
 
+test('a closing proposal the coordinator was shown is closed and told once at its session\'s next turn, and entered again is no longer shown', async () => {
+  const { chains, fx } = await relayedProposal()
+  const proposal = only(entries(fx))
+  fx.files.set(LISTED, JSON.stringify([proposal.id]) + '\n')
+  await drive(chains, 'turn.start', fx.dollar, {})
+  const closed = only(entries(fx))
+  expect([closed.status, closed.answer?.text, closed.answer?.by]).toEqual(['closed', `withdrawn: ${WORKS_AGAIN}`, 'sender'])
+  expect(fx.sent.filter(s => s.text.startsWith('[module] Settled') && s.text.includes(proposal.id)).length).toBe(1)
+  // The turn ends on done again: the same id, open, and the coordinator's list no longer marks it shown.
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(PROPOSAL))
+  expect(only(entries(fx)).status).toBe('open')
+  expect(JSON.parse(fx.files.get(LISTED)!)).toEqual([])
+  // Its next withdrawal, never shown, tells the coordinator nothing.
+  fx.sent.length = 0
+  await drive(chains, 'turn.start', fx.dollar, {})
+  expect(only(entries(fx)).status).toBe('withdrawn')
+  expect(fx.sent.filter(s => s.text.startsWith('[module] Settled')).length).toBe(0)
+})
+
+test('a sender that ends with a successor learnt withdraws its closing proposal and moves its questions', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  const proposal: RoundEntry = { ...asked, id: 's-one-done', kind: 'done', blocks: null, question: 'Everything merged.' }
+  fx.files.set(`${ROUND}/${proposal.id}.json`, JSON.stringify(proposal) + '\n')
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one' })
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect([after.get(proposal.id)!.session, after.get(proposal.id)!.status, after.get(proposal.id)!.answer?.text]).toEqual(['s-one', 'withdrawn', HANDED_ON])
+  expect([after.get(asked.id)!.session, after.get(asked.id)!.status]).toEqual(['s-two', 'open'])
+})
+
 test('the settled notice is worded by the answer the entry was closed with, and carries no command', () => {
   const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-25T21:00:00.000Z', 'T')
   const head = `Orch: belt's question since 2026-10-25T21:00:00.000Z (entry ${asked.id})`
@@ -984,11 +1069,18 @@ test('an open entry, the same wait again, is not entered twice', async () => {
   const first = only(entries(fx))
   const path = `${ROUND}/${first.id}.json`
   // A mark only the first writing carries: a second writing would erase it.
-  fx.files.set(path, JSON.stringify({ ...first, marked: true }) + '\n')
-  await drive(chains, 'turn.start', fx.dollar, {})
+  const at = '2026-11-18T13:01:19.825Z'
+  fx.files.set(path, JSON.stringify({ ...first, at, marked: true }) + '\n')
   await drive(chains, 'turn.complete', fx.dollar, ask)
   expect(entries(fx).length).toBe(1)
   expect((JSON.parse(fx.files.get(path)!) as { marked?: boolean }).marked).toBe(true)
+  // A done declared again after the session worked is a new fact, dated by its declaration: one entry, open, the old one gone.
+  await drive(chains, 'turn.start', fx.dollar, {})
+  await drive(chains, 'turn.complete', fx.dollar, ask)
+  const again = only(entries(fx))
+  expect([again.id, again.status]).toEqual([first.id, 'open'])
+  expect(again.at).not.toBe(at)
+  expect((JSON.parse(fx.files.get(path)!) as { marked?: boolean }).marked).toBeUndefined()
 })
 
 // --- a coordinator on another machine: the entry carried to its round, acknowledged ------------

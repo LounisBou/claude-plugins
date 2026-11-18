@@ -45,17 +45,19 @@ function world(gitOut: Record<string, string> = {}) {
 const lintOf = (text: string) => lint(text, { expected: [], shortNames: new Set(), exists: () => true })
 
 // Seen 2026-11-15: a predecessor closed by the takeover never sent its successor's name, which the
-// briefs made the only proof of a successor; takeoversense, archivesort and writingfix each refused the
-// new orchestrator's orders. The successor alone under the name, or the module's line, is proof enough.
-test('every agent brief takes as its orchestrator the successor ListAgents lists alone under the name, or the one the module names', () => {
+// briefs made the only proof of a successor. The module now sends each agent of the chain the
+// « [module] Your orchestrator is now … » line at the takeover's confirmation (hooks/tests/relay.test.ts),
+// so no brief says how to tell a successor or how an orchestrator's message is addressed.
+test('no agent brief teaches how to recognise an orchestrator\'s successor or its messages: the module names it', () => {
   const w = world({ 'rev-parse --short=12 origin/main': 'abc123def456' })
   assert.equal(w.phase(), 0)
   const phase = readFileSync(join(w.briefs, 'routes.md'), 'utf8')
   const templates = join(import.meta.dirname, '..', '..', '..', 'templates')
-  for (const [what, text] of [['phase', phase], ['review', readFileSync(join(templates, 'agent-review-brief.md'), 'utf8')], ['comments', readFileSync(join(templates, 'agent-comments-brief.md'), 'utf8')]] as const) {
-    assert.ok(text.includes('once `ListAgents` lists no other session of that name'), `${what}: the successor alone under the name is the orchestrator`)
-    assert.ok(text.includes('`[module] Your orchestrator is now'), `${what}: the module's line names the orchestrator`)
-    assert.ok(!text.includes('waits for its word'), `${what}: no successor waits for a word its predecessor may never send`)
+  const briefs = [['phase', phase], ...['review', 'comments', 'rotation'].map(kind => [kind, readFileSync(join(templates, `agent-${kind}-brief.md`), 'utf8')] as const)]
+  for (const [what, text] of briefs) {
+    assert.ok(!text.includes('carry its name alone') && !text.includes('carry the name alone'), `${what}: no rule on the name an orchestrator's messages carry`)
+    assert.ok(!text.includes('lists no other session of that name'), `${what}: no rule on telling a successor`)
+    assert.ok(!text.includes('Your orchestrator is now'), `${what}: the module's line is not described in a brief`)
   }
 })
 

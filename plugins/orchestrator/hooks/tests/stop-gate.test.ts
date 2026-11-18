@@ -504,6 +504,8 @@ type Setup = {
   // The forge's open pull requests by repository, answering the machine file's query (prQueryRun): the
   // records registry then lists this session's register, and the file written is read back.
   forge?: Record<string, string>
+  // A record another session of the machine registered (its predecessor's, `records/p9z8`), with its text and its owner file.
+  predecessor?: { path: string; text: string; owner?: string }
 }
 
 function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: string[]; wrote: Record<string, string>; stamp: { atRun?: string | undefined }; inits: Record<string, ProcessRunInit | undefined> } {
@@ -532,7 +534,8 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         if (p === S.register) return [...(setup.records ? [RECORD] : []), ...(setup.shared ?? []).map(r => r.path)].map(r => `${r}\n`).join('')
         if (p === RECORD) return (setup.records ?? [])[0] ?? ''
         if (p === `${RECORD}.owner` && setup.recordOwner !== undefined) return `${setup.recordOwner}\n`
-        for (const record of setup.shared ?? []) {
+        if (p === `${S.root}/records/p9z8` && setup.predecessor !== undefined) return `${setup.predecessor.path}\n`
+        for (const record of [...(setup.shared ?? []), ...(setup.predecessor ? [setup.predecessor] : [])]) {
           if (p === record.path) return record.text
           if (p === `${record.path}.owner` && record.owner !== undefined) return `${record.owner}\n`
         }
@@ -580,7 +583,9 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
           ))
         }
         if (p === PROJECTS) return []
-        if (p === `${S.root}/records` && setup.forge !== undefined) return [{ name: 'a1b2c3', kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }]
+        if (p === `${S.root}/records` && (setup.forge !== undefined || setup.predecessor !== undefined)) {
+          return [...(setup.forge !== undefined ? ['a1b2c3'] : []), ...(setup.predecessor ? ['p9z8'] : [])].map(name => ({ name, kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }))
+        }
         if (p === `${S.root}/store/sessions`) return Object.keys(setup.sessions ?? {}).map(name => ({ name, kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }))
         if (p === `${S.root}/round`) {
           if (setup.roundHang === 'list') return new Promise(() => undefined)
@@ -982,7 +987,7 @@ test('a stop with nothing to wake the orchestrator passes, the log naming nothin
 const readyRow = (id: number, label: string, more: Record<string, unknown> = {}) =>
   `${JSON.stringify({ id, state: 'open', label, blocker: 'none', ...more })}\n`
 const OPEN_PR_LINE = (agent: string) => `${JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr: 9, status: 'working', agent, since: '2026-11-15T07:00:00Z', updated: '2026-11-15T07:00:00Z' })}\n`
-const READY = 'Lignes prêtes sans agent : 12 TOKENDRIFT'
+const READY = 'Sujets prêts sans agent : the context fills (ligne 12)'
 
 test('a stop that passes with a ready row nobody is on warns, the log naming it, and journals no escape', async () => {
   const { handlers } = mounted()
@@ -2537,6 +2542,19 @@ test('a declared done is held to the open rows, and passes once none is', async 
   const passed = await chainedStop(wait, none.dollar, stopEvent({ last_assistant_message: 'Shipped.', ...NOTHING_RUNS }))
   expect(passed.answer).toBe(passed.passed)
   expect(passed.observed).toBeUndefined()
+})
+
+test('a successor that registered no record is held to the open rows of the record its orchestration owns', async () => {
+  // Orch: Blitz's successor of 2026-11-18 (session 160a0bed) declared done at 13:01Z with 5 rows open: its own
+  // registry was empty, the record registered by its predecessors alone, and neither the declaration nor the stop read it.
+  const rows = '{"id":"r-12","label":"the report row","state":"open"}\n'
+  const taken = fakeDollar({ predecessor: { path: '/tmp/h/rec/blitz.jsonl', text: rows, owner: 'Orch: belt' } })
+  expect(String((await declare(waitMounted(), taken.dollar, { kind: 'done' })).result)).toContain('row r-12 (the report row) is open')
+  const { handlers } = mounted()
+  expect((await stop(handlers['classic.Stop'], taken.dollar, stopEvent(DONE))).observed).toContain('row r-12 (the report row) is open')
+  // A record another orchestration owns is not this one's to answer for.
+  const foreign = fakeDollar({ predecessor: { path: '/tmp/h/rec/blitz.jsonl', text: rows, owner: 'Orch: other' } })
+  expect((await declare(waitMounted(), foreign.dollar, { kind: 'done' })).isError).toBeUndefined()
 })
 
 test('a declared deferred wait is refused when nothing is deferred, and passes on the right count', async () => {
