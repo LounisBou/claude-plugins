@@ -264,7 +264,7 @@ branch requires that has not reported at the head yet is not green), through the
 shell (`gh pr ready`, `gh pr merge`, `gh api` on a pull request's merge, and the
 engine's own subcommands, `python3 engine/gh.py pr-merge 12 --repo owner/name`).
 An act that misses only records absent at the head (`<kind>: no record at <head7>`) goes through
-without `Ready`, observed (`github.ready.no-record`). On anything else missing (CI not green, a
+without `Ready`. On anything else missing (CI not green, a
 record that failed at the head) the act is refused before anyone is asked, and a pull request still carrying
 `Ready` goes back to `Not Ready`:
 
@@ -327,7 +327,6 @@ written is one line in the transcript, and the call still goes through.
 | `github.draft.open-out` | opens a pull request out of draft |
 | `github.draft.leave` | takes a pull request out of draft outside auto-merge, once the gate lets it |
 | `github.writing.rule` | carries a text that breaks a writing rule |
-| `github.ready.no-record` | merges or takes out of draft a pull request that misses only records absent at its head |
 | `github.record.e2e-stated` | records an E2E pass or fail with no run the tool performed or observed |
 
 A refusal that protects something writes one refusal event too, under its own code (`REFUSED` in

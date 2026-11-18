@@ -1346,9 +1346,6 @@ async function heldNotReady($: Mod, name: string, repo: string, pr: number, r: R
   }
 }
 
-// An act (a merge, leaving draft) the gate lets through without a record: `noRecord` is set when it did.
-type Passage = { noRecord: boolean }
-
 // Whether a pull request misses only records absent at its head, the exemption's expiry line beside them.
 function missesOnlyRecords(missing: string[]): boolean {
   return onlyAbsentRecords(missing.filter((item) => !isExpiryLine(item)))
@@ -1358,18 +1355,17 @@ function missesOnlyRecords(missing: string[]): boolean {
  * The one readiness check of every act that needs Ready (pr-ready, pr-merge, pr-readiness ready,
  * their shell forms), core's readiness contract read at the head: undefined when the gate put Ready
  * itself, the whole contract holding, CI included; else what is missing, or why that is unknown.
- * An act (`act` given) goes through as well when only records are absent at the head, which its
- * caller observes: CI, a record that failed and a readiness unread still refuse it.
+ * An act (`act` true: a merge, leaving draft) goes through as well when only records are absent at
+ * the head: CI, a record that failed and a readiness unread still refuse it.
  */
-async function gateHeld($: Mod, name: string, repo: string, pr: number, r: Readiness, act?: Passage): Promise<Held | undefined> {
+async function gateHeld($: Mod, name: string, repo: string, pr: number, r: Readiness, act = false): Promise<Held | undefined> {
   if (r.error) return heldUnverified(repo, pr, r.error, r.gate)
-  const passes = (missing: string[]): boolean => missing.length === 0 || (act !== undefined && missesOnlyRecords(missing))
+  const passes = (missing: string[]): boolean => missing.length === 0 || (act && missesOnlyRecords(missing))
   if (!passes(r.missing)) return heldNotReady($, name, repo, pr, r)
   const followed = await followGate($, repo, pr, r.gate)
   if (followed.missing === undefined) return heldUnverified(repo, pr, followed.line ?? 'the Ready label could not be put', r.gate)
   if (!passes(followed.missing)) return heldNotReady($, name, repo, pr, { ...r, missing: followed.missing })
   if (followed.line) note($, followed.line)
-  if (act && followed.missing.length > 0) act.noRecord = true
   return undefined
 }
 
@@ -1437,12 +1433,10 @@ function toolReady($: Mod, e: GhCall, act: Act) {
     return undefined
   }
   const gated = act.kind === 'merge' || act.kind === 'undraft'
-  // The gate's refusal of the act, or undefined once it lets it through, observed when a record is absent.
+  // The gate's refusal of the act, or undefined once it lets it through.
   // A merge the gate lets through is pinned to the head it checked: GitHub refuses it if that head moved.
   const heldAct = async (repo: string, pr: number, r: Readiness): Promise<string | undefined> => {
-    const passage: Passage = { noRecord: false }
-    const held = await gateHeld($, act.name, repo, pr, r, passage)
-    if (!held && passage.noRecord) await observed($, OBSERVED.noRecord)
+    const held = await gateHeld($, act.name, repo, pr, r, true)
     if (!held && act.kind === 'merge' && r.gate && typeof e.args['sha'] !== 'string') e.args = { ...e.args, sha: r.gate.head }
     return held?.refusal
   }
@@ -1538,10 +1532,8 @@ async function bashReady($: Mod, act: Act, after: Array<(result: unknown) => Pro
     leaving = !listed
   }
   if (pr === undefined) return unverifiedRefusal(repo, '?', r.error ?? '')
-  const passage: Passage = { noRecord: false }
-  const held = (await gateHeld($, act.name, repo, pr, r, passage))?.refusal
+  const held = (await gateHeld($, act.name, repo, pr, r, true))?.refusal
   if (!held && act.kind === 'merge' && !act.sha && r.gate) return unpinnedMergeRefusal(act.name, repo, pr, r.gate.head)
-  if (!held && passage.noRecord) observations.push(OBSERVED.noRecord)
   if (!held && leaving) observations.push(OBSERVED.draftLeave)
   return held
 }
