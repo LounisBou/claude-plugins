@@ -14,7 +14,6 @@ import { moduleDirOf } from './module-log.ts'
 import { parseSessionRow, sessionKey } from './supervision.ts'
 
 // The stable codes of the guards that observe, as the journal holds them.
-export const STOP_GATE_CODE = 'orchestrator.stop-gate.held'
 export const REPORT_UNNAMED_CODE = 'orchestrator.message.report-unnamed'
 export const MAP_WRITE_CODE = 'orchestrator.models.map-write'
 export const MODE_DIALOG_CODE = 'orchestrator.mode.dialog'

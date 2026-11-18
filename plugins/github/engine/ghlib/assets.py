@@ -7,27 +7,18 @@ is deliberately not used here.
 
 import base64
 import hashlib
-import json
 import os
 import re
 
-from . import errors, http, repo
+from . import errors, http, repo, writing
 
 MAX_TITLE_LENGTH = 100
 BLOCK_SEPARATOR = "\n\n---\n\n"
-# Characters that would break the bold line or the image's alt text the description
-# lint reads: they are taken out of a title rather than refused.
+# Characters that would break the bold line or the image's alt text pr-create and pr-update
+# read: they are taken out of a title rather than refused.
 TITLE_STRIPPED = str.maketrans("", "", "*]")
 
 
-# What the description lint refuses in the bold line and the alt text of a block, so a
-# title that would break it is refused here, before any block is written. The phrases are
-# engine/negative-phrases.json, which hooks/writing.ts reads too.
-with open(os.path.join(os.path.dirname(__file__), os.pardir, "negative-phrases.json"), encoding="utf-8") as _fh:
-    NEGATIVE_PHRASES = tuple(json.load(_fh)["phrases"])
-_NEGATIVE = re.compile(
-    r"(?<![\w-])(%s)(?![\w-])" % "|".join(re.escape(p) for p in NEGATIVE_PHRASES), re.IGNORECASE
-)
 # A `#N` or `repo#N` reference, and a pull request URL: none belongs in the summary.
 _REFERENCE = re.compile(r"#\d|https?://github\.com/[^\s/]+/[^\s/]+/pull/\d", re.IGNORECASE)
 
@@ -51,15 +42,12 @@ def _clean_title(title):
             "image title must not end with a colon, which would read as a section label"
         )
     if ";" in stripped:
-        raise errors.UsageError("image title must not hold a semicolon: the description rules refuse it")
+        raise errors.UsageError("image title must not hold a semicolon: " + writing.SEMICOLON_RULE)
     if _REFERENCE.search(stripped):
+        raise errors.UsageError("image title must not name a pull request or an issue: " + writing.REF_RULE)
+    if writing.says_not(stripped):
         raise errors.UsageError(
-            "image title must not name a pull request or an issue: references go in PRs Dependency or Related PRs"
-        )
-    if _NEGATIVE.search(stripped.replace("\u2019", "'")):
-        raise errors.UsageError(
-            "image title must say what the screen shows, not what it does not do: "
-            "the description rules refuse that phrasing"
+            "image title must say what the screen shows: " + writing.negative_rule(writing.NEGATIVE_PHRASES)
         )
     return stripped
 

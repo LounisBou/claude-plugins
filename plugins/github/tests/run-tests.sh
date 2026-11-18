@@ -717,6 +717,27 @@ check "pr-update sends only the given fields" "New" "$title"
 
 check_status "pr-update with no field exits 1" 1 gh3 pr-update 7
 
+echo "== writing rules refused by pr-create and pr-update =="
+
+check "each writing rule holds case by case" "" \
+  "$(python3 -I "$ROOT/tests/writing_cases.py" "$GHDIR" | grep -v '^ok ')"
+
+# A text that breaks a rule is refused as a usage error naming the rule, and nothing reaches GitHub.
+sent_lines() { wc -l < "$F3/sent.jsonl" | tr -d ' '; }
+printf 'Adds the reset; at last.\n' > "$WORK/semicolon.md"
+before=$(sent_lines)
+check_status "pr-create with a semicolon in its body exits 1" 1 gh3 pr-create --title 'fix: reset' --body-file "$WORK/semicolon.md" --head feature-x
+check "…the refusal names the rule and its field" "- body: no semicolon in prose (writing/pull-requests.md and writing/comments.md); code in backticks or a fenced block may keep one" \
+  "$(gh3 pr-create --title 'fix: reset' --body-file "$WORK/semicolon.md" --head feature-x 2>&1 | grep '^- ')"
+check_status "pr-update with a title on two lines exits 1" 1 gh3 pr-update 7 --title "$(printf 'fix: one\ntwo')"
+check "…and nothing is sent for either" "$before" "$(sent_lines)"
+# The four sections bind a repository of the geonativefr organisation, whatever the case, and no other.
+printf 'Adds the reset.\n' > "$WORK/summary.md"
+check_status "pr-update of a GeoNative repository without the four sections exits 1" 1 \
+  env GH_FIXTURES="$F3" GH_TOKEN=x GH_REPO=GeoNativeFr/api python3 "$GHDIR/gh.py" pr-update 7 --body-file "$WORK/summary.md"
+check "…and sends nothing" "$before" "$(sent_lines)"
+check_status "pr-update of another repository with the summary alone runs" 0 gh3 pr-update 7 --body-file "$WORK/summary.md"
+
 printf '%s' '[{"name":"bug"}]' > "$F3/POST_repos_acme_thing_issues_7_labels.json"
 check "label-add returns the label set" "bug" \
   "$(gh3 label-add 7 bug --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')"
@@ -863,8 +884,7 @@ check "a title made only of asterisks says it is empty, not that it spans lines"
   "$(gh3 image-upload "$WORK/shot.png" --title "**" 2>&1 >/dev/null | head -1)"
 check "a title with no refused phrase near its words is kept" "Undo changed items, no dependency-free build" \
   "$(gh3 image-upload "$WORK/shot.png" --title "Undo changed items, no dependency-free build" --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin).get("title"))')"
-# The phrases are engine/negative-phrases.json alone, which hooks/register.ts reads too (its mod tests
-# read a list of their own through the mod): a copy of the engine holding another list refuses that one.
+# The phrases are engine/negative-phrases.json alone: a copy of the engine holding another list refuses that one.
 copy="$WORK/engine-phrases"
 rm -rf "$copy" && mkdir -p "$copy" && cp -R "$ROOT/engine/." "$copy/"
 printf '{"phrases": ["zzz-engine-phrase"]}\n' > "$copy/negative-phrases.json"
@@ -880,14 +900,12 @@ def verdict(title):
 print(verdict("Login zzz-engine-phrase screen"), verdict("Login screen unchanged"))
 ')"
 check "the file's phrases are the engine's" "$(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["phrases"]))' "$ROOT/engine/negative-phrases.json")" \
-  "$(PYTHONPATH="$ROOT/engine" python3 -c 'from ghlib import assets; print("\n".join(assets.NEGATIVE_PHRASES))')"
+  "$(PYTHONPATH="$ROOT/engine" python3 -c 'from ghlib import writing; print("\n".join(writing.NEGATIVE_PHRASES))')"
 check_status "an empty title after trim exits 1" 1 gh3 image-upload "$WORK/shot.png" --title "   "
 
-# The block written for each surviving title passes the description lint (hooks/writing.ts,
-# read through bun, which the mod's own tests run under).
-if command -v bun >/dev/null 2>&1; then
-  blocks="$WORK/blocks.json"
-  F3="$F3" GHDIR="$GHDIR" python3 - "$WORK" > "$blocks" <<'PY'
+# The block written for each surviving title passes the description rules pr-create refuses.
+blocks="$WORK/blocks.json"
+F3="$F3" GHDIR="$GHDIR" python3 - "$WORK" > "$blocks" <<'PY'
 import json, os, subprocess, sys
 env = dict(os.environ, GH_FIXTURES=os.environ["F3"], GH_TOKEN="x", GH_REPO="acme/thing")
 out = []
@@ -899,33 +917,36 @@ for title in ("Login screen", "**Login** screen [v2]", "Undo changed items, no d
     out.append(json.loads(run.stdout)["markdown"])
 print(json.dumps(out))
 PY
-  check "a block written for each surviving title passes the description lint" "7 blocks, 0 refused" \
-    "$(BLOCKS="$blocks" ROOT="$ROOT" bun -e '
-const { lint, parsePhrases } = await import(process.env.ROOT + "/hooks/writing.ts")
-const phrases = parsePhrases(await Bun.file(process.env.ROOT + "/engine/negative-phrases.json").text())
-const blocks = JSON.parse(await Bun.file(process.env.BLOCKS).text())
-const none = "**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"
-let refused = 0
-for (const block of blocks) {
-  if (lint("pr-create", { title: "fix: x", body: "Adds the screenshots.\n\n" + block + "\n\n" + none }, "", phrases).length > 0) refused++
-}
-console.log(blocks.length + " blocks, " + refused + " refused")
-')"
-  # The lint refuses each phrase of the file in a summary, and the engine refuses it in a title: one list.
-  check "the lint and the engine refuse the same phrases, those of the file" "all refused by both" \
-    "$(ROOT="$ROOT" GHDIR="$GHDIR" bun -e '
-const { lint, parsePhrases } = await import(process.env.ROOT + "/hooks/writing.ts")
-const phrases = parsePhrases(await Bun.file(process.env.ROOT + "/engine/negative-phrases.json").text())
-const none = "**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"
-let both = 0
-for (const phrase of phrases) {
-  const lintRefuses = lint("pr-create", { title: "fix: x", body: "Adds it. The rest " + phrase + " here.\n\n" + none }, "", phrases).length > 0
-  const run = Bun.spawnSync(["python3", "-I", "-c", "import sys; sys.path.insert(0, sys.argv[1]); from ghlib import assets, errors\ntry:\n assets._clean_title(\"Screen \" + sys.argv[2])\nexcept errors.UsageError:\n sys.exit(0)\nsys.exit(1)", process.env.GHDIR, phrase])
-  if (lintRefuses && run.exitCode === 0) both++
-}
-console.log(both === phrases.length && phrases.length > 0 ? "all refused by both" : both + " of " + phrases.length)
-')"
-fi
+check "a block written for each surviving title passes the description rules" "7 blocks, 0 refused" \
+  "$(python3 -I - "$GHDIR" "$blocks" <<'PY'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import writing
+blocks = json.load(open(sys.argv[2]))
+none = "**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"
+refused = sum(1 for block in blocks if writing.body_rules("Adds the screenshots.\n\n" + block + "\n\n" + none))
+print("%d blocks, %d refused" % (len(blocks), refused))
+PY
+)"
+# Each phrase of the file is refused in a description's summary and in an image title: one list.
+check "a description and an image title refuse the same phrases, those of the file" "all refused by both" \
+  "$(python3 -I - "$GHDIR" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import assets, errors, writing
+none = "**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"
+both = 0
+for phrase in writing.NEGATIVE_PHRASES:
+    body = bool(writing.body_rules("Adds it. The rest " + phrase + " here.\n\n" + none))
+    try:
+        assets._clean_title("Screen " + phrase)
+        title = False
+    except errors.UsageError:
+        title = True
+    both += body and title
+print("all refused by both" if both == len(writing.NEGATIVE_PHRASES) and both else "%d of %d" % (both, len(writing.NEGATIVE_PHRASES)))
+PY
+)"
 
 printf '\377\330\377another capture' > "$WORK/second.png"
 SHA2=$(python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$WORK/second.png")
@@ -1411,16 +1432,15 @@ check "the fallback skill defers to the native tool" "1" \
 
 echo "== writing rules =="
 
-# One file per kind of text, and the references every kind follows: the
-# guard « writing rules read » names these paths (hooks/guards.ts).
+# One file per kind of text, and the references every kind follows.
 for name in commits.md pull-requests.md security-updates.md comments.md references.md; do
   check "engine/writing/$name exists" "yes" "$([ -f "$ROOT/engine/writing/$name" ] && echo yes || echo no)"
 done
-# A refusal (the rule strings of hooks/writing.ts, its comments left out) that names a file and a section sends the model to a heading that exists there.
+# A refusal (the rule strings of engine/ghlib/writing.py, its comments left out) that names a file and a section sends the model to a heading that exists there.
 dangling=$(python3 - "$ROOT" <<'PYCITE'
 import re, sys
 root = sys.argv[1]
-src = "".join(l for l in open(root + "/hooks/writing.ts", encoding="utf-8") if not l.lstrip().startswith("//"))
+src = "".join(l for l in open(root + "/engine/ghlib/writing.py", encoding="utf-8") if not l.lstrip().startswith("#"))
 missing = []
 for name, section in sorted(set(re.findall(r"writing/([\w-]+\.md), « ([^»]+) »", src))):
     try:

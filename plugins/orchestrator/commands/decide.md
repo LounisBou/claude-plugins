@@ -72,8 +72,7 @@ fact that changes a question still to come updates it before it is presented.
    your tab or by a message, close it with `settle`, the work it asks in `work`.
 2. His answer in the round is the module's dated record, answering any re-ask, a successor's
    too: never copy it. A goal
-   ruled out: `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`, which the
-   stop gate reads. Work deferred (« later, when I say so »):
+   ruled out: `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`. Work deferred (« later, when I say so »):
    `dispatch-record.sh defer <record> <id>` (a row, its blocker first set to its revisit date, `until <ISO UTC time>`) or `dispatch-record.sh goals <record> defer <G>`
    (a goal) with `--ruling "<his words, dated>"`, never left open as a question; the turn then
    declares `declare_wait({kind: "deferred", blocks: "<n> items"})`, which asks him nothing.

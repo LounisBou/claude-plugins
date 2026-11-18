@@ -6,7 +6,6 @@ import { atom, read, update } from 'claude-code'
 
 import type { GithubPane, GithubPaneRow } from '../types/index.d.ts'
 import { reasonOf, type Events, type FsEntry, type Host, type On } from '../core/host.ts'
-import { carriesText, isGeonative, lint, NEGATIVE_FILE, parsePhrases, writesDescription } from './writing.ts'
 import {
   AUTO_DEPLOY_FILE, bashDeploys, DEPLOY_ENVS, type DeployEnv, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
 } from './deploy.ts'
@@ -16,7 +15,7 @@ import {
   covers, EXEMPT_DIR, exemptingLabels, expired, expiryLine, exemptionLine, exemptionPath, isExpiryLine, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
-import { bashTexts, normalise } from './guards.ts'
+import { normalise } from './guards.ts'
 import { isCatchable, observe, OBSERVED, REFUSED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
@@ -137,17 +136,17 @@ async function runGh(
  * and puts a write to the person. An ask from an explicit rule always asks.
  * Where nobody can answer (a -p run) the ask rejects and the call is refused.
  *
- * Between the verdict and the run come the house rules of engine/writing/:
- * the mechanical ones refuse a text before it leaves the machine, and the
- * approvals the file reserves to the person (a pull request out of draft, a
- * merge) are asked whatever the settings allow.
+ * Between the verdict and the run come the approvals engine/writing/ reserves
+ * to the person (a pull request out of draft, a merge), asked whatever the
+ * settings allow. The mechanical writing rules are the engine's: pr-create and
+ * pr-update refuse a text that breaks one.
  *
  * Outside auto-merge, leaving draft (a CI undraft aside) is observed, then asked: it is the
  * person's act on GitHub, after their review, and the readiness gate refuses one not ready.
  *
  * In a repository in auto-merge no write is put to the person: the reserved
  * approvals lift and an ask with no rule behind it runs. A deny and an ask
- * from an explicit rule stand, and so do the mechanical writing rules.
+ * from an explicit rule stand.
  */
 async function permit(
   $: Mod, e: GhCall, beforeAsk?: () => Promise<string | undefined>, ciUndraft?: () => Promise<boolean>,
@@ -155,7 +154,6 @@ async function permit(
   const input = { command: e.command, args: e.args, repo: e.repo }
   const verdict = await $.tool.check({ tool: TOOL, input })
   if (verdict.decision === 'deny') return verdict.reason || 'refused by a permission rule'
-  const args = e.args
 
   // The ready guard, before any question: nobody is asked about a pull
   // request that is not ready.
@@ -178,9 +176,6 @@ async function permit(
   // Outside auto-merge, leaving draft is the operator's on GitHub: observed, and asked below as
   // any write no rule allows. The readiness gate above still refuses a pull request not ready.
   if (!autoMerge && leavesDraft(e.command)) await observed($, OBSERVED.draftLeave)
-
-  // A text that breaks a writing rule goes as it is, observed.
-  if (await breaksWriting($, e.command, args, e)) await observed($, OBSERVED.writing)
 
   const reserved = reservedToPerson(e.command, autoMerge)
   if (reserved) return ask($, reserved + ' ' + describe(e) + '?', ['Allow', 'Deny'], e.command)
@@ -211,70 +206,6 @@ async function permit(
   return 'the user refused gh ' + e.command
 }
 
-/*
- * The writing rules on the Bash path: a gh pr create, edit, comment or review
- * whose title or body (inline, or the file --body-file names) breaks them goes as it is, observed
- * once, as through the tool. A body the hook cannot see, from stdin or a command substitution, is
- * left out, and so is a file it cannot read, logged: the command then runs as it is.
- */
-async function bashLint($: Mod, line: string): Promise<void> {
-  let texts
-  try {
-    texts = bashTexts(line)
-  } catch (err) {
-    guardFailed($, err)
-    return
-  }
-  for (const text of texts) {
-    const args: Record<string, unknown> = {}
-    if (text.title !== undefined) args['title'] = text.title
-    if (text.body !== undefined) args['body'] = text.body
-    else if (text.bodyFile !== undefined) {
-      try {
-        args['body'] = String(await $.fs.read(await bodyPath($, text.bodyFile)))
-      } catch (err) {
-        // An unreadable file is gh's to refuse: the command runs unchecked.
-        $.ui.log('github: the writing rules could not read ' + text.bodyFile + ' and let the command through: '
-          + reasonOf(err))
-      }
-    }
-    if (await breaksWriting($, text.command, args, { repo: text.repo })) {
-      await observed($, OBSERVED.writing)
-      return
-    }
-  }
-}
-
-/*
- * The negative phrasings a description's summary may not hold, read from the engine's file, which the
- * engine's image titles read too. Read for a call that carries text only. A file that cannot be read
- * leaves that one rule unchecked and is logged, as any other failure of the writing rules is.
- */
-async function negativePhrases($: Mod, command: string): Promise<readonly string[]> {
-  if (!carriesText(command)) return []
-  const file = String($.plugin.root) + '/' + NEGATIVE_FILE
-  try {
-    const phrases = parsePhrases(String(await $.fs.read(file)))
-    if (phrases) return phrases
-    $.ui.log('github: the writing rules found no list of phrases in ' + file + ' and left that rule unchecked')
-  } catch (err) {
-    $.ui.log('github: the writing rules could not read ' + file + ' and left that rule unchecked: '
-      + reasonOf(err))
-  }
-  return []
-}
-
-// The file a --body-file names, as the shell reads it: `~` is HOME, a relative
-// path is under the session's directory.
-async function bodyPath($: Mod, file: string): Promise<string> {
-  const tilde = /^~(\/|$)/.exec(file)
-  if (!tilde && file.startsWith('~')) throw new Error('another user\'s home is not read: ' + file)
-  if (!tilde) return normalise(file, String(await $.session.cwd()))
-  const home = await $.env.get('HOME')
-  if (!home) throw new Error('HOME is unset, ' + file + ' is not read')
-  return normalise(String(home) + file.slice(1))
-}
-
 async function ask($: Mod, question: string, options: string[], command: string): Promise<string | undefined> {
   try {
     if ((await $.ui.ask(question, options)) === options[0]) return undefined
@@ -282,11 +213,6 @@ async function ask($: Mod, question: string, options: string[], command: string)
     return 'gh ' + command + ' needs permission and nobody could be asked'
   }
   return 'the user refused gh ' + command
-}
-
-function guardFailed($: Mod, err: unknown): undefined {
-  $.ui.log('github: the writing rules guard failed and let the call through: ' + reasonOf(err))
-  return undefined
 }
 
 // Whether a call's answer is a refusal or an error: an answer that is no object has no such field.
@@ -518,28 +444,6 @@ async function readTargetRepo($: Mod, e: Named, dir?: string): Promise<string | 
   return match ? match[1] + '/' + match[2] : undefined
 }
 
-// Whether a text breaks a writing rule. The four sections of a description bind a GeoNative repository
-// only: a description that breaks a rule under the template is read again for the repository it goes to,
-// which is looked up then and not before (every other text, and every text that passes, costs no lookup).
-async function breaksWriting($: Mod, command: string, args: Record<string, unknown>, target: Named): Promise<boolean> {
-  const phrases = await negativePhrases($, command)
-  if (lint(command, args, lastTyped, phrases).length === 0) return false
-  if (!writesDescription(command)) return true
-  return lint(command, args, lastTyped, phrases, await geonativeTarget($, target)).length > 0
-}
-
-// Whether the template of a description, its four sections, binds the repository a call is for: the
-// repository is GeoNative's (isGeonative), or the checkout cannot name it, where the template is kept
-// rather than a problem hidden.
-async function geonativeTarget($: Mod, e: Named): Promise<boolean> {
-  try {
-    const repo = await targetRepo($, e)
-    return repo === undefined || isGeonative(repo)
-  } catch {
-    return true
-  }
-}
-
 // Whether a write goes to a repository in auto-merge. Any doubt answers no,
 // and the person is asked as before.
 async function inAutoMerge($: Mod, e: Named): Promise<boolean> {
@@ -646,9 +550,6 @@ export function selfReviewRefusal(kind: string, head: string, pushed: ReadonlySe
   return 'github: this session pushed ' + head.slice(0, 7) + ': a review is made by another session, never by the one that'
     + ' wrote or pushed the code. Run the review from another session (implement: /implement:review).'
 }
-// The last prompt the user typed (at the terminal or through the bridge): a
-// text found in it verbatim is the user's own words, never refused.
-let lastTyped = ''
 // The grants « Allow for this session » gave, by session, command and repository.
 // Kept in the module: a reload or a restart drops them, which only asks again.
 const sessionGrants = new Set<string>()
@@ -2324,13 +2225,6 @@ export function register(on: On<Mod>): void {
     return next(e)
   }).catch(async (_$, e, next) => next(e))
 
-  on('prompt.submit', async ($, e, next) => {
-    const kind = String(e.origin?.kind ?? '')
-    if (kind !== 'composer' && kind !== 'bridge') return next(e)
-    lastTyped = String(e.text ?? '')
-    return next(e)
-  }).catch(async (_$, e, next) => next(e))
-
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const line = String(e['command'])
     // What the call is observed for, journaled just before it runs: a call refused further down leaves no line.
@@ -2377,7 +2271,6 @@ export function register(on: On<Mod>): void {
       return await refuse($, REFUSED.ready, guardThrew(current, err))
     }
     for (const code of new Set(observations)) await observed($, code)
-    await bashLint($, line)
     const started = Date.now()
     const result = await next(e)
     // A run to its end is observed for an E2E record; a background one has not ended.

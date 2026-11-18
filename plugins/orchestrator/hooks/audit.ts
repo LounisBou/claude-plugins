@@ -13,7 +13,6 @@ import { messageOf, type Caught, type Next, type On } from './host.ts'
 import { MODELS_DENY } from './models-guard.ts'
 import { configDir, logLine } from './module-io.ts'
 import { write, type Held, type Memory } from './observe.ts'
-export { STOP_GATE_CODE } from './observe.ts'
 import { findingsOf, NOT_ORCHESTRATOR, REVIEW_TOOL, withIndexIds } from './review.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
 

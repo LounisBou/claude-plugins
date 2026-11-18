@@ -50,9 +50,9 @@
 # nothing else, and says on stderr which named row is closed or absent. A successor reads the
 # counts and the ids, then the labels of the rows its Live state omits: 99 open rows printed
 # whole once cost a birth 25,371 characters. A row (or a goal) the operator deferred stays open and carries
-# his ruling; the summary shows it as `deferred=` with that ruling, and the stop gate takes the
-# ending `waiting: deferred — <n> items`, n the deferred rows and goals together, once every row
-# and goal still open is one. The record is JSON lines: appendable, greppable, and read back
+# his ruling; the summary shows it as `deferred=` with that ruling, and `declare_wait` takes the
+# deferred wait `<n> items`, n the deferred rows and goals together, once every row and goal
+# still open is one. The record is JSON lines: appendable, greppable, and read back
 # with the `jq` the rest of this plugin already needs.
 #
 # Why it exists: the routing rule says a tier drop that costs more than one round is
@@ -120,18 +120,17 @@
 # Every write, and every read by the owner, also registers the record's absolute path under the host session that ran
 # it, in `<state dir>/records/<CLAUDE_CODE_SESSION_ID>` (one path per line, no duplicate). An
 # order noted « to plan after the round » in prose alone was lost once: nothing read it back.
-# A row opened for it is read back by the stop gate (the module's own gate, over the Stop
-# event), which refuses `waiting: done` while a registered row is open, and by `summary`,
-# which lists the open rows. Registering never fails a command.
+# A row opened for it is read back by `declare_wait` (hooks/wait.ts), which refuses a done
+# while a registered row is open, and by `summary`, which lists the open rows. Registering never fails a command.
 #
 # `goals` keeps the spec's goals of the build in `goals.md`, beside the record (the grammar
 # and the reasons are `goals.ts`'s header). A build was once declared done against its plan
 # while its plan had moved three of the spec's five goals « after the build », and no row was
 # ever opened for them. So `open` refuses while no `goals.md` sits beside the record (a build
 # with no spec says `goals <record> init --spec none`), warns on every open goal no phase
-# carries, and the stop gate observes `waiting: done` while a goal is open, lacks evidence, or
-# was ruled out without the operator's words. `goals init` registers the record even before its
-# first row, so the gate finds the goals from the first write.
+# carries, and `declare_wait` refuses a done while a goal is open, lacks evidence, or was ruled
+# out without the operator's words. `goals init` registers the record even before its first
+# row, so the declaration finds the goals from the first write.
 #
 # The subcommands themselves are dispatch-record.ts, beside this launcher; this header documents both.
 

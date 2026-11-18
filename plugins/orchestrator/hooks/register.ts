@@ -41,7 +41,7 @@ export function register(on: On<Mod>): void {
   // First: the audit trail reads what every later handler answered, after it decided.
   registerAudit(on)
   registerGauge(on)
-  // Before the guards and the supervision: the stop gate and the turn's end read the declared wait it hands on.
+  // Before the guards and the supervision: the turn's end reads the declared wait it hands on.
   registerWait(on)
   registerGuards(on)
   registerBackground(on)

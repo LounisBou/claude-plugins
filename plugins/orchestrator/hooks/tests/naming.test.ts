@@ -7,7 +7,7 @@ import type { Reply } from 'claude-code/testing'
 import { journalled, logLineOf } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type CapturedOn } from '../../core/capture.ts'
 import type { Events, Host, Noun, ProcessRunInit, ToolSpec } from '../../core/host.ts'
-import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, isEnding, homeArgv, resumeText, HOME_MOVE_MS, runsTakeover, TAKEN_OVER_TEXT, TAKEN_OVER_STAYED_TEXT, TAKEN_OVER_HOME_TEXT } from '../naming.ts'
+import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, homeArgv, resumeText, HOME_MOVE_MS, runsTakeover, TAKEN_OVER_TEXT, TAKEN_OVER_STAYED_TEXT, TAKEN_OVER_HOME_TEXT } from '../naming.ts'
 
 type World = Host<Noun>
 
@@ -290,9 +290,7 @@ test('an interrupted turn runs neither the rename nor the end it asked', async (
   const fx = fakeDollar()
   await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
   await handlers['tool.call:end'](fx.dollar, {})
-  expect(isEnding()).toBe(true)
   await handlers['turn.complete'](fx.dollar, { isAborted: true, reason: 'aborted' }, pass)
-  expect(isEnding()).toBe(false)
   await handlers['turn.complete'](fx.dollar, { isAborted: false }, pass)
   expect(fx.runs).toEqual([])
 })

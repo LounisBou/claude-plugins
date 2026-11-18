@@ -41,13 +41,6 @@ const SELF_ROLES: ReadonlySet<string> = new Set(['orchestrator', 'coordinator'])
 // the launcher's sessions out is the parent's, shared by every subagent it starts.
 export const MAIN_THREAD_ONLY = "only the session's main thread names or ends it"
 
-// Whether this session has asked to end (end_session accepted): the stop gate lets
-// the turn that asked go — the session is leaving, and its successor holds its work.
-let endAsked = false
-export function isEnding(): boolean {
-  return endAsked
-}
-
 // A call that hands an agent this session's address: the launcher's spawn or rotate
 // (its script or the python beneath it) — the brief it writes names the orchestrator —
 // and a SendMessage, which the peer reads its sender's name off. Made in the turn
@@ -221,7 +214,6 @@ export function register(on: On<Held>): void {
       return { result: 'this session was opened by the launcher; its successor closes its tab', isError: true }
     }
     ending = true
-    endAsked = true
     return { result: 'This session ends when this turn ends.' }
   }).catch(async ($, e, next) => {
     await logLine($, 'naming', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
@@ -239,7 +231,6 @@ export function register(on: On<Held>): void {
       if (pending !== null || ending) await logLine($, 'naming', 'the turn was interrupted: the rename or end it asked is dropped')
       pending = null
       ending = false
-      endAsked = false
       return next(e)
     }
     if (pending !== null) {
