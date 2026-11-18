@@ -421,21 +421,20 @@ test('append writes the spend flag from the last hour\'s calls, priced by the or
     const module = join(config, 'orch')
     mkdirSync(join(module, 'routing'), { recursive: true })
     writeFileSync(join(module, 'routing', 'prices.json'), JSON.stringify({ big: { input: 10, output: 50, cache_write_5m: 12.5, cache_write_1h: 20, cache_read: 0.25 } }))
-    Object.assign(deps.env, { ORCHESTRATOR_MODULE_DIR: module, TELEMETRY_SPEND_ALERT_USD_PER_HOUR: '20' })
+    const at = (threshold: string): Deps => ({ ...deps, env: { ...deps.env, ORCHESTRATOR_MODULE_DIR: module, TELEMETRY_SPEND_ALERT_USD_PER_HOUR: threshold } })
     const call = { v: 1, ts: '2026-11-13T20:30:00.000Z', event: 'api_call', session: S, title: 'Orch: billing', message: 'msg-1', model: 'big', usage: { output_tokens: 1_000_000 } }
     setStdin(JSON.stringify(call))
-    assert.equal(run(['append', '--config', config], deps), 0)
+    assert.equal(run(['append', '--config', config], at('20')), 0)
     const file = join(config, 'telemetry', 'spend-flag.json')
     const written = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
     assert.equal(written['over'], true)
     assert.equal(written['rate_usd_per_hour'], 50)
     assert.deepEqual(written['top'], [{ session: S, name: 'Orch: billing', usd: 50 }])
     // A flag younger than its period is left as it is; `spend` recomputes whatever its age.
-    deps.env['TELEMETRY_SPEND_ALERT_USD_PER_HOUR'] = '100'
     setStdin(JSON.stringify({ ...call, message: 'msg-0', ts: '2026-11-13T20:31:00.000Z', usage: { output_tokens: 0 } }))
-    assert.equal(run(['append', '--config', config], deps), 0)
+    assert.equal(run(['append', '--config', config], at('100')), 0)
     assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>)['over'], true)
-    assert.equal(run(['spend', '--config', config], deps), 0)
+    assert.equal(run(['spend', '--config', config], at('100')), 0)
     assert.equal(deps.outs.at(-1), 'spend 50 $/h over the last hour, under 100 $/h')
     assert.equal((JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>)['over'], false)
   })

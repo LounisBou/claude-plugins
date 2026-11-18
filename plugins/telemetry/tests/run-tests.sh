@@ -116,5 +116,17 @@ check "report prints its heading and seven day rows, exit 0" "0|weekly report 20
   "$code|$(printf '%s\n' "$out" | head -1)|$(printf '%s\n' "$out" | grep -c '^2026-11-')"
 check "report says a figure with no source is n/a, with why" "yes" "$(printf '%s\n' "$out" | grep -q '^1 agents on every runnable line: n/a — ' && echo yes || echo no)"
 
+# The spend flag, through the command line a session's writer runs: a call of the last hour, priced by the
+# orchestrator's prices, is over a threshold the environment lowers, and the file statusbar reads says so.
+SPEND_NOW=$(node -e 'process.stdout.write(new Date(Date.now() - 600000).toISOString())')
+mkdir -p "$WORK/orch/routing"
+rm -f "$CONFIG/telemetry/spend-flag.json"   # an earlier append wrote one: a flag younger than five minutes is left alone
+printf '%s\n' '{"big":{"input":10,"output":50,"cache_write_5m":12.5,"cache_write_1h":20,"cache_read":0.25}}' > "$WORK/orch/routing/prices.json"
+printf '%s\n' "{\"v\":1,\"ts\":\"$SPEND_NOW\",\"event\":\"api_call\",\"session\":\"60ed5626-9879-4041-892a-5db0ff0bad69\",\"message\":\"m1\",\"model\":\"big\",\"usage\":{\"output_tokens\":1000000}}" \
+  | ORCHESTRATOR_MODULE_DIR="$WORK/orch" TELEMETRY_SPEND_ALERT_USD_PER_HOUR=20 cli append
+check "append writes the spend flag: over its threshold, 50 dollars an hour" "true|50" "$(jq -r '"\(.over)|\(.rate_usd_per_hour)"' "$CONFIG/telemetry/spend-flag.json")"
+out=$(ORCHESTRATOR_MODULE_DIR="$WORK/orch" TELEMETRY_SPEND_ALERT_USD_PER_HOUR=100 cli spend)
+check "spend recomputes it now, under a higher threshold" "spend 50 \$/h over the last hour, under 100 \$/h" "$out"
+
 [ "$fail" -eq 0 ] && echo "telemetry: all checks passed"
 exit "$fail"

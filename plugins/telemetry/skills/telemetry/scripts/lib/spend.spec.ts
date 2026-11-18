@@ -10,7 +10,7 @@ import { SPEND_FLAG_EVERY_MS, SPEND_FLAG_STALE_AFTER_MS, SPEND_TOP_MAX, type Spe
 import type { Prices } from '../../../../core/usage-cost.ts'
 import { makeEvent, type Event } from '../../../../hooks/collect.ts'
 import {
-  computeSpend, readPrices, readSpendFlag, recentCalls, refreshSpend, SPEND_THRESHOLD_DEFAULT, SPEND_THRESHOLD_VARIABLE, SPEND_WINDOW_MS, spendFlagPath, spendLine, spendThreshold,
+  computeSpend, readPrices, readSpendFlag, recentCalls, refreshSpend, SPEND_THRESHOLD_DEFAULT, SPEND_THRESHOLD_VARIABLE, SPEND_WINDOW_MS, spendFlagPath, spendLine, spendThreshold, titleOfSession,
 } from './spend.ts'
 
 const NOW = Date.parse('2026-11-18T20:00:00Z')
@@ -161,5 +161,21 @@ test('a flag file that is no flag is rewritten, a clock that went back too', () 
     assert.equal(readSpendFlag(state), null)
     assert.equal(refreshSpend(options)?.rate_usd_per_hour, 0)
     assert.equal(refreshSpend({ ...options, now: NOW - MINUTE })?.at, NOW - MINUTE)
+  })
+})
+
+test('a spender no event names takes the name its transcript\'s head carries, else the start of its id', () => {
+  rig(({ dir, events, state, config }) => {
+    mkdirSync(join(config, 'projects', '-w'), { recursive: true })
+    writeFileSync(join(config, 'projects', '-w', `${A}.jsonl`), `{"type":"custom-title","customTitle":"Orch: from the head"}\n{"type":"user"}\n`)
+    writeFileSync(join(config, 'projects', '-w', `${B}.jsonl`), '{"type":"user"}\n')
+    assert.equal(titleOfSession(config, A), 'Orch: from the head')
+    assert.equal(titleOfSession(config, B), undefined)
+    assert.equal(titleOfSession(config, 'cccccccc-0000-4000-8000-000000000003'), undefined)
+    store(events, '2026-11-18', [call(A, 'm1'), call(B, 'm2', { million: 2 })])
+    mkdirSync(join(dir, 'orch', 'routing'), { recursive: true })
+    writeFileSync(join(dir, 'orch', 'routing', 'prices.json'), JSON.stringify(PRICES))
+    const written = refreshSpend({ stateDir: state, eventsDir: events, config, env: { ORCHESTRATOR_MODULE_DIR: join(dir, 'orch') }, secrets: new Map<string, string>(), now: NOW })
+    assert.deepEqual(written?.top.map(s => s.name), ['bbbbbbbb', 'Orch: from the head'])
   })
 })

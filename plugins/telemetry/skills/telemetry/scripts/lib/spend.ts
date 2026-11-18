@@ -3,7 +3,7 @@
 // deck prices a message (core's usage-cost.ts, the prices of the orchestrator's `routing/prices.json`),
 // and whether it is past the threshold. The result is core's `SpendFlag`, written beside the
 // events for statusbar and the orchestrator to read. A signal: nothing here refuses anything.
-import { existsSync, readFileSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, readSync } from 'node:fs'
 import { join } from 'node:path'
 import { moduleDirOf } from '../../../../core/orchestration.ts'
 import {
@@ -11,16 +11,17 @@ import {
 } from '../../../../core/spend-flag.ts'
 import { readText, writeAtomic } from '../../../../core/store.ts'
 import { messageCost, recordOfEntry, type Price, type Prices } from '../../../../core/usage-cost.ts'
-import type { Event } from '../../../../hooks/collect.ts'
+import { titleFromTranscriptHead, TRANSCRIPT_HEAD_BYTES, type Event } from '../../../../hooks/collect.ts'
 import type { EnvSecrets } from './redact.ts'
 import { parseEvent } from './store.ts'
+import { transcriptOf } from './transcript.ts'
 
 /** The span the rate is taken over. */
 export const SPEND_WINDOW_MS = 3_600_000
 
 /** The threshold, in US dollars an hour at API list prices: the environment's value, else ~/.env's, else the default. */
 export const SPEND_THRESHOLD_VARIABLE = 'TELEMETRY_SPEND_ALERT_USD_PER_HOUR'
-export const SPEND_THRESHOLD_DEFAULT = 400
+export const SPEND_THRESHOLD_DEFAULT = 300
 
 /** A spender's name is cut to this many characters in the line. */
 export const SPENDER_NAME_MAX = 40
@@ -71,6 +72,23 @@ function costOf(event: Event, prices: Prices): number | null | undefined {
   return price === undefined ? null : messageCost(read.record, price)
 }
 
+/** A session's title from the head of its transcript, where the host writes the name it was launched or renamed under; undefined when there is none or it cannot be read. */
+export function titleOfSession(config: string, session: string): string | undefined {
+  const path = transcriptOf(config, session)
+  if (path === undefined) return undefined
+  try {
+    const fd = openSync(path, 'r')
+    try {
+      const buffer = Buffer.alloc(TRANSCRIPT_HEAD_BYTES)
+      return titleFromTranscriptHead(buffer.toString('utf8', 0, readSync(fd, buffer, 0, TRANSCRIPT_HEAD_BYTES, 0)))
+    } finally {
+      closeSync(fd)
+    }
+  } catch {
+    return undefined
+  }
+}
+
 const shorten = (name: string): string => (name.length > SPENDER_NAME_MAX ? `${name.slice(0, SPENDER_NAME_MAX - 1)}…` : name)
 
 /** The one line: the rate against the threshold, and the biggest spenders. */
@@ -86,10 +104,12 @@ export interface SpendInput {
   readonly threshold: number
   /** The flag as it stands, for the episode's start. */
   readonly previous: SpendFlag | null
+  /** A session's name when no event of the window names it (the biggest spenders only are asked). */
+  readonly nameOf?: (session: string) => string | undefined
 }
 
 /** The flag over the window ending at `now`. A call is counted once however often it was recorded; a model with no price leaves its calls out and counts them as unpriced. */
-export function computeSpend({ events, prices, now, threshold, previous }: SpendInput): SpendFlag {
+export function computeSpend({ events, prices, now, threshold, previous, nameOf }: SpendInput): SpendFlag {
   const seen = new Set<string>()
   const spent = new Map<string, number>()
   const names = new Map<string, { at: number; name: string }>()
@@ -116,7 +136,7 @@ export function computeSpend({ events, prices, now, threshold, previous }: Spend
   const top = [...spent]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, SPEND_TOP_MAX)
-    .map(([session, usd]) => ({ session, name: names.get(session)?.name ?? session.slice(0, 8), usd }))
+    .map(([session, usd]) => ({ session, name: names.get(session)?.name ?? nameOf?.(session) ?? session.slice(0, 8), usd }))
   const over = rate > threshold
   const continued = previous !== null && previous.over && previous.since !== null && now - previous.at <= SPEND_FLAG_STALE_AFTER_MS
   return {
@@ -155,6 +175,7 @@ export function refreshSpend(options: RefreshOptions): SpendFlag | undefined {
     now,
     threshold: spendThreshold(options.env, options.secrets),
     previous,
+    nameOf: session => titleOfSession(options.config, session),
   })
   writeAtomic(spendFlagPath(stateDir), `${JSON.stringify(flag)}\n`)
   return flag

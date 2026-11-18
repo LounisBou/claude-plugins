@@ -55,7 +55,7 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   after an append, at most every five minutes, and writes `spend-flag.json` beside the events (core's
   `spend-flag.ts`): the `api_call` events of the last hour, every session's and its subagents', priced at API
   list prices by core's cost rule and the orchestrator's `routing/prices.json`, summed as dollars an hour,
-  against a threshold (`TELEMETRY_SPEND_ALERT_USD_PER_HOUR` in the environment or `~/.env`, 400 by default;
+  against a threshold (`TELEMETRY_SPEND_ALERT_USD_PER_HOUR` in the environment or `~/.env`, 300 by default;
   an equivalent at list prices, the machine being on a subscription), with the biggest spenders. A signal:
   statusbar shows its line and the orchestrator tells it to the coordinator and each orchestrator; nothing
   is refused.
