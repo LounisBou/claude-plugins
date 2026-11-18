@@ -496,7 +496,13 @@ test('ownersOf: a row held by a live agent whose title shares no word with its l
   assert.deepEqual(live(), ['TAKEOVERPROMPT (265): READY NOT STARTED', 'FOLLOW (266): DISPATCHED, NO LIVE AGENT'])
 })
 
-test('the takeover reads each live agent\'s row in the record\'s `agent` field, whatever its brief', () => {
+test('ownersOf: a rotation moves the row to the new agent, the old one holding nothing', () => {
+  const rows = [{ id: '264', line: '', label: 'ARCHIVESORT: the archive', blocker: 'none', agent: 'Agent: archivesort 2' }]
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: ['Agent: archivesort', 'Agent: archivesort 2'], questions: [] }, () => 'fallen'), ['the archive (264): archivesort 2'])
+  assert.deepEqual(ownersOf({ rows, prs: [], agents: ['Agent: archivesort'], questions: [] }, () => 'fallen'), ['the archive (264): DISPATCHED, NO LIVE AGENT'])
+})
+
+test('the takeover reads each live agent\'s row in the record\'s `agent` field', () => {
   const w = world({
     rows: [
       JSON.stringify({ id: 259, label: 'TAKEOVERSENSE: the takeover reads', state: 'open', blocker: 'none', agent: 'Agent: takeoversense' }),
@@ -505,9 +511,6 @@ test('the takeover reads each live agent\'s row in the record\'s `agent` field, 
     ].join('\n') + '\n',
     deck: deckOf([orchestrator(NAME, null, [], ['Agent: takeoversense', 'Agent: archivesort'])]),
   })
-  mkdirSync(join(w.state, 'prompts'), { recursive: true })
-  writeFileSync(join(w.briefs, 'archivesort-rotation.md'), '# belt — resume brief for row 259: the archive\n')
-  writeFileSync(join(w.state, 'prompts', 'launch-Agent--archivesort-1700000000000.sh'), `#!/bin/sh\nexport ORCHESTRATOR_BRIEF='${join(w.briefs, 'archivesort-rotation.md')}' && run\n`)
   assert.equal(w.run('--tty', '/dev/ttys009'), 0)
   assert.match(w.text(), /- Row owners: the takeover reads \(259\): takeoversense; the archive \(264\): archivesort; the takeover defects \(265\): READY NOT STARTED\n/)
 })

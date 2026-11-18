@@ -364,7 +364,7 @@ test('an orchestrator whose name names no orchestration owns no record, an unown
 // A pull request of the orchestration, merged or closed wherever it was, and the open rows of its record that wait on it.
 const WAITERS = [
   JSON.stringify({ id: 2, state: 'closed', label: 'P17 scraper', agent: 'Agent: p17' }),
-  JSON.stringify({ id: 3, state: 'open', label: 'P18 cache', blocker: 'PR acme/app#17 merged', note: 'Dispatched 2026-11-15: Agent: p18' }),
+  JSON.stringify({ id: 3, state: 'open', label: 'P18 cache', blocker: 'PR acme/app#17 merged', agent: 'Agent: p18', note: 'Dispatched 2026-11-15: Agent: stale' }),
   JSON.stringify({ id: 4, state: 'open', label: 'P19 ui', blocker: 'none', note: 'stacked on app#17, merge main once it lands' }),
   JSON.stringify({ id: 5, state: 'closed', label: 'P16', blocker: 'PR acme/app#17 merged' }),
   JSON.stringify({ id: 6, state: 'open', label: 'later', blocker: 'PR acme/app#17 merged', deferred: 'later, 2026-11-15' }),
@@ -848,13 +848,19 @@ test('the row an agent\'s brief names is its own, in the record beside that brie
   expect((await prWake(held.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 9 (web); tell it.'])
 })
 
-test('an agent whose brief names no row owns the one row its note names: at Ready it is closed; of two rows, it is told', async () => {
+test('an agent whose brief names no row owns the one row that names it: at Ready it is closed; of two rows, it is told', async () => {
   const one = `${rowOf(333, 'open', { agent: 'Agent: p17' })}\n${P17_LINE}\n`
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: one, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
   expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
   const two = `${rowOf(338, 'open', { agent: 'Agent: p17' })}\n${one}`
   const held = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: two, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
   expect((await prWake(held.dollar, new Set())).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 still holds row 338 (app), row 333 (app); tell it.'])
+})
+
+test('a note that names an agent holds nothing: only the row\'s agent field does', async () => {
+  const rows = `${rowOf(333, 'open', { note: 'Held by Agent: p17' })}\n${rowOf(338, 'open', { note: 'Dispatched: Agent: p17' })}\n${P17_LINE}\n`
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
 })
 
 test('an agent whose brief sits beside no record owns that row in the records of the orchestration: at Ready it is closed', async () => {

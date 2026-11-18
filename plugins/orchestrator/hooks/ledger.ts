@@ -135,7 +135,7 @@ function namesMerged(ref: string, merged: { repo: string | null; pr: number }): 
 }
 
 // The open rows of a record's text that wait on the merged pull request: their blocker or their
-// note names it. A row the operator deferred has no agent to tell.
+// note names it, each with the agent its `agent` field names. A row the operator deferred has no agent to tell.
 export function waitingRows(text: string, merged: { repo: string | null; pr: number }): { id: number; label: string; agent: string | null }[] {
   const found: { id: number; label: string; agent: string | null }[] = []
   for (const line of text.split('\n')) {
@@ -146,11 +146,11 @@ export function waitingRows(text: string, merged: { repo: string | null; pr: num
       continue
     }
     if (typeof row !== 'object' || row === null || isLedgerMarked(row)) continue
-    const { id, label, state, blocker, note, deferred } = row as Record<string, unknown>
+    const { id, label, state, blocker, note, deferred, agent: held } = row as Record<string, unknown>
     if (typeof id !== 'number' || state !== 'open' || (typeof deferred === 'string' && deferred.trim() !== '')) continue
     const said = [blocker, note].filter((part): part is string => typeof part === 'string').join(' ')
     if (!prRefsOf(said).some(ref => namesMerged(ref, merged))) continue
-    const agent = typeof note === 'string' ? /\bAgent: [^,;()«»]+/.exec(note)?.[0].trim() ?? null : null
+    const agent = typeof held === 'string' && held.trim() !== '' ? held.trim() : null
     found.push({ id, label: typeof label === 'string' ? label : '', agent })
   }
   return found

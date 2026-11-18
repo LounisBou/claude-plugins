@@ -67,6 +67,12 @@ describe('an agent put on its row by the launcher', () => {
     assert.deepEqual(d.warned, ['spawn: warning: Agent: a was not put on row 355 of /b/record.jsonl: ERROR: owned by Orch: other'])
   })
 
+  it('leaves the launch alone when the write itself fails to run', async () => {
+    const d = deps({ [BRIEF]: PHASE, [REGISTRY]: '/b/record.jsonl\n', '/b/record.jsonl': open(355) }, { run: async () => ({ status: null, stdout: '', stderr: '' }) })
+    await recordAgent(spawned('Agent: a'), d)
+    assert.match(d.warned[0] ?? '', /Agent: a was not put on row 355 of \/b\/record\.jsonl/)
+  })
+
   it('writes nothing for a launch with no brief, a title that is no agent\'s, a brief with no row, or another command', async () => {
     const files = { [BRIEF]: PHASE, '/b/review.md': '# review\nNo row here.\n', [REGISTRY]: '/b/record.jsonl\n', '/b/record.jsonl': open(355) }
     for (const request of [spawned('Agent: a', ''), spawned('Audit: a'), spawned('Agent: a', '/b/review.md'), spawned('Agent: a', '/b/missing.md'), parseLauncherArgs('close', ['--tty', '/dev/ttys1']), parseLauncherArgs('rotate', ['--old-tty', '/dev/ttys1'])]) {
