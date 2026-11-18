@@ -10,7 +10,7 @@ import {
   checkWakeDone, deferredRows, goalsPaths, isDegradedPass, isOwnRecord, openRows, orchestrationOf, ownerOf, parseGoalsCheck,
   recordsWithOpenRows, waitLine, withDeadline, type DeclaredWait, type GoalsReading,
 } from './stop-gate.ts'
-import { WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
+import { recordsRegistryPath, WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
 import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject } from '../core/consent-record.ts'
 import { fieldsOf, messageOf, type Host, type On } from './host.ts'
 import { configDir, logLine, stateDir } from './module-io.ts'
@@ -158,7 +158,11 @@ export async function holdsRecord($: Held, wait: DeclaredWait): Promise<string |
   // The orchestration's records, not the session's registry alone: a successor that never read or wrote its record
   // registered none, and declared done with 5 rows open in its predecessors' record (the operator's report of 2026-11-18).
   const sessionId = await $.session.id()
-  const registered = await read(() => projectRecords($, state, sessionId, own), [] as string[])
+  // The session's own register first, on its own read: a scan of the others that runs out of time keeps it.
+  const mine = String(await read(() => $.fs.read(recordsRegistryPath(state, sessionId)), '')).split('\n').map(line => line.trim()).filter(Boolean)
+  const scanned = await read<string[] | null>(() => projectRecords($, state, sessionId, own), null)
+  if (scanned === null) await logLine($, 'wait', 'the records of the orchestration unread at the declaration: its own register alone is read')
+  const registered = scanned ?? mine
   const records: string[] = []
   for (const path of registered) {
     if (isOwnRecord(ownerOf(String(await read(() => $.fs.read(`${path}.owner`), ''))), own)) records.push(path)

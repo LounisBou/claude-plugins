@@ -874,6 +874,37 @@ test('several sessions share the successor\'s name besides the receiver: the rep
 const LISTED = `${HOME}/.claude/claude-orchestrator/round-listed.json`
 const DROP = 'Already closed: drop it, never ask or relay it again, present the next.'
 
+test('a closing proposal the coordinator was shown is closed and told once at its session\'s next turn, and entered again is no longer shown', async () => {
+  const { chains, fx } = await relayedProposal()
+  const proposal = only(entries(fx))
+  fx.files.set(LISTED, JSON.stringify([proposal.id]) + '\n')
+  await drive(chains, 'turn.start', fx.dollar, {})
+  const closed = only(entries(fx))
+  expect([closed.status, closed.answer?.text, closed.answer?.by]).toEqual(['closed', `withdrawn: ${WORKS_AGAIN}`, 'sender'])
+  expect(fx.sent.filter(s => s.text.startsWith('[module] Settled') && s.text.includes(proposal.id)).length).toBe(1)
+  // The turn ends on done again: the same id, open, and the coordinator's list no longer marks it shown.
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(PROPOSAL))
+  expect(only(entries(fx)).status).toBe('open')
+  expect(JSON.parse(fx.files.get(LISTED)!)).toEqual([])
+  // Its next withdrawal, never shown, tells the coordinator nothing.
+  fx.sent.length = 0
+  await drive(chains, 'turn.start', fx.dollar, {})
+  expect(only(entries(fx)).status).toBe('withdrawn')
+  expect(fx.sent.filter(s => s.text.startsWith('[module] Settled')).length).toBe(0)
+})
+
+test('a sender that ends with a successor learnt withdraws its closing proposal and moves its questions', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  const proposal: RoundEntry = { ...asked, id: 's-one-done', kind: 'done', blocks: null, question: 'Everything merged.' }
+  fx.files.set(`${ROUND}/${proposal.id}.json`, JSON.stringify(proposal) + '\n')
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one' })
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect([after.get(proposal.id)!.session, after.get(proposal.id)!.status, after.get(proposal.id)!.answer?.text]).toEqual(['s-one', 'withdrawn', HANDED_ON])
+  expect([after.get(asked.id)!.session, after.get(asked.id)!.status]).toEqual(['s-two', 'open'])
+})
+
 test('the settled notice is worded by the answer the entry was closed with, and carries no command', () => {
   const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-25T21:00:00.000Z', 'T')
   const head = `Orch: belt's question since 2026-10-25T21:00:00.000Z (entry ${asked.id})`
