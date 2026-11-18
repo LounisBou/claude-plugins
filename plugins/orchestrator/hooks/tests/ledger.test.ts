@@ -454,6 +454,100 @@ test('two Ready pull requests of one agent: the agent holds nothing the other on
   expect(lines.every(line => line.endsWith('close it.') && !line.includes('still holds'))).toBe(true)
 })
 
+// A pull request of the orchestration its agent still works on, the forge reading it against its base (`main` at `c…` unless given).
+const conflicting = (mergeable: string, sha = 'a'.repeat(40), baseSha = 'c'.repeat(40), launcher: string | null = running('Agent: p17')) => fake({
+  session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION },
+  forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', mergeable, sha, baseSha }]) }, launcher,
+})
+const CONFLICT_LINE = '[module] acme/app#17 is conflicting with its base main: its agent Agent: p17 (session s-p17), rebase it (references/rebase.md).'
+
+test('a pull request whose agent still works on it and that the forge reads conflicting wakes its orchestrator with its agent to rebase it', async () => {
+  expect((await prWake(conflicting('CONFLICTING').dollar, new Set())).lines).toEqual([CONFLICT_LINE])
+})
+
+test('a conflict is told once per head and base head, again only when either moves and the conflict stays', async () => {
+  const told = new Set<string>()
+  expect((await prWake(conflicting('CONFLICTING').dollar, told)).lines).toEqual([CONFLICT_LINE])
+  expect((await prWake(conflicting('CONFLICTING').dollar, told)).lines).toEqual([])
+  // Still computing: nothing yet, and what was told of this head and base head is kept.
+  expect((await prWake(conflicting('UNKNOWN').dollar, told)).lines).toEqual([])
+  expect((await prWake(conflicting('CONFLICTING').dollar, told)).lines).toEqual([])
+  // Its agent gone for a while, the anomaly says it; back at the same head and base head, nothing is told again.
+  expect((await prWake(conflicting('CONFLICTING', 'a'.repeat(40), 'c'.repeat(40), '').dollar, told)).lines).toHaveLength(1)
+  expect((await prWake(conflicting('CONFLICTING').dollar, told)).lines).toEqual([])
+  // Its base moved and the conflict is still there: told again; its head moved: told again.
+  expect((await prWake(conflicting('CONFLICTING', 'a'.repeat(40), 'd'.repeat(40)).dollar, told)).lines).toEqual([CONFLICT_LINE])
+  expect((await prWake(conflicting('CONFLICTING', 'b'.repeat(40), 'd'.repeat(40)).dollar, told)).lines).toEqual([CONFLICT_LINE])
+  // Rebased: mergeable again, nothing to tell.
+  expect((await prWake(conflicting('MERGEABLE', 'e'.repeat(40), 'd'.repeat(40)).dollar, told)).lines).toEqual([])
+})
+
+test('a mergeability the forge still computes (UNKNOWN) is no conflict: nothing is told', async () => {
+  expect((await prWake(conflicting('UNKNOWN').dollar, new Set())).lines).toEqual([])
+  expect((await prWake(conflicting('MERGEABLE').dollar, new Set())).lines).toEqual([])
+})
+
+test('a file written before the base was read tells no conflict: it waits for the refresh that reads the base', async () => {
+  const world = conflicting('CONFLICTING')
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([CONFLICT_LINE])
+  // The same file as one written before: its base fields gone, it is still fresh and is not read again.
+  const file = JSON.parse(world.files.get(`${STATE}/prs.json`)!) as { prs: Record<string, unknown>[] }
+  for (const pr of file.prs) { delete pr['base']; delete pr['baseSha'] }
+  world.files.set(`${STATE}/prs.json`, JSON.stringify(file))
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([])
+})
+
+test('a conflicting pull request no running agent holds is told once, as the anomaly, never twice', async () => {
+  const lines = (await prWake(conflicting('CONFLICTING', 'a'.repeat(40), 'c'.repeat(40), '').dollar, new Set())).lines
+  expect(lines).toEqual(['[module] acme/app#17 en anomalie (en conflit) — reattach an agent, refresh its wait, or ask'])
+})
+
+test('a conflicting pull request a fresh wait holds names no agent: one is put on it to rebase it; one the operator parked says nothing', async () => {
+  const forge = { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', mergeable: 'CONFLICTING' }]) }
+  const fresh = new Date(Date.now() - 60_000).toISOString()
+  const waiting = JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr: 17, status: 'waiting', on: 'the CI', since: fresh, updated: fresh })
+  const held = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${waiting}\n` }, forge, launcher: '' })
+  expect((await prWake(held.dollar, new Set())).lines).toEqual(['[module] acme/app#17 is conflicting with its base main: no agent on it, put one to rebase it (references/rebase.md).'])
+  const parked = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'parked', { on: 'his ruling, 2026-11-18' })}\n` }, forge, launcher: '' })
+  expect((await prWake(parked.dollar, new Set())).lines).toEqual([])
+})
+
+test('a file refreshed without the base keeps the conflict told of its head: the next refresh that reads the base tells nothing again', async () => {
+  const told = new Set<string>()
+  const world = conflicting('CONFLICTING')
+  expect((await prWake(world.dollar, told)).lines).toEqual([CONFLICT_LINE])
+  // A session of the previous version refreshes the file with its old query, which reads no base.
+  const withBase = world.files.get(`${STATE}/prs.json`)!
+  const file = JSON.parse(withBase) as { prs: Record<string, unknown>[] }
+  for (const pr of file.prs) { delete pr['base']; delete pr['baseSha'] }
+  world.files.set(`${STATE}/prs.json`, JSON.stringify(file))
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
+  world.files.set(`${STATE}/prs.json`, withBase)
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
+})
+
+test('a Ready pull request the forge reads conflicting is told to rebase only, not to close: its agent gets one order', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION },
+    forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Ready' }], mergeable: 'CONFLICTING' }]) }, launcher: running('Agent: p17') })
+  const told = new Set<string>()
+  expect((await prWake(world.dollar, told)).lines).toEqual([CONFLICT_LINE])
+  // The conflict gone at the same head, it is ready again: its agent is told to close it then.
+  const file = JSON.parse(world.files.get(`${STATE}/prs.json`)!) as { prs: Record<string, unknown>[] }
+  for (const pr of file.prs) pr['mergeable'] = 'MERGEABLE'
+  world.files.set(`${STATE}/prs.json`, JSON.stringify(file))
+  expect((await prWake(world.dollar, told)).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 is done with it (session s-p17), close it.'])
+})
+
+test('a pull request told in anomaly without an agent that then turns conflicting is told again, in conflict', async () => {
+  const told = new Set<string>()
+  expect((await prWake(conflicting('MERGEABLE', 'a'.repeat(40), 'c'.repeat(40), '').dollar, told)).lines).toEqual([expect.stringMatching(/^\[module\] acme\/app#17 en anomalie \(sans agent depuis /)])
+  expect((await prWake(conflicting('CONFLICTING', 'a'.repeat(40), 'c'.repeat(40), '').dollar, told)).lines).toEqual(['[module] acme/app#17 en anomalie (en conflit) — reattach an agent, refresh its wait, or ask'])
+  expect((await prWake(conflicting('CONFLICTING', 'a'.repeat(40), 'c'.repeat(40), '').dollar, told)).lines).toEqual([])
+  // Its base moved: still computing, then conflicting again: neither is told again.
+  expect((await prWake(conflicting('UNKNOWN', 'a'.repeat(40), 'd'.repeat(40), '').dollar, told)).lines).toEqual([])
+  expect((await prWake(conflicting('CONFLICTING', 'a'.repeat(40), 'd'.repeat(40), '').dollar, told)).lines).toEqual([])
+})
+
 // An agent's launch, as the launcher writes it: the script naming its brief, the brief naming its row.
 const launched = (dir: string, agent: string, row: number): Record<string, string> => ({
   [`${STATE}/prompts/launch-${agent.replace(/[^A-Za-z0-9._-]/g, '-')}-1700000000000.sh`]: `export ORCHESTRATOR_BRIEF='${dir}/${agent.slice(7)}-brief.md'\n`,

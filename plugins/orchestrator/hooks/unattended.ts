@@ -16,7 +16,7 @@ import { parseSessionRow, publishUnattended, sessionKey, storeOf } from './super
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { fileWanted, readPrFile, refreshPrFile } from './pr-file.ts'
-import { prsOfRepo, type PrFile } from './pr-file-format.ts'
+import { prsOfRepo, type FilePr, type PrFile } from './pr-file-format.ts'
 import { readyHeadsOf } from './ready-agent.ts'
 import type { RecordText } from './row-owner.ts'
 
@@ -32,10 +32,11 @@ export const UNATTENDED_BOUND_MS = 20_000
 // `wanted`: whether the sweep asks the file to hold a repository (`prs.wanted`).
 // `openKeys`: the session's lines still open on the forge as `owner/name#n`, attended or not: the deck lists them.
 // `atReady`: the lines still open whose pull request carries Ready and whose agent the launcher lists running: that agent is done and closes now. `readyHeads`: the head each open pull request carries Ready at.
+// `forge`: the file's current reading of each of the session's lines still open, by `owner/name#n`: its head, its base and its `mergeable`.
 export type Reading = {
   list: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
   ended: Ended[]; kept: LedgerLine[]; atReady: LedgerLine[]; readyHeads: ReadonlyMap<string, string>; records: RecordText[]; live: ReadonlySet<string>; wanted: boolean
-  openKeys: string[]
+  openKeys: string[]; forge: ReadonlyMap<string, FilePr>
 }
 export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
 
@@ -168,7 +169,10 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   // A repository the forge did not list is unknown, not closed: its lines stay listed until the file reads them merged or closed.
   const openNow = new Set(open.map(pr => prKey(pr.repo, pr.pr)))
   const openKeys = kept.filter(line => unread.includes(line.repo) || openNow.has(prKey(line.repo, line.pr))).map(line => prKey(line.repo, line.pr))
-  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, wanted, openKeys }
+  const keptKeys = new Set(kept.map(line => prKey(line.repo, line.pr)))
+  const forge = new Map(repos.filter(repo => !unread.includes(repo)).flatMap(repo => prsOfRepo(file, repo, now) ?? [])
+    .filter(pr => pr.state === 'OPEN' && keptKeys.has(prKey(pr.repo, pr.pr))).map(pr => [prKey(pr.repo, pr.pr), pr] as const))
+  return { list, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, wanted, openKeys, forge }
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.
