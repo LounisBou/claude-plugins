@@ -11,7 +11,6 @@ import {
   recordsWithOpenRows, waitLine, withDeadline, type DeclaredWait, type GoalsReading,
 } from './stop-gate.ts'
 import { recordsRegistryPath, WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
-import { CONSENT_KINDS, DEPLOY_ENVS, parseConsentSubject } from '../core/consent-record.ts'
 import { fieldsOf, messageOf, type Host, type On } from './host.ts'
 import { configDir, logLine, stateDir } from './module-io.ts'
 import { recordedInstallPaths } from '../core/install-record.ts'
@@ -46,7 +45,7 @@ const KIND_NEEDS: Record<WaitKind, string> = {
 // when it names none, and is refused with none open, unless pull requests of the record wait on his merge
 // (`merging`): the wait then names them, in blocks or, when it names none, by itself.
 export function parseDeclaration(input: unknown, asked: readonly { id: string; blocks: string }[] = [], merging: readonly Unattended[] = []): { wait: DeclaredWait } | { error: string } {
-  const e = (input ?? {}) as { kind?: unknown; blocks?: unknown; urgent?: unknown; consent_kind?: unknown; consent_repo?: unknown; consent_pr?: unknown; consent_env?: unknown }
+  const e = (input ?? {}) as { kind?: unknown; blocks?: unknown; urgent?: unknown }
   if (typeof e.kind !== 'string' || !(WAIT_KINDS as readonly string[]).includes(e.kind)) {
     return { error: `kind is one of ${WAIT_KINDS.join(', ')}` }
   }
@@ -54,13 +53,6 @@ export function parseDeclaration(input: unknown, asked: readonly { id: string; b
   if (e.blocks !== undefined && typeof e.blocks !== 'string') return { error: 'blocks is a string' }
   if (e.urgent !== undefined && typeof e.urgent !== 'boolean') return { error: 'urgent is true or false' }
   if (e.urgent === true && kind !== 'operator') return { error: 'only an operator wait is urgent' }
-  const given = Object.fromEntries([['kind', e.consent_kind], ['repo', e.consent_repo], ['pr', e.consent_pr], ['env', e.consent_env]].filter(([, value]) => value !== undefined))
-  const asksConsent = Object.keys(given).length > 0
-  const consent = asksConsent ? parseConsentSubject(given) : undefined
-  if (asksConsent && kind !== 'operator') return { error: 'only an operator question asks consent' }
-  if (asksConsent && consent === undefined) {
-    return { error: `consent is consent_kind with consent_repo (owner/name): "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env (${DEPLOY_ENVS.join(', ')})` }
-  }
   if (kind === 'operator' && asked.length === 0 && merging.length === 0) return { error: ASK_FIRST }
   const named = String(e.blocks ?? '').replace(/\s+/g, ' ').trim()
   // With no question of the session's open, an operator wait waits on the pull requests that wait on his merge: it names every one, or none and says them itself.
@@ -74,7 +66,7 @@ export function parseDeclaration(input: unknown, asked: readonly { id: string; b
   if (blocks === '') return { error: `a ${kind} wait names in blocks ${KIND_NEEDS[kind]}` }
   if (blocks.length > BLOCKS_MAX) return { error: `blocks holds at most ${BLOCKS_MAX} characters` }
   if (kind !== 'operator') return { wait: { kind, blocks } }
-  return { wait: { kind, blocks, ...(e.urgent === true ? { urgent: true as const } : {}), ...(consent ? { consent } : {}), asked: asked.map(question => question.id) } }
+  return { wait: { kind, blocks, ...(e.urgent === true ? { urgent: true as const } : {}), asked: asked.map(question => question.id) } }
 }
 
 // The declarations of one session, by turn: a declaration is current only in the turn that
@@ -232,8 +224,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           + '`operator` (a question the operator must answer; blocks: what it blocks; urgent: true to have it presented at once), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
           + 'A command, monitor, subagent or agent you started wakes you by itself: declare nothing for it. '
-          + 'An operator question that asks his consent to waive E2E or norms on a pull request, to exempt a repository from E2E, to put it in or out of auto-merge, or of auto-deploy in one environment, '
-          + 'names it in consent_kind and consent_repo: "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env. '
           + 'An `operator` wait waits on the questions this session asked with `ask`. '
           + 'The stop gate reads the declaration in place of your last line.',
         inputSchema: {
@@ -242,10 +232,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             kind: { type: 'string', enum: [...WAIT_KINDS] },
             blocks: { type: 'string', maxLength: BLOCKS_MAX },
             urgent: { type: 'boolean' },
-            consent_kind: { type: 'string', enum: [...CONSENT_KINDS] },
-            consent_repo: { type: 'string' },
-            consent_pr: { type: 'integer' },
-            consent_env: { type: 'string', enum: [...DEPLOY_ENVS] },
           },
           required: ['kind'],
         },

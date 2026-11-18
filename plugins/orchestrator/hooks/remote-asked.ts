@@ -13,7 +13,7 @@ import { updateOver } from '../core/store-io.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { messageOf, type Host } from './host.ts'
 import { askedAsEntry, parseAsked, readAsked, type Asked } from './question.ts'
-import { ALREADY_ANSWERED, ANSWER_RESEND_MS, ANSWER_SENDS, closesItself, coordinatorAddress, readSessions, sendToCoordinator, sessionKey, tellSettled, writeConsent } from './supervision.ts'
+import { ALREADY_ANSWERED, ANSWER_RESEND_MS, ANSWER_SENDS, closesItself, coordinatorAddress, readSessions, sendToCoordinator, sessionKey, tellSettled } from './supervision.ts'
 import { ASKED_LINE_CAP, qAckLine, qAskedLine, qReplyLine, type QAck, type QReply } from './remote-round.ts'
 import { settledMessage } from './settle.ts'
 
@@ -219,7 +219,7 @@ export async function receiveAskedAck($: Held, from: string | null, ack: QAck): 
 
 /**
  * The operator's answer or the coordinator's withdrawal given on the replica's machine, received by
- * the owner: applied while the question is open (his consent recorded, the new state pushed),
+ * the owner: applied while the question is open (the new state pushed),
  * acknowledged, and told to its asker — this session's model, by the readable line that replaces the
  * marked one, or its asker's session by a message. Settled first here: acknowledged `already`, its
  * own state pushed again. The same reply received again is acknowledged again and told nowhere.
@@ -260,7 +260,6 @@ export async function receiveReply($: Held, from: string, id: string, seq: numbe
     return { consumed: again ? 'orchestrator: a remote reply received already, acknowledged again' : 'orchestrator: a remote reply to a question settled here first, said already answered' }
   }
   await logLine($, 'question', `${id} ${done.status} on the coordinator's machine by ${reply.settler}`)
-  if (done.status === 'answered' && done.consent) await writeConsent($, { ...done, question: done.ask } as never, reply.text, reply.by, reply.at)
   await replicate($, done)
   await ack($, from, { id, seq, of: 'reply' })
   const text = settledMessage(done, { session: '', name: reply.settler, role: 'coordinator' })

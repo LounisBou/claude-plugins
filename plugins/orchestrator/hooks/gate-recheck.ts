@@ -1,6 +1,6 @@
 // hooks/gate-recheck.ts
-// A pull request an open question of an orchestrator's round names (its consent subject, or an
-// `<owner/name>#<n>` in its subject, context or question), re-checked against the Ready gate while
+// A pull request an open question of an orchestrator's round names (an `<owner/name>#<n>` in its
+// subject, context or question), re-checked against the Ready gate while
 // the question stays open: once per new install of the plugins and once per hour, through the
 // github plugin's own `pr-readiness ready`, which puts Ready only when its gate reads the pull request
 // ready at its head. When it does, the session is told in one line, with the hint to settle the
@@ -22,11 +22,9 @@ const PR_REF = /([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9][0-9]*)/g
 
 export type PrRef = { readonly repo: string; readonly pr: number }
 
-/** The pull requests an open question names: its consent subject's, then those its text names, once each. */
-export function questionPrs(entry: Pick<Asked, 'subject' | 'context' | 'ask' | 'consent'>): PrRef[] {
+/** The pull requests an open question's text names, once each. */
+export function questionPrs(entry: Pick<Asked, 'subject' | 'context' | 'ask'>): PrRef[] {
   const found = new Map<string, PrRef>()
-  const consent = entry.consent
-  if (consent !== undefined && 'pr' in consent) found.set(`${consent.repo}#${consent.pr}`, { repo: consent.repo, pr: consent.pr })
   for (const text of [entry.subject, entry.context, entry.ask]) {
     for (const match of text.matchAll(PR_REF)) {
       const ref = { repo: match[1]!, pr: Number(match[2]) }

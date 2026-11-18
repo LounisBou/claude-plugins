@@ -26,7 +26,6 @@ import {
 } from './session-name.ts'
 import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, hostTasks } from './stop-gate.ts'
 import { moduleDirOf } from './module-log.ts'
-import { answersChoice, namesOtherSubject, opensChoice, consentPath, consentRecordOf, CONSENT_GRANT, grants, parseConsentSubject, type Answerer, type ConsentSubject } from '../core/consent-record.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
@@ -2739,59 +2738,10 @@ async function withdrawEntry($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
     const written = await changeEntry($, path, current =>
       current && current.status === 'open' && current.session === sessionId ? { ...current, status: closed ? 'closed' : 'withdrawn', answer } : null)
     if (!written) await logLine($, 'supervision', `round: ${entry.id} was settled meanwhile, left as it is`)
-    else {
-      if (closed) settled.push({ entry, answer })
-      await writeTabConsent($, entry, held.said ?? '', at)
-    }
+    else if (closed) settled.push({ entry, answer })
   }
   if (direct.length === 0) await logLine($, 'supervision', `round: no open entry matched for ${name} since ${held.since ?? '?'}`)
   return settled
-}
-
-// The operator's answer to an entry that asks his consent, written as that subject's consent
-// record (core's consent-record.ts), the contract github reads in place of the round. An entry
-// that asks none, an answer with nothing to quote, or a write that fails leaves the answer as it
-// is: an entry that asked a consent and records none says why in one log line.
-// What a consent record is written from: the entry's id, question and choices, and the subject it asks.
-export type ConsentEntry = Pick<RoundEntry, 'id' | 'question' | 'choices' | 'consent'>
-export async function writeConsent($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, entry: ConsentEntry, text: string, by: Answerer, at: string): Promise<string | null> {
-  if (!entry.consent) return null
-  const record = consentRecordOf({ subject: entry.consent, entry: entry.id, question: entry.question, answer: text, choices: entry.choices, by, at })
-  if (!record) {
-    const why = opensChoice(text, entry.choices)
-      ? namesOtherSubject(text, entry.consent)
-        ? `« ${text.trim()} » names a pull request or repository other than the question's own (${subjectLabel(entry.consent)}): ask again, with it in the question`
-        : `« ${text.trim()} » adds words after its choice (a limit, a condition or a question): only a plain confirmation records, so ask again with the limit in the question`
-      : `« ${text.trim()} » names none of its choices`
-    await logLine($, 'supervision', `round: the consent of ${entry.id} (${subjectLabel(entry.consent)}) was not recorded: ${why}`)
-    return why
-  }
-  try {
-    const path = consentPath(await configDir($), record)
-    const made = await $.process.run(['mkdir', '-p', '--', path.slice(0, path.lastIndexOf('/'))], { timeoutMs: 5000 })
-    if (made.exitCode !== 0) throw new Error(made.stderr || `mkdir exited ${made.exitCode}`)
-    await writeAtomic($, path, JSON.stringify(record) + '\n')
-    return null
-  } catch (err) {
-    await logLine($, 'supervision', `round: the consent of ${entry.id} was not recorded: ${messageOf(err)}`)
-    return messageOf(err)
-  }
-}
-
-// The words the operator typed in the asking session's own tab, as the answer to an entry that
-// asks his consent: a record (`by: 'tab'`, as writeConsent writes the pane's) only when they name
-// one choice of the entry unambiguously (answersChoice) and that choice grants (« Accorder »,
-// core's grants): the record's answer is its text. A prompt typed there can be any instruction,
-// and a refusal is no consent: free prose, an ambiguous answer and a refusing choice leave no
-// record, and the log says so once.
-async function writeTabConsent($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, entry: RoundEntry, typed: string, at: string): Promise<void> {
-  if (!entry.consent) return
-  const chosen = answersChoice(typed, entry.choices)
-  if (!chosen || !grants(chosen.text)) {
-    await logLine($, 'supervision', `round: the words typed for ${entry.id} are not one unambiguous « ${CONSENT_GRANT} », no consent recorded`)
-    return
-  }
-  await writeConsent($, entry, `${chosen.letter} : ${chosen.text}`, 'tab', at)
 }
 
 // A question's « other answer » forgotten: its field and its note to answer in the session.
@@ -2943,8 +2893,6 @@ function roundEntryOf(e: unknown): RoundEntry | null {
   }
   const answer = e['answer'] === null || e['answer'] === undefined ? null : roundAnswerOf(e['answer'])
   if (answer === undefined) return null
-  const consent = e['consent'] === undefined ? undefined : parseConsentSubject(e['consent'])
-  if (e['consent'] !== undefined && consent === undefined) return null
   const originRead = e['origin']
   const origin = originRead === undefined ? undefined
     : isRecord(originRead) && isText(originRead['machine']) && isText(originRead['address'])
@@ -2961,7 +2909,6 @@ function roundEntryOf(e: unknown): RoundEntry | null {
     ...(movedFrom !== undefined ? { movedFrom } : {}),
     ...(origin !== undefined ? { origin } : {}),
     ...(delivery !== undefined ? { delivery } : {}),
-    ...(consent !== undefined ? { consent } : {}),
   }
 }
 
@@ -3062,10 +3009,7 @@ async function sendTo($: Host<'session'>, to: CoordinatorTo, text: string): Prom
   return here.length === 1 && only !== undefined && only !== to ? $.session.send({ to: only, text }) : sent
 }
 
-// A consent subject as a log line names it: the pull request of a waiver, the repository of auto-merge.
-function subjectLabel(consent: ConsentSubject): string {
-  return 'pr' in consent ? `${consent.kind} ${consent.repo}#${consent.pr}` : `${consent.kind} ${consent.repo}`
-}
+
 
 // A recipient as a log line names it.
 function addressLabel(to: CoordinatorTo): string {
@@ -3931,8 +3875,7 @@ async function showGate($: Host<'env' | 'fs' | 'plugin' | 'process'>, reading: {
 // per-file convention: the engine fences $ to the file that received it, so
 // guards.ts's identical reader cannot be imported, and each domain spells its
 // own over its own $. A caller in another file hands its $ in as an argument,
-// as it does to every other function of this file it calls (question.ts's
-// settleWords reads the transcript so).
+// as it does to every other function of this file it calls.
 export async function readBlock($: Host<'process'>, path: string, index: number, timeoutMs: number): Promise<Uint8Array> {
   const { exitCode, stdout } = await $.process.run(blockArgv(path, index), { timeoutMs })
   if (exitCode !== 0) throw new Error(`dd exited ${exitCode} on ${path}`)

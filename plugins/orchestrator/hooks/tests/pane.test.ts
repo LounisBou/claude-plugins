@@ -1515,14 +1515,11 @@ test('a pick on a question asked with ask settled or claimed meanwhile writes an
   }
 })
 
-test('the pane\'s answer to a question asked with ask that asks consent is written as its consent record, by the pane', async () => {
-  const consent = { kind: 'e2e-waiver', repo: 'Acme/Thing', pr: 12 }
-  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z', { consent, choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }] })
+test('the pane\'s answer writes no consent file: a consent rests on his quoted, dated words', async () => {
+  const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z', { choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }] })
   const { fx, render } = await askedPane([first])
   await pick(await render(), 'A')
-  const records = [...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))
-  expect(records).toEqual([`${HOME}/.claude/consents/acme/thing/${first.id}.json`])
-  expect(JSON.parse(String(fx.files.get(records[0]!)))).toMatchObject({ subject: consent, entry: first.id, question: 'Which merges first?', answer: 'Accorder', by: 'pane' })
+  expect([...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))).toEqual([])
 })
 
 test('an answer to a question asked with ask not delivered is written failed on it and said in the pane while its asker has a row', async () => {
@@ -2267,17 +2264,6 @@ test('a withdrawal from another peer naming the same sender, start and blocks le
   const received = await handlers['session.receive'](fx.dollar, { origin: { kind: 'peer' }, text: envelope }, (x: unknown) => ({ passed: x }))
   expect(received).toEqual({ consumed: 'coordinator: a remote withdrawal, applied' })
   expect(stored(asked.id).status).toBe('open')
-})
-
-test('a remote withdrawal writes no consent record, whatever words it quotes', async () => {
-  const consent = { kind: 'e2e-waiver' as const, repo: 'Acme/Thing', pr: 12 }
-  const asked = remoteEntry({ consent })
-  const { fx, handlers, stored } = await askingPane([asked])
-  const message = withdrawalText('Orch: belt', 'phase 3', BLOCKS_SINCE, CHOICES[0]!.text)
-  const envelope = `<cross-session-message from="${FAR}" from-name="Orch: belt" from-mode="prompting">\n${message}\n</cross-session-message>`
-  await handlers['session.receive'](fx.dollar, { origin: { kind: 'peer' }, text: envelope }, (x: unknown) => ({ passed: x }))
-  expect(stored(asked.id).status).toBe('withdrawn')
-  expect([...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))).toEqual([])
 })
 
 // --- a closing proposal settled by the coordinator ------------------------------------------

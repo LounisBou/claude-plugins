@@ -6,7 +6,6 @@
 // (`v: 2`, the asker under `sender`) and the entry its relay writes out of a turn that ended on a
 // wait (no `v`, the asker under `from` and `session`). Nothing of the question's or the answer's
 // words is part of this contract: a reader gets the letter the answer names, never its text.
-import { answersChoice } from './consent-record.ts'
 import { ROUND_DIR } from './orchestration.ts'
 
 export const ROUND_STATUSES = ['open', 'answered', 'withdrawn', 'closed'] as const
@@ -100,3 +99,48 @@ export const ROUND_READER_CONTRACT = {
   open_status: 'open',
   operator_kind: 'operator',
 } as const
+
+// A text with its runs of whitespace made one space: a quote keeps the words, not the line breaks.
+function spaced(text: string): string {
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+// A lone letter opening an answer, alone or set apart by a separator: the choice it names.
+const LETTERED = /^([A-Za-z])\s*(?:[:—)\-.]|$)/
+
+/**
+ * An answer as the operator gave it: the choice its opening letter names (« A : yes », « A — … »,
+ * « A »), its letter and its text; anything else, a letter among no choice included, his own words.
+ */
+export function givenAnswer(answer: string, choices: readonly { letter: string; text: string }[]): { letter: string | null; text: string } {
+  const trimmed = answer.trim()
+  const named = LETTERED.exec(trimmed)?.[1]?.toUpperCase()
+  const chosen = named === undefined ? undefined : choices.find(choice => choice.letter.toUpperCase() === named)
+  return chosen ? { letter: chosen.letter, text: chosen.text.trim() } : { letter: null, text: trimmed }
+}
+
+/**
+ * The choice that words the operator typed in the asking session's own tab answer, case and
+ * spacing aside: that choice's letter alone (« A »); its letter, a separator (`:`, `—`, `)`, `-`,
+ * `.`) and nothing else or exactly that choice's text (« a) waive it, docs only »); exactly that
+ * choice's text then its letter in parentheses (« Accorder (A) », as a relayed answer words it);
+ * or exactly one choice's text and nothing else. Anything else answers nothing (undefined): a
+ * prompt typed there can be any instruction, so only an unambiguous answer names a choice.
+ */
+export function answersChoice<C extends { letter: string; text: string }>(typed: string, choices: readonly C[]): C | undefined {
+  const said = spaced(typed).toLowerCase()
+  const textOf = (choice: C) => spaced(choice.text).toLowerCase()
+  const lettered = /^([a-z])\s*(?:[:—)\-.]\s*(.*))?$/.exec(said)
+  if (lettered) {
+    const chosen = choices.find(choice => choice.letter.toLowerCase() === lettered[1])
+    const rest = lettered[2] ?? ''
+    if (chosen && (rest === '' || rest === textOf(chosen))) return chosen
+  }
+  const pressed = /^(.*\S)\s*\(\s*([a-z])\s*\)$/.exec(said)
+  if (pressed) {
+    const chosen = choices.find(choice => choice.letter.toLowerCase() === pressed[2])
+    if (chosen && textOf(chosen) !== '' && textOf(chosen) === pressed[1]) return chosen
+  }
+  const exact = choices.filter(choice => textOf(choice) !== '' && textOf(choice) === said)
+  return exact.length === 1 ? exact[0] : undefined
+}

@@ -3,14 +3,13 @@
 // Skill call is read as one. Pure functions only: register.ts keeps the file and answers the calls.
 // A deploy of an undeclared path is not recognised here: the host's own protections stand behind it.
 
-import { DEPLOY_ENVS, type DeployEnv } from '../core/consent-record.ts'
 import { simpleCommands } from '../core/shell.ts'
 
 // The list's file, in the plugin's data directory beside auto-merge.json.
 export const AUTO_DEPLOY_FILE = 'auto-deploy.json'
-// Auto-deploy as the operator writes it: « auto-deploy », « auto deploy », « autodeploy », « auto-déploiement »,
-// « déploiement automatique » or « déploiement continu », in any case, with or without the accents.
-export const AUTO_DEPLOY_WORD = /auto[-\s]?(deploy|d[ée]ploi)|d[ée]ploiement\s+(automatique|continu)/i
+// The environments a repository is auto-deployed to, one grant each.
+export type DeployEnv = 'dev' | 'staging' | 'prod'
+export const DEPLOY_ENVS: readonly DeployEnv[] = ['dev', 'staging', 'prod']
 
 // One entry of the list: the repository may be deployed to the environment.
 export type Grant = { repo: string; env: DeployEnv }
