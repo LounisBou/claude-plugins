@@ -8642,12 +8642,11 @@ res=$(HTMUX=/private/tmp/tmux-501/mine,1,0 hprobe ok)
 check "an orchestrator in a tmux session the operator made by hand moves" "1" \
   "$(hcalls | grep -c '\[new-session\]')"
 
-# After a deploy: an orchestrator whose home server was started from another deploy's conf (the
-# successor of one told of the newer install, after its takeover) leaves it for a server of its own
-# commit, shown right of the old server's tab, and starts the follower that brings the old server's
-# agents after it. One started from this commit's conf stays.
+# After a deploy: a successor whose home server was started from another deploy's conf stays in it
+# whatever that conf is: no server is made, no tab opened, so no agent is ever moved out of its
+# orchestrator's tab.
 cat > "$WORK/redeploy_probe.py" <<'PYEOF'
-import contextlib, io, os, sys
+import contextlib, io, sys
 sys.path.insert(0, sys.argv[1])
 import iterm_agent as ia
 calls = []
@@ -8655,265 +8654,56 @@ class FakeIterm(ia.Terminal):
     def identity(self, tty, fresh=False):
         calls.append("identity %s" % tty); return ("OLD-SESSION", "OLD-TAB")
     def create(self, command, title, place, chain, made):
-        calls.append("create %s %s %s %s" % (place.at, place.anchor, place.side, title))
-        made["session_id"] = "NEW-SESSION"
-        return "/dev/ttys970", "NEW-TAB"
+        calls.append("create %s" % title); return "/dev/ttys970", "NEW-TAB"
 ia.ITERM = FakeIterm()
-ia.time.sleep = lambda s: None
-ia.SPAWN_TIMEOUT = 0
-ia.server_conf = lambda: os.environ["PROBE_CONF"]
-ia.start_home_follow = lambda *a: calls.append("follow %s" % " ".join(a))
-out, err = io.StringIO(), io.StringIO()
+# The server's own `-f`, read on its process, names another deploy's conf (ignored once `home` no
+# longer reads it, and the reason a `home` that still did would move).
+ia.server_conf = lambda: "/cfg/deploys/lounisbou/0ld/plugins/orchestrator/skills/iterm-agents/tmux/home.conf"
+ia.start_home_follow = lambda *a: calls.append("follow")
+out = io.StringIO()
 code = 0
 try:
-    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    with contextlib.redirect_stdout(out):
         ia.cmd_home(ia.args_from_line('home', ["--session", sys.argv[2], "--prompt", "Go on"]))
 except SystemExit as e:
     code = e.code
 print("exit=%s" % code)
 print("calls=%s" % ",".join(calls))
 print("OUT:" + " ".join(out.getvalue().split()))
-print("ERR:" + " ".join(err.getvalue().split()))
 PYEOF
 printf '/dev/ttys900 999991 /opt/x/host --resume x --name Orch: conv\n' > "$WORK/redeploy-ps"
-rdprobe() { HTMUX=/private/tmp/tmux-501/orch-oldserv,1,0 homecmd env PROBE_CONF="$1" ORCHESTRATOR_PS_TABLE="$WORK/redeploy-ps" \
-  "$py" "$WORK/redeploy_probe.py" "$ROOT/skills/iterm-agents/scripts" "$HSID" 2>&1; }
-reset_homerec; printf '1\n' > "$HR/mark"; printf '/dev/ttys970\n' > "$HR/clients"
-res=$(rdprobe "/cfg/deploys/lounisbou/0ld/plugins/orchestrator/skills/iterm-agents/tmux/home.conf")
-check "an orchestrator in a home server of another deploy moves into a server of its own commit, its tab right of the old server's, and its agents follow" \
-  "0|follow orch-oldserv orch-abcdef12 /dev/ttys900 tmux:/private/tmp/tmux-501/orch-oldserv:%0 $HSID,create beside /dev/ttys970 right Orch: conv|moved: orch-abcdef12, shown on /dev/ttys970|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)|$(hcalls | grep -c "\[-L\]\[orch-abcdef12\]\[-f\]\[@ROOT@/skills/iterm-agents/tmux/home.conf\]\[new-session\]")"
-check "and its window 0 releases no tab: the old server's window closes with the session" "0" \
-  "$(grep -c 'home-release' "$(ls "$WORK"/homestate/prompts/home-*.sh)")"
 reset_homerec; printf '1\n' > "$HR/mark"
-res=$(rdprobe "$ROOT/skills/iterm-agents/tmux/home.conf")
-check "one whose home server runs this commit's conf stays, and nothing follows" \
-  "0|stay: this session already runs in a home session|" "$(sfield "$res" exit)|$(sfield "$res" OUT)|$(sfield "$res" calls)"
-reset_homerec; printf '1\n' > "$HR/mark"
-res=$(rdprobe "")
-check "one whose home server's conf cannot be read stays" "0|stay: this session already runs in a home session|" \
-  "$(sfield "$res" exit)|$(sfield "$res" OUT)|$(sfield "$res" calls)"
-if command -v tmux >/dev/null 2>&1 && [ "$(uname)" = Darwin ] && CT=$(mktemp -d /tmp/oc.XXXXXX 2>/dev/null); then
-  printf 'set -g status-left x\n' > "$CT/c.conf"
-  TMUX_TMPDIR="$CT" tmux -L orch-conf$$ -f "$CT/c.conf" new-session -d -s home "sleep 30" 2>/dev/null
-  spid=$(TMUX_TMPDIR="$CT" tmux -L orch-conf$$ display -p '#{pid}' 2>/dev/null)
-  check "the conf a home server was started with is read on the server's own process" "$CT/c.conf|" \
-    "$(TMUX="$CT/tmux-$(id -u)/orch-conf$$,$spid,0" ipy "print(ia.server_conf())")|$(TMUX="$CT/tmux-$(id -u)/orch-conf$$,1,0" ipy "print(ia.server_conf())")"
-  TMUX_TMPDIR="$CT" tmux -L orch-conf$$ kill-server 2>/dev/null; rm -rf "$CT"
-else
-  skip_case "the conf a home server was started with is read on the server's own process" "no tmux, or not macOS"
-fi
+res=$(HTMUX=/private/tmp/tmux-501/orch-oldserv,1,0 homecmd env ORCHESTRATOR_PS_TABLE="$WORK/redeploy-ps" \
+  "$py" "$WORK/redeploy_probe.py" "$ROOT/skills/iterm-agents/scripts" "$HSID" 2>&1)
+check "an orchestrator in a home server of another deploy stays in it: no server, no tab, no follower" \
+  "0|stay: this session already runs in a home session||0" \
+  "$(sfield "$res" exit)|$(sfield "$res" OUT)|$(sfield "$res" calls)|$(hcalls | grep -c '\[new-session\]')"
 
-echo "== iterm-agents: after a deploy, the home servers follow it =="
+echo "== iterm-agents: after a deploy, the home servers read its conf =="
 # Real servers under a tmux directory of the suite's own (TMUX_TMPDIR), never the operator's.
-if command -v tmux >/dev/null 2>&1 && [ "$(uname)" = Darwin ] && FT=$(mktemp -d /tmp/of.XXXXXX 2>/dev/null); then
-  FW="$FT/w"; mkdir -p "$FW/cfg/sessions" "$FW/state" "$FW/bin" "$FW/projects"
-  FOLD="orch-fold$$"; FNEW="orch-fnew$$"; FREL="orch-frel$$"; FOTHER="other-$$"
+if command -v tmux >/dev/null 2>&1 && FT=$(mktemp -d /tmp/of.XXXXXX 2>/dev/null); then
+  FREL="orch-frel$$"; FOTHER="other-$$"
   FMARK=$((6600 + $$ % 1000))
   ft() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$FT" tmux "$@"; }
-  fenv() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$FT" CLAUDE_CONFIG_DIR="$FW/cfg" ORCHESTRATOR_STATE_DIR="$FW/state" \
-    ORCHESTRATOR_HOST_CLI="$FW/bin/f-host" ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_PROJECTS_DIR="$FW/projects" \
-    ORCHESTRATOR_TMUX="$(command -v tmux)" ORCHESTRATOR_HOME_FOLLOW_POLL=0.3 ORCHESTRATOR_HOME_FOLLOW_QUIET=0 \
-    ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 ORCHESTRATOR_CLOSE_TIMEOUT=5 "$@"; }
-  fpy() { fenv "$py" -c "
-import sys
-sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
-import iterm_agent as ia
-$1
-"; }
-  # The host's stand-in: it registers the session it was given or the one it resumes, under the name
-  # it was given, with the status the case set, records its words and its ORCHESTRATOR_ variables,
-  # then waits. A node script: the kernel hides the environment of a platform binary such as /bin/sh
-  # from other processes, and the move reads it there.
-  cat > "$FW/bin/f-host" <<SH
-#!/usr/bin/env node
-const fs = require('fs')
-const args = process.argv.slice(2)
-const after = flag => { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : undefined }
-const sid = after('--resume') ?? process.env.STUB_SID ?? ''
-fs.appendFileSync('$FW/args-' + sid, args.join(' ') + '\\n')
-if (!process.env.STUB_NO_TRANSCRIPT) { fs.mkdirSync('$FW/projects/p', { recursive: true }); fs.appendFileSync('$FW/projects/p/' + sid + '.jsonl', '{}\\n') }
-fs.writeFileSync('$FW/env-' + sid, Object.keys(process.env).filter(k => k.startsWith('ORCHESTRATOR_')).sort().map(k => k + '=' + process.env[k]).join('\\n') + '\\n')
-fs.writeFileSync('$FW/cfg/sessions/' + process.pid + '.json', JSON.stringify({ pid: process.pid, sessionId: sid, cwd: '$FW', name: after('--name') ?? '', status: process.env.STUB_STATUS ?? 'idle', statusUpdatedAt: 0 }))
-// A command run in the background, as the host runs one: a shell that sources its snapshot.
-if (process.env.STUB_BG) fs.writeFileSync('$FW/bg-' + sid, String(require('child_process').spawn('/bin/sh', ['-c', ': /shell-snapshots/snapshot-stub; sleep 600; :'], { stdio: 'ignore' }).pid))
-setInterval(() => {}, 1 << 30)
-SH
-  chmod +x "$FW/bin/f-host"
-  # The follower ends once the old process is gone; the resume starts in its new window just after.
-  fresumed() { i=0; while ! grep -q -- "--resume $1" "$FW/args-$1" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done; }
-  # The old server, started from another deploy's conf: window 0 is the orchestrator's old place,
-  # its session already gone; one agent, busy. The new server, whose window 0 runs the resumed
-  # orchestrator.
-  printf 'set -g status-left OLD\n' > "$FW/old.conf"
-  ft -L "$FOLD" -f "$FW/old.conf" new-session -d -s home -n 'Orch: f' "sleep $FMARK"
-  ft -L "$FOLD" new-window -d -t home: -n 'Agent: a' "env STUB_SID=sid-a STUB_STATUS=busy ORCHESTRATOR_SPAWNED=1 ORCHESTRATOR_REPORTS_TO='Orch: f' $FW/bin/f-host --permission-mode auto --name 'Agent: a' 'the first prompt'"
-  fpy "ia.make_home('$FNEW', 'Orch: f', '$FW', \"env STUB_SID=sid-o $FW/bin/f-host --resume sid-o --name 'Orch: f'\", 'suite')" >/dev/null 2>&1
-  i=0; while [ "$(grep -l '"sid-a"' "$FW"/cfg/sessions/*.json 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
-  oldpid=$(basename "$(grep -l '"sid-a"' "$FW"/cfg/sessions/*.json)" .json)
-  fpy "ia.cmd_home_follow(ia.args_of('home-follow', {'from_': '$FOLD', 'to': '$FNEW', 'session': 'sid-o'}))" > "$FW/follow.out" 2>&1 &
-  fpid=$!
-  sleep 2
-  check "a busy agent is not moved: it stays in the old server, its process running" "Agent: a|alive|1" \
-    "$(ft -L "$FOLD" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: a')|$(alive "$oldpid")|$(wc -l < "$FW/args-sid-a" | tr -d ' ')"
-  # Its turn ends.
-  sed -i.bak 's/"status":"busy"/"status":"idle"/' "$FW/cfg/sessions/$oldpid.json"; rm -f "$FW/cfg/sessions/$oldpid.json.bak"
-  i=0; while kill -0 "$fpid" 2>/dev/null && [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done
-  fresumed sid-a
-  check "at its turn's end the agent is resumed in the new server under its name, with its launch's options and its ORCHESTRATOR_ variables" \
-    "Agent: a|--permission-mode auto --resume sid-a --name Agent: a|1|1" \
-    "$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: a')|$(tail -1 "$FW/args-sid-a")|$(grep -c '^ORCHESTRATOR_SPAWNED=1$' "$FW/env-sid-a")|$(grep -c '^ORCHESTRATOR_REPORTS_TO=Orch: f$' "$FW/env-sid-a")"
-  check "its old process is ended, and the old server, empty of sessions, is ended and traced" "gone|down|1|1" \
-    "$(alive "$oldpid")|$(ft -L "$FOLD" has-session 2>/dev/null && echo up || echo down)|$(grep -c "home-follow: Agent: a (session sid-a) moved from $FOLD on /dev/ttys[0-9]* to $FNEW on /dev/ttys[0-9]*" "$FW/state/close.log")|$(grep -c "home: server $FOLD ended: cause=redeploy (its sessions moved to $FNEW)" "$FW/state/close.log")"
-  # Nothing moves before the orchestrator runs in window 0 of the new server.
-  ft -L "$FOLD" -f "$FW/old.conf" new-session -d -s home -n 'Orch: f' "sleep $FMARK"
-  ft -L "$FOLD" new-window -d -t home: -n 'Agent: b' "env STUB_SID=sid-b $FW/bin/f-host --name 'Agent: b'"
-  sleep 1
-  ORCHESTRATOR_HOME_WAIT=1 ORCHESTRATOR_SPAWN_TIMEOUT=1 fpy "ia.cmd_home_follow(ia.args_of('home-follow', {'from_': '$FOLD', 'to': '$FNEW', 'session': 'sid-never'}))" > "$FW/follow2.out" 2>&1
-  check "an orchestrator never resumed in the new server moves nothing, and says so" "1|Agent: b" \
-    "$(grep -c "the orchestrator sid-never never resumed in $FNEW: the sessions of $FOLD stay there" "$FW/state/close.log")|$(ft -L "$FOLD" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: b')"
-  ft -L "$FOLD" kill-server 2>/dev/null
-  # An agent whose work is delivered (its window's state done: its pull request Ready, waiting for
-  # the merge) is closed, not moved; one whose session wrote no turn yet waits until it has one.
-  ft -L "$FOLD" -f "$FW/old.conf" new-session -d -s home -n 'Orch: f' "sleep $FMARK"
-  ft -L "$FOLD" new-window -d -t home: -n 'Agent: d' "env STUB_SID=sid-d $FW/bin/f-host --name 'Agent: d'"
-  ft -L "$FOLD" set-option -w -t 'home:Agent: d' @state done
-  ft -L "$FOLD" new-window -d -t home: -n 'Agent: n' "env STUB_SID=sid-n STUB_NO_TRANSCRIPT=1 $FW/bin/f-host --name 'Agent: n'"
-  i=0; while [ "$(grep -l -e '"sid-d"' -e '"sid-n"' "$FW"/cfg/sessions/*.json 2>/dev/null | wc -l | tr -d ' ')" -lt 2 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
-  dpid=$(basename "$(grep -l '"sid-d"' "$FW"/cfg/sessions/*.json)" .json)
-  fpy "ia.cmd_home_follow(ia.args_of('home-follow', {'from_': '$FOLD', 'to': '$FNEW', 'session': 'sid-o'}))" > "$FW/follow3.out" 2>&1 &
-  fpid=$!
-  sleep 2
-  check "a delivered agent is closed, not moved, its session id said for a resume; one with no turn written waits" \
-    "gone|0|1|Agent: n|0" \
-    "$(alive "$dpid")|$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -cx 'Agent: d')|$(grep -c 'home-follow: Agent: d (session sid-d) closed, not moved: its work is delivered; resume it with --resume sid-d' "$FW/state/close.log")|$(ft -L "$FOLD" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: n')|$(grep -c -- '--resume sid-n' "$FW/args-sid-n")"
-  printf '{}\n' > "$FW/projects/p/sid-n.jsonl"
-  i=0; while kill -0 "$fpid" 2>/dev/null && [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done
-  fresumed sid-n
-  check "once its first turn is written, it moves, and the old server ends" "Agent: n|1|down" \
-    "$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: n')|$(grep -c -- '--resume sid-n' "$FW/args-sid-n")|$(ft -L "$FOLD" has-session 2>/dev/null && echo up || echo down)"
-  ft -L "$FOLD" kill-server 2>/dev/null; ft -L "$FNEW" kill-server 2>/dev/null
-
-  # The orchestrator's chain follows it into the new server: an agent moved is pointed at its new
-  # window, one closed leaves it. An agent whose pull request is merged (state over) is closed like a
-  # delivered one; one running a command in the background waits for its end, which would wake it in
-  # the window the move left.
-  fpy "ia.make_home('$FNEW', 'Orch: f', '$FW', \"env STUB_SID=sid-o $FW/bin/f-host --resume sid-o --name 'Orch: f'\", 'suite')" >/dev/null 2>&1
-  ft -L "$FOLD" -f "$FW/old.conf" new-session -d -s home -n 'Orch: f' "sleep $FMARK"
-  ft -L "$FOLD" new-window -d -t home: -n 'Agent: c' "env STUB_SID=sid-c $FW/bin/f-host --name 'Agent: c'"
-  ft -L "$FOLD" new-window -d -t home: -n 'Agent: v' "env STUB_SID=sid-v $FW/bin/f-host --name 'Agent: v'"
-  ft -L "$FOLD" set-option -w -t 'home:Agent: v' @state over
-  ft -L "$FOLD" new-window -d -t home: -n 'Agent: g' "env STUB_SID=sid-g STUB_BG=1 $FW/bin/f-host --name 'Agent: g'"
-  i=0; while { [ "$(grep -l -e '"sid-c"' -e '"sid-v"' -e '"sid-g"' -e '"sid-o"' "$FW"/cfg/sessions/*.json 2>/dev/null | wc -l | tr -d ' ')" -lt 4 ] || [ ! -s "$FW/bg-sid-g" ]; } && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
-  vpid=$(basename "$(grep -l '"sid-v"' "$FW"/cfg/sessions/*.json)" .json)
-  gpid=$(basename "$(grep -l '"sid-g"' "$FW"/cfg/sessions/*.json)" .json)
-  ctab=$(fpy "print(ia.socket_tab_id('$FOLD', '$(ft -L "$FOLD" list-windows -F '#{window_id} #W' | sed -n 's/ Agent: c$//p')'))")
-  vtab=$(fpy "print(ia.socket_tab_id('$FOLD', '$(ft -L "$FOLD" list-windows -F '#{window_id} #W' | sed -n 's/ Agent: v$//p')'))")
-  mkdir -p "$FW/state/chains"
-  printf '{"tab_id":"%s","tty":"/dev/ttys801","owner":"own"}\n{"tab_id":"%s","tty":"/dev/ttys802","owner":"own"}\n' "$ctab" "$vtab" > "$FW/state/chains/ttys800.jsonl"
-  zerotty=$(ft -L "$FNEW" display -p -t home:0 '#{pane_tty}')
-  fpy "ia.cmd_home_follow(ia.args_of('home-follow', {'from_': '$FOLD', 'to': '$FNEW', 'session': 'sid-o', 'tty': '/dev/ttys800', 'owner': 'own'}))" > "$FW/follow4.out" 2>&1 &
-  fpid=$!
-  i=0; while ! { grep -q 'Agent: g waits' "$FW/state/close.log" && grep -q 'Agent: c (session sid-c) moved' "$FW/state/close.log"; } 2>/dev/null && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
-  cwin=$(ft -L "$FNEW" list-windows -F '#{window_id} #W' 2>/dev/null | sed -n 's/ Agent: c$//p')
-  check "the orchestrator's chain follows it: the agent moved names its new window there, the one closed is dropped, the old chain is gone" \
-    "1|0|1|absent" \
-    "$(grep -c "\"tab_id\": *\"$(fpy "print(ia.socket_tab_id('$FNEW', '$cwin'))")\"" "$FW/state/chains/$(basename "$zerotty").jsonl" 2>/dev/null)|$(grep -c "$vtab" "$FW/state/chains/$(basename "$zerotty").jsonl" 2>/dev/null)|$(grep -c '"owner": *"tmux:' "$FW/state/chains/$(basename "$zerotty").jsonl" 2>/dev/null)|$([ -e "$FW/state/chains/ttys800.jsonl" ] && echo present || echo absent)"
-  check "an agent whose pull request is merged (state over) is closed, not moved" "gone|0|1" \
-    "$(alive "$vpid")|$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -cx 'Agent: v')|$(grep -c 'home-follow: Agent: v (session sid-v) closed, not moved' "$FW/state/close.log")"
-  check "an agent at rest with a command running in the background is not moved, and says once what it waits for" \
-    "Agent: g|alive|1|1" \
-    "$(ft -L "$FOLD" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: g')|$(alive "$gpid")|$(grep -c 'home-follow: Agent: g waits for its background command(s) to end: /bin/sh -c : /shell-snapshots/snapshot-stub' "$FW/state/close.log")|$(wc -l < "$FW/args-sid-g" | tr -d ' ')"
-  pkill -P "$(cat "$FW/bg-sid-g")" 2>/dev/null; kill "$(cat "$FW/bg-sid-g")" 2>/dev/null
-  i=0; while kill -0 "$fpid" 2>/dev/null && [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done
-  fresumed sid-g
-  check "once its background command ended, it moves, and the old server ends" "Agent: g|1|down" \
-    "$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -x 'Agent: g')|$(grep -c -- '--resume sid-g' "$FW/args-sid-g")|$(ft -L "$FOLD" has-session 2>/dev/null && echo up || echo down)"
-  ft -L "$FOLD" kill-server 2>/dev/null
-
-  # What cannot be moved stays, and the follower says so: an environment it cannot read (the agent
-  # would lose the variables tying it to its orchestrator), a turn begun between the check and the
-  # kill, a failure on one pane, an error of the follower's own, and the deadline.
-  ft -L "$FOLD" -f "$FW/old.conf" new-session -d -s home -n 'Orch: f' "sleep $FMARK"
-  ft -L "$FOLD" new-window -d -t home: -n 'Agent: r' "env STUB_SID=sid-r $FW/bin/f-host --name 'Agent: r'"
-  i=0; while [ "$(grep -l '"sid-r"' "$FW"/cfg/sessions/*.json 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
-  rpid=$(basename "$(grep -l '"sid-r"' "$FW"/cfg/sessions/*.json)" .json)
-  rfollow() { fpy "$1
-ia.cmd_home_follow(ia.args_of('home-follow', {'from_': '$FOLD', 'to': '$FNEW', 'session': 'sid-o'}))" > "$FW/follow-r.out" 2>&1; }
-  ORCHESTRATOR_HOST_ENV=null rfollow ""
-  check "an agent whose environment cannot be read stays, said, and its server is left running" "1|1|alive|up" \
-    "$(grep -c "home-follow: Agent: r stays in $FOLD: its environment cannot be read" "$FW/state/close.log")|$(grep -c "home-follow: $FOLD keeps 1 session(s) the move cannot resume; it is left running" "$FW/state/close.log")|$(alive "$rpid")|$(ft -L "$FOLD" has-session 2>/dev/null && echo up || echo down)"
-  ORCHESTRATOR_HOME_FOLLOW_DEADLINE=1 rfollow "ia.resting = lambda pid: False
-real_call = ia.tmux_call
-def recorded(argv, *a, **k):
-    if argv[:3] == ['-L', '$FNEW', 'kill-window']:
-        open('$FW/killed-new', 'a').write('x\\n')
-    return real_call(argv, *a, **k)
-ia.tmux_call = recorded"
-  check "an agent whose turn began between the check and the kill stays, its window in the new server killed, and the deadline says who stayed" \
-    "killed|0|alive|1" \
-    "$([ -s "$FW/killed-new" ] && echo killed)|$(ft -L "$FNEW" list-windows -F '#W' 2>/dev/null | grep -cx 'Agent: r')|$(alive "$rpid")|$(grep -c "home-follow: $FOLD still holds Agent: r after 1s, not moved: they stay there, and so does the server" "$FW/state/close.log")"
-  : > "$FW/state/close.log"
-  ORCHESTRATOR_HOME_FOLLOW_DEADLINE=1 rfollow "
-def boom(*a):
-    raise RuntimeError('boom')
-ia.follow_pane = boom"
-  check "a failure on one pane is said once and the follower goes on to its deadline" "1|1|alive" \
-    "$(grep -c 'home-follow: Agent: r: not moved this round: boom' "$FW/state/close.log")|$(grep -c "home-follow: $FOLD still holds Agent: r" "$FW/state/close.log")|$(alive "$rpid")"
-  rfollow "
-def boom(*a):
-    raise RuntimeError('boom')
-ia.follow_panes = boom"
-  check "an error of the follower's own is said where the moves are, the sessions left as they are" "1|alive" \
-    "$(grep -c "home-follow: the follower stopped on an error (RuntimeError: boom): the sessions left in $FOLD stay there" "$FW/state/close.log")|$(alive "$rpid")"
-  ft -L "$FOLD" kill-server 2>/dev/null; ft -L "$FNEW" kill-server 2>/dev/null
-  # The follower is started apart from the session that asks for it, through the launcher's request.
-  ORCHESTRATOR_HOME_WAIT=0 ORCHESTRATOR_SPAWN_TIMEOUT=0 fpy "ia.start_home_follow('$FOLD', '$FNEW', '', '', 'sid-z')"
-  i=0; while ! grep -q 'the orchestrator sid-z never resumed' "$FW/state/close.log" 2>/dev/null && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
-  check "start_home_follow runs the follower in a process of its own, its lines in close.log" "1" \
-    "$(grep -c "home-follow: the orchestrator sid-z never resumed in $FNEW: the sessions of $FOLD stay there" "$FW/state/close.log")"
-
-  # Every live home server reads the conf of the launcher's commit, with no restart; a server that
-  # is no home server is left alone.
-  ft -L "$FREL" -f "$FW/old.conf" new-session -d -s home "sleep $FMARK"
-  ft -L "$FOTHER" -f "$FW/old.conf" new-session -d -s home "sleep $FMARK"
+  # Servers started from another deploy's conf; one of them is no home server.
+  printf 'set -g status-left OLD\n' > "$FT/old.conf"
+  ft -L "$FREL" -f "$FT/old.conf" new-session -d -s home "sleep $FMARK"
+  ft -L "$FOTHER" -f "$FT/old.conf" new-session -d -s home "sleep $FMARK"
+  # The old deploy is pruned: a server reads its -f once, at its start, and never again.
+  rm -f "$FT/old.conf"
   relpid=$(ft -L "$FREL" display -p '#{pid}')
   out=$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$FT" bash "$AGENT" home-reload 2>&1); rc=$?
   check "home-reload has every home server read this commit's conf, the same server running, and no other server" \
     "0|home-reload: $FREL reloaded $ROOT/skills/iterm-agents/tmux/home.conf||$relpid|OLD" \
     "$rc|$out|$(ft -L "$FREL" show -gv status-left)|$(ft -L "$FREL" display -p '#{pid}')|$(ft -L "$FOTHER" show -gv status-left)"
+  check "the server whose -f deploy is pruned still makes a window, and draws the new conf's bar" "0|1|1" \
+    "$(ft -L "$FREL" new-window -d -t home: -n after 2>&1 | grep -c .)|$(ft -L "$FREL" list-windows -F '#W' | grep -cx after)|$(ft -L "$FREL" show -gv status-style | grep -c '#1c1c1c')"
   ft -L "$FREL" kill-server 2>/dev/null; ft -L "$FOTHER" kill-server 2>/dev/null
   pkill -fx "sleep $FMARK" 2>/dev/null
   rm -rf "$FT"
 else
-  skip_case "the home servers follow a deploy" "no tmux, or not macOS"
+  skip_case "the home servers read a deploy's conf" "no tmux"
 fi
-check "an agent is at rest once idle for FOLLOW_QUIET seconds: not before, never busy, idle alone with no time" \
-  "False|True|False|True" \
-  "$(ORCHESTRATOR_HOME_FOLLOW_QUIET=5 ipy "
-r = dict(status='idle', statusUpdatedAt=1000)
-print('|'.join(str(x) for x in [ia.at_rest(r, now=3), ia.at_rest(r, now=7), ia.at_rest(dict(status='busy', statusUpdatedAt=0), now=99), ia.at_rest(dict(status='idle'))]))")"
-# The old server's end: its tab closed once the server is gone, closed by force past the wait; a
-# server that keeps a session the move cannot resume is neither ended nor closed.
-efprobe() { ORCHESTRATOR_CLOSE_TIMEOUT=0 ORCHESTRATOR_STATE_DIR="$WORK/efstate" ipy "
-calls = []
-class T(ia.Terminal):
-    def find(self, tty):
-        calls.append('find ' + tty); return $1 and len(calls) < 6
-    def close(self, tty, expect):
-        calls.append('close ' + tty)
-ia.ITERM = T()
-ia.home_no_tab = lambda: False
-ia.home_answers = lambda s: True
-ia.kill_watched_home = lambda s: calls.append('kill ' + s) or True
-ia.trace_home = lambda *a: calls.append('trace ' + a[0])
-ia.end_followed('orch-o', 'orch-n', $2, ['/dev/ttys1'])
-print('calls=' + ','.join(calls) + ';end')" | sed -n 's/^calls=//p'; }
-check "the old server, empty, is ended and its tab closed by force once the wait is over" \
-  "kill orch-o,trace orch-o,find /dev/ttys1,close /dev/ttys1;end" "$(efprobe True '{}')"
-check "a tab already gone is not closed again" "kill orch-o,trace orch-o,find /dev/ttys1;end" "$(efprobe False '{}')"
-check "a server that keeps a session the move cannot resume is neither ended nor its tab closed" ";end" \
-  "$(efprobe True "{'9': 'x'}")"
 
 # The words of a launch, replayed: the conversation's own names dropped, the rest kept as typed.
 rw() { "$py" -c "

@@ -83,7 +83,8 @@ SANDBOX=$(mktemp -d "$BASE/tmux-e2e-XXXXXX") && SANDBOX=$(cd "$SANDBOX" && pwd -
 [ -d "${SANDBOX}" ] || { echo "cannot create a working directory under $BASE" >&2; exit 1; }
 WORKDIR="$SANDBOX/work"
 STATE="$SANDBOX/state"
-mkdir -p "$WORKDIR" "$STATE" "$SANDBOX/module" "$SANDBOX/bin" "$SANDBOX/run"
+mkdir -p "$WORKDIR" "$STATE" "$SANDBOX/module" "$SANDBOX/bin" "$SANDBOX/run" "$SANDBOX/old-deploy"
+printf 'set -g status-left OLD-DEPLOY\n' > "$SANDBOX/old-deploy/home.conf"
 tm() { tmux -L "$SERVER" "$@"; }
 # The home servers the run starts besides its own, each ended at the end whatever happened.
 HOMES=()
@@ -159,7 +160,10 @@ env -i HOME="$HOME" USER="$USER" PATH="$EPATH" TERM=xterm-256color \
   ORCHESTRATOR_STATE_DIR="$STATE" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" \
   ORCHESTRATOR_HOST_CLI="$WRAPPER" ORCHESTRATOR_TRUST_FILE="$SANDBOX/trust.json" \
   ORCHESTRATOR_TIER_LIGHT="$MODEL" ORCHESTRATOR_WORKSPACES="$SANDBOX" ${passthrough[@]+"${passthrough[@]}"} \
-  tmux -L "$SERVER" new-session -d -s home -n orch -x 160 -y 45 -c "$WORKDIR" '/bin/bash --noprofile --norc'
+  tmux -L "$SERVER" -f "$SANDBOX/old-deploy/home.conf" new-session -d -s home -n orch -x 160 -y 45 -c "$WORKDIR" '/bin/bash --noprofile --norc'
+# The server was started from the conf of a deploy since pruned: the conf is read once, at the
+# start, so nothing of the run reads that directory again.
+rm -rf "$SANDBOX/old-deploy"
 tm set -t home @orchestrator-home 1 >/dev/null
 SOCKET=$(tm display -p -t home:0 '#{socket_path}')
 OWN_PANE=$(tm display -p -t home:0 '#{pane_id}')
@@ -489,6 +493,9 @@ LEAD_SID=e2e-lead-$$
 mkdir -p "$TRANSCRIPTS"
 printf '{"type":"api-request","sessionId":"%s","querySource":"repl_main_thread","params":{"model":"%s","output_config":{"effort":"low"}}}\n' \
   "$LEAD_SID" "$MODEL" > "$TRANSCRIPTS/$LEAD_SID.jsonl"
+# An agent at work through the whole succession: it must stay in its window, its process unchanged.
+THREE_HOST=$(ps -t "${THREE#/dev/}" -o pid=,command= 2>/dev/null | awk '/--setting-sources project/ { print $1; exit }')
+tm send-keys -t "$THREE_PANE" 'Count from 1 to 300, one number per line, and nothing else. Do not use any tool.' Enter
 LENV=(CLAUDE_CODE_SESSION_ID="$LEAD_SID" ORCHESTRATOR_PROJECTS_DIR="$HOSTDIR/projects")
 launcher 120 spawn --successor --dir "$WORKDIR" --permission-mode acceptEdits --title "Orch: e2e lead" \
   --no-remote-control --prompt "$(prompt E2E-HEIR-READY)"
@@ -512,6 +519,16 @@ check "the takeover kills window 0 and gives the successor index 0, the operator
   "0|takeover: no transcript of the session on $OWN_TTY was found: no « handed over » read
 took window 0: the predecessor's window $W0 on $OWN_TTY was closed|0 $HEIR_WIN Orch: e2e lead 1|0" \
   "$(rc)|$(out)|$(windows | awk '$1 == 0')|$(windows | grep -c " $W0 ")"
+# The server started from a deploy's conf stays the successor's: its home leaves it in place, and
+# the agent, busy through the takeover, is in the same window of the same server, the same process.
+LENV=(ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1)
+launcher 30 home --session "$LEAD_SID" --name "Orch: e2e lead"
+LENV=()
+check "the successor's server started from another deploy's conf keeps it: home stays" \
+  "0|stay: this session already runs in a home session" "$(rc)|$(out)"
+check "the agent busy through the succession is still in its window of the same server, its process the same" \
+  "1|$THREE_HOST" \
+  "$(windows | grep -c " $W3 Agent: e2e three ")|$(ps -t "${THREE#/dev/}" -o pid=,command= 2>/dev/null | awk '/--setting-sources project/ { print $1; exit }')"
 if wait_reply "$HEIR_PANE" E2E-HEIR-READY 90; then HREPLIED=1; else HREPLIED=0; fi
 audit_rc
 check "the successor replied within 90s, and the chain still holds the agent under it" "1|tmux:$SOCKET:$W3 $THREE" \

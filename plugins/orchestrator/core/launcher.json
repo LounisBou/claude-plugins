@@ -380,36 +380,6 @@
       ],
       "unknown": "ignore"
     },
-    "home-follow": {
-      "options": [
-        {
-          "flag": "--from",
-          "dest": "from_",
-          "kind": "value"
-        },
-        {
-          "flag": "--to",
-          "dest": "to",
-          "kind": "value"
-        },
-        {
-          "flag": "--tty",
-          "dest": "tty",
-          "kind": "value"
-        },
-        {
-          "flag": "--owner",
-          "dest": "owner",
-          "kind": "value"
-        },
-        {
-          "flag": "--session",
-          "dest": "session",
-          "kind": "value"
-        }
-      ],
-      "unknown": "ignore"
-    },
     "home-reload": {
       "options": [],
       "unknown": "refuse"
