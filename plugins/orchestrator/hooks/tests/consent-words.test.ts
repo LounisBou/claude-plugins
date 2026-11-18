@@ -298,6 +298,7 @@ test('a plain grant followed by a separate instruction stays a grant: the instru
   for (const said of [
     "Accorder l'auto-merge de acme/guide\n\nsauf acme/guide#3", "Accorder l'auto-merge de acme/guide. Valable jusqu'à vendredi", "Accorder l'auto-merge de acme/guide.\nLance le push de acme/other",
     "Accorder l'auto-merge de acme/guide ? Lance le push", "Accorder l'auto-merge de acme/guide. Lance le push ?", "Accorder l'auto-merge de acme/guide. Refuser le reste",
+    "Accorder l'auto-merge de acme/guide. Lance le push sur acme/guide-evil", "Accorder l'auto-merge de acme/guide. Merge la PR 8", "Accorder l'auto-merge de acme/guide.\nQuand la CI passe, désactive-le",
   ]) expect('refuse' in judged(said), said).toBe(true)
 })
 

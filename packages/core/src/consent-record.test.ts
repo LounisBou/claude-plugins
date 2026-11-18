@@ -273,7 +273,7 @@ describe('a plain grant followed by another instruction', () => {
   })
 
   it('grants on an « ok », « oui » or « go » before the choice and a restating of the subject after it, on one line or two', () => {
-    for (const typed of ['Accorder', 'Ok Accorder', 'oui, Accorder !', 'Go accorder', "Accorder pour l'auto-merge", 'Accorder auto-merge de geonativefr/beltv5_fw_legacy', 'Accorder.\nLance le push', 'Accorder ! Lance le push forcé go !']) {
+    for (const typed of ['Accorder', 'Ok Accorder', 'oui, Accorder !', 'Go accorder', "Accorder pour l'auto-merge", 'Accorder auto-merge de geonativefr/beltv5_fw_legacy', 'Accorder.\nLance le push', 'Accorder ! Lance le push forcé go !', "Accorder l'auto-merge d'geonativefr/beltv5_fw_legacy", "D'accord, Accorder"]) {
       assert.equal(granted(typed), true, typed)
     }
   })
@@ -289,10 +289,34 @@ describe('a plain grant followed by another instruction', () => {
     for (const typed of [
       "Accorder pour l'auto-merge\n\nsauf beltv5_fw_legacy#3", 'Accorder.\nSeulement la première PR', 'Accorder. Mais pas ce soir', 'Accorder. Refuser le reste',
       "Accorder.\nValable jusqu'à vendredi", 'Accorder. Lance le push ?', 'Accorder. Pousse acme/other', 'Accorder. Exclure #3', 'Accorder. Si la CI passe',
+      'Accorder. Lance le push demain', 'Accorder. Lance le push à 14h', 'Accorder. Lance le push; puis stop', TYPED + "\n\nsauf beltv5_fw_legacy#3",
     ]) assert.equal(granted(typed), false, typed)
   })
 
-  it('keeps his words whole to the asker: the instruction is plain, and only a grant records', () => {
+  it('refuses a following instruction that names another repository, pull request or environment, however it is written', () => {
+    for (const typed of [
+      'Accorder. Lance le push sur geonativefr/beltv5_fw_legacy-evil', 'Accorder. Lance le push sur geonativefr/beltv5_fw_legacy/other', 'Accorder. Merge geonativefr/beltv5_fw_legacy#77', 'Accorder. Merge la PR 8',
+      'Accorder. Merge pull request n° 8', 'Accorder. https://github.com/geonativefr/beltv5_fw_legacy/pull/3', 'Accorder. Merge ＃8', 'Accorder. Merge geonativefr/beltv5_fw_legacy#1',
+    ]) assert.equal(granted(typed), false, typed)
+    const deploy = { kind: 'auto-deploy' as const, repo: 'acme/app', env: 'prod' as const }
+    assert.equal(plainInstruction('Déploie aussi staging', deploy), false)
+    assert.equal(plainInstruction('Déploie prod', deploy), true)
+    const waiver = { kind: 'norms-waiver' as const, repo: 'acme/app', pr: 7 }
+    assert.equal(plainInstruction('Merge acme/app#7', waiver), true)
+    assert.equal(plainInstruction('Merge acme/app#77', waiver), false)
+    assert.equal(plainInstruction('Merge #70', waiver), false)
+  })
+
+  it('refuses a following instruction that is a condition, an exception, a restriction, a limit or a withdrawal in other words, and a question mark of any script', () => {
+    for (const typed of [
+      'Accorder. Quand la CI passe, lance le push', 'Accorder. Lorsque la CI passe', 'Accorder. À condition que la CI passe', 'Accorder. Tant que la CI est verte', 'Accorder. Provided CI passes', 'Accorder. When CI passes',
+      'Accorder. Sans le push', 'Accorder. Excepté la PR de Paul', 'Accorder. Hors acme', 'Accorder. Except docs', "Accorder. Ne fusionne que les docs", 'Accorder. Plus de merge', 'Accorder. Plus tard',
+      'Accorder. Pour cette session', 'Accorder. Laisse tomber', 'Accorder. Hold on', 'Accorder. Undo that', "Accorder. Désactive l'auto-merge", 'Accorder. Disable auto-merge', 'Accorder. Turn it off',
+      'Accorder？', 'Accorder ؟', 'Accorder. Lance le push ？', 'Accorder. Lance le push؟',
+    ]) assert.equal(granted(typed), false, typed)
+  })
+
+  it('tells a plain instruction from one that holds a condition, a limit or another subject', () => {
     assert.equal(plainInstruction('LAnce le push forcé go !', MERGE), true)
     assert.equal(plainInstruction('Lance le push de geonativefr/beltv5_fw_legacy#1', MERGE), false)
     assert.equal(plainInstruction('Lance le push, sauf le dernier', MERGE), false)

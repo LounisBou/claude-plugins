@@ -11,7 +11,7 @@
 // grant it; a limit they state is the exemption's `until`, and no other; anything else — another
 // repository or pull request, a question, a condition, a limit that is not the one passed — writes
 // nothing, and the refusal says why.
-import { apart, CONSENT_GRANT, CONSENT_VERSION, DEPLOY_ENVS, HEDGED, LIMIT_LEFT, parseConsentRecord, parseConsentSubject, plainInstruction, splitGrant, type Answerer, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
+import { apart, CONSENT_GRANT, ENV_NAME, ENV_WORDS, CONSENT_VERSION, DEPLOY_ENVS, HEDGED, LIMIT_LEFT, parseConsentRecord, parseConsentSubject, plainInstruction, splitGrant, type Answerer, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
 
 export type Fields = Record<string, unknown>
 
@@ -76,9 +76,6 @@ const TOPIC: Record<ConsentSubject['kind'], readonly RegExp[]> = {
   'auto-deploy': [apart("auto[- ]?d[eé]ploi\\p{L}*|auto[- ]?deploy\\p{L}*|d[eé]ploiement (?:automatique|continu)|d[eé]ployer automatiquement|continuous deploy\\p{L}*")],
 }
 
-const ENV_WORDS: Record<string, DeployEnv> = { dev: 'dev', staging: 'staging', stage: 'staging', prod: 'prod', production: 'prod' }
-// An environment is no part of a compound (« pre-prod », « prod-like »): hyphens and underscores join it too.
-const ENV_NAME = new RegExp(`(?<![\\p{L}\\p{N}_-])(?:${Object.keys(ENV_WORDS).join('|')})(?![\\p{L}\\p{N}_-])`, 'gu')
 
 // The instant a Paris wall time is, or NaN when that time does not exist (the hour skipped in spring); the earlier of the two when it is the hour the autumn repeats.
 function parisInstant(year: number, month: number, day: number, hour: number, minute: number): number {

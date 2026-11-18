@@ -242,12 +242,12 @@ export const apart = (pattern: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}]
  * Fail-closed: the asker asks again, with the limit or the condition in the question. It is read on
  * words folded to lower case with the plain apostrophe.
  */
-export const HEDGED = apart("pas|non|jamais|sauf|mais|attend\\p{L}*|wait|not|don't|dont|no|never|refus\\p{L}*|annul\\p{L}*|cancel|stop|si|if|unless|only|seulement|uniquement|plut[oô]t|rather|avant|before|apr[eè]s|after|sinon|otherwise|r[eé]voqu\\p{L}*|retir\\p{L}*|revok\\p{L}*|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|monday|tuesday|wednesday|thursday|friday|saturday|sunday")
+export const HEDGED = apart("pas|non|jamais|sauf|mais|attend\\p{L}*|wait|not|don't|dont|no|never|refus\\p{L}*|annul\\p{L}*|cancel|stop|si|if|unless|only|seulement|uniquement|plut[oô]t|rather|avant|before|apr[eè]s|after|sinon|otherwise|r[eé]voqu\\p{L}*|retir\\p{L}*|revok\\p{L}*|quand|lorsque?|when|whenever|condition\\p{L}*|provided|tant|as long|sans|without|except\\p{L}*|hors|exclu\\p{L}*|exclud\\p{L}*|ne|n(?=')|plus|moins|tard|later|laisse\\p{L}*|tomb\\p{L}*|hold|undo|d[eé]sactiv\\p{L}*|disabl\\p{L}*|off|supprim\\p{L}*|delet\\p{L}*|remov\\p{L}*|turn|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|monday|tuesday|wednesday|thursday|friday|saturday|sunday")
 
 /** A limit left in words: a date, an hour, a duration, a period, a moment, a zone, any way of limiting a consent. Read on words folded to lower case. */
 export const LIMIT_LEFT = new RegExp(
   "jusqu|until|ce soir|tonight|expir|valable|demain|tomorrow|aujourd'hui|today|\\d{1,2}/\\d{1,2}|\\d{4}-\\d{2}-\\d{2}|(?<![\\p{L}\\p{N}])\\d{1,2}\\s?h(?:\\d{2})?(?![\\p{L}\\p{N}])"
-  + "|(?<![\\p{L}\\p{N}])(?:pendant|durant|during|for|semaines?|weeks?|week-?end|jours?|journ[eé]es?|days?|heures?|hours?|minutes?|mois|months?|ans|ann[eé]es?|years?|temporair\\p{L}*|provisoire\\p{L}*|temporar\\p{L}*|moment|fois|once|am|pm|pst|cst|cet|cest|bst|gmt|utc|locale|local)(?![\\p{L}\\p{N}])"
+  + "|(?<![\\p{L}\\p{N}])(?:pendant|durant|during|for|semaines?|weeks?|week-?end|jours?|journ[eé]es?|days?|heures?|hours?|minutes?|mois|months?|ans|ann[eé]es?|years?|temporair\\p{L}*|provisoire\\p{L}*|temporar\\p{L}*|moment|fois|once|sessions?|soir|matin|nuit|night|morning|evening|am|pm|pst|cst|cet|cest|bst|gmt|utc|locale|local)(?![\\p{L}\\p{N}])"
   + "|(?<![\\p{L}\\p{N}])[+-]\\s?\\d",
   'u',
 )
@@ -286,14 +286,39 @@ export function splitGrant(typed: string, subject: ConsentSubject): { grant: str
   return { grant: text.slice(0, cut).trim(), following: text.slice(cut).trim() }
 }
 
+// A question or a semicolon in any script NFKC does not fold to the ASCII ones (the Arabic question mark).
+const QUESTION = /[?;؟]/
+
+/** The environments an auto-deploy names, and the words that name them. */
+export const ENV_WORDS: Record<string, DeployEnv> = { dev: 'dev', staging: 'staging', stage: 'staging', prod: 'prod', production: 'prod' }
+// An environment is no part of a compound (« pre-prod », « prod-like »): hyphens and underscores join it too.
+export const ENV_NAME = new RegExp(`(?<![\\p{L}\\p{N}_-])(?:${Object.keys(ENV_WORDS).join('|')})(?![\\p{L}\\p{N}_-])`, 'gu')
+
+// A pull request as words name it: `#7`, `PR 7`, `pull request n° 7`, `/pull/7`.
+const PULL_REF = /#\s?(\d+)(?!\d)|(?<![\p{L}\p{N}])(?:prs?|pull requests?|pull)\s*(?:n°|no\.?|#)?\s*(\d+)(?!\d)|\/pulls?\/(\d+)(?!\d)/gu
+
+// Whether words name a repository other than the subject's, token by token (`acme/app-evil` is not `acme/app`), or a pull request other than its own.
+function namesAnother(said: string, subject: ConsentSubject): boolean {
+  const repo = subject.repo.toLowerCase()
+  for (const token of said.split(/[\s,;:!?()"«»]+/)) {
+    if (!token.includes('/') || !/\p{L}/u.test(token)) continue
+    // The elision before the name (« d'acme/app »), the pull request after it (`#7`) and the closing dot are no part of it.
+    if (token.replace(/^[^/]*'/, '').replace(/#\d+$/, '').replace(/[.']+$/, '') !== repo) return true
+  }
+  const numbers = [...said.matchAll(PULL_REF)].map(match => Number(match[1] ?? match[2] ?? match[3]))
+  return numbers.some(number => !('pr' in subject) || number !== subject.pr)
+}
+
 /**
  * Whether the words that follow a grant are a separate plain instruction, which the grant does not
- * void: no question, no condition, exception or refusal, no limit, and no other repository or pull
- * request than the subject's. Fail-closed on every list; the instruction itself is not read.
+ * void: no question, no condition, exception, refusal or limit (the lists HEDGED and LIMIT_LEFT),
+ * no other repository, pull request or, for an auto-deploy, environment than the subject's. Read
+ * fail-closed on those lists; the instruction itself is not read.
  */
 export function plainInstruction(following: string, subject: ConsentSubject): boolean {
-  const said = spaced(following).toLowerCase().replace(/[’‘]/g, "'")
-  return !/[?;]/.test(said) && !HEDGED.test(said) && !LIMIT_LEFT.test(said) && !namesOtherSubject(said, subject)
+  const said = spaced(following).normalize('NFKC').toLowerCase().replace(/[’‘]/g, "'")
+  if (QUESTION.test(said) || HEDGED.test(said) || LIMIT_LEFT.test(said) || namesAnother(said, subject)) return false
+  return !('env' in subject) || [...said.matchAll(ENV_NAME)].every(match => ENV_WORDS[match[0]] === subject.env)
 }
 
 /**
@@ -315,7 +340,7 @@ export function plainInstruction(following: string, subject: ConsentSubject): bo
  */
 export function leadingChoice<C extends { letter: string; text: string }>(typed: string, choices: readonly C[], subject: ConsentSubject, question?: string): C | undefined {
   const { grant, following } = splitGrant(typed, subject)
-  const said = spaced(grant).toLowerCase().replace(/[’‘]/g, "'").replace(GRANT_LEAD, '')
+  const said = spaced(grant).normalize('NFKC').toLowerCase().replace(/[’‘]/g, "'").replace(GRANT_LEAD, '')
   const candidates = opened(said, choices)
   const first = candidates[0]
   if (first === undefined) return undefined
@@ -326,7 +351,7 @@ export function leadingChoice<C extends { letter: string; text: string }>(typed:
   if (following !== '' && !plainInstruction(following, subject)) return undefined
   // Only an exemption carries a limit of its own (`until`, which expires it): no other kind's record expires, so a limit there is never the question's.
   const rest = restated(withoutOwnSubject(subject.kind === 'e2e-exemption' ? withoutStatedLimit(said.slice(text.length), question) : said.slice(text.length), subject), subject)
-  if (/[?;]/.test(rest)) return undefined
+  if (QUESTION.test(rest)) return undefined
   const words = rest.match(/[\p{L}\p{N}\p{M}]+/gu) ?? []
   return words.every(word => CONFIRMATION.has(word)) ? first : undefined
 }
