@@ -3477,12 +3477,12 @@ check "the decision round's coordinator paragraph stays at 450 characters or few
 # The module carries each question; the round sending them itself as well delivered one question twice.
 check "the decision round no longer looks the coordinator up or sends it the questions itself, and stays at 8,800 bytes or fewer" "no|no|0|yes" \
   "$(spells "$ROOT/commands/decide.md" 'coordinator.sh lookup')|$(spells "$ROOT/commands/decide.md" 'goes to that coordinator with `SendMessage`')|$(sed -n '1,5p' "$ROOT/commands/decide.md" | grep -c '^allowed-tools: .*coordinator\.sh')|$([ "$(wc -c < "$ROOT/commands/decide.md" | tr -d ' ')" -le 8800 ] && echo yes || echo no)"
-# The coordinator's own decision round takes every orchestrator's open questions in the order
-# `round --by-urgency` prints, points at decide.md for the round's shape, and relays each ruling.
+# The machine-wide decide is run by its script: the command runs it and does what its first line
+# says, the round's steps being the coordination skill's, never copied into the command.
 CDECIDE="$ROOT/commands/coordinator-decide.md"
-check "coordinator-decide reads round --by-urgency, follows decide.md's shape, relays each ruling verbatim, and is listed" \
-  "yes|yes|yes|yes|1|yes" \
-  "$(spells "$CDECIDE" '--by-urgency`: its open `operator` entries are the round')|$(spells "$CDECIDE" "The round's shape is \`/orchestrator:decide\`'s, read from \`commands/decide.md\`")|$(spells "$CDECIDE" 'verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender')|$(spells "$CDECIDE" 'orchestrator, the groups ordered by their oldest wait')|$(sed -n '1,5p' "$CDECIDE" | grep -c '^allowed-tools: .*coordinator\.sh.*SendMessage')|$(spells "$ROOT/README.md" '| `/orchestrator:coordinator-decide` |')"
+check "coordinator-decide runs round --decide and does what its line says, holds no state machine, and is listed" \
+  "yes|0|1|yes" \
+  "$(spells "$CDECIDE" 'and do what its first line says')|$(grep -c 'decide: machine' "$CDECIDE")|$(sed -n '1,5p' "$CDECIDE" | grep -c '^allowed-tools: .*coordinator\.sh.*mcp__orchestrator__settle')|$(spells "$ROOT/README.md" '| `/orchestrator:coordinator-decide` |')"
 COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$ROOT/skills/coordination/references/succession.md" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
   -e 's#<subject>#ops#' -e "s#<your working directory>#$WORK#" -e 's#${CLAUDE_PLUGIN_ROOT}#/plugin#g')
 coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \

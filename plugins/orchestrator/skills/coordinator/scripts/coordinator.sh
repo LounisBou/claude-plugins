@@ -27,13 +27,15 @@
 #                            --all prints those too, the answered then the withdrawn
 #                            (--by-urgency prints the same order, every question's text)
 #   coordinator.sh round --decide --as "<name>"   where the operator's decide runs, then its
-#                            entries: one line, « decide: coordinator » (the live coordinator's own
-#                            session, named by --as: round --by-urgency follows), « decide: machine | <n> open »
-#                            (no coordinator live: the open operator entries of every session of the machine
-#                            follow, in the round's order, every question's text, none recorded as listed),
-#                            « decide: elsewhere | <name> | <tty> » (a coordinator is live and this is not it:
-#                            nothing follows) or « decide: empty | no open question »; exit 0 in each; a record naming no pid counts as a coordinator
-#                            live (as the hooks module reads it); a liveness check that cannot run is a refusal, exit 1
+#                            entries: one line, ending on what the session does next, « decide: coordinator — … »
+#                            (the live coordinator's own session, named by --as: round --by-urgency follows),
+#                            « decide: machine | <n> open — … » (no coordinator live, an Orch: session: the open
+#                            operator entries of every session of the machine follow, in the round's order, every
+#                            question's text, none recorded as listed), « decide: elsewhere | <name> | <tty> — … »
+#                            (a coordinator is live and this is not it: nothing follows) or « decide: empty | no
+#                            open question — … »; exit 0 in each; a record naming no pid counts as a coordinator
+#                            live (as the hooks module reads it); no coordinator live, a question open and a session not an
+#                            orchestrator, or a liveness check that cannot run, is a refusal, exit 1
 #   coordinator.sh round-archive   moves every entry settled over a day ago into round/archive/; prints
 #                            "archived <n>"
 #

@@ -4100,7 +4100,7 @@ def cmd_home_release(args):
 #
 # A deploy installs a new commit of the plugins in a directory of its own, and a running session
 # keeps the commit it started on. A home server takes nothing else from a commit than its conf, so
-# the session the hooks module tells of the newer install runs that commit's `home-reload`: every
+# the hooks module of a session it tells of the newer install runs that commit's `home-reload`: every
 # live home server reads the new conf, with no restart. No server is replaced and no agent moves.
 
 

@@ -49,7 +49,7 @@ describe('round --decide', () => {
     const f = fixture()
     seed(f)
     assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
-    assert.equal(f.out[0], 'decide: machine | 6 open')
+    assert.equal(f.out[0], 'decide: machine | 6 open — no coordinator is live: load orchestrator:coordination and run its decision round over every entry below, due or not, this command run again before each question and an entry it no longer lists not asked, each answer closed by settle (answered-here) only, which no other outcome of yours passes')
     assert.deepEqual(ids(f.out), ['c-urgent', 'b-early', 'a-late', 'h-late', 'd-coord', 'q-v2'])
     assert.ok(f.out.includes('    Ship b-early?'))
     assert.ok(f.out.includes('    _Question_ : Which first?'))
@@ -61,17 +61,17 @@ describe('round --decide', () => {
     const f = withCoordinator({})
     seed(f)
     assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
-    assert.equal(f.out[0], 'decide: machine | 6 open')
+    assert.equal(f.out[0], 'decide: machine | 6 open — no coordinator is live: load orchestrator:coordination and run its decision round over every entry below, due or not, this command run again before each question and an entry it no longer lists not asked, each answer closed by settle (answered-here) only, which no other outcome of yours passes')
   })
 
   it('with a coordinator live elsewhere, says where to run it and lists nothing', () => {
     const f = withCoordinator({ '/dev/ttys101': 5100 })
     seed(f)
     assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
-    assert.deepEqual(f.out, ['decide: elsewhere | Coord: ops [c0ffee] | /dev/ttys101'])
+    assert.deepEqual(f.out, ['decide: elsewhere | Coord: ops [c0ffee] | /dev/ttys101 — that coordinator runs the round, in its tab: say so in one line and stop'])
     f.out.length = 0
     assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
-    assert.deepEqual(f.out, ['decide: elsewhere | Coord: ops [c0ffee] | /dev/ttys101'])
+    assert.deepEqual(f.out, ['decide: elsewhere | Coord: ops [c0ffee] | /dev/ttys101 — that coordinator runs the round, in its tab: say so in one line and stop'])
   })
 
   it('in the live coordinator\'s own session, keeps today\'s round: round --by-urgency as it prints it', () => {
@@ -81,7 +81,7 @@ describe('round --decide', () => {
     const decided = f.out.slice()
     f.out.length = 0
     assert.equal(main(f.ctx, ['round', '--by-urgency']), 0)
-    assert.deepEqual(decided, ['decide: coordinator', ...f.out])
+    assert.deepEqual(decided, ['decide: coordinator — load orchestrator:coordination and run its decision round over every entry below, due or not, this command run again before each question and an entry it no longer lists not asked; a closing proposal (done) presented apart, outside the count', ...f.out])
     assert.ok(ids(decided).includes('g-done'))
   })
 
@@ -90,18 +90,44 @@ describe('round --decide', () => {
     writeFileSync(join(f.state, 'coordinator.json'), JSON.stringify({ name: 'Coord: ops [c0ffee]', tty: '/dev/ttys101' }))
     seed(f)
     assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
-    assert.deepEqual(f.out, ['decide: elsewhere | Coord: ops [c0ffee] | /dev/ttys101'])
+    assert.deepEqual(f.out, ['decide: elsewhere | Coord: ops [c0ffee] | /dev/ttys101 — that coordinator runs the round, in its tab: say so in one line and stop'])
   })
 
   it('says in one line that the round is empty: no entry, only settled ones, or only a closing proposal', () => {
     const none = fixture()
     assert.equal(main(none.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
-    assert.deepEqual(none.out, ['decide: empty | no open question'])
+    assert.deepEqual(none.out, ['decide: empty | no open question — say so in one line and stop'])
     const settled = fixture()
     put(settled, 'e-answered', entry('e-answered', { status: 'answered', answer: { text: 'A', by: 'pane', at: '2026-10-18T10:02:00.000Z' } }))
     put(settled, 'g-done', entry('g-done', { kind: 'done' }))
     assert.equal(main(settled.ctx, ['round', '--decide', '--as', 'Orch: me [a1b2c3]']), 0)
-    assert.deepEqual(settled.out, ['decide: empty | no open question'])
+    assert.deepEqual(settled.out, ['decide: empty | no open question — say so in one line and stop'])
+  })
+
+  it('with no coordinator live, refuses a session that is not an orchestrator: settle would refuse its answers', () => {
+    const f = fixture()
+    seed(f)
+    assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Audit: me [a1b2c3]']), 1)
+    assert.deepEqual(f.err, ['coordinator: round: --decide with no coordinator live runs in an Orch: session, and Audit: me [a1b2c3] is not one'])
+    assert.deepEqual(f.out, [])
+  })
+
+  it('with no coordinator live, takes an orchestrator named the former way, refuses a coordinator not recorded, and tells any session where a live one runs it', () => {
+    const f = fixture()
+    seed(f)
+    assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Orch : me [a1b2c3]']), 0)
+    assert.ok(f.out[0]?.startsWith('decide: machine | 6 open'))
+    assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Coord: me [a1b2c3]']), 1)
+    const live = withCoordinator({ '/dev/ttys101': 5100 })
+    seed(live)
+    assert.equal(main(live.ctx, ['round', '--decide', '--as', 'Audit: me [a1b2c3]']), 0)
+    assert.ok(live.out[0]?.startsWith('decide: elsewhere | Coord: ops [c0ffee]'))
+  })
+
+  it('says an empty round to any session, before judging who runs it', () => {
+    const f = fixture()
+    assert.equal(main(f.ctx, ['round', '--decide', '--as', 'Audit: me [a1b2c3]']), 0)
+    assert.deepEqual(f.out, ['decide: empty | no open question — say so in one line and stop'])
   })
 
   it('refuses an option it does not know, --as with no value or twice, and --decide with no --as', () => {

@@ -5,6 +5,7 @@
 // A question is closed by the module's `settle` tool, no longer by a command here.
 import { readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { roleOf } from '../../../core/names.ts'
 import { ROUND_DIR } from '../../../core/orchestration.ts'
 import { setting } from '../../../core/paths.ts'
 import { isTemporary } from '../../../core/store-io.ts'
@@ -350,33 +351,39 @@ function isDir(path: string): boolean {
 
 /**
  * `round --decide [--as <name>]`, the operator's decide machine-wide: its first line says where it
- * runs. The live coordinator's own session (named by `--as`) reads the round as `round --by-urgency`
+ * runs and what the session does next, so the command is only « run it, do what its line says ».
+ * The live coordinator's own session (named by `--as`) reads the round as `round --by-urgency`
  * prints it; any other session, while a coordinator is live, is told where to run it; with none
- * live, the open operator entries of every session of the machine are listed in the round's order,
- * or one line says there are none.
+ * live, an orchestrator gets the open operator entries of every session of the machine in the
+ * round's order, or one line that there are none, and any other session a refusal: `settle` takes
+ * its answers from no other.
  */
+// What the decide line asks of the session that runs the round.
+const ROUND_LINE = 'load orchestrator:coordination and run its decision round over every entry below, due or not, this command run again before each question and an entry it no longer lists not asked'
+
 function decideRound(ctx: Context, me: string): number {
   // A record naming no pid cannot be judged by the hooks module, which counts it live: so does the
   // decide, or it would list entries `settle` then refuses.
   const recorded = recordedCoordinator(ctx)
   const coordinator = recorded !== undefined && recorded.name !== '' && (recorded.live || recorded.pid === '') ? recorded : undefined
   if (coordinator !== undefined && coordinator.name !== me) {
-    ctx.out(`decide: elsewhere | ${coordinator.name} | ${coordinator.tty}`)
+    ctx.out(`decide: elsewhere | ${coordinator.name} | ${coordinator.tty} — that coordinator runs the round, in its tab: say so in one line and stop`)
     return 0
   }
   if (coordinator !== undefined) {
-    ctx.out('decide: coordinator')
+    ctx.out(`decide: coordinator — ${ROUND_LINE}; a closing proposal (done) presented apart, outside the count`)
     return round(ctx, ['--by-urgency'])
   }
   const state = stateOf(ctx.env)
   const open = ordered(roundEntries(join(state, ROUND_DIR)).filter(e => e['status'] === 'open' && e['kind'] === 'operator'))
   if (open.length === 0) {
-    ctx.out('decide: empty | no open question')
+    ctx.out('decide: empty | no open question — say so in one line and stop')
     return 0
   }
+  if (roleOf(me) !== 'orchestrator') die(`round: --decide with no coordinator live runs in an Orch: session, and ${me} is not one`)
   const module = moduleOf(ctx.env)
   const view = { pane: paneOpen(ctx, state), text: true, live: liveSessions(module), remote: remoteMachines(module) }
-  ctx.out(`decide: machine | ${open.length} open`)
+  ctx.out(`decide: machine | ${open.length} open — no coordinator is live: ${ROUND_LINE}, each answer closed by settle (answered-here) only, which no other outcome of yours passes`)
   for (const entry of open) entryLines(entry, view).forEach(line => ctx.out(line))
   return 0
 }
