@@ -14,6 +14,7 @@
 #   dispatch-record.sh undefer <record> <id>
 #   dispatch-record.sh blocker <record> <id> <b>   (what the open row waits on: none | PR <owner/repo>#<n> merged | row <n> closed | release installed | until <ISO UTC time> | measure <what>)
 #   dispatch-record.sh note    <record> <id> "<text>"   (the open row's note of judgment; "" removes it)
+#   dispatch-record.sh agent   <record> <id> "Agent: <subject>"   (the session working the open row; the launcher writes it at a spawn or a rotation given the brief)
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
 #   dispatch-record.sh cost    <record> <id> --session <session id> [--recount]   (adds that session's measured cost)
 #   dispatch-record.sh summary <record> [--open [--ids | --label <id>[,<id>...]]]
@@ -35,6 +36,11 @@
 # needs on it. `summary --open` prints both; the takeover (`succession.sh takeover`) checks each
 # blocker on its artifact and reads an open row whose blocker fell and that no live agent holds as
 # READY NOT STARTED. A row written without a blocker has none recorded.
+#
+# A row holds its agent: the launcher writes the name of the session it spawns (or rotates in) on the row its
+# brief's `Row:` line names, `agent`; the takeover, the « Sujets prêts sans agent » line and the module's wake
+# read that name against the sessions the launcher lists running, and nothing else. An agent put on another
+# row later is written by `agent`; a session that ends frees its row with no write.
 #
 # A blocker that waits on a moment is `until <ISO UTC time>` (`until 2026-11-15T11:00:00Z`, to the
 # second, `Z` only): it falls once that time has passed, read on the clock by the takeover and by
