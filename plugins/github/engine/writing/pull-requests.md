@@ -1,22 +1,21 @@
 # Pull requests and issues
 
+`pr-create` and `pr-update` refuse a title or a description that breaks a mechanical rule of
+this file (its sections, headings, horizontal rules, bold labels and semicolons, the references
+and phrasings of its summary, its TODO items), naming the rule: what follows is what they cannot check.
+
 ## Pull request titles
 
-The same convention as the commits: `<type>[(<scope>)]: <description>`.
-One line, stating what the change does, with no semicolon. No workflow vocabulary —
-the same words forbidden in commit messages.
-
-Short: about sixty characters at most, the subject of the change in a few words
-after the conventional prefix, no clause on how or why — that belongs in the description.
+The same convention as the commits: `<type>[(<scope>)]: <description>`, stating what the
+change does, with no workflow vocabulary — the same words forbidden in commit messages.
+Short: the subject of the change in a few words after the conventional prefix, no clause on
+how or why — that belongs in the description.
 
 ## Pull request descriptions
 
-In a repository of the `geonativefr` GitHub organisation (its owner, whatever the case) follow this exact
-template. In any other repository the description is the summary text alone, then what a pull request
-may carry (screenshots): the four sections below, and every rule that
-names them (the order, the items, the references above them, the text after them, the bold labels), are
-GeoNative's own. A repository the checkout cannot name is read as GeoNative's, so that a problem is
-shown rather than hidden.
+In a repository of the `geonativefr` GitHub organisation follow this exact template. In any
+other repository the description is the summary text alone, then what a pull request may carry
+(screenshots): the four sections below are GeoNative's own.
 
 ```
 <summary: what it is about, what it does, in 3-5 lines>
@@ -44,53 +43,23 @@ shown rather than hidden.
 - <url of the next one>
 ```
 
-The four sections are mandatory in every description of a GeoNative repository, so an empty one reads as checked,
-never as forgotten. A section with nothing in it is written `none`, lowercase
-in one word, on its label's line.
-With nothing to do at deployment and no linked PR, a description ends with:
-
-```
-**TODO Staging:** none
-**TODO Prod:** none
-**PRs Dependency:** none
-**Related PRs:** none
-```
-
-No heading: the description starts directly with the summary text, never
-with `## Summary`, `## Self-review` or any other title. State what the PR does, never what it does not
-do — no list of omissions, no rejected alternatives, no things left untouched. Phrase
-a prerequisite positively ("X must have Y set", not "it will fail without Y"). The
-plugin observes, through its tool and through the shell alike, in the summary, the phrasings that say what the PR does not do. The summary names no pull request: no
-`#N`, no `repo#N`, no `owner/repo#N`, no pull request URL above the sections, as links
-go in `PRs Dependency` or `Related PRs`, a closing keyword such as `Fixes #12` excepted. No horizontal rule (`---`, `***`, `___`)
-other than the `---` between two screenshots, and no bold label line (`**Label:**`)
-other than the four sections, anywhere in the description.
-The four sections come after the summary text, in that order, each in that exact shape
-whatever the number of items: the bold label alone on its line, then one item per line,
-nothing else on the line. A TODO Staging or TODO Prod item is a task-list checkbox,
-`- [ ] <step>`, never a bare `- ` bullet. A TODO
-item stands alone:
-it never points to another item ("do the same edit", "same as above", "likewise") and writes
-the action in full, the file, the value before and after, and the host or environment. One
-checkbox, one action: an edit and the restart, reload or deploy that applies it are two
-checkboxes, never joined by "then" or "and run". A TODO is only an action a person does by hand:
-a step the deploy runs on its own (database migrations, cache clear, build) is never a TODO.
-A PRs Dependency or Related PRs
-item is a `- ` bullet — the line break and the dash are what keep
-GitHub's preview rendering every link as a pull request card. Never a heading, never a
-link inline after the label: `none` is the one thing ever written beside a label, and
-never beside items. A label with nothing after it and no item below is an empty section
-left unsaid: write `none`. Staging and prod TODOs are always kept apart, both
-listing the items they share. `**PRs Dependency:**` lists the PRs
-that ship before this one or at the same time: that is the delivery prerequisite, their
-deploy steps included. No TODO repeats it (« Deploy/Merge <PR> before this PR », their
+A section with nothing in it is `none` on its label's line. State what the PR does, never what
+it does not do — no list of omissions, no rejected alternatives, no things left untouched. Phrase
+a prerequisite positively ("X must have Y set", not "it will fail without Y"). A TODO item writes
+the action in full, the file, the value before and after, and the host or environment, one action
+per checkbox. A TODO is only an action a person does by hand: a step the deploy runs on its own
+(database migrations, cache clear, build) is never a TODO. A PRs Dependency or Related PRs item is
+a `- ` bullet with the pull request's full URL, which GitHub's preview renders as a card. Staging
+and prod TODOs are always kept apart, both listing the items they share. `**PRs Dependency:**`
+lists the PRs that ship before this one or at the same time: that is the delivery prerequisite,
+their deploy steps included. No TODO repeats it (« Deploy/Merge <PR> before this PR », their
 migrations, restarts or config): with no deploy action of its own, a PR has both TODOs at
 `none`, even with dependencies. A TODO never names a PRs Dependency item nor its deploy: that
 section carries the order. `**Related PRs:**` lists the PRs truly linked to this work: part of the same
 batch, the origin of the bug, or a link of that strength. A follow-up PR, one that must come
 after this one, is never listed
-in Related PRs. Two PRs never depend on each other. English always, with no
-semicolon. No workflow vocabulary. Every PR is opened as a draft, is never put back to draft, and leaves
+in Related PRs. Two PRs never depend on each other. English always. No workflow vocabulary.
+Every PR is opened as a draft, is never put back to draft, and leaves
 draft only for its CI to run or to be merged. Outside auto-merge, leaving draft (a CI undraft aside) is the operator's,
 on GitHub after their review, and a merge needs their explicit word, given through this tool.
 A deployment needs its repository listed for its environment (`auto-deploy-set`).
@@ -108,13 +77,9 @@ pull request's own files and body, never by eye. A TODO goes only on the PR that
 enables its step: it runs when that PR ships.
 
 A pull request that changes an interface carries screenshots of what it changes,
-desktop AND mobile on a project with a mobile version. They sit above the four
-sections. Each screenshot is its descriptive title in bold, alone on its line: the
-screen, the state shown, the screen size, and before or after when there is a pair
-(`**Devices list, desktop 1440 px, after**`), with no colon at its end, which would
-read as a section label. Its image, `![…](…)` or an `<img>` tag, is on the next line.
-Two screenshots in a row are separated by a `---` line with a blank line before it, so
-the line above never turns into a heading: the block `image-upload --title` writes.
+desktop AND mobile on a project with a mobile version, above the four sections, as the
+block `image-upload --title` writes. Each title names the screen, the state shown, the
+screen size, and before or after when there is a pair (`Devices list, desktop 1440 px, after`).
 A PR without both is not ready. When
 a visual is fixed after the merge, retake the screenshots and replace them on GitHub
 and Notion.

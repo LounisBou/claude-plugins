@@ -102,7 +102,7 @@ head; the request carries no `event`, which keeps the review pending.
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
+| `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields. `pr-create` and `pr-update` refuse a title or body breaking a rule of `writing/`, naming it, and send nothing |
 | `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready, its labels untouched (« Guards »). `--for-ci`: out of draft only for its CI, with `Not Ready` put on it |
 | `pr-draft` | `<pr>` | Back to draft, its labels untouched: `Ready` follows the records at the head, not the draft state |
 | `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` and take the other off, creating the labels when missing (a PR already carrying the label reads nothing); prints the state, `(unchanged)` when nothing changed. `ready` only when the gate reads it ready, else the label carried and `Missing: …` |
@@ -317,22 +317,18 @@ top; elsewhere it is asked through the tool, refused in the shell. Outside auto-
 draft (CI undraft aside) meets the ready guard, is observed, then asked; opening out of draft is
 observed. The engine's undraft is a CI one only with `--for-ci`, and names `--repo`.
 
-The engine's texts from Bash (`pr-create`, `pr-comment`, `pr-update`, `review-submit`,
-`thread-reply`, `comment-edit`, `review-pending-*`) are linted as the tool's are. An engine act
-whose PR number cannot be read (`pr-merge "$PR"`) is refused: write the number.
+An engine act whose PR number cannot be read (`pr-merge "$PR"`) is refused: write the number.
 
 Not read on that route: an engine script run through a variable, `eval`, `uv run` or an unquoted
 `${CLAUDE_PLUGIN_ROOT}/engine/gh.py` (run `python3 "<root>/engine/gh.py" …`), a `gh alias`, a
-script or subprocess running `gh` or the engine, `curl` on the API, a `--comments-file`'s
-comments, a body file the same command line writes.
+script or subprocess running `gh` or the engine, `curl` on the API.
 
 **Records.** Writing under the records root, the E2E exemptions or the check plans (Write, Edit,
 MultiEdit, NotebookEdit, or a shell command naming the root, `pr-records/` or `engine/record.py`)
 is observed (`github.records.write`, `github.exemption.write`); deleting in them (`rm`, `unlink`,
 `find -delete`, a `mv` out) is refused. Also observed: moving a label an exemption names
 (`github.exempt-label.move`), opening out of draft (`github.draft.open-out`), leaving draft
-outside auto-merge (`github.draft.leave`), a text breaking a writing rule (`github.writing.rule`):
-README « Observed guards ».
+outside auto-merge (`github.draft.leave`): README « Observed guards ».
 
 `mcp__github__record {pr, repo?, result?, run?, ran?, detail, kind?, dir?}` writes one record
 through `record.py` when the `HEAD` of `dir` (default: the session's directory) is the head

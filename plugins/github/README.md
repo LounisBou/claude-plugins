@@ -44,29 +44,23 @@ it. `/github:doctor` then confirms everything is ready.
   « Allow for this session », which covers that one command on that one
   repository until the session ends; it is never offered for `pr-merge` or
   `comment-delete`, nor where an explicit rule asks.
-- **Writing rules observed** — before a title, a description or a comment
-  leaves the machine, the mod checks the mechanical rules of
-  `engine/writing/`: no semicolon in prose (code spans, fenced blocks and
-  URLs are not prose), no trailer of any kind (`Co-Authored-By`,
-  `Signed-off-by`, `Claude-Session`, any `<word>-by`, `Change-Id`), a
-  title on one line and within 72 characters, no heading in a PR description,
-  every CVE id in a PR description a link to its advisory,
-  and a security update's tables, one per advisory. No PR description carries a
+- **Writing rules refused** — `pr-create` and `pr-update`, through the tool or
+  `engine/gh.py` run from Bash, refuse a title or a description that breaks a
+  mechanical rule of `engine/writing/` and send nothing, the refusal naming each
+  rule: no semicolon in prose (code spans, fenced blocks and URLs are not prose),
+  no trailer of any kind (`Co-Authored-By`, `Signed-off-by`, `Claude-Session`,
+  any `<word>-by`, `Change-Id`), a title on one line and within 72 characters,
+  no heading in a description, every CVE id a link to its advisory, and a
+  security update's tables, one per advisory. No description carries a
   horizontal rule but the `---` between two screenshots, nor a negative phrasing
-  from a fixed list in its summary. In a GeoNative repository (owner
-  `geonativefr`, or one the checkout cannot name) a PR description also ends with the four
-  sections `TODO Staging`, `TODO Prod`, `PRs Dependency` and `Related PRs`, in
-  that order, `none` where empty, with nothing after them, carries no other bold
+  of `engine/negative-phrases.json` in its summary. In a GeoNative repository
+  (owner `geonativefr`) a description also ends with the four sections
+  `TODO Staging`, `TODO Prod`, `PRs Dependency` and `Related PRs`, in that
+  order, `none` where empty, with nothing after them, carries no other bold
   label (a screenshot's bold title, with no colon at its end, is none), and has
-  no pull request reference in its summary. The same rules hold for `gh pr create`, `gh pr edit`,
-  `gh pr comment` and `gh pr review` run through Bash, their `--body-file` read,
-  and for the engine's own subcommands run there (`python3 engine/gh.py
-  pr-update 12 --body-file body.md`). A request the engine would read from
+  no pull request reference in its summary. A request the engine would read from
   stdin (`--stdin-json`) is refused from Bash, as nothing on the line shows it.
-  A `--body` read from stdin or made by a command substitution other than a
-  `$(cat <<'EOF' … EOF)` heredoc is left unchecked, as the hook cannot see it.
-  A text that breaks one goes as it is and is observed (« Observed guards »).
-  A text the user typed in the prompt passes unobserved. `pr-create` opens a
+  `pr-create` opens a
   draft unless the call says otherwise. Opening out of draft (`draft: false`)
   is observed; outside a repository in auto-merge (below), so is leaving draft
   (`pr-ready`), the operator's act on GitHub after their review, and it is asked
@@ -326,7 +320,6 @@ written is one line in the transcript, and the call still goes through.
 | `github.exempt-label.move` | puts or takes off a label an E2E exemption names |
 | `github.draft.open-out` | opens a pull request out of draft |
 | `github.draft.leave` | takes a pull request out of draft outside auto-merge, once the gate lets it |
-| `github.writing.rule` | carries a text that breaks a writing rule |
 | `github.record.e2e-stated` | records an E2E pass or fail with no run the tool performed or observed |
 
 A refusal that protects something writes one refusal event too, under its own code (`REFUSED` in

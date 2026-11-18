@@ -12,9 +12,6 @@ const CONSENT_REFUSE = 'Refuser'
 import { dialogOf, fieldsOf, listOf } from '../core/host.ts'
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname).replace(/\/$/, '')
-// The writing rules read this file of the plugin, which no scenario below is about.
-const NEGATIVE_FILE = ROOT + '/engine/negative-phrases.json'
-const NEGATIVE_TEXT = JSON.stringify({ phrases: ['unchanged'] })
 const HEAD = '0123456789abcdef0123456789abcdef01234567'
 const MOVED = 'fedcba9876543210fedcba9876543210fedcba98'
 const RECORDS = '/cfg/pr-records'
@@ -206,7 +203,6 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
     return { deny: 'ENOENT ' + e.path }
   })
   on('fs.read', (_$, e) => {
-    if (e.path === NEGATIVE_FILE) return { value: NEGATIVE_TEXT }
     seen.reads.push(e.path)
     if (e.path in seen.files) return { value: seen.files[e.path] }
     if (tree[e.path]?.text !== undefined) return { value: tree[e.path]?.text }
@@ -2167,12 +2163,12 @@ test('a norms record written from the norms module puts Ready through the record
 // ---- the routes around leaving draft and around the gate ----
 
 
-test('a pr-create out of draft outside auto-merge with a body that breaks the writing rules is observed twice, asked write', async ($, on) => {
+test('a pr-create out of draft outside auto-merge is observed, asked write', async ($, on) => {
   const seen = await world($, on, { verdict: { decision: 'ask' }, answer: 'Allow' })
   const call = gh('pr-create', { title: 'fix: x', body: 'no sections', draft: false }, 'geonativefr/thing')
   const out = await $.tool.call(call)
   expect(out).toEqual({ result: 'ok' })
-  expect(seen.journal).toEqual(['github.draft.open-out', 'github.writing.rule'])
+  expect(seen.journal).toEqual(['github.draft.open-out'])
   expect(seen.asked.length).toBe(1)
   expect(commands(seen)).toEqual(['pr-create'])
 })

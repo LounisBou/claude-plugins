@@ -2,9 +2,7 @@
 
 A pull request that updates dependencies to fix published advisories opens its
 description with the first line and the tables below. They take the place of the
-summary text, and the four sections of the template in `pull-requests.md` follow, with their rules,
-`none` where empty. A description whose first line names a CVE id is read as a security
-update and needs its tables:
+summary text, and the four sections of the template in `pull-requests.md` follow:
 
 ```
 <package>, <package> and <package> to <version> ([<CVE id>](<advisory URL>), [<CVE id>](<advisory URL>))
@@ -27,7 +25,5 @@ id, the advisory's title, then its severity in bold when the advisory gives one.
 Affected: each affected range in its own code span. Reference: the advisory URL, bare.
 An advisory with no CVE id puts its GHSA id where the CVE id goes, as a link too.
 
-Every CVE id in a pull request description is a markdown link to its advisory,
-`[CVE-2026-12345](<advisory URL>)`, the URL the audit prints for it: never bare and
-never in a code span. GitHub turns a bare CVE id into a link only when its own
-advisory database holds that advisory, and never one in a code span.
+Every CVE id links to the advisory URL the audit prints for it. `pr-create` and `pr-update`
+refuse a bare CVE id, and a first line naming CVE ids without their tables.

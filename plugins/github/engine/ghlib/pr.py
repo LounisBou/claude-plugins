@@ -10,7 +10,7 @@ import sys
 import time
 from urllib.parse import quote
 
-from . import bodies, errors, fmt, http, meta, related, repo
+from . import bodies, errors, fmt, http, meta, related, repo, writing
 
 
 def _current_branch():
@@ -520,6 +520,7 @@ def pr_create(args):
     }
     if not payload["head"]:
         raise errors.UsageError("cannot determine the head branch; pass --head")
+    writing.check(owner, payload["title"], payload["body"] if args.body_file else None)
     if args.draft:
         payload["draft"] = True
     created = http.rest("POST", "/repos/%s/%s/pulls" % (owner, name), payload)

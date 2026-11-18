@@ -3,7 +3,7 @@
 import sys
 from urllib.parse import quote
 
-from . import bodies, errors, fmt, http, repo
+from . import bodies, errors, fmt, http, repo, writing
 
 _READY = """
 mutation($id:ID!) {
@@ -41,6 +41,7 @@ def pr_update(args):
         payload["state"] = args.state
     if not payload:
         raise errors.UsageError("pr-update needs at least one of --title/--body-file/--base/--state")
+    writing.check(owner, payload.get("title"), payload.get("body"))
     return http.rest("PATCH", "/repos/%s/%s/pulls/%s" % (owner, name, args.pr), payload)
 
 
