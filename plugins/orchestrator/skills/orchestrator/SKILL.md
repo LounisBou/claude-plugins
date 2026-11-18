@@ -40,7 +40,7 @@ words.
 2. **Verify on the artifact, never on a report.** « Written », « green » and « repaired » are
    claims until the repository, the process table or the running artifact reads clean, the
    measurement that found a fault taken again. A delivery is read by its review session and
-   the gate: you read their verdict line, never a diff or a finding. A fact you did not read
+   the gate: you decide its findings through `mcp__orchestrator__review`, never from the diff. A fact you did not read
    is not stated; a figure relayed from an agent says « per the agent's report ». A delivery's
    tree, unpushed commits, head against its pull request's and CI come read on its `facts` line:
    never re-checked by hand; a `FALSE CLAIM` there sends the delivery back.

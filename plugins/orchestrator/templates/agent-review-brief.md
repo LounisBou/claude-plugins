@@ -32,9 +32,9 @@ One more check is fixed on every delivery: its E2E line, from the implementer's 
 
 The checks of `review-verdict.md`, beside `{{SCREENSHOT_CHECKLIST}}`, are yours too, 1 to 11 and 13, check 10 by reading: a test not shown to fall is a finding. Sub-agents report to you; you consolidate.
 
-## 4. Report shape — three levels, each finding written once
+## 4. Report shape — two levels, each finding written once
 
-Verify every finding on the artifact, drop what it does not bear out, merge duplicates, and grade each against the design: critical: contradicts the spec or the design, including a behaviour the phase delivers; important: breaks a behaviour or its proof; minor: the rest.
+Verify every finding on the artifact, drop what it does not bear out, merge duplicates, and grade each against the design: critical: contradicts the spec or the design, including a behaviour the phase delivers; important: breaks a behaviour or its proof. A minor is dropped.
 
 1. **Your message**, the one line the orchestrator reads: `<repo>#{{PR}} {{HEAD}} — <n> findings — blocking: <file:line of each critical, …|none> — E2E: <the check's state> — report: {{REPORT_PATH}}` (the `report:` key is the one the orchestrator's hooks read; its path is your index, below).
 2. **Your index**, `{{REPORT_PATH}}`, a new file that is yours alone (never the implementer's report): one line per finding, at most 200 characters, `<n>. [severity] file:line — title — <its detail file>`; then what was read, « what the readers could not show », the norms lens's mode, §3's lines, anything doubtful outside the findings.
