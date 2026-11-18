@@ -1424,9 +1424,9 @@ test('the Other answer of a question asked with ask is its field once picked, it
 // its label and its hint, whatever space the boxes around it take: a field drawn indented by four
 // columns had lines four columns wider than its room, which the host cut with « … », its caret
 // rows below at the column of a line it did not draw (the operator's report of 2026-11-18).
-const leftOf = (path: El[]) => path.reduce((sum, el) => {
+const sideOf = (path: El[], side: 'Left' | 'Right') => path.reduce((sum, el) => {
   const p = el.props
-  return sum + Number(p.paddingLeft ?? p['paddingX'] ?? p['padding'] ?? 0) + Number(p['marginLeft'] ?? p['marginX'] ?? p['margin'] ?? 0)
+  return sum + Number(p[`padding${side}`] ?? p['paddingX'] ?? p['padding'] ?? 0) + Number(p[`margin${side}`] ?? p['marginX'] ?? p['margin'] ?? 0)
 }, 0)
 function pathTo(node: unknown, match: (node: El) => boolean): El[] | null {
   if (!isEl(node)) return null
@@ -1438,17 +1438,18 @@ function pathTo(node: unknown, match: (node: El) => boolean): El[] | null {
   return null
 }
 
-test('the Other answer field is drawn at the pane\'s left edge, the text typed in it drawn there alone', async () => {
+test('the Other answer field is drawn across the pane\'s whole width, the width the host wraps it at', async () => {
   const first = askedObject('low', 'Orch: low', '2026-10-18T10:04:00.000Z')
   const { render } = await askedPane([first])
   await pick(await render(), 'other')
-  const tree = await render()
-  const path = pathTo(tree, n => n.type === 'Input')!
-  expect(leftOf(path)).toBe(0)
-  const typed = "C, pas de tag pour l'instant mais les versions vont suivre celle du legacy"
-  const onInput = input(tree).props['onInput'] as ((value: string) => void) | undefined
-  onInput?.(typed)
-  expect(texts(await render()).filter(text => text.includes(typed))).toEqual([])
+  const path = pathTo(await render(), n => n.type === 'Input')!
+  expect([sideOf(path, 'Left'), sideOf(path, 'Right')]).toEqual([0, 0])
+  // A window shorter than the tree draws its track in a right margin of its own: not beside the
+  // field, which would lose those columns, nor over its hint.
+  const short = await render({ scroll: { offset: 0, bodyRows: 6 }, bodyColumns: 80 })
+  const shortPath = pathTo(short, n => n.type === 'Input')!
+  expect([sideOf(shortPath, 'Left'), sideOf(shortPath, 'Right')]).toEqual([0, 0])
+  expect(kidsOf(short).filter(k => isEl(k) && k.props.position === 'absolute')).toEqual([])
 })
 
 test('a question asked with ask without choices takes the field at once', async () => {

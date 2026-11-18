@@ -285,7 +285,8 @@ const OTHER_LABEL = WORDS.other
 // within it. The host's terminal field wraps its text, and places its caret, at the pane's whole
 // width less its label and its hint, whatever padding the boxes around it take: indented, its
 // lines were wider than its room, cut with « … », the caret rows below them. It is drawn at the
-// pane's left edge, where the width it wraps at is the one it has.
+// pane's left edge, and no scroll track (its right margin) is drawn while it is: across the
+// pane's whole width, the width it wraps at is the one it has.
 const ANSWER_ROWS = 4
 
 // The mark of the recommended choice and of the recommendation's line.
@@ -2219,6 +2220,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             $.ui.invalidate('ui.render')
           })
       }
+      // Whether this draw holds the « Other answer » field: the field takes the pane's whole width,
+      // so no scroll track is drawn beside it (see ANSWER_ROWS).
+      let fieldDrawn = false
       // The controls under that question's lines, as the card draws its own: a picker of its letters
       // and « Other answer » where the surface has one, a Button per choice elsewhere, then the field.
       const askedControls = (entry: Asked): Drawn[] => {
@@ -2260,6 +2264,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         }
         if (typeof el.Input === 'function') {
           if (!(picker && choosingAsked && pane.writing !== entry.id)) {
+            fieldDrawn = true
             controls.push({
               node: el.Input({
                 key: answerKey(entry.id),
@@ -2324,7 +2329,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
       const counted = width > 0 ? flow.reduce((sum, piece) => sum + piece.rows, 0) + pinnedRows.length : 0
-      const track = scroll && width > 0 ? scrollTrack(scroll.offset, scroll.bodyRows, measured ?? counted) : null
+      const track = scroll && width > 0 && !fieldDrawn ? scrollTrack(scroll.offset, scroll.bodyRows, measured ?? counted) : null
       const pinned = track !== null && pinnedRows.length > 0 ? pinnedRows : null
       const overlays = track === null || !scroll ? [] : [
         el.Box({
