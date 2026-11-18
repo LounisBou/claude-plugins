@@ -661,7 +661,7 @@ export function consentWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[
 // excused: the kinds its check plan or the operator's exemption excuses, each standing for its record unless a run failed.
 // carried: the kinds with no record at the head that an earlier head of the same diff holds.
 // holder: only the conditions that holder refuses a merge on; every condition, omitted.
-// lightCiOff: the date the operator turned light CI off for the repository, when he did: a stacked pull request needs no tests.
+// lightCiOff: why the repository has no light CI (none configured, or the operator's dated refusal): a stacked pull request needs no tests.
 export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excused: Excused = {}, carried: Carried[] = [],
   holder?: Holder, lightCiOff?: string): string[] {
   const missing: string[] = []
@@ -724,10 +724,10 @@ export const NO_CI = 'NONE'
 const NO_CI_TEXT = 'no CI configured'
 
 // What stands for green CI at a stacked pull request's head, as the Ready line names it, or undefined on the bottom
-// pull request (`no CI configured` on either, in a repository with none): the operator's refusal of light CI, the tests record (its own or carried), or the checks green.
+// pull request (`no CI configured` on either, in a repository with none): why the repository has no light CI, the tests record (its own or carried), or the checks green.
 export function stackedCi(gate: Gate, files: RecordFile[], carried: Carried[] = [], lightCiOff?: string): string | undefined {
   if (gate.stacked !== true) return gate.ci.result === NO_CI ? NO_CI_TEXT : undefined
-  if (lightCiOff !== undefined) return 'the operator\'s refusal of light CI for this repository (' + lightCiOff + ')'
+  if (lightCiOff !== undefined) return lightCiOff
   const tests = latestByKind(headRecordsRead(gate, files).read).get(SCRIPTED.kind)
   if (tests && accepts(tests)) return 'passed local tests (' + SCRIPTED.producer + ')'
   if (!tests && carried.some((c) => c.kind === SCRIPTED.kind)) return 'passed local tests (' + SCRIPTED.producer + ')'
