@@ -6,7 +6,7 @@
 // agent, and a send that fails logged without holding the turn.
 import { expect, test } from 'claude-code/testing'
 import { DECLARATIONS } from '../wait.ts'
-import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, hostStopOf, stopInTail, stopText, chainOwnerTty, RELAY_CAP, heldReport, readDeliveryFacts, gateCi, GATE_BOUND_MS, factsLine, falseClaims, type DeliveryFacts, type FactsRun } from '../relay.ts'
+import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, hostStopOf, stopInTail, stopText, chainOwnerTty, RELAY_CAP, heldReport, readDeliveryFacts, gateCi, GATE_MIN_MS, factsLine, falseClaims, type DeliveryFacts, type FactsRun, type Gate } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
 import { register } from '../register.ts'
 import { logLineOf, lockRun } from './fakes.ts'
@@ -63,6 +63,8 @@ const OTHER = '9999999123456789abcdef0123456789abcdef01'
 // The gate's answer at a head, as github's `pr-gate --json` gives it (only what the facts read).
 const gateOf = (head: string, result: string) => JSON.stringify({ head, ci: { result, failed: [], running: 0, total: 7 } })
 const GATE_ARGV = ['python3', '/g/gh.py', 'pr-gate']
+const BOUND = 4200
+const GATE_ON = { argv: GATE_ARGV, boundMs: BOUND }
 const GATE_KEY = 'python3 /plugins/github/engine/gh.py pr-gate'
 const FACTS: DeliveryFacts = { dirty: 0, unpushed: 0, head: SHA, pr: { number: 12, head: SHA, ci: 'green' }, claimed: { pr: 12, head: 'abcdef0' } }
 
@@ -90,7 +92,7 @@ test('the facts are read from git in the checkout and gh on the pull request the
     const out = answers[argv.join(' ')]
     return out === undefined ? { exitCode: 1, stdout: '' } : { exitCode: 0, stdout: out }
   }
-  const facts = await readDeliveryFacts(run, `Done.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR`, GATE_ARGV)
+  const facts = await readDeliveryFacts(run, `Done.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR`, GATE_ON)
   expect(facts).toEqual({ dirty: 2, unpushed: 0, head: SHA, pr: { number: 12, head: SHA, ci: 'green' }, claimed: { pr: 12, head: 'abcdef0' } })
   // No verdict line: gh reads the branch's pull request; a run that throws is unread.
   calls.length = 0
@@ -112,18 +114,18 @@ const STALE_ROLLUP = [
   { workflowName: 'Application', name: 'build', conclusion: 'CANCELLED', detailsUrl: 'https://github.com/o/a/actions/runs/44148519423/job/3' },
 ]
 
-const factsWith = async (gate: { exitCode: number; stdout?: unknown } | null | 'throws', argv: readonly string[] | null = GATE_ARGV) => {
+const factsWith = async (answer: { exitCode: number; stdout?: unknown; stderr?: unknown } | null | 'throws', gate: Gate | null = GATE_ON) => {
   const asked: { argv: string; timeoutMs: number | undefined }[] = []
   const run: FactsRun = async (a, timeoutMs) => {
     asked.push({ argv: a.join(' '), timeoutMs })
     if (a[0] === 'python3') {
-      if (gate === 'throws') throw new Error('spawn failed')
-      return gate
+      if (answer === 'throws') throw new Error('spawn failed')
+      return answer
     }
     if (a[0] === 'gh') return { exitCode: 0, stdout: JSON.stringify({ number: 12, headRefOid: SHA, statusCheckRollup: STALE_ROLLUP }) }
     return { exitCode: 0, stdout: a[1] === 'status' ? '' : a[1] === 'rev-parse' ? SHA : '0\n' }
   }
-  return { facts: await readDeliveryFacts(run, REPORT, argv), asked }
+  return { facts: await readDeliveryFacts(run, REPORT, gate), asked }
 }
 
 test("the facts line's CI is the gate's reading: an older failed or cancelled run of a re-triggered workflow does not make it failing", async () => {
@@ -131,7 +133,7 @@ test("the facts line's CI is the gate's reading: an older failed or cancelled ru
   expect(facts.pr).toEqual({ number: 12, head: SHA, ci: 'green' })
   expect(factsLine(facts)).toContain(', CI green at abcdef0')
   // The gate is asked for the pull request the verdict line names, on its own bound.
-  expect(asked.find(a => a.argv.startsWith('python3'))).toEqual({ argv: 'python3 /g/gh.py pr-gate 12 --json', timeoutMs: GATE_BOUND_MS })
+  expect(asked.find(a => a.argv.startsWith('python3'))).toEqual({ argv: 'python3 /g/gh.py pr-gate 12 --json', timeoutMs: BOUND })
 })
 
 test("the gate's other results stay what the gate says: a failing latest run fails, a rerun going is pending, no CI is none", async () => {
@@ -142,23 +144,37 @@ test("the gate's other results stay what the gate says: a failing latest run fai
 
 // A gate that gave no answer says CI is unread, with the reason: never the head's rollup reduced again.
 test('a gate that fails, runs out of time, answers badly or reads another head says CI unread with why, never a rollup reading', async () => {
-  const unread = async (gate: Parameters<typeof factsWith>[0], argv?: readonly string[] | null) => (await factsWith(gate, argv)).facts.pr
-  expect(await unread(null)).toEqual({ number: 12, head: SHA, ci: 'unread', ciWhy: `the gate did not answer within ${GATE_BOUND_MS} ms` })
-  expect((await unread('throws'))?.ciWhy).toBe(`the gate did not answer within ${GATE_BOUND_MS} ms`)
+  const unread = async (gate: Parameters<typeof factsWith>[0], on: Gate | null = GATE_ON) => (await factsWith(gate, on)).facts.pr
+  expect(await unread(null)).toEqual({ number: 12, head: SHA, ci: 'unread', ciWhy: `the gate did not answer within ${BOUND} ms` })
+  // A run that could not start is not a timeout.
+  expect((await unread('throws'))?.ciWhy).toBe('the gate could not run: spawn failed')
   expect(await unread({ exitCode: 1, stdout: '' })).toMatchObject({ ci: 'unread', ciWhy: 'the gate failed (exit 1)' })
+  expect(await unread({ exitCode: 1, stdout: '', stderr: 'no GitHub origin remote; pass --repo owner/name\nmore' })).toMatchObject({ ciWhy: 'the gate failed (exit 1): no GitHub origin remote; pass --repo owner/name' })
   expect(await unread({ exitCode: 0, stdout: 'not json' })).toMatchObject({ ci: 'unread', ciWhy: 'the gate answered no JSON' })
+  expect(await unread({ exitCode: 0, stdout: 'null' })).toMatchObject({ ci: 'unread', ciWhy: 'the gate answered no head' })
+  expect(await unread({ exitCode: 0, stdout: JSON.stringify({ ci: { result: 'SUCCESS' } }) })).toMatchObject({ ci: 'unread', ciWhy: 'the gate answered no head' })
   expect(await unread({ exitCode: 0, stdout: JSON.stringify({ head: SHA, ci: {} }) })).toMatchObject({ ci: 'unread', ciWhy: 'the gate answered no CI result' })
+  expect(await unread({ exitCode: 0, stdout: JSON.stringify({ head: SHA, ci: { result: 'constructor' } }) })).toMatchObject({ ci: 'unread', ciWhy: 'the gate answered no CI result' })
   expect(await unread({ exitCode: 0, stdout: gateOf(OTHER, 'SUCCESS') })).toMatchObject({ ci: 'unread', ciWhy: 'the gate read head 9999999, not abcdef0' })
   expect(await unread({ exitCode: 0, stdout: gateOf(SHA, 'SUCCESS') }, null)).toMatchObject({ ci: 'unread', ciWhy: 'the github plugin is not found' })
   const line = factsLine((await factsWith({ exitCode: 1, stdout: '' })).facts)
   expect(line).toBe("facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12's head, CI unread (the gate failed (exit 1)) at abcdef0")
-  expect(gateCi({ exitCode: 0, stdout: gateOf(SHA, 'SUCCESS') }, SHA)).toEqual({ ci: 'green' })
+  expect(gateCi({ exitCode: 0, stdout: gateOf(SHA, 'SUCCESS') }, SHA, BOUND)).toEqual({ ci: 'green' })
+})
+
+// The relay's deadline is shared: the gate gets what is left of it, and under the least worth giving it is not run.
+test('a gate with too little time left is not run: CI is unread, the relay keeps its time for the send', async () => {
+  const { facts, asked } = await factsWith({ exitCode: 0, stdout: gateOf(SHA, 'SUCCESS') }, { argv: GATE_ARGV, boundMs: GATE_MIN_MS - 1 })
+  expect(facts.pr).toMatchObject({ ci: 'unread', ciWhy: 'the relay had too little time left for the gate' })
+  expect(asked.some(a => a.argv.startsWith('python3'))).toBe(false)
+  const some = await factsWith({ exitCode: 0, stdout: gateOf(SHA, 'SUCCESS') }, { argv: GATE_ARGV, boundMs: GATE_MIN_MS })
+  expect(some.asked.find(a => a.argv.startsWith('python3'))?.timeoutMs).toBe(GATE_MIN_MS)
 })
 
 test('a report that names no pull request has no number for the gate: CI is unread, and the gate is not run', async () => {
   const asked: string[] = []
   const run: FactsRun = async argv => { asked.push(argv.join(' ')); return argv[0] === 'gh' ? { exitCode: 0, stdout: JSON.stringify({ number: 12, headRefOid: SHA }) } : { exitCode: 0, stdout: '0\n' } }
-  const facts = await readDeliveryFacts(run, 'status: done', GATE_ARGV)
+  const facts = await readDeliveryFacts(run, 'status: done', GATE_ON)
   expect(facts.pr).toEqual({ number: 12, head: SHA, ci: 'unread', ciWhy: 'the report names no pull request, so the gate has none to read' })
   expect(asked.some(a => a.startsWith('python3'))).toBe(false)
 })
