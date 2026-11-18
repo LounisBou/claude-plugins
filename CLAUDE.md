@@ -14,15 +14,20 @@ A monorepo of independent Claude Code plugins under `plugins/<name>/`.
 - Shared code is edited in `packages/core/src` only, then `npm run core` rewrites each plugin's
   `core/` copy; never edit a copy. A plugin whose copy changed ships a change.
 - Prompt budgets (`ci/prompts.json`) are lowered by the release (`npm run release`), never in a pull
-  request; a budget exceeded is a warning in CI and a line of the weekly report, not a refusal.
+  request; a budget exceeded is a warning in CI and a line of the weekly report, and the release
+  refuses it. No pull request grows a plugin's prompts: CI fails one that raises any plugin's prompt
+  tokens against its base (`npm run prompts -- --growth origin/main`), and a rise is paid by a removal
+  in the same plugin, in the same pull request.
 - A pull request raises no version. One release pull request raises the version of every plugin
   changed since the last release, in `plugins/<name>/.claude-plugin/plugin.json`, then runs
   `npm run marketplace` (`npm run version-bump -- <last-release-ref>` checks it). Never edit the
   catalogue's `plugins` list by hand.
 - Conventional commits, scoped by plugin (`fix(github): …`) or repository part (`ci`, `core`, `docs`).
-- This repository is in auto-merge: the session that opens a pull request merges it, with a
-  merge commit, once the repository rules and the blocking suites (`ci/plugins.json`) pass. What
-  CI runs, and when, is in `docs/architecture.md`, « What CI holds ».
+- This repository is in auto-merge, with a merge commit, once the repository rules and the blocking
+  suites (`ci/plugins.json`) pass. A pull request dispatched by an orchestrator is merged by that
+  orchestrator, never by its agent; a session working alone merges its own. The method is in
+  `docs/conventions.md`, « What the method is »; what CI runs, and when, is in
+  `docs/architecture.md`, « What CI holds ».
 - The repository's objectives are `docs/objectives.md`; changes here are made in simple sessions (one session per change: tests, pull request, `/code-review`, merge on green CI).
 - Each change is one pull request, with one review, green CI and auto-merge.
 - A friction met only while working on claude-plugins becomes no new rule, guard, gate or check of

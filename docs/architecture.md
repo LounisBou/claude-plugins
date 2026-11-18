@@ -208,6 +208,7 @@ release still raises the versions other machines install.
 | catalogue matches the manifests | `npm run marketplace -- --check`, `plugins/*/.claude-plugin/plugin.json` |
 | every changed plugin's version raised (the release pull request, not run by CI) | `npm run version-bump -- <last-release-ref>`, the same manifests against the last release |
 | prompt budgets and duplicates against their ceilings, and the balance: the prompt tokens gained or lost since the last release (a report: a warning and the run's summary, never a red check; a line of the weekly report) | `npm run prompts`, `ci/prompts.json` |
+| no plugin's prompt tokens higher than at the pull request's merge base (a red check on a pull request) | `npm run prompts -- --growth <base>` |
 | tokens by scenario, and the pull request's difference (a report in the run's summary, a warning when the script fails) | `npm run context`, `ci/scenarios.json` |
 | rules a prompt states that nothing holds (a report in the run's summary; a line of the weekly report) | `npm run rules` |
 | the release prints the balance, then raises every changed plugin and lowers the prompt budgets in one commit | `npm run release`, `scripts/release.ts` |

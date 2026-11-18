@@ -580,6 +580,128 @@ for (const [name, role] of [['Coord: ops', 'coordinator'], ['Audit: method', 'au
   })
 }
 
+// --- a successor tells the agents it inherited ----------------------------------------------
+
+// The orchestrator under test is a successor on ttys005; the launcher handed it the chain of an
+// agent on ttys011 (its host process 9011) that started at `agentStart`, the successor itself at
+// 2000, under its tab's owner w9. The predecessor never received « takeover confirmed »: no line
+// came from it. The successor's own word to it is what makes the session a successor.
+const INHERITED = `[module] Your orchestrator is now Orch: belt-2 (session s-one): it confirmed the takeover. Send your reports, questions and deliveries to it; the previous one takes no more.`
+const CONFIRM = { origin: { kind: 'model' }, text: 'takeover confirmed — Orch: belt-2 holds the orchestration' }
+const INHERIT = `${STATE}/store/inherit/s-one`
+function successorWorld(agentStart: number, over: Over = {}, chainOwner = 'w9') {
+  Object.assign(over, { name: over.name ?? 'Orch: belt-2', role: over.role ?? 'orchestrator' })
+  const fx = fake(over)
+  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: over.name, status: 'busy', startedAt: 2000 }))
+  fx.files.set(`${STATE}/chains/ttys005.jsonl`, JSON.stringify({ tab_id: 'tab-p4', tty: '/dev/ttys011', owner: chainOwner }) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/9011.json`, JSON.stringify({ pid: 9011, sessionId: 's-agent', name: 'Agent: belt-p4', status: 'idle', startedAt: agentStart }))
+  const run = fx.dollar.process.run
+  fx.dollar.process.run = async (argv: readonly string[], init?: Parameters<typeof run>[1]) =>
+    argv[0] === 'ps' && argv[2] === 'ttys011' ? { exitCode: 0, stdout: '9011\n', stderr: '' } : run(argv, init)
+  const get = fx.dollar.env.get
+  fx.dollar.env.get = async (n: string) => (n === 'ITERM_SESSION_ID' ? 'w0t0p0:w9' : get(n))
+  return fx
+}
+
+test('a successor tells an agent of the chain it took when it sends its takeover word, once, whether or not the predecessor lives', async () => {
+  const chains = mounted()
+  const fx = successorWorld(1000)
+  await drive(chains, 'session.send', fx.dollar, CONFIRM)
+  expect(fx.sent).toEqual([{ to: { sessionId: 's-agent' }, text: INHERITED }])
+  expect(JSON.parse(fx.files.get(INHERIT)!)).toEqual({ done: true })
+  await drive(chains, 'session.send', fx.dollar, CONFIRM)
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  expect(fx.sent.length).toBe(1)
+})
+
+test('an orchestrator that sent no takeover word tells nobody at its measures, a resumed one included', async () => {
+  const chains = mounted()
+  const fx = successorWorld(1000)
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  expect(fx.sent).toEqual([])
+  expect(fx.files.has(INHERIT)).toBe(false)
+})
+
+for (const [label, send] of [
+  ['a plugin\'s send', { ...CONFIRM, origin: { kind: 'plugin' } }],
+  ['a subagent\'s send', { ...CONFIRM, agentId: 'a-1' }],
+  ['another message of the model', { ...CONFIRM, text: 'not yet' }],
+] as const) {
+  test(`${label} makes no successor`, async () => {
+    const fx = successorWorld(1000)
+    await drive(mounted(), 'session.send', fx.dollar, send)
+    expect(fx.sent).toEqual([])
+    expect(fx.files.has(INHERIT)).toBe(false)
+  })
+}
+
+test('an agent the orchestrator started itself is told nothing', async () => {
+  const fx = successorWorld(3000)
+  await drive(mounted(), 'session.send', fx.dollar, CONFIRM)
+  expect(fx.sent).toEqual([])
+  expect(JSON.parse(fx.files.get(INHERIT)!)).toEqual({ done: true })
+})
+
+test('an agent the predecessor already told is not told again', async () => {
+  const fx = successorWorld(1000)
+  fx.files.set(`${STATE}/store/told/s-agent`, JSON.stringify({ session: 's-one', at: 2500 }) + '\n')
+  await drive(mounted(), 'session.send', fx.dollar, CONFIRM)
+  expect(fx.sent).toEqual([])
+})
+
+test('a chain entry another tab wrote, a recycled tty\'s, tells its agent nothing', async () => {
+  const fx = successorWorld(1000, {}, 'w4')
+  await drive(mounted(), 'session.send', fx.dollar, CONFIRM)
+  expect(fx.sent).toEqual([])
+})
+
+test('a line the agent did not receive leaves the session pending, and is sent again at the next measure only', async () => {
+  const chains = mounted()
+  const over: Over = { send: 'refuse' }
+  const fx = successorWorld(1000, over)
+  await drive(chains, 'session.send', fx.dollar, CONFIRM)
+  expect(fx.sent).toEqual([])
+  expect(fx.logged.some(l => l.includes('successor: Agent: belt-p4 not told'))).toBe(true)
+  expect(JSON.parse(fx.files.get(INHERIT)!)).toEqual({ done: false })
+  delete over.send
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  expect(fx.sent).toEqual([{ to: { sessionId: 's-agent' }, text: INHERITED }])
+  expect(JSON.parse(fx.files.get(INHERIT)!)).toEqual({ done: true })
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  expect(fx.sent.length).toBe(1)
+})
+
+test('two takeover words at once send the line once: no pass starts beside a running one', async () => {
+  const fx = successorWorld(1000)
+  await Promise.all([drive(mounted(), 'session.send', fx.dollar, CONFIRM), drive(mounted(), 'session.send', fx.dollar, CONFIRM)])
+  expect(fx.sent.length).toBe(1)
+})
+
+test('a send that is rejected, or a record that cannot be written, never fails the hook', async () => {
+  const chains = mounted()
+  const rejected = successorWorld(1000, { send: 'reject' })
+  const e = await drive(chains, 'session.send', rejected.dollar, CONFIRM)
+  expect(e).toBe(CONFIRM)
+  expect(rejected.logged.some(l => l.includes('successor: Agent: belt-p4 not told: the send was rejected'))).toBe(true)
+  const unwritable = successorWorld(1000)
+  const write = unwritable.dollar.fs.write
+  unwritable.dollar.fs.write = async (p: string, text: string) => { if (p.includes('/told/')) throw new Error('disk full'); return write(p, text) }
+  await drive(chains, 'session.send', unwritable.dollar, CONFIRM)
+  expect(unwritable.sent.length).toBe(1)
+  expect(unwritable.logged.some(l => l.includes('told, not recorded'))).toBe(true)
+})
+
+test('a record naming no start passes the agent, and a session that is no orchestrator is no successor', async () => {
+  const blind = successorWorld(1000)
+  blind.files.set(`${HOME}/.claude/sessions/9011.json`, JSON.stringify({ pid: 9011, sessionId: 's-agent', name: 'Agent: belt-p4', status: 'idle' }))
+  await drive(mounted(), 'session.send', blind.dollar, CONFIRM)
+  expect(blind.sent).toEqual([])
+  const agent = successorWorld(1000, { name: AGENT, role: 'agent' })
+  await drive(mounted(), 'session.send', agent.dollar, CONFIRM)
+  expect(agent.sent).toEqual([])
+  expect(agent.files.has(INHERIT)).toBe(false)
+})
+
 for (const failure of ['reject', 'refuse'] as const) {
   test(`a send that fails (${failure}) is logged, never holds the turn's end, and is tried again`, async () => {
     const chains = mounted()

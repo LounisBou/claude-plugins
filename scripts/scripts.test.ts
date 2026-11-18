@@ -7,7 +7,7 @@ import { describe, it } from 'node:test'
 import { compareVersions, parseManifest, readPlugins } from './lib/plugins.ts'
 import { entryOf, render } from './marketplace.ts'
 import { isRelease, mainCells, mainTouched, matrixOf, nightlyCells, NO_SUITE, parseBlocking, parseShards, pullRequestCells, run as runMatrix, touchedPlugins } from './plugin-matrix.ts'
-import { breaches, isPromptPath, loweredOutsideRelease, measure } from './prompts.ts'
+import { breaches, grown, isPromptPath, loweredOutsideRelease, measure } from './prompts.ts'
 import { raise, releasePlan } from './release.ts'
 import { missingBumps, shippedChanges } from './version-bump.ts'
 
@@ -347,5 +347,10 @@ describe('prompts', () => {
     ])
     assert.deepEqual(loweredOutsideRelease({ budgets: { a: 9, b: 4 }, duplicates: 3 }, base, true), [])
     assert.deepEqual(loweredOutsideRelease({ budgets: { a: 10, b: 5, c: 1 }, duplicates: 4 }, base, false), [])
+  })
+
+  it('refuses a plugin whose prompt tokens rose against its base, and lets a fall, an equal and a new plugin pass', () => {
+    assert.deepEqual(grown({ a: 11, b: 5, c: 3, d: 9 }, { a: 10, b: 5, c: 4 }), ['a: prompt tokens rose from 10 to 11 against the base, and a pull request raises none'])
+    assert.deepEqual(grown({ a: 10, b: 4 }, { a: 10, b: 5 }), [])
   })
 })

@@ -60,7 +60,7 @@ export function titleOf(line: string): string | null {
 // id, its name as the rename stored it — unquoted, the rule above — and its
 // status, and since when (`since`, its statusUpdatedAt: a busy session's turn start) when it says.
 // Null for a text that is no such record.
-export function hostRecordOf(text: string): { sessionId: string | null; name: string | null; status: 'idle' | 'busy' | null; since?: number } | null {
+export function hostRecordOf(text: string): { sessionId: string | null; name: string | null; status: 'idle' | 'busy' | null; since?: number; startedAt?: number } | null {
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -68,12 +68,13 @@ export function hostRecordOf(text: string): { sessionId: string | null; name: st
     return null
   }
   if (!parsed || typeof parsed !== 'object') return null
-  const record: { sessionId?: unknown; name?: unknown; status?: unknown; statusUpdatedAt?: unknown } = parsed
+  const record: { sessionId?: unknown; name?: unknown; status?: unknown; statusUpdatedAt?: unknown; startedAt?: unknown } = parsed
   return {
     sessionId: typeof record.sessionId === 'string' ? record.sessionId : null,
     name: typeof record.name === 'string' ? unquoted(record.name) : null,
     status: record.status === 'idle' || record.status === 'busy' ? record.status : null,
     ...(typeof record.statusUpdatedAt === 'number' ? { since: record.statusUpdatedAt } : {}),
+    ...(typeof record.startedAt === 'number' ? { startedAt: record.startedAt } : {}),
   }
 }
 

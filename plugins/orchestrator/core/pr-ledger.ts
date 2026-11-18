@@ -376,13 +376,44 @@ export function unattendedLine(list: readonly Unattended[], unread: readonly str
 }
 
 /**
- * An open dispatch row ready to start: its number and its keyword, the label's first word. A row the
- * operator deferred is listed once its `until` date has come (`deferred`): it goes back to him, relaunched or dropped.
+ * An open dispatch row ready to start: its number, its keyword (the label's first word) and its subject,
+ * the label said in plain words (`subjectOf`). A row the operator deferred is listed once its `until`
+ * date has come (`deferred`): it goes back to him, relaunched or dropped.
  */
 export interface ReadyRow {
   readonly id: number
   readonly keyword: string
+  readonly subject: string
   readonly deferred?: true
+}
+
+/** The most a subject keeps of its text, cut at a word with « … ». */
+const SUBJECT_MAX = 90
+
+/** A subject's loose end: spaces and commas, and a dash that stands apart (` —`), never a dash inside a word. */
+const LOOSE_END = /(?:\s+[—–-]+)?[\s,]*$/u
+
+/**
+ * What a row's label is about, in plain words: past its lead (up to its first `:` before a space, whatever
+ * its words: `KEYWORD:`, `M7 SOURCE:`, `3-bis C:`), up to where its detail starts
+ * (a `:` before a space or at the end, a `;`, or a `(` after a space; a `:` in a URL or a time stays), at most
+ * SUBJECT_MAX characters cut at a word; '' for a label with no words.
+ */
+export function subjectOf(label: string): string {
+  const words = label.trim()
+  const lead = /:(?:\s+|$)/u.exec(words)
+  const subject = lead === null ? words : words.slice(lead.index + lead[0].length)
+  return atWord(subject.split(/:(?=\s|$)|;|\s\(/u)[0] ?? '')
+}
+
+/** A text on one line, its loose end dropped, at most `max` characters cut at a word with « … ». */
+export function atWord(text: string, max: number = SUBJECT_MAX): string {
+  const words = text.replace(/\s+/g, ' ').trim().replace(LOOSE_END, '')
+  const chars = Array.from(words)
+  if (chars.length <= max) return words
+  const cut = chars.slice(0, max).join('')
+  const space = cut.lastIndexOf(' ')
+  return `${(space > 0 ? cut.slice(0, space) : cut).replace(LOOSE_END, '')}…`
 }
 
 /** The subject of an `Agent: <subject>` session name, lowercased; null for any other name. */
@@ -454,23 +485,26 @@ export function readyRows(input: {
       const named = (subject: string | null): boolean => subject !== null && wanted !== '' && spelled(subject).includes(spelled(wanted))
       if (alive.some(subject => named(subject) || spelled(held).includes(spelled(`agent: ${subject}`)))) continue
       if (input.lines.some(line => agentsOf(line).some(agent => named(agentSubject(agent))) || new RegExp(`(?<![a-z0-9._-])${(line.repo.split('/')[1] ?? '').replace(/\./g, '\\.')}#${line.pr}(?![0-9])`, 'i').test(held))) continue
-      ready.push({ id, keyword: keyword === '' ? 'no keyword' : keyword, ...(putOff ? { deferred: true as const } : {}) })
+      ready.push({ id, keyword: keyword === '' ? 'no keyword' : keyword, subject: subjectOf(words), ...(putOff ? { deferred: true as const } : {}) })
     }
   }
   return ready
 }
 
 /**
- * « Lignes prêtes sans agent : <id> <KEYWORD>, … », then, for the deferred rows whose date has come,
- * « Lignes différées à leur date de réexamen : … — à demander à l'opérateur : relancer ou abandonner »; null when none.
+ * « Sujets prêts sans agent : <subject> (ligne <id>) ; … », then, for the deferred rows whose date has come,
+ * « Sujets différés à leur date de réexamen : … — à demander à l'opérateur : relancer ou abandonner »; null when none.
+ * Each row leads with its subject, the line the operator is told, its id after it for the session that dispatches it;
+ * a label with no words is named by its keyword.
  */
 export function readyRowsLine(list: readonly ReadyRow[]): string | null {
-  const named = (rows: readonly ReadyRow[]): string => rows.map(row => `${row.id} ${row.keyword}`).join(', ')
+  const named = (rows: readonly ReadyRow[]): string =>
+    rows.map(row => `${row.subject !== '' ? row.subject : row.keyword} (ligne ${row.id})`).join(' ; ')
   const ready = list.filter(row => row.deferred !== true)
   const due = list.filter(row => row.deferred === true)
   const lines = [
-    ...(ready.length === 0 ? [] : [`Lignes prêtes sans agent : ${named(ready)}`]),
-    ...(due.length === 0 ? [] : [`Lignes différées à leur date de réexamen : ${named(due)} — à demander à l'opérateur : relancer ou abandonner`]),
+    ...(ready.length === 0 ? [] : [`Sujets prêts sans agent : ${named(ready)}`]),
+    ...(due.length === 0 ? [] : [`Sujets différés à leur date de réexamen : ${named(due)} — à demander à l'opérateur : relancer ou abandonner`]),
   ]
   return lines.length === 0 ? null : lines.join('\n')
 }

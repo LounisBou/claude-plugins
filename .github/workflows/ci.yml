@@ -51,7 +51,7 @@ jobs:
       - name: tooling tests, with the coverage floor
         if: steps.tested.outputs.repository != 'true'
         run: npm test
-      # The next three steps report: a figure over its ceiling or a script that fails is a warning
+      # Apart from the growth check, the next steps report: a figure over its ceiling or a script that fails is a warning
       # and a line of the run's summary, never a red job (the weekly report prints the same figures).
       # A warning is one non-empty line of the script's own message, the first five at most.
       - name: prompt budgets and duplicates against their ceilings (a report)
@@ -73,6 +73,10 @@ jobs:
             echo "### Prompt budgets and duplicates: npm run prompts exited $rc and printed no figures" >> "$GITHUB_STEP_SUMMARY"
             { grep -v '^$' "$RUNNER_TEMP/prompts.err" || echo "npm run prompts exited $rc with no message"; } | head -n 5 | while IFS= read -r fault; do echo "::warning title=prompt budgets::${fault}"; done
           fi
+      # The one prompt check that refuses: a pull request raises no plugin's prompt tokens.
+      - name: no plugin's prompt tokens rise against the pull request's base
+        if: github.event_name == 'pull_request' && steps.tested.outputs.repository != 'true'
+        run: npm run prompts -- --growth "origin/${{ github.base_ref }}"
       - name: context by scenario, and this pull request's difference (a report)
         if: steps.tested.outputs.repository != 'true'
         run: |

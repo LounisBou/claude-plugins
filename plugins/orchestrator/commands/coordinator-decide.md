@@ -6,53 +6,8 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator
 Run a DECISION ROUND over the open questions of every orchestrator, coordinator and auditor of
 the machine: the operator's machine-wide decide, with or without a coordinator.
 
-0. **Where it runs.** `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh round
-   --decide --as "<your exact name and reference, from ListAgents>"`. Its first line starting
-   with `decide:` says; a refusal (exit 1) is told to the operator verbatim, and you stop.
-   - `decide: coordinator`: you are the live coordinator: steps 1 to 6 hold as written.
-   - `decide: machine | N open`: no coordinator is live, and this session runs the round, when it
-     is an `Orch:` session: `settle` refuses any other, which says so in one line and stops.
-     Steps 2 to 6 hold over the entries printed, the senders being any orchestrator, coordinator
-     or auditor, N the count of step 2. No question reached you by message; each is answered by
-     step 5's `settle`, `answered-here` only, which wakes its asker.
-   - `decide: elsewhere | <name> | <tty>`: say in one line that the coordinator runs it, in that
-     tab, and stop.
-   - `decide: empty | …`: say in one line that no question is open, and stop.
-
-   Load `orchestrator:coordination` for what a round presents, in both cases.
-
-The round's shape is `/orchestrator:decide`'s, read from `commands/decide.md` and followed as
-written, the question's shape and what it blocks being `method:lifecycle`, « Questions to the
-operator »; a question left open in the round, never repeated; his words standing and a reading questioned. The coordination
-skill's rules for relayed questions hold too: the question and every field of its block are
-the sender's, verbatim, and you add nothing of your own. Only what follows differs.
-
-1. **The source.** `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh round
-   --by-urgency`: its open `operator` entries are the round, every one of them, due or not,
-   whether the pane is open or closed, plus the questions that reached you by message and are
-   still open in your ledger. A closing proposal (`done`) is presented as the skill says, outside
-   this round.
-2. **The order.** As `--by-urgency` prints them, as the skill's step 2 says:
-   the urgent level first, then within each level the questions grouped by
-   orchestrator, the groups ordered by their oldest wait. A question received by message
-   takes its place in its sender's group by the time you received it. Announce the count in one line:
-   « Round by `<your exact name>`: N questions, the urgent first, from `<sender>` (3),
-   `<sender>` (1). »
-3. **The sender in each question.** Its first line names who asks: « Question i of N — from
-   `<sender's exact name>` ». The first question of each sender carries that sender's context
-   block, three to five sentences in its own words, as the coordination skill's step 4 says.
-4. **Re-verify before presenting.** Run `round --by-urgency` again just before each question:
-   an entry answered in the pane or withdrawn by its sender meanwhile is not asked, and one
-   found settled on its artifact is withdrawn as the skill's step 5 says; write it back in the
-   ledger and present the next one instead, the count moving with it.
-5. **The relay, on each answer, in the same turn.** « Recorded: <his words> »; for an entry of
-   the round, `settle` on its id (`answered-here`, answer: his words) alone,
-   which sends it, dated, to the sender in the same call; for a question that reached you by message, the ruling
-   verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender, by `SendMessage` to its
-   exact `ListAgents` name, « the operator answered »; marked sent in the ledger; then
-   the next question in full in the same message. The relay goes with each answer, never held
-   for the end: each orchestrator waits on its own.
-6. **The end line.** « The round is complete: N/N. » — then one short list: each ruling, the
-   line of the ledger that holds it, and the sender told.
+Run `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh round --decide --as "<your
+exact name and reference, from ListAgents>"` and do what its first line says; a refusal (exit 1)
+is told to the operator verbatim.
 
 $ARGUMENTS

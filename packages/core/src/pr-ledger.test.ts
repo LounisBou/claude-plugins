@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   archiveOf, endedLines, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_EARLIER_KEPT, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
-  blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, unattended, unattendedLine, unattendedPaneLines, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutEarlier, withoutLines, type LedgerLine,
+  blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, subjectOf, atWord, unattended, unattendedLine, unattendedPaneLines, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutEarlier, withoutLines, type LedgerLine,
 } from './pr-ledger.ts'
 
 const AT = '2026-11-14T10:00:00Z'
@@ -192,8 +192,8 @@ describe('an unattended pull request', () => {
     const ready = (text: string, over: { lines?: LedgerLine[]; live?: string[] } = {}) =>
       readyRows({ texts: [text], lines: over.lines ?? [], live: new Set(over.live ?? []) })
 
-    it('is named with its id and keyword when its blocker is none and no agent, no pull request holds it', () => {
-      assert.deepEqual(ready(rowText()), [{ id: 12, keyword: 'TOKENDRIFT' }])
+    it('is named with its id, keyword and subject when its blocker is none and no agent, no pull request holds it', () => {
+      assert.deepEqual(ready(rowText()), [{ id: 12, keyword: 'TOKENDRIFT', subject: 'the context fills' }])
       assert.deepEqual(ready(rowText() + rowText({ id: 13, label: 'GATEFIX: a gate' })).map(r => r.id), [12, 13])
     })
 
@@ -229,7 +229,7 @@ describe('an unattended pull request', () => {
       const deferredAt = (blocker: string | undefined, now: number) =>
         readyRows({ texts: [rowText({ deferred: 'later, 2026-11-15', blocker })], lines: [], live: new Set(), now })
       assert.deepEqual(deferredAt('until 2026-11-28T08:00:00Z', MOMENT - 1), [], 'one second before')
-      assert.deepEqual(deferredAt('until 2026-11-28T08:00:00Z', MOMENT), [{ id: 12, keyword: 'TOKENDRIFT', deferred: true }], 'at the date')
+      assert.deepEqual(deferredAt('until 2026-11-28T08:00:00Z', MOMENT), [{ id: 12, keyword: 'TOKENDRIFT', subject: 'the context fills', deferred: true }], 'at the date')
       assert.deepEqual(deferredAt('none', MOMENT), [])
       assert.deepEqual(deferredAt('measure dashboard p95 under 300 ms', MOMENT), [])
       assert.deepEqual(deferredAt(undefined, MOMENT), [])
@@ -248,8 +248,8 @@ describe('an unattended pull request', () => {
     })
 
     it('names a row with no keyword as such, and only its note can hold it', () => {
-      assert.equal(readyRowsLine(ready(rowText({ label: undefined }))), 'Lignes prêtes sans agent : 12 no keyword')
-      assert.equal(readyRowsLine(ready(rowText({ label: ': no word' }), { live: ['Agent: tokendrift'] })), 'Lignes prêtes sans agent : 12 no keyword')
+      assert.equal(readyRowsLine(ready(rowText({ label: undefined }))), 'Sujets prêts sans agent : no keyword (ligne 12)')
+      assert.equal(readyRowsLine(ready(rowText({ label: ': no word' }), { live: ['Agent: tokendrift'] })), 'Sujets prêts sans agent : no word (ligne 12)')
       assert.deepEqual(ready(rowText({ label: undefined, note: 'Agent: tokendrift' }), { live: ['Agent: tokendrift [a1b2c3]'] }), [])
     })
 
@@ -295,18 +295,52 @@ describe('an unattended pull request', () => {
       assert.deepEqual(ready(`${JSON.stringify(line())}\nnot json\n[]\n${rowText({ id: 'r-1' })}`), [])
     })
 
-    it('is said in one line, absent when there is none', () => {
+    it('is said in one line, each row led by its subject with its id after it, absent when there is none', () => {
       assert.equal(readyRowsLine([]), null)
-      assert.equal(readyRowsLine([{ id: 12, keyword: 'TOKENDRIFT' }, { id: 13, keyword: 'GATEFIX' }]), 'Lignes prêtes sans agent : 12 TOKENDRIFT, 13 GATEFIX')
+      assert.equal(
+        readyRowsLine([{ id: 12, keyword: 'TOKENDRIFT', subject: 'the context fills, then drifts' }, { id: 13, keyword: 'GATEFIX', subject: 'a gate' }]),
+        'Sujets prêts sans agent : the context fills, then drifts (ligne 12) ; a gate (ligne 13)',
+      )
+    })
+
+    it('names a row whose label has no subject by its keyword', () => {
+      assert.equal(readyRowsLine([{ id: 12, keyword: 'TOKENDRIFT', subject: '' }]), 'Sujets prêts sans agent : TOKENDRIFT (ligne 12)')
+      assert.equal(readyRowsLine(ready(rowText({ label: 'TOKENDRIFT' }))), 'Sujets prêts sans agent : TOKENDRIFT (ligne 12)')
     })
 
     it('puts the deferred rows whose date has come to the operator as a question, on a line of their own', () => {
-      const due = { id: 14, keyword: 'LEARNING', deferred: true as const }
-      assert.equal(readyRowsLine([due]), "Lignes différées à leur date de réexamen : 14 LEARNING — à demander à l'opérateur : relancer ou abandonner")
+      const due = { id: 14, keyword: 'LEARNING', subject: 'answer the learning questions', deferred: true as const }
+      assert.equal(readyRowsLine([due]), "Sujets différés à leur date de réexamen : answer the learning questions (ligne 14) — à demander à l'opérateur : relancer ou abandonner")
       assert.equal(
-        readyRowsLine([{ id: 12, keyword: 'TOKENDRIFT' }, due]),
-        "Lignes prêtes sans agent : 12 TOKENDRIFT\nLignes différées à leur date de réexamen : 14 LEARNING — à demander à l'opérateur : relancer ou abandonner",
+        readyRowsLine([{ id: 12, keyword: 'TOKENDRIFT', subject: 'the context fills' }, due]),
+        "Sujets prêts sans agent : the context fills (ligne 12)\nSujets différés à leur date de réexamen : answer the learning questions (ligne 14) — à demander à l'opérateur : relancer ou abandonner",
       )
+    })
+
+    it('says a label in plain words: past its keyword, up to where its detail starts, cut at a word', () => {
+      assert.equal(subjectOf('SUBJECTS: every orchestrator names subjects to the operator, never rows: the rule in the rulebook'), 'every orchestrator names subjects to the operator, never rows')
+      assert.equal(subjectOf('PANEE2E: pane-e2e.sh fails 5 checks on main (round-listed.json not written)'), 'pane-e2e.sh fails 5 checks on main')
+      assert.equal(subjectOf('LEARNING: Q1 A, Q2 A; Q4-11 held'), 'Q1 A, Q2 A')
+      assert.equal(subjectOf('FINISHLINE: the goal row — release 3.1 installed (here and there)'), 'the goal row — release 3.1 installed')
+      assert.equal(subjectOf('M7 SOURCE: no pull request grows the prompts; measured'), 'no pull request grows the prompts')
+      assert.equal(subjectOf('RELEASE 2026-11-18: release pull request for the plugins changed (since 3.1)'), 'release pull request for the plugins changed')
+      assert.equal(subjectOf('3-bis C: correction round on the gate'), 'correction round on the gate')
+      assert.equal(subjectOf('Add the retry knob'), 'Add the retry knob')
+      assert.equal(subjectOf('  TOKENDRIFT:   the   context  fills  '), 'the context fills')
+      assert.equal(subjectOf('TOKENDRIFT'), 'TOKENDRIFT')
+      assert.equal(subjectOf('TOKENDRIFT:'), '')
+      assert.equal(subjectOf(''), '')
+      assert.equal(subjectOf('FIX: see https://x.com/a for the trace'), 'see https://x.com/a for the trace')
+      assert.equal(subjectOf('DEPLOY: at 10:00 tonight: then the rest'), 'at 10:00 tonight')
+      assert.equal(subjectOf('https://x.com/a broken'), 'https://x.com/a broken')
+      assert.equal(subjectOf('(WIP) the thing'), '(WIP) the thing')
+      assert.equal(subjectOf('FIX: C-- and v1.2.'), 'C-- and v1.2.')
+      assert.equal(subjectOf('KEY: the end —  '), 'the end')
+      assert.equal(Array.from(subjectOf(`LONG: ${'😀'.repeat(120)}`)).length, 91, 'cut at a character, never inside one')
+      assert.equal(atWord('a  goal\n spread ,  '), 'a goal spread')
+      assert.equal(atWord('one two three', 8), 'one two…')
+      const long = subjectOf(`LONG: ${'word '.repeat(40)}`)
+      assert.ok(long.length <= 91 && long.endsWith('word…'), long)
     })
   })
 })

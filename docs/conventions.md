@@ -4,6 +4,26 @@ Every change follows these. Each one exists because its absence produced a repea
 across the plugins; the defects are listed in `specs/program-design.md`. A convention is
 changed by a pull request that edits this file and the code it governs together.
 
+## What the method is
+
+The orchestration and claude-plugins work through the agents' tools and through sources of truth,
+read by loops that act on them; never through briefs or prompts. Two examples:
+
+- An agent is closed automatically when its pull request is ready: a loop reads the pull request's
+  state and closes the agent, with no line telling anyone to close it.
+- A to-do cannot be forgotten: the tool that records it requires who takes it, or what it waits on
+  and its date.
+
+A prompt or a brief carries a rule only where no loop can hold it, and the aim is briefs that empty
+out.
+
+No over-development or over-protection: no mechanism (a guard, a record, a check, a parser) is built
+against a defect never observed, and a mechanism that costs more than it has caught is removed.
+Example: the consent record of auto-merge and auto-deploy (decision 0004, amended 2026-11-15 for
+waivers), which caught nothing and is removed.
+
+Who merges: the auto-merge bullet of the repository's CLAUDE.md states it.
+
 ## One rule, one place
 
 - A fact (a path, a name shape, a threshold, a price, a version) is defined once and read
@@ -108,9 +128,9 @@ changed by a pull request that edits this file and the code it governs together.
   plugin.
 - Each plugin has a budget of prompt tokens and the repository a ceiling of sentences said
   more than once, both measured by CI against their ceilings (`ci/prompts.json`, `npm run prompts`).
-  CI reports them, a warning and a line of the weekly report (`telemetry.ts report`), and does not
-  refuse a pull request over them; the release lowers the budgets (`npm run release`), and none
-  should rise outside it.
+  CI reports them, a warning and a line of the weekly report (`telemetry.ts report`); the release
+  lowers the budgets (`npm run release`) and refuses one exceeded. CI refuses a pull request that
+  raises any plugin's prompt tokens against its base: a rise is paid by a removal in the same plugin, in the same pull request.
 - What a kind of session loads is a scenario of `ci/scenarios.json`; `npm run context` sums
   its tokens, and CI writes each pull request's difference by scenario in its summary. A new
   skill or command a session loads in full joins the scenario of that session.
@@ -120,7 +140,8 @@ changed by a pull request that edits this file and the code it governs together.
   and those before that deploy. It runs on the operator's machine, reports, and blocks nothing.
 - A rule that enters a prompt replaces one.
 - `npm run rules` lists the rules a prompt states that neither code holds nor an eval names: a
-  rule left to prose alone is a candidate for a guard, an eval, or removal. It reports: a line of the
+  rule left to prose alone is a candidate for a mechanism (a tool, or a loop on a source of truth),
+an eval, or removal. It reports: a line of the
   weekly report, and CI's summary; it blocks nothing.
 
 ## Changes and releases

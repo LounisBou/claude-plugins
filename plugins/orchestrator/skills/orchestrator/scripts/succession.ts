@@ -52,10 +52,10 @@ import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts
 import { orchForm } from '../../../core/names.ts'
 import { sessionOrchestration } from '../../../core/session-orchestration.ts'
 import { parseSessionName } from '../../../core/names.ts'
-import { agentsOf, ledgerLines, prKey, statusText, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
+import { agentsOf, ledgerLines, prKey, statusText, subjectOf, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
 import { auditRun, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
-import { GoalsFault, parseGoals } from './lib/goals-file.ts'
+import { GoalsFault, namedGoals, parseGoals } from './lib/goals-file.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { archiveSettled } from './lib/round-archive.ts'
 import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
@@ -164,7 +164,7 @@ export interface LiveAgent {
   readonly brief?: string
   /** The row its brief was printed for (rowOfBrief); undefined when no brief names one. */
   readonly row?: string
-  /** What its Ready pull request says of it, `Ready: close it` or the pull requests it still holds; undefined when none of its pull requests is Ready. */
+  /** What its Ready pull request says of it, `Ready (<prs>): the module closes it once done` or the pull requests it still holds; undefined when none of its pull requests is Ready. */
   readonly ready?: string
 }
 
@@ -276,8 +276,8 @@ export function agentLine(agent: LiveAgent): string {
 }
 
 /**
- * What the Ready pull requests of an agent say of it, the module's wake read from the same artifact: `Ready: close it`
- * when every pull request its lines name is Ready or ended, `Ready <pr>, still holds <pr>: tell it, do not close it`
+ * What the Ready pull requests of an agent say of it, the module's wake read from the same artifact: `Ready (<pr>): the module
+ * closes it once done` when every pull request its lines name is Ready or ended, `Ready <pr>, still holds <pr>: tell it`
  * when another open pull request of its own is not. Undefined when none of its pull requests is Ready.
  * `ledger` is the record's lines, `ended` whether the forge reads a pull request merged or closed, `readyHead` its Ready head.
  */
@@ -291,7 +291,7 @@ export function readyNote(
   if (ready.length === 0) return undefined
   const holds = holdsOf(kept, mine, key => ready.some(line => prKey(line.repo, line.pr) === key))
   const names = ready.map(line => prKey(line.repo, line.pr)).join(', ')
-  return holds.length === 0 ? `Ready: close it (${names})` : `Ready ${names}, still holds ${holds.join(', ')}: tell it, do not close it`
+  return holds.length === 0 ? `Ready (${names}): the module closes it once done` : `Ready ${names}, still holds ${holds.join(', ')}: tell it`
 }
 
 /** The launcher's `list`, its rows; undefined when it cannot be run. */
@@ -710,24 +710,27 @@ export function fallOf(blocker: string, facts: Artifacts): Fall {
  * « ruling » until its `until` date, then DEFERRED DUE; a row with no live agent reads its blocker checked on its artifact: `blocked: <blocker>` while it stands, then an open pull request it holds,
  * DISPATCHED, NO LIVE AGENT when its note names an agent the deck no longer lists, READY NOT STARTED
  * once its blocker has fallen, `blocker unread: <blocker>` when its artifact cannot be read; a row
- * with no blocker recorded reads NO OWNER.
+ * with no blocker recorded reads NO OWNER. Each line leads with the row's subject, its id in parentheses: `<subject> (<id>): <owner>`.
  */
 export function ownersOf(open: OpenState, fall: (blocker: string) => Fall = () => 'unread'): string[] {
   return open.rows.map(row => {
+    // The row leads with its subject, its id after it; a row whose label has no words leads with its id.
+    const subject = subjectOf(row.label ?? '')
+    const lead = subject === '' ? row.id : `${subject} (${row.id}):`
     // A deferred row waits for its revisit date, its `until` blocker; once it has come the row goes back to the operator.
-    if ((row.ruling ?? '') !== '') return `${row.id} ${row.blocker !== undefined && untilOf(row.blocker) !== undefined && fall(row.blocker) === 'fallen' ? 'DEFERRED DUE, ask the operator: relaunch or drop' : 'ruling'}`
+    if ((row.ruling ?? '') !== '') return `${lead} ${row.blocker !== undefined && untilOf(row.blocker) !== undefined && fall(row.blocker) === 'fallen' ? 'DEFERRED DUE, ask the operator: relaunch or drop' : 'ruling'}`
     const note = row.note ?? ''
     const seats: readonly LiveAgent[] = open.seats ?? open.agents.map(name => ({ name, tty: null }))
     const live = seats.filter(seat => (seat.row === undefined ? names(note, seat.name) : seat.row === row.id)).map(seat => seat.name)
-    if (live.length > 0) return `${row.id} ${live.map(bareName).join(', ')}`
+    if (live.length > 0) return `${lead} ${live.map(bareName).join(', ')}`
     // A blocker still standing says why nobody is on the row; once it fell, an open pull request the row holds is its owner.
     const fell = row.blocker === undefined ? undefined : fall(row.blocker)
-    if (fell === 'standing') return `${row.id} blocked: ${row.blocker}`
-    if ((row.linked ?? []).length > 0) return `${row.id} ${(row.linked ?? []).join(', ')}`
+    if (fell === 'standing') return `${lead} blocked: ${row.blocker}`
+    if ((row.linked ?? []).length > 0) return `${lead} ${(row.linked ?? []).join(', ')}`
     // Dispatched, and its agent gone from the deck: its pull request or branch is read before anyone is sent again.
-    if (/\bAgent:\s*\S/.test(note)) return `${row.id} DISPATCHED, NO LIVE AGENT`
-    if (row.blocker === undefined) return `${row.id} NO OWNER`
-    return `${row.id} ${fell === 'fallen' ? 'READY NOT STARTED' : `blocker unread: ${row.blocker}`}`
+    if (/\bAgent:\s*\S/.test(note)) return `${lead} DISPATCHED, NO LIVE AGENT`
+    if (row.blocker === undefined) return `${lead} NO OWNER`
+    return `${lead} ${fell === 'fallen' ? 'READY NOT STARTED' : `blocker unread: ${row.blocker}`}`
   })
 }
 
@@ -790,17 +793,15 @@ export function objectiveOf(aim: string): string {
   return cut(end === null ? text.replace(/[.!?]$/, '') : text.slice(0, end.index), 300)
 }
 
-/** The project sheet from `goals.md`: the objective, the spec it names and the goals as one line, `goals met=m/n open=none`, `open=` the open ones with their plan, and `deferred=` the deferred ones. */
+/** The project sheet from `goals.md`: the objective, the spec it names and the goals as one line, `goals met=m/n` then the goals still to reach by their words (`namedGoals`). */
 export function projectSheet(goals: string | undefined, installed: string): string {
   const parts: string[] = []
   if (goals === undefined) parts.push('no goals.md beside the record')
   else {
     try {
       const { head, rows } = parseGoals(goals, 'goals.md')
-      const open = rows.filter(row => row.status === 'open')
-      const deferred = rows.filter(row => row.status === 'deferred').map(row => row.id)
       parts.push(`objective ${objectiveOf(head.aim) || 'none'}`, `spec ${head.spec || 'none'}`)
-      parts.push(`goals met=${rows.filter(row => row.status === 'met').length}/${rows.length} open=${open.length === 0 ? 'none' : open.map(row => `${row.id} (plan: ${row.plan || 'none'})`).join(', ')}${deferred.length === 0 ? '' : ` deferred=${deferred.join(',')}`}`)
+      parts.push(`goals met=${rows.filter(row => row.status === 'met').length}/${rows.length} ${namedGoals(rows)}`)
     } catch (error) {
       if (!(error instanceof GoalsFault)) throw error
       parts.push(`goals unread: ${error.message}`)

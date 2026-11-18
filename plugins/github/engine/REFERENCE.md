@@ -266,14 +266,14 @@ Both routes are `hooks/e2e-scope.ts`'s.
 ### Light CI
 
 A stacked PR (`pr-gate`'s `stacked`: its base heads another open PR, unprotected, not default) is ready on
-its review and a `tests` pass at its head or its checks green; a failed run or check blocks. File
-`${CLAUDE_CONFIG_DIR:-$HOME/.claude}/light-ci/<owner>-<name>.json`: `{"command": [...], "prepare": [...]?,
-"timeoutSeconds": 600, "decided": {"at", "words"}}`, or `{"off": "<words>", "at"}` (review alone, dated in `Ready`).
+its review and, where the operator configured light CI, a `tests` pass at its head or its checks green, which
+stand over a failed run; a failed check blocks. File `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/light-ci/<owner>-<name>.json`:
+`{"command": [...], "prepare": [...]?, "timeoutSeconds": 600, "decided": {"at", "words"}}`, or `{"off": "<words>", "at"}`;
+no file or `off`: review alone, named in `Ready`.
 
 - `mcp__github__light_ci {action: "run", pr, dir?}`: clean checkout of the head; `prepare`, then `command` (no
-  shell; `{base}`: the merge base); `tests` `pass|fail` by `light-ci`. Past 570 s nothing is written: run
-  `python3 <github root>/engine/light_ci.py run --pr <n>` in the background.
-- `{action: "status", repo?}`: the file, CI on stacked bases, median PR run, stacked PRs in 30 days, a command.
+  shell; `{base}`: the merge base); `tests` `pass|fail` by `light-ci`. Past 570 s nothing is written.
+- `{action: "status", repo?}`: what the file holds.
 
 ### What the contract does not stop
 

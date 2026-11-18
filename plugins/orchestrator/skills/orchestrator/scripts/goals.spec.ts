@@ -102,7 +102,7 @@ test('the grammar: met needs evidence on disk, a ruling his words, and check rea
   const { path, sha } = repo()
   const g = join(dir, 'goals.md')
   cli('init', g, '--spec', SPEC, '--aim', AIM, '--repo', path)
-  assert.equal(cli('line', g), '0|goals met=0/5 ruled_out=0 open=G1,G2,G3,G4,G5 unplanned=G1,G2,G3,G4,G5\n|')
+  assert.equal(cli('line', g), "0|goals met=0/5 ruled_out=0 open: The unit of choice is a **pair** `<alias>/<effort>`: a… (G1, no phase) ; Every dispatch's cost is **measured** and attached to its… (G2, no phase) ; **Offline calibration**: a bench replays merged pull… (G3, no phase) ; **Generalisation**: per-project tables fold into one global… (G4, no phase) ; **Online refinement**: the record corrects the table build… (G5, no phase)\n|")
   assert.equal(cli('plan', g), '1||ERROR: plan: a goal id is required\n')
   assert.equal(cli('plan', g, 'G1', '--phase', ' '), '1||ERROR: plan: --phase <text> is required\n')
   assert.equal(cli('plan', g, 'G9', '--phase', 'x'), '1||ERROR: no goal G9 (goals: G1, G2, G3, G4, G5)\n')
@@ -121,11 +121,11 @@ test('the grammar: met needs evidence on disk, a ruling his words, and check rea
   assert.equal(cli('rule-out', g, 'G4', '--ruling', 'operator: « not   now »'), '0||')
   assert.equal(cli('defer', g, 'G4', '--ruling', 'later'), '1||ERROR: defer: G4 is ruled-out, not open\n')
   assert.equal(cli('defer', g, 'G1', '--ruling', '« same »'), '0||')
-  assert.equal(cli('check', g), '1|deferred: G1\ngoals met=3/5 ruled_out=1 open=none unplanned=none deferred=G1\n|')
+  assert.equal(cli('check', g), '1|deferred: G1\ngoals met=3/5 ruled_out=1 open: none — deferred: The unit of choice is a **pair** `<alias>/<effort>`: a… (G1)\n|')
   assert.equal(cli('reopen', g), '1||ERROR: reopen: a goal id is required\n')
   assert.equal(cli('reopen', g, 'G1'), '0||')
   assert.equal(cli('rule-out', g, 'G1', '--ruling', '"his words"'), '0||')
-  assert.equal(cli('check', g), '0|goals met=3/5 ruled_out=2 open=none unplanned=none\n|')
+  assert.equal(cli('check', g), '0|goals met=3/5 ruled_out=2 open: none\n|')
   const answer = cli('check', g, '--json')
   const json = JSON.parse(answer.slice(2, -1)) as Assessment
   assert.deepEqual(Object.keys(json), ['ok', 'open', 'deferred', 'unplanned', 'faults', 'notes', 'rows', 'met', 'ruled_out', 'aim', 'spec', 'table'])
@@ -147,7 +147,7 @@ test('check: every fault of a hand-edited file, and a spec that moved', () => {
     + 'fault: G3 met without evidence on disk: no path or commit\nfault: G4 deferred without the operator\'s words\n'
     + 'fault: G5 has no status of open, met, ruled-out or deferred: empty\nfault: G1 is not the spec\'s text\nfault: G2 is not the spec\'s text\n'
     + 'fault: G3 is not the spec\'s text\nfault: G4 is not the spec\'s text\nfault: G5 is not the spec\'s text\nfault: the aim is not the spec\'s text\n'
-    + 'goals met=1/5 ruled_out=1 open=none unplanned=none deferred=G4\n|')
+    + 'goals met=1/5 ruled_out=1 open: none — deferred: w (G4)\n|')
   writeFileSync(g, `spec: ${spec}\n\n| G1 | open | ${'The unit of choice is a **pair** `<alias>/<effort>`: a family alias and an effort level.'} | | |\n`)
   assert.match(cli('check', g), /^1\|open: G1\nfault: 1 rows, the spec's Goals list 5\ngoals met=0\/1/)
   rmSync(spec)
