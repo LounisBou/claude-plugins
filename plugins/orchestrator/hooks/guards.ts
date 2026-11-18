@@ -37,7 +37,7 @@ import {
 } from './stop-gate.ts'
 import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
-import { ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
+import { agentsOf, ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED, refreshRowAndDeck, showPrStates } from './supervision.ts'
 import { pullRequestsRead } from './tab-state.ts'
 import { askedThisTurn, readAsked } from './question.ts'
@@ -689,7 +689,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         if (pr?.state === 'OPEN') awaitingMerge.push(agent.label)
         if (!pr) continue
         // Every pull request the dispatch record entrusts to the agent counts, the branch's among them.
-        const others = (await ledgerOf()).filter(line => line.status === 'working' && line.agent === agent.label
+        const others = (await ledgerOf()).filter(line => agentsOf(line).includes(agent.label)
           && !(line.pr === Number(pr.number) && (pr.repo === undefined || pr.repo.toLowerCase() === line.repo.toLowerCase())))
         const together = pullRequestsRead([pr, ...await Promise.all(others.map(line => otherPullRequestRead($, line.repo, line.pr, until)))])
         if (together) read.push({ tty: agent.tty, pr: together })

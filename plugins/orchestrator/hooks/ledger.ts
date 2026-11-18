@@ -306,7 +306,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     const key = `${prKey(line.repo, line.pr)} ready ${reading.readyHeads.get(prKey(line.repo, line.pr)) ?? ''}`
     if (told.has(key)) continue
     told.add(key)
-    const agent = line.agent ?? ''
+    // The agent put on it last that still runs, else one put on it before, as a merge names it.
+    const agent = agentsOf(line).find(name => reading.live.has(name)) ?? line.agent ?? ''
     const holds = holdsOf(reading.kept, other => other === agent, key => reading.readyHeads.has(key))
     lines.push(readyAgentLine({ repo: line.repo, pr: line.pr, agent, session: await sessionOf($, agent), holds }))
   }

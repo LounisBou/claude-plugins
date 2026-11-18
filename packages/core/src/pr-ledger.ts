@@ -452,7 +452,7 @@ export function readyRows(input: {
       const spelled = (text: string): string => ` ${text.replace(/[^a-z0-9]+/g, ' ').trim()} `
       const named = (subject: string | null): boolean => subject !== null && wanted !== '' && spelled(subject).includes(spelled(wanted))
       if (alive.some(subject => named(subject) || spelled(held).includes(spelled(`agent: ${subject}`)))) continue
-      if (input.lines.some(line => named(agentSubject(line.agent)) || new RegExp(`(?<![a-z0-9._-])${(line.repo.split('/')[1] ?? '').replace(/\./g, '\\.')}#${line.pr}(?![0-9])`, 'i').test(held))) continue
+      if (input.lines.some(line => agentsOf(line).some(agent => named(agentSubject(agent))) || new RegExp(`(?<![a-z0-9._-])${(line.repo.split('/')[1] ?? '').replace(/\./g, '\\.')}#${line.pr}(?![0-9])`, 'i').test(held))) continue
       ready.push({ id, keyword: keyword === '' ? 'no keyword' : keyword, ...(putOff ? { deferred: true as const } : {}) })
     }
   }

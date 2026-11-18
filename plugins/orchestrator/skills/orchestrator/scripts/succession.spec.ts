@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, roundOpen, roundSettled, rowLines, rowOfBrief, TEMPLATE, todoStray, toApply, type Artifacts, type ListedRow } from './succession.ts'
+import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, readyNote, roundOpen, roundSettled, rowLines, rowOfBrief, TEMPLATE, todoStray, toApply, type Artifacts, type ListedRow } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -1005,4 +1005,12 @@ test('the takeover reads pull requests in the machine\'s pull request file, neve
   writeFileSync(join(state, 'prs.json'), JSON.stringify({ ...file, error: 'HTTP 502' }))
   assert.equal(filePrs({ ORCHESTRATOR_STATE_DIR: state }, NOW.getTime()).open('acme/app'), undefined)
   rmSync(state, { recursive: true, force: true })
+})
+
+test('a Ready note names the agent put on the pull request before as well as the one put on it last', () => {
+  const line = { v: 1, ledger: 'pr', repo: 'acme/app', pr: 17, status: 'working', agent: 'Agent: review 17 r1', earlier: ['Agent: p17'], since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:30:00Z' } as const
+  const ready = (repo: string, pr: number): string | undefined => repo === 'acme/app' && pr === 17 ? 'a'.repeat(40) : undefined
+  assert.equal(readyNote('Agent: p17', [line], () => false, ready), 'Ready: close it (acme/app#17)')
+  assert.equal(readyNote('Agent: review 17 r1', [line], () => false, ready), 'Ready: close it (acme/app#17)')
+  assert.equal(readyNote('Agent: other', [line], () => false, ready), undefined)
 })

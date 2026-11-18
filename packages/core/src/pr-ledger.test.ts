@@ -213,6 +213,8 @@ describe('an unattended pull request', () => {
       assert.deepEqual(ready(rowText({ note: 'other-claude-plugins#7 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }).length, 1)
       assert.deepEqual(ready(rowText({ note: 'claude-plugins#71 draft' }), { lines: [line({ repo: 'acme/claude-plugins', agent: 'Agent: x' })] }).length, 1)
       assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: other' })] }).length, 1)
+      // An agent put on the pull request before the last one holds it too.
+      assert.deepEqual(ready(rowText(), { lines: [line({ agent: 'Agent: review r1', earlier: ['Agent: tokendrift'] })] }), [])
     })
 
     it('is not named with a blocker, a deferral that has no date, a closed state, or no blocker said', () => {
