@@ -10,7 +10,6 @@ export { gitSubcommand, innerLine, readCommands, redirectsToFile, simpleCommands
 export type { ShellCommand } from './shell.ts'
 export { accepts, DETAIL_MAX, KINDS, kindFor, parsePrRecord, producersOf, RECORD_VERSION, type Kind, type PrRecord, type Result } from './pr-record.ts'
 export { blocks, carriesAcross, CI_CHECK, heldBy, missingEvidence, PLAN_NEEDS, PLAN_OMITTED, READINESS_CONTRACT, WAIVABLE, type Condition, type HeadEvidence, type Holder, type Missing, type Planned, type Waivable } from './readiness.ts'
-export { CONSENT_KINDS, CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_VERSION, consentAnswer, consentDir, consentPath, consentRecordOf, parseConsentRecord, parseConsentSubject, quotesConsent, sameSubject, type Answerer, type ConsentKind, type ConsentRecord, type ConsentSubject } from './consent-record.ts'
 export { configDirOf, ENV, gateThresholds, isSpawned } from './env.ts'
 export {
   machineLine, markRow, nextRow, parseChoices, parseState, REPORT_STATUSES, reportStatus, ROW_STATUSES, twoDigits,
@@ -28,4 +27,4 @@ export { GATE_PERCENT, GATE_TOKENS, gateTokensOf, hasFigures, LAUNCHER, launcher
 export { agentsOf, archiveOf, endedLines, isLedgerMarked, LEDGER_EARLIER_KEPT, LEDGER_VERSION, ledgerLineOf, ledgerLines, minuteOf, parseLedgerLine, parsePrRef, PR_LEDGER_CONTRACT, prKey, statusText, unattended, UNATTENDED_AFTER_MS, unattendedLine, withArchived, withLine, withoutEarlier, withoutLines, type LedgerLine, type LedgerSet, type LedgerStatus, type OpenPr, type Unattended } from './pr-ledger.ts'
 export { defaultsOf, isCommand, LAUNCHER_ARGS_VERSION, LAUNCHER_COMMANDS, LAUNCHER_CONTRACT, LAUNCHER_USAGE, LauncherArgsError, parseLauncherArgs, type CommandName, type LauncherCommand, type LauncherOption, type LauncherRequest, type OptionKind, type OptionValue, type Unknown } from './launcher.ts'
 export { appendChain, chainOwned, chainPath, CHAINS_DIR, chainText, chainTtyOf, chainTtys, changeChain, dropFromChain, dropTabEverywhere, parseChain, readChain, repointTab, transferChain, type ChainEntry } from './chains.ts'
-export { parseRoundQuestion, ROUND_ANSWERERS, ROUND_STATUSES, type RoundAnswerer, type RoundQuestion, type RoundStatus } from './round-question.ts'
+export { answersChoice, givenAnswer, parseRoundQuestion, ROUND_ANSWERERS, ROUND_STATUSES, type RoundAnswerer, type RoundQuestion, type RoundStatus } from './round-question.ts'

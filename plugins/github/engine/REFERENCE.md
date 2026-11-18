@@ -147,11 +147,10 @@ directory (README « Repositories in auto-merge »).
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `auto-merge-set` | `{"repo": "owner/name", "on": true\|false, "words": "<their recorded answer>"}` | Put the repository in auto-merge or take it out, on the operator's quoted word |
+| `auto-merge-set` | `{"repo": "owner/name", "on": true\|false, "words": "« <his words> », <their date>"}` | Put the repository in auto-merge or take it out, on the operator's quoted word |
 | `auto-merge-list` | | The repositories in auto-merge, one per line, or `no repository in auto-merge` |
 
-`words` name auto-merge and quote the operator's answer in a consent record of auto-merge on
-that repository (core's `consent-record.ts`); `on: true` needs that answer to be « Accorder ».
+`words` quote the operator with their date, as a waiver's `detail` does.
 The file keeps its other keys, names compare without regard to case, and it is written whole
 under a lock; a malformed file is never overwritten.
 
@@ -220,7 +219,7 @@ rule and the JSON has `images`, one `{url, path, reused, title}` per file.
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`; a record at another sha counts only when carried (below).
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
 - What a record lets pass and what is owed: core's `pr-record.ts` (`accepts`) and `readiness.ts` (`missingEvidence`).
-- The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest, and the operator's answer to the waiver question, from any channel (newest consent record `<kind>-waiver`, « Accorder ») at every head with none of its kind; named in `Ready`; a `fail` holds.
+- The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest; named in `Ready`; a `fail` holds.
 - A kind missing at the head takes its latest accepted record across earlier heads of the same commit count and `pr-fingerprint` (`<kind> carried from <head7>`).
 - Otherwise a moved head voids every record; one of an unpushed commit counts once that sha is on the PR.
 - Pruning: once a day at `session.start`, `<head>` directories and fingerprints untouched for 90 days go.
@@ -344,8 +343,7 @@ README « Observed guards ».
 through `record.py` when the `HEAD` of `dir` (default: the session's directory) is the head
 `pr-gate` reads and its tracked files are clean. A session writes `e2e` only. `waived` (E2E or
 norms) and `exempt` rest on his words quoted in `detail` with their date (`YYYY-MM-DD`, a time
-optional), from any channel: « « <his words> », 2026-11-15T08:50Z »; no consent record is read.
-Auto-merge and auto-deploy keep their recorded consent.
+optional), from any channel: « « <his words> », 2026-11-15T08:50Z », and so do `auto-merge-set` and `auto-deploy-set` in `words`.
 
 **Auto-merge and deploy lists.** Writing `auto-merge.json` or `auto-deploy.json` in a plugin's
 data directory, by a tool or a shell command naming one there, is refused: use `auto-merge-set`
@@ -357,7 +355,7 @@ Answered by the mod (README « Repositories in auto-deploy »).
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "<their recorded answer>", "commands": [...]?}` | Grant (« Accorder » recorded) or withdraw the environment on the operator's quoted word; `commands`: its deploys |
+| `auto-deploy-set` | `{"repo": "owner/name", "env": "dev"\|"staging"\|"prod", "on": true\|false, "words": "« <his words> », <their date>", "commands": [...]?}` | Grant or withdraw the environment on the operator's quoted, dated words; `commands`: its deploys |
 | `auto-deploy-list` | | The environments granted |
 
 ## Exit codes

@@ -104,7 +104,7 @@
 # is printed, so the entry is closed with it.
 # round records the ids of the open entries it printed in <state>/round-listed.json (record_listed).
 # An entry is closed with the hooks module's `settle` tool (hooks/question.ts), which writes the
-# answer, records the consent and sends a question asked with `ask` its answer in the same call; the
+# answer and sends a question asked with `ask` its answer in the same call; the
 # close of a closing proposal sends nothing.
 # round-archive moves each entry file of <state>/round/ settled over a day ago — closed, answered
 # or withdrawn, at its answer's time (else its start), its delivery absent or delivered — into

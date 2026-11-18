@@ -7,21 +7,20 @@ import { atom, read, update } from 'claude-code'
 import type { GithubPane, GithubPaneRow } from '../types/index.d.ts'
 import { reasonOf, type Events, type FsEntry, type Host, type On } from '../core/host.ts'
 import { carriesText, isGeonative, lint, NEGATIVE_FILE, parsePhrases, writesDescription } from './writing.ts'
-import { CONSENT_GRANT, CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_REFUSE, CONSENT_VERSION, DEPLOY_ENVS, consentDir, consentPath, grants, parseConsentRecord, quotesConsent, sameSubject, type ConsentRecord, type ConsentSubject, type DeployEnv } from '../core/consent-record.ts'
 import {
-  AUTO_DEPLOY_FILE, AUTO_DEPLOY_WORD, bashDeploys, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
+  AUTO_DEPLOY_FILE, bashDeploys, DEPLOY_ENVS, type DeployEnv, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
 } from './deploy.ts'
 import { ACCEPTANCE, DETAIL_MAX, KINDS, SCRIPTED, type PrRecord } from '../core/pr-record.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
   covers, EXEMPT_DIR, exemptingLabels, expired, expiryLine, exemptionLine, exemptionPath, isExpiryLine, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
 } from './e2e-scope.ts'
-import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, waiverQuestion, waiverSubject, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
+import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { bashTexts, normalise } from './guards.ts'
 import { isCatchable, observe, OBSERVED, REFUSED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashLabellings, bashPushes,
-  carriesReady, ciUndraft, ciUndraftLine, consentWaiver, createdPr, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
+  carriesReady, ciUndraft, ciUndraftLine, createdPr, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, toolLabelling, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, writesRecords,
@@ -328,7 +327,6 @@ export function leavesDraft(command: string): boolean {
 // plugin; it changes only through auto-merge-set, on their quoted word.
 export const AUTO_MERGE_FILE = 'auto-merge.json'
 // Auto-merge as the operator writes it: « auto-merge », « auto merge », « automerge ».
-export const AUTO_MERGE_WORD = /auto[-\s]?merge/i
 // The list's path in any plugin's data directory, for the Write and Edit guard.
 const AUTO_MERGE_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-merge\.json$/
 // The deploy list, beside it.
@@ -342,16 +340,16 @@ const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + GUARDED_DI
 export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.tool + ', from an orchestrator session.'
 
 /*
- * What an E2E or norms waiver, and an E2E exemption, rest on: the operator's words, quoted in `detail` with their
- * date, from any channel. No consent record is read: the quote is the record, and it stays visible in the file it writes.
+ * What an E2E or norms waiver, an E2E exemption, auto-merge and auto-deploy rest on: the operator's words, quoted
+ * with their date, from any channel. The quote is the record, and it stays visible in the file it writes.
  */
 const QUOTED_DATE = /\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?Z?)?/
 // The letters his words hold at least, dates and times left out: digits are no words.
 const QUOTE_LETTERS_MIN = 6
-export function quotedWordsRefusal(what: string, detail: string): string | undefined {
-  const asks = 'github: ' + what + ' rests on the operator\'s words, quoted in "detail" with their date ("« <his words> », 2026-11-15T08:50Z")'
-  if (detail.trim() === '') return asks + ': "detail" is empty.'
-  if (detail.length > DETAIL_MAX) return asks + ': "detail" is at most ' + DETAIL_MAX + ' characters.'
+export function quotedWordsRefusal(what: string, detail: string, field = 'detail'): string | undefined {
+  const asks = 'github: ' + what + ' rests on the operator\'s words, quoted in "' + field + '" with their date ("« <his words> », 2026-11-15T08:50Z")'
+  if (detail.trim() === '') return asks + ': "' + field + '" is empty.'
+  if (detail.length > DETAIL_MAX) return asks + ': "' + field + '" is at most ' + DETAIL_MAX + ' characters.'
   if (!QUOTED_DATE.test(detail)) return asks + ': it carries no date.'
   const words = detail.replace(new RegExp(QUOTED_DATE.source, 'g'), ' ').replace(/\d{1,2}:\d{2}(:\d{2})?/g, ' ').replace(/[^\p{L}]/gu, '')
   if (words.length < QUOTE_LETTERS_MIN) return asks + ': it quotes fewer than ' + QUOTE_LETTERS_MIN + ' letters of his words.'
@@ -1033,8 +1031,7 @@ async function carriedRecords($: Mod, gate: Gate, files: RecordFile[]): Promise<
   const { found, unread } = await earlierRecords($, gate, root)
   const waivers: Carried[] = []
   for (const kind of unread ? [] : WAIVED.filter((k) => wanted.includes(k))) {
-    const granted = await grantedWaiver($, gate.repo, Number(gate.pr), kind)
-    const waiver = durableWaiver(gate, found, kind) ?? (granted ? consentWaiver(gate, found, granted.at, granted.by, kind) : undefined)
+    const waiver = durableWaiver(gate, found, kind)
     if (waiver) waivers.push(waiver)
   }
   // A waiver stands beside what the same diff carries, or alone.
@@ -1637,101 +1634,6 @@ async function followPushes($: Mod, line: string): Promise<void> {
   }
 }
 
-// ---- the operator's word ----
-
-// A text with its runs of whitespace made one space: a quote keeps the words, not the line breaks.
-function spaced(text: string): string {
-  return text.replace(/\s+/g, ' ').trim()
-}
-
-// The consent records of a repository (core's consent-record.ts): read-only here, the newest files only.
-const CONSENT_READ = 200
-
-// The consent records of a repository, the newest files first; a directory or a file that cannot be read holds none.
-async function consentRecords($: Mod, repo: string): Promise<ConsentRecord[]> {
-  const records: ConsentRecord[] = []
-  try {
-    const dir = await configDir($)
-    if (!dir) return records
-    const root = consentDir(dir, repo)
-    const dated: Array<{ path: string; mtime: number }> = []
-    for (const entry of await $.fs.list(root)) {
-      const name = String(entry?.name ?? '')
-      if (entry?.kind === 'dir' || name.startsWith('.') || !name.endsWith('.json')) continue
-      try {
-        dated.push({ path: root + '/' + name, mtime: Number((await $.fs.stat(root + '/' + name)).mtimeMs) })
-      } catch {
-        // Not a record.
-      }
-    }
-    dated.sort((a, b) => b.mtime - a.mtime)
-    for (const { path } of dated.slice(0, CONSENT_READ)) {
-      try {
-        const record = parseConsentRecord(JSON.parse(String(await $.fs.read(path))))
-        if (record) records.push(record)
-      } catch {
-        // Not a record.
-      }
-    }
-  } catch {
-    // No records.
-  }
-  return records
-}
-
-// True when some consent record of the subject, written for the operator's answer to the
-// question that asked it, is quoted whole in the text, its whitespace normalised, and that answer
-// itself says what `carries` asks of the operator's words.
-async function consentAnswered($: Mod, quote: string, subject: ConsentSubject, carries?: (words: string) => boolean): Promise<boolean> {
-  return (await consentRecords($, subject.repo)).some((record) => quotesConsent(record, subject, quote) && (!carries || carries(spaced(record.answer))))
-}
-
-// The operator's waiver of a pull request's E2E or norms check: his newest answer to that check's waiver
-// question, from any channel, when it grants it (check-plan.ts); a newer « Refuser » takes it back.
-async function grantedWaiver($: Mod, repo: string, pr: number, check: Waivable): Promise<ConsentRecord | undefined> {
-  const newest = await newestAnswer($, { kind: waiverSubject(check), repo, pr })
-  return newest && grants(newest.answer) ? newest : undefined
-}
-
-// His newest recorded answer to the question that asked consent on the subject, whichever channel wrote it.
-async function newestAnswer($: Mod, subject: ConsentSubject): Promise<ConsentRecord | undefined> {
-  const answers = (await consentRecords($, subject.repo)).filter((record) => sameSubject(record.subject, subject))
-  return answers.reduce<ConsentRecord | undefined>((a, b) => (!a || b.at > a.at ? b : a), undefined)
-}
-
-// The operator's answer to a waiver question put by dialog, recorded as the round's answers are
-// (core's consent-record.ts, `by: 'tab'`, the asking session's own), dated by the module.
-async function recordWaiverAnswers($: Mod, e: ToolInput, out: unknown): Promise<void> {
-  const result = isRecord(out) ? out['result'] : undefined
-  const answers = isRecord(result) ? result['answers'] : undefined
-  if (!isRecord(answers)) return
-  const questions: unknown[] = Array.isArray(e['questions']) ? e['questions'] : []
-  for (const question of questions) {
-    const asked = waiverQuestion(question)
-    const text = isRecord(question) ? question['question'] : undefined
-    const answer = String(answers[String(text ?? '')] ?? '').trim()
-    if (!asked || (answer !== CONSENT_GRANT && answer !== CONSENT_REFUSE)) continue
-    const dir = await configDir($)
-    if (!dir) return
-    const now = Number(await $.clock.now())
-    const session = String(await $.session.id() ?? '').replace(/[^A-Za-z0-9._-]/g, '')
-    const record: ConsentRecord = {
-      v: CONSENT_VERSION, subject: { kind: waiverSubject(asked.check), repo: asked.repo.toLowerCase(), pr: asked.pr },
-      entry: 'dialog-' + (session || 'session') + '-' + now, question: String(text), answer, by: 'tab',
-      at: new Date(now).toISOString().replace(/\.\d+Z$/, 'Z'),
-    }
-    const path = consentPath(dir, record)
-    try {
-      await withListLock($, path, () => writeAutoMerge($, path, JSON.stringify(record) + '\n'))
-    } catch (err: unknown) {
-      note($, 'github: the waiver answer of ' + asked.repo + '#' + asked.pr + ' is not recorded: ' + reasonOf(err).trim())
-      continue
-    }
-    const { line } = await followGate($, asked.repo, asked.pr, undefined, true)
-    if (line) note($, line)
-  }
-}
-
 // ---- auto-merge on the operator's word ----
 
 // Whether a Bash command line names a list where it lives: its file name
@@ -1756,21 +1658,8 @@ async function listAutoMerge($: Mod): Promise<string> {
   return listed.length > 0 ? listed.join('\n') : 'no repository in auto-merge'
 }
 
-// How a session names the subject its question asks consent on, in declare_wait's own fields.
-function askedConsent(kind: string, repo: string, extra?: string, value?: string): string {
-  return 'consent_kind "' + kind + '" and consent_repo "' + repo + '"' + (extra ? ' and ' + extra + ' "' + value + '"' : '')
-}
-
-// The refusal of an auto-merge-set whose words are not the operator's, or undefined.
-async function unprovenWord($: Mod, words: string, repo: string, on: boolean): Promise<string | undefined> {
-  if (!AUTO_MERGE_WORD.test(words)) {
-    return 'github: auto-merge-set quotes the operator: "words" must name auto-merge ("auto-merge", "auto merge" or'
-      + ' "automerge"), in their recorded answer.'
-  }
-  if (await consentAnswered($, words, { kind: 'auto-merge', repo }, on ? grants : undefined)) return undefined
-  return 'github: auto-merge-set refused on ' + repo + ': its "words" are not the operator\'s ' + (on ? '« ' + CONSENT_GRANT + ' » ' : 'answer ')
-    + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-merge on ' + repo + '. Ask them with declare_wait\'s ' + askedConsent('auto-merge', repo) + ', choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' », then quote their answer verbatim.'
-}
+// The refusal of an auto-merge-set whose words are not the operator's quoted, dated words, or undefined.
+const unprovenWord = (words: string): string | undefined => quotedWordsRefusal('auto-merge-set', words, 'words')
 
 // The list's lock, core's convention (`<path>.lock` holding the holder's pid), taken
 // with the shell's noclobber since the module has no node:fs. A lock older than
@@ -1830,7 +1719,7 @@ async function setAutoMerge($: Mod, e: GhRequest): Promise<Answer> {
   if (!isRepoName(repo)) return { deny: 'github: auto-merge-set names its repository as owner/name: {"repo": "owner/name"}' }
   if (typeof args['on'] !== 'boolean') return { deny: 'github: auto-merge-set says in or out: {"on": true} or {"on": false}' }
   const words = typeof args['words'] === 'string' ? args['words'] : ''
-  const unproven = await unprovenWord($, words, repo, args['on'])
+  const unproven = unprovenWord(words)
   if (unproven) return await refuse($, REFUSED.autoMergeSet, unproven)
   if (verdict.decision === 'ask' && verdict.rule) {
     const refused = await ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)
@@ -1859,25 +1748,6 @@ async function listAutoDeploy($: Mod): Promise<string> {
   return list.grants.length > 0 ? list.grants.map((g) => g.repo + ' ' + g.env).join('\n') : 'no repository in auto-deploy'
 }
 
-// The refusal of an auto-deploy-set whose consent is not the operator's, or undefined. A grant rests on
-// the record alone: his newest answer for the repository and the environment is « Accorder », whatever
-// "words" says. A withdrawal quotes a record of that subject, and its words name auto-deploy.
-async function unprovenDeployWord($: Mod, words: string, repo: string, env: DeployEnv, on: boolean): Promise<string | undefined> {
-  const subject: ConsentSubject = { kind: 'auto-deploy', repo, env }
-  if (on) {
-    const newest = await newestAnswer($, subject)
-    if (newest && grants(newest.answer)) return undefined
-  } else {
-    if (!AUTO_DEPLOY_WORD.test(words)) {
-      return 'github: auto-deploy-set quotes the operator: "words" must name auto-deploy ("auto-deploy", "auto deploy",'
-        + ' "autodeploy", "auto-déploiement", "déploiement automatique" or "déploiement continu"), in their recorded answer.'
-    }
-    if (await consentAnswered($, words, subject)) return undefined
-  }
-  return 'github: auto-deploy-set refused on ' + repo + ' for ' + env + ': ' + (on ? 'the operator\'s newest answer is missing or is not « ' + CONSENT_GRANT + ' » ' : 'its "words" are not the operator\'s answer ')
-    + 'in a consent record (' + CONSENT_PRODUCER + ') of auto-deploy on ' + repo + ' for ' + env + '. Ask them with declare_wait\'s ' + askedConsent('auto-deploy', repo, 'consent_env', env) + ', choices « ' + CONSENT_GRANT + ' » / « ' + CONSENT_REFUSE + ' »' + (on ? '.' : ', then quote their answer verbatim.')
-}
-
 // The declarations a call adds for its repository, or a refusal naming what is wrong.
 function declarationsOf(raw: unknown, repo: string): Declared[] | string {
   if (raw === undefined) return []
@@ -1903,7 +1773,7 @@ async function setAutoDeploy($: Mod, e: GhRequest): Promise<Answer> {
   if (typeof args['on'] !== 'boolean') return { deny: 'github: auto-deploy-set says in or out: {"on": true} or {"on": false}' }
   const declared = declarationsOf(args['commands'], repo)
   if (typeof declared === 'string') return { deny: declared }
-  const unproven = await unprovenDeployWord($, typeof args['words'] === 'string' ? args['words'] : '', repo, env, args['on'])
+  const unproven = quotedWordsRefusal('auto-deploy-set', typeof args['words'] === 'string' ? args['words'] : '', 'words')
   if (unproven) return await refuse($, REFUSED.autoDeploySet, unproven)
   if (verdict.decision === 'ask' && verdict.rule) {
     const refused = await ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)
@@ -2561,17 +2431,6 @@ export function register(on: On<Mod>): void {
       return refusal === null ? next(e) : await refuse($, REFUSED.net, refusal)
     })
   }
-
-  // The operator's answer to a waiver question put by dialog becomes its consent record.
-  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
-    const out = await next(e)
-    try {
-      await recordWaiverAnswers($, e, out)
-    } catch (err: unknown) {
-      note($, 'github: a waiver answer could not be read: ' + reasonOf(err).trim())
-    }
-    return out
-  })
 
   // A skill the repositories declare as a deploy runs only where the list grants it.
   on('tool.call', { tool: 'Skill' }, async ($, e, next) => {

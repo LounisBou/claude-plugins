@@ -50,14 +50,13 @@ const flatText = (text: string): string => plainText(text).replace(/\s+/g, ' ').
 
 /**
  * What makes two questions one for the record: the asker's project (its session name's subject),
- * what it blocks (its parts split by `, `, spacing and case aside), the consent it asks, and its
+ * what it blocks (its parts split by `, `, spacing and case aside), and its
  * fields, choices and recommendation as given.
  */
-export function askedKey(entry: Pick<Asked, 'sender' | 'blocks' | 'consent' | 'subject' | 'context' | 'ask' | 'choices' | 'recommended' | 'why'>): string {
+export function askedKey(entry: Pick<Asked, 'sender' | 'blocks' | 'subject' | 'context' | 'ask' | 'choices' | 'recommended' | 'why'>): string {
   const blocks = entry.blocks.split(', ').map(part => flatText(part).toLowerCase()).filter(part => part !== '').sort()
-  const consent = entry.consent ? [entry.consent.kind, entry.consent.repo.toLowerCase(), 'pr' in entry.consent ? entry.consent.pr : 'env' in entry.consent ? entry.consent.env : null] : null
   return JSON.stringify([
-    parseSessionName(entry.sender.name)?.subject ?? entry.sender.name, blocks, consent,
+    parseSessionName(entry.sender.name)?.subject ?? entry.sender.name, blocks,
     [entry.subject, entry.context, entry.ask].map(flatText), entry.choices.map(choice => [choice.letter, flatText(choice.text)]),
     entry.recommended, entry.why === null ? null : flatText(entry.why),
   ])

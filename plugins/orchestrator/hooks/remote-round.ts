@@ -16,15 +16,12 @@ import { parseChoices } from '../core/method.ts'
 import type { RoundEntry } from './round.ts'
 import { roleOf } from './session-name.ts'
 import { BLOCKS_CAP, cleanBlocks, ROW_MARKER } from './remote-row.ts'
-import { parseConsentSubject } from '../core/consent-record.ts'
 
 // The receiver's caps on each field: a line past any of them is refused whole, never cut.
 const NAME_CAP = 120                       // remote-row.ts's own
 const MACHINE_CAP = 64                     // machineLabel's cut
 const STAMP_CAP = 40                       // remote-row.ts's own
 const SESSION_CAP = 128                    // a host session id is a uuid, 36 characters
-// The repository of a consent subject: GitHub's 39 characters of owner, a slash, 100 of name.
-export const CONSENT_REPO_CAP = 140
 // The fingerprint after the session id: the text's length, a dash, FNV-1a's 32 bits in hex.
 const FINGERPRINT_CAP = 12 + 1 + 8
 const ID_CAP = SESSION_CAP + 1 + FINGERPRINT_CAP
@@ -33,17 +30,17 @@ const ID_CAP = SESSION_CAP + 1 + FINGERPRINT_CAP
 const QUESTION_CAP = cutQuestion('x'.repeat(RELAY_CAP + 1)).length - String(RELAY_CAP + 1).length + 12
 
 // The cap on an ask's object, derived and not guessed: its structure (the entry with every text
-// empty, five choices, the urgent mark and the consent subject, its machine), and every text
+// empty, five choices, the urgent mark, its machine), and every text
 // at its cap six times over — JSON writes one character as six at most (`\u001f`). The
 // choices' texts are parts of the question's lines, so they count once more as the question.
 const SKELETON = JSON.stringify({
   id: '', from: '', session: '', kind: 'operator', since: '', blocks: '', question: '',
   choices: 'ABCDE'.split('').map(letter => ({ letter, text: '' })), recommendation: 'A',
-  status: 'open', at: '', answer: null, urgent: true, consent: { kind: 'norms-waiver', repo: '', pr: Number.MAX_SAFE_INTEGER }, machine: '',
+  status: 'open', at: '', answer: null, urgent: true, machine: '',
 }).length
 const JSON_ESCAPE = 6
 export const ASK_CAP = SKELETON
-  + JSON_ESCAPE * (ID_CAP + NAME_CAP + SESSION_CAP + 2 * STAMP_CAP + BLOCKS_CAP + 2 * QUESTION_CAP + CONSENT_REPO_CAP + MACHINE_CAP)
+  + JSON_ESCAPE * (ID_CAP + NAME_CAP + SESSION_CAP + 2 * STAMP_CAP + BLOCKS_CAP + 2 * QUESTION_CAP + MACHINE_CAP)
 
 // The answer's text as the sender cuts it (cutQuestion): the question's own bound. Its readable
 // rest is paneAnswerText's (supervision.ts): its own words, 97 characters, rounded up, then the
@@ -58,7 +55,7 @@ export const ANSWER_CAP = JSON.stringify({ id: '', since: '', text: '', at: '', 
 
 // The fields an ask carries: the entry's as roundEntry builds them, and the sender's machine.
 // No `origin`, which only the receiver writes, and no `movedFrom`, which only a succession does.
-// The urgent mark and the consent subject are carried when the entry has them.
+// The urgent mark is carried when the entry has it.
 const FIELDS = ['id', 'from', 'session', 'kind', 'since', 'blocks', 'question', 'choices', 'recommendation', 'status', 'at', 'answer', 'machine'] as const
 
 // An id of roundEntryId's shape: the session id as the store sanitises it, then the fingerprint.
@@ -79,17 +76,16 @@ function askObject(entry: RoundEntry, machine: string): Record<string, unknown> 
   }
 }
 
-// The receiver's whole check of an ask: the exact field set (the urgent mark and the consent
-// subject alone optional), each field's type and bounds, an open and unanswered entry of an
+// The receiver's whole check of an ask: the exact field set (the urgent mark alone optional, and
+// the consent subject an older sender still carries dropped), each field's type and bounds, an open and unanswered entry of an
 // orchestrator, an id of its session. The choices and the recommendation are read again from
 // the question, never taken from the line. Anything else is null.
 function askOf(o: Record<string, unknown>): { entry: RoundEntry; machine: string } | null {
-  const keys = Object.keys(o)
+  const { consent: _consent, ...rest } = o
+  const keys = Object.keys(rest)
   const urgent = keys.includes('urgent')
-  const consent = keys.includes('consent') ? parseConsentSubject(o['consent']) : undefined
-  if (keys.length !== FIELDS.length + (urgent ? 1 : 0) + (keys.includes('consent') ? 1 : 0) || !FIELDS.every(field => keys.includes(field))) return null
+  if (keys.length !== FIELDS.length + (urgent ? 1 : 0) || !FIELDS.every(field => keys.includes(field))) return null
   if (urgent && (o['urgent'] !== true || o['kind'] !== 'operator')) return null
-  if (keys.includes('consent') && (consent === undefined || consent.repo.length > CONSENT_REPO_CAP || o['kind'] !== 'operator')) return null
   if (!line(o['from'], NAME_CAP) || roleOf(o['from'] as string) !== 'orchestrator') return null
   if (!line(o['session'], SESSION_CAP) || !idOf(o['id'], o['session'] as string)) return null
   if (!stamp(o['since']) || !stamp(o['at'])) return null
@@ -100,8 +96,8 @@ function askOf(o: Record<string, unknown>): { entry: RoundEntry; machine: string
   if (!Array.isArray(o['choices']) || !(o['recommendation'] === null || typeof o['recommendation'] === 'string')) return null
   if (o['status'] !== 'open' || o['answer'] !== null) return null
   if (!line(o['machine'], MACHINE_CAP) || !/^[A-Za-z0-9_-]+$/.test(o['machine'] as string)) return null
-  const { machine, ...entry } = o as unknown as RoundEntry & { machine: string }
-  return { entry: { ...entry, ...parseChoices(entry.question), ...(consent ? { consent } : {}) }, machine }
+  const { machine, ...entry } = rest as unknown as RoundEntry & { machine: string }
+  return { entry: { ...entry, ...parseChoices(entry.question) }, machine }
 }
 
 // The answer's check: an id of an entry's shape, two stamps, a text within its cap, and a

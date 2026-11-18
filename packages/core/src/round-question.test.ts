@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { parseRoundQuestion } from './round-question.ts'
+import { answersChoice, givenAnswer, parseRoundQuestion } from './round-question.ts'
+import { kindFor, producersOf } from './pr-record.ts'
 
 const CHOICES = [{ letter: 'A', text: 'Ship it now' }, { letter: 'B', text: 'Wait for the review' }]
 const ASKED = {
@@ -60,5 +61,64 @@ describe('a round question', () => {
   it('counts only lettered choices', () => {
     assert.equal(parseRoundQuestion({ ...ASKED, choices: [...CHOICES, { letter: 'Z', text: 'x' }, 'C', { letter: 'C' }] })?.options, 3)
     assert.equal(parseRoundQuestion({ ...ASKED, choices: 'none', recommended: 'x' })?.recommended, null)
+  })
+})
+
+describe('an answer given', () => {
+  it('gives an answer as the choice its letter names, letter and text, or as his own words', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    assert.deepEqual(givenAnswer('A : Accorder', choices), { letter: 'A', text: 'Accorder' })
+    assert.deepEqual(givenAnswer('b — refuse it', choices), { letter: 'B', text: 'Refuser' })
+    assert.deepEqual(givenAnswer('B', choices), { letter: 'B', text: 'Refuser' })
+    assert.deepEqual(givenAnswer('  I would wait a day  ', choices), { letter: null, text: 'I would wait a day' })
+    assert.deepEqual(givenAnswer('C', choices), { letter: null, text: 'C' })
+  })
+
+  it('takes a choice pressed as its text then its letter in parentheses', () => {
+    const choices = [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }]
+    assert.equal(answersChoice('Accorder (A)', choices)?.letter, 'A')
+    assert.equal(answersChoice(' accorder  (a) ', choices)?.letter, 'A')
+    assert.equal(answersChoice('Accorder (B)', choices), undefined)
+  })
+})
+
+describe('words typed in the sender\'s own tab', () => {
+  const choices = [{ letter: 'A', text: 'waive it, docs only' }, { letter: 'B', text: 'run the E2E' }]
+  const [waive, run] = choices
+
+  it('answers a choice by its letter alone, its letter set apart from nothing or its exact text, or its exact text alone', () => {
+    for (const typed of ['A', ' a ', 'a)', 'A.', 'a) waive it, docs only', 'A — waive it,  docs only', 'A—waive it, docs only', 'a - WAIVE IT, docs only', 'waive it, docs only', '  WAIVE it,\n docs only ']) {
+      assert.deepEqual(answersChoice(typed, choices), waive, typed)
+    }
+    for (const typed of ['b', 'B : run the e2e', 'RUN THE E2E']) assert.deepEqual(answersChoice(typed, choices), run, typed)
+    for (const typed of ['waive it, docs only (A)', 'Waive it, docs only (a)', 'waive it, docs only  ( A )']) assert.deepEqual(answersChoice(typed, choices), waive, typed)
+  })
+
+  it('is no answer when it is anything else', () => {
+    for (const typed of [
+      '', 'C', 'C)', 'yes', 'go on with phase 2',
+      'do not waive it, docs only', 'I say WAIVE IT, docs only, thanks', 'ok: waive it, docs only',
+      'B waive it, docs only', 'B : waive it, docs only', 'A run the E2E', 'A - but not yet', 'A, but check the diff first', 'A go', 'a) yes',
+      'waive it, docs only (B)', 'run the E2E (A)', 'yes (A)', '(A)',
+    ]) assert.equal(answersChoice(typed, choices), undefined, typed)
+    assert.equal(answersChoice('anything', []), undefined)
+  })
+
+  it('is no answer when a short choice text sits inside an unrelated prompt', () => {
+    const short = [{ letter: 'A', text: 'yes' }, { letter: 'B', text: 'no' }]
+    assert.deepEqual(answersChoice('Yes', short), short[0])
+    for (const typed of ['yes, and then rebase the branch on main', 'no idea, go on', 'B yes']) assert.equal(answersChoice(typed, short), undefined, typed)
+  })
+
+})
+
+describe('record producers', () => {
+  it('gives each kind its declared producer, and any other caller the open kind', () => {
+    assert.equal(kindFor('pr-review'), 'review')
+    assert.equal(kindFor('norms'), 'norms')
+    assert.equal(kindFor('engine'), 'e2e')
+    assert.equal(kindFor('orchestrator'), 'review')
+    assert.deepEqual(producersOf('review').map(p => p.plugin), ['pr-review', 'orchestrator'])
+    assert.deepEqual(producersOf('e2e'), [])
   })
 })

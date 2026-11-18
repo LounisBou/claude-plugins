@@ -13,7 +13,6 @@
 // this file never waits on anything.
 
 import { withDeadline as cancelAtDeadline, DeadlineExceeded } from '../core/deadline.ts'
-import type { ConsentSubject } from '../core/consent-record.ts'
 import type { WaitKind } from '../core/orchestration.ts'
 import { parseSessionName, sessionName } from '../core/names.ts'
 import type { ChainEntry } from '../core/chain-entries.ts'
@@ -23,13 +22,6 @@ import type { Host } from './host.ts'
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
 // --- the decision shapes -----------------------------------------------------------------
-
-// The classic decision `{"decision":"block","reason":…}` answers through the module's own field:
-// `block` carries the reason text (the shipped types' ClassicResult documents exactly this mapping,
-// and a field of the wrong shape fails the hook, which is skipped: the stop would pass untold).
-export function refuse(reason: string): { block: string } {
-  return { block: reason }
-}
 
 // One race, the whole gate's own law: stop_gate.py runs under a single deadline
 // checked between its external calls, and a read that cannot answer in time
@@ -60,10 +52,8 @@ export async function withDeadline<T>(work: ((signal: AbortSignal) => Promise<T>
 // operator, every goal met, or only deferred work left (core's WAIT_KINDS). A command, monitor,
 // subagent or agent of its own is read by the gate itself (checkWake), never declared.
 // `urgent` marks an operator wait the coordinator presents at once (URGENT_LINE).
-// consent: the subject an operator question asks his consent on (core's consent-record.ts), which the
-// audit trail names.
 // asked: the ids of the questions asked with `ask` (question.ts) an operator wait waits on.
-export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject; asked?: string[] }
+export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; asked?: string[] }
 
 // The one machine line a declaration spells: the form the gate's checks read a declared wait in.
 // It is never taught: the model declares, and a line it writes itself decides nothing.
@@ -382,75 +372,6 @@ export function hostTasks(tasks: unknown, crons: unknown): string[] | null {
   }
   return named
 }
-
-// The ids of the open questions a turn's final text copies: a line that is its id line
-// (`**Question i of N** (<id>)`) or its `_Question_ : <ask>` line, whole, a quote mark aside. A mention
-// by subject, an id inside a sentence or a longer question that starts alike copies nothing. The
-// caller hands only the questions asked in an earlier turn.
-export function restatedQuestions(message: string, open: readonly { id: string; ask: string }[]): string[] {
-  const lines = message.split('\n').map(line => line.replace(/^\s*(?:>\s*)*/, '').trim())
-  return open
-    .filter(q => lines.some(line => line === `_Question_ : ${q.ask}` || (line.endsWith(`(${q.id})`) && /^\**Question \d+ of \d+\b/.test(line))))
-    .map(q => q.id)
-}
-
-export const restatedReason = (ids: readonly string[]): string =>
-  `Already in the round (${ids.join(', ')}): name it by its subject, do not copy it.`
-
-// A choice or a decision put to the operator in the turn's final message, in prose. The one check of
-// the gate that refuses: a question asked this way is shown nowhere (no ✋, no counter) and nothing
-// carries his answer back, so letting the turn end on it leaves him with a question he cannot see.
-// The refusal is the gate's only one, so it is held to precision over reach: it reads the message's
-// tail only, outside fenced code and quotes and without its `waiting:` line, and wants a question's
-// structure and a request to rule together, each in the forward or imperative form. Either is
-// (1) at least two lettered options (`(A`, `A)`, `**A**`, `option A`) and a request to rule
-// (« dès que vous aurez tranché », « please choose », a recommendation inside an option's
-// parentheses, or a last line that asks which), or (2) a last line that asks him « should I »,
-// « voulez-vous », and the like. A report that names choices already made carries a structure and
-// no request (« tranché », « chose », « recommended » alone ask nothing), and passes.
-const TAIL_PARAGRAPHS = 3
-const OPTION_LABELS = [
-  /\(([A-D])(?=[,):.])/g,
-  /(?:^|\s)([A-D])\)(?=\s)/g,
-  /\*\*([A-D])\*\*/g,
-  /\b(?:[Oo]ption|[Cc]hoice|[Vv]ariante)\s+([A-D])\b/g,
-  /^\s*(?:[-*]\s*)?([A-D])[.:](?=\s)/gm,
-]
-const RULING_CUE = new RegExp([
-  'aurez (?:tranché|décidé|choisi)', '(?:once|when|until) you (?:have )?(?:decide|choose|rule|pick|confirm)',
-  "jusqu'à ce que vous (?:ayez )?(?:tranch|décid|chois)", 'tranchez\\b', 'choisissez\\b', 'décidez\\b',
-  'please (?:choose|decide|pick|confirm)', 'à vous de (?:trancher|choisir|décider)',
-  'tell me (?:which|whether)', 'dites-moi (?:lequel|laquelle|si)',
-  '(?:waiting (?:for|on)|en attente de) (?:your|votre) (?:choice|decision|choix|décision)',
-].join('|'), 'i')
-// A recommendation written inside an option's own parentheses: « (A, que je recommande) ».
-const OPTION_RECOMMENDED = /\(([A-D])\b[^)]*\b(?:que je recommande|je recommande|i recommend|which i recommend)\b/
-const WHICH_QUESTION = /\b(?:which (?:one|option)|lequel|laquelle|votre choix|your choice|your call)\b/i
-const ASKS_HIM = /\b(?:should i|shall i|do you want|would you like|do you prefer|want me to|dois-je|voulez-vous|souhaitez-vous|préférez-vous|veux-tu)\b/i
-// A last line that reports a question someone else asked is no question of the session's own.
-const REPORTED = /\b(?:asked|asks|demandé|demandait|said|dit|wrote|écrit)\b/i
-
-function tailOf(message: string): string {
-  const kept = message.replace(/```[\s\S]*?(?:```|$)/g, '').split('\n')
-    .filter(line => !/^\s*>/.test(line) && !/^\s*waiting:/i.test(line)).join('\n')
-  return kept.trim().split(/\n\s*\n/).slice(-TAIL_PARAGRAPHS).join('\n\n')
-}
-
-export function putsChoiceToOperator(message: string): boolean {
-  const tail = tailOf(message)
-  if (tail === '') return false
-  const last = tail.split('\n').filter(line => line.trim() !== '').pop() ?? ''
-  const asking = /\?[\s"'»)*_]*$/.test(last)
-  if (asking && ASKS_HIM.test(last) && !REPORTED.test(last)) return true
-  const labels = new Set(OPTION_LABELS.flatMap(pattern => [...tail.matchAll(pattern)].map(found => found[1] ?? '')))
-  if (labels.size < 2) return false
-  return RULING_CUE.test(tail) || OPTION_RECOMMENDED.test(tail) || (asking && WHICH_QUESTION.test(last))
-}
-
-export const PROSE_CHOICE_REASON = 'Your message puts a choice or a decision to the operator in prose, and no question of yours is open in the round: '
-  + 'he is shown nothing (no ✋, no counter) and nothing will carry his answer back to you. '
-  + 'Ask it with `mcp__orchestrator__ask` (its choices, your recommendation), then declare an operator wait on it. '
-  + 'If it asks him nothing, end the message without the question.'
 
 export type Held = { case: string; reason: string }
 

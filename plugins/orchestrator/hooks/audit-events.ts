@@ -157,11 +157,9 @@ const WAIT_ON: Record<WaitKind, 'operator' | null> = { operator: 'operator', def
 
 export interface WaitSeen {
   readonly kind: WaitKind
-  readonly consent?: { readonly repo: string; readonly pr?: number } | undefined
 }
 
-/** A declared wait's start (span null) or end (span: the start's identifier); its consent's pull request, if any. */
+/** A declared wait's start (span null) or end (span: the start's identifier). */
 export function waitEvents(stamp: Stamp, wait: WaitSeen, edge: Edge, span: string | null): Built[] {
-  return audit(stamp, 'wait', `orchestrator.wait.${wait.kind}`, { wait: wait.kind, edge, span, on: WAIT_ON[wait.kind] },
-    { subject: { repo: repoOf(wait.consent?.repo), pr: prOf(wait.consent?.pr) } })
+  return audit(stamp, 'wait', `orchestrator.wait.${wait.kind}`, { wait: wait.kind, edge, span, on: WAIT_ON[wait.kind] })
 }

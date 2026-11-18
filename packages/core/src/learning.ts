@@ -12,7 +12,7 @@
 // design's question 9: 30 days, 90 days, 6,000 events; what a journal drops is folded into one count
 // per signature and week (`foldWeekly`).
 
-import { consentAnswer, givenAnswer, grants } from './consent-record.ts'
+import { givenAnswer } from './round-question.ts'
 import { WAIT_KINDS } from './orchestration.ts'
 import { PR_RECORD_CONTRACT } from './pr-record.ts'
 
@@ -1150,18 +1150,12 @@ export type AnswerGiven =
   | { readonly asked: string; readonly granted: boolean }
   | { readonly letter: string | null; readonly recommended: string | null }
 
-/**
- * What an answer to a question of the round gives: for a question that asks a consent, its kind and
- * whether the answer grants it (consent-record.ts reads the answer); for any other, the choice its
- * opening letter names.
- */
+/** What an answer to a question of the round gives: the choice its opening letter names, beside the recommended one. */
 export function answerGiven(
   answer: string,
-  asked: { readonly consent?: { readonly kind: string } | null; readonly choices?: readonly { readonly letter: string; readonly text: string }[]; readonly recommended?: string | null },
+  asked: { readonly choices?: readonly { readonly letter: string; readonly text: string }[]; readonly recommended?: string | null },
 ): AnswerGiven {
-  const choices = asked.choices ?? []
-  if (asked.consent) return { asked: asked.consent.kind, granted: grants(consentAnswer(answer, choices)) }
-  return { letter: givenAnswer(answer, choices).letter, recommended: asked.recommended ?? null }
+  return { letter: givenAnswer(answer, asked.choices ?? []).letter, recommended: asked.recommended ?? null }
 }
 
 /** The code of an answer: the grant asked and its outcome, or how the choice stands to the recommendation. */

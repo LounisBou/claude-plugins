@@ -32,15 +32,15 @@ import {
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, type GoalsReading,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames, restatedQuestions, restatedReason,
-  putsChoiceToOperator, refuse, PROSE_CHOICE_REASON, busyWake, type BusyAgent, type OwnAgent,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames,
+  busyWake, type BusyAgent, type OwnAgent,
 } from './stop-gate.ts'
 import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { agentsOf, ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED, refreshRowAndDeck, showPrStates } from './supervision.ts'
 import { pullRequestsRead } from './tab-state.ts'
-import { askedThisTurn, readAsked } from './question.ts'
+import { readAsked } from './question.ts'
 import { fieldsOf, messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
 import { asksTheMode } from './mode-dialog.ts'
 import { unnamedReport } from './relay.ts'
@@ -49,7 +49,7 @@ import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashW
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
 import { openFor } from './todo.ts'
 import {
-  MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, PROSE_CHOICE_CODE, refused, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
+  MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
 } from './observe.ts'
 import { todoName } from './todo-format.ts'
 import { prWake } from './ledger.ts'
@@ -525,8 +525,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // classic events carry the settings payload's own fields — the shipped types give
   // classic.Stop the transcript path, the cwd and the last assistant message beside the
   // module's — so the scope and the message are read off the event itself. Since the
-  // operator's ruling of 2026-11-15 the gate refuses nothing but one stop (a choice put to him in prose, below):
-  // each other stop it would have held passes, with one `let through` log line and one escape in the journal. The shell gate
+  // operator's ruling of 2026-11-15 the gate refuses no stop:
+  // each stop it would have held passes, with one `let through` log line and one escape in the journal. The shell gate
   // that once answered the same stops is gone with the cutover — this handler is the only
   // stop gate.
   on('classic.Stop', async ($, e, next) => {
@@ -581,25 +581,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // A question asked with `ask` still open stays in the round until he answers it, its answer
       // waking the session; unless the session handed over: its successor holds the questions.
       let opened: { id: string; ask: string }[] = []
-      // Whether the round was read: a read that threw or did not answer in time says nothing about what is open.
-      let roundRead = true
       if ((role === 'orchestrator' || role === 'auditor') && sessionId !== '' && handedOverIn !== sessionId && !isEnding()) {
         const read = await inTime($, async () => (await readAsked($)).filter(entry => entry.status === 'open' && entry.sender.session === sessionId), until)
-        if (read === null) roundRead = false
-        else opened = read
-      }
-      // The one check of the gate that refuses (the others observe, the operator's ruling of 2026-11-15
-      // limiting refusals to the irreversible; his ruling of 2026-11-17 on this one: « ça ne devrait pas
-      // être possible »): a choice put to him in prose with no question of the session open in the round
-      // is shown nowhere, and nothing brings his answer back. The coordinator is left out: its decision
-      // round presents the other sessions' questions in prose by design. A round that could not be read
-      // refuses nothing: the gate stands down on a read it could not make. The host re-fires a refused stop
-      // with `stop_hook_active`, which the gate lets pass at its first line, so it refuses once per turn.
-      if ((role === 'orchestrator' || role === 'auditor') && sessionId !== '' && handedOverIn !== sessionId && !isEnding()
-        && roundRead && opened.length === 0 && putsChoiceToOperator(String(e.last_assistant_message ?? ''))) {
-        await logLine($, 'guards', `stop gate: refused: a choice put to the operator in prose, no question of ${name} open in the round`)
-        await refused($, PROSE_CHOICE_CODE)
-        return refuse(PROSE_CHOICE_REASON)
+        if (read !== null) opened = read
       }
       if (role === 'auditor') {
         // An auditor ends on no gate of its own, except its list: an item still open and no wait declared is refused once.
@@ -619,13 +603,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         if (swept) return
         swept = true
         await runSweep($, state, root, until)
-      }
-      // A turn's end that copies the block of a question asked in an earlier turn: told once, by its subject.
-      const earlier = opened.filter(entry => !askedThisTurn().includes(entry.id))
-      const restated = restatedQuestions(String(e.last_assistant_message ?? ''), earlier)
-      if (restated.length > 0) {
-        await logLine($, 'guards', `stop gate: restated question ${restated.join(', ')}`)
-        return await letThrough(restatedReason(restated))
       }
       // Check 1, what will wake you. The agents of this orchestrator are the chain
       // entries its own session wrote, still running one by the listing's glyph.

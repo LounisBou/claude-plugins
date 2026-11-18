@@ -189,7 +189,7 @@ test('a declared wait starts when its turn ends and ends when the next starts, b
   const fx = fake({ name: 'Orch: belt' })
   const m = mounted()
   m.declarations.turnStarted()
-  m.declarations.declare({ kind: 'operator', blocks: 'the merge', asked: ['**Question 1 of 1** secret'], consent: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 } })
+  m.declarations.declare({ kind: 'operator', blocks: 'the merge', asked: ['**Question 1 of 1** secret'] })
   await m.on('turn.complete', fx.dollar, {}, { text: 'done' })
   await m.on('turn.complete', fx.dollar, { agentId: 'a1' }, { text: 'a subagent' })
   await m.on('turn.start', fx.dollar, { agentId: 'a1' })
@@ -200,7 +200,7 @@ test('a declared wait starts when its turn ends and ends when the next starts, b
     { wait: 'operator', edge: 'start', span: null, on: 'operator' },
     { wait: 'operator', edge: 'end', span: start.id, on: 'operator' },
   ])
-  expect(start.subject).toEqual({ repo: 'acme/thing', pr: 12, head: null })
+  expect(start.subject).toEqual({ repo: null, pr: null, head: null })
   expect(JSON.stringify(fx.journal()).includes('secret') || JSON.stringify(fx.journal()).includes('the merge')).toBe(false)
   for (const event of fx.journal()) expect(parseJournalEvent(event)).toEqual(event)
 })

@@ -58,10 +58,9 @@ Who merges: the auto-merge bullet of the repository's CLAUDE.md states it.
 
 - A guard that protects (an irreversible action, a security boundary) fails closed: when it
   cannot decide, it refuses and says why. A hook that only observes fails open and logs.
-- The operator's consent is a structured act: a tool call, a choice in a prompt, a recorded
-  answer. It is never inferred from words in a prompt: « don't push » contains « push ».
-  The E2E or norms waiver and the E2E exemption are the exception: they rest on his words quoted with their
-  date in `detail`, and a quote that is false stays visible there.
+- The operator's consent rests on his words quoted with their date (a waiver's or an exemption's
+  `detail`, auto-merge's and auto-deploy's `words`), never on a guard reading a prompt's words:
+  a quote that is false stays visible there.
 - A gate decides on structured facts (a tool call such as `declare_wait`, a record), never on
   the wording of a model's last line.
 - Separation holds by construction: a review or norms record is written by a session other
