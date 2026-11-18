@@ -2470,21 +2470,9 @@ test('a declaration is validated: a known kind, and what it blocks where the kin
   }
 })
 
-test('an operator question may declare the subject it asks consent on, in flat fields', () => {
+test('an operator wait carries no consent subject: consent rests on his quoted, dated words', () => {
   const asked = [{ id: 'q-1', blocks: 'x' }]
-  const waiver = { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }
-  const flat = (s: { kind: string; repo: string; pr?: number; env?: string }) => ({
-    consent_kind: s.kind, consent_repo: s.repo, ...(s.pr === undefined ? {} : { consent_pr: s.pr }), ...(s.env === undefined ? {} : { consent_env: s.env }),
-  })
-  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', ...flat(waiver) }, asked)).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: waiver, asked: ['q-1'] } })
-  for (const bad of [
-    { kind: 'deferred', blocks: 'x', ...flat(waiver) }, { kind: 'operator', blocks: 'G1', ...flat({ kind: 'e2e-waiver', repo: 'acme/thing' }) },
-    { kind: 'operator', blocks: 'G1', ...flat({ kind: 'merge', repo: 'acme/thing' }) },
-    { kind: 'operator', blocks: 'G1', consent_repo: 'acme/thing' },
-  ]) expect('error' in parseDeclaration(bad, asked)).toBe(true)
-  const deploy = { kind: 'auto-deploy', repo: 'acme/infra', env: 'staging' }
-  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', ...flat(deploy) }, asked)).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: deploy, asked: ['q-1'] } })
-  expect('error' in parseDeclaration({ kind: 'operator', blocks: 'G1', ...flat({ kind: 'auto-deploy', repo: 'acme/infra' }) }, asked)).toBe(true)
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', consent_kind: 'e2e-waiver', consent_repo: 'acme/thing', consent_pr: 12 }, asked)).toEqual({ wait: { kind: 'operator', blocks: 'G1', asked: ['q-1'] } })
 })
 
 test('the declare_wait tool is registered at every start, and refused to a subagent and on a bad input', async () => {
@@ -2494,9 +2482,7 @@ test('the declare_wait tool is registered at every start, and refused to a subag
   dollar.tool = { ...dollar.tool, register: async spec => { tools.push(spec) } }
   await wait['session.start'](dollar, { cwd: '/tmp/h/work/repo' }, through)
   expect(tools.map(t => [t.name, t.isDeferred])).toEqual([[WAIT_TOOL, false]])
-  // The consent an operator question asks names the environment of an auto-deploy.
-  expect(propertyOf(tools[0], 'consent_env')).toEqual({ type: 'string', enum: ['dev', 'staging', 'prod'] })
-  expect(propertyOf(tools[0], 'consent')).toBe(undefined)
+  expect(propertyOf(tools[0], 'consent_kind')).toBe(undefined)
   expect((await declare(wait, dollar, { kind: 'done', agentId: 'a-1' })).isError).toBe(true)
   expect((await declare(wait, dollar, { kind: 'soon' })).isError).toBe(true)
   // Neither is a declaration: the stop reads the message alone.

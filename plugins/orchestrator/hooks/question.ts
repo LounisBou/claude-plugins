@@ -10,7 +10,7 @@
 //
 // The `settle` tool closes a question by its id, here: its one closure function writes every close
 // of a round question, the object `ask` stored or the relay's entry (settle.ts decides what it
-// writes), then records the consent it asked, sends the answer of a question asked with `ask` to its
+// writes), then journals his answer, sends the answer of a question asked with `ask` to its
 // asker at once when another session settles it, and records the work the answer asks as a to-do of
 // the asker. The pane, the words typed in the asker's tab and its session's end close through the
 // same function (closeRound).
@@ -19,14 +19,14 @@ import { ROUND_ARCHIVE_DIR, ROUND_DIR, roundEntryPath } from '../core/orchestrat
 import { answerEvent, answerGiven, subjectOf } from '../core/learning.ts'
 import { write, type Memory } from './observe.ts'
 import { PLUGIN } from './audit-events.ts'
-import { answersChoice, CONSENT_GRANT, CONSENT_KINDS, CONSENT_REFUSE, DEPLOY_ENVS, grants, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
+import { answersChoice } from '../core/round-question.ts'
 import { typedByOperator } from './models-guard.ts'
 import { DECLARATIONS } from './wait.ts'
 import { machineLabel } from './remote-row.ts'
 import type { RoundEntry } from './round.ts'
 import { askedKey } from './asked-key.ts'
 import { callTodo, whoAmI } from './todo.ts'
-import { setSessionWindow, closesItself, coordinatorRuns, forgetRelayed, isRoundAnswer, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled, writeConsent, type ConsentEntry } from './supervision.ts'
+import { setSessionWindow, closesItself, coordinatorRuns, forgetRelayed, isRoundAnswer, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled } from './supervision.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planClaimed, planPane, planRelayed, planWithdrawal, settledMessage, type Fields, type Me, type Plan, type SettleRequest } from './settle.ts'
 import { configDir, logLine, stateDir, storeIo } from './module-io.ts'
 import { fieldsOf, messageOf, type Host, type On } from './host.ts'
@@ -58,7 +58,6 @@ export type AskFields = {
   why: string | null
   blocks: string
   urgent?: true
-  consent?: ConsentSubject
 }
 
 /** How a question asked here was settled (settle.ts): the answer or the reason, who settled it, when, and the message's author. */
@@ -95,7 +94,7 @@ const trimmed = (value: unknown): string | null => (typeof value === 'string' &&
 
 /** The call's fields as the method's question, or why they are none. */
 export function parseAsk(e: Record<string, unknown>): { fields: AskFields } | { error: string } {
-  for (const field of ['subject', 'context', 'question', 'recommended', 'why', 'blocks', ...CHOICE_FIELDS, 'consent_kind', 'consent_repo', 'consent_env']) {
+  for (const field of ['subject', 'context', 'question', 'recommended', 'why', 'blocks', ...CHOICE_FIELDS]) {
     if (e[field] !== undefined && typeof e[field] !== 'string') return { error: `${field} is a string.` }
   }
   const subject = trimmed(e['subject'])
@@ -121,29 +120,12 @@ export function parseAsk(e: Record<string, unknown>): { fields: AskFields } | { 
   if (blocks === '') return { error: 'blocks names what waits on his answer.' }
   if (blocks.length > ASK_BLOCKS_MAX) return { error: `blocks holds at most ${ASK_BLOCKS_MAX} characters.` }
   if (e['urgent'] !== undefined && typeof e['urgent'] !== 'boolean') return { error: 'urgent is true or false.' }
-  const consented = consentOf(e, choices)
-  if (consented !== null && 'error' in consented) return consented
   return {
     fields: {
       subject, context, ask, choices, recommended: letter, why, blocks,
       ...(e['urgent'] === true ? { urgent: true as const } : {}),
-      ...(consented !== null ? { consent: consented.consent } : {}),
     },
   }
-}
-
-// The consent the question asks, its subject read as declare_wait reads it; its choices are then the
-// two the consent record knows, « Accorder » then « Refuser », so that his answer grants or refuses.
-function consentOf(e: Record<string, unknown>, choices: readonly AskedChoice[]): { consent: ConsentSubject } | { error: string } | null {
-  const given = Object.fromEntries([['kind', e['consent_kind']], ['repo', e['consent_repo']], ['pr', e['consent_pr']], ['env', e['consent_env']]].filter(([, value]) => value !== undefined))
-  if (Object.keys(given).length === 0) return null
-  const consent = parseConsentSubject(given)
-  if (consent === undefined) {
-    return { error: `consent is consent_kind with consent_repo (owner/name): "e2e-waiver" or "norms-waiver" with consent_pr, "e2e-exemption" or "auto-merge" alone, "auto-deploy" with consent_env (${DEPLOY_ENVS.join(', ')}).` }
-  }
-  const named = choices.length === 2 && choices[0]?.text === CONSENT_GRANT && choices[1]?.text === CONSENT_REFUSE
-  if (!named) return { error: `a question that asks consent offers two choices: choice_a "${CONSENT_GRANT}", choice_b "${CONSENT_REFUSE}".` }
-  return { consent }
 }
 
 /** A new question's id: the asking session's, the instant, and a random part, safe as a file name. */
@@ -232,8 +214,6 @@ export function parseAsked(text: string): Asked | null {
   }
   const answer = answerOf(o['answer'] ?? null)
   if (answer === undefined) return null
-  const consent = o['consent'] === undefined ? undefined : parseConsentSubject(o['consent'])
-  if (o['consent'] !== undefined && consent === undefined) return null
   const originRead = o['origin']
   const origin = originRead === undefined ? undefined
     : isRecord(originRead) && isText(originRead['machine']) && isText(originRead['address']) ? { machine: originRead['machine'], address: originRead['address'] } : null
@@ -248,7 +228,6 @@ export function parseAsked(text: string): Asked | null {
     v: ASK_VERSION, id, sender: { session, name, role, machine }, subject, context, ask, choices, recommended, why, blocks,
     status, at, answer, seq,
     ...(o['urgent'] === true ? { urgent: true as const } : {}),
-    ...(consent !== undefined ? { consent } : {}),
     ...(origin !== undefined ? { origin } : {}),
     ...(delivery !== undefined ? { delivery } : {}),
     ...(replica !== undefined ? { replica } : {}),
@@ -382,8 +361,6 @@ export async function nameMovedAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' |
 
 // What the operator typed, as an answer keeps it: past this many characters it is cut, the cut said.
 const TYPED_CAP = 500
-// The note a cut answer ends with: the words past the cap were never read, so a cut answer grants nothing.
-const CUT_NOTE = /\n\[cut at \d+ of \d+ characters\]$/
 
 /**
  * A prompt the operator typed in the asker's own tab (never the model's, never a command): its open
@@ -399,9 +376,8 @@ export async function claimAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pr
 }
 
 /**
- * The asker's turn ended: each question claimed in it is answered in its tab with his words, its
- * consent recorded when they name its choice, unless the turn's operator wait keeps it
- * (`kept`): then it is open again, drawn again.
+ * The asker's turn ended: each question claimed in it is answered in its tab with his words,
+ * unless the turn's operator wait keeps it (`kept`): then it is open again, drawn again.
  */
 export async function settleClaimed($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, kept: readonly string[], now: Date = new Date()): Promise<void> {
   const at = now.toISOString()
@@ -413,18 +389,11 @@ export async function settleClaimed($: Host<'clock' | 'env' | 'fs' | 'plugin' | 
   })
   const takes = (entry: Asked) => entry.sender.session === session && !!entry.claimed && !kept.includes(entry.id)
   for (const id of await openAskedIds($, takes)) {
-    let refused = false
     // Read before the lock, as the lock cannot: whether the coordinator here was shown it.
     const shown = await closesItself($, id)
-    const done = await closeOwnAsked($, id, takes, at, asked => {
-      const typed = asked.claimed?.typed ?? ''
-      const chosen = asked.consent ? (CUT_NOTE.test(typed) ? undefined : answersChoice(typed, asked.choices)) : null
-      refused = !!asked.consent && (!chosen || !grants(chosen.text))
-      return planClaimed(asked, chosen && !refused ? `${chosen.letter} : ${chosen.text}` : null, at, shown)
-    })
+    const done = await closeOwnAsked($, id, takes, at, asked => planClaimed(asked, at, shown))
     if (done === null) continue
     await logLine($, 'question', `${id} answered in its asker's tab`)
-    if (refused) await logLine($, 'question', `the words typed for ${id} are not one unambiguous « ${CONSENT_GRANT} », no consent recorded`)
   }
 }
 
@@ -674,7 +643,7 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
 /**
  * His answer given in the coordinator's pane to a question asked with `ask`: the object read again
  * and written under its lock, answered by the pane, so a question settled, withdrawn or claimed in
- * its asker's tab meanwhile is left as it is; then its consent recorded and the answer sent to its
+ * its asker's tab meanwhile is left as it is; then the answer sent to its
  * asker at once, a send not delivered written on the object, which the pane then shows. Answers
  * the object answered, or null when it was not.
  */
@@ -709,7 +678,6 @@ async function journalAnswer($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
   const config = await configDir($)
   const ruling = path.startsWith(`${config}/`) ? path.slice(config.length + 1) : null
   const entry = done.entry
-  const consent = parseConsentSubject(entry['consent']) ?? null
   const choicesRead = entry['choices']
   const choices = Array.isArray(choicesRead)
     ? choicesRead.flatMap(c => (isRecord(c) && isText(c['letter']) && isText(c['text']) ? [{ letter: c['letter'], text: c['text'] }] : []))
@@ -719,34 +687,19 @@ async function journalAnswer($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
   await write($, answering, stamp => {
     const event = answerEvent({
       at: stamp.at, random: stamp.random(), plugin: PLUGIN,
-      subject: subjectOf(fieldsOf(entry['consent']) ?? {}),
+      subject: subjectOf({}),
       context: { session: stamp.session, role: stamp.role },
-      given: answerGiven(done.consentText, { consent, choices, recommended }),
+      given: answerGiven(done.answerWords, { choices, recommended }),
       ruling,
     })
     return event === undefined ? [] : [event]
   })
 }
 
-// The fields a consent record is written from, read off a closed entry: a relay's entry or an object
-// `ask` stored (its question in `ask`). Null when it asks no consent or a field is not of its type.
-function consentEntryOf(entry: Fields): ConsentEntry | null {
-  const [id, question] = [entry['id'], typeof entry['ask'] === 'string' ? entry['ask'] : entry['question']]
-  const consent = parseConsentSubject(entry['consent'])
-  const choicesRead = entry['choices']
-  if (!isText(id) || !isText(question) || consent === undefined || !Array.isArray(choicesRead)) return null
-  const choices: AskedChoice[] = []
-  for (const c of choicesRead) {
-    if (!isRecord(c) || !isText(c['letter']) || !isText(c['text'])) return null
-    choices.push({ letter: c['letter'], text: c['text'] })
-  }
-  return { id, question, choices, consent }
-}
-
 /**
  * The one closure of a round entry (design §4.3), whoever closes it — `settle`, the pane, the words
  * typed in its asker's tab, its session's end: the entry read again and written under its lock as
- * `decide` plans it (null leaves it), `written` run once it is, then its consent recorded, the
+ * `decide` plans it (null leaves it), `written` run once it is, then his answer journaled, the
  * relay's fingerprint forgotten, the coordinator here told, the answer sent to its asker or to its
  * owner's machine (an answer to the closing session's own question, `own`, is its caller's to
  * submit: answerAskedFromPane), and the object pushed to a coordinator on another machine. Answers the plan and
@@ -766,12 +719,7 @@ export async function closeRound(
   if ('error' in done) return { error: done.error }
   await written?.()
   const said: string[] = []
-  if (done.consentBy !== null) {
-    await journalAnswer($, path, done)
-    const entry = consentEntryOf(done.entry)
-    const missed = entry === null ? null : await writeConsent($, entry, done.consentText, done.consentBy, at)
-    if (missed !== null) said.push(`The consent is not recorded (${missed}): ask again for it if it is still needed.`)
-  }
+  if (done.answeredBy !== null) await journalAnswer($, path, done)
   const relay = done.entry['v'] === ASK_VERSION ? null : parseRoundEntry(JSON.stringify(done.entry))
   const asked = done.entry['v'] === ASK_VERSION ? parseAsked(JSON.stringify(done.entry)) : null
   if (asked !== null && asked.status !== 'open') await settleWindow($, asked.sender.session)
@@ -852,7 +800,6 @@ export function register(on: On<Held>): void {
           + 'subject (a few words), context (two to six sentences: the stake, what is known), question (one sentence ending in « ? »), '
           + 'choice_a to choice_e (none, or two to five, each a different piece of work with its cost and gain), recommended (the letter) and why (its argument against the others), '
           + 'blocks (what waits on the answer), urgent (true to have it presented at once). '
-          + 'A question that asks his consent names consent_kind and consent_repo, with consent_pr or consent_env as its kind needs, and offers choice_a "Accorder", choice_b "Refuser". '
           + 'For an orchestrator, a coordinator or an auditor.',
         inputSchema: {
           type: 'object',
@@ -865,10 +812,6 @@ export function register(on: On<Held>): void {
             why: { type: 'string' },
             blocks: { type: 'string', maxLength: ASK_BLOCKS_MAX },
             urgent: { type: 'boolean' },
-            consent_kind: { type: 'string', enum: [...CONSENT_KINDS] },
-            consent_repo: { type: 'string' },
-            consent_pr: { type: 'integer' },
-            consent_env: { type: 'string', enum: [...DEPLOY_ENVS] },
           },
           required: ['subject', 'context', 'question', 'blocks'],
         },

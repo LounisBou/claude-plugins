@@ -82,7 +82,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   on('turn.complete', {}, async ($, e, next) => {
     const result = await next(e)
     const wait = e.agentId === undefined ? declarations.current() : null
-    if (wait !== null) await startWait($, memory, { kind: wait.kind, consent: wait.consent })
+    if (wait !== null) await startWait($, memory, { kind: wait.kind })
     return result
   }).catch(net)
 

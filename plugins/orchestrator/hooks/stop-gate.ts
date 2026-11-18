@@ -13,7 +13,6 @@
 // this file never waits on anything.
 
 import { withDeadline as cancelAtDeadline, DeadlineExceeded } from '../core/deadline.ts'
-import type { ConsentSubject } from '../core/consent-record.ts'
 import type { WaitKind } from '../core/orchestration.ts'
 import { parseSessionName, sessionName } from '../core/names.ts'
 import type { ChainEntry } from '../core/chain-entries.ts'
@@ -53,10 +52,8 @@ export async function withDeadline<T>(work: ((signal: AbortSignal) => Promise<T>
 // operator, every goal met, or only deferred work left (core's WAIT_KINDS). A command, monitor,
 // subagent or agent of its own is read by the gate itself (checkWake), never declared.
 // `urgent` marks an operator wait the coordinator presents at once (URGENT_LINE).
-// consent: the subject an operator question asks his consent on (core's consent-record.ts), which the
-// audit trail names.
 // asked: the ids of the questions asked with `ask` (question.ts) an operator wait waits on.
-export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; consent?: ConsentSubject; asked?: string[] }
+export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true; asked?: string[] }
 
 // The one machine line a declaration spells: the form the gate's checks read a declared wait in.
 // It is never taught: the model declares, and a line it writes itself decides nothing.

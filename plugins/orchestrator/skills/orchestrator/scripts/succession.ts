@@ -64,7 +64,6 @@ import { holdsOf, readyHeadsOf } from '../../../hooks/ready-agent.ts'
 import { bareName, briefOfLaunch, namesAgent as names, newestLaunch, rowOfBrief } from '../../../hooks/row-owner.ts'
 export { rowOfBrief }
 import type { Asked } from '../../../hooks/question.ts'
-import { parseConsentSubject } from '../../../core/consent-record.ts'
 
 export const USAGE =
   'usage: succession.sh takeover <dispatch record> --mode build|investigate [--tty <predecessor tty>] [--name "<Orch: x>"] [--session <id>] [--worktree <dir>]'
@@ -396,7 +395,7 @@ interface Seen {
 const isText = (value: unknown): value is string => typeof value === 'string'
 
 /** The fields of an object `ask` stored that its key reads, each of its type; undefined for anything else. */
-function askedFields(entry: Fields): Pick<Asked, 'sender' | 'blocks' | 'consent' | 'subject' | 'context' | 'ask' | 'choices' | 'recommended' | 'why'> & { id: string; status: string; at: string } | undefined {
+function askedFields(entry: Fields): Pick<Asked, 'sender' | 'blocks' | 'subject' | 'context' | 'ask' | 'choices' | 'recommended' | 'why'> & { id: string; status: string; at: string } | undefined {
   const { id, status, at, subject, context, ask, blocks, recommended, why, choices, sender } = entry
   const from = typeof sender === 'object' && sender !== null ? (sender as Fields) : {}
   if (!isText(id) || !isText(status) || !isText(at) || !isText(subject) || !isText(context) || !isText(ask) || !isText(blocks) || !isText(from['name']) || !isText(from['session'])) return undefined
@@ -406,11 +405,9 @@ function askedFields(entry: Fields): Pick<Asked, 'sender' | 'blocks' | 'consent'
     return isText(c['letter']) && isText(c['text']) ? [{ letter: c['letter'], text: c['text'] }] : []
   })
   if (lettered.length !== choices.length) return undefined
-  const consent = entry['consent'] === undefined ? undefined : parseConsentSubject(entry['consent'])
-  if (entry['consent'] !== undefined && consent === undefined) return undefined
   return {
     id, status, at, subject, context, ask, blocks, recommended: recommended as string | null, why: why as string | null, choices: lettered,
-    sender: { name: from['name'], session: from['session'], role: '', machine: '' }, ...(consent !== undefined ? { consent } : {}),
+    sender: { name: from['name'], session: from['session'], role: '', machine: '' },
   }
 }
 

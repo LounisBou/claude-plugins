@@ -43,9 +43,9 @@ function world(answer: () => unknown) {
   return { $, files, calls, prompts, at: (ms: number) => { now = ms } }
 }
 
-test('the pull requests a question names: its consent subject first, then its text, once each', () => {
-  expect(questionPrs({ subject: 'acme/infra#219 and acme/app#3', context: 'acme/infra#219 again', ask: 'ok?', consent: { kind: 'e2e-waiver', repo: 'acme/web', pr: 9 } }))
-    .toEqual([{ repo: 'acme/web', pr: 9 }, { repo: 'acme/infra', pr: 219 }, { repo: 'acme/app', pr: 3 }])
+test('the pull requests a question names in its text, once each', () => {
+  expect(questionPrs({ subject: 'acme/infra#219 and acme/app#3', context: 'acme/infra#219 again', ask: 'ok?' }))
+    .toEqual([{ repo: 'acme/infra', pr: 219 }, { repo: 'acme/app', pr: 3 }])
   expect(questionPrs({ subject: 'no pull request', context: '#12 alone', ask: 'ok?' })).toEqual([])
 })
 

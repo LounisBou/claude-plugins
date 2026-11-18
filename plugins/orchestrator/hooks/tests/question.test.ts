@@ -144,13 +144,9 @@ for (const [name, input, refusal] of [
   expect('error' in parsed && parsed.error).toMatch(refusal)
 })
 
-test('a question that asks consent offers Accorder then Refuser, and keeps its subject', () => {
-  const consent = { consent_kind: 'e2e-waiver', consent_repo: 'acme/app', consent_pr: 7 }
-  const base = { ...FULL, choice_c: undefined, ...consent }
-  expect('error' in parseAsk(base) && (parseAsk(base) as { error: string }).error).toMatch(/choice_a "Accorder", choice_b "Refuser"/)
-  const parsed = parseAsk({ ...base, choice_a: 'Accorder', choice_b: 'Refuser' })
-  expect('fields' in parsed && parsed.fields.consent).toEqual({ kind: 'e2e-waiver', repo: 'acme/app', pr: 7 })
-  expect('error' in parseAsk({ ...base, choice_a: 'Accorder', choice_b: 'Refuser', consent_pr: undefined })).toBe(true)
+test('a question carries no consent subject: consent rests on his quoted, dated words', () => {
+  const parsed = parseAsk({ ...FULL, choice_c: undefined, choice_a: 'Accorder', choice_b: 'Refuser', consent_kind: 'e2e-waiver', consent_repo: 'acme/app', consent_pr: 7 })
+  expect('fields' in parsed && Object.keys(parsed.fields)).not.toContain('consent')
 })
 
 // --- creation -----------------------------------------------------------------------------------
@@ -487,20 +483,7 @@ test('a question the wait keeps whose reopening cannot be written is never answe
   expect(logs.some(line => line.includes(`${kept.id} answered in its asker's tab`))).toBe(false)
 })
 
-test('a consent question answered « Accorder » in the asker\'s tab is recorded as that consent; other words record none', async () => {
-  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
-  const records = async (typed: string) => {
-    const { dollar, files } = world()
-    await ask(dollar, { ...FULL, urgent: undefined, ...consent })
-    await claimAsked(dollar, 'composer', typed, NOW)
-    await settleClaimed(dollar, [], NOW)
-    return [...files.keys()].filter(p => p.includes('/consents/acme/app/'))
-  }
-  expect((await records('A')).length).toBe(1)
-  expect((await records('let me think')).length).toBe(0)
-})
-
-test('words around « Accorder » typed in any session\'s own tab record no consent: the question is answered by its letter', async () => {
+test('no answer typed in a session\'s own tab writes a consent file, its letter included', async () => {
   const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
   const records = async (me: [string, string], typed: string) => {
     const { dollar, files } = world({ me })
@@ -510,8 +493,8 @@ test('words around « Accorder » typed in any session\'s own tab record no cons
     return [...files.entries()].filter(([p]) => p.includes('/consents/acme/app/')).map(([, text]) => JSON.parse(text).answer)
   }
   for (const me of [['coordinator', 'Coord: general [a1b2c3]'], ['orchestrator', 'Orch: belt [a1b2c3]']] as [string, string][]) {
-    expect(await records(me, 'A')).toEqual(['Accorder'])
-    expect(await records(me, 'Accorder')).toEqual(['Accorder'])
+    expect(await records(me, 'A')).toEqual([])
+    expect(await records(me, 'Accorder')).toEqual([])
     expect(await records(me, 'Accorder la dispense et fusionner, merci')).toEqual([])
     expect(await records(me, "Ok Accorder pour l'auto-merge !!! \n\nLAnce le push forcé go !")).toEqual([])
     expect(await records(me, 'Accorder ?')).toEqual([])
@@ -579,7 +562,7 @@ test('the tool is registered with flat fields only, and answers its calls', asyn
   expect(registered.map(spec => spec.name)).toEqual([ASK_TOOL])
   const properties = fieldsOf(registered[0]?.inputSchema?.['properties']) ?? {}
   expect(Object.values(properties).every(p => fieldsOf(p)?.['type'] !== 'object' && fieldsOf(p)?.['type'] !== 'array')).toBe(true)
-  expect(Object.keys(properties).sort()).toEqual(['blocks', 'choice_a', 'choice_b', 'choice_c', 'choice_d', 'choice_e', 'consent_env', 'consent_kind', 'consent_pr', 'consent_repo', 'context', 'question', 'recommended', 'subject', 'urgent', 'why'])
+  expect(Object.keys(properties).sort()).toEqual(['blocks', 'choice_a', 'choice_b', 'choice_c', 'choice_d', 'choice_e', 'context', 'question', 'recommended', 'subject', 'urgent', 'why'])
   await handlers[`tool.call:mcp__orchestrator__${ASK_TOOL}`](dollar, FULL)
   expect(stored(files).length).toBe(1)
 })

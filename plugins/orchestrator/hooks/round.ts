@@ -9,7 +9,6 @@
 // parse is skipped by every reader, never repaired. Pure on purpose, like relay.ts: the
 // handler holds the $.
 import { fingerprint, type Wait } from './relay.ts'
-import { type ConsentSubject } from '../core/consent-record.ts'
 import { parseChoices, type Choice } from '../core/method.ts'
 import { type WaitKind } from '../core/orchestration.ts'
 
@@ -48,7 +47,6 @@ export type RoundEntry = {
   movedFrom?: string            // the session id of the predecessor this entry was moved from at a succession: the successor's own later question never supersedes it
   origin?: { machine: string; address: string } // a sender on another machine (remote-round.ts): its machine's label and the address its ask came from, written by this machine's module on receipt; absent for a sender on this machine
   delivery?: RoundDelivery      // the answer's trip back to its sender, written by the coordinator's module, and pending by the coordinator's `settle`
-  consent?: ConsentSubject      // the subject the question asks the operator's consent on, as its sender declared it (declare_wait): his answer is written as its consent record
 }
 
 // An answer on its way to a remote sender: `pending` written with the answer, `sent` once the host

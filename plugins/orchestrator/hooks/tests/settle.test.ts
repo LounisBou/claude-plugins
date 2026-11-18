@@ -1,10 +1,9 @@
 // hooks/tests/settle.test.ts
 // The `settle` tool over a faked $: a call validated, then the one closure of a round question —
 // an object `ask` stored, closed by its asker or by the coordinator, its answer sent to its asker at
-// once when another session settles it, its consent recorded, the work its answer asks recorded as a
+// once when another session settles it, his answer journaled, the work its answer asks recorded as a
 // to-do of the asker; and the relay's entry closed by its own sender as the answered tool closed it.
 import { expect, test } from 'claude-code/testing'
-import { grants } from '../../core/consent-record.ts'
 import { answerAskedFromPane, askTurnStarted, callAsk, settle, registerSettle } from '../question.ts'
 import { parseSettle, planAsked, planClaimed, planPane, planWithdrawal, type SettleRequest } from '../settle.ts'
 import { todoPath } from '../todo-format.ts'
@@ -104,7 +103,7 @@ test('a call names its entry, its outcome and what that outcome needs; anything 
   expect(parseSettle({ id: 'q-1', outcome: 'answered-here', answer: 'B, and port it', work: 'port the fix to next' })).toEqual({ request: request('q-1', { text: 'B, and port it', work: 'port the fix to next' }) })
   for (const [input, refusal] of [
     [{ outcome: 'answered-here', answer: 'A' }, /id is the id/],
-    // A consent he typed with no question before it is no entry: a consent is the choice of a question asked with ask.
+    // A settle with no id is no settle, whatever consent fields it carries.
     [{ consent_kind: 'auto-merge', consent_repo: 'acme/app', outcome: 'answered-here', answer: "Accorder l'auto-merge sur acme/app" }, /id is the id/],
     [{ id: '../x', outcome: 'answered-here', answer: 'A' }, /id is the id/],
     [{ id: 'q-1', outcome: 'closed', answer: 'A' }, /outcome is one of/],
@@ -197,49 +196,13 @@ test('a question settled once is not settled again, and an id the round lacks is
   expect((await settle(m.asker, request('q-absent'), AT)).result).toBe('no entry q-absent in the round.')
 })
 
-test('a question that asks consent is recorded as that consent, by the tab or by the coordinator; a withdrawal records none', async () => {
-  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' }
+test('no settle writes a consent file: a consent rests on his quoted, dated words', async () => {
   const m = machine()
-  const mine = await asked(m, consent)
+  const mine = await asked(m, { choice_a: 'Accorder', choice_b: 'Refuser' })
   await settle(m.asker, request(mine, { text: 'A' }), AT)
-  const theirs = await asked(m, consent)
-  await settle(m.coordinator, request(theirs, { text: 'A' }), AT)
-  const moot = await asked(m, consent)
-  await settle(m.coordinator, request(moot, { outcome: 'withdrawn', text: 'moot' }), AT)
-  const records = [...m.files.entries()].filter(([p]) => p.includes('/consents/acme/app/')).map(([p, text]) => [p.slice(p.lastIndexOf('/') + 1), JSON.parse(text).by])
-  expect(records.sort()).toEqual([[`${mine}.json`, 'tab'], [`${theirs}.json`, 'coordinator']].sort())
-})
-
-test('an answer that names its choice by text then letter, as the coordinator relays it, is recorded as that choice, and « Accorder » grants', async () => {
-  const consent = { consent_kind: 'e2e-waiver', consent_repo: 'acme/app', consent_pr: 7, choice_a: 'Accorder', choice_b: 'Refuser' }
-  const m = machine()
-  const granted = await asked(m, consent)
-  await settle(m.coordinator, request(granted, { text: 'Accorder (A)' }), AT)
-  const refused = await asked(m, consent)
-  await settle(m.coordinator, request(refused, { text: 'Refuser (B)' }), AT)
-  const answers = (id: string) => JSON.parse(m.files.get([...m.files.keys()].find(p => p.endsWith(`/consents/acme/app/${id}.json`))!)!).answer
-  expect([answers(granted), answers(refused)]).toEqual(['Accorder', 'Refuser'])
-})
-
-test('an answer by message on its asker\'s own question records no consent: the model\'s word is no answer of the operator', async () => {
-  const m = machine()
-  const id = await asked(m, { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' })
-  await settle(m.asker, request(id, { outcome: 'answered-by-message', text: 'A', author: COORD }), AT)
-  expect(entryOf(m, id).status).toBe('answered')
-  expect([...m.files.keys()].filter(p => p.includes('/consents/'))).toEqual([])
-})
-
-test('a consent that cannot be recorded leaves the question settled, and the reply says so', async () => {
-  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' }
-  const m = machine()
-  const blocked = await asked(m, consent)
-  const run = m.coordinator.process.run
-  m.coordinator.process.run = async (argv: readonly string[]) => (argv[0] === 'mkdir' ? { exitCode: 1, stdout: '', stderr: 'read-only file system' } : run(argv))
-  const failed = await settle(m.coordinator, request(blocked, { text: 'A' }), AT)
-  expect(failed.isError).toBeUndefined()
-  expect(entryOf(m, blocked).status).toBe('answered')
-  expect(failed.result).toContain('The consent is not recorded')
-  expect(failed.result).toContain('read-only file system')
+  const theirs = await asked(m, { choice_a: 'Accorder', choice_b: 'Refuser' })
+  await settle(m.coordinator, request(theirs, { text: 'Accorder' }), AT)
+  expect(entryOf(m, theirs).status).toBe('answered')
   expect([...m.files.keys()].filter(p => p.includes('/consents/'))).toEqual([])
 })
 
@@ -294,67 +257,6 @@ test('its sender settles the relay\'s entry answered in its tab, or withdraws it
   expect(entryOf(m, 'r-1')).toMatchObject({ status: 'answered', answer: { by: 'tab', text: "answered in the sender's own tab", typed: 'B' } })
   expect(entryOf(m, 'r-2')).toMatchObject({ status: 'withdrawn', answer: { by: 'sender', text: 'no longer needed' } })
   expect(m.sent).toEqual([])
-})
-
-// The coordinator's own tab is the operator's: his choice given there is his consent, for a question
-// whichever orchestrator's pull request it is about. Words in place of a choice are kept whole and grant
-// nothing; an orchestrator's own settle is its word.
-const GRANT_WORDS = 'Accorder la dispense de acme/app#7 et fusionner, merci'
-const LIMIT_WORDS = "Accorder la dispense et fusionner. Valable jusqu'au 16/11/2026 12h00"
-const consentOf = (id: string) => ({ consent: { kind: 'e2e-waiver', repo: 'acme/app', pr: 7 }, choices: [{ letter: 'A', text: 'Accorder' }, { letter: 'B', text: 'Refuser' }], kind: 'operator', question: 'Waive E2E on acme/app#7?', id })
-const recordsOf = (m: ReturnType<typeof machine>) => [...m.files.entries()].filter(([p]) => p.includes('/consents/acme/app/')).map(([, text]) => JSON.parse(text))
-const CONSENT_ASK = { consent_kind: 'e2e-waiver', consent_repo: 'acme/app', consent_pr: 7, choice_a: 'Accorder', choice_b: 'Refuser' }
-
-test('the coordinator settles its own wait that asks consent: its choice is the consent record, by the coordinator; words in its place grant nothing', async () => {
-  const m = machine()
-  m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed({ ...consentOf('r-1'), from: COORD, session: 's-coord' })))
-  m.files.set(`${ROUND}/r-2.json`, JSON.stringify(relayed({ ...consentOf('r-2'), from: COORD, session: 's-coord' })))
-  await settle(m.coordinator, request('r-1', { text: 'A' }), AT)
-  await settle(m.coordinator, request('r-2', { text: GRANT_WORDS }), AT)
-  expect(recordsOf(m).map(r => [r.entry, grants(r.answer), r.by]).sort()).toEqual([['r-1', true, 'coordinator'], ['r-2', false, 'coordinator']])
-  expect(recordsOf(m).find(r => r.entry === 'r-1')).toMatchObject({ answer: 'Accorder', subject: { kind: 'e2e-waiver', repo: 'acme/app', pr: 7 } })
-})
-
-test('the coordinator settling its own ask that asks consent takes the same path: its letter grants, his sentence with a limit grants nothing', async () => {
-  const m = machine()
-  askTurnStarted()
-  const made = await callAsk(m.coordinator, { ...QUESTION, ...CONSENT_ASK }, NOW)
-  const id = /Asked as (\S+?):/.exec(made.result)![1]!
-  await settle(m.coordinator, request(id, { text: LIMIT_WORDS }), AT)
-  expect(recordsOf(m).map(r => grants(r.answer))).toEqual([false])
-  expect((await settle(m.coordinator, request(id, { text: 'A' }), AT)).result).toContain('is answered already')
-  askTurnStarted()
-  const second = /Asked as (\S+?):/.exec((await callAsk(m.coordinator, { ...QUESTION, context: 'second', ...CONSENT_ASK }, NOW)).result)![1]!
-  await settle(m.coordinator, request(second, { text: 'Accorder' }), AT)
-  expect(recordsOf(m).filter(r => grants(r.answer)).map(r => [r.entry, r.by])).toEqual([[second, 'coordinator']])
-})
-
-test('an orchestrator settling its own wait that asks consent records none: its words are its own, and a withdrawal records none', async () => {
-  const m = machine()
-  m.files.set(`${ROUND}/r-1.json`, JSON.stringify(relayed(consentOf('r-1'))))
-  m.files.set(`${ROUND}/r-2.json`, JSON.stringify(relayed({ ...consentOf('r-2'), from: COORD, session: 's-coord' })))
-  await settle(m.asker, request('r-1', { text: GRANT_WORDS }), AT)
-  await settle(m.coordinator, request('r-2', { outcome: 'withdrawn', text: 'moot' }), AT)
-  expect(recordsOf(m)).toEqual([])
-})
-
-test('an orchestrator settling its own question with words after « Accorder » records them whole, which grants nothing', async () => {
-  const m = machine()
-  const own = await asked(m, CONSENT_ASK)
-  await settle(m.asker, request(own, { text: 'Accorder, mais pas avant lundi' }), AT)
-  expect(recordsOf(m).map(r => [r.entry, r.answer, r.by, grants(r.answer)])).toEqual([[own, 'Accorder, mais pas avant lundi', 'tab', false]])
-})
-
-test('the coordinator closing another orchestrator\'s question: « Accorder » grants, « Refuser » refuses, and words in place of a choice grant nothing', async () => {
-  const m = machine()
-  const granted = await asked(m, CONSENT_ASK)
-  await settle(m.coordinator, request(granted, { text: 'A' }), AT)
-  const refused = await asked(m, CONSENT_ASK)
-  await settle(m.coordinator, request(refused, { text: 'Refuser' }), AT)
-  const worded = await asked(m, CONSENT_ASK)
-  await settle(m.coordinator, request(worded, { text: GRANT_WORDS }), AT)
-  expect(recordsOf(m).map(r => [r.entry, r.answer, r.by]).sort()).toEqual([[granted, 'Accorder', 'coordinator'], [refused, 'Refuser', 'coordinator'], [worded, GRANT_WORDS, 'coordinator']].sort())
-  expect(recordsOf(m).filter(r => grants(r.answer)).map(r => r.entry)).toEqual([granted])
 })
 
 test('a question asked with ask the coordinator here was shown is settled by its asker in its own tab, and the coordinator told once; one never shown, or settled by the coordinator, tells it nothing', async () => {
@@ -437,30 +339,28 @@ test('the pane\'s plan: an open question answered and sent to its asker now, a r
   expect(planPane(object({ status: 'answered' }), 'A : yes', ME, 'T1')).toBeNull()
   expect(planPane(object({ claimed: { typed: 'B', at: 'T1' } }), 'A : yes', ME, 'T1')).toBeNull()
   const here = planPane(object(), 'A : yes', ME, 'T1')!
-  expect(here).toMatchObject({ deliver: 'now', consentBy: 'pane', consentText: 'A : yes', relayed: false, told: false, asker: { session: 's-ask', name: ASKER, remote: false } })
+  expect(here).toMatchObject({ deliver: 'now', answeredBy: 'pane', answerWords: 'A : yes', relayed: false, told: false, asker: { session: 's-ask', name: ASKER, remote: false } })
   expect(here.entry).toMatchObject({ status: 'answered', seq: 4, answer: { text: 'A : yes', by: 'pane', at: 'T1', settler: COORD } })
   const origin = { machine: 'box-2', address: 'bridge:peer' }
   const there = planPane(object({ origin }), 'A : yes', ME, 'T1')!
-  expect(there).toMatchObject({ deliver: 'remote', consentBy: null })
+  expect(there).toMatchObject({ deliver: 'remote', answeredBy: null })
   expect(there.entry).toMatchObject({ status: 'answered', seq: 3, origin, delivery: { state: 'pending', at: 'T1', attempts: 0 } })
 })
 
-test('the tab\'s plan: the claim goes, his words the answer by the tab, its consent from the choice they name only', () => {
+test('the tab\'s plan: the claim goes, his words the answer by the tab', () => {
   const claimed = object({ claimed: { typed: 'A', at: 'T1' } })
-  const granted = planClaimed(claimed, 'A : yes', 'T2')
-  expect('claimed' in granted.entry).toBe(false)
-  expect(granted.entry).toMatchObject({ status: 'answered', seq: 4, answer: { text: 'A', by: 'tab', at: 'T2', settler: ASKER } })
-  expect(granted).toMatchObject({ deliver: null, consentBy: 'tab', consentText: 'A : yes', relayed: false, told: false })
-  expect(planClaimed(claimed, null, 'T2')).toMatchObject({ consentBy: null, consentText: '' })
+  const plan = planClaimed(claimed, 'T2')
+  expect('claimed' in plan.entry).toBe(false)
+  expect(plan.entry).toMatchObject({ status: 'answered', seq: 4, answer: { text: 'A', by: 'tab', at: 'T2', settler: ASKER } })
+  expect(plan).toMatchObject({ deliver: null, answeredBy: null, answerWords: '', relayed: false, told: false })
   // The coordinator here that was shown the question is told it was answered in its asker's tab; one that was not is told nothing.
-  expect(planClaimed(claimed, null, 'T2').told).toBe(false)
-  expect(planClaimed(claimed, null, 'T2', true).told).toBe(true)
+  expect(planClaimed(claimed, 'T2', true).told).toBe(true)
 })
 
 test('the withdrawal\'s plan: a question asked with ask withdrawn by its asker; the relay\'s entry withdrawn, or closed when the coordinator here was shown it', () => {
   const asked = planWithdrawal(object(), 'ended', 'T1', true)
   expect(asked.entry).toMatchObject({ status: 'withdrawn', seq: 4, answer: { text: 'ended', by: 'sender', at: 'T1', settler: ASKER } })
-  expect(asked).toMatchObject({ deliver: null, consentBy: null, relayed: false, told: false })
+  expect(asked).toMatchObject({ deliver: null, answeredBy: null, relayed: false, told: false })
   const quiet = planWithdrawal(relayed(), 'ended', 'T1', false)
   expect(quiet.entry).toMatchObject({ status: 'withdrawn', answer: { text: 'ended', by: 'sender', at: 'T1' } })
   expect(quiet).toMatchObject({ relayed: true, told: false, asker: { session: 's-ask', name: ASKER, remote: false } })
@@ -543,33 +443,13 @@ function decideMachine(record: Record<string, unknown> | null, listing: string |
 }
 const RUNNING = { name: COORD, tty: '/dev/ttys009', pid: Number(COORD_PID) }
 
-test('with no coordinator live, another orchestrator settles an open question answered-here: its asker is sent the answer, the consent is the tab\'s', async () => {
+test('with no coordinator live, another orchestrator settles an open question answered-here: its asker is sent the answer', async () => {
   const m = decideMachine(null)
-  const id = await asked(m, { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' })
+  const id = await asked(m, { choice_a: 'Accorder', choice_b: 'Refuser' })
   const answer = await settle(m.other, request(id, { text: 'Accorder' }), AT)
   expect(answer.isError).toBeUndefined()
   expect(entryOf(m, id)).toMatchObject({ status: 'answered', answer: { text: 'Accorder', by: 'coordinator', settler: OTHER, at: AT.toISOString() } })
   expect(m.sent).toEqual([{ to: { sessionId: 's-ask' }, text: `[module] The operator answered your question ${id} « ${QUESTION.subject} » (blocks: acme/app#1) through ${OTHER} at ${AT.toISOString()} — Accorder` }])
-  const record = [...m.files.entries()].find(([p]) => p.includes(`/consents/acme/app/${id}`))
-  expect(JSON.parse(record![1]).by).toBe('tab')
-})
-
-test('his words of 2026-11-18 typed in place of a choice, settled by its asker or by the coordinator, grant nothing and reach the asker whole', async () => {
-  const typedWords = "Ok Accorder pour l'auto-merge !!!\n\nLAnce le push forcé go !"
-  const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser' }
-  const recorded = (m: ReturnType<typeof decideMachine>, id: string) => [...m.files.entries()].filter(([p]) => p.includes(`/consents/acme/app/${id}`)).map(([, text]) => JSON.parse(text).answer)
-  for (const text of ["Ok Accorder pour l'auto-merge !!!", typedWords]) {
-    const m = decideMachine(null)
-    const id = await asked(m, consent)
-    expect((await settle(m.asker, request(id, { text }), AT)).isError).toBeUndefined()
-    expect(recorded(m, id).some(grants)).toBe(false)
-  }
-  const m = decideMachine(RUNNING)
-  const id = await asked(m, consent)
-  expect((await settle(m.coordinator, request(id, { text: typedWords }), AT)).isError).toBeUndefined()
-  expect(recorded(m, id).some(grants)).toBe(false)
-  expect(entryOf(m, id)).toMatchObject({ answer: { text: typedWords, by: 'coordinator' } })
-  expect(m.sent[0]?.text).toContain('LAnce le push forcé go !')
 })
 
 test('a coordinator record whose process is gone, or now on another tty, is no coordinator live; a record of a process that runs, one with no pid, and a listing that fails are', async () => {

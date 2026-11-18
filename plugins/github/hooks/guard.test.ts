@@ -6,7 +6,9 @@ import type { Engine, NounEvents, Reply, TestOn } from 'claude-code/testing'
 import { EXEMPT_REFUSAL } from './register.js'
 import { RECORDS_REFUSAL, STDIN_REFUSAL } from './ready.js'
 import { parseLearningEvent } from '../core/learning.ts'
-import { CONSENT_GRANT, CONSENT_REFUSE } from '../core/consent-record.ts'
+// The choices a consent question offered, which an old consent file still holds.
+const CONSENT_GRANT = 'Accorder'
+const CONSENT_REFUSE = 'Refuser'
 import { dialogOf, fieldsOf, listOf } from '../core/host.ts'
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname).replace(/\/$/, '')

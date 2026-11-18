@@ -11,7 +11,6 @@ import { settledText, successorText, parseSessionRow, paneRows, withWait, writeS
 import { register } from '../register.ts'
 import { answerAskedFromPane, askTurnStarted, callAsk, settle } from '../question.ts'
 import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
-import { parseConsentRecord } from '../../core/consent-record.ts'
 import { DECLARATIONS } from '../wait.ts'
 import type { DeclaredWait } from '../stop-gate.ts'
 import { logLineOf, lockRun } from './fakes.ts'
@@ -1418,13 +1417,7 @@ const replies = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => parseQ(s.te
 const qAcks = (fx: ReturnType<typeof fake>, of: string) => fx.sent.filter(s => parseQAck(s.text)?.of === of)
 const objectAt = (fx: ReturnType<typeof fake>, id: string) => JSON.parse(fx.files.get(`${ROUND}/${id}.json`)!)
 
-// The same question asking the operator's consent to auto-deploy: its two choices are the consent record's.
-const DEPLOY = { kind: 'auto-deploy' as const, repo: 'Acme/Thing', env: 'prod' as const }
-const consentFiles = (fx: ReturnType<typeof fake>) => [...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))
-const CONSENT_ASKED_FIELDS = {
-  ...ASKED_FIELDS, subject: 'auto-deploy', question: 'Auto-deploy Acme/Thing to prod?', choice_a: 'Accorder', choice_b: 'Refuser',
-  consent_kind: DEPLOY.kind, consent_repo: DEPLOY.repo, consent_env: DEPLOY.env,
-}
+const CONSENT_ASKED_FIELDS = { ...ASKED_FIELDS, subject: 'auto-deploy', question: 'Auto-deploy Acme/Thing to prod?', choice_a: 'Accorder', choice_b: 'Refuser' }
 // A peer at another address, naming itself the coordinator.
 const FORGER_AT = 'uds:/tmp/cc-socks/666.sock'
 
@@ -1646,18 +1639,6 @@ test('a push sent after the timer was armed is sent again 30 s on: the tick that
   expect(objectAt(sender, second).replica).toMatchObject({ seq: 1, state: 'sent', attempts: 2 })
 })
 
-test('his « Accorder » in the pane on a replica asking consent is the consent record at the owner, none at the coordinator', async () => {
-  const { chains, sender, coordinator, id } = await askedRemotely(CONSENT_ASKED_FIELDS)
-  expect(objectAt(sender, id).consent).toEqual(DEPLOY)
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(pushes(sender)).text))
-  await answerAskedFromPane(coordinator.dollar, id, 'A : Accorder')
-  expect(consentFiles(coordinator)).toEqual([])
-  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', only(replies(coordinator)).text))
-  expect(objectAt(sender, id)).toMatchObject({ status: 'answered', answer: { text: 'A : Accorder', by: 'pane' } })
-  const records = consentFiles(sender).map(p => parseConsentRecord(JSON.parse(sender.files.get(p)!))!)
-  expect(records.map(r => [r.subject, r.entry, r.answer, r.by])).toEqual([[DEPLOY, id, 'Accorder', 'pane']])
-})
-
 test('the resend timer is armed again by no tick that finds every push acked, nor while its coordinator is on this machine', async () => {
   forgetResendTimer()
   const { chains, sender, coordinator, id } = await askedRemotely()
@@ -1676,14 +1657,13 @@ test('the resend timer is armed again by no tick that finds every push acked, no
   expect(timers().length).toBe(armed)
 })
 
-test('a reply from another address than the coordinator\'s is refused: no answer, no consent, no acknowledgment', async () => {
+test('a reply from another address than the coordinator\'s is refused: no answer, no acknowledgment', async () => {
   const { chains, sender, coordinator, id } = await askedRemotely(CONSENT_ASKED_FIELDS)
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(pushes(sender)).text))
   await answerAskedFromPane(coordinator.dollar, id, 'A : Accorder')
   const consumed = await receive(chains, sender.dollar, delivered(FORGER_AT, 'Coord: ops [abc]', only(replies(coordinator)).text))
   expect(typeof consumed.consumed).toBe('string')
   expect(objectAt(sender, id)).toMatchObject({ status: 'open', seq: 1, answer: null })
-  expect(consentFiles(sender)).toEqual([])
   expect(qAcks(sender, 'reply')).toEqual([])
   expect(sender.logged.some(l => l.endsWith(`a remote reply to ${id} from ${FORGER_AT}, not the coordinator's, refused`))).toBe(true)
 })
