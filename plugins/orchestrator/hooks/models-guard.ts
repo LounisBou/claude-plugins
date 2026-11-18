@@ -1,12 +1,12 @@
 // hooks/models-guard.ts
-// The tier map's guard, pure: whether a tool call writes the operator's tier map
+// The tier map's guard, pure: whether a Bash call writes the operator's tier map
 // (`<state dir>/models.json`), and whether his last typed prompt lifts the guard. The
 // routing skill says the map is his and never rebound by a session, and a plan that told
 // an orchestrator to « bind the three tiers in models.json » was followed over the rule:
 // prose alone lost. guards.ts holds the $ that reads the session's role and the prompt.
 
-// A Bash line that overwrites the map destroys the operator's bindings, with no backup: it keeps
-// refusing (the deletion class). A file tool's write is observed by guards.ts.
+// A Bash line that overwrites the map destroys the operator's bindings, with no backup: it is
+// refused (the deletion class).
 export const MODELS_DENY = 'The tier map is the operator\'s (model-routing, « Pairs, tiers and the map »): '
   + 'put the binding to him as one arbitration. A pair `pick` returned goes in the brief and the record.'
 
@@ -27,11 +27,6 @@ const normal = (p: string) => p.replace(/\/{2,}/g, '/').replace(/\/+$/, '')
 // The map's own paths: the state dir's, and the config dir's default root beside it.
 export function mapPaths(stateDir: string, configDir: string): string[] {
   return [...new Set([`${stateDir}/models.json`, `${configDir}/claude-orchestrator/models.json`].map(normal))]
-}
-
-// A Write, Edit or MultiEdit on the map.
-export function editsTheMap(filePath: string, maps: readonly string[]): boolean {
-  return filePath !== '' && maps.includes(normal(filePath))
 }
 
 const unquote = (w: string) => w.replace(/^['"]+|['"]+$/g, '')

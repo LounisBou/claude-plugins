@@ -3,7 +3,7 @@
 //   session.ts      the lifecycle: tools registered, a skill's start, the user's words
 //   walkthrough.ts  the Iron Rules of start-review and process-comments, and the band
 //   triage.ts       the open_comments tool process-comments starts with
-//   loop.ts         auto-fix-loop's state tool and its Stop gate
+//   loop.ts         auto-fix-loop's state tool
 //   commands.ts     doctor and install with no model turn, the preflight once
 // The module loads only where plugin modules do; the skills keep a Bash route
 // for every call, so a session without it (claude -p, an older host) works as

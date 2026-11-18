@@ -16,7 +16,7 @@ import { register as registerGuards } from '../guards.ts'
 import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf, prQueryRun } from './fakes.ts'
-import { capture, hookOf, hostOf } from '../../core/capture.ts'
+import { capture, hookOf, hooksOn, hostOf } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Hook, type Host, type Matcher, type Noun, type ProcessRunInit, type ToolSpec } from '../../core/host.ts'
 
 // The host a hook under test is handed: every noun, those a fake does not set throwing.
@@ -436,7 +436,7 @@ function mounted(declarations: Declarations = new Declarations()): { handlers: G
   const handlers: Guards = {
     'classic.Stop': stopHook.handler,
     'prompt.submit': hookOf(hooks, 'prompt.submit').handler,
-    'tool.call': hookOf(hooks, 'tool.call', { tool: 'Bash' }).handler,
+    'tool.call': hooksOn(hooks, 'tool.call').filter(h => h.matcher?.['tool'] === 'Bash').at(-1)!.handler,
     'tool.call:SendMessage': hookOf(hooks, 'tool.call', { tool: 'SendMessage' }).handler,
   }
   return { handlers, matchers: { 'classic.Stop': stopHook.matcher, 'tool.call:SendMessage': hookOf(hooks, 'tool.call', { tool: 'SendMessage' }).matcher } }
@@ -1453,15 +1453,14 @@ test("an agent's long message to its orchestrator is cut to the limit with the p
   expect(sentBy(out)).toBe(`${'w'.repeat(VERDICT_LIMIT)} … (cut: full report at ${REPORT})`)
 })
 
-test("an agent's long message to its orchestrator that names no report goes whole with one escape, a short one goes whole with none", async () => {
+test("an agent's long message to its orchestrator that names no report goes whole, a short one goes whole too", async () => {
   const { handlers } = mounted()
   const fx = journalled(fakeDollar({ launchName: 'Agent: belt-p3' }).dollar)
   const dollar = fx.dollar
   expect(sentBy(await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', LONG), delivered))).toBe(LONG)
-  expect(fx.journal()).toEqual(['escape orchestrator.message.report-unnamed'])
   const short = `demo#12 abc1234 — gate green — blocking: none — report: ${REPORT}`
   expect(sentBy(await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', short), delivered))).toBe(short)
-  expect(fx.journal().length).toBe(1)
+  expect(fx.journal()).toEqual([])
 })
 
 test("the coordinator's and an orchestrator's long messages are never cut", async () => {

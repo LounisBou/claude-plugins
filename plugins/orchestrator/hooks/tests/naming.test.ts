@@ -30,24 +30,18 @@ function mounted() {
   const start = hookOf(hooks, 'session.start', {})
   const rename = toolHook(`mcp__orchestrator__${RENAME_TOOL}`)
   const end = toolHook(`mcp__orchestrator__${END_TOOL}`)
-  const bash = toolHook('Bash')
-  const send = toolHook('SendMessage')
-  // The second hook on Bash: the one that reads a successor's takeover.
-  const takeover = hooksOn(hooks, 'tool.call').filter(h => h.matcher?.['tool'] === 'Bash')[1]
-  if (takeover === undefined) throw new Error('no takeover hook on Bash')
+  // The hook on Bash: the one that reads a successor's takeover.
+  const takeover = toolHook('Bash')
   const complete = hookOf(hooks, 'turn.complete')
   const handlers = {
     'session.start': callOf(start),
     'tool.call': callOf(rename),
     'tool.call:end': callOf(end),
-    'tool.call:Bash': callOf(bash),
-    'tool.call:SendMessage': callOf(send),
     'tool.call:takeover': callOf(takeover),
     'turn.complete': callOf(complete),
   }
   const matchers = {
     'session.start': start.matcher, 'tool.call': rename.matcher, 'tool.call:end': end.matcher,
-    'tool.call:Bash': bash.matcher, 'tool.call:SendMessage': send.matcher,
   }
   return { handlers, matchers }
 }
@@ -126,85 +120,6 @@ test('the call records the name and the turn\'s completion runs the rename, once
   expect(fx.runs.length).toBe(1)
 })
 
-// The rename lands when the turn ends, and a session that kept going in the same turn spawned
-// its agents and messaged them under its directory-stem name: every agent got the wrong
-// orchestrator address. Prose did not hold the turn's end; the module does.
-const SPAWN = { tool: 'Bash', command: 'bash /p/skills/iterm-agents/scripts/iterm-agent.sh spawn --dir /w --title "Agent: belt" --prompt p' }
-const ROTATE = { tool: 'Bash', command: 'bash /p/skills/iterm-agents/scripts/iterm-agent.sh rotate --tty /dev/ttys003 --prompt p' }
-const SEND = { tool: 'SendMessage', to: 'Agent: belt', message: 'your brief' }
-const passOn = async (e: Events['tool.call']) => ({ result: { ran: e['tool'] } })
-
-test('while a rename is pending, a spawn, a rotate and a SendMessage run, each with one escape, until the turn ends', async () => {
-  const { handlers, matchers } = mounted()
-  expect(matchers['tool.call:Bash']).toEqual({ tool: 'Bash' })
-  expect(matchers['tool.call:SendMessage']).toEqual({ tool: 'SendMessage' })
-  const fx = fakeDollar()
-  const j = journalled(fx.dollar)
-  // No rename pending: every call runs.
-  expect(await handlers['tool.call:Bash'](j.dollar, SPAWN, passOn)).toEqual({ result: { ran: 'Bash' } })
-  expect(await handlers['tool.call:SendMessage'](j.dollar, SEND, passOn)).toEqual({ result: { ran: 'SendMessage' } })
-  await handlers['tool.call'](j.dollar, { name: 'Orch: belt' })
-  const reason = 'your name "Orch: belt" is taken when this turn ends: end the turn now; the module resumes you under it'
-  for (const [key, call] of [['tool.call:Bash', SPAWN], ['tool.call:Bash', ROTATE], ['tool.call:SendMessage', SEND]] as const) {
-    const answer = await handlers[key](j.dollar, call, passOn)
-    expect(answer.deny).toBeUndefined()
-  }
-  expect(j.journal()).toEqual(Array(3).fill('escape orchestrator.naming.rename-pending'))
-  expect(fx.logged.filter((line: string) => line.includes(reason)).length).toBe(3)
-  // Any other Bash call runs with no escape: only what addresses an agent is observed.
-  expect(await handlers['tool.call:Bash'](j.dollar, { tool: 'Bash', command: 'git status' }, passOn)).toEqual({ result: { ran: 'Bash' } })
-  expect(await handlers['tool.call:Bash'](j.dollar, { tool: 'Bash', command: 'bash /p/iterm-agent.sh list' }, passOn)).toEqual({ result: { ran: 'Bash' } })
-  await handlers['turn.complete'](j.dollar, { isAborted: false }, pass)
-  // The next turn runs under the name: nothing is observed any more.
-  expect(await handlers['tool.call:Bash'](j.dollar, SPAWN, passOn)).toEqual({ result: { ran: 'Bash' } })
-  expect(await handlers['tool.call:SendMessage'](j.dollar, SEND, passOn)).toEqual({ result: { ran: 'SendMessage' } })
-})
-
-// The launcher named in a variable on one line and called on the next: the spawn the held
-// rename let through, its agents left as tabs the move into the home session did not take.
-test('while a rename is pending, a spawn or a rotate written over several commands is observed too', async () => {
-  const { handlers } = mounted()
-  const fx = fakeDollar()
-  const j = journalled(fx.dollar)
-  await handlers['tool.call'](j.dollar, { name: 'Orch: belt' })
-  const path = '/p/skills/iterm-agents/scripts/iterm-agent.sh'
-  const held = [
-    `I=${path}; D=/tmp/briefs\n$I spawn --dir /w --title "Agent: belt" --brief $D/b.md 2>&1 | tail -5`,
-    `I=${path}\n"$I" spawn --dir /w --title "Agent: belt" --prompt p`,
-    `I=${path}; \${I} rotate --tty /dev/ttys003`,
-    `cd /w && bash ${path} spawn --dir /w --prompt p`,
-    `L=/p/skills/iterm-agents/scripts && $L/iterm-agent.sh spawn --dir /w --prompt p`,
-    `python3 /p/skills/iterm-agents/scripts/iterm_agent.py spawn --dir /w --prompt p`,
-    `bash "${path}" spawn --dir /w --prompt p`,
-    `I=${path}\n$I \\\n  spawn --dir /w --prompt p`,
-    `I=${path}\n$I "spawn" --dir /w --prompt p`,
-    `bash ${path} \\\n  spawn --dir /w --prompt p`,
-    `I=${path}; go() { "$I" "$@"; }; go spawn --dir /w --prompt p`,
-    `I=${path}\ngo() { "$I" "$@"; }\ngo spawn --dir /w --prompt p`,
-    `go() { bash ${path} "$@"; }\ngo rotate --tty /dev/ttys003`,
-  ]
-  for (const command of held) {
-    const answer = await handlers['tool.call:Bash'](j.dollar, { tool: 'Bash', command }, passOn)
-    expect(answer).toEqual({ result: { ran: 'Bash' } })
-  }
-  expect(j.journal().length).toBe(held.length)
-  // The launcher's other subcommands, and a read of its file, still run.
-  // A note that names the launcher and, elsewhere, a variable before « spawn » calls nothing:
-  // only a variable given the launcher's path is the launcher.
-  const note = `cat > /w/notes.md <<'EOF'\nRun ${path} list first.\nThen $L spawn the agent.\nEOF`
-  for (const command of [`I=${path}\n$I list`, `grep -n "def cmd_spawn" /p/skills/iterm-agents/scripts/iterm_agent.py`, `I=${path}\n$I screen --tty /dev/ttys003 | grep spawn`, note]) {
-    expect(await handlers['tool.call:Bash'](j.dollar, { tool: 'Bash', command }, passOn)).toEqual({ result: { ran: 'Bash' } })
-  }
-  expect(j.journal().length).toBe(held.length)
-})
-
-test("a subagent's spawn or message is not the main thread's to hold", async () => {
-  const { handlers } = mounted()
-  const fx = fakeDollar()
-  await handlers['tool.call'](fx.dollar, { name: 'Orch: belt' })
-  expect(await handlers['tool.call:SendMessage'](fx.dollar, { ...SEND, agentId: 'a-1' }, passOn)).toEqual({ result: { ran: 'SendMessage' } })
-})
-
 test('the turn that renamed resumes the session under its name, the prompt queued after the rename', async () => {
   const { handlers } = mounted()
   const fx = fakeDollar()
@@ -224,8 +139,6 @@ test('no resume on an interrupted turn, for a subagent, or for a session that en
   await handlers['turn.complete'](fx.dollar, { agentId: 'a-1', isAborted: false }, pass)
   await handlers['turn.complete'](fx.dollar, { isAborted: true, reason: 'aborted' }, pass)
   expect(fx.submits).toEqual([])
-  // The interrupted turn dropped the rename: nothing is held any more.
-  expect(await handlers['tool.call:SendMessage'](fx.dollar, SEND, passOn)).toEqual({ result: { ran: 'SendMessage' } })
   await handlers['tool.call'](fx.dollar, { name: 'Orch: belt' })
   await handlers['tool.call:end'](fx.dollar, {})
   await handlers['turn.complete'](fx.dollar, { isAborted: false }, pass)

@@ -6,7 +6,7 @@
 import { SKILL_KEYS, releases, endsWalkthrough } from './policy.ts'
 import { walkthrough, startWalkthrough, endWalkthrough, preflight } from './state.ts'
 import { OPEN_COMMENTS, OPEN_COMMENTS_DESCRIPTION, OPEN_COMMENTS_SCHEMA } from './triage.ts'
-import { LOOP_TOOL, LOOP_DESCRIPTION, LOOP_SCHEMA, agentEnded, releaseLoop } from './loop.ts'
+import { LOOP_TOOL, LOOP_DESCRIPTION, LOOP_SCHEMA, releaseLoop } from './loop.ts'
 import { PASSED_NOTE, failedText } from './commands.ts'
 import { fieldsOf, type Host, type On } from '../core/host.ts'
 
@@ -79,10 +79,8 @@ export function register(on: On<SessionHost>): void {
   }).catch(async (_$, e, next) => next(e))
 
   on('turn.complete', async ($, e, next) => {
-    if (e.agentId) {
-      // A subagent's turn: a review agent the host ran in the background may have ended there.
-      agentEnded(String(e.agentId), String(e.reason ?? ''), String(e.answer ?? ''))
-    } else {
+    // Only the main session's turns end a rule: a subagent's turn does not.
+    if (!e.agentId) {
       if (e.reason === 'aborted') {
         // An interrupted turn: the user takes the session back from every rule.
         releaseLoop()

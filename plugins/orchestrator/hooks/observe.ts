@@ -1,8 +1,7 @@
 // hooks/observe.ts
 // The orchestrator's journal writer (core's journal.ts and learning.ts), shared by the audit trail
-// (audit.ts) and the guards that observe instead of refusing (guards.ts, naming.ts, commands.ts):
-// one escape per call a guard once refused and now lets through, under the guard's stable code. It
-// imports no guard, so a guard imports it. An observer: a journal that cannot be written is one
+// (audit.ts) and the one observation left, /coordinator-end with an item open (commands.ts): one
+// escape per call let through, under its stable code. It imports no guard, so a guard imports it. An observer: a journal that cannot be written is one
 // line in the module's log, and the call goes on.
 import { appendEventOver, randomPart, type JournalIo } from '../core/journal.ts'
 import { journalDir } from '../core/learning.ts'
@@ -13,12 +12,7 @@ import { configDir, logLine, storeIo } from './module-io.ts'
 import { moduleDirOf } from './module-log.ts'
 import { parseSessionRow, sessionKey } from './supervision.ts'
 
-// The stable codes of the guards that observe, as the journal holds them.
-export const REPORT_UNNAMED_CODE = 'orchestrator.message.report-unnamed'
-export const MAP_WRITE_CODE = 'orchestrator.models.map-write'
-export const MODE_DIALOG_CODE = 'orchestrator.mode.dialog'
-export const WAITED_ON_DIALOG_CODE = 'orchestrator.dialog.waited-on'
-export const RENAME_PENDING_CODE = 'orchestrator.naming.rename-pending'
+// The stable code of the observation left, as the journal holds it.
 export const END_TODO_OPEN_CODE = 'orchestrator.coordinator-end.todo-open'
 
 export type Held = Host<'plugin' | 'env' | 'process' | 'fs' | 'session' | 'clock'>
