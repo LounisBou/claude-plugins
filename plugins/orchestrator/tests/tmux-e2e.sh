@@ -260,7 +260,8 @@ agent() { # <title> <word>: an agent spawned as the orchestrator spawns one
 }
 
 # Every test host's command line, read while it runs: none may lack remoteControlAtStartup=false
-# or carry --remote-control. Offenders accumulate; the last check reads them.
+# or carry --remote-control. Offenders accumulate; the last check reads them. The script's own
+# process is left out by its name, not by the sandbox's, which every host's command line names.
 RC_SEEN=0; RC_BAD=()
 audit_rc() {
   local line
@@ -269,7 +270,7 @@ audit_rc() {
     RC_SEEN=$((RC_SEEN + 1))
     case "$line" in *'"remoteControlAtStartup":false'*) ;; *) RC_BAD+=("no setting: ${line:0:90}") ;; esac
     case "$line" in *--remote-control*) RC_BAD+=("remote control: ${line:0:90}") ;; esac
-  done < <(ps -axo command= 2>/dev/null | grep -- '--setting-sources project' | grep -v 'grep\|tmux-e2e')
+  done < <(ps -axo command= 2>/dev/null | grep -- '--setting-sources project' | grep -v 'grep\|tmux-e2e\.sh')
 }
 
 echo "== the switch =="
