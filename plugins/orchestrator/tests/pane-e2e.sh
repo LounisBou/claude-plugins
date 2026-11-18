@@ -375,8 +375,8 @@ typeahead() {
 # known, and a slash command is no prompt the operator typed. The pane is open and its questions
 # are not urgent, so a plain `round` would print each as its header alone, the pane's, and record
 # none as shown: `round-listed.json` would stay empty. `round --by-urgency` is run instead, as the
-# coordinator runs it when the operator asks for the questions: every question's text is printed
-# and the entries it was shown are recorded. The module closes such an entry itself once it is
+# coordinator's decision round runs it: every question's text is printed and the entries it was
+# shown are recorded. The module closes such an entry itself once it is
 # settled, and tells the coordinator in one line with nothing to run. The time
 # is stamped once, the moment the answer is given, and both delays are measured from that stamp
 # — the question leaving the pane and the notice reaching the coordinator's tab —, polled in one
@@ -805,6 +805,8 @@ sleep 2
 pane_has() { pane | grep -qF -- "$1"; }
 check "(f) the coordinator's own question is asked with the ask tool, its turn ended, and drawn in its pane" "yes|yes|drawn" \
   "$([ "$asked" != never ] && echo yes)|$([ "$ended" != never ] && echo yes)|$([ "$(until_ms 25 pane_has 'Which page goes first?')" != never ] && echo drawn || echo missing)"
+# A plain round, deliberately: the coordinator's own question is read in its pane alone, so it is
+# not recorded as shown and its settling sends no « Settled in the pane » notice.
 coordround round >/dev/null
 keys_to_pane
 tm send-keys -t "$SESSION" Enter
