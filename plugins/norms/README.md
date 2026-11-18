@@ -109,8 +109,10 @@ mechanical work the markdown would otherwise hand the model:
 - `validate`: the lexical checks (empty entries, vague words, no code block,
   mixed list markers, no top-level header) arrive with exact line numbers.
 
-Every hook that fails passes the event on unchanged. `/norms:check` then has no
-`<norms-scope>` block and its markdown stops, saying so: it computes no scope itself.
+A `/norms:check` whose scope cannot be computed reaches its markdown with a
+`<norms-scope>` block holding one `refused:` line that names the failure: the command
+prints it and stops, and computes no scope itself. Every other hook that fails passes
+the event on unchanged.
 The push question is the exception: when nobody can be asked, a forced push is refused.
 
 ## CONTRIBUTING.md stays with the project

@@ -95,7 +95,7 @@ test('without a scope computed in this session, the record is written for the se
   const { $ } = setup({}, {}, calls)
   const out = await mounted().done($, { open: 0, fixed: 0, passed: 2 })
   expect(fieldsOf(out)?.['result']).toBe('record: ' + WRITTEN)
-  expect(recordCalls(calls).map(c => [c['pr'], c['repo'], c['result'], c['detail']])).toEqual([[12, 'Owner/Repo', 'pass', '0 fixed, 2 passed, 0 open']])
+  expect(recordCalls(calls).map(c => [c['pr'], c['repo'], c['result'], c['detail'], c['dir']])).toEqual([[12, 'Owner/Repo', 'pass', '0 fixed, 2 passed, 0 open', '/repo']])
 })
 
 test('no open finding records a pass with its detail', async () => {

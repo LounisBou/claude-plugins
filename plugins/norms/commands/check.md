@@ -52,7 +52,7 @@ In automatic mode nobody types in this session, so nothing waits for an answer:
 
 The arguments end with a `<norms-scope>` block, computed by the plugin before this command runs: the base commit, the changed files and their classes, the project type, the CONTRIBUTING.md status, the applicable and skipped agents, the agents the words request and the validated reference paths. Use those values as given. The user's own words are the text before the block.
 
-A block with a `refused:` line: print that line to the user as it is, and stop.
+A block with a `refused:` line: print that line to the user as it is, and stop. No block at all (the plugin's hooks did not run): say so and stop.
 
 When the block says `requested agents: named inside free text`, pick the agents from the words with these shortcuts, among the block's `applicable agents` only:
 

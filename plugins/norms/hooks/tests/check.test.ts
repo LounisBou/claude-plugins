@@ -3,7 +3,7 @@
 // (the <norms-context> block appended to each norms agent's prompt).
 import { expect, test } from 'claude-code/testing'
 import { classify, parseCheckArgs, applicable, classifyAll, contributingExcerpt, fenceFor, projectTypes } from '../scope.ts'
-import { baseOf, register, resetCache } from '../check.ts'
+import { baseOf, register, resetCache, SKILL_MATCHER } from '../check.ts'
 import { branchPull, openPullAt } from '../record.ts'
 import { mount, hook, nextOf, fakeDollar, gitRuns, BASE, HEAD, type Call } from './fakes.ts'
 import { fieldsOf, listOf } from '../../core/host.ts'
@@ -116,6 +116,19 @@ test('a command that already ran when the hook failed is not run again with a re
   const { next, seen } = nextOf()
   await h.net!($, e, Object.assign(next, { called: true, error: { message: 'late failure' } }))
   expect(seen).toEqual([e])
+})
+
+test('the Skill run of a check whose scope fails gets the refusal block; one that already ran is not run again', async () => {
+  const hooks = mount(register)
+  const { $ } = fakeDollar({})
+  const h = hook(hooks, 'tool.call', SKILL_MATCHER)
+  const e = { tool: 'Skill', skill: 'norms:check', args: 'naming' }
+  const failed = nextOf()
+  await h.net!($, e, Object.assign(failed.next, { error: { message: 'git is gone' } }))
+  expect(fieldsOf(failed.seen[0])?.['args']).toBe(`naming\n\n<norms-scope>\nrefused: the scope could not be computed (git is gone)\n${REFUSAL_TAIL}`)
+  const ran = nextOf()
+  await h.net!($, e, Object.assign(ran.next, { called: true, error: { message: 'late failure' } }))
+  expect(ran.seen).toEqual([e])
 })
 
 test('a norms agent gets the diff of its own files and its own sections at spawn', async () => {
