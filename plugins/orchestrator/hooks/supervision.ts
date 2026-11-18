@@ -285,8 +285,8 @@ const OTHER_LABEL = WORDS.other
 // within it. The host's terminal field wraps its text, and places its caret, at the pane's whole
 // width less its label and its hint, whatever padding the boxes around it take: indented, its
 // lines were wider than its room, cut with « … », the caret rows below them. It is drawn at the
-// pane's left edge, and no scroll track (its right margin) is drawn while it is: across the
-// pane's whole width, the width it wraps at is the one it has.
+// pane's left edge, and no scroll track (its right margin) is drawn while it is, the key line
+// still pinned: across the pane's whole width, the width it wraps at is the one it has.
 const ANSWER_ROWS = 4
 
 // The mark of the recommended choice and of the recommendation's line.
@@ -1961,11 +1961,18 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 
   // The pane's ring leaving the text field, for the picker or off the pane: the field goes
   // with it, so that Tab from a choice never reaches it, until « Other answer » is picked again.
+  // The ring landing on a field: the host moves the window to bring it into view and tells the
+  // module nothing of that move, so the pane is drawn again once it has, its key line pinned at
+  // the window's new top.
   on('ui.focus', { component: 'Pane', requestId: PANE_ID }, async ($, e, next) => {
     const result = await next(e)
-    if (pane.writing !== null && !(isRecord(result) && result['deny']) && e.element !== answerKey(pane.writing)) {
+    if (isRecord(result) && result['deny']) return result
+    if (pane.writing !== null && e.element !== answerKey(pane.writing)) {
       pane.writing = null
       $.ui.invalidate('ui.render')
+    }
+    if (typeof e.element === 'string' && e.element.startsWith(answerKey(''))) {
+      $.clock.after(SCROLL_AFTER_DRAW_MS, () => $.ui.invalidate('ui.render'))
     }
     return result
   }).catch(async ($, e, next) => {
@@ -2221,7 +2228,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           })
       }
       // Whether this draw holds the « Other answer » field: the field takes the pane's whole width,
-      // so no scroll track is drawn beside it (see ANSWER_ROWS).
+      // so no scroll track is drawn beside it, the key line still pinned (see ANSWER_ROWS).
       let fieldDrawn = false
       // The controls under that question's lines, as the card draws its own: a picker of its letters
       // and « Other answer » where the surface has one, a Button per choice elsewhere, then the field.
@@ -2323,19 +2330,21 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // pinned to the window's top once the tree is taller, each drawn at the window's own rows
       // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
-      // line would cover it.
+      // line would cover it. While the « Other answer » field is drawn the track alone is left
+      // out: its right margin would take columns the field counts as its own (see ANSWER_ROWS).
       const drawnKey = JSON.stringify([answering?.id ?? null, pending, asked.map(entry => entry.id), blocks, failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
       const counted = width > 0 ? flow.reduce((sum, piece) => sum + piece.rows, 0) + pinnedRows.length : 0
-      const track = scroll && width > 0 && !fieldDrawn ? scrollTrack(scroll.offset, scroll.bodyRows, measured ?? counted) : null
-      const pinned = track !== null && pinnedRows.length > 0 ? pinnedRows : null
-      const overlays = track === null || !scroll ? [] : [
-        el.Box({
+      const taller = scroll && width > 0 ? scrollTrack(scroll.offset, scroll.bodyRows, measured ?? counted) : null
+      const track = fieldDrawn ? null : taller
+      const pinned = taller !== null && pinnedRows.length > 0 ? pinnedRows : null
+      const overlays = taller === null || !scroll ? [] : [
+        ...(track === null ? [] : [el.Box({
           position: 'absolute', top: scroll.offset, right: 0, width: 1, flexDirection: 'column',
           children: track.map(thumb => el.Text(thumb ? { color: 'suggestion', children: '█' } : { dimColor: true, children: '│' })),
-        }),
+        })]),
         ...(pinned === null ? [] : [el.Box({
           position: 'absolute', top: scroll.offset, left: 0, width, flexDirection: 'column',
           children: pinned.map(row => el.Text({ dimColor: true, children: row.padEnd(width) })),

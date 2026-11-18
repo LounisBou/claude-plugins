@@ -577,7 +577,9 @@ caret_cell() {
 FIELD_TEXT="C, pas de tag pour l'instant mais les versions vont suivre celle du legacy : les corrections seront v32_33_cg1 pour corrections geonative 1, puis la suite jusqu'au bout"
 for size in 160x50 100x50 160x14; do
   echo "== a long text typed in the field ($size)"
-  COLS=${size%x*} start "${size#*x}" report 'Other answer'
+  COLS=${size%x*} start "${size#*x}" report 'Questions for you'
+  # In the short window the field is below the pinned key line and the question: the wheel brings it in.
+  for ((i = 0; i < 10; i++)); do pane | grep -q '^Other answer: ' && break; wheel down 1; done
   click 'Other answer'
   check "the field takes the keys ($size)" "0" "$(wait_for '⏎ send' 5; echo $?)"
   tm send-keys -t "$SESSION" -l "$FIELD_TEXT"
@@ -587,6 +589,9 @@ for size in 160x50 100x50 160x14; do
   # Its head is drawn at most once: scrolled out of the field's four rows where they cannot hold it.
   check "the text wraps in the field, cut nowhere, drawn once ($size)" "0|1|1|1" "$(pane | grep -c '…')|$(flat | grep -c 'v32_33_cg1 pour corrections geonative 1, puis la suite')|$([ "$(screen | grep -c 'C, pas de tag')" -le 1 ] && echo 1)|$(screen | grep -c 'v32_33_cg1')"
   check "the caret follows the text's last character ($size)" "bout|blank" "$(caret_cell)"
+  # The window shorter than the tree: no track beside the field, the key line still pinned at its top.
+  [ "$size" = 160x14 ] && check "the key line pinned at the window's top, no track beside the field ($size)" "1|" \
+    "$(pane | head -2 | grep -c 'Enter: choose')|$(thumb)"
 done
 
 echo "== an orchestrator that asks two questions (160x50)"
