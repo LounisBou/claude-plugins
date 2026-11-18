@@ -7,7 +7,7 @@ import { isAgent } from '../row-owner.ts'
 test('a row\'s agent field names an agent by its name alone: its reference and its case apart', () => {
   expect(isAgent('Agent: row knows', 'Agent: row knows')).toBe(true)
   expect(isAgent('Agent: Row Knows [a1b2c3]', 'Agent: row knows')).toBe(true)
-  expect(isAgent('Agent: row knows', 'Agent: ROW KNOWS [d4e5f6]')).toBe(true)
+  expect(isAgent('Agent: row knows', 'Agent: ROW KNOWS [a1b2c3]')).toBe(true)
   expect(isAgent('Agent: row knows', 'row knows')).toBe(true)
   expect(isAgent('Agent: row knows', 'Agent: row knows 2')).toBe(false)
   expect(isAgent('Agent: row knows', 'Agent: ')).toBe(false)
