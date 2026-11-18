@@ -191,6 +191,48 @@ test('a delivery says CI unread when the github plugin is not found, and reads t
   expect(absent.sent[0]!.text.split('\n')[1]).toContain('CI unread (the github plugin is not found) at abcdef0')
 })
 
+// The handler gives the gate what the relay's deadline leaves (supervision.ts gateOf), not the 3000 ms of
+// the other reads: the gate answers in about 3.3 s, so a gate held to 3000 ms would read « unread » every time.
+// A gate that fails or cannot run says CI unread with why, and the delivery still goes out.
+test("a delivery runs the gate on the relay's remaining time, and a gate that fails says CI unread with why while the message goes out", async () => {
+  const report = 'All green.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
+  const repo = { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': JSON.stringify({ number: 12, headRefOid: SHA }) }
+  const ok = fake({ repo: { ...repo, [GATE_KEY]: gateOf(SHA, 'SUCCESS') } })
+  await drive(mounted(), 'turn.complete', ok.dollar, turnEnd(report))
+  expect(ok.gateCalls).toHaveLength(1)
+  expect(ok.gateCalls[0]!.argv).toBe('python3 /plugins/github/engine/gh.py pr-gate 12 --json')
+  // Above the 3000 ms of a git or gh read, within the relay's 5000 ms less the 500 ms kept for the send.
+  expect(ok.gateCalls[0]!.timeoutMs! > 3000 && ok.gateCalls[0]!.timeoutMs! <= 4500, String(ok.gateCalls[0]!.timeoutMs)).toBe(true)
+  const failed = fake({ repo })
+  await drive(mounted(), 'turn.complete', failed.dollar, turnEnd(report))
+  expect(failed.sent).toHaveLength(1)
+  expect(failed.sent[0]!.text.split('\n')[1]).toBe("facts (read by the module): tree clean, 0 unpushed, head abcdef0 = #12's head, CI unread (the gate failed (exit 1)) at abcdef0")
+  const thrown = fake({ repo, gateThrows: true })
+  await drive(mounted(), 'turn.complete', thrown.dollar, turnEnd(report))
+  expect(thrown.sent).toHaveLength(1)
+  expect(thrown.sent[0]!.text.split('\n')[1]).toContain('CI unread (the gate could not run: spawn failed) at abcdef0')
+})
+
+// A pull request gh did not read has no head to hold the gate's answer against: CI is unread, said beside it, and a gate
+// answer that cannot be read at all is unread with why, never a line with no CI word.
+test('a pull request gh failed to read, or a gate answer that cannot be read, still gives the line a CI word', async () => {
+  const ran = (view: { exitCode: number; stdout?: unknown }, gate: unknown) => readDeliveryFacts(async argv => {
+    if (argv[0] === 'python3') return gate as never
+    if (argv[0] === 'gh') return view
+    return { exitCode: 0, stdout: argv[1] === 'status' ? '' : argv[1] === 'rev-parse' ? SHA : '0\n' }
+  }, REPORT, GATE_ON)
+  const noView = await ran({ exitCode: 1, stdout: '' }, { exitCode: 0, stdout: gateOf(SHA, 'SUCCESS') })
+  expect(noView.pr).toBeNull()
+  expect(factsLine(noView)).toBe('facts (read by the module): tree clean, 0 unpushed, head abcdef0, pull request unread, CI unread (the pull request was not read)')
+  // A view that is no pull request reads the same way.
+  expect((await ran({ exitCode: 0, stdout: 'not json' }, null)).ciWhy).toBe('the pull request was not read')
+  // A host that answers nothing (a throw inside gateCi) is a gate answer that cannot be read.
+  const broken = await ran({ exitCode: 0, stdout: JSON.stringify({ number: 12, headRefOid: SHA }) }, undefined)
+  expect(broken.pr).toMatchObject({ ci: 'unread' })
+  expect(broken.pr?.ciWhy).toMatch(/^the gate's answer could not be read: /)
+  expect(factsLine(broken)).toContain('CI unread (the gate\'s answer could not be read: ')
+})
+
 test("the github plugin is found where the host's install record puts it, the engine's file being there", async () => {
   const report = 'All green.\nowner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
   const repo = { 'git status --porcelain': '', 'git rev-parse HEAD': SHA, 'git rev-list --count': '0', 'gh pr view': JSON.stringify({ number: 12, headRefOid: SHA }), 'python3 /cache/github/engine/gh.py pr-gate': gateOf(SHA, 'PENDING') }
@@ -274,7 +316,7 @@ test('a chain whose owner is not live is not counted, however recently it was wr
 // agent's record carrying another.
 // `reportsTo`: the orchestrator the launch recorded. `alive`: the pids the process table lists,
 // none read when absent. `registry`: the host's registry records of other sessions.
-type Over = { noGithub?: boolean; repo?: Record<string, string>; elsewhere?: Record<string, string>; checkout?: string; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
+type Over = { noGithub?: boolean; gateThrows?: boolean; repo?: Record<string, string>; elsewhere?: Record<string, string>; checkout?: string; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
 
 // The tab and the run: the agent's host process (501) on ttys005, launched with its
 // --name; its shell (850) and the run (900) on no tty. The module's shell is a child of
@@ -290,6 +332,7 @@ function fake(over: Over = {}) {
   const mtimes = new Map<string, number>()
   const sent: { to: unknown; text: string }[] = []
   const logged: string[] = []
+  const gateCalls: { argv: string; timeoutMs?: number }[] = []
   const usage = { context: { tokens: 120000, window: 1000000, percent: 12 } }
   const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: 'hostcli' }
   if (over.gateTokens) env['ORCHESTRATOR_CONTEXT_GATE_TOKENS'] = over.gateTokens
@@ -341,8 +384,12 @@ function fake(over: Over = {}) {
       stat: async (p: string) => { throw new Error(`ENOENT: ${p}`) },
     },
     process: {
-      run: async (argv: readonly string[], init?: { cwd?: string }) => {
+      run: async (argv: readonly string[], init?: { cwd?: string; timeoutMs?: number }) => {
         const [verb = '', first = '', second = '', third = ''] = argv
+        if (verb === 'python3') {
+          gateCalls.push({ argv: argv.join(' '), ...(init?.timeoutMs === undefined ? {} : { timeoutMs: init.timeoutMs }) })
+          if (over.gateThrows) throw new Error('spawn failed')
+        }
         const locked = lockRun(argv, files)
         if (locked) return locked
         const line = logLineOf(argv)
@@ -376,7 +423,7 @@ function fake(over: Over = {}) {
     command: { run: async () => undefined },
     prompt: { submit: async () => undefined },
   } satisfies HostParts
-  return { dollar, files, mtimes, sent, logged, usage }
+  return { dollar, files, mtimes, sent, logged, usage, gateCalls }
 }
 
 // The module's hooks as it registers them, in their order.

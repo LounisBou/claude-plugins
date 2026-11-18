@@ -106,6 +106,8 @@ export type DeliveryFacts = {
   head: string | null
   /** The pull request gh reads, the one the verdict line names or else the branch's; null unread. `ciWhy` says why `ci` is unread. */
   pr: { number: number; head: string; ci: CiState; ciWhy?: string } | null
+  /** Why CI is unread when `pr` is: gh did not read the pull request. */
+  ciWhy?: string
   /** The pull request and head the agent's verdict line names, if it names one. */
   claimed: { pr: number; head: string } | null
 }
@@ -175,22 +177,29 @@ export async function readDeliveryFacts(run: FactsRun, report: string, gate: Gat
     dirty: porcelain === null ? null : porcelain.split('\n').filter(line => line.trim() !== '').length,
     unpushed: countOf(lineOf(unpushed)),
     head: lineOf(head) || null,
-    pr: pullRequestOf(lineOf(view), typeof gating === 'string' ? gating : await gating, gate?.boundMs ?? 0),
+    ...pullRequestOf(lineOf(view), typeof gating === 'string' ? gating : await gating, gate?.boundMs ?? 0),
     claimed: named ? { pr: named.pr, head: named.head } : null,
   }
 }
 
-// The pull request gh read; its CI is the gate's answer, or unread for the reason the gate was not asked.
-function pullRequestOf(json: string | null, gated: GateRead | string, boundMs: number): DeliveryFacts['pr'] {
-  if (!json) return null
+// The pull request gh read; its CI is the gate's answer, or unread for the reason the gate was not
+// asked. A pull request gh did not read has no head to compare the gate's answer with: its CI is
+// unread too, said beside it. A gate answer that cannot be read is unread, never a missing CI word.
+function pullRequestOf(json: string | null, gated: GateRead | string, boundMs: number): Pick<DeliveryFacts, 'pr' | 'ciWhy'> {
+  let read: { number?: unknown; headRefOid?: unknown } = {}
   try {
-    const read = JSON.parse(json) as { number?: unknown; headRefOid?: unknown }
-    if (typeof read.number !== 'number' || typeof read.headRefOid !== 'string') return null
-    const ci = typeof gated === 'string' ? { ci: 'unread' as const, why: gated } : gateCi(gated, read.headRefOid, boundMs)
-    return { number: read.number, head: read.headRefOid, ...(ci.why === undefined ? { ci: ci.ci } : { ci: ci.ci, ciWhy: ci.why }) }
+    read = json ? JSON.parse(json) as typeof read : {}
   } catch {
-    return null
+    read = {}
   }
+  if (typeof read.number !== 'number' || typeof read.headRefOid !== 'string') return { pr: null, ciWhy: 'the pull request was not read' }
+  let ci: { ci: CiState; why?: string }
+  try {
+    ci = typeof gated === 'string' ? { ci: 'unread', why: gated } : gateCi(gated, read.headRefOid, boundMs)
+  } catch (error) {
+    ci = { ci: 'unread', why: `the gate's answer could not be read: ${oneLine(error instanceof Error ? error.message : error)}` }
+  }
+  return { pr: { number: read.number, head: read.headRefOid, ...(ci.why === undefined ? { ci: ci.ci } : { ci: ci.ci, ciWhy: ci.why }) } }
 }
 
 // What the facts contradict in a claimed delivery: a dirty tree, unpushed commits, a local head
@@ -212,7 +221,7 @@ export function factsLine(f: DeliveryFacts): string {
   const tree = f.dirty === null ? 'tree unread' : f.dirty === 0 ? 'tree clean' : `tree dirty (${f.dirty} paths)`
   const pushed = f.unpushed === null ? 'unpushed unread' : `${f.unpushed} unpushed`
   const head = !f.head ? 'head unread'
-    : !f.pr ? `head ${h7(f.head)}, pull request unread`
+    : !f.pr ? `head ${h7(f.head)}, pull request unread${f.ciWhy ? `, CI unread (${f.ciWhy})` : ''}`
     : f.head === f.pr.head ? `head ${h7(f.head)} = #${f.pr.number}'s head` : `head ${h7(f.head)} ≠ #${f.pr.number}'s head ${h7(f.pr.head)}`
   const ci = f.pr ? `, CI ${f.pr.ci}${f.pr.ciWhy ? ` (${f.pr.ciWhy})` : ''} at ${h7(f.pr.head)}` : ''
   const wrong = falseClaims(f)
