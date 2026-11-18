@@ -31,6 +31,11 @@ test('run: a log takes both streams, truncated or appended; a log that cannot op
   }
 })
 
+test('run: the input is the command\'s stdin, and none is an empty one', async () => {
+  assert.deepEqual(await run(['cat'], { input: 'gate\n' }), { status: 0, stdout: 'gate\n', stderr: '' })
+  assert.deepEqual(await run(['cat']), { status: 0, stdout: '', stderr: '' })
+})
+
 test('run: a command that cannot start has no status', async () => {
   assert.deepEqual(await run(['/no/such/command']), { status: null, stdout: '', stderr: '' })
 })

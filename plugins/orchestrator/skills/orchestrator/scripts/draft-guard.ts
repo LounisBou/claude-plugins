@@ -1,15 +1,18 @@
 // draft-guard — which failing checks of a draft pull request are draft guards.
 //
-//   draft-guard.sh <owner/repo> <pr> [--dependents]
+//   draft-guard.sh <owner/repo> <pr> [--dependents] < <the pull request's `pr-gate --json` answer>
 //
 // Some repositories run a job that fails on purpose while a pull request is a draft (a draft
 // guard). A failing check of a DRAFT pull request is one when the job that produced it tests the
 // draft flag (`pull_request.draft`) in its own definition. `ci-watch.sh` reads a red that is no red
 // otherwise; no repository is named anywhere, and every other red of a draft is still reported.
 //
-// As a command: reads `isDraft`, then prints the failing check names (bucket `fail` or `cancel`)
-// that are NOT draft guards, one per line; a pull request that is not a draft prints every failing
-// name. Exit 0, or 5 with one line on stderr when `gh` fails.
+// CI is read once, by the github gate: its answer comes on stdin (its `draft`, `ci.failed` and
+// `ci.checks`, each counted check with its bucket and link); this script reads no check itself.
+//
+// As a command: prints the gate's failing names (`ci.failed`) that are NOT draft guards, one per
+// line; a pull request that is not a draft prints every failing name. Exit 0, or 5 with one line on
+// stderr when the answer is no gate's.
 //
 // With `--dependents`: on a draft, prints instead the names of the passed checks (bucket `pass`)
 // whose job needs a job that is one of the draft's guards, one per line; on a pull request that is
@@ -58,21 +61,15 @@ export class Unread extends Error {}
 /** `gh` with its arguments: its stdout, or Unread. */
 export type Gh = (argv: readonly string[]) => string
 
-/** One check as `gh pr checks --json name,bucket,link` answers it; any field may be missing. */
+/** One check as the gate's `ci.checks` lists it (`name`, `bucket`, `link`); any field may be missing. */
 type Check = Readonly<Record<string, unknown>>
 
-/**
- * The stdout of `gh <argv>`; Unread when it cannot run or exits non-zero. `gh pr checks` exits 1 on
- * failing checks and 8 on pending ones, so for it the exit code alone is no error: the exit codes in
- * `tolerated` are not, when they come with an answer.
- */
-export function runGh(argv: readonly string[], tolerated: readonly number[] = []): string {
+/** The stdout of `gh <argv>` (the workflow runs and files it reads); Unread when it cannot run or exits non-zero. */
+export function runGh(argv: readonly string[]): string {
   const done = spawnSync('gh', argv, { encoding: 'utf8', timeout: CALL_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] })
   if (done.error !== undefined) throw new Unread(`gh cannot run: ${done.error.message}`)
-  if (done.status === 0 || (done.status !== null && tolerated.includes(done.status) && done.stdout.trim() !== '')) return done.stdout
-  const why = done.stderr.trim().split(/\r?\n/)[0] || 'no answer'
-  if (why.includes('no checks reported')) return '[]'
-  throw new Unread(`gh ${argv.slice(0, 2).join(' ')} failed: ${why}`)
+  if (done.status === 0) return done.stdout
+  throw new Unread(`gh ${argv.slice(0, 2).join(' ')} failed: ${done.stderr.trim().split(/\r?\n/)[0] || 'no answer'}`)
 }
 
 // --- the workflow file, read without a YAML library --------------------------------------------
@@ -360,12 +357,14 @@ export function dependents(repo: string, checks: unknown, guardNames: Iterable<s
 
 export interface Deps {
   readonly io: Io
-  /** `gh` with its arguments and the exit codes that are no error when they come with an answer. */
-  readonly gh: (argv: readonly string[], tolerated?: readonly number[]) => string
+  /** `gh` with its arguments: the workflow runs and files it reads. */
+  readonly gh: (argv: readonly string[]) => string
   readonly cacheDir: string
+  /** The gate's answer the caller gives on stdin. */
+  readonly stdin: () => string
 }
 
-export const USAGE = 'usage: draft-guard.sh <owner/repo> <pr> [--dependents]'
+export const USAGE = 'usage: draft-guard.sh <owner/repo> <pr> [--dependents] < <pr-gate --json answer>'
 
 /** Runs one command line; the exit code. */
 export function main(argv: readonly string[], deps: Deps): number {
@@ -375,26 +374,25 @@ export function main(argv: readonly string[], deps: Deps): number {
     deps.io.err(`${USAGE}\n`)
     return 5
   }
-  let draft: unknown
-  let checks: unknown
+  let draft: boolean
+  let failed: string[]
+  let checks: unknown[]
   try {
-    const view: unknown = JSON.parse(deps.gh(['pr', 'view', pr, '-R', repo, '--json', 'isDraft']))
-    if (!isObject(view) || !Object.hasOwn(view, 'isDraft')) throw new TypeError('no isDraft')
-    draft = view['isDraft']
-    checks = JSON.parse(deps.gh(['pr', 'checks', pr, '-R', repo, '--json', 'name,bucket,link'], [1, 8]))
-    if (!Array.isArray(checks)) throw new TypeError('no list of checks')
-  } catch (error) {
-    deps.io.err(error instanceof Unread ? `draft_guard: ${error.message}\n` : 'draft_guard: gh answered with something else than the expected JSON\n')
+    const gate: unknown = JSON.parse(deps.stdin())
+    const ci = isObject(gate) ? gate['ci'] : undefined
+    if (!isObject(gate) || typeof gate['draft'] !== 'boolean' || !isObject(ci) || !Array.isArray(ci['failed']) || !Array.isArray(ci['checks'])) throw new TypeError('no gate answer')
+    draft = gate['draft']
+    failed = ci['failed'].filter((name): name is string => typeof name === 'string' && name !== '')
+    checks = ci['checks']
+  } catch {
+    deps.io.err('draft_guard: stdin holds no pr-gate answer (draft, ci.failed, ci.checks)\n')
     return 5
   }
   const gh: Gh = args => deps.gh(args)
-  const dropped = draft === true ? guards(repo, checks, deps.cacheDir, gh) : new Set<string>()
+  const dropped = draft ? guards(repo, checks, deps.cacheDir, gh) : new Set<string>()
   const names = behind
-    ? (draft === true ? dependents(repo, checks, dropped, deps.cacheDir, gh) : [])
-    : listOf(checks).map(checkOf).flatMap(check => {
-      const name = check?.['name']
-      return (check?.['bucket'] === 'fail' || check?.['bucket'] === 'cancel') && typeof name === 'string' && name !== '' && !dropped.has(name) ? [name] : []
-    })
+    ? (draft ? dependents(repo, checks, dropped, deps.cacheDir, gh) : [])
+    : [...new Set(failed)].filter(name => !dropped.has(name))
   for (const name of names) deps.io.out(`${name}\n`)
   return 0
 }
@@ -406,5 +404,5 @@ export function cacheDirOf(env: Env): string {
 
 /* node:coverage ignore next 3 */
 if (isEntry(import.meta.url)) {
-  process.exitCode = main(process.argv.slice(2), { io: processIo, gh: runGh, cacheDir: cacheDirOf(process.env) })
+  process.exitCode = main(process.argv.slice(2), { io: processIo, gh: runGh, cacheDir: cacheDirOf(process.env), stdin: () => readFileSync(0, 'utf8') })
 }

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { countBucket, firstLine, gateCall, joinNames, logPath, main, parseArgs, parseTarget, parseView, Said, USAGE, watch, type Deps, type Options } from './ci-watch.ts'
+import { countBucket, firstLine, gateCall, joinNames, logPath, main, parseArgs, parseGate, parseTarget, parseView, Said, USAGE, watch, type Deps, type Options } from './ci-watch.ts'
 import type { Ran, RunOptions } from './lib/process.ts'
 import { parseJournalEvent } from '../../../core/learning.ts'
 
@@ -34,12 +34,31 @@ interface Script {
   guardFails?: string
   repoView?: string
   repoViewFails?: string
-  /** What the gate answers per read, `<RESULT>:<running>` (an answer for no read: SUCCESS:0), or `fail`, or `bad`. */
+  /** What the gate answers per read, `<RESULT>:<running>` (none: read from the buckets and failing names, `gateCi`), or `fail`, or `bad`. */
   gate?: string[]
   /** The head the gate speaks of (default HA). */
   gateHead?: string
   /** What the gate lists as unverified. */
   gateUnverified?: string[]
+}
+
+/**
+ * The gate's `ci` for a script: its checks are the script's buckets (a cancelled one counted a
+ * failure) and its failures those and the `failing` names; its result `<RESULT>:<running>` when the
+ * script gives one, else FAILURE on a failure, PENDING when nothing passed and something was
+ * skipped, SUCCESS otherwise.
+ */
+function gateCi(script: Script, answer: string | undefined): object {
+  const checks = (script.buckets ?? '').split('\n').filter(Boolean).map(entry => {
+    const [name = '', bucket = ''] = entry.split(':')
+    return { name, bucket: bucket === 'cancel' ? 'fail' : bucket, link: '' }
+  })
+  const failures = [...new Set([...(script.failing ?? '').split('\n').filter(Boolean), ...checks.filter(c => c.bucket === 'fail').map(c => c.name)])]
+  const [given, running = '0'] = (answer ?? '').split(':')
+  const result = given !== undefined && given !== '' ? given
+    : failures.length > 0 ? 'FAILURE'
+    : !checks.some(c => c.bucket === 'pass') && checks.some(c => c.bucket === 'skipping') ? 'PENDING' : 'SUCCESS'
+  return { result, running: Number(running), failed: result === 'FAILURE' ? failures : [], skipped: [], total: checks.length, unverified: script.gateUnverified ?? [], checks }
 }
 
 const ok = (stdout = ''): Ran => ({ status: 0, stdout, stderr: '' })
@@ -67,11 +86,10 @@ function fake(script: Script): Deps & { readonly calls: string[]; readonly gates
     gate: async (repo, pr) => {
       gates.push(`${repo}#${pr}`)
       if (gates.length > 50) throw new Error('the gate is read without end: the bound is ignored')
-      const answer = nth('gate', script.gate) ?? 'SUCCESS:0'
+      const answer = nth('gate', script.gate)
       if (answer === 'fail') return failed('error: no GitHub token; run /github:install\nmore\n')
       if (answer === 'bad') return ok('not json\n')
-      const [result = '', running = '0'] = answer.split(':')
-      return ok(JSON.stringify({ repo, pr: Number(pr), head: script.gateHead ?? HA, ci: { result, running: Number(running), failed: [], skipped: [], total: 1, unverified: script.gateUnverified ?? [] } }))
+      return ok(JSON.stringify({ repo, pr: Number(pr), head: script.gateHead ?? HA, ci: gateCi(script, answer) }))
     },
     run: async (argv, options = {}) => {
       const line = argv.join(' ')
@@ -229,7 +247,11 @@ test('the small readings', () => {
   assert.equal(joinNames('\n'), '')
   assert.deepEqual(parseView(`OPEN ${HA} auto draft`), { state: 'OPEN', head: HA, auto: true, draft: true })
   assert.deepEqual(parseView('MERGED'), { state: 'MERGED', head: 'MERGED', auto: false, draft: false })
-  assert.equal(countBucket('pass\ta\nskipping\tb\npass\tc', 'pass', new Set(['c'])), 1)
+  assert.equal(countBucket([{ name: 'a', bucket: 'pass' }, { name: 'b', bucket: 'skipping' }, { name: 'c', bucket: 'pass' }], 'pass', new Set(['c'])), 1)
+  assert.equal(parseGate('not json'), null)
+  assert.equal(parseGate('{"ci": {"result": "SUCCESS"}}'), null)
+  assert.deepEqual(parseGate('{"head": "h", "ci": {"result": "FAILURE", "running": 0, "failed": ["a", 1], "unverified": ["x"], "checks": [{"name": "a", "bucket": "fail"}, {"name": 2}]}}'),
+    { head: 'h', result: 'FAILURE', running: 0, unverified: true, failed: ['a'], checks: [{ name: 'a', bucket: 'fail' }], raw: '{"head": "h", "ci": {"result": "FAILURE", "running": 0, "failed": ["a", 1], "unverified": ["x"], "checks": [{"name": "a", "bucket": "fail"}, {"name": 2}]}}' })
   assert.equal(logPath(options(['7', '--repo', 'o/r x']), true), join(state, 'ci-watch', 'o_r_x-pr7-base.log'))
 })
 
@@ -256,12 +278,20 @@ test('the repository is passed to every gh call', async () => {
   assert.ok(deps.calls.includes('gh run list -R o/r --commit ' + HA + ' --json databaseId,status --jq .[] | select(.status != "completed") | .databaseId'))
 })
 
-test('red, cancelled and skipped readings after the watch', async () => {
+test('red, cancelled and skipped readings are the gate\'s, whatever the checks watch exits with', async () => {
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [1], failing: 'test\ne2e' }), `red 7 ${HA} test, e2e|1`)
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:cancel\nunit:pass\ne2e:cancel' }), `red 7 ${HA} build, e2e|1`)
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'unit:skipping\ndocs:skipping' }), `no-checks 7 ${HA} skipped=2|2`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'] }), 'unread 7 gh pr checks failed: gh: HTTP 502|5')
-  assert.match(await said({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [4] }), /^unread 7 gh pr checks --watch exited 4 with no failing check named \(log: .*here-pr7\.log\)\|5$/)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [4] }), `green 7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['FAILURE:0'] }), 'unread 7 pr-gate read FAILURE with no failing check named|5')
+})
+
+// A rerun the gate leaves out (cancelled, superseded by a newer run of its workflow) fails the checks
+// watch and `gh pr checks` still names it: the gate reads the head green, and so does the watch.
+test('a cancelled run the gate leaves out is no red: the watch says the gate\'s green', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [1], failing: 'build', buckets: 'build:pass', gate: ['SUCCESS:0'] })
+  assert.equal((await watch(options(), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal(deps.calls.filter(call => call.includes('select(.bucket')).length, 0)
 })
 
 test('a pull request GitHub reports as conflicting is no green: its suites never ran, whatever else passed', async () => {
@@ -303,7 +333,7 @@ test('moved and closed, at each read', async () => {
 })
 
 test('the head\'s unfinished runs are watched, then the checks again', async () => {
-  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [0, 1], failing: 'e2e', headRuns: ['201:completed;202:in_progress', '-'] })
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], failing: 'e2e', gate: ['PENDING:1', 'PENDING:1', 'FAILURE:0'], headRuns: ['201:completed;202:in_progress', '-'] })
   assert.equal((await watch(options(), deps)).line, `red 7 ${HA} e2e`)
   assert.equal(deps.calls.filter(call => call.startsWith('gh run watch 202')).length, 1)
   assert.equal(deps.calls.filter(call => call.includes('--watch')).length, 2)
@@ -342,25 +372,24 @@ test('a head with a third-party check alone is no green: it waits for the reposi
 })
 
 test('the gate: nothing to await, or a read that failed', async () => {
-  // PENDING over something that proved nothing (a skipped check) awaits no run: the line is the bucket read's.
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass\nlint:skipping', gate: ['PENDING:0'] }), `green 7 ${HA} ${GATE}|0`)
-  // The result counts: a check running under a result that is no PENDING (a failure, a success) awaits no run.
-  for (const answer of ['FAILURE:1', 'SUCCESS:1']) {
-    assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', gate: [answer] }), `green 7 ${HA} ${GATE}|0`, answer)
-  }
+  // PENDING over something that proved nothing (a skipped check) awaits no run, and is no green.
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass\nlint:skipping', gate: ['PENDING:0'] }), `no-checks 7 ${HA} skipped=1|2`)
+  // The result counts: a check running under a failure or a success awaits no run.
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:fail', gate: ['FAILURE:1'] }), `red 7 ${HA} build|1`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', gate: ['SUCCESS:1'] }), `green 7 ${HA} ${GATE}|0`)
   // The checks the base requires could not be read: green cannot be told, so it waits, then no-checks.
   const blind = { view: [`OPEN ${HA}`], reg: ['1'], buckets: 'scanner:pass', gate: ['PENDING:0'] }
   assert.equal(await said({ ...blind, gateUnverified: ['rulesets of main: HTTP 403'] }), `no-checks 7 ${HA}|2`)
-  assert.equal(await said(blind), `green 7 ${HA} ${GATE}|0`)
+  assert.equal(await said(blind), `no-checks 7 ${HA} skipped=0|2`)
   // A verdict of another head is none: the watch waits and reads the pull request again.
   assert.equal(await said({ ...blind, gateHead: HB }), `no-checks 7 ${HA}|2`)
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', gateHead: HA.toUpperCase() }), `green 7 ${HA} ${GATE}|0`)
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['fail'] }), 'unread 7 pr-gate failed: error: no GitHub token; run /github:install|5')
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['bad'] }), 'unread 7 pr-gate failed: an answer with no ci result|5')
-  // A head whose watch is not green never reads the gate.
+  // A red is the gate's: read once, it ends the watch.
   const red = fake({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [1], failing: 'e2e' })
-  await watch(options(), red)
-  assert.deepEqual(red.gates, [])
+  assert.equal((await watch(options(), red)).line, `red 7 ${HA} e2e`)
+  assert.deepEqual(red.gates, ['acme/thing#7'])
 })
 
 test('a draft: a red of guards alone settles, and its green needs a check behind a guard', async () => {
@@ -370,10 +399,10 @@ test('a draft: a red of guards alone settles, and its green needs a check behind
   assert.ok(deps.calls.includes('gh pr checks 7 --watch --interval 1'))
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], failing: 'wip', buckets: 'secrets:pass\nwip:fail', dependents: '' }), `no-checks 7 ${HA} skipped=0|2`)
   assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], failing: 'wip', guard: 'tests\n' }), `red 7 ${HA} tests|1`)
-  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1] }), `unread 7 gh pr checks --watch exited 1 with no failing check named (log: ${join(state, 'ci-watch', 'here-pr7.log')})|5`)
-  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], guardFails: 'draft_guard: gh failed\n' }), 'unread 7 draft_guard: gh failed|5')
-  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], guardFails: '' }), 'unread 7 draft guard failed|5')
-  const named = fake({ view: [draft], reg: ['2'], watchCodes: [1], guard: 'tests\n' })
+  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1] }), `green 7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [draft], reg: ['2'], failing: 'wip', guardFails: 'draft_guard: gh failed\n' }), 'unread 7 draft_guard: gh failed|5')
+  assert.equal(await said({ view: [draft], reg: ['2'], failing: 'wip', guardFails: '' }), 'unread 7 draft guard failed|5')
+  const named = fake({ view: [draft], reg: ['2'], failing: 'wip', guard: 'tests\n' })
   await watch(options(['7', '--repo', 'acme/x']), named).catch(() => undefined)
   assert.ok(named.calls.includes('node /plugin/draft-guard.ts acme/x 7'))
 })
