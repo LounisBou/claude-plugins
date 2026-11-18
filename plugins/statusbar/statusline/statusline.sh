@@ -1,7 +1,8 @@
 #!/bin/bash
-# Two-line status line:
+# Status line:
 #   1. directory │ branch[*↑↓{n}] │ open PR │ model │ session name
 #   2. context │ 5-hour quota │ 7-day quota │ lines +/-
+#   3. only while a quota window, at its pace so far, runs out before it resets
 #
 # Every value comes from the JSON payload the host sends on stdin. No network
 # calls, no state, no credentials. Git status is the only external command.
@@ -178,6 +179,26 @@ window_text() {
   [ -n "$color" ] && end=$RESET
   [ "$pct" -ge 80 ] && mark="⚠ "
   printf '%s%s%s: %s%%%s%s%s' "$color" "$mark" "$label" "$pct" "$bar" "$tail" "$end"
+}
+
+# The pace of one quota window: "<label>|<reset>" when, at the pace of the window so far, its
+# quota is exhausted before it resets, nothing otherwise. The window's length is its own (5 hours,
+# 7 days), its start the reset minus that length; the pace is read once a tenth of the window has
+# gone, because the first minutes of a window say nothing. Only the percentage and the reset the
+# host sends are read. $1 label, $2 percentage, $3 reset epoch, $4 window seconds,
+# $5 time|date (the format of the reset it names).
+window_pace() {
+  local pct=${2%%.*} epoch=$3 span=$4 rem elapsed
+  is_number "$pct" && is_number "$epoch" || return 1
+  rem=$(( epoch - $(date +%s) ))
+  [ "$rem" -gt 0 ] && [ "$rem" -le "$span" ] || return 1
+  elapsed=$(( span - rem ))
+  [ $(( elapsed * 10 )) -ge "$span" ] || return 1
+  # pct / elapsed * span >= 100, in integers.
+  [ $(( pct * span )) -ge $(( 100 * elapsed )) ] || return 1
+  if [ "$5" = "date" ]; then printf '%s|%s' "$1" "$(fmt_date "$epoch")"
+  else printf '%s|%s' "$1" "$(fmt_time "$epoch")"
+  fi
 }
 
 # Concatenates with the separator. No nameref: macOS ships bash 3.2.
@@ -394,5 +415,17 @@ if is_number "$q_open" && [ "$q_open" -gt 0 ]; then
   line1=$(join_sep "$line1" "${q_colour}${q_text}${RESET}")
 fi
 
+# Line 3, only while it is true: at the pace so far a quota window is used up before it resets.
+# Computed from the rate_limits above, nothing else; the 5-hour window is named first.
+if [ "$show_usage" = "1" ]; then
+  pace=""
+  pace=$(window_pace "5h" "$h5_pct" "$h5_reset" 18000 time) ||
+    { [ "$show_seven" = "1" ] && pace=$(window_pace "7d" "$d7_pct" "$d7_reset" 604800 date); }
+  if [ -n "$pace" ]; then
+    line3="${RED}⚠ at this rate the ${pace%%|*} window is exhausted before its reset (at ${pace#*|})${RESET}"
+  fi
+fi
+
 [ -n "$line1" ] && printf '%s\n' "$line1"
 [ -n "$line2" ] && printf '%s\n' "$line2"
+[ -n "${line3:-}" ] && printf '%s\n' "$line3"

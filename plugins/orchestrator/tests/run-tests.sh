@@ -10767,7 +10767,7 @@ check "a transcript path that does not exist is a refusal, never a cost of zero"
 
 echo "== deck: usage, routing.py's cost rule =="
 
-# The deck's usage (hooks/usage.ts) spells routing.py's cost rule again, in the module: the
+# The deck's usage (hooks/usage.ts) reads the cost rule routing.py reads (core's usage-cost.ts): the
 # two are held to the same tokens and the same cost on one transcript. The module side runs
 # under node, through the module's own reader (the shell it hands the host), in two reads cut
 # anywhere, mid-line and mid-character included.
