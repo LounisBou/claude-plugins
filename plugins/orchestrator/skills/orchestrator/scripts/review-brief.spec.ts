@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -191,4 +192,42 @@ test('parseArgs reads each flag once and the last one wins', () => {
   const parsed = parseArgs([...FIELDS(), '--reason', 'second'])
   assert.equal('error' in parsed, false)
   if (!('error' in parsed)) assert.equal(parsed.reason, 'second')
+})
+
+test('the readers\' model is the diff\'s class: haiku for prose, opus for a guard, sonnet otherwise, and --tier overrides it', () => {
+  const git = (cwd: string, ...args: string[]): void => { execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]) }
+  const checkout = join(dir, 'checkout')
+  mkdirSync(checkout)
+  git(checkout, 'init', '-q', '-b', 'main')
+  writeFileSync(join(checkout, 'a.txt'), 'a')
+  git(checkout, 'add', '.')
+  git(checkout, 'commit', '-q', '-m', 'base')
+  git(checkout, 'checkout', '-q', '-b', 'work')
+  const brief = (extra: string[], name: string): string => {
+    const args = [...FIELDS().map(value => value === '/w/review-12' ? checkout : value === join(dir, 'review-12.md') ? join(dir, name) : value), '--base', 'main', '--head', execFileSync('git', ['-C', checkout, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(), '--lens', 'tests', ...extra]
+    const done = run(args)
+    assert.equal(done.code, 0, done.err)
+    return readFileSync(join(dir, name), 'utf8')
+  }
+  mkdirSync(join(checkout, 'docs'))
+  writeFileSync(join(checkout, 'docs', 'a.md'), 'a')
+  git(checkout, 'add', '-f', '.')
+  git(checkout, 'commit', '-q', '-m', 'docs')
+  assert.match(brief([], 'prose.md'), /at the \*\*light\*\* tier, `model: haiku`/)
+  writeFileSync(join(checkout, 'draft-guard.ts'), 'a')
+  git(checkout, 'add', '.')
+  git(checkout, 'commit', '-q', '-m', 'guard')
+  assert.match(brief([], 'guard.md'), /at the \*\*deep\*\* tier, `model: opus`/)
+  assert.match(brief(['--tier', 'light'], 'forced.md'), /at the \*\*light\*\* tier, `model: haiku`/)
+})
+
+test('the model follows the tier, and reads none with no lens', () => {
+  assert.equal(run([...FIELDS(), '--lens', 'tests']).code, 0)
+  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /at the \*\*standard\*\* tier, `model: sonnet`/)
+  rmSync(join(dir, 'review-12.md'))
+  assert.equal(run([...FIELDS(), '--lens', 'tests', '--tier', 'deep']).code, 0)
+  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /`model: opus`/)
+  rmSync(join(dir, 'review-12.md'))
+  assert.equal(run(FIELDS()).code, 0)
+  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /at the \*\*none\*\* tier, `model: none`/)
 })

@@ -61,8 +61,6 @@ The floor `pick` lands on when no table names the class: the class's tier, throu
 | The screenshot audit of a pull request, dispatched as the subagent type `orchestrator:screenshots` | `screenshot-audit` | `standard` | you, on a capture in doubt |
 | Read-only search subagents | `search` | `light` | they locate; they never judge |
 
-The tabs you launch and the subagents launched inside a session read this one table: say the lenses' pair in the review brief.
-
 ## The five readings
 
 For a phase that does not sit plainly on a row, take these before dispatching, from the plan and the decision log:
