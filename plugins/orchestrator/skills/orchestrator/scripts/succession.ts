@@ -60,6 +60,7 @@ import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { archiveSettled } from './lib/round-archive.ts'
 import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
 import { askedKey } from '../../../hooks/asked-key.ts'
+import { holdsOf, readyHeadsOf } from '../../../hooks/ready-agent.ts'
 import { bareName, briefOfLaunch, namesAgent as names, newestLaunch, rowOfBrief } from '../../../hooks/row-owner.ts'
 export { rowOfBrief }
 import type { Asked } from '../../../hooks/question.ts'
@@ -163,6 +164,8 @@ export interface LiveAgent {
   readonly brief?: string
   /** The row its brief was printed for (rowOfBrief); undefined when no brief names one. */
   readonly row?: string
+  /** What its Ready pull request says of it, `Ready: close it` or the pull requests it still holds; undefined when none of its pull requests is Ready. */
+  readonly ready?: string
 }
 
 /** What the state holds open for this orchestrator. */
@@ -268,7 +271,26 @@ export function briefOf(state: string, name: string): string | undefined {
 /** An agent as the Live state prints it: its name, then its tty and brief where known. */
 export function agentLine(agent: LiveAgent): string {
   const facts = [agent.tty === null ? '' : ttyName(agent.tty), agent.brief === undefined ? '' : `brief ${agent.brief}`].filter(part => part !== '')
-  return facts.length === 0 ? agent.name : `${agent.name} (${facts.join(', ')})`
+  const named = facts.length === 0 ? agent.name : `${agent.name} (${facts.join(', ')})`
+  return agent.ready === undefined ? named : `${named} — ${agent.ready}`
+}
+
+/**
+ * What the Ready pull requests of an agent say of it, the module's wake read from the same artifact: `Ready: close it`
+ * when every pull request its lines name is Ready or ended, `Ready <pr>, still holds <pr>: tell it, do not close it`
+ * when another open pull request of its own is not. Undefined when none of its pull requests is Ready.
+ * `ledger` is the record's lines, `ended` whether the forge reads a pull request merged or closed, `readyHead` its Ready head.
+ */
+export function readyNote(
+  agent: string, ledger: readonly LedgerLine[], ended: (repo: string, pr: number) => boolean, readyHead: (repo: string, pr: number) => string | undefined,
+): string | undefined {
+  const kept = ledger.filter(line => !ended(line.repo, line.pr))
+  const mine = (name: string): boolean => bareName(name).toLowerCase() === bareName(agent).toLowerCase()
+  const ready = kept.filter(line => line.status === 'working' && mine(line.agent ?? '') && readyHead(line.repo, line.pr) !== undefined)
+  if (ready.length === 0) return undefined
+  const holds = holdsOf(kept, mine, key => ready.some(line => prKey(line.repo, line.pr) === key))
+  const names = ready.map(line => prKey(line.repo, line.pr)).join(', ')
+  return holds.length === 0 ? `Ready: close it (${names})` : `Ready ${names}, still holds ${holds.join(', ')}: tell it, do not close it`
 }
 
 /** The launcher's `list`, its rows; undefined when it cannot be run. */
@@ -579,7 +601,7 @@ function todoHolders(todoText: string): Holder[] {
 /** Reads the state this orchestrator holds open from the files that keep it. */
 export function readOpen(
   request: Request, env: Env, openPrs: OpenPrReader = () => undefined, listed?: readonly ListedRow[],
-  prState?: (repo: string, pr: number) => string | undefined,
+  prState?: (repo: string, pr: number) => string | undefined, readyHead: (repo: string, pr: number) => string | undefined = () => undefined,
 ): OpenState {
   const state = stateRoot(env)
   const recordText = readText(request.record) ?? ''
@@ -594,12 +616,14 @@ export function readOpen(
     .flatMap(tty => parseChain(readText(chainPath(state, tty))).map(entry => entry.tty))
   const live = liveAgents(deck.agents, chained, listed)
   const seats = live.agents.map(agent => {
+    const ready = readyNote(agent.name, ledger, (repo, pr) => ['MERGED', 'CLOSED'].includes(prState?.(repo, pr) ?? ''), readyHead)
+    const said = ready === undefined ? agent : { ...agent, ready }
     const brief = briefOf(state, agent.name)
-    if (brief === undefined) return agent
+    if (brief === undefined) return said
     // A brief that cannot be read binds no row: the takeover still prints the rest of the state.
     let row: string | undefined
     try { row = rowOfBrief(readText(brief)) } catch { row = undefined }
-    return row === undefined ? { ...agent, brief } : { ...agent, brief, row }
+    return row === undefined ? { ...said, brief } : { ...said, brief, row }
   })
   // A row of a record older than the ledger names no pull request the ledger holds: the forge's open
   // ones are matched to the open rows, by what a label names and the heads its review recorded.
@@ -744,11 +768,15 @@ export function notInstalled(worktree: string, env: Env, now: Date): string {
  * it holds them; undefined where it holds no current reading of the repository or does not hold the
  * pull request.
  */
-export function filePrs(env: Env, now: number): { readonly state: (repo: string, pr: number) => string | undefined; readonly open: OpenPrReader } {
+export function filePrs(env: Env, now: number): {
+  readonly state: (repo: string, pr: number) => string | undefined; readonly open: OpenPrReader; readonly ready: (repo: string, pr: number) => string | undefined
+} {
   const file = parsePrFile(readText(prFilePath(stateRoot(env))) ?? '')
   return {
     state: (repo, pr) => prsOfRepo(file, repo, now)?.find(one => one.pr === pr)?.state,
     open: repo => prsOfRepo(file, repo, now)?.filter(one => one.state === 'OPEN').map(one => ({ repo, pr: one.pr, head: one.sha })),
+    // The head a pull request carries Ready at; undefined when it is not Ready, or its repository's reading is not current.
+    ready: (repo, pr) => readyHeadsOf(prsOfRepo(file, repo, now) ?? []).get(prKey(repo, pr)),
   }
 }
 
@@ -814,6 +842,8 @@ export interface Deps {
   readonly now: () => Date
   readonly prState?: (repo: string, pr: number) => string | undefined
   readonly openPrs?: OpenPrReader
+  /** The head a pull request carries Ready at; undefined when it is not Ready or cannot be read. */
+  readonly readyHead?: (repo: string, pr: number) => string | undefined
   /** The window index of the home session's pane on a tty; undefined when no tmux pane runs there. */
   readonly paneWindow?: (tty: string) => number | undefined
   /** The launcher's `list` rows; undefined when it cannot be read. */
@@ -904,7 +934,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const launcher = join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh')
   const prs = filePrs(env, now.getTime())
   const prState = deps.prState ?? prs.state
-  const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))(), prState)
+  const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))(), prState, deps.readyHead ?? prs.ready)
   if ((open.disagree ?? 0) > 0) {
     const journal = deps.journal ?? scriptJournal(env, deps.now, line => io.err(`${line}\n`))
     writeAudit(journal, auditRun(env, now), 'failure', 'orchestrator.succession.agents', { failure: 'succession-lost-state', count: open.disagree ?? 0, prs: [] })
