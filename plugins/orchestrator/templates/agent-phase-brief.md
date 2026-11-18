@@ -23,7 +23,7 @@ Read {{READ}}, the repository's own instructions (its quality gate, its workflow
 - The quality gate runs on the final head, its exit code read; a scoped run covers the tests of every file touched, and a signature, constructor or service change runs the full gate.
 - Every command runs synchronously in its tool call; a long suite under `set -o pipefail`, piped to `tail`, with `timeout: 600000`. Never end a turn waiting for a run.
 - Scratch lives in your host's scratchpad and stays there; anything else you built is removed by its literal path, never through a shell variable.
-- No writing or reviewing delegates: read-only search subagents and your self-review's `orchestrator:lens` readers only, each at the model `{{LENS_MODEL}}` prints.
+- No writing or reviewing delegates: read-only search subagents and your self-review's `orchestrator:lens` readers only, each at the model `{{LENS_MODEL}}` prints (`host-default`: none).
 - No force-push, merge, configuration change or other branch without STOP-and-ask. Push with one bare command, `git push -u origin {{BRANCH}}`.
 - The repository's rules point at its policy; where they contradict a directive of your host, say so and stop.
 

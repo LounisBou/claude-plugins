@@ -28,7 +28,8 @@ import { isAbsolute, join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { fill } from './succession.ts'
-import { diffFiles, MODELS, tierOf, type Tier } from './lens-model.ts'
+import { diffFiles, modelOf, tierOf, type Tier } from './lens-model.ts'
+import { Refused } from '../../iterm-agents/scripts/tier.ts'
 
 export const USAGE =
   'usage: review-brief.sh --out <path> --repo <owner/name> --pr <n> --title "<delivery>" --spec <path> --index <path> --delivery-report <path> --branch <b> --head <sha> '
@@ -126,7 +127,7 @@ function values(f: Fields): Record<string, string> {
     ROUND_SIZE: f.size !== '' ? f.size : lensed ? `${f.lenses.length} read-only lenses (${f.lenses.join(', ')})` : 'a single reading by you',
     ROUND_SIZE_REASON: f.reason,
     LENS_TIER: lensed ? tier : 'none',
-    LENS_MODEL: lensed ? MODELS[tier] : 'none',
+    LENS_MODEL: lensed ? modelOf(tier) : 'none',
     LENSES: lensed ? [f.lenses.map(lens => `- ${lens}`).join('\n'), ...(f.scope === '' ? [] : [f.scope])].join('\n\n') : f.scope === '' ? 'none' : `none\n\n${f.scope}`,
     SCREENSHOT_CHECKLIST: CHECKLIST,
     REPORT_PATH: f.index,
@@ -158,7 +159,14 @@ export function main(argv: readonly string[], io: Io, template?: string, templat
     }
     text = readFileSync(templatePath, 'utf8')
   }
-  const known = values(parsed)
+  let known: Record<string, string>
+  try {
+    known = values(parsed)
+  } catch (error) {
+    if (!(error instanceof Refused)) throw error
+    io.err(`review-brief: ${error.message}\n`)
+    return 2
+  }
   const unknown = placeholdersOf(text).filter(name => !(name in known))
   if (unknown.length > 0) {
     io.err(`review-brief: the template has fields this command does not fill: ${unknown.map(name => `{{${name}}}`).join(', ')}\n`)

@@ -2,19 +2,36 @@
 //
 //   lens-model.sh [--base <ref>] [--head <ref>] [--dir <checkout>]
 //
-// Prints one word, `haiku`, `sonnet` or `opus`: the `model` of each `orchestrator:lens` the session
-// launches over `<base>...<head>` (`origin/main` and `HEAD` by default). Documentation and prose
-// alone read at haiku; a diff that touches a security boundary, a guard, a consent, data or a
-// migration reads at opus; every other diff reads at sonnet. A diff that cannot be read, or an empty
-// one, is the default class. The review brief's `{{LENS_MODEL}}` is this same answer.
+// Prints one word: the model the operator's tier map binds to the readers' tier, or `host-default`
+// when that tier is unbound (the readers are launched with no `model`). The tier is the diff's class
+// over `<base>...<head>` (`origin/main` and `HEAD` by default): documentation and prose alone read at
+// `light`; a diff that touches a security boundary, a guard, a consent, data or a migration reads at
+// `deep`; every other diff reads at `standard`. A diff that cannot be read, or an empty one, is the
+// default class. The review brief's `{{LENS_MODEL}}` is this same answer.
 import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { isEntry, processIo, type Io } from './lib/process.ts'
+import { modelsMapOf, Refused, resolveTierPair } from '../../iterm-agents/scripts/tier.ts'
 
 export const USAGE = 'usage: lens-model.sh [--base <ref>] [--head <ref>] [--dir <checkout>]'
 
 export type Tier = 'light' | 'standard' | 'deep'
-/** The model each tier of readers runs at, a family of the host's model aliases. */
-export const MODELS: Readonly<Record<Tier, string>> = { light: 'haiku', standard: 'sonnet', deep: 'opus' }
+
+/** What a launch is told when the tier map binds the tier to no model. */
+export const UNBOUND = 'host-default'
+
+/** The model the operator's tier map binds to `tier`, or `host-default`; a map that does not read is refused by the map's own reader. */
+export function modelOf(tier: Tier, env: Readonly<Record<string, string | undefined>> = process.env): string {
+  const read = (path: string): string | null => {
+    try {
+      return readFileSync(path, 'utf8')
+    } catch {
+      return null
+    }
+  }
+  return resolveTierPair(tier, modelsMapOf(env, homedir()), { env, read, warn: () => {} }).model || UNBOUND
+}
 
 /** A path whose change is a security boundary, a guard, a consent, data or a migration. */
 const CRITICAL = /(^|[/._-])(guard|secur|auth(?!or)|permission|secret|credential|consent|migrat|schema|sql$)/i
@@ -51,7 +68,13 @@ export function main(argv: readonly string[], io: Io): number {
     }
     values.set(name, value)
   }
-  io.out(`${MODELS[tierOf(diffFiles(values.get('dir') ?? '.', values.get('base') ?? 'origin/main', values.get('head') ?? 'HEAD'))]}\n`)
+  try {
+    io.out(`${modelOf(tierOf(diffFiles(values.get('dir') ?? '.', values.get('base') ?? 'origin/main', values.get('head') ?? 'HEAD')))}\n`)
+  } catch (error) {
+    if (!(error instanceof Refused)) throw error
+    io.err(`lens-model: ${error.message}\n`)
+    return 1
+  }
   return 0
 }
 

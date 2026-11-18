@@ -7,8 +7,17 @@ import { test } from 'node:test'
 import { main, parseArgs, placeholdersOf, TEMPLATE, USAGE } from './review-brief.ts'
 
 let dir = ''
-test.beforeEach(() => { dir = realpathSync(mkdtempSync(join(tmpdir(), 'review-brief-'))) })
-test.afterEach(() => rmSync(dir, { recursive: true, force: true }))
+const savedMap = process.env['ORCHESTRATOR_MODELS_MAP']
+test.beforeEach(() => {
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'review-brief-')))
+  // The operator's own tier map never reaches a test: a map of its own, bound by each test that needs one.
+  process.env['ORCHESTRATOR_MODELS_MAP'] = join(dir, 'models.json')
+})
+test.afterEach(() => {
+  if (savedMap === undefined) delete process.env['ORCHESTRATOR_MODELS_MAP']
+  else process.env['ORCHESTRATOR_MODELS_MAP'] = savedMap
+  rmSync(dir, { recursive: true, force: true })
+})
 
 const FIELDS = (): string[] => [
   '--out', join(dir, 'review-12.md'), '--repo', 'acme/app', '--pr', '12', '--title', 'a fix of the thing (row 9 THING)',
@@ -194,7 +203,8 @@ test('parseArgs reads each flag once and the last one wins', () => {
   if (!('error' in parsed)) assert.equal(parsed.reason, 'second')
 })
 
-test('the readers\' model is the diff\'s class: haiku for prose, opus for a guard, sonnet otherwise, and --tier overrides it', () => {
+test('the readers\' tier and model are the diff\'s class: light for prose, deep for a guard, standard otherwise, and --tier overrides it', () => {
+  writeFileSync(join(dir, 'models.json'), '{"light": "small-model", "standard": "mid-model", "deep": "big-model"}')
   const git = (cwd: string, ...args: string[]): void => { execFileSync('git', ['-C', cwd, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]) }
   const checkout = join(dir, 'checkout')
   mkdirSync(checkout)
@@ -213,21 +223,27 @@ test('the readers\' model is the diff\'s class: haiku for prose, opus for a guar
   writeFileSync(join(checkout, 'docs', 'a.md'), 'a')
   git(checkout, 'add', '-f', '.')
   git(checkout, 'commit', '-q', '-m', 'docs')
-  assert.match(brief([], 'prose.md'), /at the \*\*light\*\* tier, `model: haiku`/)
+  assert.match(brief([], 'prose.md'), /at the \*\*light\*\* tier, `model: small-model`/)
   writeFileSync(join(checkout, 'draft-guard.ts'), 'a')
   git(checkout, 'add', '.')
   git(checkout, 'commit', '-q', '-m', 'guard')
-  assert.match(brief([], 'guard.md'), /at the \*\*deep\*\* tier, `model: opus`/)
-  assert.match(brief(['--tier', 'light'], 'forced.md'), /at the \*\*light\*\* tier, `model: haiku`/)
+  assert.match(brief([], 'guard.md'), /at the \*\*deep\*\* tier, `model: big-model`/)
+  assert.match(brief(['--tier', 'light'], 'forced.md'), /at the \*\*light\*\* tier, `model: small-model`/)
 })
 
-test('the model follows the tier, and reads none with no lens', () => {
+test('the model follows the tier from the map, is host-default when the tier is unbound, reads none with no lens, and a map that does not read is refused', () => {
   assert.equal(run([...FIELDS(), '--lens', 'tests']).code, 0)
-  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /at the \*\*standard\*\* tier, `model: sonnet`/)
+  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /at the \*\*standard\*\* tier, `model: host-default`/)
   rmSync(join(dir, 'review-12.md'))
+  writeFileSync(join(dir, 'models.json'), '{"deep": "big-model/high"}')
   assert.equal(run([...FIELDS(), '--lens', 'tests', '--tier', 'deep']).code, 0)
-  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /`model: opus`/)
+  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /`model: big-model`/)
   rmSync(join(dir, 'review-12.md'))
   assert.equal(run(FIELDS()).code, 0)
   assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /at the \*\*none\*\* tier, `model: none`/)
+  rmSync(join(dir, 'review-12.md'))
+  writeFileSync(join(dir, 'models.json'), 'not json')
+  const refused = run([...FIELDS(), '--lens', 'tests'])
+  assert.equal(refused.code, 2)
+  assert.match(refused.err, /^review-brief: resolve-tier: .*does not read as a tier map/)
 })
