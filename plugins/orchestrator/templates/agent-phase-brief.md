@@ -29,7 +29,7 @@ Read {{READ}}, the repository's own instructions (its quality gate, its workflow
 
 ## Communication and delivery
 
-- Report on start and on each push, 3 lines at most. A question, a blocker (with a proposed resolution) or the final report ends your turn on one line, `status: question|blocked|done — <one line>`; the hooks module relays it.
+- A question, a blocker (with a proposed resolution) or the final report ends your turn on one line, `status: question|blocked|done — <one line>`; the hooks module relays it.
 - Draft pull request on `{{BASE}}`, opened with the github tool's `pr-create --draft`, never `Ready`: that is the github ready gate's; its title and description follow the rules that tool shows; your self-review findings go in your report only. Figures once, on the final head. You never watch its checks.
 - The final report goes to {{REPORT_PATH}}: suite exit code and counts, the E2E line, the image lines, deviations, doubts. Your turn ends on `<repo>#<pr> <head7> — <verdict> — blocking: <file:line, …|none> — report: {{REPORT_PATH}}`, then the status line. You may be closed when your pull request is Ready: the orchestrator resumes you or starts a fresh agent for later work.
 - Past your context gate: finish the current unit, then stop and say so. Work that needs more judgment than this brief anticipated: say so with the evidence and stop.

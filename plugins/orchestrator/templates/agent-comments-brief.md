@@ -58,9 +58,8 @@ You are the COMMENTS agent for this round. You assess every open review thread w
 ## 6. Communication
 
 - Your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** — its exact `ListAgents` name and reference.
-- Report on start (verified state plus the re-fetched thread list) and per thread (assessment first, then outcome).
-- A question, a blocker (STOP + proposed resolution) or the final report: end your turn on it: write it, then one last line, plain text: `status: question|blocked|done — <one line>`. The hooks module sends it to the orchestrator; never send it yourself too. The orchestrator relays a question for the operator verbatim, and his answer back verbatim.
-- The final report goes to `{{REPORT_PATH}}`: threads and their outcomes, suite exit code and counts, deviations from this brief, anything wrong or doubtful. Your turn ends on its verdict line, then your status line: `<repo>#<pr> <head7> — <verdict> — blocking: <file:line, …|none> — report: {{REPORT_PATH}}`. Intermediate messages: 3 lines at most; each per-thread assessment, the reviewer's words included, goes in full to a file its message names.
+- A question, a blocker (STOP + proposed resolution) or the final report: end your turn on it: write it, then one last line, plain text: `status: question|blocked|done — <one line>`. The hooks module sends it to the orchestrator. The orchestrator relays a question for the operator verbatim, and his answer back verbatim.
+- The final report goes to `{{REPORT_PATH}}`: threads and their outcomes, suite exit code and counts, deviations from this brief, anything wrong or doubtful. Your turn ends on its verdict line, then your status line: `<repo>#<pr> <head7> — <verdict> — blocking: <file:line, …|none> — report: {{REPORT_PATH}}`. Each per-thread assessment, the reviewer's words included, goes in full to a file the message that sends it names.
 - The hooks module reports your measured context to the orchestrator at the gate and with your delivery. Past the gate: finish the current unit, then stop and say so.
 
 ## 7. Delivery
