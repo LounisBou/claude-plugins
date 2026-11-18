@@ -246,8 +246,8 @@ type Chain = { ttys: ReadonlySet<string> } | { kind: 'refused' | 'later'; why: s
 
 /*
  * The ttys of this orchestration's agents: the entries of the launcher's chain under the session's own tty that this
- * session wrote (its chain owner, the rule of the stop gate and the pane). A chain owner unknown refuses every close,
- * as the stop gate counts no entry then; a tty or a chain unread waits for a later tick; both are logged.
+ * session wrote (its chain owner, the rule of the turn end and the pane). A chain owner unknown refuses every close,
+ * as the turn end counts no entry then; a tty or a chain unread waits for a later tick; both are logged.
  */
 async function chainTtys($: Held): Promise<Chain> {
   const owner = await chainOwner($)

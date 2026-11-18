@@ -359,8 +359,8 @@ export async function storeOf($: Host<'env'>): Promise<string> {
 
 // The key is the session's own: one file per session id, so two sessions
 // writing at once write two files and neither merge can lose the other's row.
-// The id is sanitised the way the stop gate sanitises its own paths — the key
-// names a file, and an id is host-generated but never trusted as a path.
+// The id is sanitised: the key names a file, and an id is host-generated but
+// never trusted as a path.
 export function sessionKey(id: string): string {
   return `sessions/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
 }
@@ -843,7 +843,7 @@ export function agentPaneRows(agents: readonly AgentView[]): { label: string; na
 }
 
 // The agents of the orchestrator on `tty`: the launcher's chain entries its own
-// tab wrote (the owner is the terminal session's id, the stop gate's rule — no
+// tab wrote (the owner is the terminal session's id, the turn end's rule — no
 // owner, no entry counted: a recycled tty's occupant would be), each read
 // through the process on the agent's tty to the host's record of it, and that
 // session's store row. An entry no live session answers for is an agent gone.
@@ -3793,7 +3793,7 @@ async function showTabState($: Host<'env' | 'plugin' | 'process'>, state: TabSta
 // The windows of the agents whose pull request was read: merged or closed, their work is over and
 // their orchestrator owes their close (`over`); an open one that carries Ready turns a delivery's
 // window from « under review » to « done », and one that lost it back (stateAfterPr). Asked by the
-// orchestrator's stop gate, which already reads each idle agent's pull request: no poller of its
+// orchestrator's turn end, which reads each idle agent's pull request: no poller of its
 // own. The agents are named by the ttys of their panes, found on the server this session runs in;
 // each state stands until the window's own session writes its next. A session outside a home
 // session shows nothing; a failure is said once (until a write of this session's own succeeds) and
@@ -3898,8 +3898,8 @@ export async function transcriptPathOf($: Host<'env' | 'fs'>, sessionId: string)
 }
 
 // The session's repository (`owner/name`), this file's own one-line read of
-// the origin remote — the per-file convention again: the stop gate's
-// repositoryOf holds its own $ and cannot be imported. The read runs in the
+// the origin remote — the per-file convention again: no other
+// file's reader holding $ can be imported. The read runs in the
 // working directory the host runs the module in, the session's project; null
 // when there is no origin: a session outside any checkout reports no
 // repository, never a failure. Bounded (REPO_READ_MS): it runs in the pane's

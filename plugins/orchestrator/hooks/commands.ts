@@ -240,7 +240,7 @@ export function progressLines(groups: readonly DispatchRow[][], goals: readonly 
 // id sanitised the way every key in the store is, under the root that tool
 // itself resolves (the override or the config dir). Each record is read under
 // the bound; a record that cannot answer in time, or is missing, or torn
-// contributes no rows (the stop gate reads them the same way), and a registry
+// contributes no rows (the declared wait reads them the same way), and a registry
 // that itself loses the race is said as unreadable rather than as absent.
 async function progressText($: Held): Promise<string> {
   const id = await $.session.id()

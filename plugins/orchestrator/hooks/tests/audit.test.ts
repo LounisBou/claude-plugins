@@ -6,7 +6,7 @@
 // body or command; a journal that cannot be written changes no answer.
 import { expect, test } from 'claude-code/testing'
 import { register, refusalCode } from '../audit.ts'
-import { observed, STOP_GATE_CODE } from '../observe.ts'
+import { observed, MAP_WRITE_CODE } from '../observe.ts'
 import { PULL_URL } from '../audit-events.ts'
 import { guardFallback, killDecision } from '../guards.ts'
 import { MODELS_DENY } from '../models-guard.ts'
@@ -97,17 +97,17 @@ test('a guard\'s refusal is written once, as a version 1 refusal, and the refusa
 
 test('a guard that observes writes one version 1 escape under its code; a journal that fails is one log line', async () => {
   const fx = fake({ name: 'Orch: belt' })
-  await observed(fx.dollar as never, STOP_GATE_CODE)
+  await observed(fx.dollar as never, MAP_WRITE_CODE)
   const [event] = fx.journal()
   expect(fx.journal().length).toBe(1)
   expect(event).toEqual({
-    v: 1, id: event.id, at: event.at, kind: 'escape', source: { plugin: 'orchestrator', code: STOP_GATE_CODE },
+    v: 1, id: event.id, at: event.at, kind: 'escape', source: { plugin: 'orchestrator', code: MAP_WRITE_CODE },
     subject: { repo: null, pr: null, head: null }, context: { role: 'orchestrator', mode: null, paths: [], languages: [], session: 'sess-1' },
-    evidence: [{ type: 'refusal', code: STOP_GATE_CODE }], trust: 'computed',
+    evidence: [{ type: 'refusal', code: MAP_WRITE_CODE }], trust: 'computed',
   })
   expect(parseJournalEvent(event)).toEqual(event)
   const broken = fake({ broken: true })
-  await observed(broken.dollar as never, STOP_GATE_CODE)
+  await observed(broken.dollar as never, MAP_WRITE_CODE)
   expect(broken.journal()).toEqual([])
   expect(broken.logged.some(line => line.includes('the journal could not be written'))).toBe(true)
 })

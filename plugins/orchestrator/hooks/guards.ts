@@ -7,51 +7,41 @@
 // refused, since a session kills only what it started, by pid. A forced push is
 // the forge's to refuse (github's `/github:protect`), never a reading of the
 // command's text here. And
-// the stop gate, hooks/stop_gate.py ported: a stop is held until something
-// will wake the orchestrator — a busy agent's idle notice, the answer to a
-// declared block, the end of a watched pull request's checks. The shell
-// originals are gone with the cutover — these ports are the pipeline now.
+// an orchestrator's turn end, which decides nothing of the stop: it arms the
+// module's tick on the busy agents and the pull requests, shows the idle
+// agents' pull requests on their windows, and sweeps the checkouts.
 //
 // The engine fences $ to the file that received it — never passed across an
 // import, a noun of it never read as a value — so the transcript block reader
 // lives here, next to the handlers that hold $, while the name walk's logic
 // stays pure in session-name.ts (readName below delegates to it over this
-// file's own readers) and the stop gate's decisions in stop-gate.ts.
+// file's own readers) and the turn end's pure parts in stop-gate.ts.
 import {
   roleOf, walkName, hostOn, scanTail, hostBasenames, blockArgv, bytesOfBase64, hostRecordOf,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
 import { tripGate, parseMeasure, measureFilePath, newerInstalled, generationLived, runtimeChanges, runtimeDiffArgv, homeReloadArgv, type Newer } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
-import { isEnding } from './naming.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
   withDeadline, isDegradedPass, type DegradedPass,
-  listing, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, projectCheckouts,
-  headsPath, readHeads, writeHeads, parseCiWatchLog, watchedNumbers,
-  checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
-  noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, type GoalsReading,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, todoOpen, liveNames,
-  busyWake, type BusyAgent, type OwnAgent,
+  listing, chainOwner, ownAgents, hostStatusOf, pullRequestOf, isSuccessorSpawn,
+  orchestrationOf, ownerOf, isOwnRecord, busyWake, type BusyAgent, type OwnAgent,
 } from './stop-gate.ts'
-import { CI_WATCH_DIR, launcherOf, recordsRegistryPath, watchNumberOf } from '../core/orchestration.ts'
+import { launcherOf, recordsRegistryPath } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
-import { agentsOf, ledgerLines, readyRows, readyRowsLine } from '../core/pr-ledger.ts'
+import { agentsOf, ledgerLines } from '../core/pr-ledger.ts'
 import { coordinatorAddress, REFERENCED, refreshRowAndDeck, showPrStates } from './supervision.ts'
 import { pullRequestsRead } from './tab-state.ts'
-import { readAsked } from './question.ts'
-import { fieldsOf, messageOf, reasonOf, type FsEntry, type Host, type On, type ProcessRunResult } from './host.ts'
+import { fieldsOf, messageOf, reasonOf, type Host, type On, type ProcessRunResult } from './host.ts'
 import { asksTheMode } from './mode-dialog.ts'
-import { unnamedReport } from './relay.ts'
 import { shorten } from '../core/verdict.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
-import { openFor } from './todo.ts'
 import {
-  MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, REPORT_UNNAMED_CODE, STOP_GATE_CODE, WAITED_ON_DIALOG_CODE,
+  MAP_WRITE_CODE, MODE_DIALOG_CODE, observed, REPORT_UNNAMED_CODE, WAITED_ON_DIALOG_CODE,
 } from './observe.ts'
-import { todoName } from './todo-format.ts'
 import { prWake } from './ledger.ts'
 import { projectRecords } from './unattended.ts'
 import { PR_FILE_INTERVAL_MS } from './pr-file-format.ts'
@@ -272,7 +262,7 @@ async function changesRuntime($: Held, newer: Newer): Promise<boolean> {
   return run.exitCode === 1 && runtimeChanges(String(run.stdout ?? ''), newer, await loadedPlugins($)).length > 0
 }
 
-// `declarations`: the waits this session's turns declared, the one the stop gate decides on (wait.ts).
+// `declarations`: the waits this session's turns declared and its hand-over (wait.ts), read at the turn's end (supervision.ts).
 export function register(on: On<Held>, declarations: Declarations = DECLARATIONS): void {
   // Module memory, the gauge's own law: a reload resets it all. The transcript's
   // place and the version decided are the session's own, keyed by its id: after a
@@ -281,18 +271,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // decided (told, or found to change nothing the session runs), `announced` whether
   // a version notice was given.
   let memo: { sessionId: string; transcript: string | null; toldCommit: string | null; announced: boolean } | null = null
-  // The session id that handed over (it spawned its successor), the stop gate's
-  // release: keyed by id like the memo above, a /clear's new session has not.
-  let handedOverIn: string | null = null
-  // The peers whose idle notice this session subscribed to (SendMessage with
-  // notify_when_idle), each with the time it was asked: the stop gate's release until
-  // the peer's notice or message comes in, or the time-to-live runs out. Keyed by the
-  // session id like the two above.
-  let awaited: { sessionId: string; peers: Map<string, number> } | null = null
-  const awaitingIn = (sessionId: string): boolean => {
-    if (!awaited || awaited.sessionId !== sessionId) return false
-    return awaitingAny(awaited.peers, Date.now())
-  }
   // The launcher's mark, read once and kept: a re-entered call, or one past its
   // budget, can no longer read the environment, and the kill guard's net decides
   // on this instead. Undefined until the first read answers.
@@ -308,12 +286,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       try {
         lastTyped = { sessionId: await $.session.id(), text: String(e.text ?? ''), at: new Date().toISOString() }
       } catch { /* no session id: the guard keeps no word of his, and stays up */ }
-    }
-    // An awaited peer's notice or message ends the wait on it, whatever else this prompt is.
-    if (awaited && awaited.peers.size > 0) {
-      const text = String(e.text ?? '')
-      const kind = String(e.origin?.kind ?? '')
-      for (const peer of [...awaited.peers.keys()]) if (noticeFrom(peer, text, kind)) awaited.peers.delete(peer)
     }
     // The model drift the gauge measured is said on this channel — the context the
     // model reads beside the prompt, never only a toast nobody sees — whatever the
@@ -376,9 +348,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     return next(e)
   })
 
-  // A subscription to a peer's idle notice, made by the main thread and sent: kept for
-  // the stop gate, which reads it as something that will wake the session. Mounted
-  // before the Bash guard below.
+  // An agent's long message to its orchestrator. Mounted before the Bash guard below.
   on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
     const { to: target, message } = e
     const to = typeof target === 'string' ? target.trim() : ''
@@ -407,17 +377,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         }
       }
     }
-    const out = await next(sending)
-    if (!e.agentId && e['notify_when_idle'] === true && to && out && !answered(out).isError && !answered(out).deny) {
-      try {
-        const sessionId = await $.session.id()
-        if (!awaited || awaited.sessionId !== sessionId) awaited = { sessionId, peers: new Map() }
-        awaited.peers.set(to, Date.now())
-      } catch (err) {
-        await logLine($, 'guards', `the subscription to ${to} could not be kept: ${messageOf(err)}`)
-      }
-    }
-    return out
+    return next(sending)
   }).catch(async ($, e, next) => {
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
@@ -485,7 +445,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // `e.command`, never a nested `input` — and the deny the engine documents for
   // the event is `{ deny: reason }`, the decision's own shape already, the
   // matcher keeping it to Bash calls. The same hook watches for the successor's
-  // spawn: run without error, it is the hand-over the stop gate releases on.
+  // spawn: run without error, it is the hand-over the turn's end reads (supervision.ts).
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const command = String(e['command'] ?? '')
     try {
@@ -502,8 +462,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     const out = await next(e)
     if (!e.agentId && isSuccessorSpawn(command) && out && !answered(out).isError && !answered(out).deny) {
       try {
-        handedOverIn = await $.session.id()
-        declarations.handOver(handedOverIn)
+        declarations.handOver(await $.session.id())
       } catch (err) {
         await logLine($, 'guards', `the hand-over could not be kept: ${messageOf(err)}`)
       }
@@ -521,43 +480,25 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     return fallback ?? next(e)
   })
 
-  // The stop gate (hooks/stop_gate.py ported; the decisions in stop-gate.ts). The
-  // classic events carry the settings payload's own fields — the shipped types give
-  // classic.Stop the transcript path, the cwd and the last assistant message beside the
-  // module's — so the scope and the message are read off the event itself. Since the
-  // operator's ruling of 2026-11-15 the gate refuses no stop:
-  // each stop it would have held passes, with one `let through` log line and one escape in the journal. The shell gate
-  // that once answered the same stops is gone with the cutover — this handler is the only
-  // stop gate.
+  // An orchestrator's turn end: the module acts and decides nothing of the stop, which always
+  // passes. It arms the tick on the session's busy agents and on its pull requests, shows each
+  // idle agent's pull request on its window, and sweeps the checkouts. The classic events carry
+  // the settings payload's own fields — the transcript path among them — so the scope is read off
+  // the event itself. Every read races one deadline; a read that fails is a log line, and the stop
+  // passes all the same.
   on('classic.Stop', async ($, e, next) => {
-    // The sweep's one shot, armed once the stop is known Orch-scoped: every passing
-    // exit below calls it before next(e), a refusal never does, and the catch does too
-    // (the shell gate's own finally — a stop the gate could not read through passes all
-    // the same, and sweeps). Null until the scope is settled, so a failure before it
-    // sweeps nothing.
+    // The sweep's one shot, armed once the stop is known an orchestrator's: every exit below
+    // calls it before next(e), the catch too. Null until the scope is settled, so a failure
+    // before it sweeps nothing.
     let sweepAtStop: (() => Promise<void>) | null = null
-    // Observed, not refused: what the gate once refused the stop for is logged whole, the journal
-    // holds one escape under the gate's code, and the stop passes, swept as any other.
-    // The open rows ready with nobody on them, once the launcher's listing is read: said in every line
-    // the gate writes for a stop it lets through, and a warning of its own for one that would pass.
-    let readiness: (() => Promise<string | null>) | null = null
-    const letThrough = async (reason: string | null): Promise<unknown> => {
-      const ready = await readiness?.() ?? null
-      const said = [reason, ready].flatMap(text => text ?? []).join('\n')
-      await logLine($, 'guards', `stop gate: let through: ${said.replace(/\s*\n\s*/g, ' ')}`)
-      await observed($, STOP_GATE_CODE)
-      await sweepAtStop?.()
-      return next(e)
-    }
     try {
-      // A stop another gate already held this turn is re-fired with the marker set: this gate,
-      // which only observes, steps aside before it reads anything, its line already written.
+      // A stop another hook already held this turn is re-fired with the marker set: its acts already ran.
       if (e.stop_hook_active) return next(e)
       const sessionId = String(e.session_id ?? '')
       // The scope first, from the session itself: the launcher's listing is a call to
       // the terminal, and every agent's, auditor's and hand-started session would pay it.
       const transcript = String(e.transcript_path ?? '') || await transcriptPathOf($, sessionId)
-      // One deadline over the whole gate, the name walk included: its reads are bounded.
+      // One deadline over the whole handler, the name walk included: its reads are bounded.
       const until = Date.now() + await stopDeadline($)
       const { tty, name, pid } = await readName($, transcript, sessionId, until)
       if (!tty) {
@@ -568,35 +509,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         await logLine($, 'guards', `stop gate: the session's name cannot be read on ${tty}`)
         return next(e)
       }
-      const role = roleOf(name)
-      if (role === 'agent') {
-        // An agent's report over the verdict limit that names no report file: observed, the way said in the log.
-        const short = shorten(String(e.last_assistant_message ?? '').trim())
-        if (short.kind === 'unnamed') {
-          await logLine($, 'guards', `stop gate: an agent's report of ${short.length} characters names no report file`)
-          return await letThrough(unnamedReport(short.length))
-        }
-        return next(e)
-      }
-      // A question asked with `ask` still open stays in the round until he answers it, its answer
-      // waking the session; unless the session handed over: its successor holds the questions.
-      let opened: { id: string; ask: string }[] = []
-      if ((role === 'orchestrator' || role === 'auditor') && sessionId !== '' && handedOverIn !== sessionId && !isEnding()) {
-        const read = await inTime($, async () => (await readAsked($)).filter(entry => entry.status === 'open' && entry.sender.session === sessionId), until)
-        if (read !== null) opened = read
-      }
-      if (role === 'auditor') {
-        // An auditor ends on no gate of its own, except its list: an item still open and no wait declared is refused once.
-        const owed = await quietly($, () => openFor($, name), until, { pending: [], deferred: [] })
-        const open = [...owed.pending, ...owed.deferred]
-        if (declarations.current() !== null || open.length === 0) return next(e)
-        await logLine($, 'guards', `stop gate: an auditor with ${open.length} open to-do`)
-        return await letThrough(todoOpen(open.map(todoName)))
-      }
-      if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
-      if (role === 'coordinator') return next(e)
+      if (roleOf(name) !== 'orchestrator') return next(e)
       const state = await stateDir($)
-      const questionOpen = opened.length > 0
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
       let swept = false
       sweepAtStop = async () => {
@@ -604,40 +518,23 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         swept = true
         await runSweep($, state, root, until)
       }
-      // Check 1, what will wake you. The agents of this orchestrator are the chain
-      // entries its own session wrote, still running one by the listing's glyph.
+      // The agents of this orchestrator are the chain entries its own session wrote, still
+      // running one by the listing's glyph.
       const rows = listing(await mustRun($, ['bash', launcherOf(root), 'list'], "the launcher's listing", until))
       const chain = await quietly($, () => $.fs.read(chainPath(state, tty)), until, '')
       const owner = await chainOwner($)
       if (!owner) {
-        // Said once per stop, as the shell gate said it (stop_gate.py:232): without the
-        // owner no chain entry is counted, and the operator should know why the gate
-        // saw no agent of its own — a recycled tty's occupant would have been counted.
+        // Without the owner no chain entry is counted, and the log says why no agent of its own was seen.
         await logLine($, 'guards', 'stop gate: ITERM_SESSION_ID is not set: no chain entry is counted')
       }
       const entries = parseChain(String(chain))
-      // The orchestration's records, scanned once per stop whichever read needs them first.
-      let recordsOnce: Promise<string[]> | undefined
-      const recordsOf = () => (recordsOnce ??= registeredRecords($, state, sessionId, orchestrationOf(name), until))
-      let readyOnce: string | null | undefined
-      readiness = async () => {
-        if (readyOnce !== undefined) return readyOnce
-        try {
-          const records = await ownRecords($, await recordsOf(), orchestrationOf(name), until)
-          const texts = await readRecords($, records, until)
-          readyOnce = readyRowsLine(readyRows({ texts, lines: texts.flatMap(text => ledgerLines(text)), live: liveNames(rows) }))
-        } catch (err) {
-          await logLine($, 'guards', `stop gate: ready rows unread: ${reasonOf(err)}`)
-          readyOnce = null
-        }
-        return readyOnce
-      }
-      // The ledger lines of this orchestration's records, read once and only when an idle agent needs them.
+      // The ledger lines of this orchestration's records, read once whichever act needs them first.
       let ledgerOnce: ReturnType<typeof ledgerLines> | undefined
       const ledgerOf = async () => {
         if (ledgerOnce !== undefined) return ledgerOnce
         try {
-          const records = await ownRecords($, await recordsOf(), orchestrationOf(name), until)
+          const own = orchestrationOf(name)
+          const records = await ownRecords($, await registeredRecords($, state, sessionId, own, until), own, until)
           ledgerOnce = (await readRecords($, records, until)).flatMap(text => ledgerLines(text))
         } catch (err) {
           await logLine($, 'guards', `stop gate: ledger unread: ${reasonOf(err)}`)
@@ -646,9 +543,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         return ledgerOnce
       }
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
-      const { agents, resident } = ownAgents(rows, entries, owner, hostStatus)
-      // A busy agent releases the stop below; past the bound in one turn, the tick wakes the session,
-      // as it does on a pull request of the orchestration merged, closed or entering the anomaly.
+      const agents = ownAgents(rows, entries, owner, hostStatus)
+      // Past its bound in one turn, a busy agent wakes the session at the tick, as a pull request
+      // of the orchestration merged, closed or entering the anomaly does.
       const busyNow = agents.filter(agent => agent.state === 'busy')
       tick.own = pid
       if (busyNow.length > 0) {
@@ -657,17 +554,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       }
       tick.watch = (await ledgerOf()).length > 0 || await fileWanted($, state, Date.now())
       if (busyNow.length > 0 || tick.watch) armTick($, tick, 0)
-      // An idle agent whose pull request merged is delivered; one whose pull request is open
-      // is not asked to stand down: it receives the kept findings until its pull request is Ready.
-      const delivered: string[] = []
-      const awaitingMerge: string[] = []
       // What the pull requests read of each idle agent say its window should show (over, or Ready: done).
       const read: { tty: string; pr: { state: string; ready?: boolean | undefined } }[] = []
       for (const agent of agents) {
         if (agent.state !== 'idle') continue
         const pr = await pullRequestRead($, agent.tty, until)
-        if (pr?.state === 'MERGED') delivered.push(`${agent.label} (pull request #${pr.number}, ${pr.state})`)
-        if (pr?.state === 'OPEN') awaitingMerge.push(agent.label)
         if (!pr) continue
         // Every pull request the dispatch record entrusts to the agent counts, the branch's among them.
         const others = (await ledgerOf()).filter(line => agentsOf(line).includes(agent.label)
@@ -676,153 +567,20 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         if (together) read.push({ tty: agent.tty, pr: together })
       }
       await inTime($, () => showPrStates($, read), until)
-      // The process table, read once for both checks: the commands and monitors this
-      // session started in the background (check 1: one still running will wake it, and
-      // names the line that fits) and the ci-watches alive at all (check 2: a head waited
-      // on in the background is not told).
-      let table: ReturnType<typeof processTable> | null = null
-      const processes = async () => {
-        if (table === null) {
-          const ps = await inTime($, () => runUntil($, ['ps', '-axo', 'pid=,ppid=,command='], until), until)
-          table = ps && ps.exitCode === 0 ? processTable(String(ps.stdout ?? '')) : []
-        }
-        return table
-      }
-      const background = ownBackground(await processes(), pid)
-      if (!pid) await logLine($, 'guards', 'stop gate: host pid unread: the process table could not be tied to this session')
-      const wake = checkWake({
-        agents, resident, delivered, background, awaitingMerge,
-        // The host's own list of the session's work in flight, the reliable reading of what will wake it.
-        tasks: hostTasks(e.background_tasks, e.session_crons),
-        awaiting: sessionId !== '' && awaitingIn(sessionId),
-        declared: declarations.current(),
-        handedOver: (sessionId !== '' && handedOverIn === sessionId) || isEnding(),
-        questionOpen,
-      })
-      if (wake !== null && typeof wake === 'object' && 'blocks' in wake) {
-        // The release the machine line grants, logged as the shell gate logged it — the
-        // figures that say whether the gate earns its cost are read there.
-        await logLine($, 'guards', `stop gate: check1 blocks ${wake.blocks}`)
-      } else if (wake !== null && typeof wake === 'object' && 'warn' in wake) {
-        // Measured, not refused: these reminders cost a turn each and mostly turned out wrong.
-        await logLine($, 'guards', `stop gate: warn ${wake.warn}${wake.detail === '' ? '' : ` ${wake.detail}`}`)
-      } else if (wake === 'read-what-is-left') {
-        // The done line: the facts are read only now, as the shell gate read them lazily.
-        const top = await projectTop($, String(e.cwd ?? ''), until)
-        const checkouts = projectCheckouts(top, await mustRun($, ['bash', `${root}/skills/orchestrator/scripts/workspace.sh`, 'list'], 'workspace.sh list', until))
-        const records = await ownRecords($, await recordsOf(), orchestrationOf(name), until)
-        // The ending is the wait the turn declared: done, or deferred with the items it names.
-        const declared = declarations.current()
-        const ids = declared?.kind === 'deferred' ? declared.blocks : null
-        const ending = ids === null ? 'done' : 'deferred'
-        const texts = await readRecords($, records, until)
-        const deferred = openRows(texts)
-        const goals = await readGoals($, records, root, until)
-        const owed = await quietly($, () => openFor($, name), until, { pending: [], deferred: [] })
-        // Measured, not refused: the working copies are not filtered by session, so another
-        // orchestrator's checkout of the same project would hold this one's done line.
-        if (checkouts.length > 0) await logLine($, 'guards', `stop gate: warn working-copies ${checkouts.join(', ')}`)
-        const held = checkWakeDone({
-          agents, checkouts, deferred,
-          deferredRows: deferredRows(texts),
-          goalsOpen: goals.flatMap(g => g.open),
-          goalsDeferred: goals.flatMap(g => g.deferred),
-          goalsFaults: goals.flatMap(g => g.faults),
-          todos: owed.pending.map(todoName),
-          todosDeferred: owed.deferred.map(todoName),
-          rowRecords: recordsWithOpenRows(records, texts),
-          goalsRecords: goals.filter(g => g.open.length > 0).map(g => g.path),
-          ending,
-          ids: ids ?? undefined,
-        })
-        if (held) {
-          await logLine($, 'guards', `stop gate: check1 ${held.case}`)
-          return await letThrough(held.reason)
-        }
-      } else if (wake !== null) {
-        await logLine($, 'guards', `stop gate: check1 ${wake.case}`)
-        return await letThrough(wake.reason)
-      }
-      // Check 2, the real CI state, over what ci-watch already watched: its logs are the
-      // precomputed state, no synchronous network at a stop.
-      if (!sessionId) {
-        await logLine($, 'guards', 'stop gate: no session id: the reported heads cannot be kept')
-        await sweepAtStop?.()
-        return next(e)
-      }
-      // A stop the checks let pass is still said when a ready row has nobody on it: a warning, as the others the gate measures.
-      const passing = async (): Promise<unknown> => {
-        // Measured, not refused: nothing held this stop, so no escape is journalled for it.
-        const ready = await readiness?.() ?? null
-        if (ready !== null) await logLine($, 'guards', `stop gate: warn ready-rows ${ready.replace(/\s*\n\s*/g, ' ')}`)
-        await sweepAtStop?.()
-        return next(e)
-      }
-      const watches = await listCiWatches($, `${state}/${CI_WATCH_DIR}`, until)
-      if (watches === null) return await passing()
-      // The universe of check 2 is this session's own watches: ci-watch wrote beside each
-      // log its owner file, `<log>.session`, holding the id of the session that armed the
-      // watch. A log is kept when its owner file, trimmed, is this session's id. A log with
-      // no owner file was armed by no session, and an owner file that cannot be read is the
-      // same: neither is this session's to be told of, and neither is said. The repository
-      // a watch names decides nothing: a session's own watch is told whatever repository it
-      // names, another session's never is. One widening stays, declared: a dead watch of
-      // this session's closed or merged pull request is still told once per tell — the
-      // shell gate read `--state open` live at the stop and a log name carries no state.
-      let resolvedRepo: { name: string | null; why: string } | null = null
-      const repository = async () => (resolvedRepo ??= await repositoryOf($, String(e.cwd ?? ''), until))
-      const logs = []
-      for (const entry of watches) {
-        const number = watchNumberOf(entry.name)
-        if (!number || entry.kind !== 'file') continue
-        const owner = String(await quietly($, () => $.fs.read(`${state}/${CI_WATCH_DIR}/${entry.name}.session`), until, '')).trim()
-        if (owner !== sessionId) continue
-        const text = await mustReadText($, `${state}/${CI_WATCH_DIR}/${entry.name}`, `the ci-watch log ${entry.name}`, until)
-        const buckets = parseCiWatchLog(text)
-        logs.push({ number, tell: logTell(text), checks: Object.entries(buckets).map(([name, bucket]) => ({ name, bucket })) })
-      }
-      let watched: ReadonlySet<string> = new Set()
-      if (logs.length > 0) {
-        watched = watchedNumbers((await processes()).map(row => row.command).join('\n'))
-      }
-      const headsFile = headsPath(state, sessionId)
-      const reported = readHeads(String(await quietly($, () => $.fs.read(headsFile), until, '')))
-      const { lines, heads } = checkCi({
-        logs,
-        reported,
-        watched,
-        ignored: await ignoredChecks($, state, repository, until),
-        watchCommand: `${root}/skills/orchestrator/scripts/ci-watch.sh`,
-      })
-      // The record is written before the refusal is answered, the shell gate's own
-      // order: a head told is a head recorded even if the host never reads the reason.
-      if (await inTime($, () => $.fs.write(headsFile, writeHeads(heads)), until) === null) {
-        await logLine($, 'guards', 'stop gate: the reported heads unread: the write did not answer in time')
-        throw new GateUnread('the reported heads')
-      }
-      if (lines.length > 0) {
-        await logLine($, 'guards', `stop gate: check2 ci-not-finished ${lines.map(l => l.split('. Report')[0]).join(' ; ')}`)
-        return await letThrough(lines.join('\n'))
-      }
-      // The checks have let the stop pass: the sweep runs now, last and never part of
-      // the decision (the design's « The sweep runs by itself »).
-      return await passing()
+      await sweepAtStop()
+      return next(e)
     } catch (err) {
-      // A gate that cannot read lets the stop pass and says so — one line, already
-      // written where the read failed; anything else the gate broke on is said here.
-      // Never a stop held on the gate's own failure.
+      // A read that failed lets the stop pass — one line, already written where it failed;
+      // anything else the handler broke on is said here. The stop still sweeps.
       if (!(err instanceof GateUnread)) {
         await logLine($, 'guards', `stop gate: ${reasonOf(err)}`)
       }
-      // The shell gate swept in a finally over its checks: a stop it could not read
-      // through passes all the same, and sweeps.
       await sweepAtStop?.()
       return next(e)
     }
   }).catch(async ($, e, next) => {
-    // The registered net the plan's every-handler rule asks validate to see, both laws
-    // above it: the stop is let through, the state dir says why, and next is
-    // replay-safe in a catch, called or not.
+    // The registered net the plan's every-handler rule asks validate to see: the stop is let
+    // through, the state dir says why, and next is replay-safe in a catch, called or not.
     await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -892,15 +650,13 @@ async function runSweep($: Held, stateRoot: string, root: string, until: number)
   } catch { /* the sweep never refuses or delays a stop; its failures are said above */ }
 }
 
-// --- the stop gate's reads (hooks/stop_gate.py ported; the decisions in stop-gate.ts) -----
+// --- the turn end's reads -----------------------------------------------------------------
 
-// The gate's own failure posture (stop_gate.py:692-693): a read that cannot be made is
-// one log line and a stop that passes. Time is the same failure — every read races what
-// is left of one overall deadline, and a read that loses lets the stop pass.
+// A read that cannot be made is one log line and a stop that passes, swept. Time is the same
+// failure — every read races what is left of one overall deadline.
 class GateUnread extends Error {}
 
-// The whole gate's deadline (stop_gate.py:109): seconds, the env override the operator
-// keeps, the shell gate's own default beside it.
+// The turn end's deadline: seconds, the env override the operator keeps, its default beside it.
 async function stopDeadline($: Held): Promise<number> {
   const raw = await $.env.get('ORCHESTRATOR_STOP_GATE_DEADLINE')
   const n = raw === undefined ? NaN : Number(raw)
@@ -1058,8 +814,7 @@ async function quietly<T>($: Held, work: () => Promise<T>, until: number, fallba
   return done === null ? fallback : done
 }
 
-// A read the gate stands down on: it could not be made, so the stop passes and the log
-// says so — never a stop held on the gate's own wait.
+// A read the turn end stands down on: it could not be made, so the stop passes and the log says so.
 async function mustRun($: Held, argv: readonly string[], what: string, until: number): Promise<string> {
   const done = await inTime($, () => runUntil($, argv, until), until)
   if (!done || done.exitCode !== 0) {
@@ -1069,28 +824,11 @@ async function mustRun($: Held, argv: readonly string[], what: string, until: nu
   return String(done.stdout ?? '')
 }
 
-async function mustReadText($: Held, path: string, what: string, until: number): Promise<string> {
-  let text: unknown = null
-  try {
-    const left = until - Date.now()
-    text = left > 0 ? await withDeadline($.fs.read(path), left) : null
-  } catch (err) {
-    await logLine($, 'guards', `stop gate: ${what} unread: ${reasonOf(err)}`)
-    throw new GateUnread(what)
-  }
-  if (text === null || isDegradedPass(text)) {
-    await logLine($, 'guards', `stop gate: ${what} unread: it did not answer in time`)
-    throw new GateUnread(what)
-  }
-  return String(text)
-}
-
 // pull_request_of()'s reads (stop_gate.py:250-275; the launcher's host_cli_cwd): the
 // host process on the agent's tty by the identity rule (hostOn: its record, else its
 // basename), that process's working directory, that checkout's branch, then one gh read
-// run in that checkout — the only network the gate pays, for an idle agent alone. Any
-// read that fails, or cannot answer in time, is no pull request: the refusal simply does
-// not name the agent, never a stop held on it.
+// run in that checkout — the only network the turn end pays, for an idle agent alone. Any
+// read that fails, or cannot answer in time, is no pull request: its window is left as it is.
 async function pullRequestRead($: Held, tty: string, until: number): Promise<{ number: string; state: string; ready?: boolean; repo?: string } | null> {
   const left = () => Math.max(1, until - Date.now())
   const config = await configDir($)
@@ -1125,19 +863,10 @@ async function otherPullRequestRead($: Held, repo: string, pr: number, until: nu
   return read === null ? null : { state: read.state, ...(read.ready === undefined ? {} : { ready: read.ready }) }
 }
 
-// The project's root (project_checkouts' first half): git's answer, or the cwd itself
-// when git gives none. The shell gate resolved the path; the sandbox exposes no
-// resolver, and the cwd names the same project to workspace.sh's own listing.
-async function projectTop($: Held, cwd: string, until: number): Promise<string> {
-  const done = await inTime($, () => runUntil($, ['git', '-C', cwd, 'rev-parse', '--show-toplevel'], until), until)
-  const top = done && done.exitCode === 0 ? String(done.stdout ?? '').trim() : ''
-  return top || cwd
-}
-
-// open_rows()'s reads (stop_gate.py:315-337): the records of the session's orchestration (unattended.ts
-// projectRecords), the session's own register and those another session of the machine registered that
-// its orchestration owns: a successor that never read or wrote its record registered none, and must
-// still answer for its rows and goals. A read that fails is no row.
+// The records of the session's orchestration (unattended.ts projectRecords), whose ledger lines the
+// turn end reads: the session's own register and those another session of the machine registered that
+// its orchestration owns, since a successor that never read or wrote its record registered none. A read
+// that fails is no record.
 // The session's own register is read first, on its own: a scan of the others that does not finish keeps it, said in the log.
 async function registeredRecords($: Held, state: string, sessionId: string, own: string | null, until: number): Promise<string[]> {
   const register = await quietly($, () => $.fs.read(recordsRegistryPath(state, sessionId)), until, '')
@@ -1168,106 +897,4 @@ async function readRecords($: Held, records: readonly string[], until: number): 
   const texts: string[] = []
   for (const path of records) texts.push(String(await quietly($, () => $.fs.read(path), until, '')))
   return texts
-}
-
-// The spec's goals beside each registered record, read by goals.py check — the grammar's one
-// implementation, shared with dispatch-record.sh. A record with no goals.md is a legacy one,
-// opened before the file existed (open refuses without it now): it passes, said once. A
-// check that cannot run, runs out of time, or cannot read its file lets the stop pass on
-// that file, said in the log — the gate's own law. A spec that has moved is a note, logged.
-async function readGoals($: Held, records: readonly string[], root: string, until: number): Promise<GoalsReading[]> {
-  const readings: GoalsReading[] = []
-  for (const path of goalsPaths(records)) {
-    const exists = await inTime($, () => $.fs.exists(path), until)
-    if (exists !== true) {
-      await logLine($, 'guards', `stop gate: ${path.replace(/\/goals\.md$/, '')} has no goals.md`)
-      continue
-    }
-    const done = await inTime($, () => runUntil($, ['bash', `${root}/skills/orchestrator/scripts/goals.sh`, 'check', path, '--json'], until), until)
-    const reading = done && (done.exitCode === 0 || done.exitCode === 1) ? parseGoalsCheck(path, String(done.stdout ?? '')) : null
-    if (!reading) {
-      await logLine($, 'guards', `stop gate: goals unread: ${path}: ${!done ? 'it did not answer in time' : `it exited ${done.exitCode}`}`)
-      continue
-    }
-    for (const note of reading.notes) await logLine($, 'guards', `stop gate: goals ${path}: ${note}`)
-    readings.push(reading)
-  }
-  return readings
-}
-
-// The session's repository (`owner/name`), read from the origin remote of the cwd —
-// the same fact the shell gate read from gh, a local read now. Null when it cannot be
-// known; `why` is the half-line ignored-checks says when it had entries to match.
-async function repositoryOf($: Held, cwd: string, until: number): Promise<{ name: string | null; why: string }> {
-  const remote = await inTime($, () => runUntil($, ['git', '-C', cwd, 'remote', 'get-url', 'origin'], until), until)
-  if (!remote) return { name: null, why: 'the origin remote did not answer in time' }
-  if (remote.exitCode !== 0) return { name: null, why: 'git remote get-url origin did not answer' }
-  const url = String(remote.stdout ?? '').trim()
-  const name = /[:/]([^/:]+\/[^/]+?)(?:\.git)?$/.exec(url)?.[1]
-  if (!name) return { name: null, why: url ? `the origin URL names no repository: ${url}` : 'the origin URL is empty' }
-  return { name, why: '' }
-}
-
-// ignored_checks() ported (stop_gate.py:481-508): the names of the checks the machine
-// ignores for the session's repository, one `<owner>/<repo> <check name>` per line. An
-// absent file is empty; a malformed line is said and dropped (stop_gate.py:498); a file
-// that cannot be read, or a repository that cannot be known, is said once (its
-// unreadable line at :507) and filters nothing: a red is never lost for want of a read.
-async function ignoredChecks(
-  $: Held,
-  state: string,
-  repository: () => Promise<{ name: string | null; why: string }>,
-  until: number,
-): Promise<Set<string>> {
-  let raw: unknown = null
-  try {
-    const left = until - Date.now()
-    raw = left > 0 ? await withDeadline($.fs.read(`${state}/ignored-checks`), left) : null
-  } catch (err) {
-    const message = reasonOf(err)
-    if (!/ENOENT|no such/i.test(message)) {
-      await logLine($, 'guards', `stop gate: ignored-checks unreadable: ${message}`)
-    }
-    return new Set()
-  }
-  if (raw === null || isDegradedPass(raw)) return new Set()
-  const entries: [string, string][] = []
-  for (const line of String(raw).split('\n')) {
-    if (!line.trim() || line.trim().startsWith('#')) continue
-    const [repo = '', ...rest] = line.trim().split(/\s+/)
-    const name = rest.join(' ').trim()
-    if (repo.includes('/') && name) entries.push([repo, name])
-    else await logLine($, 'guards', `stop gate: ignored-checks malformed line: ${line}`)
-  }
-  if (entries.length === 0) return new Set()
-  const repo = await repository()
-  if (repo.name === null) {
-    await logLine($, 'guards', `stop gate: ignored-checks repository unread: ${repo.why}`)
-    return new Set()
-  }
-  const wanted = repo.name.toLowerCase()
-  return new Set(entries.filter(([ownerRepo]) => ownerRepo.toLowerCase() === wanted).map(([, name]) => name))
-}
-
-// The watches ci-watch left behind (check 2's data): an absent directory is no watch
-// ever run — the state dir is born without one — and anything else that cannot be read
-// stands the check down. Null answers mean exactly that: already said in the log.
-async function listCiWatches($: Held, dir: string, until: number): Promise<{ name: string; kind: string; mtimeMs: number }[] | null> {
-  let listed: FsEntry[] | DegradedPass | null = null
-  try {
-    const left = until - Date.now()
-    listed = left > 0 ? await withDeadline($.fs.list(dir), left) : null
-  } catch (err) {
-    const message = reasonOf(err)
-    if (/ENOENT|no such/i.test(message)) return []
-    await logLine($, 'guards', `stop gate: the ci-watch watches unread: ${message}`)
-    return null
-  }
-  if (listed === null || isDegradedPass(listed)) {
-    await logLine($, 'guards', 'stop gate: the ci-watch watches unread: it did not answer in time')
-    return null
-  }
-  return listed
-    .filter(entry => entry && typeof entry.name === 'string')
-    .map(entry => ({ name: entry.name, kind: String(entry.kind), mtimeMs: Number(entry.mtimeMs) || 0 }))
 }

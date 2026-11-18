@@ -16,8 +16,7 @@
 # push is seen before its checks, and « no checks reported » right then is not a red); runs
 # `gh pr checks --watch --fail-fast` as a wait only (its exit code decides nothing), its output in a
 # log file under the state directory, never on stdout, the arming session's id beside it
-# (`<log>.session`, the key the stop gate tells a session its own watches by); reads the pull
-# request once more when the watch returns. Then the github plugin's `pr-gate` decides (its engine,
+# (`<log>.session`); reads the pull request once more when the watch returns. Then the github plugin's `pr-gate` decides (its engine,
 # found where the host installed the plugin, or at the checkout the override names): it is the one
 # reading of CI, and the watch counts nothing of its own. Each answer read is kept whole, the last
 # one replacing the one before, in `<state>/ci-gate/<owner_name>-pr<n>.json`: the hooks module's

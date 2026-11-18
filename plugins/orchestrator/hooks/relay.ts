@@ -72,7 +72,7 @@ export function parseStatus(answer: string): Wait | null {
 
 // An agent's turn text held to the verdict limit before it is relayed: whole under it, else its
 // status line kept whole and the text above it cut, the cut naming the report the text names, or
-// saying it names none (the stop gate refused that turn once already: its text still goes up).
+// saying it names none.
 export function heldReport(answer: string): string {
   const text = answer.trim()
   const short = shorten(text)

@@ -5,7 +5,7 @@
 // `deferred`, `verdict`) plus `words`, `said_at`, `from`, `images`, `rows`, `agent`, `waits` and `surfaced`: the item
 // keeps his words, who takes it (the dispatch rows it turned into, or an agent) or what it waits on, never the rows'
 // state, which is their own. Written by the orchestrator's hooks module
-// alone, under the store's lock; read by its stop gate, its declared wait, its status command and the
+// alone, under the store's lock; read by its declared wait, its status command and the
 // coordinator's end (docs/contracts.md).
 import { ROLES } from '../core/names.ts'
 

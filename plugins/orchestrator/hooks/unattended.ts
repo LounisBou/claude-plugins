@@ -87,7 +87,7 @@ export async function projectRecords($: Host<'fs'>, state: string, sessionId: st
 }
 
 // The lines of the records a session registered, each with its record and its text; `own` keeps only
-// those its orchestration owns, as the stop gate reads them.
+// those its orchestration owns, as the turn end reads them.
 async function linesOf($: Host<'fs'>, records: readonly string[], own: string | null): Promise<{ path: string; text: string; lines: LedgerLine[] }[]> {
   const read: { path: string; text: string; lines: LedgerLine[] }[] = []
   for (const path of records) {
