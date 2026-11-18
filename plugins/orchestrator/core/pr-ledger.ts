@@ -387,7 +387,7 @@ export interface ReadyRow {
   readonly deferred?: true
 }
 
-/** The most a subject keeps of its label, cut at a word with « … ». */
+/** The most a subject keeps of its text, cut at a word with « … ». */
 const SUBJECT_MAX = 90
 
 /** A subject's loose end: spaces and commas, and a dash that stands apart (` —`), never a dash inside a word. */
@@ -399,10 +399,15 @@ const LOOSE_END = /(?:\s+[—–-]+)?[\s,]*$/u
  * SUBJECT_MAX characters cut at a word; '' for a label with no words.
  */
 export function subjectOf(label: string): string {
-  const words = (label.trim().replace(/^[^\s:]+:(?:\s+|$)/u, '').split(/:(?=\s|$)|;|\s\(/u)[0] ?? '').replace(/\s+/g, ' ').trim().replace(LOOSE_END, '')
+  return atWord((label.trim().replace(/^[^\s:]+:(?:\s+|$)/u, '').split(/:(?=\s|$)|;|\s\(/u)[0] ?? ''))
+}
+
+/** A text on one line, its loose end dropped, at most `max` characters cut at a word with « … ». */
+export function atWord(text: string, max: number = SUBJECT_MAX): string {
+  const words = text.replace(/\s+/g, ' ').trim().replace(LOOSE_END, '')
   const chars = Array.from(words)
-  if (chars.length <= SUBJECT_MAX) return words
-  const cut = chars.slice(0, SUBJECT_MAX).join('')
+  if (chars.length <= max) return words
+  const cut = chars.slice(0, max).join('')
   const space = cut.lastIndexOf(' ')
   return `${(space > 0 ? cut.slice(0, space) : cut).replace(LOOSE_END, '')}…`
 }

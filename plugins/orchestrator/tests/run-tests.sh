@@ -801,9 +801,9 @@ check "after init --spec none, open passes" "1" "$(bash "$REC" open "$GO" --clas
 bash "$REC" goals "$GO" init --spec "$GSPEC" --aim "$GAIM" --replace >/dev/null
 bash "$REC" goals "$GO" plan G1 --phase "Phase 1" >/dev/null
 for g in G2 G3 G5; do bash "$REC" goals "$GO" plan "$g" --phase "Phase 2" >/dev/null; done
-check "open warns on a goal in no phase, and prints the goals line with unplanned=" "1|0|1" \
-  "$(bash "$REC" open "$GO" --class x --tier light 2>&1 >/dev/null | grep -c 'WARNING: G4 is in no phase and not ruled out: plan it or put it to the operator')|$(bash "$REC" open "$GO" --class x --tier light 2>&1 >/dev/null | grep -c 'G1 is in no phase')|$(bash "$REC" open "$GO" --class x --tier light 2>&1 >/dev/null | grep -c 'unplanned=G4$')"
-check "status prints the aim, the table and the goals line" "aim: $GAIM|goals met=0/5 ruled_out=0 open=G1,G2,G3,G4,G5 unplanned=G4" \
+check "open warns on a goal in no phase, and prints the goals line naming it in no phase" "1|0|1" \
+  "$(bash "$REC" open "$GO" --class x --tier light 2>&1 >/dev/null | grep -c 'WARNING: G4 is in no phase and not ruled out: plan it or put it to the operator')|$(bash "$REC" open "$GO" --class x --tier light 2>&1 >/dev/null | grep -c 'G1 is in no phase')|$(bash "$REC" open "$GO" --class x --tier light 2>&1 >/dev/null | grep -c '(G4, no phase) ;')"
+check "status prints the aim, the table and the goals line" "aim: $GAIM|goals met=0/5 ruled_out=0 open: The unit of choice is a **pair** \`<alias>/<effort>\`: a… (G1, plan: Phase 1) ; Every dispatch's cost is **measured** and attached to its… (G2, plan: Phase 2) ; **Offline calibration**: a bench replays merged pull… (G3, plan: Phase 2) ; **Generalisation**: per-project tables fold into one global… (G4, no phase) ; **Online refinement**: the record corrects the table build… (G5, plan: Phase 2)" \
   "$(bash "$REC" goals "$GO" status | head -1)|$(bash "$REC" goals "$GO" status | tail -1)"
 
 # Every goals write registers the record under the session, even before its first row. A read
@@ -973,7 +973,7 @@ check "summary --open shows a deferred row as deferred, with its ruling, and the
   "$(bash "$REC" summary "$DR" --open | grep "^deferred=")|$(bash "$REC" summary "$DR" --open | grep '^open=')"
 bash "$REC" goals "$DR" defer G1 --ruling "2026-10-29: later, when I am on mini-tech" >/dev/null
 bash "$REC" goals "$DR" defer G3 --ruling "« same »" >/dev/null
-check "the goals line counts a deferred goal apart from the open ones" "goals met=0/3 ruled_out=0 open=G2 unplanned=G2 deferred=G1,G3" \
+check "the goals line counts a deferred goal apart from the open ones" "goals met=0/3 ruled_out=0 open: second goal (G2, no phase) — deferred: first goal (G1) ; third goal (G3)" \
   "$(bash "$REC" goals "$DR" status | tail -1)"
 check "goals status shows the deferred goal with its ruling" "yes" "$(bash "$REC" goals "$DR" status | grep -q '^| G1 | deferred |.*operator: « 2026-10-29: later, when I am on mini-tech » |$' && echo yes || echo no)"
 check "check --json lists the deferred goals apart, and is not ok" "G2|G1,G3|false" \
@@ -983,7 +983,7 @@ sed 's/^| G3 | deferred | \(.*\) | operator: « same » |$/| G3 | deferred | \1 
 check "a deferred goal without his words is a fault" "1" "$(bash "$REC" goals "$DR" check 2>/dev/null | grep -c 'G3 deferred without the operator.s words')"
 bash "$REC" goals "$DR" reopen G1 >/dev/null
 bash "$REC" undefer "$DR" "$d1" >/dev/null
-check "reopen and undefer lift a deferral" "open|null|G1|goals met=1/3 ruled_out=0 open=G1 unplanned=G1 deferred=G3" \
+check "reopen and undefer lift a deferral" "open|null|G1|goals met=1/3 ruled_out=0 open: first goal (G1, no phase) — deferred: third goal (G3)" \
   "$(jq -r --argjson i "$d1" 'select(.id==$i)|.state' "$DR")|$(jq -r --argjson i "$d1" 'select(.id==$i)|.deferred' "$DR")|$(bash "$REC" goals "$DR" check --json | jq -r '.open|join(",")')|$(bash "$REC" goals "$DR" status | tail -1)"
 
 # A cascade starts one tier BELOW the table's row, on classes where a failed attempt is

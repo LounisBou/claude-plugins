@@ -33,13 +33,13 @@ premise its question assumes: how the project ships, which branch or environment
 target, what that target already holds. A row or a register says what was true when
 written; the user's own merge or close most often settles a question behind it. Collect wide: add the questions the next steps will need from him — a choice the next phase's brief must name, a premise its plan assumes — so that
 he answers them now. Every goal
-`dispatch-record.sh goals <record> status` lists as `unplanned=` is a question of the wave:
+`dispatch-record.sh goals <record> status` lists in `no phase` is a question of the wave:
 plan it, or rule it out? Write the list to `decision-round.md` in the session's scratch
 directory — number, title, where it comes from, status — so the round survives a
 compaction, in asking order: the urgent first (a production fault, a detected
 regression, a decision under a real deadline), then the oldest first. An item found settled is written there as « already done: <evidence> »,
-dropped from the count, and not asked. Announce it in one line, the goals line from the same `goals status`:
-« N questions, back to back. Goals: m/n met, open: <each goal in a few words> (G3), … » A question that arises mid-round is appended as N + 1, announced in one line, and
+dropped from the count, and not asked. Announce it in one line,
+« N questions, back to back. », then the goals line of the same `goals status`. A question that arises mid-round is appended as N + 1, announced in one line, and
 taken in order; the count in the header moves with it.
 
 ## 2. Present ONE question

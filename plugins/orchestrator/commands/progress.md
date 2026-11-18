@@ -7,7 +7,7 @@ Report the state of the whole build to the user, from the artifacts — never
 from the rows alone, never from memory of what was said.
 
 The hooks module answers this command on the spot, with no model turn: from the dispatch
-records this session registered, one `goals met=<m>/<n> ruled_out=<k> open=<ids> unplanned=<ids>` line
+records this session registered, one `goals met=<m>/<n> ruled_out=<k> open: …` line
 per record with a `goals.md` beside it, one `open: <subject> (row <id>)` line per row still open, or
 `deferred: <subject> (row <id>) — ruling: <his words>` for a row the operator deferred (put off by his
 ruling, never work to dispatch),
@@ -38,8 +38,7 @@ whatever this command printed.
    — one JSON line the module writes on every gauge pass — and keep its
    `context_percent`, `context_tokens` and `context_window`.
 5. Present, in this order and nothing else:
-   - **Goals** — the `goals met=m/n … open=…` line of
-     `dispatch-record.sh goals <record> status`, each open goal named in its words, with its phase (`method:lifecycle`, « Reports »).
+   - **Goals** — the goals line of `dispatch-record.sh goals <record> status`.
    - **Done** — phases merged, with PR numbers and what each delivered in one line.
    - **In flight** — phases with a PR open or an agent writing: agent name,
      head, review round, what is owed and by whom.

@@ -218,7 +218,7 @@ export function parseDispatchRow(line: string): DispatchRow | null {
 // subject, its label in plain words, the id after it. An empty label keeps its
 // row and is named for what it is; no group at all is said as that.
 //
-// The goals lines lead: one `goals met=m/n … open=…` per record that has a goals.md, the
+// The goals lines lead: one `goals met=m/n … open: …` per record that has a goals.md, the
 // distance to the spec one command away at any moment.
 export function progressLines(groups: readonly DispatchRow[][], goals: readonly string[] = []): string[] {
   const rows = groups.flat()
@@ -318,7 +318,7 @@ async function readSleeping($: Held): Promise<string> {
   return sleepingText(parseSleeping(String(read)), path)
 }
 
-// The goals line of one goals.md, goals.sh's own (`goals met=m/n ruled_out=k open=… unplanned=…`),
+// The goals line of one goals.md, goals.sh's own (`goals met=m/n ruled_out=k open: …`),
 // or null when there is no file, or its reading failed or ran out of time.
 async function goalsLine($: Held, goalsFile: string, bound: number): Promise<string | null> {
   const exists = await withDeadline(() => Promise.resolve($.fs.exists(goalsFile)).catch(() => false), bound)

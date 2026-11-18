@@ -17,8 +17,7 @@ _Recommendation_ : A — <why it beats the others>
 - Two to five choices, A to E, each a different piece of work, not shades of one.
 - The free answer is always open, never opening on a lone letter.
 - The recommendation argues its letter against the others; a bare letter is none.
-- Write for a reader with nothing open: name each thing by its subject (`SKILL.md`, « Reports »),
-  and say what each choice changes for him.
+- Write for a reader with nothing open: say what each choice changes for him.
 - A host dialog (`SKILL.md`): the recommended option first and marked, « Other » for the free answer.
 - Record the question as asked and his words, dated, where answers are kept; your reading of them goes
   apart, named as yours, never as his order.

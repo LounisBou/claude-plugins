@@ -55,7 +55,7 @@ import { parseSessionName } from '../../../core/names.ts'
 import { agentsOf, ledgerLines, prKey, statusText, untilOf, type LedgerLine } from '../../../core/pr-ledger.ts'
 import { auditRun, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
-import { GoalsFault, parseGoals } from './lib/goals-file.ts'
+import { GoalsFault, namedGoals, parseGoals } from './lib/goals-file.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { archiveSettled } from './lib/round-archive.ts'
 import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
@@ -790,17 +790,15 @@ export function objectiveOf(aim: string): string {
   return cut(end === null ? text.replace(/[.!?]$/, '') : text.slice(0, end.index), 300)
 }
 
-/** The project sheet from `goals.md`: the objective, the spec it names and the goals as one line, `goals met=m/n open=none`, `open=` the open ones with their plan, and `deferred=` the deferred ones. */
+/** The project sheet from `goals.md`: the objective, the spec it names and the goals as one line, `goals met=m/n` then the goals still to reach by their words (`namedGoals`). */
 export function projectSheet(goals: string | undefined, installed: string): string {
   const parts: string[] = []
   if (goals === undefined) parts.push('no goals.md beside the record')
   else {
     try {
       const { head, rows } = parseGoals(goals, 'goals.md')
-      const open = rows.filter(row => row.status === 'open')
-      const deferred = rows.filter(row => row.status === 'deferred').map(row => row.id)
       parts.push(`objective ${objectiveOf(head.aim) || 'none'}`, `spec ${head.spec || 'none'}`)
-      parts.push(`goals met=${rows.filter(row => row.status === 'met').length}/${rows.length} open=${open.length === 0 ? 'none' : open.map(row => `${row.id} (plan: ${row.plan || 'none'})`).join(', ')}${deferred.length === 0 ? '' : ` deferred=${deferred.join(',')}`}`)
+      parts.push(`goals met=${rows.filter(row => row.status === 'met').length}/${rows.length} ${namedGoals(rows)}`)
     } catch (error) {
       if (!(error instanceof GoalsFault)) throw error
       parts.push(`goals unread: ${error.message}`)

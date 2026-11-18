@@ -36,11 +36,7 @@ The operator's consent is a structured act (a dialog answer, a recorded ruling),
 
 A unit of work ends with a report as in `references/report.md`.
 
-**Subjects, never rows.** Every text that reaches the operator (a report, a question, a line relayed
-to him, a wait's `blocks`) names each item by its subject: what it is and where it stands, in plain
-words, its pull request as `<repo>#<n>`; a row id, keyword or code name comes at most in
-parentheses after it, never alone. A line read only by sessions may lead with an id; the line a
-session relays to him leads with the subject.
+Every text the operator reads names each item by its subject, a row id at most in parentheses after it.
 
 ## Questions to the operator
 

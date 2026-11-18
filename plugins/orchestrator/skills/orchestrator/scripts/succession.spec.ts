@@ -127,7 +127,7 @@ test('an orchestrator closed with no handover is taken up from the state alone: 
     'the live agents': '- Agents running (name and reference, brief path): Agent: api',
     'the open question, verbatim': '[q-2] **Question 1 of 1**\nWhich schema?',
     'the stray to-do items': 'to-do 2 → row 1 closed; to-do 3 → row 9 missing',
-    'the project sheet': 'objective a belt that holds; spec /specs/belt.md; goals met=1/2 open=G2 (plan: phase 2)',
+    'the project sheet': 'objective a belt that holds; spec /specs/belt.md; goals met=1/2 open: routes (G2, plan: phase 2)',
     'the state directory': `State directory: \`${w.state}\``,
     'the first dispatch': 'every open row with no agent that the phase rules allow',
   }
@@ -217,13 +217,13 @@ test('the owner file read in the house shape: a name with its reference still fi
 test('the project sheet lists the open goals only: a goal ruled out or deferred is neither open nor met', () => {
   const w = world({ goals: '# Goals\nspec: /s.md\naim: x\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | ruled-out | b | p2 | |\n| G3 | open | c | p3 | |\n' })
   assert.equal(w.run(), 0)
-  assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/3 open=G3 \(plan: p3\)\n/)
+  assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/3 open: c \(G3, plan: p3\)\n/)
 })
 
-test('a deferred goal shows on the Project line beside open=none, so the table is read for it', () => {
+test('a deferred goal shows on the Project line by its words beside open: none, so the table is read for it', () => {
   const w = world({ goals: '# Goals\nspec: /s.md\naim: x\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | deferred | b | p2 | his words |\n| G3 | deferred | c | p3 | his words |\n' })
   assert.equal(w.run(), 0)
-  assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/3 open=none deferred=G2,G3\n/)
+  assert.match(w.text(), /- Project: objective x; spec \/s\.md; goals met=1\/3 open: none — deferred: b \(G2\) ; c \(G3\)\n/)
 })
 
 test('an open to-do item pointing to a closed or missing row is flagged; one pointing to an open row, a closed item or an item with no row is not', () => {
@@ -238,13 +238,13 @@ test('an open to-do item pointing to a closed or missing row is flagged; one poi
 test('the project sheet reads the objective, the spec goals.md names, the open goals with their plan', () => {
   const w = world()
   assert.equal(w.run(), 0)
-  assert.match(w.text(), /- Project: objective a belt that holds; spec \/specs\/belt\.md; goals met=1\/2 open=G2 \(plan: phase 2\)\n/)
+  assert.match(w.text(), /- Project: objective a belt that holds; spec \/specs\/belt\.md; goals met=1\/2 open: routes \(G2, plan: phase 2\)\n/)
   const v = world({ goals: null })
   assert.equal(v.run(), 0)
   assert.match(v.text(), /- Project: no goals\.md beside the record\n/)
-  assert.equal(projectSheet('# Goals\nspec: none\naim:\n', '3 merged PRs not installed, oldest 2 h'), 'objective none; spec none; goals met=0/0 open=none; installed: 3 merged PRs not installed, oldest 2 h')
+  assert.equal(projectSheet('# Goals\nspec: none\naim:\n', '3 merged PRs not installed, oldest 2 h'), 'objective none; spec none; goals met=0/0 open: none; installed: 3 merged PRs not installed, oldest 2 h')
   assert.equal(projectSheet('# Goals\naim: x\n', ''), 'goals unread: goals.md: no spec: line')
-  assert.equal(projectSheet('spec: none\n| G1 | open | a \\| b | | |\n', ''), 'objective none; spec none; goals met=0/1 open=G1 (plan: none)')
+  assert.equal(projectSheet('spec: none\n| G1 | open | a \\| b | | |\n', ''), 'objective none; spec none; goals met=0/1 open: a | b (G1, no phase)')
 })
 
 test('the name is the record\'s owner unless given; a record without one, or none at all, is refused', () => {
@@ -966,7 +966,7 @@ test('the project line prints the objective\'s first sentence and the goals coun
   assert.equal(objectiveOf(''), '')
   const w = world({ goals: '# Goals\nspec: /s.md\naim: ship the belt. It was first planned in March. G1-G5 are in the archive.\n\n| id | status | goal | plan | evidence |\n|---|---|---|---|---|\n| G1 | met | a | p1 | |\n| G2 | open | b | p2 | |\n' })
   assert.equal(w.run(), 0)
-  assert.match(w.text(), /- Project: objective ship the belt; spec \/s\.md; goals met=1\/2 open=G2 \(plan: p2\)\n/)
+  assert.match(w.text(), /- Project: objective ship the belt; spec \/s\.md; goals met=1\/2 open: b \(G2, plan: p2\)\n/)
 })
 
 test('fill leaves a line out whose optional placeholder is empty, and keeps it filled otherwise', () => {

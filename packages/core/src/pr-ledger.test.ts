@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   archiveOf, endedLines, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_EARLIER_KEPT, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
-  blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, subjectOf, unattended, unattendedLine, unattendedPaneLines, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutEarlier, withoutLines, type LedgerLine,
+  blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, subjectOf, atWord, unattended, unattendedLine, unattendedPaneLines, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutEarlier, withoutLines, type LedgerLine,
 } from './pr-ledger.ts'
 
 const AT = '2026-11-14T10:00:00Z'
@@ -334,6 +334,8 @@ describe('an unattended pull request', () => {
       assert.equal(subjectOf('FIX: C-- and v1.2.'), 'C-- and v1.2.')
       assert.equal(subjectOf('KEY: the end —  '), 'the end')
       assert.equal(Array.from(subjectOf(`LONG: ${'😀'.repeat(120)}`)).length, 91, 'cut at a character, never inside one')
+      assert.equal(atWord('a  goal\n spread ,  '), 'a goal spread')
+      assert.equal(atWord('one two three', 8), 'one two…')
       const long = subjectOf(`LONG: ${'word '.repeat(40)}`)
       assert.ok(long.length <= 91 && long.endsWith('word…'), long)
     })

@@ -223,7 +223,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         name: WAIT_TOOL,
         isDeferred: false,
         description: 'Declares what will wake this session once its turn ends, before ending the turn: '
-          + '`operator` (a question the operator must answer; blocks: what it blocks, named as `method:lifecycle` « Reports » says; urgent: true to have it presented at once), '
+          + '`operator` (a question the operator must answer; blocks: what it blocks; urgent: true to have it presented at once), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
           + 'A command, monitor, subagent or agent you started wakes you by itself: declare nothing for it. '
           + 'An operator question that asks his consent to waive E2E or norms on a pull request, to exempt a repository from E2E, to put it in or out of auto-merge, or of auto-deploy in one environment, '
