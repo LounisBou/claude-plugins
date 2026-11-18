@@ -1,7 +1,7 @@
 // hooks/core.ts
 // The pure half of the hooks module: the state file's parser and writer, the
-// preflight's verdict, the ignore guard's verdict, the shell reader the guards
-// judge Bash lines with, and every guard decision. Nothing here touches `$`:
+// preflight's verdict, the ignore guard's verdict, the shell reader that tells
+// the band a commit was made, what is armed, and the band. Nothing here touches `$`:
 // register.ts reads the world and hands the facts in.
 
 export const REQUIRED_PLUGINS = ['superpowers@claude-plugins-official'] as const
@@ -20,7 +20,7 @@ export function skillOf(key: string): SkillName | null {
 // The method's state-file format, owned by the method plugin and parsed in core.
 export { markRow, nextRow, parseState, twoDigits, ROW_STATUSES as STATUSES, type Row, type State } from '../core/method.ts'
 import type { Row, State } from '../core/method.ts'
-import { gitSubcommand, redirectsToFile, simpleCommands } from '../core/shell.ts'
+import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 
 // ── The branch, the mode, the ignore guard ───────────────────────────────────
 
@@ -138,7 +138,7 @@ export function stateLine(s: Snapshot): string {
 // assignments, and `sh -c` read again. `eval` joins its words into a line read the same way.
 export { simpleCommands } from '../core/shell.ts'
 
-// What a command line does that implement:check observes: stage or commit.
+// What a command line does that the band follows: stage or commit.
 export type Action = 'stage' | 'commit'
 
 function actionsOf(argv: readonly string[], depth: number): Action[] {
@@ -155,133 +155,32 @@ export function shellActions(command: string, depth = 0): Action[] {
   return simpleCommands(command).flatMap(argv => actionsOf(argv, depth))
 }
 
-// ── The guards ───────────────────────────────────────────────────────────────
+// ── What is armed ────────────────────────────────────────────────────────────
 
-// What is armed. `outer` is the implement skill last started, and holds until
-// another one starts, the conversation ends or is cleared, a turn is aborted or
-// the user releases it: a phase stopped on a question resumes on the next
-// prompt under the same rules. `checking` is implement:check's own, and ends
-// with its verdict, its turn, or the user's words. `typed` is the user's last
-// prompt.
-export type Guard = { outer: 'feature' | 'prepare' | 'phase' | 'close' | null; checking: boolean; typed: string }
-export const IDLE: Guard = { outer: null, checking: false, typed: '' }
+// What is armed: `outer` is the implement skill last started, and holds until another one starts,
+// the conversation ends or is cleared, or a turn is aborted: a phase stopped on a question resumes
+// on the next prompt under the same band and the same silenced commit trailer.
+export type Guard = { outer: 'feature' | 'prepare' | 'phase' | 'close' | null }
+export const IDLE: Guard = { outer: null }
 
 const OUTERS: ReadonlyArray<Guard['outer']> = ['feature', 'prepare', 'phase', 'close', null]
 
-// The guard as the host kept it: each field it holds in its shape, the idle value in place of any other.
+// The guard as the host kept it: its field in its shape, the idle value in place of any other.
 export function guardOf(value: unknown): Guard {
   if (typeof value !== 'object' || value === null) return IDLE
   const kept: Partial<Record<keyof Guard, unknown>> = value
   const outer = OUTERS.find(o => o === kept.outer)
-  return {
-    outer: outer === undefined ? IDLE.outer : outer,
-    checking: typeof kept.checking === 'boolean' ? kept.checking : IDLE.checking,
-    typed: typeof kept.typed === 'string' ? kept.typed : IDLE.typed,
-  }
+  return { outer: outer === undefined ? IDLE.outer : outer }
 }
 
-// The user's last prompt is kept across the start: a prompt that asks for a
-// subagent and names the skill in one breath arms the skill after it was read,
-// and the subagent guard still finds the request.
+// A skill that starts is armed; implement:check arms nothing, it only reads.
 export function armedBy(g: Guard, skill: SkillName): Guard {
-  if (skill === 'check') return { ...g, checking: true }
-  return { outer: skill, checking: false, typed: g.typed }
+  return skill === 'check' ? g : { outer: skill }
 }
 
-// The origins a person types from: the terminal, the remote bridge, and the
-// caller of a headless run. A notification, a peer and a plugin are not them.
-export function typedByUser(kind: string): boolean {
-  return kind === 'composer' || kind === 'bridge' || kind === 'sdk'
-}
-
-// The user's words end a check in flight, unless the words are the slash
-// command that started it.
-export function onTyped(g: Guard, text: string): Guard {
-  return { ...g, typed: text, checking: g.checking && text.trimStart().startsWith('/') }
-}
-
-// An interrupted turn releases everything; any other end of a turn ends the
-// check, which is a one-turn skill.
+// An interrupted turn releases everything.
 export function onTurnEnd(g: Guard, aborted: boolean): Guard {
-  return aborted ? IDLE : { ...g, checking: false }
-}
-
-const VERDICT_TABLE = /^\| *check *\| *evidence *\| *result *\|/m
-const VERDICT_LINE = /^(PASS|FAIL: *[0-9][0-9, ]*)[ \t]*$/m
-
-// implement:check is over once its table and its verdict line are written.
-export function isVerdict(answer: string): boolean {
-  return VERDICT_TABLE.test(answer) && VERDICT_LINE.test(answer)
-}
-
-const LABEL: Record<Action, string> = { 'stage': 'git add', 'commit': 'git commit' }
-const RELEASE = 'Words in a prompt release nothing: /implement:release-guard releases every guard.'
-
-/*
- * What a rule found in a tool call: the stable code the telemetry holds it under, and the words that
- * name what was done. Only an irreversible act (a deletion) is refused, with checkDeny's text; any
- * other lets the call through, and the code is the one line it leaves.
- */
-export type Verdict = { readonly code: string; readonly what: string; readonly irreversible: boolean }
-
-const observe = (code: string, what: string): Verdict => ({ code, what, irreversible: false })
-
-export function checkDeny(what: string): string {
-  return `implement:check removes nothing: ${what} refused by the implement plugin. Name the defect as a FAIL row; the repair belongs to the caller once the verdict line (PASS, or FAIL: <rows>) is written under the table. ${RELEASE}`
-}
-
-export const READ_ONLY_AGENTS = new Set(['Explore'])
-
-// The commands of a line that delete from the tree implement:check reads: the one act of the check
-// that cannot be taken back.
-const REMOVERS = new Set(['rm', 'rmdir'])
-// The commands of a line that write into it: a file moved, copied over, created, or edited in place.
-const WRITERS = new Set(['tee', 'mv', 'cp', 'touch', 'truncate', 'ln', 'install', 'dd', 'patch'])
-
-// A word `rm` or `rmdir` of a line the reader cannot read, found by its text: a doubt that may hide a removal.
-const REMOVAL_WORD = /(^|[\s;&|(){}`"'\/])(rm|rmdir)(?=$|[\s;&|(){}`"'])/
-
-const basename = (argv: readonly string[]): string => (argv[0] ?? '').split('/').pop() ?? ''
-
-function writesTree(argv: readonly string[]): string | null {
-  const name = basename(argv)
-  if (WRITERS.has(name)) return name
-  if ((name === 'sed' || name === 'perl') && argv.some(a => /^-[A-Za-z]*i/.test(a) || a.startsWith('--in-place'))) return `${name} -i`
-  return null
-}
-
-/*
- * The finding of a shell line during a check, null outside one. A removal is the irreversible act
- * and wins over any other finding of the line; the others are observed, the first one found naming
- * the line. A line the reader cannot read (a brace expansion past its limit) is observed too, the
- * one exception being a word `rm` or `rmdir` anywhere in it: a doubt does not hide a removal.
- */
-export function bashDecision(g: Guard, command: string): Verdict | null {
-  if (!g.checking) return null
-  try {
-    const commands = simpleCommands(command)
-    const removal = commands.map(argv => basename(argv)).find(name => REMOVERS.has(name))
-    if (removal) return { code: 'implement.check.remove', what: removal, irreversible: true }
-    const write = shellActions(command).find(a => a === 'stage' || a === 'commit')
-    if (write) return observe(`implement.check.${write}`, LABEL[write])
-    if (redirectsToFile(command)) return observe('implement.check.redirect', 'a redirection into a file')
-    const writer = commands.map(writesTree).find(w => w !== null)
-    return writer ? observe('implement.check.write', writer) : null
-  } catch {
-    if (REMOVAL_WORD.test(command)) return { code: 'implement.check.remove', what: 'a removal in a shell line it cannot read', irreversible: true }
-    return observe('implement.check.unreadable', 'a shell line it cannot read')
-  }
-}
-
-// A subagent other than a search one during a phase: observed, the phase writes the work itself.
-export function agentDecision(g: Guard, subagentType: unknown): Verdict | null {
-  if (g.outer !== 'phase') return null
-  const type = typeof subagentType === 'string' && subagentType !== '' ? subagentType : 'general-purpose'
-  return READ_ONLY_AGENTS.has(type) ? null : observe('implement.phase.subagent', type)
-}
-
-export function editDecision(g: Guard, tool: string): Verdict | null {
-  return g.checking ? observe('implement.check.edit', tool) : null
+  return aborted ? IDLE : g
 }
 
 // The commit trailer the engine asks for: none while a skill that commits runs.

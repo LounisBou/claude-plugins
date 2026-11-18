@@ -46,7 +46,7 @@ below.
 - **`/implement:prepare`** — plan a future feature onto `ROADMAP.md` without
   touching a branch, so it coexists with a feature in progress on another one.
 
-Two more commands, answered by the hooks module:
+One more command, answered by the hooks module:
 
 - **`/implement:review`** — launch the review of the branch's pull request in another
   session: on macOS with the orchestrator installed, an iTerm tab through its launcher;
@@ -54,8 +54,6 @@ Two more commands, answered by the hooks module:
   `.git/implement-review.log`. The reviewer runs `/pr-review:auto-fix-loop` in its review-only
   mode and leaves the review record for github's ready gate, which refuses a record written by
   the session that pushed the head.
-- **`/implement:release-guard`** — release the guards below (the check's removal refusal and
-  the journal lines) until an implement skill starts again.
 
 ## The hooks module
 
@@ -66,7 +64,7 @@ it fails.
 
 - **The commands answer at once.** `/implement:install` and `/implement:doctor`
   are answered by the module, without a model turn, from the merged settings of
-  every scope; so are `/implement:review` and `/implement:release-guard`.
+  every scope; so is `/implement:review`.
 - **The preflight runs before the skill.** The module checks the dependency and
   the repository as the skill's text is loaded: a failure replaces the text with
   the `error:`/`fix:` lines, a pass leads it with a `Preflight: passed` line and
@@ -81,28 +79,15 @@ it fails.
   `IMPLEMENTATION.md` and its next phase) and `mark` (one row, its sha resolved
   from `HEAD`). The skills use it in place of their derivation blocks when it is
   listed.
-- **Two Iron Rules are watched at the call, one act is refused.** While
-  `implement:phase` is armed, a subagent other than `Explore` runs, and the journal
-  keeps one line for it; while `implement:check` runs, an edit, a `git add`, a
-  `git commit`, any other write into the tree and a shell line the reader cannot read
-  go through the same way. Only a removal (`rm`, `rmdir`) is refused during a check
-  until its verdict line is written, because it cannot be taken back. A push, a merge
-  or a pull request is never refused, whether or not the module can read what is armed.
-  No commit trailer is asked for while `feature`, `phase` or `close` is armed.
-- **One line, one code.** A call the rules would once have stopped leaves one event in
-  `<config>/implement/journal/` (core's learning contract, kind `escape`), under a stable
-  code (`implement.check.edit`, `.stage`, `.commit`, `.redirect`, `.write`, `.unreadable`,
-  `implement.phase.subagent`) and holding neither the command, the path nor the text of the call.
+- **No commit trailer is asked for** while `feature`, `phase` or `close` is armed. Nothing else
+  is watched or refused at the call: a check's reading, a phase's subagents, a push, a merge or
+  a pull request are the skills' own rules, written in them.
 - **A band above the prompt** shows the phase run: phase N of M, its status, the
   sha it started from, and the head.
 
-A guard stays armed across turns, so a phase stopped on a question resumes
-under the same rules. It is released by another implement skill starting, an
-interrupted turn, the conversation ending or being cleared, and `/implement:release-guard`.
-During a check, a shell line that writes into the tree (a redirection into a file,
-`sed -i`, `cp`, `tee`…) is observed like an edit; `rm` and `rmdir` are refused. A shell line
-is read word by word: a guarded command named inside quotes, a comment or a here-document is
-not a call.
+What a skill arms (the band, the silenced trailer) stays armed across turns, so a phase stopped on a
+question resumes as it was. It is released by another implement skill starting, an interrupted turn,
+and the conversation ending or being cleared.
 
 ## The artifact layout
 

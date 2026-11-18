@@ -5,14 +5,13 @@
 // plugin does without the module: the markdown command runs, the skill text
 // is read as written, the tool call goes through.
 import {
-  IDLE, armedBy, guardOf, keptBand, agentDecision, bandOf, bandSegments, bashDecision, checkDeny, codenameOf, doctorText, editDecision,
-  ignoreVerdict, shellActions, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
-  preflightLines, silencesAttribution, skillOf, skillText, stateLine, typedByUser,
+  IDLE, armedBy, guardOf, keptBand, bandOf, bandSegments, codenameOf, doctorText,
+  ignoreVerdict, shellActions, markRow, modeOf, nextRow, onTurnEnd, parseState,
+  preflightLines, silencesAttribution, skillOf, skillText, stateLine,
   type Band, type Guard, type Snapshot,
 } from './core.ts'
 import { fieldsOf, reasonOf, type Host, type On, type OnStream } from '../core/host.ts'
 import { spawnArgv } from '../core/orchestration.ts'
-import { observed } from './observe.ts'
 import { startRetrospective } from './retrospective.ts'
 import { candidateLaunchers, headlessArgv, lastLine, reviewerPrompt, reviewerTitle } from './review.ts'
 
@@ -119,7 +118,6 @@ async function serveState($: ImplementHost, e: StateCall): Promise<{ result: str
   const action = e['action']
   if (action === 'get') return { result: JSON.stringify(await snapshot($, docs), null, 2) }
   if (action !== 'mark') return { result: `unknown action: ${String(action)}; use get or mark`, isError: true }
-  if ((await readGuard($)).checking) return { result: 'implement:check edits nothing: mark refused until its verdict line is written', isError: true }
   const s = await snapshot($, docs)
   const path = `${s.docs}/IMPLEMENTATION.md`
   const text = await readText($, path)
@@ -217,13 +215,7 @@ export function register(on: On<ImplementHost> & OnStream<ImplementHost>): void 
   on('command.run', { command: 'implement:review' }, async ($) => ({ text: await launchReviewer($) }))
     .catch(async ($, e, next) => next(e))
 
-  on('command.run', { command: 'implement:release-guard' }, async ($) => {
-    await writeGuard($, IDLE)
-    await $.state.set(BAND, null)
-    return { text: 'implement: every guard is released until an implement skill starts again.' }
-  }).catch(async ($, e, next) => next(e))
-
-  // The preflight ahead of the skill's text, and the guards the skill arms.
+  // The preflight ahead of the skill's text, and what the skill arms.
   on('skill.prompt', async ($, e, next) => {
     if (String(e.skill ?? '') === METHOD_SKILL) {
       method.isLoaded = true
@@ -240,11 +232,6 @@ export function register(on: On<ImplementHost> & OnStream<ImplementHost>): void 
     return { text: skillText(String(e.text ?? ''), lines, line, !method.isLoaded) }
   }).catch(async ($, e, next) => next(e))
 
-  on('prompt.submit', async ($, e, next) => {
-    if (typedByUser(String(e.origin?.kind ?? ''))) await writeGuard($, onTyped(await readGuard($), String(e.text ?? '')))
-    return next(e)
-  }).catch(async ($, e, next) => next(e))
-
   on('turn.complete', async ($, e, next) => {
     const aborted = e.isAborted === true || e.reason === 'aborted'
     if (!e.agentId) await writeGuard($, onTurnEnd(await readGuard($), aborted))
@@ -255,41 +242,16 @@ export function register(on: On<ImplementHost> & OnStream<ImplementHost>): void 
     return next(e)
   }).catch(async ($, e, next) => next(e))
 
-  // implement:check ends with its verdict, even mid-turn inside a phase run.
-  on('turn.step', async function* ($, e, next) {
-    const response = yield* next(e)
-    try {
-      if (!e.agentId && isVerdict(String(fieldsOf(response)?.['answer'] ?? ''))) {
-        const g = await readGuard($)
-        if (g.checking) await writeGuard($, { ...g, checking: false })
-      }
-    } catch { /* the check stays armed until its turn ends */ }
-    return response
-  })
-
-  // The guards. Each judges before next. A guard that could not read what is
-  // armed lets the call through. A failure after next replays what already ran.
+  // The band follows the phase run: redrawn after a commit or a write naming the state file.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const g = await readGuard($)
-    const found = bashDecision(g, String(e['command'] ?? ''))
-    if (found?.irreversible) return { deny: checkDeny(found.what) }
-    if (found) await observed($, found.code)
     const out = await next(e)
     if (g.outer === 'phase' && touchesState(String(e['command'] ?? ''))) await refreshBand($)
     return out
   }).catch(($, e, next) => next(e))
 
-  // A subagent that writes, during a phase, runs: the call goes through and the journal keeps one line.
-  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
-    const found = agentDecision(await readGuard($), e['subagent_type'])
-    if (found) await observed($, found.code)
-    return next(e)
-  }).catch(($, e, next) => next(e))
-
   on('tool.call', { tool: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] }, async ($, e, next) => {
     const g = await readGuard($)
-    const found = editDecision(g, String(e['tool']))
-    if (found) await observed($, found.code)
     const out = await next(e)
     if (g.outer === 'phase' && String(e['file_path'] ?? e['notebook_path'] ?? '').endsWith('IMPLEMENTATION.md')) await refreshBand($)
     return out
