@@ -118,8 +118,7 @@ and every skill keeps its own route.
   runs — answering the open items, the counts, the tier and the line to announce.
 - **`mcp__pr-review__loop`.** auto-fix-loop's pass counter, seen
   findings and fix log, held outside the model's memory. Any prompt the user
-  types, or an interrupted turn, ends the loop; a stop before either exit condition (a review with no
-  Critical or Important finding, the pass limit) is let through.
+  types, or an interrupted turn, ends the loop.
 - **Findings kept past the session.** Each pass the loop accepts leaves its Critical and
   Important findings in the journal, one `finding` line each (`pr-review.finding`): the
   severity, the file, the pull request and its head, and nothing of the finding's text. The

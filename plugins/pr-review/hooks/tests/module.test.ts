@@ -790,10 +790,10 @@ function wireHandback(on: TestOn, stubs: Stubs, answer: unknown = { result: { su
   on('tool.call', { tool: 'SubagentHandback' }, () => answer)
 }
 
-const launchReader = ($: Engine, id: string): Promise<Reply> =>
-  $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff' + REPORT_REQUEST, run_in_background: true, description: id })
+const launchReader = ($: Engine, id: string, type = 'code-reviewer'): Promise<Reply> =>
+  $.tool.call({ tool: 'Agent', subagent_type: type, prompt: 'review the diff' + REPORT_REQUEST, run_in_background: true, description: id })
 
-const handBack = ($: Engine, id: string, message: string): Promise<Reply> =>
+const handBack = ($: Engine, id: string, message: unknown): Promise<Reply> =>
   $.tool.call({ tool: 'SubagentHandback', agentId: id, message })
 
 test('a background reader whose hand-back carries a clean block passes the pass', async ($, on) => {
@@ -864,14 +864,123 @@ test('a hand-back that comes before its launch is registered is kept for it', as
   expect(String(out.result)).toContain('"exit": "clean"')
 })
 
-test('a pending answer names the readers still awaited', async ($, on) => {
+test('a pending answer counts the readers still awaited and names them', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
   wireHandback(on, stubs)
   await loopCall($, { action: 'start' })
   await loopCall($, { action: 'begin_pass' })
   await launchReader($, 'a1')
+  await launchReader($, 'a2', 'orchestrator:lens')
   const out = await loopCall($, { action: 'findings', keys: [] })
-  expect(String(out.result)).toContain('"code-reviewer"')
+  const answer = fieldsOf(JSON.parse(String(out.result)))
+  expect(answer?.['pending']).toBe(2)
+  expect(answer?.['awaited']).toEqual(['code-reviewer', 'orchestrator:lens'])
+})
+
+test('a hand-back of a foreign id, with no id, or whose message is no string fills no place', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  await handBack($, 'zzz', PASS2_REPORT)
+  await handBack($, '', PASS2_REPORT)
+  await $.tool.call({ tool: 'SubagentHandback', message: PASS2_REPORT })
+  await handBack($, 'a1', 42)
+  await handBack($, 'a1', undefined)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(fieldsOf(JSON.parse(String(out.result)))?.['pending']).toBe(1)
+})
+
+test('several background readers handed back in a crossed order each fill their own place', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1', 'code-reviewer')
+  await launchReader($, 'a2', 'pr-review-toolkit:silent-failure-hunter')
+  await launchReader($, 'a3', 'orchestrator:lens')
+  await handBack($, 'a3', 'No findings')
+  await handBack($, 'a1', agentAnswer([{ severity: 'important' }]))
+  await handBack($, 'a2', PASS2_REPORT)
+  const out = await loopCall($, { action: 'findings', keys: ['f0::s'] })
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  expect(stubs.records.map((r) => [fieldsOf(r)?.['result'], fieldsOf(r)?.['detail']])).toEqual([['fail', 'reviewed: 1 findings, severity unknown: no findings block from orchestrator:lens']])
+})
+
+test('several background readers all clean, handed back in a crossed order, pass the pass', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  await launchReader($, 'a2', 'orchestrator:lens')
+  await launchReader($, 'a3', 'pr-review-toolkit:silent-failure-hunter')
+  await handBack($, 'a2', PASS2_REPORT)
+  await handBack($, 'a3', PASS2_REPORT)
+  await handBack($, 'a1', PASS2_REPORT)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"exit": "clean"')
+  expect(stubs.records.map((r) => fieldsOf(r)?.['detail'])).toEqual(['clean at pass 1, 3 review agents reporting no finding'])
+})
+
+test('a hand-back kept for a launch is forgotten by the next pass', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await handBack($, 'a1', PASS2_REPORT)
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(fieldsOf(JSON.parse(String(out.result)))?.['pending']).toBe(1)
+})
+
+test('a hand-back kept for a launch is forgotten by a new loop, and so is a reader awaited', () => {
+  act({ action: 'start' })
+  act({ action: 'begin_pass' })
+  loop.awaiting.set('a1', 0)
+  loop.early.set('a2', [])
+  act({ action: 'start' })
+  expect(loop.awaiting.size).toBe(0)
+  expect(loop.early.size).toBe(0)
+})
+
+test('a second pass forgets the hand-backs kept for a launch', () => {
+  act({ action: 'start' })
+  act({ action: 'begin_pass' })
+  loop.early.set('a2', [])
+  act({ action: 'begin_pass' })
+  expect(loop.early.size).toBe(0)
+})
+
+test('a hand-back after the loop was released fills no place', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  on('prompt.submit', (_$, e) => e)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  await $.prompt.submit({ text: 'stop, I need the terminal', wait: false, origin: composer })
+  await handBack($, 'a1', PASS2_REPORT)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).not.toContain('"exit": "clean"')
+  expect(String(out.result)).toContain('"unread"')
+})
+
+test('a hand-back after the pass was accepted fills no place of the next pass', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandback(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a1')
+  await handBack($, 'a1', agentAnswer([{ severity: 'important' }]))
+  await loopCall($, { action: 'findings', keys: ['f0::s'] })
+  await handBack($, 'a2', PASS2_REPORT)
+  await loopCall($, { action: 'begin_pass' })
+  await launchReader($, 'a2')
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(fieldsOf(JSON.parse(String(out.result)))?.['pending']).toBe(1)
 })
 
 test('a late hand-back of an earlier pass fills no place of the next one', async ($, on) => {
