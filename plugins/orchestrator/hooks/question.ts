@@ -29,7 +29,7 @@ import { callTodo, whoAmI } from './todo.ts'
 import { setSessionWindow, closesItself, coordinatorRuns, forgetRelayed, isRoundAnswer, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled } from './supervision.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planClaimed, planPane, planRelayed, planWithdrawal, settledMessage, type Fields, type Me, type Plan, type SettleRequest } from './settle.ts'
 import { configDir, logLine, stateDir, storeIo } from './module-io.ts'
-import { fieldsOf, messageOf, type Host, type On } from './host.ts'
+import { messageOf, type Host, type On } from './host.ts'
 import { replicate, resendReplicas, sendReply } from './remote-asked.ts'
 
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock' | 'ui'>
