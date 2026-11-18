@@ -19,7 +19,9 @@
 # (`<log>.session`, the key the stop gate tells a session its own watches by); reads the pull
 # request once more when the watch returns. Then the github plugin's `pr-gate` decides (its engine,
 # found where the host installed the plugin, or at the checkout the override names): it is the one
-# reading of CI, and the watch counts nothing of its own. Its `ci.result` FAILURE is a `red` naming
+# reading of CI, and the watch counts nothing of its own. Each answer read is kept whole, the last
+# one replacing the one before, in `<state>/ci-gate/<owner_name>-pr<n>.json`: the hooks module's
+# facts line of a delivery reads CI there and runs no gate itself. Its `ci.result` FAILURE is a `red` naming
 # its `ci.failed`. While no failure is read, every workflow run of the head is read, each unfinished
 # one watched to its end (`gh run watch`), the checks watched again, and the gate read again; once
 # none is unfinished, the watch goes on while the gate's result is PENDING with a check running (a

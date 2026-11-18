@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -292,6 +292,23 @@ test('a cancelled run the gate leaves out is no red: the watch says the gate\'s 
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [1], failing: 'build', buckets: 'build:pass', gate: ['SUCCESS:0'] })
   assert.equal((await watch(options(), deps)).line, `green 7 ${HA} ${GATE}`)
   assert.equal(deps.calls.filter(call => call.includes('select(.bucket')).length, 0)
+})
+
+// The facts line of a delivery reads CI from the gate's last answer the watch kept, never from GitHub.
+test('each gate answer read is kept whole for the facts line, under the gate\'s repository lowercased', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' })
+  assert.equal((await watch(options(['Acme/Thing#7', '--interval', '1']), deps)).line, `green 7 ${HA} ${GATE} on Acme/Thing`)
+  const kept = JSON.parse(readFileSync(join(state, 'ci-gate', 'acme_thing-pr7.json'), 'utf8')) as { head: string; ci: { result: string } }
+  assert.deepEqual([kept.head, kept.ci.result], [HA, 'SUCCESS'])
+  // A read that failed keeps nothing; a reading kept before stays.
+  assert.match(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['fail'] }, ['Acme/Thing#7', '--interval', '1']), /^unread 7 pr-gate failed/)
+  assert.equal((JSON.parse(readFileSync(join(state, 'ci-gate', 'acme_thing-pr7.json'), 'utf8')) as { ci: { result: string } }).ci.result, 'SUCCESS')
+  assert.equal(readdirSync(join(state, 'ci-gate')).length, 1)
+})
+
+test('a gate answer that cannot be kept stops no watch: the facts line then says CI unread', async () => {
+  writeFileSync(join(state, 'ci-gate'), 'a file where the directory goes')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' }), `green 7 ${HA} ${GATE}|0`)
 })
 
 test('a pull request GitHub reports as conflicting is no green: its suites never ran, whatever else passed', async () => {

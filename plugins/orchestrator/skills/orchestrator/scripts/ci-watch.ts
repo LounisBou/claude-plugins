@@ -10,7 +10,7 @@ import { setting, stateDir, type Env } from '../../../core/paths.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { ENV } from '../../../core/env.ts'
 import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
-import { CI_WATCH_DIR, ciWatchLogPath, MODULE_DIR } from '../../../core/orchestration.ts'
+import { CI_GATE_DIR, ciGatePath, CI_WATCH_DIR, ciWatchLogPath, MODULE_DIR } from '../../../core/orchestration.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import { auditRun, fullHead, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 
@@ -157,6 +157,8 @@ export function countBucket(checks: readonly GateCheck[], bucket: string, names?
 
 /** The gate's reading of CI at a head, as the watch decides on it. */
 export interface GateCi {
+  /** The repository the gate read, `owner/name`, when it names one. */
+  readonly repo?: string
   /** The head the gate read. */
   readonly head: string | undefined
   readonly result: string
@@ -170,7 +172,7 @@ export interface GateCi {
 
 /** The gate's JSON answer read; null when it has no CI result. */
 export function parseGate(stdout: string): GateCi | null {
-  interface Answer { readonly head?: unknown; readonly ci?: { readonly result?: unknown; readonly running?: unknown; readonly unverified?: unknown; readonly failed?: unknown; readonly checks?: unknown } }
+  interface Answer { readonly repo?: unknown; readonly head?: unknown; readonly ci?: { readonly result?: unknown; readonly running?: unknown; readonly unverified?: unknown; readonly failed?: unknown; readonly checks?: unknown } }
   let gate: Answer | null = null
   try {
     gate = JSON.parse(stdout) as Answer | null
@@ -184,7 +186,7 @@ export function parseGate(stdout: string): GateCi | null {
     ? (ci.checks as { readonly name?: unknown; readonly bucket?: unknown }[]).flatMap(check => (typeof check?.name === 'string' && typeof check.bucket === 'string' ? [{ name: check.name, bucket: check.bucket }] : []))
     : []
   return {
-    head: typeof gate?.head === 'string' ? gate.head : undefined, result: ci.result, running: ci.running,
+    ...(typeof gate?.repo === 'string' ? { repo: gate.repo } : {}), head: typeof gate?.head === 'string' ? gate.head : undefined, result: ci.result, running: ci.running,
     unverified: strings(ci.unverified).length > 0, failed: strings(ci.failed), checks, raw: stdout,
   }
 }
@@ -239,7 +241,22 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     if (ran.status !== 0) throw unread(pr, `pr-gate failed: ${firstLine(ran.stderr) || 'no answer'}`)
     const ci = parseGate(ran.stdout)
     if (ci === null) throw unread(pr, 'pr-gate failed: an answer with no ci result')
+    keepGate(ci, name)
     return ci
+  }
+
+  /*
+   * The gate's answer kept whole, the last one replacing the one before (core's ciGatePath): the
+   * delivery's facts line reads CI there and asks GitHub nothing. A write that fails stops no watch;
+   * the facts line then finds no reading at the head and says CI unread.
+   */
+  const keepGate = (ci: GateCi, name: string): void => {
+    try {
+      mkdirSync(join(options.stateDir, CI_GATE_DIR), { recursive: true })
+      writeAtomic(ciGatePath(options.stateDir, ci.repo ?? name, pr), ci.raw)
+    } catch {
+      // Said by the facts line, which finds no reading at the head.
+    }
   }
 
   // Whether the head's CI is still to come: the gate speaks of another head than the one watched (it
