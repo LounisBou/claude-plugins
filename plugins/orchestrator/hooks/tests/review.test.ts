@@ -160,6 +160,37 @@ for (const name of ['Agent: review record', 'Coord: general', 'Audit: method']) 
   })
 }
 
+// A review session outside an orchestration (implement's /implement:review, `Agent: review <subject>`)
+// records its own pass or fail through the same tool; github still refuses the session that pushed the head.
+for (const verdict of ['pass', 'fail']) {
+  test(`a review session's ${verdict} is written as a review record, its answer counting no round`, async () => {
+    const fx = fake('Agent: review demo', { result: '/cfg/records/x/review.json\ngithub: acme/thing#128 Ready at 0123456: a clean review.' })
+    const out = await handler()(fx.dollar, { pr: 128, repo: 'acme/thing', verdict, detail: 'read at 0123456' })
+    expect(fx.calls).toEqual([{ tool: 'mcp__github__record', pr: 128, repo: 'acme/thing', kind: 'review', result: verdict, detail: 'read at 0123456' }])
+    expect(out).toEqual({ result: '/cfg/records/x/review.json\nReady at 0123456' })
+  })
+}
+
+for (const [label, input] of [
+  ['an acceptance', ACCEPTED],
+  ['a check plan', { pr: 128, plan: { review: 'required: max 1' } }],
+  ['a dispatch row', { pr: 128, verdict: 'pass', record: '/b/record.jsonl', row: 4 }],
+] as const) {
+  test(`a review session's ${label} is the orchestrator's: refused, nothing called`, async () => {
+    const fx = fake('Agent: review demo')
+    expect(await handler()(fx.dollar, input)).toEqual({ result: NOT_ORCHESTRATOR, isError: true })
+    expect(fx.calls).toEqual([])
+  })
+}
+
+for (const name of ['Agent: reviewrecord', 'Agent: demo p3', 'Coord: review x']) {
+  test(`a session named ${name} is no review session: its pass is refused`, async () => {
+    const fx = fake(name)
+    expect(await handler()(fx.dollar, { pr: 128, verdict: 'pass' })).toEqual({ result: NOT_ORCHESTRATOR, isError: true })
+    expect(fx.calls).toEqual([])
+  })
+}
+
 for (const [label, change] of [
   ['no pull request', { pr: 0 }], ['no verdict', { verdict: '' }], ['another verdict', { verdict: 'waived' }],
   ['no point set aside', { set_asides: [] }], ['a point without its reason', { set_asides: [{ point: 'a.ts', reason: ' ' }] }],

@@ -2774,8 +2774,13 @@ export async function walkedName($: Host<'env' | 'fs' | 'process'>, sessionId: s
 
 // The role of the session: the name its row holds, else the name its walk reads.
 export async function sessionRole($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<string | null> {
+  return roleOf(await sessionNameOf($, sessionId))
+}
+
+// The session's name: the one its row holds, else the one its walk reads.
+export async function sessionNameOf($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<string | null> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
-  return roleOf(row?.name ?? (await walkWithinBound($, sessionId)).name ?? null)
+  return row?.name ?? (await walkWithinBound($, sessionId)).name ?? null
 }
 
 // Whether the session is an orchestrator.

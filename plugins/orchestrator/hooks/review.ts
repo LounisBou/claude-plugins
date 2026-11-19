@@ -2,7 +2,9 @@
 // The orchestrator's review verdict: once its review round has read a pull request's head, the
 // orchestrator records the verdict for the github ready gate, a pass, a fail, or an acceptance
 // that sets non-critical points aside, each with its reason. The record is github's (core's
-// pr-record.ts): this tool writes it only from an orchestrator session, and github checks the rest
+// pr-record.ts): this tool writes it from an orchestrator session, or a pass or a fail from a review
+// session outside an orchestration (implement's /implement:review, `Agent: review <subject>`), the
+// acceptance, the check plan and the row staying the orchestrator's; github checks the rest
 // at the head of the clean checkout it reads: the caller's plugin, a session that did not push
 // that head, and no pass over a failed review there. In place of a verdict, the same tool writes the pull
 // request's check plan (github's check-plan.ts), which github takes from this plugin only.
@@ -13,7 +15,8 @@ import { ACCEPTANCE, acceptanceDetail, DETAIL_MAX } from '../core/pr-record.ts'
 import { AUDIT_CONTRACT, type Decision, type FindingSeverity } from '../core/learning.ts'
 import { parseFindingId } from '../core/lens.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
-import { isOrchestratorSession } from './supervision.ts'
+import { isOrchestratorSession, sessionNameOf } from './supervision.ts'
+import { roleOf } from '../core/names.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
 import { countRound } from './review-rounds.ts'
@@ -33,7 +36,17 @@ const FINDING = {
   severity: { type: 'string', enum: [...AUDIT_CONTRACT.finding_severities] },
 }
 
-export const NOT_ORCHESTRATOR = 'Only an orchestrator session records a review verdict or a check plan: the review round and the scope are its own.'
+export const NOT_ORCHESTRATOR = 'Only an orchestrator session records an acceptance, a check plan or a dispatch row, and a review session (`Agent: review <subject>`) a pass or a fail: the review round and the scope are theirs.'
+
+// A review session: an agent whose subject starts with « review », as implement's /implement:review names it.
+export function isReviewSessionName(name: string | null): boolean {
+  return roleOf(name) === 'agent' && /^\S+ ?: review \S/u.test(name ?? '')
+}
+
+// What a review session may record: a pass or a fail at the head, with no row; the rest is an orchestrator's.
+function reviewSessionMay(input: Record<string, unknown>, target: RowTarget | null): boolean {
+  return input['plan'] === undefined && target === null && text(input['verdict']) !== ACCEPTANCE.result
+}
 
 // The needs a plan may give a check, as core's readiness contract lists them.
 export const needsOf = (check: keyof typeof PLAN_NEEDS): string => PLAN_NEEDS[check].join(', ')
@@ -251,7 +264,7 @@ export function register(on: On<Held>): void {
       await $.tool.register({
         name: REVIEW_TOOL,
         isDeferred: false,
-        description: 'Records the review round\'s verdict at a pull request\'s head for the github ready gate: pass, fail, or accepted with each point set aside and its reason. From a clean checkout at the head; only in an orchestrator session. A verdict counts a round on the row it names (record and row), else on the row whose label names the pull request. In place of the verdict, plan sets the proofs the pull request owes.',
+        description: 'Records the review round\'s verdict at a pull request\'s head for the github ready gate: pass, fail, or accepted with each point set aside and its reason. From a clean checkout at the head; in an orchestrator session, or a pass or a fail in a review session (`Agent: review <subject>`). A verdict counts a round on the row it names (record and row), else on the row whose label names the pull request. In place of the verdict, plan sets the proofs the pull request owes.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -307,7 +320,9 @@ export function register(on: On<Held>): void {
       const missing = index === null ? null : importantUncovered(index, e)
       if (missing !== null) return { result: missing, isError: true }
     }
-    if (!(await isOrchestratorSession($, await $.session.id()))) return { result: NOT_ORCHESTRATOR, isError: true }
+    const session = await $.session.id()
+    const orchestrator = await isOrchestratorSession($, session)
+    if (!orchestrator && !(reviewSessionMay(e, target) && isReviewSessionName(await sessionNameOf($, session)))) return { result: NOT_ORCHESTRATOR, isError: true }
     const written = answerOf(await $.tool.call(call))
     // A verdict is a review round: the row of the pull request counts it, and the answer says which row, or that none matched.
     if (written.isError === true || !('result' in call)) return written
@@ -316,6 +331,8 @@ export function register(on: On<Held>): void {
     const sent = text(call['detail'])
     const answer = sent ? { result: written.result.split(`orchestrator (${sent})`).join(`orchestrator (${ECHOED_DETAIL})`)
       .split(`orchestrator, ${sent}`).join(`orchestrator, ${ECHOED_DETAIL}`) } : written
+    // A review session's verdict counts no round: no dispatch record is its own.
+    if (!orchestrator) return { result: answerLines(answer.result, '', null) }
     const counted = await countRound($, { pr: Number(call['pr']), repo: text(call['repo']), ...(typeof call['dir'] === 'string' ? { dir: call['dir'] } : {}), ...(typeof e['cwd'] === 'string' ? { cwd: e['cwd'] } : {}), ...(target === null ? {} : { at: { record: target.record, row: target.row } }) })
     if (target === null) return { result: answerLines(answer.result, counted, null) }
     // Level 1 after the count, so its rounds include this one. The gate's record is written: a row that
