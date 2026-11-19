@@ -15,7 +15,7 @@ import { ACCEPTANCE, acceptanceDetail, DETAIL_MAX } from '../core/pr-record.ts'
 import { AUDIT_CONTRACT, type Decision, type FindingSeverity } from '../core/learning.ts'
 import { parseFindingId } from '../core/lens.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
-import { isOrchestratorSession, sessionNameOf } from './supervision.ts'
+import { isOrchestratorSession, reportsToOrchestrator, sessionNameOf } from './supervision.ts'
 import { roleOf } from '../core/names.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
@@ -38,14 +38,17 @@ const FINDING = {
 
 export const NOT_ORCHESTRATOR = 'Only an orchestrator session records an acceptance, a check plan or a dispatch row, and a review session (`Agent: review <subject>`) a pass or a fail: the review round and the scope are theirs.'
 
-// A review session: an agent whose subject starts with « review », as implement's /implement:review names it.
+// A review session's name: an agent whose subject starts with « review », as implement's /implement:review names it.
 export function isReviewSessionName(name: string | null): boolean {
   return roleOf(name) === 'agent' && /^\S+ ?: review \S/u.test(name ?? '')
 }
 
-// What a review session may record: a pass or a fail at the head, with no row; the rest is an orchestrator's.
-function reviewSessionMay(input: Record<string, unknown>, target: RowTarget | null): boolean {
-  return input['plan'] === undefined && target === null && text(input['verdict']) !== ACCEPTANCE.result
+// Whether a session that is no orchestrator records this verdict: a review session outside an
+// orchestration, a pass or a fail at the head with no row. Inside one, the verdict is the orchestrator's.
+async function mayReview($: Held, input: Record<string, unknown>, target: RowTarget | null, session: string): Promise<boolean> {
+  if (input['plan'] !== undefined || target !== null || text(input['verdict']) === ACCEPTANCE.result) return false
+  const name = await sessionNameOf($, session)
+  return isReviewSessionName(name) && !(await reportsToOrchestrator($, session, name ?? ''))
 }
 
 // The needs a plan may give a check, as core's readiness contract lists them.
@@ -314,15 +317,15 @@ export function register(on: On<Held>): void {
     if (typeof call === 'string') return { result: call, isError: true }
     const target = rowTarget(e)
     if (typeof target === 'string') return { result: target, isError: true }
+    const session = await $.session.id()
+    const orchestrator = await isOrchestratorSession($, session)
+    if (!orchestrator && !(await mayReview($, e, target, session))) return { result: NOT_ORCHESTRATOR, isError: true }
     if (target !== null && target.findings !== '' && text(e['verdict']) === ACCEPTANCE.result) {
       const index = await $.fs.read(target.findings).catch(() => null)
       if (index === null) await logLine($, 'review', `findings index not read: ${target.findings}`)
       const missing = index === null ? null : importantUncovered(index, e)
       if (missing !== null) return { result: missing, isError: true }
     }
-    const session = await $.session.id()
-    const orchestrator = await isOrchestratorSession($, session)
-    if (!orchestrator && !(reviewSessionMay(e, target) && isReviewSessionName(await sessionNameOf($, session)))) return { result: NOT_ORCHESTRATOR, isError: true }
     const written = answerOf(await $.tool.call(call))
     // A verdict is a review round: the row of the pull request counts it, and the answer says which row, or that none matched.
     if (written.isError === true || !('result' in call)) return written
