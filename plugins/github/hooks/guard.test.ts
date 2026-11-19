@@ -1424,6 +1424,44 @@ test('an E2E "ran" rests on a Bash run this session observed in the checkout sin
   expect(background.deny).toContain('a background run is not observed')
 })
 
+test('an E2E "ran" not seen is written as stated under the result given, and observed, not refused', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved } })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', result: 'fail', detail: 'ran on the test box' })
+  expect(out.deny).toBeUndefined()
+  const argv = recordRun(seen)!
+  expect(argv[9]).toBe('fail')
+  expect(argv[13]).toBe('stated, not computed: `npm run e2e` at 0123456 not observed in /work; ran on the test box')
+  expect(seen.journal).toEqual(['github.record.e2e-stated'])
+})
+
+test('an E2E "ran" not seen is written as a stated pass when the session says it passed', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved } })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', result: 'pass' })
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)![9]).toBe('pass')
+  expect(recordRun(seen)![13]).toMatch(/^stated, not computed: /)
+})
+
+test('an E2E "ran" whose checkout reflog cannot be read is refused, not stated', async ($, on) => {
+  const seen = await world($, on, { git: { ...CLEAN, 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 128, stdout: '' } } })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', result: 'pass' })
+  expect(out.deny).toContain('cannot be read from its reflog')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('an E2E "ran" seen is computed, not stated, whatever result the session gives', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved } })
+  await $.tool.call({ tool: 'Bash', command: 'npm run e2e' })
+  await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', result: 'fail' })
+  const argv = recordRun(seen)!
+  expect(argv[9]).toBe('pass')
+  expect(argv[13]).toContain('observed `npm run e2e`')
+  expect(seen.journal).toEqual([])
+})
+
 test('a push keeps its head on disk with the session that pushed it, for any later session to read', async ($, on) => {
   const seen = await world($, on, { git: CLEAN })
   await $.tool.call({ tool: 'Bash', command: 'git push origin feat-a' })
