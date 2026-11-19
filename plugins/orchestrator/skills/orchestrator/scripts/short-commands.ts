@@ -12,9 +12,8 @@
 // plugin's: a file of the same name without it is the operator's, never written, never removed.
 // `sync` is the module's pass at each session start: after a plugin update the copies still name
 // the earlier version's root, and it rewrites them, never creating one the operator removed.
-// All three remove a marked file that matches no row, or whose row names a plugin command the
-// plugin no longer ships: either would otherwise leave its copy behind on every machine that
-// installed it.
+// All three remove a marked file that matches no row: a row dropped from the table would
+// otherwise leave its copy behind on every machine that installed it.
 //
 // The directory: --dir, else ORCHESTRATOR_COMMANDS_DIR, else the config dir's commands/.
 import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
@@ -134,12 +133,6 @@ function run(mode: Mode, dry: boolean, dest: string, deps: Deps): void {
       if (!statSync(command).isFile()) throw new Error('not a file')
       source = readFileSync(command, 'utf8')
     } catch {
-      // A marked copy of a command the plugin no longer ships runs a file that is gone.
-      if (exists(target) && !isLink(target) && ours(target)) {
-        if (!dry) rmSync(target, { force: true })
-        say(`stale short command removed: ${target} (the plugin ships no ${command})`)
-        continue
-      }
       deps.io.err(`  no plugin command ${command} for /${short}\n`)
       continue
     }
