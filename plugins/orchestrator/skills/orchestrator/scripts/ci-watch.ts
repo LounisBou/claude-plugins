@@ -9,10 +9,13 @@ import { fileURLToPath } from 'node:url'
 import { setting, stateDir, type Env } from '../../../core/paths.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { ENV } from '../../../core/env.ts'
+import { gateArgv, parseGate, type GateCheck, type GateCi } from '../../../core/ci-gate.ts'
 import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
 import { CI_GATE_DIR, ciGatePath, CI_WATCH_DIR, ciWatchLogPath, MODULE_DIR } from '../../../core/orchestration.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import { auditRun, fullHead, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
+
+export { parseGate, type GateCheck, type GateCi }
 
 export const USAGE = 'usage: ci-watch.sh <pr | owner/name#pr | pull request url> [--repo <owner/repo>] [--interval <s>] [--base-workflow <name>]... [--no-base] (outside a clone of the repository: name it, by --repo or in the target)'
 
@@ -147,48 +150,9 @@ export function logPath(options: Options, base: boolean): string {
   return ciWatchLogPath(options.stateDir, options.repo, options.pr, base)
 }
 
-/** One check the gate counted: its name and bucket (pass, fail, pending, skipping). */
-export interface GateCheck { readonly name: string; readonly bucket: string }
-
 /** Counts the gate's checks in `bucket`, among `names` when given. */
 export function countBucket(checks: readonly GateCheck[], bucket: string, names?: ReadonlySet<string>): number {
   return checks.filter(check => check.bucket === bucket && (names === undefined || names.has(check.name))).length
-}
-
-/** The gate's reading of CI at a head, as the watch decides on it. */
-export interface GateCi {
-  /** The repository the gate read, `owner/name`, when it names one. */
-  readonly repo?: string
-  /** The head the gate read. */
-  readonly head: string | undefined
-  readonly result: string
-  readonly running: number
-  readonly unverified: boolean
-  readonly failed: readonly string[]
-  readonly checks: readonly GateCheck[]
-  /** The answer as the gate gave it, for the draft guard's stdin. */
-  readonly raw: string
-}
-
-/** The gate's JSON answer read; null when it has no CI result. */
-export function parseGate(stdout: string): GateCi | null {
-  interface Answer { readonly repo?: unknown; readonly head?: unknown; readonly ci?: { readonly result?: unknown; readonly running?: unknown; readonly unverified?: unknown; readonly failed?: unknown; readonly checks?: unknown } }
-  let gate: Answer | null = null
-  try {
-    gate = JSON.parse(stdout) as Answer | null
-  } catch {
-    return null
-  }
-  const ci = gate?.ci
-  if (typeof ci?.result !== 'string' || typeof ci.running !== 'number') return null
-  const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [])
-  const checks = Array.isArray(ci.checks)
-    ? (ci.checks as { readonly name?: unknown; readonly bucket?: unknown }[]).flatMap(check => (typeof check?.name === 'string' && typeof check.bucket === 'string' ? [{ name: check.name, bucket: check.bucket }] : []))
-    : []
-  return {
-    ...(typeof gate?.repo === 'string' ? { repo: gate.repo } : {}), head: typeof gate?.head === 'string' ? gate.head : undefined, result: ci.result, running: ci.running,
-    unverified: strings(ci.unverified).length > 0, failed: strings(ci.failed), checks, raw: stdout,
-  }
 }
 
 export interface Deps {
@@ -543,7 +507,7 @@ async function readGate(repo: string, pr: string): Promise<Ran> {
     if (!(error instanceof NotInstalled)) throw error
     return { status: 1, stdout: '', stderr: `${error.message} (${error.fix})\n` }
   }
-  return run(['python3', join(root, 'engine', 'gh.py'), '--repo', repo, 'pr-gate', pr, '--json'], { stderr: 'pipe' })
+  return run(gateArgv(root, repo, pr), { stderr: 'pipe' })
 }
 
 /* node:coverage ignore next 11 */

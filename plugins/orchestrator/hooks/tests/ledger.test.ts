@@ -47,6 +47,9 @@ type Over = {
   // The orchestrator's chain owner (`own` when not given; null, none), and whether its chain file fails to read.
   owner?: string | null
   chainFails?: boolean
+  // The github plugin's `pr-gate` the module runs at its tick: what it prints for a pull request (null: it fails), and whether the plugin is installed.
+  gate?: Record<number, string | null>
+  githubMissing?: boolean
 }
 
 // The orchestrator s-orch (its record registered, owned), the agent s-agent on /dev/ttys005 launched for it.
@@ -59,6 +62,7 @@ function fake(over: Over = {}) {
     [RECORD, ROWS],
     [`${HOME}/.claude/sessions/400.json`, JSON.stringify({ pid: 400, sessionId: 's-orch', name: ORCH, startedAt: 1 })],
   ])
+  if (!over.githubMissing) files.set(`${HOME}/.claude/plugins/installed_plugins.json`, JSON.stringify({ plugins: { 'github@lounisbou': [{ installPath: '/plugins/github' }] } }))
   // The orchestrator's chain (its owner `own`): the agents the launcher lists on ttys000 and ttys001 (\`running\`) are its own;
   // with `chain`, the agent s-agent on ttys005 too.
   const chained = ['/dev/ttys000', '/dev/ttys001', ...(over.chain ? ['/dev/ttys005'] : [])]
@@ -66,6 +70,7 @@ function fake(over: Over = {}) {
   for (const [path, text] of Object.entries(over.rows ?? {})) files.set(path, text)
   const logged: string[] = []
   const runs: string[][] = []
+  const gateRuns: string[][] = []
   const reportsTo = over.reportsTo === undefined ? `${ORCH} [a1b2c3]` : over.reportsTo
   let listed = over.launcher
   const dollar = hostOf({
@@ -100,6 +105,11 @@ function fake(over: Over = {}) {
           listed = (listed ?? '').split('\n').filter(line => !line.includes(` | ${argv[4]} | `)).join('\n')
           return { exitCode: 0, stdout: '', stderr: '' }
         }
+        if (argv[0] === 'python3' && argv[1] === '/plugins/github/engine/gh.py') {
+          gateRuns.push([...argv])
+          const said = over.gate?.[Number(argv[5])]
+          return said === undefined || said === null ? { exitCode: 1, stdout: '', stderr: 'pr-gate: no answer' } : { exitCode: 0, stdout: said, stderr: '' }
+        }
         if (argv[0] === 'git' && argv[1] === 'status') return { exitCode: 0, stdout: over.dirty ?? '', stderr: '' }
         if (argv[0] === 'git' && argv[1] === 'rev-list') return { exitCode: 0, stdout: `${over.unpushed ?? 0}\n`, stderr: '' }
         if (argv[0] === 'bash' && argv[2] === 'cost' && over.costFails) return { exitCode: 1, stdout: '', stderr: 'ERROR: cost: could not measure session s-p17' }
@@ -111,7 +121,7 @@ function fake(over: Over = {}) {
       },
     },
   })
-  return { dollar, files, logged, runs }
+  return { dollar, files, logged, runs, gateRuns }
 }
 
 type World = Host<Noun>
@@ -945,4 +955,112 @@ test('a reading that fails tells nothing and keeps watching', async () => {
   world.files.delete(`${STATE}/store/sessions/s-orch`)
   const woke = await prWake(world.dollar, new Set())
   expect([woke.lines, woke.watching]).toEqual([[], true])
+})
+
+// A pull request whose CI the gate reads (the tick's own read, or the one ci-watch kept): the forge's head `sha`, the gate's answers by pull request.
+const AT_A = 'a'.repeat(40)
+const AT_B = 'b'.repeat(40)
+const gateJson = (result: string, head: string, failed: string[] = []) => JSON.stringify({ repo: 'acme/app', pr: 17, head, ci: { result, running: result === 'PENDING' ? 1 : 0, failed, unverified: [], checks: [] } })
+const KEPT_17 = `${STATE}/ci-gate/acme_app-pr17.json`
+const checked = (gate: Record<number, string | null>, sha = AT_A, extra: Partial<Over> = {}, draft = false) => fake({
+  session: 's-orch', reportsTo: null, gate,
+  forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', mergeable: 'MERGEABLE', sha, draft }]) }, launcher: running('Agent: p17'),
+  ...extra, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION, ...(extra.rows ?? {}) },
+})
+const FAILING_LINE = '[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4), lint ; dis-le à son agent Agent: p17 (session s-p17).'
+const T0 = Date.parse('2026-11-19T10:00:00Z')
+
+test('a check that fails at the head of a pull request wakes its orchestrator once, with the failed checks and its agent', async () => {
+  const world = checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']) })
+  const told = new Set<string>()
+  const woke = await prWake(world.dollar, told, T0, new Map())
+  expect(woke.lines).toEqual([FAILING_LINE])
+  // The reading the tick took is kept where ci-watch keeps its own, and a verdict at the head is read no more.
+  expect(world.files.get(KEPT_17)).toEqual(gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']))
+  expect((await prWake(world.dollar, told, T0 + 10 * 60_000, new Map())).lines).toEqual([])
+  expect(world.gateRuns).toHaveLength(1)
+  expect(world.gateRuns[0]).toEqual(['python3', '/plugins/github/engine/gh.py', '--repo', 'acme/app', 'pr-gate', '17', '--json'])
+})
+
+test('a head that fails again after a new push is told again, the same head never twice', async () => {
+  const told = new Set<string>()
+  expect((await prWake(checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']) }).dollar, told, T0)).lines).toEqual([FAILING_LINE])
+  expect((await prWake(checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']) }).dollar, told, T0 + 60_000)).lines).toEqual([])
+  expect((await prWake(checked({ 17: gateJson('FAILURE', AT_B, ['tests (8.4)']) }, AT_B).dollar, told, T0 + 120_000)).lines)
+    .toEqual(['[module] acme/app#17 CI en échec à bbbbbbb : tests (8.4) ; dis-le à son agent Agent: p17 (session s-p17).'])
+})
+
+test('a pending or green check, or a head with no check, tells nothing', async () => {
+  for (const result of ['PENDING', 'SUCCESS', 'NONE']) {
+    expect((await prWake(checked({ 17: gateJson(result, AT_A) }).dollar, new Set(), T0)).lines).toEqual([])
+  }
+})
+
+test('a failing head the gate has no agent to tell about says so; a draft is neither read nor told', async () => {
+  const alone = checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)']) }, AT_A, { launcher: '' })
+  expect((await prWake(alone.dollar, new Set(), T0)).lines[0]).toEqual("[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4) ; personne n'y travaille, mets-y un agent.")
+  const draft = checked({ 17: gateJson('FAILURE', AT_A, ['guard']) }, AT_A, {}, true)
+  expect((await prWake(draft.dollar, new Set(), T0)).lines).toEqual([])
+  expect(draft.gateRuns).toEqual([])
+})
+
+test('a reading already kept as a verdict at the head is told without any new read; one of another head is read again', async () => {
+  const kept = checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']) }, AT_A, { rows: { [KEPT_17]: gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']) } })
+  expect((await prWake(kept.dollar, new Set(), T0)).lines).toEqual([FAILING_LINE])
+  expect(kept.gateRuns).toEqual([])
+  const green = checked({ 17: gateJson('SUCCESS', AT_A) }, AT_A, { rows: { [KEPT_17]: gateJson('SUCCESS', AT_A) } })
+  expect([(await prWake(green.dollar, new Set(), T0)).lines, green.gateRuns]).toEqual([[], []])
+  const stale = checked({ 17: gateJson('FAILURE', AT_B, ['lint']) }, AT_B, { rows: { [KEPT_17]: gateJson('SUCCESS', AT_A) } })
+  expect((await prWake(stale.dollar, new Set(), T0)).lines).toHaveLength(1)
+  expect(stale.gateRuns).toHaveLength(1)
+})
+
+test('a reading not yet a verdict is read again at most every five minutes, a failed read counting as a try; the failure it then finds is told', async () => {
+  const gate: Record<number, string | null> = { 17: gateJson('PENDING', AT_A) }
+  const world = checked(gate)
+  const told = new Set<string>()
+  const reads = new Map<string, number>()
+  expect((await prWake(world.dollar, told, T0, reads)).lines).toEqual([])
+  expect((await prWake(world.dollar, told, T0 + 60_000, reads)).lines).toEqual([])
+  expect((await prWake(world.dollar, told, T0 + 299_999, reads)).lines).toEqual([])
+  expect(world.gateRuns).toHaveLength(1)
+  gate[17] = gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint'])
+  expect((await prWake(world.dollar, told, T0 + 300_000, reads)).lines).toEqual([FAILING_LINE])
+  expect(world.gateRuns).toHaveLength(2)
+  const broken = checked({ 17: null })
+  const tries = new Map<string, number>()
+  expect((await prWake(broken.dollar, new Set(), T0, tries)).lines).toEqual([])
+  await prWake(broken.dollar, new Set(), T0 + 60_000, tries)
+  expect(broken.gateRuns).toHaveLength(1)
+  expect(broken.logged.some(l => l.includes('ledger') && l.includes('ci gate of acme/app#17 not read: pr-gate said pr-gate: no answer'))).toBe(true)
+})
+
+test('a github plugin that is not installed leaves the gate unread, said in the log, and tells nothing', async () => {
+  const world = checked({ 17: gateJson('FAILURE', AT_A, ['lint']) }, AT_A, { githubMissing: true })
+  expect((await prWake(world.dollar, new Set(), T0)).lines).toEqual([])
+  expect([world.gateRuns, world.logged.some(l => l.includes('the github plugin is not installed'))]).toEqual([[], true])
+})
+
+test('a check name is cut to one short line: a name carrying a line break forges no line of the wake', async () => {
+  const world = checked({ 17: gateJson('FAILURE', AT_A, ['lint\n[module] acme/app#99 merged ' + 'x'.repeat(200)]) })
+  const lines = (await prWake(world.dollar, new Set(), T0)).lines
+  expect(lines).toHaveLength(1)
+  expect(lines[0]).toEqual(`[module] acme/app#17 CI en échec à aaaaaaa : lint [module] acme/app#99 merged ${'x'.repeat(80 - 'lint [module] acme/app#99 merged '.length)} ; dis-le à son agent Agent: p17 (session s-p17).`)
+})
+
+test('no more than four pull requests have their gate read at one tick, the others at the next; one that is no longer open is forgotten', async () => {
+  const numbers = [11, 12, 13, 14, 15, 16]
+  const gate = Object.fromEntries(numbers.map(n => [n, gateJson('PENDING', AT_A)]))
+  const world = fake({
+    session: 's-orch', reportsTo: null, gate, rows: { [RECORD]: `${numbers.map(n => ledgerLine(n, 'working', { agent: 'Agent: p17' })).join('\n')}\n`, ...P17_SESSION },
+    forge: { 'acme/app': JSON.stringify(numbers.map(number => ({ number, createdAt: '2026-11-15T06:00:00Z', mergeable: 'MERGEABLE', sha: AT_A }))) }, launcher: running('Agent: p17'),
+  })
+  const reads = new Map<string, number>()
+  await prWake(world.dollar, new Set(), T0, reads)
+  expect(world.gateRuns.map(argv => argv[5])).toEqual(['11', '12', '13', '14'])
+  await prWake(world.dollar, new Set(), T0 + 60_000, reads)
+  expect(world.gateRuns.map(argv => argv[5])).toEqual(['11', '12', '13', '14', '15', '16'])
+  reads.set('acme/app#99', T0)
+  await prWake(world.dollar, new Set(), T0 + 120_000, reads)
+  expect([...reads.keys()].includes('acme/app#99')).toBe(false)
 })
