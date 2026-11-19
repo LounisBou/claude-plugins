@@ -534,6 +534,15 @@ test('a merge pinned to a head that moved is refused', async ($, on) => {
   expect(out.deny).toContain('the head moved: ' + MOVED + ' given, ' + HEAD + ' on GitHub')
 })
 
+test('a merge pinned by a short prefix of the head runs, pinned to the full head; a wrong prefix is refused', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/thing'] })
+  const out = await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD.slice(0, 7) }))
+  expect(out.deny).toBeUndefined()
+  expect(seen.runs.find((r) => r.command === 'pr-merge')?.args?.['sha']).toBe(HEAD)
+  const wrong = await $.tool.call(gh('pr-merge', { pr: 12, sha: MOVED.slice(0, 7) }))
+  expect(wrong.deny).toContain('the head moved: ' + MOVED.slice(0, 7) + ' given, ' + HEAD + ' on GitHub')
+})
+
 // A push between the gate's read and the merge must not merge a head nobody checked.
 test('a tool merge with no sha is pinned to the head the gate checked', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['acme/thing'] })
@@ -548,6 +557,19 @@ for (const [command, flag] of [
   ['gh api -X PUT repos/acme/thing/pulls/12/merge', '-f sha='],
 ] as const) {
   test('a ready Bash merge pinning no head is refused with the flag that pins the gated one: ' + flag.trim(), async ($, on) => {
+    const seen = await world($, on, { autoMerge: ['acme/thing'] })
+    const out = await $.tool.call(bash(command))
+    expect(out.deny).toContain('refused on acme/thing#12: pin the head the gate checked, ' + flag + HEAD + '.')
+    expect(seen.bash).toEqual([])
+  })
+}
+
+for (const [command, flag] of [
+  ['gh pr merge 12 -R acme/thing --squash --match-head-commit ' + HEAD.slice(0, 7), '--match-head-commit '],
+  ['python3 /plugins/github/engine/gh.py pr-merge 12 --repo acme/thing --sha ' + HEAD.slice(0, 7), '--sha '],
+  ['gh api -X PUT repos/acme/thing/pulls/12/merge -f sha=' + HEAD.slice(0, 7), '-f sha='],
+] as const) {
+  test('a Bash merge pinned by a prefix of the head is refused with the full head to pin: ' + flag.trim(), async ($, on) => {
     const seen = await world($, on, { autoMerge: ['acme/thing'] })
     const out = await $.tool.call(bash(command))
     expect(out.deny).toContain('refused on acme/thing#12: pin the head the gate checked, ' + flag + HEAD + '.')
