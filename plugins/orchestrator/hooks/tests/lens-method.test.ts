@@ -4,7 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import { agentPaths, agentPrompt, lensMethod, methodAgent, methodWords, withMethod } from '../lens-method.ts'
 
-const RECORD = JSON.stringify({ version: 2, plugins: { 'pr-review-toolkit@claude-plugins-official': [{ installPath: '/a' }, { installPath: '/b' }], 'pr-review-toolkit@other': [{ installPath: '/c' }] } })
+const RECORD = JSON.stringify({ version: 2, plugins: { 'pr-review-toolkit@official': [{ installPath: '/a' }, { installPath: '/b' }], 'pr-review-toolkit@other': [{ installPath: '/c' }], 'pr-review@other': [{ installPath: '/d' }] } })
 
 test('each toolkit angle has its agent, by the lens\'s dashed name; the others have none', () => {
   expect(methodAgent('correctness')).toBe('code-reviewer')
@@ -15,8 +15,9 @@ test('each toolkit angle has its agent, by the lens\'s dashed name; the others h
   for (const lens of ['security', 'spec conformity', '', '!!']) expect(methodAgent(lens)).toBe(undefined)
 })
 
-test('the agent\'s prompt is read from the official catalogue\'s installs, in the record\'s order', () => {
-  expect(agentPaths(RECORD, 'code-reviewer')).toEqual(['/a/agents/code-reviewer.md', '/b/agents/code-reviewer.md'])
+test('the agent\'s prompt is read from the toolkit\'s installs, any marketplace, in the record\'s order', () => {
+  expect(agentPaths(RECORD, 'code-reviewer')).toEqual(['/a/agents/code-reviewer.md', '/b/agents/code-reviewer.md', '/c/agents/code-reviewer.md'])
+  expect(agentPaths('null', 'code-reviewer')).toEqual([])
   expect(agentPaths(undefined, 'code-reviewer')).toEqual([])
   expect(agentPaths('{', 'code-reviewer')).toEqual([])
   const read = (path: string) => (path === '/b/agents/pr-test-analyzer.md' ? '---\nname: x\n---\n\nAnalyze the tests.\n' : undefined)

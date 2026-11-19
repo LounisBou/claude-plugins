@@ -47,13 +47,13 @@ test('the module mounts the readers\' ids', () => {
 })
 
 // A machine whose install record gives the toolkit at /tk, with the agents named in `agents`.
-const RECORD = JSON.stringify({ version: 2, plugins: { 'pr-review-toolkit@claude-plugins-official': [{ scope: 'user', installPath: '/tk' }] } })
+const RECORD = JSON.stringify({ version: 2, plugins: { 'pr-review-toolkit@official': [{ scope: 'user', installPath: '/tk' }] } })
 const machine = (agents: Record<string, string>, record: string | undefined = RECORD) => hostOf({
-  env: { get: async (name: string) => (name === 'HOME' ? '/home/me' : undefined) },
+  env: { get: async (name: string) => (name === 'HOME' ? '/u/me' : undefined) },
   fs: {
     write: async () => undefined,
     read: async (path: string) => {
-      const text = path === '/home/me/.claude/plugins/installed_plugins.json' ? record : agents[path]
+      const text = path === '/u/me/.claude/plugins/installed_plugins.json' ? record : agents[path]
       if (text === undefined) throw new Error(`ENOENT: ${path}`)
       return text
     },

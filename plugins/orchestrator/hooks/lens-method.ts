@@ -1,6 +1,6 @@
 // hooks/lens-method.ts
 // The method a review reader reads its lens with. A lens whose angle has an agent in the
-// pr-review-toolkit plugin (official catalogue) reads with that agent's prompt, which lens-ids.ts
+// pr-review-toolkit plugin reads with that agent's prompt, which lens-ids.ts
 // loads into the reader's prompt where it is launched: the reader stays an `orchestrator:lens`, so
 // its description, its finding lines, their ids and telemetry's counts are core's lens.ts as before,
 // and the toolkit plugin itself may stay off in the session. A lens with no such agent, or a machine
@@ -10,7 +10,6 @@ import { recordedInstallPaths } from '../core/install-record.ts'
 import { lensSlug } from '../core/lens.ts'
 
 export const TOOLKIT = 'pr-review-toolkit'
-const TOOLKIT_MARKETPLACES = ['claude-plugins-official'] as const
 
 /** The toolkit agent of each lens angle that has one, by the lens's slug (core's lensSlug). */
 export const LENS_METHODS: Readonly<Record<string, string>> = {
@@ -27,10 +26,21 @@ export function methodAgent(lens: string): string | undefined {
   return slug === undefined ? undefined : LENS_METHODS[slug]
 }
 
-/** Where each install the host's record gives the toolkit would hold `agent`'s prompt, in its order. */
+/** The marketplaces the host's record installs the toolkit from, in its order. */
+function toolkitMarketplaces(record: string): string[] {
+  try {
+    const plugins: unknown = (JSON.parse(record) as { plugins?: unknown }).plugins
+    if (typeof plugins !== 'object' || plugins === null) return []
+    return Object.keys(plugins).filter(key => key.startsWith(`${TOOLKIT}@`)).map(key => key.slice(TOOLKIT.length + 1))
+  } catch {
+    return []
+  }
+}
+
+/** Where each install the host's record gives the toolkit would hold `agent`'s prompt, in its order, from any marketplace. */
 export function agentPaths(record: string | undefined, agent: string): string[] {
   if (record === undefined) return []
-  const recorded = recordedInstallPaths(record, TOOLKIT, TOOLKIT_MARKETPLACES)
+  const recorded = recordedInstallPaths(record, TOOLKIT, toolkitMarketplaces(record))
   return 'problem' in recorded ? [] : recorded.paths.map(root => `${root}/agents/${agent}.md`)
 }
 
