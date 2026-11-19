@@ -439,6 +439,11 @@ def pr_gate(args):
             "ci": _gate_ci(owner, name, pull, sha, statuses, (runs or {}).get("check_runs") or [], reads),
         }
     )
+    # GitHub's mergeability of the head against its base, as the pull request answers it: null while GitHub computes it.
+    # Carried only when the answer holds the field, so an answer without it is not read as still computing.
+    for key in ("mergeable", "mergeable_state"):
+        if key in pull:
+            gate[key] = pull[key]
     return gate
 
 

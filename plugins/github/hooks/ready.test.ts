@@ -134,6 +134,35 @@ test('no check at all is not green: CI has not started', () => {
   expect(missingItems(gate({}, { result: 'PENDING', total: 0, running: 0 }), ALL)).toEqual(['CI still running'])
 })
 
+test('a head that conflicts with its base is not ready, and a mergeability GitHub is computing is named too', () => {
+  expect(missingItems(gate({ mergeable: false, mergeable_state: 'dirty' }), ALL)).toEqual(['conflict with base'])
+  expect(missingItems(gate({ mergeable: false, mergeable_state: 'dirty' }), ALL, undefined, {}, [], 'gate'))
+    .toEqual(['conflict with base'])
+  expect(missingItems(gate({ mergeable: null, mergeable_state: 'unknown' }), ALL))
+    .toEqual(['mergeability unknown: GitHub is computing it, read again'])
+  expect(missingItems(gate({ mergeable: true, mergeable_state: 'clean' }), ALL)).toEqual([])
+  expect(missingItems(gate({ mergeable: true, mergeable_state: 'behind' }), ALL)).toEqual([])
+  // An absent field is not read at all: a gate answer without mergeability blocks nothing.
+  expect(missingItems(gate(), ALL)).toEqual([])
+})
+
+test('a stacked pull request with a check running is not ready when its light CI is off or absent', () => {
+  const stacked = gate({ stacked: true, base: 'feat-a' }, { result: 'PENDING', running: 2, total: 2 })
+  // Light CI off: the running check alone is named.
+  expect(missingItems(stacked, ALL, undefined, {}, [], undefined, 'off by the operator')).toEqual(['CI still running'])
+  // A tests record passed, a check running: the running check still blocks.
+  expect(missingItems(stacked, [...ALL, record('tests', 'pass')], undefined, {}, [], undefined, 'off')).toEqual(['CI still running'])
+  // Light CI on: its tests record passed stands over a pending forge check.
+  expect(missingItems(stacked, [...ALL, record('tests', 'pass', '2026-11-01T10:00:00Z', { producer: 'light-ci' })])).toEqual([])
+  // A stacked pull request with no check at all stays ready on its review.
+  expect(missingItems(gate({ stacked: true, base: 'feat-a' }, { result: 'PENDING', running: 0, total: 0 }), ALL, undefined, {}, [], undefined, 'off')).toEqual([])
+  // A stacked pull request with its checks green is ready.
+  expect(missingItems(gate({ stacked: true, base: 'feat-a' }, { result: 'SUCCESS', running: 0, total: 2 }), ALL, undefined, {}, [], undefined, 'off')).toEqual([])
+  // A failed check blocks as before, and is named once.
+  expect(missingItems(gate({ stacked: true, base: 'feat-a' }, { result: 'FAILURE', failed: ['lint'], running: 1, total: 2 }), ALL, undefined, {}, [], undefined, 'off'))
+    .toEqual(['CI failed: lint'])
+})
+
 test('a repository with no CI configured is ready on its other conditions, and the Ready line says so', () => {
   const none = gate({}, { result: 'NONE', total: 0, running: 0 })
   expect(missingItems(none, ALL)).toEqual([])

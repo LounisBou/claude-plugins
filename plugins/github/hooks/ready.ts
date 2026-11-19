@@ -50,6 +50,9 @@ export type Gate = {
   labels: string[]
   // The pull request's commit count at this head.
   commits?: number
+  // GitHub's mergeability of the head against its base: false or dirty when it conflicts, null while GitHub computes it.
+  mergeable?: boolean | null
+  mergeable_state?: string
   // Its base branch, and whether that base is the head branch of another open pull request.
   base?: string
   stacked?: boolean
@@ -527,6 +530,11 @@ export function namesHead(sha: string, head: string): boolean {
   return given === head || (given.length >= SHA_MIN && /^[0-9a-f]+$/.test(given) && head.startsWith(given))
 }
 
+// GitHub's mergeability as pr-gate reads it: a head that conflicts with its base (false, or dirty), and one GitHub is still computing (null, unknown).
+// An absent field is not read at all, and blocks nothing.
+const isConflicting = (gate: Gate): boolean => gate.mergeable === false || gate.mergeable_state === 'dirty'
+const isComputing = (gate: Gate): boolean => gate.mergeable === null || gate.mergeable_state === 'unknown'
+
 // What a pull request misses to be ready at its head, as core's readiness contract defines it
 // (readiness.ts), and before that an act that cannot be ready at all (closed, moved head).
 // excused: the kinds its check plan or the operator's exemption excuses, each standing for its record unless a run failed.
@@ -538,6 +546,9 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
   if (sha && !namesHead(sha, gate.head)) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
+  // A conflict with the base is named; a mergeability GitHub has not computed yet is named too, and read again by the next gate.
+  if (isConflicting(gate)) missing.push('conflict with base')
+  else if (isComputing(gate)) missing.push('mergeability unknown: GitHub is computing it, read again')
   const { read, skipped } = headRecordsRead(gate, files)
   const ci = gate.ci
   const lacking = missingEvidence({
@@ -563,6 +574,13 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
   // the kinds accepted it blocks nothing, as nobody may delete it.
   if (kinds.length > 0) for (const name of skipped) missing.push('unreadable record ' + name)
   // CI is named when its holder asks it: GitHub's on the bottom pull request, the gate's failure on a stacked one.
+  // A stacked pull request whose light CI is off or absent waits for its forge checks while they run: they are the proof
+  // the light CI would give. With light CI on, its tests record stands over a pending forge check, so nothing is named here.
+  // A tests item already missing names the same wait, so it is not named twice.
+  const testsMissing = missing.some((item) => item.startsWith(SCRIPTED.kind + ':'))
+  if (!holder && gate.stacked === true && lightCiOff !== undefined && ci.result !== 'FAILURE' && (ci.running ?? 0) > 0 && !testsMissing) {
+    missing.push('CI still running')
+  }
   if (!held.some((item) => item.condition === 'ci')) return missing
   if (ci.result === 'FAILURE') missing.push('CI failed: ' + (ci.failed ?? []).join(', '))
   else if (ci.result !== 'SUCCESS' && ci.result !== NO_CI) {

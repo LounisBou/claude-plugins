@@ -265,9 +265,11 @@ Both routes are `hooks/e2e-scope.ts`'s.
 
 A stacked PR (`pr-gate`'s `stacked`: its base heads another open PR, unprotected, not default) is ready on
 its review and, where the operator configured light CI, a `tests` pass at its head or its checks green, which
-stand over a failed run; a failed check blocks. File `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/light-ci/<owner>-<name>.json`:
+stand over a failed run; a failed check blocks. With light CI on, its tests pass stands over a forge check still running. File `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/light-ci/<owner>-<name>.json`:
 `{"command": [...], "prepare": [...]?, "timeoutSeconds": 600, "decided": {"at", "words"}}`, or `{"off": "<words>", "at"}`;
-no file or `off`: review alone, named in `Ready`.
+no file or `off`: review, and the forge's checks once they run. A check still running at
+  its head blocks (`CI still running`) until it ends; a failed one blocks; no check at all stays ready on its
+  review, named in `Ready`.
 
 - `mcp__github__light_ci {action: "run", pr, dir?}`: clean checkout of the head; `prepare`, then `command` (no
   shell; `{base}`: the merge base); `tests` `pass|fail` by `light-ci`. Past 570 s nothing is written.

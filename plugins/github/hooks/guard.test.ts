@@ -3532,11 +3532,18 @@ test('a failed local run keeps a stacked pull request of a repository with no CI
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
-test('a stacked pull request of a repository with no light CI file is ready on its review, the line saying so', async ($, on) => {
-  const seen = await world($, on, { ...PENDING, stacked: true })
+test('a stacked pull request of a repository with no light CI file is ready on its review when no check runs at its head, the line saying so', async ($, on) => {
+  const seen = await world($, on, { stacked: true, ci: { result: 'NONE', total: 0, running: 0 } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.pull?.labels).toEqual(['Ready'])
   expect(seen.logs).toEqual([READY_BEFORE_CI + ' no light CI configured for this repository hold at its head.'])
+})
+
+test('a stacked pull request of a repository with no light CI file is not ready while its check runs, CI still running', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true })
+  const out = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.result).toEndWith('Missing: CI still running.')
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
 test('a check that failed at a stacked pull request\'s head blocks it though its tests passed, and the gate refuses its merge', async ($, on) => {
@@ -3553,12 +3560,20 @@ test('the bottom pull request is unchanged: a tests record stands for no CI, and
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
-test('a stacked pull request of a repository whose light CI the operator refused is ready on its review, the line saying so with its date', async ($, on) => {
-  const seen = await world($, on, { ...PENDING, stacked: true,
+test('a stacked pull request of a repository whose light CI the operator refused is ready on its review when no check runs at its head, the line saying so with its date', async ($, on) => {
+  const seen = await world($, on, { stacked: true, ci: { result: 'NONE', total: 0, running: 0 },
     tree: { [LIGHT_CI_FILE]: { kind: 'file', mtimeMs: 0, text: JSON.stringify({ off: 'non, pas pour ce projet', at: '2026-11-14T18:30:00Z' }) } } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.pull?.labels).toEqual(['Ready'])
   expect(seen.logs).toEqual([READY_BEFORE_CI + ' the operator\'s refusal of light CI for this repository (2026-11-14) hold at its head.'])
+})
+
+test('a stacked pull request of a repository whose light CI the operator refused is not ready while its check runs, CI still running', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true,
+    tree: { [LIGHT_CI_FILE]: { kind: 'file', mtimeMs: 0, text: JSON.stringify({ off: 'non, pas pour ce projet', at: '2026-11-14T18:30:00Z' }) } } })
+  const out = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.result).toEndWith('Missing: CI still running.')
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
 test('a light CI file that cannot be read refuses nothing', async ($, on) => {
@@ -3569,7 +3584,7 @@ test('a light CI file that cannot be read refuses nothing', async ($, on) => {
 })
 
 test('a rebase that leaves a stacked pull request\'s diff unchanged carries its tests record', async ($, on) => {
-  const seen = await world($, on, { ...PENDING, stacked: true, records: {},
+  const seen = await world($, on, { ci: { result: 'SUCCESS', running: 0 }, stacked: true, records: {},
     tree: { ...LIGHT_CI_ON, ...earlier([...CLEAN_OLD, at('tests', 'pass', { producer: 'light-ci' })]) }, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.pull?.labels).toEqual(['Ready'])
@@ -3585,7 +3600,7 @@ test('the model may not record tests through the record tool, which names the li
 })
 
 test('light_ci run runs the script in the checkout named with the session, then the gate follows its record', async ($, on) => {
-  const seen = await world($, on, { ...PENDING, stacked: true, tree: { ...CHECKOUTS, ...LIGHT_CI_ON }, gitIn: { [REVIEW_DIR]: REVIEW_ORIGIN },
+  const seen = await world($, on, { ci: { result: 'SUCCESS', running: 0 }, stacked: true, tree: { ...CHECKOUTS, ...LIGHT_CI_ON }, gitIn: { [REVIEW_DIR]: REVIEW_ORIGIN },
     lightCi: { exitCode: 0, stdout: 'tests pass at 0123456 of acme/thing#12: npm test — exit 0 — 9s; output /tmp/x.log; record /r.json\n', stderr: '', result: 'pass' } })
   const out = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, dir: REVIEW_DIR })
   const run = lightCiRun(seen)!

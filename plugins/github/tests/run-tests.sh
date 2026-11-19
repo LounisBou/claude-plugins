@@ -2281,6 +2281,10 @@ check "pr-status under a --format answers the full pull request to that format" 
 
 check "pr-gate reads a pull request with no base as not stacked" "False" \
   "$(gh8 pr-gate 12 | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"])')"
+gate8 conflict '{"number":12,"state":"open","draft":false,"commits":3,"mergeable":false,"mergeable_state":"dirty","head":{"sha":"'$GATEHEAD'","ref":"feat"},"labels":[]}' '{"statuses":[]}' '{"check_runs":[]}'
+check "pr-gate answers the head's mergeability and its state, read with the pull request" \
+  "False dirty" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mergeable"], d["mergeable_state"])')"
 STACK8='{"number":12,"state":"open","draft":false,"commits":1,"head":{"sha":"'$GATEHEAD'","ref":"feat-b"},"base":{"ref":"feat-a","repo":{"default_branch":"main"}},"labels":[]}'
 gate8 stacked "$STACK8" '{"statuses":[]}' '{"check_runs":[]}'
 printf '%s' '[{"number":11,"head":{"ref":"feat-a"}}]' > "$F8/GET_repos_acme_thing_pulls__state=open&head=acme%3Afeat-a&per_page=100.json"
