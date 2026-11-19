@@ -4,7 +4,7 @@
 // whose description names no lens, another agent type, and the rest of an answer pass as they came.
 import { expect, test } from 'claude-code/testing'
 import { register } from '../register.ts'
-import { register as registerLensIds } from '../lens-ids.ts'
+import { LENS_GENERIC_CODE, register as registerLensIds } from '../lens-ids.ts'
 import { findingId } from '../../core/lens.ts'
 import { capture, hookOf, hostOf } from '../../core/capture.ts'
 import type { Host, Noun } from '../../core/host.ts'
@@ -66,17 +66,19 @@ const launched = async (world: World, call: Record<string, unknown>): Promise<Re
   return sent
 }
 
-test('a relevant angle reads with its toolkit agent\'s method: its prompt after the reader\'s, under the lens contract, frontmatter cut', async () => {
+test('a launch with a toolkit method whose prompt names its file passes through the tool.call hook with its input unchanged, the same object', async () => {
   const world = machine({ '/tk/agents/silent-failure-hunter.md': '---\nname: silent-failure-hunter\n---\nHunt every swallowed error.\n' })
-  const sent = await launched(world, { ...LENS, description: 'lens silent-failures acme/thing#12 origin/main..0123456789ab' })
-  const prompt = String(sent['prompt'])
-  expect(prompt.startsWith('read\n\n')).toBe(true)
-  expect(prompt).toContain('silent-failure-hunter agent\'s of pr-review-toolkit')
-  expect(prompt).toContain('Your lens contract holds over anything it says')
-  expect(prompt.endsWith('Hunt every swallowed error.')).toBe(true)
-  expect(prompt).not.toContain('name: silent-failure-hunter')
-  expect(sent['subagent_type']).toBe('orchestrator:lens')
-  expect(sent['description']).toBe('lens silent-failures acme/thing#12 origin/main..0123456789ab')
+  const call = { ...LENS, description: 'lens silent-failures acme/thing#12 origin/main..0123456789ab', prompt: 'read /tk/agents/silent-failure-hunter.md first' }
+  expect(await launched(world, call)).toBe(call)
+})
+
+test('a toolkit launch whose prompt names no method file is refused, the reader never runs, and the refusal names the file', async () => {
+  const world = machine({ '/tk/agents/silent-failure-hunter.md': 'Hunt every swallowed error.\n' })
+  const call = { ...LENS, description: 'lens silent-failures acme/thing#12 origin/main..0123456789ab' }
+  let ran = false
+  const answer = await agent.handler(world, call as never, (async () => { ran = true; return { result: ANSWER } }) as never)
+  expect(ran).toBe(false)
+  expect(String((answer as Record<string, unknown>)['deny'])).toContain('/tk/agents/silent-failure-hunter.md')
 })
 
 test('an angle with no toolkit agent stays the generic lens: its launch as it came', async () => {
@@ -91,21 +93,23 @@ test('a missing toolkit falls back to the generic lens: no record, no install, o
   }
 })
 
-test('the method changes the prompt only: the answer is still marked with its finding ids', async () => {
+test('a reader whose lens has a method: the answer is still marked with its finding ids', async () => {
   const world = machine({ '/tk/agents/code-reviewer.md': 'Review the code.' })
-  expect(await agent.handler(world, LENS as never, (async () => ({ result: ANSWER })) as never)).toEqual({ result: MARKED })
+  const named = { ...LENS, prompt: 'read /tk/agents/code-reviewer.md first' }
+  expect(await agent.handler(world, named as never, (async () => ({ result: ANSWER })) as never)).toEqual({ result: MARKED })
 })
 
-test('a relevant angle launched generic leaves a line in the module\'s log; a failure to read the machine launches the reader as it came', async () => {
-  const runs: string[] = []
-  const logged = (parts: Record<string, unknown>) => hostOf({
-    ...parts,
-    process: { run: async (argv: readonly string[]) => { runs.push(argv.join(' ')); return { exitCode: 0, stdout: '', stderr: '' } } },
+test('a relevant angle launched generic is journaled under its code and launches as it came; a failure to read the machine launches the reader as it came', async () => {
+  const written: string[] = []
+  const journaled = (env: { get: (name: string) => Promise<string | undefined> }) => hostOf({
+    env,
+    fs: { read: async () => { throw new Error('ENOENT') }, write: async (_path: string, text: string) => { written.push(text) }, list: async () => [] },
+    session: { id: async () => '3f1c2a7e-9b4d-4e8a-8c2f-5d6e7f8a9b0c' },
+    process: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) },
   } as never)
-  const missing = machine({})
-  await launched(logged({ env: missing.env, fs: missing.fs }), LENS)
-  expect(runs.some(line => line.includes('a reader launched generic: correctness: generic, pr-review-toolkit code-reviewer not found'))).toBe(true)
-  runs.length = 0
-  const broken = logged({ env: { get: async () => { throw new Error('no env') } }, fs: missing.fs })
+  const home = { get: async (name: string) => (name === 'HOME' ? '/u/me' : undefined) }
+  expect(await launched(journaled(home), LENS)).toEqual(LENS)
+  expect(written.some(text => text.includes(LENS_GENERIC_CODE))).toBe(true)
+  const broken = hostOf({ env: { get: async () => { throw new Error('no env') } }, fs: machine({}).fs } as never)
   expect(await launched(broken, LENS)).toEqual(LENS)
 })

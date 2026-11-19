@@ -26,7 +26,8 @@ import { parseReconcile, reconcileEdgePath, reconcilePath, reconcileRoot, RECONC
 import { moduleDirOf } from '../core/orchestration.ts'
 import { prFilePath, prFileRepos } from '../core/pr-file.ts'
 import { updateOver, writeAtomicOver } from '../core/store-io.ts'
-import { journalIoOf } from '../core/journal.ts'
+import { appendEventOver, journalIoOf, randomPart } from '../core/journal.ts'
+import { auditEvent, journalDir } from '../core/learning.ts'
 import { isCatchable, observe, OBSERVED, REFUSED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
@@ -1174,6 +1175,11 @@ type Reconciler = {
   // The last line said, and whether this beat said one: a beat that said none lets the same failure be said again.
   said: string | undefined
   saidNow: boolean
+  // The host's session id, and the counts the journal last received.
+  session: string
+  journaled: Counts
+  // When the journal last received them (ms), 0 before the first.
+  journaledAt: number
   // No listing and no gate before this (ms): the quota ran low, or a listing was refused for the rate limit.
   quotaUntil: number
 }
@@ -1267,19 +1273,54 @@ function readingOf(repo: string, row: ListedPr, gate: Gate, missing: string[], l
   }
 }
 
-// Holds the lease at `now`: takes or renews it when due. False when another session holds it.
-async function holdLease($: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, leasePath: string, now: number): Promise<boolean> {
+// A session id of the host's shape, the only one an event names.
+const SESSION_ID = /^[A-Za-z0-9._-]{1,80}$/
+export const RECONCILE_CODE = 'github.reconcile.counts'
+
+// The reconciler's counts are journaled at most this often: the journal's cap is shared with the module's refusals.
+export const JOURNAL_EVERY_MS = 3_600_000
+
+/*
+ * What the reconciler did since its last event (core's audit kind `reconcile`), where telemetry's sweep reads it: looked
+ * at each renewal of its lease, written at most once per JOURNAL_EVERY_MS. No forge call since (no listing, gate or move),
+ * nothing written: its beats go with the next event. A journal that cannot be written is said once, and its counts go
+ * with the next event.
+ */
+async function journalCounts($: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, config: string, now: number): Promise<void> {
+  const { ticks, listings, gates, moves } = rec.counts
+  const fact = { ticks: ticks - rec.journaled.ticks, listings: listings - rec.journaled.listings, gates: gates - rec.journaled.gates, moves: moves - rec.journaled.moves }
+  if (now - rec.journaledAt < JOURNAL_EVERY_MS || fact.listings + fact.gates + fact.moves === 0) return
+  const at = new Date(now).toISOString().replace(/\.[0-9]{3}Z$/, 'Z')
+  const event = auditEvent({
+    at, random: randomPart(), source: { plugin: 'github', code: RECONCILE_CODE }, context: { session: SESSION_ID.test(rec.session) ? rec.session : null },
+    trust: 'computed', kind: 'reconcile', fact,
+  })
+  try {
+    if (event === undefined) throw new Error('the event breaks the audit contract')
+    await appendEventOver(io, journalDir(config, 'github'), event, at, false)
+    rec.journaled = { ...rec.counts }
+    rec.journaledAt = now
+  } catch (err: unknown) {
+    sayOnce($, rec, 'github: the reconciler\'s counts could not be journaled: ' + reasonOf(err).trim())
+  }
+}
+
+// Holds the lease at `now`: takes or renews it when due, its counts journaled. False when another session holds it.
+async function holdLease($: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, config: string, now: number): Promise<boolean> {
+  const leasePath = reconcileRoot(config) + '/' + LEASE_FILE
   const lease = parseLease(await textOf($, leasePath))
   const whose = leaseOf(lease, rec.me, now)
   if (whose === 'other') return false
   if (!leaseDue(lease, rec.me, now)) return true
-  return (await updateOver(io, leasePath, (current) => takenLease(current, rec.me, now, rec.counts))) !== undefined
+  if ((await updateOver(io, leasePath, (current) => takenLease(current, rec.me, now, rec.counts))) === undefined) return false
+  await journalCounts($, rec, io, config, now)
+  return true
 }
 
 // The gate on one pull request whose fingerprint changed, its reading kept; whether the gate could be read.
 async function reconcilePr(
   $: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, at: { config: string; root: string; data: string; now: number },
-  repo: string, row: ListedPr, exemption: Exemption | undefined, fingerprint: string,
+  repo: string, row: ListedPr, local: Local, fingerprint: string,
 ): Promise<void> {
   const key = repo + '#' + row.number
   rec.counts.gates += 1
@@ -1296,7 +1337,8 @@ async function reconcilePr(
   }
   if (followed.labels) rec.counts.moves += 1
   // The labels the gate left are those the next listing reads: the fingerprint is kept with them.
-  const kept = followed.labels ? fingerprintOf(row, await localOf($, at.root, at.data, repo, row, exemption), followed.labels) : fingerprint
+  // The machine's side as it stood before the gate read it: a record written during the gate changes the next fingerprint.
+  const kept = followed.labels ? fingerprintOf(row, local, followed.labels) : fingerprint
   const reading = readingOf(repo, row, gate, followed.missing, followed.labels ?? gate.labels, followed.draft ?? gate.draft, at.now, kept)
   await writeAtomicOver(io, reconcilePath(at.config, repo, row.number), JSON.stringify(reading) + '\n')
   rec.kept.set(key, kept)
@@ -1431,7 +1473,7 @@ async function reconcileTick($: Mod): Promise<void> {
     const repos = await followedRepos($, config, root, now)
     if (repos.length === 0) return
     const io = journalIoOf($)
-    if (!(await holdLease($, rec, io, leasePath, now))) return
+    if (!(await holdLease($, rec, io, config, now))) return
     rec.counts.ticks += 1
     const edge = await mtimeOf($, reconcileEdgePath(config))
     const woken = edge > rec.edgeSeen
@@ -1456,7 +1498,8 @@ async function reconcileTick($: Mod): Promise<void> {
       const exemption = data ? await readExemption($, repo) : undefined
       for (const row of rows) {
         const key = repo + '#' + row.number
-        const fingerprint = fingerprintOf(row, await localOf($, root, data, repo, row, exemption))
+        const local = await localOf($, root, data, repo, row, exemption)
+        const fingerprint = fingerprintOf(row, local)
         if (!rec.kept.has(key)) {
           const reading = parseReconcile((await textOf($, reconcilePath(config, repo, row.number))) ?? '')
           if (reading) rec.kept.set(key, reading.fingerprint)
@@ -1465,9 +1508,9 @@ async function reconcileTick($: Mod): Promise<void> {
         if (rec.kept.get(key) === fingerprint || (failed?.fingerprint === fingerprint && now - failed.at < RETRY_MS)) continue
         if (gates >= GATES_PER_TICK) break
         // A beat can outlast what the lease had left: it is held again before each gate, the time read anew.
-        if (!(await holdLease($, rec, io, leasePath, await nowMs($)))) return
+        if (!(await holdLease($, rec, io, config, await nowMs($)))) return
         gates += 1
-        await reconcilePr($, rec, io, at, repo, row, exemption, fingerprint)
+        await reconcilePr($, rec, io, at, repo, row, local, fingerprint)
       }
     }
   } catch (err: unknown) {
@@ -1486,7 +1529,8 @@ async function startReconciler($: Mod): Promise<void> {
   const rec: Reconciler = {
     // The same session started again (resume, clear, compact) keeps its name, and with it the lease it holds.
     me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(), synced: new Map(),
-    edgeSeen: 0, said: undefined, saidNow: false, quotaUntil: 0,
+    edgeSeen: 0, said: undefined, saidNow: false, quotaUntil: 0, session,
+    journaled: { since: '', ticks: 0, listings: 0, gates: 0, moves: 0 }, journaledAt: 0,
     counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0, posts: 0 },
   }
   reconciler = rec

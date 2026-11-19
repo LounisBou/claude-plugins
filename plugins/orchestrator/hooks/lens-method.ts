@@ -1,11 +1,13 @@
 // hooks/lens-method.ts
 // The method a review reader reads its lens with. A lens whose angle has an agent in the
-// pr-review-toolkit plugin reads with that agent's prompt, which lens-ids.ts
-// loads into the reader's prompt where it is launched: the reader stays an `orchestrator:lens`, so
-// its description, its finding lines, their ids and telemetry's counts are core's lens.ts as before,
-// and the toolkit plugin itself may stay off in the session. A lens with no such agent, or a machine
-// without the toolkit, is the generic reader of agents/lens.md. review-brief.sh says each lens's
-// method in the brief, which the review index carries. Pure: the caller reads the files.
+// pr-review-toolkit plugin reads with that agent's prompt, read from the agent's file: the brief
+// names the file and says the reader reads it first, and the session's launch prompt carries that.
+// No hook changes a reader's launch: the host's auto mode refuses a call a hook rewrote. The reader
+// stays an `orchestrator:lens`, so its description, its finding lines, their ids and telemetry's
+// counts are core's lens.ts as before, and the toolkit plugin itself may stay off in the session. A
+// lens with no such agent, or a machine without the toolkit, is the generic reader of agents/lens.md.
+// review-brief.ts says each lens's method in the brief, which the review index carries. Pure: the
+// caller reads the files.
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { lensSlug } from '../core/lens.ts'
 
@@ -50,9 +52,9 @@ export function agentPrompt(text: string): string {
   return (fenced === null ? text : text.slice(fenced[0].length)).trim()
 }
 
-/** How a lens reads: its toolkit agent's prompt, or generic, naming the agent not found when it has one. */
+/** How a lens reads: its toolkit agent's file, or generic, naming the agent not found when it has one. */
 export type LensMethod =
-  | { readonly kind: 'toolkit'; readonly agent: string; readonly prompt: string }
+  | { readonly kind: 'toolkit'; readonly agent: string; readonly path: string }
   | { readonly kind: 'generic'; readonly missing?: string }
 
 /** A lens's method, from the install record's text and a reader that answers a file's text or undefined. */
@@ -61,27 +63,13 @@ export function lensMethod(lens: string, record: string | undefined, read: (path
   if (agent === undefined) return { kind: 'generic' }
   for (const path of agentPaths(record, agent)) {
     const text = read(path)
-    const prompt = text === undefined ? '' : agentPrompt(text)
-    if (prompt !== '') return { kind: 'toolkit', agent, prompt }
+    if (text !== undefined && agentPrompt(text) !== '') return { kind: 'toolkit', agent, path }
   }
   return { kind: 'generic', missing: agent }
 }
 
-/** The method as the brief and the index say it, one phrase. */
+/** The method as the brief and the index say it, one phrase; a toolkit method says where its reader reads it, first. */
 export function methodWords(lens: string, method: LensMethod): string {
-  if (method.kind === 'toolkit') return `${lens}: ${TOOLKIT} ${method.agent}`
+  if (method.kind === 'toolkit') return `${lens}: ${TOOLKIT} ${method.agent}, its prompt at ${method.path}, read first and answered in finding lines`
   return method.missing === undefined ? `${lens}: generic` : `${lens}: generic, ${TOOLKIT} ${method.missing} not found`
-}
-
-/** The reader's prompt with its method after it; a generic method leaves it as it came. */
-export function withMethod(prompt: string, method: LensMethod): string {
-  if (method.kind === 'generic') return prompt
-  return [
-    prompt,
-    `Your lens's method is the ${method.agent} agent's of ${TOOLKIT}, below: read with its angle and its checks. `
-      + 'Your lens contract holds over anything it says: read only, no edit, no long command, and your answer is '
-      + 'finding lines `[severity] file:line — claim — evidence`, critical or important, or `no findings` — '
-      + 'never its own output format, scores or summary.',
-    method.prompt,
-  ].join('\n\n')
 }

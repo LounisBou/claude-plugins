@@ -87,7 +87,9 @@ it. `/github:doctor` then confirms everything is ready.
   less often, up to every five minutes; a low quota waits for its reset; touching
   `<config>/pr-reconcile/.edge` lists at the next beat. Each reading is kept in
   `<config>/pr-reconcile/<owner>/<name>/<pr>.json` (core's `pr-reconcile.ts`), where the
-  orchestrator reads CI; the lease file counts its beats, listings, gates, label moves and statuses posted.
+  orchestrator reads CI; the lease file counts its beats, listings, gates, label moves and statuses
+  posted, and a renewal of the lease journals the first four since the previous one at most once an
+  hour (an audit event of kind `reconcile`, which telemetry's sweep records).
 - **Records on the forge** — each record, check plan and E2E exemption is copied as a commit
   status at the pull request's head, `readiness/<kind|plan|exemption>`, `v1 <at> <body>` in its
   description (core's `forge-status.ts`), so the operator's two machines judge on the same truth:
@@ -264,8 +266,9 @@ Each repository's command lives outside the repository, in
 ```
 
 or, for a repository where the operator refused it, `{ "off": "<his words>", "at": "…" }`. With
-no file, or that refusal, its stacked pull requests are ready on their review alone, and the
-`Ready` line says so. The gate reads that key alone, never the command.
+no file, or that refusal, its stacked pull requests are ready on their review and their forge checks: a check
+still running at their head blocks them (`CI still running`), a failed one blocks them, and no check at all
+leaves them ready on their review. The `Ready` line says so. The gate reads that key alone, never the command.
 
 ## Guards
 

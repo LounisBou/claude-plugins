@@ -212,6 +212,18 @@ export const EVENT_SCHEMA = {
       field('verdict', 'string', 'A review\'s result (`pass`, `fail`, `accepted`), or a close\'s verdict when it is one plain word.'),
     ],
   },
+  reconcile: {
+    summary: 'What github\'s reconciler did since its previous event, at most an hour apart: its beats, its forge listings, its gates and its label moves.',
+    writers: ['`telemetry.ts sweep`, from the `reconcile` event github\'s hooks module writes in its journal at a renewal of the reconciler\'s lease, at most once an hour (source `journal`): the event\'s `session` is the one holding the lease, its `ts` the renewal\'s'],
+    fields: [
+      field('source', 'string', '`journal`.'),
+      field('id', 'string', 'The journal event\'s id: a reconcile is recorded once.'),
+      field('ticks', 'number', 'The beats the reconciler ran since its previous event.', 'count'),
+      field('listings', 'number', 'Its listings of a repository\'s open pull requests, one forge call each.', 'count'),
+      field('gates', 'number', 'Its readings of the readiness gate.', 'count'),
+      field('moves', 'number', 'The Ready or Not Ready labels it moved.', 'count'),
+    ],
+  },
   session_end: {
     summary: 'A session ends, enriched from its transcript.',
     writers: ['hook `session.end`, then the writer reading the transcript'],

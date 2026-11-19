@@ -6,7 +6,9 @@
 // - a question of the orchestrator's round, once settled, gets a `question` event read from its
 //   file through core's `parseRoundQuestion`: its id, its asker and the letter chosen;
 // - a write of the orchestrator's dispatch record gets a `dispatch` event read from the event its
-//   script published in the orchestrator's journal (core's audit contract, kind `dispatch`).
+//   script published in the orchestrator's journal (core's audit contract, kind `dispatch`);
+// - what github's reconciler did between two renewals of its lease gets a `reconcile` event read
+//   from the event it published in github's journal (core's audit contract, kind `reconcile`).
 // Nothing is kept beside the store: a session is closed by an end or a summary at or after its last
 // event, a question or a dispatch is recorded when an event of the window carries its id, and one
 // before the window is past reading.
@@ -32,6 +34,8 @@ export const SWEPT = 'sweep'
 export const JOURNAL = 'journal'
 /** The plugin whose journal holds the dispatch record's events. */
 const DISPATCH_PLUGIN = 'orchestrator'
+/** The plugin whose journal holds the reconciler's counts. */
+const RECONCILE_PLUGIN = 'github'
 
 const DAY_MS = 24 * 3_600_000
 const dayOf = (at: number): string => new Date(at).toISOString().slice(0, 10)
@@ -74,10 +78,11 @@ interface Seen {
 }
 
 /** The sessions of the window's day files, and the ids of the round questions and journal dispatches they already record. */
-export function readWindow(dir: string, firstDay: string): { sessions: Map<string, Seen>; questions: Set<string>; dispatches: Set<string> } {
+export function readWindow(dir: string, firstDay: string): { sessions: Map<string, Seen>; questions: Set<string>; dispatches: Set<string>; reconciles: Set<string> } {
   const sessions = new Map<string, Seen>()
   const questions = new Set<string>()
   const dispatches = new Set<string>()
+  const reconciles = new Set<string>()
   for (const name of dayFiles(dir).filter(file => file.slice(0, 10) >= firstDay)) {
     for (const line of readFileSync(join(dir, name), 'utf8').split('\n')) {
       if (line === '') continue
@@ -98,6 +103,10 @@ export function readWindow(dir: string, firstDay: string): { sessions: Map<strin
         if (typeof e['id'] === 'string') dispatches.add(e['id'])
         continue
       }
+      if (e['event'] === 'reconcile' && e['source'] === JOURNAL) {
+        if (typeof e['id'] === 'string') reconciles.add(e['id'])
+        continue
+      }
       const seen = sessions.get(session) ?? { last: -Infinity, closed: -Infinity, spawned: false }
       if (e['event'] === 'session_end' || e['event'] === 'session_summary') seen.closed = Math.max(seen.closed, at)
       else seen.last = Math.max(seen.last, at)
@@ -105,7 +114,7 @@ export function readWindow(dir: string, firstDay: string): { sessions: Map<strin
       sessions.set(session, seen)
     }
   }
-  return { sessions, questions, dispatches }
+  return { sessions, questions, dispatches, reconciles }
 }
 
 /** The summary of a session the window shows idle and never ended, or undefined when it ended, is still fresh or has no transcript. */
@@ -168,25 +177,44 @@ export function questionEvent(question: RoundQuestion): Event | undefined {
 }
 
 type Dispatch = Extract<AuditEvent, { kind: 'dispatch' }>
+type Reconcile = Extract<AuditEvent, { kind: 'reconcile' }>
 
-/** The dispatch events of the journal `dir` written on or after `firstDay`, by a known session; an entry that is none left out. */
-export function journalDispatches(dir: string, firstDay: string): Dispatch[] {
+// The audit events of `kind` in the journal `dir` written on or after `firstDay`, by a known session; an entry that is none left out.
+function journalEvents<K extends AuditEvent['kind']>(dir: string, firstDay: string, kind: K): Extract<AuditEvent, { kind: K }>[] {
   let names: string[]
   try {
     names = readdirSync(dir).sort()
   } catch {
     return []
   }
-  const found: Dispatch[] = []
+  const found: Extract<AuditEvent, { kind: K }>[] = []
   for (const name of names) {
     const entry = journalEntryOf(name)
     if (entry === undefined || entry.at.slice(0, 10) < firstDay) continue
     try {
       const event = parseAuditEvent(JSON.parse(readFileSync(join(dir, name), 'utf8')))
-      if (event?.kind === 'dispatch' && event.context.session !== null) found.push(event)
+      if (event?.kind === kind && event.context.session !== null) found.push(event as Extract<AuditEvent, { kind: K }>)
     } catch { /* a file being written, or no JSON: read at the next sweep */ }
   }
   return found
+}
+
+/** The dispatch events of the journal `dir` written on or after `firstDay`, by a known session; an entry that is none left out. */
+export function journalDispatches(dir: string, firstDay: string): Dispatch[] {
+  return journalEvents(dir, firstDay, 'dispatch')
+}
+
+/** The reconciler's count events of the journal `dir` written on or after `firstDay`, by a known session. */
+export function journalReconciles(dir: string, firstDay: string): Reconcile[] {
+  return journalEvents(dir, firstDay, 'reconcile')
+}
+
+/** The `reconcile` event of a journal's reconcile: the session that held the lease and what it did since its last one. */
+export function reconcileEvent(event: Reconcile): Event {
+  const { fact } = event
+  return makeEvent('reconcile', Date.parse(event.at), event.context.session ?? '', {
+    source: JOURNAL, id: event.id, ticks: fact.ticks, listings: fact.listings, gates: fact.gates, moves: fact.moves,
+  })
 }
 
 /** The `dispatch` event of a journal's dispatch: the session that wrote it, the record's file name, the row and its pair. */
@@ -215,6 +243,8 @@ export interface SweepOptions {
   readonly moduleDir?: string | undefined
   /** The orchestrator's journal, when its environment moves it (ORCHESTRATOR_JOURNAL_DIR). */
   readonly journalDir?: string | undefined
+  /** github's journal, where a test puts it. */
+  readonly githubJournalDir?: string | undefined
   readonly now: number
 }
 
@@ -222,6 +252,8 @@ export interface SweepResult {
   readonly sessions: number
   readonly questions: number
   readonly dispatches: number
+  /** The reconciler's count events recorded, when there were any. */
+  readonly reconciles?: number
   readonly refused: readonly string[]
 }
 
@@ -238,9 +270,16 @@ export function sweep(options: SweepOptions): SweepResult {
   const dispatches = journalDispatches(options.journalDir ?? journalDir(config, DISPATCH_PLUGIN), firstDay)
     .filter(event => !window.dispatches.has(event.id))
     .map(dispatchEvent)
+  const reconciles = journalReconciles(options.githubJournalDir ?? journalDir(config, RECONCILE_PLUGIN), firstDay)
+    .filter(event => !window.reconciles.has(event.id))
+    .map(reconcileEvent)
   const lines = (events: readonly Event[]): string => events.map(event => JSON.stringify(event)).join('\n')
-  // A refused line is a question or a dispatch whose session has no id of the host's shape; a summary's session came from the store.
+  // A refused line is a question, a dispatch or a reconcile whose session has no id of the host's shape; a summary's session came from the store.
   const asked = append(dir, lines([...summaries, ...questions]), options.secrets).refused
   const published = append(dir, lines(dispatches), options.secrets).refused
-  return { sessions: summaries.length, questions: questions.length - asked.length, dispatches: dispatches.length - published.length, refused: [...asked, ...published] }
+  const counted = append(dir, lines(reconciles), options.secrets).refused
+  return {
+    sessions: summaries.length, questions: questions.length - asked.length, dispatches: dispatches.length - published.length,
+    ...(reconciles.length > 0 ? { reconciles: reconciles.length - counted.length } : {}), refused: [...asked, ...published, ...counted],
+  }
 }

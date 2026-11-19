@@ -141,7 +141,7 @@ query($owner:String!, $name:String!, $first:Int!) {
   repository(owner:$owner, name:$name) {
     pullRequests(states:OPEN, first:$first, orderBy:{field:CREATED_AT, direction:DESC}) {
       nodes {
-        number isDraft headRefOid baseRefName
+        number isDraft headRefOid baseRefName mergeable mergeStateStatus
         labels(first:20) { nodes { name } }
         commits(last:1) { nodes { commit {
           statusCheckRollup { state }
@@ -176,6 +176,9 @@ def _reconcile_row(pull):
             for c in contexts
             if isinstance(c, dict) and forge.is_readiness(c.get("context"))
         ],
+        # GitHub's mergeability against the base (MERGEABLE, CONFLICTING, UNKNOWN) and its merge state: a change re-reads the gate.
+        "mergeable": pull.get("mergeable"),
+        "mergeState": pull.get("mergeStateStatus"),
     }
 
 
@@ -458,6 +461,11 @@ def pr_gate(args):
             "ci": _gate_ci(owner, name, pull, sha, statuses, (runs or {}).get("check_runs") or [], reads),
         }
     )
+    # GitHub's mergeability of the head against its base, as the pull request answers it: null while GitHub computes it.
+    # Carried only when the answer holds the field, so an answer without it is not read as still computing.
+    for key in ("mergeable", "mergeable_state"):
+        if key in pull:
+            gate[key] = pull[key]
     return gate
 
 

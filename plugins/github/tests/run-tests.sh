@@ -2281,6 +2281,10 @@ check "pr-status under a --format answers the full pull request to that format" 
 
 check "pr-gate reads a pull request with no base as not stacked" "False" \
   "$(gh8 pr-gate 12 | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"])')"
+gate8 conflict '{"number":12,"state":"open","draft":false,"commits":3,"mergeable":false,"mergeable_state":"dirty","head":{"sha":"'$GATEHEAD'","ref":"feat"},"labels":[]}' '{"statuses":[]}' '{"check_runs":[]}'
+check "pr-gate answers the head's mergeability and its state, read with the pull request" \
+  "False dirty" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["mergeable"], d["mergeable_state"])')"
 STACK8='{"number":12,"state":"open","draft":false,"commits":1,"head":{"sha":"'$GATEHEAD'","ref":"feat-b"},"base":{"ref":"feat-a","repo":{"default_branch":"main"}},"labels":[]}'
 gate8 stacked "$STACK8" '{"statuses":[]}' '{"check_runs":[]}'
 printf '%s' '[{"number":11,"head":{"ref":"feat-a"}}]' > "$F8/GET_repos_acme_thing_pulls__state=open&head=acme%3Afeat-a&per_page=100.json"
@@ -3159,6 +3163,8 @@ def pull(number, head, base, labels, rollup, draft=False):
     return {"number": number, "isDraft": draft, "headRefOid": head, "baseRefName": base, "labels": {"nodes": [{"name": n} for n in labels]},
             "commits": {"nodes": [{"commit": {"statusCheckRollup": rollup}}]}}
 nodes = [pull(9, "A" * 40, "develop", ["Ready"], {"state": "SUCCESS"}), pull(8, "b" * 40, "main", [], None, draft=True)]
+nodes[0].update({"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"})
+nodes[1].update({"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"})
 json.dump({"rateLimit": {"remaining": 4321, "resetAt": "2026-11-19T11:00:00Z", "cost": 1}, "repository": {"pullRequests": {"nodes": nodes}}}, open(sys.argv[1], "w"))
 PY
 check "pr-panel --reconcile answers each open pull request's head, base, labels and rollup, and the quota left, in one GraphQL request" \
@@ -3169,6 +3175,14 @@ a = json.load(sys.stdin)
 rows = [json.loads(l) for l in open(sys.argv[1])]
 print("|".join("%d %s %s %s %s %s" % (r["number"], r["head"][:7], r["base"], ",".join(r["labels"]), r["rollup"], r["draft"]) for r in a["rows"])
       + "|%d %d|%d %s" % (a["rate"]["remaining"], a["rate"]["cost"], len(rows), rows[0]["path"]))' "$FR/sent.jsonl")"
+
+check "pr-panel --reconcile asks each pull request's mergeability and merge state, and answers them" \
+  "9 MERGEABLE CLEAN|8 CONFLICTING DIRTY|True" \
+  "$(env GH_FIXTURES="$FR" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-panel --reconcile | python3 -c '
+import json, sys
+a = json.load(sys.stdin)
+last = json.loads(open(sys.argv[1]).read().splitlines()[-1])
+print("|".join("%d %s %s" % (r["number"], r["mergeable"], r["mergeState"]) for r in a["rows"]) + "|" + str("mergeStateStatus" in last["query"]))' "$FR/sent.jsonl")"
 
 # The listing reads the readiness/ statuses at each head, with their creator, and the account that reads: the reconciler
 # copies between the machine and the forge only what that account posted.
