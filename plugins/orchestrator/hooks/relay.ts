@@ -114,7 +114,7 @@ export type DeliveryFacts = {
 
 // The gate's `ci.result` as a word of the facts line. The gate (github's `pr-gate`) is the one
 // reading of CI: it keeps the latest run of each check, which a rollup of every run does not.
-const GATE_CI: ReadonlyMap<string, CiState> = new Map([['SUCCESS', 'green'], ['FAILURE', 'failing'], ['PENDING', 'pending'], ['NONE', 'none']])
+export const GATE_CI: ReadonlyMap<string, CiState> = new Map([['SUCCESS', 'green'], ['FAILURE', 'failing'], ['PENDING', 'pending'], ['NONE', 'none']])
 
 // The gate's last answer ci-watch kept for a pull request (core's ciGatePath), as text, or null when
 // it kept none. The relay reads CI there and runs no process for it: the gate makes five or so
