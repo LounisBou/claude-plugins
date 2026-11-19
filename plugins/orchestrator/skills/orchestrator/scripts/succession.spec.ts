@@ -523,6 +523,11 @@ test('the deck and the launcher agreeing journal nothing; no list leaves the dec
   assert.equal(unread.run('--tty', '/dev/ttys009'), 0)
   assert.ok(!unread.err.join('').includes('agents_disagree'))
   assert.equal(unread.journaled.length, 0)
+  // A deck agent the list does not show is the one miss still journaled.
+  const lost = world({ listed: [row('/dev/ttys009', NAME, true)] })
+  assert.equal(lost.run('--tty', '/dev/ttys009'), 0)
+  assert.match(lost.err.join(''), / agents_disagree=1 /)
+  assert.deepEqual(lost.journaled.map(e => (e as { fact: unknown }).fact), [{ failure: 'succession-lost-state', count: 1, prs: [] }])
   // A deck agent the list does not show counts as a miss, and stays printed: the successor reads its pull request.
   assert.deepEqual(liveAgents([{ name: 'Agent: gone', tty: null }], [], []), { agents: [{ name: 'Agent: gone', tty: null }], disagree: 1 })
   // An agent in its first turn has no measure, so the deck lacks it: the chain and `list` print it, and that is no miss.

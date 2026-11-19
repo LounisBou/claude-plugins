@@ -2003,7 +2003,7 @@ ok_brief "$B/twoaddr.md"; printf 'For example `other-12 [9f9f9f]`.\n' >> "$B/two
 check_status "a second session reference is a finding" 1 bash "$LINT" "$B/twoaddr.md"
 check "the second address is named" "1" "$(bash "$LINT" "$B/twoaddr.md" 2>&1 | grep -c 'more than one session reference')"
 
-# The bound of one reference holds for every brief: a succession brief is printed, never linted.
+# The bound of one reference holds for every brief.
 check "the same references in an implementer brief are still refused" "1" \
   "$(ok_brief "$B/succaddr-impl.md"; printf 'Peers `Agent: a [a1b2c3]` and `Agent: b [d4e5f6]`.\n' >> "$B/succaddr-impl.md"; bash "$LINT" "$B/succaddr-impl.md" 2>&1 | grep -c 'more than one session reference')"
 
@@ -5011,15 +5011,15 @@ references_named_missing() {  # $1 the rulebook, $2 the references directory: th
 }
 check "the kernel reads the file or files a moment names, and names only files the references carry" "0|0|yes|yes|" \
   "$(printf '%s' "$SKILL_FLAT" | grep -c 'binds whole')|$(printf '%s' "$SKILL_FLAT" | grep -c 'read it again at each such moment')|$(printf '%s' "$SKILL_FLAT" | grep -qF '`references/pause-opening-move.md`' && echo yes || echo no)|$(printf '%s' "$SKILL_FLAT" | grep -qF 'read the file or files the moment names' && echo yes || echo no)|$(references_named_missing "$ROOT/skills/orchestrator/SKILL.md" "$ORCH_REFS" | paste -sd, -)"
-# The takeover text is printed, never linted: this fill holds it to its 9,000 characters.
+# The takeover text is printed, no longer linted by a check of its own: this fill is linted for holes and held to 9,000 characters.
 SUCCFILL="$WORK/succession-filled.md"
 # {{GAUGE}} is gone from the template with the gauge script it named — the module's measure
-# file replaced both — and what this fill proves is the size over a full brief. Each path
+# file replaced both — and what this fill proves is the size over a full text. Each path
 # is one that exists, short and the same on every machine, so the count does not move with the
 # length of the temporary directory the suite runs in.
 sed -E -e 's#\{\{PROJECT\}\}#scratch#g' -e 's#\{\{PREDECESSOR_NAME_PATTERN\}\}#Orch: scratch#g' -e 's#\{\{MODE\}\}#build#g' -e 's#\{\{SCRIPTS\}\}#/tmp#g' \
   -e 's#\{\{CLOSE_VERB\}\}#close#g' -e 's#\{\{LIVE_[A-Z_]+\}\}#none open#g' -e 's#\{\{[A-Z_]+\}\}#/tmp#g' "$SUCC" > "$SUCCFILL"
-# The open-questions field's value is left out, its label counted: a verbatim question block is several hundred characters.
+# The size is counted with the open-questions value left out, its label counted: a verbatim question block is several hundred characters.
 check "a succession brief, every placeholder filled, lints clean and stays under 9,000 characters" "0|yes" \
   "$(bash "$LINT" "$SUCCFILL" >/dev/null 2>&1; echo $?)|$([ "$(sed "/^- The operator's open questions/s/:.*\$/:/" "$SUCCFILL" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')" -le 9000 ] && echo yes || echo no)"
 check "the template's open-questions placeholder comes before the to-do items" "1|yes" \

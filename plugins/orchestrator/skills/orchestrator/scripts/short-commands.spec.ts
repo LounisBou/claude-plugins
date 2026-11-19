@@ -117,6 +117,24 @@ test('uninstall removes its own, a dry run removes nothing; every mode removes a
   assert.match(sc(root, {}, 'sync', '--dir', out).out, /stale short command removed/)
 })
 
+test('a marked copy whose plugin command is no longer shipped is removed in every mode; one still shipped is kept', () => {
+  const root = plugin()
+  const out = join(dir, 'out')
+  sc(root, {}, 'install', '--dir', out)
+  const gone = join(out, 'orchestrator-audit.md')
+  const kept = join(out, 'orchestrator-agents.md')
+  rmSync(join(root, 'commands', 'audit.md'))
+  const dry = sc(root, {}, 'sync', '--dry-run', '--dir', out)
+  assert.match(dry.out, /\[dry-run\] stale short command removed: .*orchestrator-audit\.md \(the plugin ships no .*audit\.md\)/)
+  assert.ok(existsSync(gone))
+  assert.match(sc(root, {}, 'sync', '--dir', out).out, /stale short command removed: .*orchestrator-audit\.md/)
+  assert.ok(!existsSync(gone) && existsSync(kept))
+  // A copy that is not this plugin's stays, and the missing command is still said.
+  writeFileSync(gone, '---\ndescription: mine\n---\n')
+  assert.ok(sc(root, {}, 'install', '--dir', out).err.includes('no plugin command'))
+  assert.ok(existsSync(gone))
+})
+
 test('a directory that cannot be written fails the install and leaves nothing behind', () => {
   if (process.getuid?.() === 0) return // root writes anywhere.
   const root = plugin()
