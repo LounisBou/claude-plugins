@@ -20,7 +20,7 @@ import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, pla
 import { normalise } from './guards.ts'
 import {
   fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, foreignHold, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS,
-  seenLabel, seenWrote, sortedStatuses, takenLease, TICK_MS,
+  listedPath, parseSeen, seenLabel, seenPath, seenText, seenWrote, sortedStatuses, takenLease, TICK_MS,
   type Counts, type Flap, type LabelMove, type ListedPr, type Listing, type Local, type Schedule, type Seen,
 } from './reconcile.ts'
 import { parseReconcile, reconcileEdgePath, reconcilePath, reconcileRoot, RECONCILE_VERSION } from '../core/pr-reconcile.ts'
@@ -32,7 +32,7 @@ import { auditEvent, journalDir } from '../core/learning.ts'
 import { isCatchable, observe, OBSERVED, REFUSED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
-  carriesReady, ciUndraft, ciUndraftLine, createdPr, durableWaiver, gateLeftLine, gateMissingLine, gateMovedLine,
+  carriesReady, ciUndraft, ciUndraftLine, createdPr, durableWaiver, gateHeldLine, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
@@ -1107,17 +1107,61 @@ async function readiness($: Mod, repo: string, pr: number, sha?: string): Promis
  * names what is missing too. It never fails the call it follows.
  */
 // `unwritten`: the gate read at the head, its label not written (the reconciler keeps the reading all the same).
-type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] } }
+type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] }; heldUntil?: number }
 
 const flapKey = (repo: string, pr: number) => repo.toLowerCase() + '#' + pr
 
-// The reconciler's say on a label: `saw` notes the labels the gate read, `hold` says whether to hold a move about to be
-// written (it says so itself, once, when it is the flap's).
-type Watch = { saw: (gate: Gate) => void; hold: (gate: Gate, move: LabelMove) => boolean }
+// The reconciler's say on a label about to be written: `copies` whether to hold it for the forge copy of the head's records,
+// `flap` whether to hold it as another machine keeps undoing it (it says so itself, once).
+type Watch = { copies: (gate: Gate, move: LabelMove) => boolean; flap: (gate: Gate, move: LabelMove) => boolean }
+
+// What this machine saw of a pull request's label, shared by the reconciler and the tools of every session: a file of the
+// data directory, changed under core's store lock. Without a data directory, what this module instance saw.
+const seenInMemory = new Map<string, Seen>()
+
+// Notes the labels the gate read at its head, and gives what this machine saw of them (reconcile.ts seenLabel).
+async function noteSeen($: Mod, repo: string, pr: number, gate: Gate, now: number): Promise<Seen> {
+  return changeSeen($, repo, pr, (current) => seenLabel(current, gate.head, gate.labels, now))
+}
+
+// Notes the label this machine wrote.
+async function noteWrote($: Mod, repo: string, pr: number, head: string, move: LabelMove, now: number): Promise<void> {
+  await changeSeen($, repo, pr, () => seenWrote(head, move, now))
+}
+
+async function changeSeen($: Mod, repo: string, pr: number, change: (current: Seen | undefined) => Seen): Promise<Seen> {
+  const data = await dataDir($)
+  const memory = flapKey(repo, pr)
+  if (!data) {
+    const next = change(seenInMemory.get(memory))
+    seenInMemory.set(memory, next)
+    return next
+  }
+  let next: Seen | undefined
+  try {
+    await updateOver(journalIoOf($), seenPath(data, repo, pr), (current) => {
+      const kept = parseSeen(current)
+      next = change(kept)
+      return kept !== undefined && seenText(kept) === seenText(next) ? undefined : seenText(next)
+    })
+  } catch {
+    // A file that cannot be written leaves what was seen where it was: this instance's.
+    next = change(seenInMemory.get(memory))
+    seenInMemory.set(memory, next)
+  }
+  return next ?? change(undefined)
+}
+
+// When this machine's reconciler last listed a repository (ms): the forge was read then. Undefined before the first listing.
+async function listedAtOf($: Mod, repo: string): Promise<number | undefined> {
+  const data = await dataDir($)
+  const read = data ? Number(await textOf($, listedPath(data, repo))) : NaN
+  return Number.isFinite(read) && read > 0 ? read : undefined
+}
 
 // unlabelled: Not Ready goes on a pull request carrying neither label too (the reconciler's, labelMove).
-// watch: the reconciler's, which holds a label that another machine keeps undoing, one that waits for a record's copy to
-// reach the forge, and Ready over a Not Ready this machine did not set.
+// watch: the reconciler's, which holds a label that another machine keeps undoing and one that waits for a record's copy to
+// reach the forge. Whoever follows, Ready is held over a Not Ready this machine did not set (`heldUntil`: when it may go).
 async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false, unlabelled = false, watch?: Watch): Promise<Followed> {
   let gate: Gate
   let missing: string[]
@@ -1137,13 +1181,17 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
   } catch (err: unknown) {
     return { line: gateLeftLine(repo, pr, reasonOf(err).trim()) }
   }
-  watch?.saw(gate)
+  const readAt = await nowMs($)
+  const seen = Number.isFinite(readAt) ? await noteSeen($, repo, pr, gate, readAt) : undefined
   const move = labelMove(gate, missing, unlabelled)
   if (!move) {
     if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted, carried), missing, gate }
     return { missing, gate }
   }
-  if (watch?.hold(gate, move)) return { missing, gate }
+  if (watch?.copies(gate, move)) return { missing, gate }
+  const until = Number.isFinite(readAt) ? foreignHold(seen, move, (await listedAtOf($, repo)) ?? readAt) : undefined
+  if (until !== undefined) return { line: gateHeldLine(repo, pr, gate.head, until, readAt), missing, gate, heldUntil: until }
+  if (watch?.flap(gate, move)) return { missing, gate }
   let now: HeadRead
   try {
     now = parseHeadRead(await runGh($, 'pr-gate', { pr, 'head-only': true }, repo))
@@ -1159,9 +1207,9 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
   // Every write is noted, the tool's too: only the same label put again counts as undone by another machine.
   if (reconciler) {
     reconciler.flaps.set(flapKey(repo, pr), flapWrote(reconciler.flaps.get(flapKey(repo, pr)), gate.head, move))
-    const written = await nowMs($)
-    if (Number.isFinite(written)) reconciler.seen.set(flapKey(repo, pr), seenWrote(gate.head, move, written))
   }
+  const written = await nowMs($)
+  if (Number.isFinite(written)) await noteWrote($, repo, pr, gate.head, move, written)
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = now.draft
   if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, accepted, excused, carried, ciText), labels, draft, missing, gate }
@@ -1189,8 +1237,6 @@ type Reconciler = {
   synced: Map<string, { key: string; at: number; ok: boolean }>
   // The label last written to each pull request, by repo#pr, and how often another machine took it away (reconcile.ts flapCheck).
   flaps: Map<string, Flap>
-  // The label each pull request carried when the gate last read it, by repo#pr, and whether this machine wrote it (reconcile.ts seenLabel).
-  seen: Map<string, Seen>
   // What each head holds that is not on the forge yet, by repo#pr: the copies waiting for their tool, refused or over the beat's budget.
   unpublished: Map<string, ForgePost[]>
   // A move held back, by repo#pr, for the fingerprint it was read at: the gate is not read again before `until` (ms), nor while the
@@ -1282,6 +1328,9 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
   // The quota is the account's: once low, no repository is listed and no gate read before its reset.
   if (listing.rate.remaining !== undefined && listing.rate.remaining < QUOTA_LOW) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
   rec.repos.set(repo, { rows: listing.rows, schedule, ...(listing.viewer !== undefined ? { viewer: listing.viewer } : {}), listedAt: now })
+  // The tools of the machine's sessions read there that the forge was listed.
+  const data = await dataDir($)
+  if (data) await writeAtomicOver(journalIoOf($), listedPath(data, repo), String(now) + '\n').catch(() => undefined)
   return true
 }
 
@@ -1295,7 +1344,7 @@ async function dropClosed($: Mod, rec: Reconciler, config: string, repo: string,
   for (const name of gone) rec.kept.delete(repo + '#' + name.slice(0, -'.json'.length))
   // The label notes of a pull request no longer listed open go with its reading.
   const listed = new Set(rows.map((row) => flapKey(repo, row.number)))
-  for (const map of [rec.flaps, rec.seen, rec.unpublished, rec.held]) for (const key of [...map.keys()]) if (key.startsWith(repo.toLowerCase() + '#') && !listed.has(key)) map.delete(key)
+  for (const map of [rec.flaps, rec.unpublished, rec.held]) for (const key of [...map.keys()]) if (key.startsWith(repo.toLowerCase() + '#') && !listed.has(key)) map.delete(key)
   if (gone.length === 0) return
   const ran = await $.process.run(['rm', '-f', '--', ...gone.map((name) => dir + '/' + name)], { timeoutMs: 10_000 })
   if (ran.exitCode !== 0) sayOnce($, rec, 'github: the reconciler could not remove the readings of closed pull requests of ' + repo + ': ' + (String(ran.stderr ?? '').trim() || 'exit ' + ran.exitCode))
@@ -1353,16 +1402,16 @@ async function holdLease($: Mod, rec: Reconciler, io: ReturnType<typeof journalI
   return true
 }
 
-// The gate on one pull request whose fingerprint changed, its reading kept; whether the gate could be read.
 // What a head holds that is not on the forge yet, as the text a held move compares (the same copies missing, the same hold).
 const unpublishedKey = (posts: readonly ForgePost[] | undefined): string => (posts ?? []).map((post) => post.name + ' ' + post.state).join(',')
 
 // The copies a move waits for: Ready, every one of the head's (the other machine judges on the forge's); Not Ready, the failures.
 const awaited = (posts: readonly ForgePost[], move: LabelMove): ForgePost[] => (move === 'ready' ? [...posts] : posts.filter((post) => post.state === FORGE.states.fail))
 
+// The gate on one pull request whose fingerprint changed, its reading kept.
 async function reconcilePr(
   $: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, at: { config: string; root: string; data: string; now: number },
-  repo: string, entry: Listed, row: ListedPr, local: Local, fingerprint: string,
+  repo: string, row: ListedPr, local: Local, fingerprint: string,
 ): Promise<void> {
   const key = repo + '#' + row.number
   const id = flapKey(repo, row.number)
@@ -1372,9 +1421,8 @@ async function reconcilePr(
   const before = rec.held.get(id)?.fingerprint === fingerprint ? rec.held.get(id) : undefined
   const since = before?.since ?? at.now
   const watch: Watch = {
-    saw: (gate) => rec.seen.set(id, seenLabel(rec.seen.get(id), gate.head, gate.labels, at.now)),
-    hold: (gate, move) => {
-      // 1. The copies of the head's records the move rests on reach the forge first: the other machine reads them there, not the label.
+    copies: (gate, move) => {
+      // The copies of the head's records the move rests on reach the forge first: the other machine reads them there, not the label.
       const missingCopies = awaited(rec.unpublished.get(id) ?? [], move)
       if (missingCopies.length > 0 && at.now < since + PUBLISH_WAIT_MS) {
         waiting.until = since + PUBLISH_WAIT_MS
@@ -1385,13 +1433,10 @@ async function reconcilePr(
         sayOnce($, rec, 'github: the ' + (move === 'ready' ? 'Ready' : 'Not Ready') + ' label of ' + key + ' at ' + gate.head.slice(0, 7) + ' no longer waits for '
           + missingCopies.map((post) => forgeContext(post.name)).join(', ') + ' to reach the forge: it was not posted within ' + String(PUBLISH_WAIT_MS / 60_000) + ' minutes')
       }
-      // 2. Ready does not go back over a Not Ready this machine did not set before the forge was read after it.
-      const until = foreignHold(rec.seen.get(id), move, entry.listedAt)
-      if (until !== undefined) {
-        waiting.until = until
-        return true
-      }
-      // 3. Two machines in lasting disagreement stop moving it.
+      return false
+    },
+    flap: (gate, move) => {
+      // Two machines in lasting disagreement stop moving it.
       const head = gate.head
       const checked = flapCheck(rec.flaps.get(id), head, move)
       if (checked.flap) rec.flaps.set(id, checked.flap)
@@ -1403,6 +1448,8 @@ async function reconcilePr(
     },
   }
   const followed = await followGate($, repo, row.number, undefined, false, true, watch)
+  // Ready held over a Not Ready this machine did not set: the gate is read again once the forge was listed after the wait.
+  if (followed.heldUntil !== undefined) waiting.until = followed.heldUntil
   const gate = followed.gate
   if (!gate || followed.missing === undefined) {
     rec.failed.set(key, { fingerprint, at: at.now })
@@ -1583,7 +1630,7 @@ async function reconcileTick($: Mod): Promise<void> {
     for (const repo of [...rec.repos.keys()]) {
       if (repos.includes(repo)) continue
       rec.repos.delete(repo)
-      for (const map of [rec.seen, rec.unpublished, rec.held]) for (const key of [...map.keys()]) if (key.startsWith(repo + '#')) map.delete(key)
+      for (const map of [rec.unpublished, rec.held]) for (const key of [...map.keys()]) if (key.startsWith(repo + '#')) map.delete(key)
     }
     const listed = new Set<string>()
     for (const repo of repos) {
@@ -1619,7 +1666,7 @@ async function reconcileTick($: Mod): Promise<void> {
         // A beat can outlast what the lease had left: it is held again before each gate, the time read anew.
         if (!(await holdLease($, rec, io, config, await nowMs($)))) return
         gates += 1
-        await reconcilePr($, rec, io, at, repo, entry, row, local, fingerprint)
+        await reconcilePr($, rec, io, at, repo, row, local, fingerprint)
       }
     }
   } catch (err: unknown) {
@@ -1638,7 +1685,7 @@ async function startReconciler($: Mod): Promise<void> {
   const rec: Reconciler = {
     // The same session started again (resume, clear, compact) keeps its name, and with it the lease it holds.
     me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(), synced: new Map(), flaps: reconciler?.flaps ?? new Map(),
-    seen: reconciler?.seen ?? new Map(), unpublished: new Map(), held: new Map(),
+    unpublished: new Map(), held: new Map(),
     edgeSeen: 0, said: undefined, saidNow: false, quotaUntil: 0, session,
     journaled: { since: '', ticks: 0, listings: 0, gates: 0, moves: 0 }, journaledAt: 0,
     counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0, posts: 0 },

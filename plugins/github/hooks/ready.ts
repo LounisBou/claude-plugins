@@ -790,6 +790,12 @@ export function gateMovedLine(repo: string, pr: number, read: string, now: strin
     + ' to ' + head7(now) + ' while the gate read it, no label written.'
 }
 
+// Ready is held over a Not Ready this machine did not set, until `until` (ms) at the earliest.
+export function gateHeldLine(repo: string, pr: number, head: string, until: number, now: number): string {
+  return 'github: the Ready label of ' + repo + '#' + pr + ' is left as it is at ' + head7(head) + ': the Not Ready it carries was not set by this machine, and the forge is read again first, in '
+    + String(Math.max(1, Math.ceil((until - now) / 1000))) + ' s at the earliest.'
+}
+
 export function gateUnwrittenLine(repo: string, pr: number, error: string): string {
   return 'github: the Ready label of ' + repo + '#' + pr + ': label not written: ' + error
 }

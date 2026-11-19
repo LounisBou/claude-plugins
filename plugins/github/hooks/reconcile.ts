@@ -233,3 +233,32 @@ export function foreignHold(seen: Seen | undefined, move: LabelMove, listedAt: n
   const until = seen.since + FOREIGN_WAIT_MS
   return listedAt !== undefined && listedAt >= until ? undefined : until
 }
+
+/** The file that keeps what this machine saw of a pull request's label, in the plugin's data directory: one for the reconciler and the tools of every session. */
+export function seenPath(data: string, repo: string, pr: number): string {
+  return data + '/label-seen/' + repo.toLowerCase() + '/' + pr + '.json'
+}
+
+/** The file that keeps when this machine's reconciler last listed a repository (ms), where the tools read that the forge was read. */
+export function listedPath(data: string, repo: string): string {
+  return data + '/label-seen/' + repo.toLowerCase() + '/.listed'
+}
+
+/** A sighting as its file's text. */
+export function seenText(seen: Seen): string {
+  return JSON.stringify({ v: 1, head: seen.head, label: seen.label ?? null, own: seen.own, since: seen.since }) + '\n'
+}
+
+/** The sighting a file's text gives, or undefined when it is none. */
+export function parseSeen(text: string | undefined): Seen | undefined {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text ?? '')
+  } catch {
+    return undefined
+  }
+  if (!isRecord(raw) || raw['v'] !== 1 || !isText(raw['head']) || typeof raw['own'] !== 'boolean' || typeof raw['since'] !== 'number' || !Number.isFinite(raw['since'])) return undefined
+  const label = raw['label']
+  if (label !== null && label !== 'ready' && label !== 'not-ready') return undefined
+  return { head: raw['head'], label: label ?? undefined, own: raw['own'], since: raw['since'] }
+}
