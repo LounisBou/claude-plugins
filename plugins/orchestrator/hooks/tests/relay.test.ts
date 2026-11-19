@@ -1571,8 +1571,8 @@ test('a claim in the asker\'s tab moves the seq and is pushed; the replica keeps
   const { chains, sender, coordinator, id } = await askedRemotely()
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(pushes(sender)).text))
   await answerAskedFromPane(coordinator.dollar, id, 'B : acme/app#2 first')
-  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'let me think'))
-  expect(objectAt(sender, id)).toMatchObject({ status: 'open', seq: 2, claimed: { typed: 'let me think' } })
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'B'))
+  expect(objectAt(sender, id)).toMatchObject({ status: 'open', seq: 2, claimed: { typed: 'B' } })
   const claim = pushes(sender).at(-1)!
   expect(parseQ(claim.text)?.seq).toBe(2)
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', claim.text))
@@ -1583,7 +1583,7 @@ test('a claim in the asker\'s tab moves the seq and is pushed; the replica keeps
 
 test('a push older than the replica, arriving after a newer one, changes nothing and is acked', async () => {
   const { chains, sender, coordinator, id } = await askedRemotely()
-  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'let me think'))
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'B'))
   const first = only(pushes(sender))
   const second = only(pushes(sender), 1)
   expect([parseQ(first.text)?.seq, parseQ(second.text)?.seq]).toEqual([1, 2])
@@ -1689,7 +1689,7 @@ test('acknowledgments from another address are refused: the push is sent again, 
 test('a push resent by another session of the owner\'s machine, at its own address, updates the replica and is acked there', async () => {
   const { chains, sender, coordinator, id } = await askedRemotely()
   await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(pushes(sender)).text))
-  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'let me think'))
+  await drive(chains, 'prompt.submit', sender.dollar, typed('composer', 'B'))
   const OTHER_SESSION_AT = 'uds:/tmp/cc-socks/502.sock'
   await drive(chains, 'session.receive', coordinator.dollar, delivered(OTHER_SESSION_AT, 'Orch: other', pushes(sender).at(-1)!.text))
   expect(objectAt(coordinator, id)).toMatchObject({ seq: 2, origin: { machine: 'unknown', address: OTHER_SESSION_AT } })

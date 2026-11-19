@@ -779,7 +779,7 @@ else
   tag=$(flow_id 'the tag')
   check "(b) the question to answer in the tab is drawn" "drawn" "$(wait_for 'Tag the release?' 25 && echo drawn || echo missing)"
   coordround round --by-urgency >/dev/null
-  orch_type 'B, wait. Reply with exactly the two lines « Noted. » and « waiting: done », with no tool.'
+  orch_type 'B'
   stamp=$(ms)
   # The question is settled only when the sender's turn ends, its model's reply included: what
   # follows that end is the module's and the pane's, and is what must be fluid.
@@ -790,7 +790,7 @@ else
   after() { [ "$1" = never ] || [ "$ended" = never ] && echo never || echo $(( $1 > ended ? $1 - ended : 0 )); }
   echo "  (b) the sender's turn ended $(shown "$ended") after the answer; then pane $(shown "$(after "$gone")"), tab $(shown "$(after "$told")"); the question $(jq -r .status "$SANDBOX/state/round/$tag.json") by $(jq -r .answer.by "$SANDBOX/state/round/$tag.json")"
   tm send-keys -t "$SESSION" Escape
-  check "(b) answered once by the module from his words in the tab, gone from the pane within seconds of the turn's end, with nothing to run" "answered|tab|B, wait.|yes|0" \
+  check "(b) answered once by the module from his words in the tab, gone from the pane within seconds of the turn's end, with nothing to run" "answered|tab|B|yes|0" \
     "$(jq -r .status "$SANDBOX/state/round/$tag.json")|$(jq -r .answer.by "$SANDBOX/state/round/$tag.json")|$(jq -r '.answer.text[0:8]' "$SANDBOX/state/round/$tag.json")|$(fluid "$(after "$gone")")|$(tab_count 'coordinator.sh')"
   # The coordinator was shown the question (`round` listed it) and is never told it is settled:
   # the plan of an answer typed in its asker's tab carries `told: false` (hooks/settle.ts,

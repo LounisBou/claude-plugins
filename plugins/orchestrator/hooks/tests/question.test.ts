@@ -443,26 +443,38 @@ test('words typed in a tab are a record only when they name one choice: free pro
   expect(mine.answer).toMatchObject({ text: 'b', by: 'tab', record: 'q-lettered' })
 })
 
-// His answer typed in the asker's own tab (§ 4.3): the prompt claims its open questions, which leave
-// the pane at once; the turn's end answers each with his words, unless its operator wait keeps it.
-test('a prompt he types claims the asker\'s open questions; the turn\'s end answers them with his words, but those its wait keeps', async () => {
+// His answer typed in the asker's own tab (§ 4.3): a prompt naming a choice of an open question claims
+// it, which leaves the pane at once; the turn's end answers it with his words, unless its operator
+// wait keeps it. Words that name no choice claim nothing, and the question stays open and drawn.
+test('a prompt he types claims an open question only when it names that one question\'s choice; the turn\'s end answers it with his words, but those its wait keeps', async () => {
   const { dollar, files } = world()
   await ask(dollar, { ...FULL, urgent: undefined })
   askTurnStarted()
   await ask(dollar, { ...FULL, urgent: undefined, subject: 'tag order' })
-  const [first, second] = pair(stored(files).sort((a, b) => (a.subject < b.subject ? -1 : 1)))
+  askTurnStarted()
+  await ask(dollar, { ...FULL, urgent: undefined, subject: 'release yes or no', choice_a: 'Yes', choice_b: 'No', choice_c: undefined, recommended: 'A' })
+  const bySubject = (subject: string) => stored(files).find(entry => entry.subject === subject)!
+  const [first, second, yesNo] = [bySubject('merge order of acme/app#1'), bySubject('tag order'), bySubject('release yes or no')]
   // A model's own prompt, or a command, claims nothing.
   expect(await claimAsked(dollar, 'model', 'B')).toEqual([])
   expect(await claimAsked(dollar, 'composer', '/compact')).toEqual([])
-  expect((await claimAsked(dollar, 'composer', '  B, and tag it after  ', NOW)).sort()).toEqual([first.id, second.id].sort())
-  expect(stored(files).every(entry => entry.status === 'open' && entry.claimed?.typed === 'B, and tag it after')).toBe(true)
-  expect(askedGroups(stored(files))).toEqual([])
-  await settleClaimed(dollar, [second.id], new Date('2026-11-14T15:01:00Z'))
+  // Free words name no choice: they claim nothing, and the three questions stay open and drawn.
+  expect(await claimAsked(dollar, 'composer', '  B, and tag it after  ', NOW)).toEqual([])
+  expect(stored(files).every(entry => entry.status === 'open' && entry.claimed === undefined)).toBe(true)
+  expect(askedGroups(stored(files)).flat().length).toBe(3)
+  // A choice's text names the one question it belongs to; a letter that two open questions both offer names neither.
+  expect(await claimAsked(dollar, 'composer', 'No', NOW)).toEqual([yesNo.id])
+  expect(await claimAsked(dollar, 'composer', ' B ', NOW)).toEqual([])
+  expect(stored(files).find(entry => entry.id === yesNo.id)?.claimed?.typed).toBe('No')
+  expect(askedGroups(stored(files)).flat().map(entry => entry.id).sort()).toEqual([first.id, second.id].sort())
+  await settleClaimed(dollar, [], new Date('2026-11-14T15:01:00Z'))
   const after = new Map(stored(files).map(entry => [entry.id, entry]))
-  expect(after.get(first.id)).toMatchObject({ status: 'answered', answer: { text: 'B, and tag it after', by: 'tab', at: '2026-11-14T15:01:00.000Z', settler: 'Coord: general [a1b2c3]' } })
-  expect(after.get(first.id)!.claimed).toBeUndefined()
-  expect(after.get(second.id)).toMatchObject({ status: 'open' })
-  expect(after.get(second.id)!.claimed).toBeUndefined()
+  expect(after.get(yesNo.id)).toMatchObject({ status: 'answered', answer: { text: 'No', by: 'tab', at: '2026-11-14T15:01:00.000Z', settler: 'Coord: general [a1b2c3]' } })
+  expect(after.get(yesNo.id)!.claimed).toBeUndefined()
+  for (const open of [first, second]) {
+    expect(after.get(open.id)).toMatchObject({ status: 'open' })
+    expect(after.get(open.id)!.claimed).toBeUndefined()
+  }
 })
 
 // The kept question's reopening is written first; when that write fails it stays claimed, and the
@@ -490,40 +502,55 @@ test('no answer typed in a session\'s own tab writes a consent file, its letter 
     await ask(dollar, { ...FULL, urgent: undefined, ...consent })
     await claimAsked(dollar, 'composer', typed, NOW)
     await settleClaimed(dollar, [], NOW)
-    return [...files.entries()].filter(([p]) => p.includes('/consents/acme/app/')).map(([, text]) => JSON.parse(text).answer)
+    return {
+      consent: [...files.entries()].filter(([p]) => p.includes('/consents/acme/app/')).map(([, text]) => JSON.parse(text).answer),
+      status: stored(files)[0]?.status,
+    }
   }
   for (const me of [['coordinator', 'Coord: general [a1b2c3]'], ['orchestrator', 'Orch: belt [a1b2c3]']] as [string, string][]) {
-    expect(await records(me, 'A')).toEqual([])
-    expect(await records(me, 'Accorder')).toEqual([])
-    expect(await records(me, 'Accorder la dispense et fusionner, merci')).toEqual([])
-    expect(await records(me, "Ok Accorder pour l'auto-merge !!! \n\nLAnce le push forcé go !")).toEqual([])
-    expect(await records(me, 'Accorder ?')).toEqual([])
-    expect(await records(me, 'Refuser')).toEqual([])
-    expect(await records(me, 'Accorder pour acme/other')).toEqual([])
+    // A letter or a choice's text answers the question, and records no consent.
+    for (const typed of ['A', 'Accorder', 'Refuser']) expect(await records(me, typed)).toEqual({ consent: [], status: 'answered' })
+    // Words that name no choice leave the question open, and record no consent.
+    for (const typed of ['Accorder la dispense et fusionner, merci', "Ok Accorder pour l'auto-merge !!! \n\nLAnce le push forcé go !", 'Accorder ?', 'Accorder pour acme/other']) {
+      expect(await records(me, typed)).toEqual({ consent: [], status: 'open' })
+    }
   }
 })
 
-test('words cut at the cap grant nothing, whatever their first line says: the tail was never read', async () => {
+test('cut words that name no choice grant nothing, whatever their first line says: they claim no question, so no consent is recorded', async () => {
   const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
   const { dollar, files } = world({ me: ['coordinator', 'Coord: general [a1b2c3]'] })
   await ask(dollar, { ...FULL, urgent: undefined, ...consent })
   const long = `Accorder l'auto-merge !\n\n${'Lance le push forcé et range les logs. '.repeat(14)}\nMais seulement si la CI est verte, sinon annule tout.`
   expect(long.length).toBeGreaterThan(500)
-  await claimAsked(dollar, 'composer', long, NOW)
-  expect(stored(files)[0]?.claimed?.typed).toMatch(/\[cut at 500 of \d+ characters\]$/)
+  expect(await claimAsked(dollar, 'composer', long, NOW)).toEqual([])
   await settleClaimed(dollar, [], NOW)
-  expect(stored(files)[0]).toMatchObject({ status: 'answered' })
+  expect(stored(files)[0]).toMatchObject({ status: 'open' })
+  expect(stored(files)[0]!.claimed).toBeUndefined()
   expect([...files.keys()].filter(p => p.includes('/consents/acme/app/'))).toEqual([])
 })
 
-test('his words typed in place of a choice answer the entry whole, which its asker reads, and record no consent', async () => {
+test('a choice whose text is longer than 500 characters is claimed by it, and stored whole', async () => {
+  const { dollar, files } = world()
+  const long = `Relancer le lot de tests ${'sans attendre la revue '.repeat(24)}`.trim()
+  expect(long.length).toBeGreaterThan(500)
+  await ask(dollar, { ...FULL, urgent: undefined, choice_a: long, recommended: 'A' })
+  expect(await claimAsked(dollar, 'composer', long, NOW)).toHaveLength(1)
+  expect(stored(files)[0]?.claimed?.typed).toBe(long)
+  await settleClaimed(dollar, [], NOW)
+  expect(stored(files)[0]).toMatchObject({ status: 'answered' })
+})
+
+test('his free words typed in place of a choice leave the question open and drawn for its asker, and record no consent', async () => {
   const consent = { consent_kind: 'auto-merge', consent_repo: 'acme/app', choice_a: 'Accorder', choice_b: 'Refuser', choice_c: undefined, recommended: 'A' }
   const { dollar, files } = world({ me: ['orchestrator', 'Orch: belt [a1b2c3]'] })
   await ask(dollar, { ...FULL, urgent: undefined, ...consent })
   const typedWords = "Ok Accorder pour l'auto-merge !!!\n\nLAnce le push forcé go !"
-  await claimAsked(dollar, 'composer', typedWords, NOW)
+  expect(await claimAsked(dollar, 'composer', typedWords, NOW)).toEqual([])
   await settleClaimed(dollar, [], NOW)
-  expect(stored(files)[0]).toMatchObject({ status: 'answered', answer: { text: typedWords, by: 'tab' } })
+  expect(stored(files)[0]).toMatchObject({ status: 'open' })
+  expect(stored(files)[0]!.claimed).toBeUndefined()
+  expect(askedGroups(stored(files)).flat().length).toBe(1)
   expect([...files.keys()].filter(p => p.includes('/consents/acme/app/')).length).toBe(0)
 })
 

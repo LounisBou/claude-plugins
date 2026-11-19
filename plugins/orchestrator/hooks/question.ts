@@ -359,19 +359,22 @@ export async function nameMovedAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' |
   for (const entry of written) await logLine($, 'question', `${entry.id} now names its successor's session ${entry.sender.session}`)
 }
 
-// What the operator typed, as an answer keeps it: past this many characters it is cut, the cut said.
-const TYPED_CAP = 500
-
 /**
- * A prompt the operator typed in the asker's own tab (never the model's, never a command): its open
- * questions are claimed with his words, and leave the pane at once. Answers the ids claimed.
+ * A prompt the operator typed in the asker's own tab (never the model's, never a command) that names
+ * one open question's choice (`answersChoice`) claims that question, which leaves the pane at once.
+ * Only a prompt that names exactly one open question claims: a letter two open questions both offer
+ * names neither. Words that name no choice claim nothing: the question stays open and drawn, for the
+ * asker to settle with its own words. Answers the ids claimed.
  */
 export async function claimAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, kind: string, text: string, now: Date = new Date()): Promise<string[]> {
   if (!typedByOperator(kind) || text.trimStart().startsWith('/')) return []
   const said = text.trim()
-  const typed = said.length > TYPED_CAP ? `${said.slice(0, TYPED_CAP)}\n[cut at ${TYPED_CAP} of ${said.length} characters]` : said
-  if (typed === '') return []
-  const claimed = await changeOpenAsked($, await $.session.id(), entry => (entry.claimed ? null : { ...entry, claimed: { typed, at: now.toISOString() }, seq: entry.seq + 1 }))
+  if (said === '') return []
+  const session = await $.session.id()
+  const named = (await readAsked($)).filter(entry => entry.sender.session === session && entry.status === 'open' && !entry.claimed && answersChoice(said, entry.choices) !== undefined)
+  if (named.length !== 1) return []
+  const [target] = named
+  const claimed = await changeOpenAsked($, session, entry => (entry.id !== target!.id || entry.claimed ? null : { ...entry, claimed: { typed: said, at: now.toISOString() }, seq: entry.seq + 1 }))
   return claimed.map(entry => entry.id)
 }
 
