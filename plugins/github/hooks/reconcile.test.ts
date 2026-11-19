@@ -1,8 +1,8 @@
 // The reconciler's pure decisions: its listing, its fingerprint, its schedule and its lease.
 import { expect, test } from 'claude-code/testing'
 import {
-  fingerprintOf, IDLE_MAX_MS, LEASE_MS, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, RECENT_MS, reconciledRepos, takenLease, TICK_MS,
-  type ListedPr, type Local,
+  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, IDLE_MAX_MS, LEASE_MS, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, RECENT_MS, reconciledRepos, takenLease, TICK_MS,
+  type Flap, type ListedPr, type Local,
 } from './reconcile.ts'
 
 const HEAD = 'a'.repeat(40)
@@ -87,4 +87,22 @@ test('the holder renews its lease only when it runs low; a lease that does not p
   expect(leaseDue(undefined, 's2', T0)).toBe(true)
   for (const text of ['{', '{"v":2,"holder":"x","until":1}', '{"v":1,"holder":3,"until":1}']) expect(parseLease(text)).toBeUndefined()
   expect(parseLease('{"v":1,"holder":"x","until":1,"counts":{"since":"s","ticks":-1}}')).toEqual({ v: 1, holder: 'x', until: 1 })
+})
+
+test('a label the reconciler wrote and finds undone is held past FLAP_UNDONE undos, said once, at that head only', () => {
+  let flap: Flap | undefined = flapWrote(undefined, HEAD, 'ready')
+  const said: boolean[] = []
+  for (let i = 1; i <= FLAP_UNDONE + 2; i++) {
+    const checked = flapCheck(flap, HEAD, 'ready')
+    expect([i, checked.hold]).toEqual([i, i > FLAP_UNDONE])
+    said.push(checked.say)
+    flap = checked.flap
+    if (!checked.hold) flap = flapWrote(flap, HEAD, 'ready')
+  }
+  expect(said).toEqual([false, false, false, true, false])
+  // Another head starts again, and so does a label this machine had not written.
+  expect(flapCheck(flap, 'b'.repeat(40), 'ready')).toEqual({ hold: false, say: false })
+  expect(flapCheck(flap, HEAD, 'not-ready')).toEqual({ hold: false, say: false })
+  expect(flapWrote(flap, 'b'.repeat(40), 'ready')).toEqual({ head: 'b'.repeat(40), wrote: 'ready', undone: 0, said: false })
+  expect(flapCheck(undefined, HEAD, 'ready')).toEqual({ hold: false, say: false })
 })

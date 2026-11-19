@@ -46,6 +46,26 @@ test('the same record on both sides is neither imported nor posted, and the newe
   expect(forgeSync(sides({ statuses: [same], records: [record({ at: LATER }), record({ result: 'fail' })] }))).toEqual({ records: [], posts: [], unposted: [] })
 })
 
+test('two records of one second with different results: the failure wins on both machines, so they end on the same one', () => {
+  // The machine holds a pass, the forge a fail: the fail is imported.
+  const fail = status('readiness/review', 'failure', 'v1 ' + T + ' fail orchestrator')
+  expect(forgeSync(sides({ statuses: [fail], records: [record()] })).records).toEqual([{ kind: 'review', result: 'fail', producer: 'orchestrator', at: T }])
+  // The machine holds a fail, the forge a pass: the fail is posted over it.
+  const pass = status('readiness/review', 'success', 'v1 ' + T + ' pass orchestrator')
+  const synced = forgeSync(sides({ statuses: [pass], records: [record({ result: 'fail' })] }))
+  expect([synced.records, synced.posts]).toEqual([[], [{ name: 'review', state: 'failure', description: 'v1 ' + T + ' fail orchestrator' }]])
+  // Once the forge holds the fail, neither side moves.
+  expect(forgeSync(sides({ statuses: [fail], records: [record({ result: 'fail' })] }))).toEqual({ records: [], posts: [], unposted: [] })
+})
+
+test('of two local records of one second the failure is the one compared with the forge', () => {
+  const pass = status('readiness/review', 'success', 'v1 ' + T + ' pass orchestrator')
+  const both = [record({ producer: 'one' }), record({ result: 'fail', producer: 'two' })]
+  const there = forgeSync(sides({ statuses: [pass], records: both })).posts
+  expect(there).toEqual([{ name: 'review', state: 'failure', description: 'v1 ' + T + ' fail two' }])
+  expect(forgeSync(sides({ statuses: [pass], records: both.reverse() })).posts).toEqual(there)
+})
+
 test('a record the machine just wrote is left to its tool for a beat before the reconciler posts it', () => {
   const fresh = new Date(LISTED - SETTLE_MS + 1000).toISOString().replace(/\.\d+Z$/, 'Z')
   expect(forgeSync(sides({ records: [record({ at: fresh })] })).posts).toEqual([])
