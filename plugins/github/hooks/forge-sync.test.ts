@@ -5,7 +5,7 @@ import type { ForgeStatus } from '../core/forge-status.ts'
 import { parsePrRecord, type PrRecord } from '../core/pr-record.ts'
 import { parsePlan, type CheckPlan } from './check-plan.ts'
 import { parseExemption, type Exemption } from './e2e-scope.ts'
-import { exemptionBody, exemptionFromBody, forgeSync, planBody, planFromBody, SETTLE_MS, type ForgeSides } from './forge-sync.ts'
+import { AHEAD_MS, exemptionBody, exemptionFromBody, forgeSync, planBody, planFromBody, SETTLE_MS, type ForgeSides } from './forge-sync.ts'
 
 const HEAD = 'a'.repeat(40)
 const T = '2026-11-19T10:00:00Z'
@@ -50,6 +50,27 @@ test('a record the machine just wrote is left to its tool for a beat before the 
   const fresh = new Date(LISTED - SETTLE_MS + 1000).toISOString().replace(/\.\d+Z$/, 'Z')
   expect(forgeSync(sides({ records: [record({ at: fresh })] })).posts).toEqual([])
   expect(forgeSync(sides({ records: [record()] })).posts.map((post) => post.name)).toEqual(['review'])
+})
+
+test('a copy left to its tool says so, that the reconciler reads the head again at the next beat', () => {
+  const fresh = new Date(LISTED - SETTLE_MS + 1000).toISOString().replace(/\.\d+Z$/, 'Z')
+  expect(forgeSync(sides({ records: [record({ at: fresh })] })).waiting).toBe(true)
+  expect(forgeSync(sides({ plan: plan(fresh) })).waiting).toBe(true)
+  expect(forgeSync(sides({ records: [record()] })).waiting).toBeUndefined()
+})
+
+test('a status dated ahead of the listing is not imported, and said', () => {
+  const ahead = new Date(LISTED + AHEAD_MS + 1000).toISOString().replace(/\.\d+Z$/, 'Z')
+  const near = new Date(LISTED + AHEAD_MS).toISOString().replace(/\.\d+Z$/, 'Z')
+  const sync = forgeSync(sides({
+    statuses: [status('readiness/review', 'success', 'v1 ' + ahead + ' pass orchestrator'), status('readiness/plan', 'success', 'v1 ' + ahead + ' e2e=none norms=none review=none')],
+  }))
+  expect([sync.records, sync.plan]).toEqual([[], undefined])
+  expect(sync.unposted).toEqual([
+    'github: readiness/review of acme/app on the forge is dated ' + ahead + ', ahead of this machine\'s clock: it is not copied here',
+    'github: readiness/plan of acme/app on the forge is dated ' + ahead + ', ahead of this machine\'s clock: it is not copied here',
+  ])
+  expect(forgeSync(sides({ statuses: [status('readiness/review', 'success', 'v1 ' + near + ' pass orchestrator')] })).records.map((r) => r.at)).toEqual([near])
 })
 
 test('a status another account posted, or none of the gate\'s, copies nothing; with no account known nothing is trusted', () => {

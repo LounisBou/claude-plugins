@@ -29,6 +29,8 @@ ACCEPTANCE = _CONTRACT["acceptance"]
 SCRIPTED = _CONTRACT["scripted"]
 DETAIL_MAX = _CONTRACT["detail_max"]
 USAGE_EXIT = 2
+# How far ahead of now a record's --at may be: two machines' clocks apart (the reconciler's AHEAD_MS).
+AHEAD_S = 300
 
 _HEAD = re.compile(_CONTRACT["patterns"]["head"])
 _PART = re.compile(_CONTRACT["patterns"]["repo_part"])
@@ -103,6 +105,9 @@ def validate(args):
         except ValueError:
             raise UsageError("--at expects an instant in UTC to the second, 2026-11-19T10:00:00Z, got: " + at)
     now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+    # A record dated ahead would outlast every later one of its kind, here and on the forge.
+    if at is not None and at > (now + datetime.timedelta(seconds=AHEAD_S)).strftime("%Y-%m-%dT%H:%M:%SZ"):
+        raise UsageError("--at may not be ahead of now by more than %d seconds, got: %s" % (AHEAD_S, at))
     return {
         "v": VERSION,
         "repo": args.repo.lower(),

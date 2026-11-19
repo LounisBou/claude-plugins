@@ -2344,6 +2344,15 @@ gate8 readiness "$PULL8" '{"state":"failure","statuses":[{"context":"readiness/r
 check "pr-gate leaves the readiness/ statuses out of CI" "SUCCESS   2" "$(ci8)"
 gate8 readiness-only "$PULL8" '{"state":"success","statuses":[{"context":"readiness/plan","state":"success"}]}' '{"total_count":0,"check_runs":[]}'
 check "pr-gate reads a head whose only statuses are readiness/ copies as one with no check" "PENDING   0" "$(ci8)"
+gate8 readiness-checks "$PULL8" '{"state":"failure","statuses":[{"context":"readiness/review","state":"failure"},{"context":"ci/legacy","state":"success"}]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
+check "pr-checks leaves the readiness/ statuses out of CI, as pr-gate does" "checks: SUCCESS (2 total, 0 running, 0 failed, 0 skipped)|ci/legacy" \
+  "$(gh8 pr-checks 12)|$(gh8 pr-checks 12 --json | python3 -c 'import json,sys; print(",".join(s["context"] for s in json.load(sys.stdin)["statuses"]["statuses"]))')"
+# A repository with no CI: the readiness/ copies on its default branch's head are no CI either.
+gate8 readiness-no-ci "$(printf '%s' "$PULL8" | sed 's/"labels"/"base":{"ref":"main","repo":{"default_branch":"main"}},"labels"/')" '{"state":"success","statuses":[{"context":"readiness/plan","state":"success"}]}' '{"total_count":0,"check_runs":[]}'
+printf '%s' '{"workflows":[]}' > "$F8/GET_repos_acme_thing_actions_workflows__per_page=100.json"
+printf '%s' '{"total_count":0,"check_runs":[]}' > "$F8/GET_repos_acme_thing_commits_main_check-runs__per_page=1.json"
+printf '%s' '{"state":"success","statuses":[{"context":"readiness/review","state":"success"}]}' > "$F8/GET_repos_acme_thing_commits_main_status.json"
+check "pr-gate reads a repository whose default branch holds only readiness/ copies as one with no CI" "NONE   0" "$(ci8 2>/dev/null)"
 
 gate8 running "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"in_progress","conclusion":null}]}'
 check "pr-gate reads a running check as pending" "PENDING   1" "$(ci8)"
@@ -2833,7 +2842,7 @@ check "record.py writes nothing on a usage error" "no" \
 path=$(recbase --kind review --result fail --session forge --at 2026-11-19T10:00:00Z)
 check "record.py writes a record copied from the forge at the instant it gives" "2026-11-19T10:00:00Z review.20261119T100000Z.pr-review.json" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["at"])' "$path") $(basename "$path")"
-for at in 2026-11-19 2026-11-19T10:00:00.123Z 2026-13-01T10:00:00Z "2026-11-19 10:00:00"; do
+for at in 2026-11-19 2026-11-19T10:00:00.123Z 2026-13-01T10:00:00Z "2026-11-19 10:00:00" 2099-01-01T00:00:00Z; do
   check_status "record.py refuses --at $at with exit 2" 2 recbase --kind review --result pass --at "$at"
 done
 check "record.py imports nothing outside the standard library" "" \

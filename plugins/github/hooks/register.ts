@@ -1407,7 +1407,10 @@ async function syncForge(
   const last = rec.synced.get(id)
   if (last?.key === key && (last.ok || at.now - last.at < RETRY_MS)) return false
   const records = await recordsAt($, at.root, repo, row.head)
-  if (records === undefined) return false
+  if (records === undefined) {
+    sayOnce($, rec, 'github: the reconciler could not read the records of ' + id + ' at ' + row.head.slice(0, 7) + ': its forge copies wait')
+    return false
+  }
   const plan = at.data ? await readPlan($, repo, row.number) : undefined
   const sync = forgeSync({ repo, statuses: row.statuses, viewer, records, plan, exemption: at.data ? exemption : undefined, listedAt: listed.listedAt })
   let ok = true
@@ -1452,8 +1455,9 @@ async function syncForge(
     const context = forgeContext(post.name)
     row.statuses = sortedStatuses([...row.statuses.filter((s) => s.context !== context), { context, state: post.state, description: post.description, creator: viewer }])
   }
-  // A budget spent leaves the rest to the next beat at once; a failure, to RETRY_MS later.
-  if (ok || budget.posts < POSTS_PER_TICK) rec.synced.set(id, { key, at: at.now, ok })
+  // A copy left to its tool, or a budget spent, leaves the rest to the next beat at once; a failure, to RETRY_MS later.
+  if (sync.waiting && ok) rec.synced.delete(id)
+  else if (ok || budget.posts < POSTS_PER_TICK) rec.synced.set(id, { key, at: at.now, ok })
   else rec.synced.delete(id)
   return sync.records.length > 0 || sync.plan !== undefined || sync.exemption !== undefined
 }

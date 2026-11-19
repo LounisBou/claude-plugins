@@ -117,6 +117,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     }
     if (String(argv[1] ?? '').endsWith('/engine/record.py')) {
       const at = flag('--at')
+      state.runs.push('record.py')
       state.copied.push(flag('--kind') + ' ' + flag('--result') + ' ' + flag('--producer') + ' ' + at + ' ' + flag('--session'))
       const record = { v: 1, repo: flag('--repo'), pr: Number(flag('--pr')), head: flag('--head'), kind: flag('--kind'), result: flag('--result'), producer: flag('--producer'), detail: flag('--detail'), session: flag('--session'), at }
       put(RECORDS + '/' + record.repo + '/' + record.head + '/' + record.kind + '.' + at.replace(/[-:]/g, '') + '.' + record.producer + '.json', JSON.stringify(record), T0 + 10 * TICK_MS)
@@ -472,7 +473,7 @@ test('a record the other machine posted is copied here before the gate reads it'
   const { clock, state } = await started($, on, { pulls, viewer: 'operator' })
   await beat(clock)
   expect(state.copied).toEqual(['review pass orchestrator 2026-11-19T09:00:00Z forge'])
-  expect(state.runs.slice(0, 2)).toEqual(['pr-panel', 'pr-gate'])
+  expect(state.runs.slice(0, 3)).toEqual(['pr-panel', 'record.py', 'pr-gate'])
   expect(state.posted).toEqual([])
   await beat(clock, 3)
   expect(state.copied).toHaveLength(1)
@@ -543,4 +544,42 @@ test('this machine\'s check plan is posted at a head where the forge lacks it', 
   const { clock, state } = await started($, on, { pulls: pullWith([]), viewer: 'operator', files: { [PLAN]: plan } })
   await beat(clock)
   expect(state.posted).toEqual(['plan a v1 2026-11-19T09:00:00Z e2e=none norms=required review=required/2'])
+})
+
+test('a record this machine just wrote, left to its tool at the first listing, is posted at a later beat', async ($, on) => {
+  // Written at the first beat's instant: that listing leaves it to the tool, whose post failed.
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt(new Date(T0 + TICK_MS).toISOString().replace(/\.\d+Z$/, 'Z')) }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  await beat(clock)
+  expect(state.posted).toEqual([])
+  await beat(clock, 4)
+  expect(state.posted).toEqual(['review a v1 2026-11-19T10:01:00Z pass orchestrator'])
+})
+
+const EXEMPTION = '/data/github/e2e-exempt/acme/app.json'
+const exemptionAt = (at: string, detail = '« docs only », 2026-11-19') =>
+  JSON.stringify({ v: 1, repo: 'acme/app', exempt: true, paths: ['docs/**'], labels: [], detail, session: 's', at })
+
+test('an exemption the other machine posted is written here before the gate reads it, its words left there', async ($, on) => {
+  const pulls = pullWith([status('readiness/exemption', 'success', 'v1 2026-11-19T09:00:00Z {"e":true,"p":["docs/**"],"l":[]}')])
+  const { clock, state, files } = await started($, on, { pulls, viewer: 'operator' })
+  await beat(clock)
+  const exemption = JSON.parse(files.get(EXEMPTION)?.text ?? '{}')
+  expect([exemption.exempt, exemption.paths, exemption.at, exemption.detail]).toEqual([true, ['docs/**'], '2026-11-19T09:00:00Z', 'copied from the forge, posted by operator'])
+  expect(state.posted).toEqual([])
+  expect(count(state.runs, 'pr-gate')).toBe(1)
+})
+
+test('this machine\'s exemption is posted where the forge lacks it', async ($, on) => {
+  const { clock, state } = await started($, on, { pulls: pullWith([]), viewer: 'operator', files: { [EXEMPTION]: exemptionAt('2026-11-19T09:00:00Z') } })
+  await beat(clock)
+  expect(state.posted).toEqual(['exemption a v1 2026-11-19T09:00:00Z {"e":true,"p":["docs/**"],"l":[]}'])
+})
+
+test('an exemption too long for the forge is said once and never posted', async ($, on) => {
+  const long = JSON.stringify({ v: 1, repo: 'acme/app', exempt: true, paths: Array.from({ length: 12 }, (_, i) => 'docs/part-' + i + '/**'), labels: [], detail: '« ok », 2026-11-19', session: 's', at: '2026-11-19T09:00:00Z' })
+  const { clock, state } = await started($, on, { pulls: pullWith([]), viewer: 'operator', files: { [EXEMPTION]: long } })
+  await beat(clock, 3)
+  expect(state.posted).toEqual([])
+  expect(state.said.filter((line) => line.includes('E2E exemption of acme/app is too long for the forge'))).toHaveLength(1)
 })

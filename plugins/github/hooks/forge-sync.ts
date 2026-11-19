@@ -5,8 +5,8 @@
 // Only the statuses the operator's account created are read. Pure: the module (register.ts) reads, writes and posts.
 
 import {
-  FORGE, forgeDescription, parseForgeDescription, parseRecordStatus, recordPost, trustedStatuses,
-  type ForgePost, type ForgeRecord, type ForgeStatus,
+  FORGE, forgeContext, forgeDescription, parseForgeDescription, parseRecordStatus, recordPost, trustedStatuses,
+  type ForgeName, type ForgePost, type ForgeRecord, type ForgeStatus,
 } from '../core/forge-status.ts'
 import { KINDS, type PrRecord } from '../core/pr-record.ts'
 import { planInput, type CheckPlan, type Checks } from './check-plan.ts'
@@ -17,6 +17,8 @@ import { TICK_MS } from './reconcile.ts'
 export const POSTS_PER_TICK = 8
 /** How long a copy made here is left to the tool that made it before the reconciler posts it. */
 export const SETTLE_MS = TICK_MS
+/** How far ahead of the listing a status's instant may be (two clocks apart); one further ahead is not imported. */
+export const AHEAD_MS = 300_000
 /** The session a copy imported from the forge is written with. */
 export const FORGE_SESSION = 'forge'
 
@@ -29,8 +31,10 @@ export type ForgeSync = {
   readonly plan?: { readonly checks: Checks; readonly at: string }
   readonly exemption?: Exemption
   readonly posts: ForgePost[]
-  /** What cannot be posted, one line each. */
+  /** What cannot be copied, one line each. */
   readonly unposted: string[]
+  /** A copy made here is left to its tool for now: the reconciler reads this head again at the next beat. */
+  readonly waiting?: true
 }
 
 /** What a head holds on each side. `listedAt`: when the listing that read `statuses` was taken (ms). */
@@ -99,12 +103,23 @@ function newestByKind(records: readonly PrRecord[]): Map<string, PrRecord> {
 /** What to import and what to post at one head, the newer side winning for each record kind, the plan and the exemption. */
 export function forgeSync(sides: ForgeSides): ForgeSync {
   const trusted = trustedStatuses(sides.statuses, sides.viewer)
-  const settled = (at: string) => Date.parse(at) + SETTLE_MS <= sides.listedAt
-  const out: { records: ForgeRecord[]; plan?: NonNullable<ForgeSync['plan']>; exemption?: Exemption; posts: ForgePost[]; unposted: string[] } = { records: [], posts: [], unposted: [] }
+  const out: { records: ForgeRecord[]; plan?: NonNullable<ForgeSync['plan']>; exemption?: Exemption; posts: ForgePost[]; unposted: string[]; waiting?: true } = { records: [], posts: [], unposted: [] }
+  const settled = (at: string) => {
+    const ok = Date.parse(at) + SETTLE_MS <= sides.listedAt
+    if (!ok) out.waiting = true
+    return ok
+  }
+  // A status dated ahead of the listing would win over every copy made after it, on both machines: it is not read.
+  const ahead = (name: ForgeName, at: string | undefined) => {
+    if (at === undefined || Date.parse(at) <= sides.listedAt + AHEAD_MS) return false
+    out.unposted.push('github: ' + forgeContext(name) + ' of ' + sides.repo + ' on the forge is dated ' + at + ', ahead of this machine\'s clock: it is not copied here')
+    return true
+  }
   const newest = newestByKind(sides.records)
   for (const kind of KINDS) {
     const status = trusted.get(kind)
-    const there = status ? parseRecordStatus(status) : undefined
+    const read = status ? parseRecordStatus(status) : undefined
+    const there = read && !ahead(kind, read.at) ? read : undefined
     const here = newest.get(kind)
     const side = newer(here?.at, there?.at)
     if (side === 'import' && there) out.records.push(there)
@@ -114,7 +129,8 @@ export function forgeSync(sides: ForgeSides): ForgeSync {
     }
   }
   const planStatus = trusted.get(FORGE.plan)
-  const planRead = planStatus ? parseForgeDescription(planStatus.description) : undefined
+  const planDescribed = planStatus ? parseForgeDescription(planStatus.description) : undefined
+  const planRead = planDescribed && !ahead(FORGE.plan, planDescribed.at) ? planDescribed : undefined
   const planThere = planRead ? planFromBody(planRead.body) : undefined
   const planSide = newer(sides.plan?.at, planThere && planRead ? planRead.at : undefined)
   if (planSide === 'import' && planThere && planRead) out.plan = { checks: planThere, at: planRead.at }
@@ -123,7 +139,8 @@ export function forgeSync(sides: ForgeSides): ForgeSync {
     if (description) out.posts.push({ name: FORGE.plan, state: 'success', description })
   }
   const exemptStatus = trusted.get(FORGE.exemption)
-  const exemptRead = exemptStatus ? parseForgeDescription(exemptStatus.description) : undefined
+  const exemptDescribed = exemptStatus ? parseForgeDescription(exemptStatus.description) : undefined
+  const exemptRead = exemptDescribed && !ahead(FORGE.exemption, exemptDescribed.at) ? exemptDescribed : undefined
   const exemptThere = exemptRead && exemptStatus ? exemptionFromBody(exemptRead.body, sides.repo, exemptRead.at, exemptStatus.creator) : undefined
   const exemptSide = newer(sides.exemption?.at, exemptThere?.at)
   if (exemptSide === 'import' && exemptThere) out.exemption = exemptThere
