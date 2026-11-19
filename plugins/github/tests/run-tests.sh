@@ -3165,6 +3165,29 @@ import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1])]
 print(len(rows), rows[0]["path"])' "$FP/sent.jsonl")"
 
+# The pane's CI cell leaves out the readiness/ copies: a failed record with green CI reads green, and is named as no failed check.
+FPR="$WORK/fixpanelready"; mkdir -p "$FPR"
+python3 - "$FPR/graphql.json" <<'PY'
+import json, sys
+def pull(number, state, *contexts):
+    rollup = {"state": state, "contexts": {"nodes": list(contexts)}}
+    return {"number": number, "title": str(number), "url": "", "isDraft": False, "comments": {"totalCount": 0},
+            "reviewThreads": {"nodes": []}, "commits": {"nodes": [{"commit": {"statusCheckRollup": rollup}}]}}
+status = lambda context, state: {"__typename": "StatusContext", "context": context, "state": state}
+run = lambda name, status, conclusion: {"__typename": "CheckRun", "name": name, "status": status, "conclusion": conclusion}
+nodes = [
+    pull(9, "FAILURE", status("readiness/review", "FAILURE"), run("test", "COMPLETED", "SUCCESS")),
+    pull(8, "FAILURE", status("readiness/review", "FAILURE"), status("ci/legacy", "ERROR")),
+    pull(7, "FAILURE", status("readiness/review", "FAILURE")),
+]
+json.dump({"repository": {"pullRequests": {"nodes": nodes}}}, open(sys.argv[1], "w"))
+PY
+check "pr-panel reads the CI cell without the readiness/ statuses: a failed record with green CI is SUCCESS, and nothing else is no CI yet" \
+  "9 SUCCESS []|8 FAILURE [ci/legacy]|7 PENDING []" \
+  "$(env GH_FIXTURES="$FPR" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-panel | python3 -c '
+import json, sys
+print("|".join("%d %s [%s]" % (r["number"], r["ci"], ",".join(r["failed"])) for r in json.load(sys.stdin)))')"
+
 FR="$WORK/fixreconcile"; mkdir -p "$FR"
 python3 - "$FR/graphql.json" <<'PY'
 import json, sys

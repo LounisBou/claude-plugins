@@ -93,7 +93,7 @@ def _panel_failed(contexts):
         if node.get("__typename") == "CheckRun":
             if node.get("status") == "COMPLETED" and node.get("conclusion") not in _PANEL_PASSING:
                 failed.append(node.get("name") or "?")
-        elif node.get("state") in ("FAILURE", "ERROR"):
+        elif node.get("state") in ("FAILURE", "ERROR") and not forge.is_readiness(node.get("context")):
             failed.append(node.get("context") or "?")
     return failed
 
@@ -116,7 +116,10 @@ def _panel_row(pull):
     contexts = (rollup.get("contexts") or {}).get("nodes") or []
     # No rollup: CI has not reported on the head yet, PENDING as the ready guard reads it. A state
     # this table does not know reads "?"; a green rollup holding a run that proved nothing is PENDING.
-    ci = _PANEL_ROLLUP.get(rollup.get("state"), "?") if rollup else "PENDING"
+    # The gate's copies on the forge (readiness/) are no CI: the state is read without them (_ci_rollup),
+    # and a head that holds nothing else has no CI yet.
+    state = _ci_rollup(rollup) if rollup else None
+    ci = "PENDING" if state is None else _PANEL_ROLLUP.get(state, "?")
     if ci == "SUCCESS" and _panel_unproven(contexts, bool(pull.get("isDraft"))):
         ci = "PENDING"
     return {
