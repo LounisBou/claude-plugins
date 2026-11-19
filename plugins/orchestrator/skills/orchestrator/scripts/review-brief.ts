@@ -23,9 +23,9 @@
 // Lenses are one `--lens` each, their size said as « 3 read-only lenses (a, b, c) » unless `--size`
 // gives it; `--scope` is the text that follows the list, what the readers check. The readers' tier and
 // model are read from the diff (`lens-model.ts`); `--tier` overrides the tier, the model follows it.
-// Each lens's method (`hooks/lens-method.ts`: its pr-review-toolkit agent, or generic, or generic
+// Each lens's method (`hooks/lens-method.ts`: its pr-review-toolkit agent's file, or generic, or generic
 // because the toolkit is missing here) is said in the brief, which the review index carries; the
-// module loads it into the reader where the review session launches it.
+// review session writes a toolkit method's file into that reader's launch prompt.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, dirname } from 'node:path'

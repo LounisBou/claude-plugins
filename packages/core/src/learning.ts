@@ -931,14 +931,16 @@ export function retrospectiveStartArgv(root: string, configDir: string): string[
 // each present, null when unknown. Version 1's kinds keep version 1: a refusal is still a refusal.
 // Version 3 adds one kind and changes none: `dispatch`, each write of the orchestrator's dispatch
 // record as its script performed it (the subcommand, the row, the class and the pair it runs on, a
-// one-word verdict), so a reader takes it from its owner rather than from a command line. Each kind
-// is written at the version it entered with (`kind_versions`), so a reader of an older release still
+// one-word verdict), so a reader takes it from its owner rather than from a command line. Version 5
+// adds one kind and changes none: `reconcile`, what github's reconciler did since its last one (its
+// beats, its listings, its gates, its label moves), written at a renewal of its lease at most once an
+// hour. Each kind is written at the version it entered with (`kind_versions`), so a reader of an older release still
 // reads the kinds it knows.
 
 export const AUDIT_CONTRACT = {
-  version: 4,
-  kinds: ['link', 'step', 'review', 'decision', 'wait', 'failure', 'dispatch'],
-  kind_versions: { link: 2, step: 2, review: 2, decision: 4, wait: 2, failure: 2, dispatch: 3 },
+  version: 5,
+  kinds: ['link', 'step', 'review', 'decision', 'wait', 'failure', 'dispatch', 'reconcile'],
+  kind_versions: { link: 2, step: 2, review: 2, decision: 4, wait: 2, failure: 2, dispatch: 3, reconcile: 5 },
   // A kind whose fact changed is still read at its earlier version, with that version's fields.
   earlier: { decision: { version: 2, fact: ['decision', 'severity', 'file', 'line'] } },
   steps: ['implement', 'review', 'correction', 'ci-wait', 'merge'],
@@ -964,6 +966,7 @@ export const AUDIT_CONTRACT = {
     wait: ['wait', 'edge', 'span', 'on'],
     failure: ['failure', 'count', 'prs'],
     dispatch: ['sub', 'record', 'row', 'class', 'tier', 'model', 'effort', 'verdict'],
+    reconcile: ['ticks', 'listings', 'gates', 'moves'],
   },
   patterns: {
     goal: '^G[0-9]{1,4}$',
@@ -1023,6 +1026,8 @@ export interface Facts {
     readonly effort: Effort | null
     readonly verdict: string | null
   }
+  /** Counts since the reconciler's previous event: its beats, its listings (one forge call each), its gates and its label moves. */
+  readonly reconcile: { readonly ticks: number; readonly listings: number; readonly gates: number; readonly moves: number }
 }
 
 type EarlierVersion<K extends AuditKind> = K extends keyof typeof audit.earlier ? (typeof audit.earlier)[K]['version'] : never
@@ -1061,6 +1066,7 @@ const FACT_CHECKS: { readonly [K in AuditKind]: (fact: Fields) => boolean } = {
     && nullable(f['class'], (c): c is string => matches(AUDIT_PATTERNS.class, c)) && nullable(f['tier'], (t): t is Tier => isOneOf(audit.tiers, t))
     && nullable(f['model'], (m): m is string => matches(AUDIT_PATTERNS.model, m)) && nullable(f['effort'], (e): e is Effort => isOneOf(audit.efforts, e))
     && nullable(f['verdict'], (r): r is string => matches(AUDIT_PATTERNS.result, r)),
+  reconcile: f => isCount(f['ticks']) && isCount(f['listings']) && isCount(f['gates']) && isCount(f['moves']),
 }
 
 /** The audit event `raw` holds, or undefined: version 1's envelope, a kind at the version it is written at, and exactly its fact's fields. */

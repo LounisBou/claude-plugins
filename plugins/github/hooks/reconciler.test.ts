@@ -4,6 +4,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock, NounEvents, TestOn } from 'claude-code/testing'
 import { fieldsOf } from '../core/host.ts'
 import { parseReconcile } from '../core/pr-reconcile.ts'
+import { JOURNAL_EVERY_MS } from './register.ts'
+import { parseAuditEvent } from '../core/learning.ts'
 import { GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
 
 const T0 = Date.parse('2026-11-19T10:00:00Z')
@@ -39,6 +41,8 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     gateFails: false,
     panelFails: undefined as string | undefined,
     readinessFails: false,
+    // Run inside the next label write, as a record written while the gate runs.
+    duringReadiness: undefined as (() => void) | undefined,
   }
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'session-r' }))
@@ -107,6 +111,8 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     }
     if (command === 'pr-readiness' && state.readinessFails) return done('', 1, 'gh: HTTP 403 label')
     if (command === 'pr-readiness' && pull) {
+      state.duringReadiness?.()
+      state.duringReadiness = undefined
       pull.labels = [...pull.labels.filter((l) => !['ready', 'not ready'].includes(l.toLowerCase())), args['state'] === 'ready' ? 'Ready' : 'Not Ready']
       state.labelled.push(pull.number + ' ' + String(args['state']))
       return done('ok')
@@ -312,4 +318,64 @@ test('the same session started again keeps its lease: it reconciles at the next 
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await beat(clock)
   expect(count(state.runs, 'pr-panel')).toBe(2)
+})
+
+test('a record written while the gate moves the label reads the gate again at the next beat', async ($, on) => {
+  const { clock, state, put } = await started($, on)
+  state.duringReadiness = () => put(RECORDS + '/acme/app/' + HEAD + '/e2e.y.json', '{}', T0 + TICK_MS)
+  await beat(clock)
+  expect(state.labelled).toEqual(['7 not-ready'])
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(2)
+})
+
+// The reconciler's events in the github journal, by path order (their ids start with their time).
+const journaled = (files: Map<string, { text: string }>) => [...files.keys()].filter((path) => path.startsWith(CFG + '/github/journal/')).sort()
+  .map((path) => parseAuditEvent(JSON.parse(files.get(path)?.text ?? 'null')))
+
+// The lease's counts, which every journaled event adds up to once it is written.
+const leaseCounts = (files: Map<string, { text: string }>) => {
+  const { ticks, listings, gates, moves } = JSON.parse(files.get(LEASE)?.text ?? '{}').counts ?? {}
+  return { ticks, listings, gates, moves }
+}
+// Beats one at a time until the journal holds `n` events, at most `max` beats: the lease then holds what the last one counted.
+const beatUntil = async (clock: MockClock, files: Map<string, { text: string }>, n: number, max: number) => {
+  for (let i = 0; i < max && journaled(files).length < n; i++) await beat(clock)
+  return journaled(files)
+}
+const summed = (events: ReturnType<typeof journaled>) => events.reduce((sum, event) => {
+  const fact = event?.kind === 'reconcile' ? event.fact : { ticks: 0, listings: 0, gates: 0, moves: 0 }
+  return { ticks: sum.ticks + fact.ticks, listings: sum.listings + fact.listings, gates: sum.gates + fact.gates, moves: sum.moves + fact.moves }
+}, { ticks: 0, listings: 0, gates: 0, moves: 0 })
+
+test('the lease renewals of an hour journal one event for telemetry\'s sweep, the hour after the summed counts since', async ($, on) => {
+  const { clock, files } = await started($, on)
+  await beat(clock, 3)
+  expect(journaled(files)).toEqual([])
+  // Taken at the first beat for LEASE_MS, renewed at the fourth with under LEASE_RENEW_MS left: the first three beats go.
+  await beat(clock)
+  expect(journaled(files).map((event) => [event?.kind, event?.source, event?.context.session, event?.fact])).toEqual([
+    ['reconcile', { plugin: 'github', code: 'github.reconcile.counts' }, 'session-r', { ticks: 3, listings: 3, gates: 1, moves: 1 }],
+  ])
+  // Renewed every three beats for an hour: nothing more journaled.
+  await beat(clock, JOURNAL_EVERY_MS / TICK_MS - 1)
+  expect(journaled(files)).toHaveLength(1)
+  const events = await beatUntil(clock, files, 2, 3)
+  expect(events).toHaveLength(2)
+  expect(summed(events)).toEqual(leaseCounts(files))
+})
+
+test('an hour with no forge call journals nothing; its beats go with the next event', async ($, on) => {
+  const resetAt = new Date(T0 + 3 * JOURNAL_EVERY_MS).toISOString()
+  const { clock, files, state } = await started($, on, { remaining: QUOTA_LOW - 1, resetAt })
+  await beat(clock, 4)
+  expect(journaled(files).map((event) => event?.fact)).toEqual([{ ticks: 3, listings: 1, gates: 0, moves: 0 }])
+  // The quota waits for its reset, three hours on: no listing, no gate, nothing journaled.
+  await beat(clock, 3 * JOURNAL_EVERY_MS / TICK_MS - 4)
+  expect(journaled(files)).toHaveLength(1)
+  state.remaining = 4000
+  const events = await beatUntil(clock, files, 2, 6)
+  expect(events).toHaveLength(2)
+  expect(events[1]?.kind === 'reconcile' && events[1].fact.ticks).toBeGreaterThan(3 * JOURNAL_EVERY_MS / TICK_MS - 10)
+  expect(summed(events)).toEqual(leaseCounts(files))
 })

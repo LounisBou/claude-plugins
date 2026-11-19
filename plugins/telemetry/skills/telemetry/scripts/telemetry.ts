@@ -307,7 +307,8 @@ export function run(args: readonly string[], deps: Deps): number {
       if (operands.includes('--auto') && !claimSweep(stateDir, deps.now())) return 0
       const result = sweep({ config, stateDir, secrets, moduleDir: deps.env['ORCHESTRATOR_MODULE_DIR'], journalDir: deps.env['ORCHESTRATOR_JOURNAL_DIR'], now: deps.now() })
       for (const reason of result.refused) deps.err(`telemetry: a line was refused (${reason})`)
-      deps.out(`sweep: ${result.sessions} session(s) without an end summarized, ${result.questions} round question(s) recorded, ${result.dispatches} dispatch(es) recorded`)
+      const counts = result.reconciles === undefined ? '' : `, ${result.reconciles} reconciler count(s) recorded`
+      deps.out(`sweep: ${result.sessions} session(s) without an end summarized, ${result.questions} round question(s) recorded, ${result.dispatches} dispatch(es) recorded${counts}`)
       return 0
     }
     default:
