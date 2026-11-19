@@ -206,3 +206,50 @@ test('redactValue: the ids of an API call (message, request, prompt) are random 
   assert.ok(!JSON.stringify(redacted.value).includes(token))
   assert.equal((redacted.value as Record<string, unknown>)['request'], '[REDACTED:identifier]')
 })
+
+const SHA = '8e76bc4f9b4ee5d898894ec8e0a4ba7a827f4286'
+
+test('entropy: a git object id (40 hex) is kept, alone or among words, as the export scan sees it', () => {
+  assert.equal(isHighEntropy(SHA), false)
+  for (const text of [`commit ${SHA}`, `merged at ${SHA}.`, `git show ${SHA}:docs/a.md`, `refs/heads/x ${SHA}\n${SHA} refs/tags/v1`]) {
+    assert.deepEqual(redactText(text), { text, hits: [] }, text)
+  }
+})
+
+test('entropy: a hex-looking secret of another shape than a git object id is still redacted', () => {
+  const key = (n: number): string => 'a3f9c2e1b7d4058e6f2a9c1b3e5d7f0a9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b'.slice(0, n)
+  for (const secret of [key(32), key(64), key(41), key(39), key(40).toUpperCase(), `${key(40)}0Zq`, `${key(40)}_${key(40)}`, `x${key(40)}`]) {
+    assert.deepEqual(redactText(`the value ${secret} stays out`), { text: 'the value [REDACTED:entropy] stays out', hits: ['entropy'] }, secret)
+  }
+})
+
+test('a git object id given as the value of a secret, or after a token word, is still redacted by its own pattern', () => {
+  const cases: readonly (readonly [string, string])[] = [
+    [join('API_', 'TOKEN=', SHA, ' make'), 'secret-assignment'],
+    [join('curl -H "Authorization: token ', SHA, '" x'), 'authorization'],
+    [join('curl -H "X-Auth: Bearer ', SHA, '" x'), 'bearer'],
+    [join('cli --to', 'ken ', SHA, ' list'), 'secret-flag'],
+    [`fetch https://api.example.com/v1?access_token=${SHA}&page=2`, 'url-secret'],
+    [join('git clone https://', SHA, '@git.example.com/a.git'), 'url-credentials'],
+  ]
+  for (const [text, pattern] of cases) {
+    const out = redactText(text)
+    assert.ok(out.hits.includes(pattern), `${pattern}: ${out.text}`)
+    assert.ok(!out.text.includes(SHA), out.text)
+  }
+})
+
+test('a value of ~/.env that looks like a git object id is still redacted', () => {
+  const out = redactText(`token is ${SHA} ok`, new Map([['LEGACY_KEY', SHA]]))
+  assert.deepEqual(out, { text: 'token is [REDACTED:env] ok', hits: ['env'] })
+})
+
+test('entropy: the temporary directory macOS names under /var/folders is a path, kept; the same run elsewhere is not', () => {
+  const dir = 'fzqct5s130lgbsy29rbbfpgw0000gn'
+  for (const text of [`/var/folders/fz/${dir}/T/x.json`, `/private/var/folders/fz/${dir}/T/`]) {
+    assert.deepEqual(redactText(text), { text, hits: [] }, text)
+  }
+  for (const text of [`/var/other/fz/${dir}/T/`, `/var/folders/${dir}/T/`, `value ${dir}`]) {
+    assert.deepEqual(redactText(text).hits, ['entropy'], text)
+  }
+})

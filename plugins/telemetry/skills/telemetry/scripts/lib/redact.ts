@@ -31,6 +31,16 @@ export const IDENTIFIERS: Readonly<Record<string, RegExp>> = {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/*
+ * A full git object id, the run `git log` and `git rev-parse` print: a name, not a secret. Only
+ * this exact shape is kept: 32 or 64 hex, an upper-case or a longer run stay judged by their entropy,
+ * and a value a secret pattern or ~/.env names is redacted before this guess runs.
+ */
+const GIT_OBJECT_ID = /^[0-9a-f]{40}$/
+
+/* The directory macOS makes for a user's temporary files: `/var/folders/<2 characters>/<random run>/T`. */
+const TEMP_DIR_HEAD = /\/var\/folders\/[A-Za-z0-9_]{2}\/$/
+
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const byRegex = (name: string, regex: RegExp, keep?: (match: string, ...groups: string[]) => string): Pattern => ({
@@ -52,7 +62,7 @@ export function entropy(text: string): number {
 
 /** Whether a run of token characters looks random enough to be a secret. */
 export function isHighEntropy(run: string): boolean {
-  if (UUID.test(run)) return false
+  if (UUID.test(run) || GIT_OBJECT_ID.test(run)) return false
   const longest = run.split(/[-_.]/).reduce((a, b) => (b.length > a.length ? b : a), '')
   if (longest.length < 20) return false
   const letter = /[A-Za-z]/.test(longest)
@@ -205,7 +215,10 @@ export const PATTERNS: readonly Pattern[] = [
   byRegex('secret-flag', new RegExp(String.raw`(${SECRET_FLAG})(\s+|=)(?!\[REDACTED)(?:"[^"]*"|'[^']*'|[^\s"'-][^\s"']*)`, 'gi'), (_m, flag, sep) => `${flag}${sep}`),
   quotedAssignment,
   byRegex('secret-assignment', new RegExp(String.raw`\b(${SECRET_KEY})(["']?\s*[:=]\s*["']?)(?!\[REDACTED)[^\s"',;&|)}]+`, 'gi'), (_m, key, sep) => `${key}${sep}`),
-  { name: 'entropy', apply: (text, mark) => text.replace(/[A-Za-z0-9+=_-]{20,}/g, run => (isHighEntropy(run) ? mark : run)) },
+  {
+    name: 'entropy',
+    apply: (text, mark) => text.replace(/[A-Za-z0-9+=_-]{20,}/g, (run, at: number) => (isHighEntropy(run) && !TEMP_DIR_HEAD.test(text.slice(Math.max(0, at - 16), at)) ? mark : run)),
+  },
 ]
 
 /** The patterns of the operator's ~/.env: its values, and assignments of its keys. */
