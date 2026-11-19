@@ -1855,7 +1855,8 @@ async function e2eOutcome($: Mod, run: E2eRun, dir: string | undefined, head: st
   }
   const cwd = (dir ?? String(await $.session.cwd())).replace(/\/+$/, '')
   const moved = await headMovedAt($, inDir)
-  const seen = moved === undefined ? undefined : observedRuns.filter((r) => r.line === run.ran && r.cwd === cwd && r.at >= moved).pop()
+  if (moved === undefined) return { deny: 'github: when the checkout ' + cwd + ' last moved cannot be read from its reflog: record with "run" instead.' }
+  const seen = observedRuns.filter((r) => r.line === run.ran && r.cwd === cwd && r.at >= moved).pop()
   if (!seen) {
     if (given !== 'pass' && given !== 'fail') {
       return { deny: 'github: this session ran no `' + run.ran + '` in ' + cwd + ' since its head ' + head.slice(0, 7) + ' was checked out (a background run is not observed): give "result": "pass" or "fail" to record it as stated, or run it there in Bash.' }
