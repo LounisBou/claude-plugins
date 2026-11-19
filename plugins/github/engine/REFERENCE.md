@@ -226,7 +226,7 @@ Core's `pr-record.ts` declares each kind's producer, the only plugin github writ
 |---|---|---|
 | pr-review `auto-fix-loop` (`hooks/loop.ts`, `verdict`) | review | A `review_only` loop only, from the findings blocks: `pass` when nothing Critical or Important was reported, else `fail` (an unreadable block fails). The fix loop writes none. None on dirty tracked files or with no PR (`record: none — <why>`) |
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, else `fail`, at the head. None on a dirty tree or with no PR |
-| orchestrator `mcp__orchestrator__review` | review | `verdict: pass\|fail\|accepted` from an orchestrator session, at the head of a clean checkout: `accepted` names each point set aside with its reason; a `pass` over a failed review at the head is refused |
+| orchestrator `mcp__orchestrator__review` | review | `verdict: pass\|fail\|accepted` from an orchestrator, `pass\|fail` from `Agent: review`, at a clean checkout's head: `accepted` sets each point aside with its reason; no `pass` over a failed review there |
 | github `mcp__github__light_ci` | tests | « Light CI » below |
 | any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, run\|ran, detail?, dir?}` or `{pr, repo?, result: waived\|not-applicable, detail, dir?}`, producer `session-e2e` (below, and « Guards ») |
 

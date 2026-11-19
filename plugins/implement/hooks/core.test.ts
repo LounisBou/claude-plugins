@@ -289,6 +289,13 @@ describe('the reviewer', () => {
     expect(reviewerPrompt('feat/demo')).toContain('branch feat/demo')
     expect(reviewerPrompt('feat/demo')).toContain('you change no code')
   })
+  test('its prompt is the one review instrument: lens readers, the verdict through the orchestrator\'s review tool, never pr-review\'s loop', () => {
+    const prompt = reviewerPrompt('feat/demo')
+    expect(prompt).toContain('orchestrator:lens')
+    expect(prompt).toContain('mcp__orchestrator__review')
+    expect(prompt).not.toContain('pr-review')
+    expect(prompt).not.toContain('review_only')
+  })
   test('the launcher is looked for in every recorded install, none from a broken record', () => {
     expect(candidateLaunchers(JSON.stringify({ plugins: { 'orchestrator@lounisbou': [{ installPath: '/a/' }] } }))).toEqual(['/a/skills/iterm-agents/scripts/iterm-agent.sh'])
     expect(candidateLaunchers('{')).toEqual([])

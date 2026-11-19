@@ -51,9 +51,10 @@ One more command, answered by the hooks module:
 - **`/implement:review`** — launch the review of the branch's pull request in another
   session: on macOS with the orchestrator installed, an iTerm tab through its launcher;
   anywhere else, a headless `claude -p` session whose report goes to
-  `.git/implement-review.log`. The reviewer runs `/pr-review:auto-fix-loop` in its review-only
-  mode and leaves the review record for github's ready gate, which refuses a record written by
-  the session that pushed the head.
+  `.git/implement-review.log`, both named `Agent: review <codename>`. The reviewer reads the diff
+  with `orchestrator:lens` readers and records its pass or fail through `mcp__orchestrator__review`,
+  which takes a verdict from a session of that name; github's ready gate refuses a record written
+  by the session that pushed the head. It needs the orchestrator plugin installed.
 
 ## The hooks module
 

@@ -157,15 +157,16 @@ async function launchReviewer($: ImplementHost): Promise<string> {
       }
     }
   }
+  // The review tool knows a review session by this name, in iTerm and headless alike.
+  const title = reviewerTitle(codenameOf(branch.out))
   if (launcher !== null) {
-    const title = reviewerTitle(codenameOf(branch.out))
-    const spawned = await $.process.run(spawnArgv(launcher, { dir: top.out, title, prompt, keepTools: ['mcp__pr-review'] }), { cwd: top.out, timeoutMs: 120_000 })
+    const spawned = await $.process.run(spawnArgv(launcher, { dir: top.out, title, prompt, keepTools: ['mcp__orchestrator__review'] }), { cwd: top.out, timeoutMs: 120_000 })
     const tty = lastLine(spawned.stdout)
     if (spawned.exitCode === 0 && tty.startsWith('/dev/')) return `Reviewer « ${title} » launched in iTerm on ${tty}. Its review record is the ready gate's; nothing more to do here.`
     return `The launcher refused the reviewer (exit ${spawned.exitCode}): ${lastLine(spawned.stderr) || tty || 'no tty printed'}. Nothing was launched another way.`
   }
   const log = `${top.out}/.git/implement-review.log`
-  const started = await $.process.run(headlessArgv(prompt, log), { cwd: top.out, timeoutMs: 10_000 })
+  const started = await $.process.run(headlessArgv(prompt, log, title), { cwd: top.out, timeoutMs: 10_000 })
   if (started.exitCode !== 0) return `The headless reviewer did not start (exit ${started.exitCode}): ${lastLine(started.stderr) || 'no output'}.`
   return `Reviewer launched headless (no iTerm launcher here); its report goes to ${log}. Its review record is the ready gate's.`
 }
