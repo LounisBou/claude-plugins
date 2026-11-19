@@ -28,7 +28,7 @@ below, and the `args` object holds the subcommand's arguments.
 | `pr-panel` | `[--reconcile]` | The open PRs, newest first (at most 100), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` (`SUCCESS`, `FAILURE`, `PENDING`, `?`) from the head's status check rollup, not the gate's reading. `--reconcile`: the reconciler's, `{"rows", "rate"}` |
 | `pr-status` | `<pr>` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
 | `pr-checks` | `<pr>` | Verdict, counts, failed and skipped names (`checks-summary`); `--json`: commit status and check runs |
-| `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total", "checks"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read |
+| `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "mergeable", "mergeable_state" (when the pull request answer holds them: `null` while GitHub computes them), "ci": {"result", "failed", "running", "skipped", "total", "checks"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read |
 | `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
 | `pr-files` | `<pr>` | Totals, a line per changed path (`files-summary`); `--json`: with the patches, paginated |
@@ -269,7 +269,7 @@ stand over a failed run; a failed check blocks. With light CI on, its tests pass
 `{"command": [...], "prepare": [...]?, "timeoutSeconds": 600, "decided": {"at", "words"}}`, or `{"off": "<words>", "at"}`;
 no file or `off`: review, and the forge's checks once they run. A check still running at
   its head blocks (`CI still running`) until it ends; a failed one blocks; no check at all stays ready on its
-  review, named in `Ready`.
+  review, named in `Ready`. An unreadable file reads as light CI on: the tests record is then required.
 
 - `mcp__github__light_ci {action: "run", pr, dir?}`: clean checkout of the head; `prepare`, then `command` (no
   shell; `{base}`: the merge base); `tests` `pass|fail` by `light-ci`. Past 570 s nothing is written.
@@ -304,7 +304,9 @@ question, naming what is missing. Refused too: a shell merge or undraft naming n
 
 **The gate puts `Ready`.** After a record is written, or a `pr-gate` or `pr-checks` read through
 the tool, the module reads readiness at the open PR's head, rereading it just before writing, and
-puts `Ready` when nothing is missing, `Not Ready` back otherwise. It never touches the draft state:
+puts `Ready` when nothing is missing, `Not Ready` back otherwise. A head that conflicts with its base is missing
+(`conflict with base`), and one whose mergeability GitHub is still computing is too on the Ready path
+(`mergeability unknown`, read again by the next gate). It never touches the draft state:
 a PR out of draft, for its CI or by the operator, stays out.
 
 A PR carrying `Not Ready` with no passed check at its head may leave draft for its CI, unasked:

@@ -38,6 +38,9 @@ type World = {
   // pr-get's pull requests, by branch ('' for the current one).
   pulls?: Record<string, unknown[]>
   autoMerge?: string[]
+  // pr-gate's mergeability of the head against its base, carried into the gate answer when given.
+  mergeable?: boolean | null
+  mergeable_state?: string
   // The deploy list file, as written (an object) or as raw text.
   deployList?: unknown
   // git's answers, by its argv after git.
@@ -139,6 +142,8 @@ function gateOf(w: World, pull?: Pull) {
     repo: 'acme/thing', pr: 12, state: 'open', draft: pull?.draft ?? w.draft ?? true, head, labels: pull?.labels ?? w.labels ?? ['Not Ready'],
     ...(w.commits === undefined ? {} : { commits: w.commits }),
     ...(w.stacked === undefined ? {} : { stacked: w.stacked, base: 'feat-a' }),
+    ...(w.mergeable === undefined ? {} : { mergeable: w.mergeable }),
+    ...(w.mergeable_state === undefined ? {} : { mergeable_state: w.mergeable_state }),
     ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1, ...(w.ci ?? {}) },
   }
 }
@@ -3576,6 +3581,13 @@ test('a stacked pull request of a repository whose light CI the operator refused
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
+test('a Ready pull request that conflicts with its base moves to Not Ready, and the answer names the conflict', async ($, on) => {
+  const seen = await world($, on, { labels: ['Ready'], mergeable: false, mergeable_state: 'dirty' })
+  const out = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.result).toEndWith('Missing: conflict with base.')
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
 test('a light CI file that cannot be read refuses nothing', async ($, on) => {
   const seen = await world($, on, { ...PENDING, stacked: true,
     tree: { [LIGHT_CI_FILE]: { kind: 'file', mtimeMs: 0, text: '{"off": ' } } })
@@ -3584,7 +3596,7 @@ test('a light CI file that cannot be read refuses nothing', async ($, on) => {
 })
 
 test('a rebase that leaves a stacked pull request\'s diff unchanged carries its tests record', async ($, on) => {
-  const seen = await world($, on, { ci: { result: 'SUCCESS', running: 0 }, stacked: true, records: {},
+  const seen = await world($, on, { ...PENDING, stacked: true, records: {},
     tree: { ...LIGHT_CI_ON, ...earlier([...CLEAN_OLD, at('tests', 'pass', { producer: 'light-ci' })]) }, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.pull?.labels).toEqual(['Ready'])
@@ -3600,7 +3612,7 @@ test('the model may not record tests through the record tool, which names the li
 })
 
 test('light_ci run runs the script in the checkout named with the session, then the gate follows its record', async ($, on) => {
-  const seen = await world($, on, { ci: { result: 'SUCCESS', running: 0 }, stacked: true, tree: { ...CHECKOUTS, ...LIGHT_CI_ON }, gitIn: { [REVIEW_DIR]: REVIEW_ORIGIN },
+  const seen = await world($, on, { ...PENDING, stacked: true, tree: { ...CHECKOUTS, ...LIGHT_CI_ON }, gitIn: { [REVIEW_DIR]: REVIEW_ORIGIN },
     lightCi: { exitCode: 0, stdout: 'tests pass at 0123456 of acme/thing#12: npm test — exit 0 — 9s; output /tmp/x.log; record /r.json\n', stderr: '', result: 'pass' } })
   const out = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, dir: REVIEW_DIR })
   const run = lightCiRun(seen)!

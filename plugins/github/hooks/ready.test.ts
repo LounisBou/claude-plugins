@@ -140,6 +140,8 @@ test('a head that conflicts with its base is not ready, and a mergeability GitHu
     .toEqual(['conflict with base'])
   expect(missingItems(gate({ mergeable: null, mergeable_state: 'unknown' }), ALL))
     .toEqual(['mergeability unknown: GitHub is computing it, read again'])
+  // A merge right after a push is not refused while GitHub computes it; a conflict still is.
+  expect(missingItems(gate({ mergeable: null, mergeable_state: 'unknown' }), ALL, undefined, {}, [], 'gate')).toEqual([])
   expect(missingItems(gate({ mergeable: true, mergeable_state: 'clean' }), ALL)).toEqual([])
   expect(missingItems(gate({ mergeable: true, mergeable_state: 'behind' }), ALL)).toEqual([])
   // An absent field is not read at all: a gate answer without mergeability blocks nothing.

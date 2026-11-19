@@ -548,7 +548,8 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
   if (sha && !namesHead(sha, gate.head)) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
   // A conflict with the base is named; a mergeability GitHub has not computed yet is named too, and read again by the next gate.
   if (isConflicting(gate)) missing.push('conflict with base')
-  else if (isComputing(gate)) missing.push('mergeability unknown: GitHub is computing it, read again')
+  // Only the Ready path waits for an unknown state: a merge right after a push is not refused for it.
+  else if (!holder && isComputing(gate)) missing.push('mergeability unknown: GitHub is computing it, read again')
   const { read, skipped } = headRecordsRead(gate, files)
   const ci = gate.ci
   const lacking = missingEvidence({
