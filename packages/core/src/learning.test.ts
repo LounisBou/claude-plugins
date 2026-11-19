@@ -322,8 +322,8 @@ describe('the audit event, version 2 of the contract', () => {
       const event = { ...STEP, kind, fact: facts[kind] }
       assert.deepEqual(parseAuditEvent(event), event, kind)
     }
-    assert.deepEqual([...AUDIT_KINDS], ['link', 'step', 'review', 'decision', 'wait', 'failure', 'dispatch'])
-    assert.equal(AUDIT_VERSION, 4)
+    assert.deepEqual([...AUDIT_KINDS], ['link', 'step', 'review', 'decision', 'wait', 'failure', 'dispatch', 'reconcile'])
+    assert.equal(AUDIT_VERSION, 5)
   })
 
   it('reads a decision at version 4 with the finding\'s id and lens, and one at version 2 as it was written', () => {
@@ -399,6 +399,16 @@ describe('the audit event, version 2 of the contract', () => {
     assert.equal(parseAuditEvent({ ...STEP, v: 3 }), undefined)
     const built = auditEvent({ at: AT, random: '0a1b2c3d', source: { plugin: 'orchestrator', code: 'orchestrator.dispatch.open' }, trust: 'computed', kind: 'dispatch', fact: DISPATCH.fact })
     assert.equal(built?.v, 3)
+  })
+
+  it('reads a reconcile at version 5, its four counts whole numbers', () => {
+    const RECONCILE = { ...STEP, v: 5, kind: 'reconcile', fact: { ticks: 3, listings: 1, gates: 0, moves: 0 } }
+    assert.deepEqual(parseAuditEvent(RECONCILE), RECONCILE)
+    for (const change of [{ v: 4 }, { fact: { ...RECONCILE.fact, gates: -1 } }, { fact: { ...RECONCILE.fact, moves: 1.5 } }, { fact: { ticks: 3, listings: 1, gates: 0 } }]) {
+      assert.equal(parseAuditEvent({ ...RECONCILE, ...change }), undefined, JSON.stringify(change))
+    }
+    const built = auditEvent({ at: AT, random: '0a1b2c3d', source: { plugin: 'github', code: 'github.reconcile.counts' }, trust: 'computed', kind: 'reconcile', fact: RECONCILE.fact })
+    assert.equal(built?.v, 5)
   })
 
   it('is written as learning-audit.json, beside version 1', () => {

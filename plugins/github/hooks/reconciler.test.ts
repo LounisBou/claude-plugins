@@ -4,6 +4,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock, NounEvents, TestOn } from 'claude-code/testing'
 import { fieldsOf } from '../core/host.ts'
 import { parseReconcile } from '../core/pr-reconcile.ts'
+import { parseAuditEvent } from '../core/learning.ts'
 import { GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
 
 const T0 = Date.parse('2026-11-19T10:00:00Z')
@@ -325,4 +326,22 @@ test('a record written while the gate moves the label reads the gate again at th
   expect(state.labelled).toEqual(['7 not-ready'])
   await beat(clock)
   expect(count(state.runs, 'pr-gate')).toBe(2)
+})
+
+// The reconciler's events in the github journal, by path order (their ids start with their time).
+const journaled = (files: Map<string, { text: string }>) => [...files.keys()].filter((path) => path.startsWith(CFG + '/github/journal/')).sort()
+  .map((path) => parseAuditEvent(JSON.parse(files.get(path)?.text ?? 'null')))
+
+test('each renewal of the lease journals what the reconciler did since the last one, for telemetry\'s sweep', async ($, on) => {
+  const { clock, files } = await started($, on)
+  await beat(clock, 3)
+  expect(journaled(files)).toEqual([])
+  // Taken at the first beat for LEASE_MS, renewed at the fourth with under LEASE_RENEW_MS left: the first three beats go.
+  await beat(clock)
+  const first = journaled(files)
+  expect(first.map((event) => [event?.kind, event?.source, event?.context.session, event?.fact])).toEqual([
+    ['reconcile', { plugin: 'github', code: 'github.reconcile.counts' }, 'session-r', { ticks: 3, listings: 3, gates: 1, moves: 1 }],
+  ])
+  await beat(clock, 3)
+  expect(journaled(files).map((event) => event?.fact)).toEqual([{ ticks: 3, listings: 3, gates: 1, moves: 1 }, { ticks: 3, listings: 1, gates: 0, moves: 0 }])
 })
