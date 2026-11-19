@@ -258,3 +258,27 @@ test('the readers\' description names their pull request and range as facts the 
   assert.equal(run(FIELDS()).code, 0)
   assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /with the description `none`/)
 })
+
+test('each lens\'s method is said in the brief: a toolkit angle by its agent, another generic, a missing toolkit generic with its agent named; none with no lens', () => {
+  const saved = process.env['CLAUDE_CONFIG_DIR']
+  process.env['CLAUDE_CONFIG_DIR'] = join(dir, 'config')
+  try {
+    mkdirSync(join(dir, 'config', 'plugins'), { recursive: true })
+    mkdirSync(join(dir, 'tk', 'agents'), { recursive: true })
+    writeFileSync(join(dir, 'tk', 'agents', 'silent-failure-hunter.md'), '---\nname: silent-failure-hunter\n---\nHunt.\n')
+    writeFileSync(join(dir, 'config', 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'pr-review-toolkit@official': [{ installPath: join(dir, 'tk') }] } }))
+    assert.equal(run([...FIELDS(), '--lens', 'silent failures', '--lens', 'correctness', '--lens', 'security', '--tier', 'deep']).code, 0)
+    assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'),
+      /\nReaders' methods, set at their launch, for your index: silent failures: pr-review-toolkit silent-failure-hunter; correctness: generic, pr-review-toolkit code-reviewer not found; security: generic\.\n/)
+    rmSync(join(dir, 'review-12.md'))
+    rmSync(join(dir, 'config', 'plugins', 'installed_plugins.json'))
+    assert.equal(run([...FIELDS(), '--lens', 'tests']).code, 0)
+    assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /\nReaders' methods, set at their launch, for your index: tests: generic, pr-review-toolkit pr-test-analyzer not found\.\n/)
+    rmSync(join(dir, 'review-12.md'))
+    assert.equal(run(FIELDS()).code, 0)
+    assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /\nReaders' methods, set at their launch, for your index: none\.\n/)
+  } finally {
+    if (saved === undefined) delete process.env['CLAUDE_CONFIG_DIR']
+    else process.env['CLAUDE_CONFIG_DIR'] = saved
+  }
+})

@@ -23,7 +23,11 @@
 // Lenses are one `--lens` each, their size said as « 3 read-only lenses (a, b, c) » unless `--size`
 // gives it; `--scope` is the text that follows the list, what the readers check. The readers' tier and
 // model are read from the diff (`lens-model.ts`); `--tier` overrides the tier, the model follows it.
+// Each lens's method (`hooks/lens-method.ts`: its pr-review-toolkit agent, or generic, or generic
+// because the toolkit is missing here) is said in the brief, which the review index carries; the
+// module loads it into the reader where the review session launches it.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { isAbsolute, join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isEntry, processIo, type Io } from './lib/process.ts'
@@ -31,6 +35,8 @@ import { fill } from './succession.ts'
 import { diffFiles, modelOf, tierOf, type Tier } from './lens-model.ts'
 import { Refused } from '../../iterm-agents/scripts/tier.ts'
 import { LENS_HEAD_CHARS } from '../../../core/lens.ts'
+import { configDirOf } from '../../../core/env.ts'
+import { lensMethod, methodWords } from '../../../hooks/lens-method.ts'
 
 export const USAGE =
   'usage: review-brief.sh --out <path> --repo <owner/name> --pr <n> --title "<delivery>" --spec <path> --index <path> --delivery-report <path> --branch <b> --head <sha> '
@@ -108,6 +114,22 @@ export function placeholdersOf(text: string): string[] {
   return [...new Set([...text.matchAll(/\{\{([A-Z_]+)\}\}/g)].map(match => match[1] ?? ''))]
 }
 
+/** A file's text, or undefined when it cannot be read. */
+function textOf(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return undefined
+  }
+}
+
+/** Each lens's method as this machine gives it, joined; none with no lens. */
+export function lensMethods(lenses: readonly string[]): string {
+  if (lenses.length === 0) return 'none'
+  const record = textOf(join(configDirOf(process.env, homedir()), 'plugins', 'installed_plugins.json'))
+  return lenses.map(lens => methodWords(lens, lensMethod(lens, record, textOf))).join('; ')
+}
+
 /** What each field of the template reads, from the fields given. */
 function values(f: Fields): Record<string, string> {
   const lensed = f.lenses.length > 0
@@ -131,6 +153,7 @@ function values(f: Fields): Record<string, string> {
     LENS_MODEL: lensed ? modelOf(tier) : 'none',
     // Core's reader description (lens.ts): the module reads the lens, pull request and range from it.
     LENS_DESCRIPTION: lensed ? `lens <lens> ${f.repo}#${f.pr} ${f.base}..${f.head.slice(0, LENS_HEAD_CHARS).toLowerCase()}` : 'none',
+    LENS_METHODS: lensMethods(f.lenses),
     LENSES: lensed ? [f.lenses.map(lens => `- ${lens}`).join('\n'), ...(f.scope === '' ? [] : [f.scope])].join('\n\n') : f.scope === '' ? 'none' : `none\n\n${f.scope}`,
     SCREENSHOT_CHECKLIST: CHECKLIST,
     REPORT_PATH: f.index,

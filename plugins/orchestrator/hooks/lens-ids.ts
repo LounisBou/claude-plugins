@@ -5,8 +5,12 @@
 // the id the review index carries and the review's decision names. A reader run in the foreground
 // is marked in its answer; one run in the background in its hand-back, its only delivery. Any other
 // agent, and every other line, passes as it came; a failure here passes the answer unmarked.
+// The same launch gives the reader its lens's method (lens-method.ts): a lens whose angle has a
+// pr-review-toolkit agent reads with that agent's prompt after its own; one not found, or a failure, leaves
+// it generic, with a line in the module's log.
 import { parseLensDescription, withFindingIds } from '../core/lens.ts'
-import { logLine } from './module-io.ts'
+import { configDir, logLine } from './module-io.ts'
+import { agentPaths, lensMethod, methodAgent, methodWords, withMethod } from './lens-method.ts'
 import { messageOf, type Host, type On } from './host.ts'
 
 type Held = Host<'fs' | 'process' | 'plugin' | 'env'>
@@ -28,6 +32,26 @@ function marked(value: unknown, lens: string): unknown {
   return value
 }
 
+/** The reader's launch with its lens's method in its prompt; as it came for a generic lens or a prompt that is no text. */
+async function withLensMethod($: Held, e: Record<string, unknown>, lens: string): Promise<Record<string, unknown>> {
+  const agent = methodAgent(lens)
+  if (agent === undefined || typeof e['prompt'] !== 'string') return e
+  const read = async (path: string): Promise<string | undefined> => {
+    try {
+      return await $.fs.read(path)
+    } catch {
+      return undefined
+    }
+  }
+  const record = await read(`${await configDir($)}/plugins/installed_plugins.json`)
+  const texts = new Map<string, string | undefined>()
+  for (const path of agentPaths(record, agent)) texts.set(path, await read(path))
+  const method = lensMethod(lens, record, path => texts.get(path))
+  if (method.kind === 'toolkit') return { ...e, prompt: withMethod(e['prompt'], method) }
+  await logLine($, 'lens-ids', `a reader launched generic: ${methodWords(lens, method)}`)
+  return e
+}
+
 /** The id the host gave a reader it launched in the background. */
 function launchedId(answer: unknown): string | undefined {
   const body = isRecord(answer) ? answer['result'] : undefined
@@ -38,8 +62,14 @@ function launchedId(answer: unknown): string | undefined {
 export function register(on: On<Held>): void {
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     const facts = e['subagent_type'] === LENS_AGENT && typeof e['description'] === 'string' ? parseLensDescription(e['description']) : undefined
-    const answer = await next(e)
-    if (facts === undefined) return answer
+    if (facts === undefined) return next(e)
+    let launch = e
+    try {
+      launch = await withLensMethod($, e, facts.lens)
+    } catch (err) {
+      await logLine($, 'lens-ids', `a reader launched with the generic method: ${messageOf(err)}`)
+    }
+    const answer = await next(launch)
     try {
       const id = launchedId(answer)
       if (id !== undefined) {

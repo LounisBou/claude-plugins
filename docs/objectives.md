@@ -13,7 +13,7 @@ claude-plugins serves the other projects, not itself.
 5. **main always green, deployed on its own.** CI green, automatic deployment (already granted).
 
 Working mode: one Claude session per change, without the orchestrator's hooks; tests, PR,
-`/code-review`, merge when CI is green.
+review by `orchestrator:lens` readers, merge when CI is green.
 
 Review due 2026-11-22: merged PRs, defects met, tokens spent; decision on extending the simple
 mode to the other projects.
