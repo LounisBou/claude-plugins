@@ -240,8 +240,8 @@ head, after the head and clean checks, only when Bash would run it without askin
 the head unmoved after. `ran` names a command line this session ran to its end in Bash, not in the
 background, in that checkout (its directory or a leading `cd <absolute path> &&`) since its `HEAD`
 last moved. Exit 0 is `pass`, else `fail`; the detail names the command, the head and the exit. A
-`result: pass|fail` with neither (a run on another machine) is written, its detail opening `stated,
-not computed: `, and observed (`github.record.e2e-stated`). `waived` and `not-applicable` take no run.
+`result: pass|fail` with neither, or with a `ran` not seen, is written, its detail opening `stated, not
+computed: `, and observed (`github.record.e2e-stated`). `waived` and `not-applicable` take no run.
 
 Not producers: `start-review`, `process-comments`, a human `APPROVED` review on GitHub.
 

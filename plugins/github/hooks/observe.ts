@@ -14,7 +14,7 @@ export const PLUGIN = 'github'
 // The stable code of each guard now observed.
 export const OBSERVED = {
   exemption: 'github.exemption.write',
-  // An E2E pass or fail written with no run the record tool performed or observed: recorded as stated.
+  // An E2E pass or fail written with no run the record tool performed or observed (or a `ran` not seen): recorded as stated.
   e2eStated: 'github.record.e2e-stated',
 } as const
 
@@ -43,7 +43,7 @@ export const REFUSED = {
   recordRuntime: 'github.record.runtime-not-applicable',
   recordUnquoted: 'github.record.unquoted-words',
   recordUnplanned: 'github.record.waiver-unplanned',
-  // A run named for an E2E that the tool cannot perform or did not observe.
+  // A run named for an E2E that the tool cannot perform.
   recordE2eUnrun: 'github.record.e2e-unrun',
 } as const
 
