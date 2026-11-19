@@ -31,6 +31,63 @@ export const IDENTIFIERS: Readonly<Record<string, RegExp>> = {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/*
+ * A full git object id, the run `git log` and `git rev-parse` print: a name, not a secret. It is kept
+ * only where its context marks it a git object (`gitContext`); any other 40 hex, which a legacy
+ * token or a key can be, stays judged by its entropy. 32 or 64 hex, upper case or longer runs are never kept.
+ */
+const GIT_OBJECT_ID = /^[0-9a-f]{40}$/
+
+/** The words that name a git object: `sha`, `commit`, `head`, `rev`, `oid`, `hash`, `ref`, plural allowed. */
+const GIT_WORD = String.raw`(?:sha|commit|head|rev|oid|hash|ref)s?`
+
+/** Whether a field name is exactly one of them (`sha`, `head`, `commits`): not the tail of a longer name. */
+export const isGitField = (field: string): boolean => new RegExp(`^${GIT_WORD}$`, 'i').test(field)
+
+/**
+ * What stands before the id after a git word that is a whole word (never the tail of `my_secret_ref`,
+ * `token_hash`): its quote, its `:` or `=`, its blanks (`"sha": "`, `commit `, `head \`<id>\``).
+ */
+const AFTER_GIT_WORD = new RegExp(String.raw`[^A-Za-z0-9_-]${GIT_WORD}["'\x60]?[^\S\n]*(?:[:=][^\S\n]*)?["'\x60]?$`, 'i')
+
+/** A pinned dependency or action: `owner/repo@<id>`, `owner/repo/path@<id>`. */
+const PINNED = /[\w.-]+\/[\w.-]+(?:\/[\w./-]+)?@$/
+
+/** A git word, a separator and the id, in one run: `sha=<id>`, `--match-head-commit=<id>`, `head-<id>`, `commit_<id>`. */
+const GIT_WORD_RUN = new RegExp(String.raw`^(?:--?(?:match-head-)?)?${GIT_WORD}[=_-]+[0-9a-f]{40}$`, 'i')
+
+/** How far back and forward the context of an id is read: bounded, so a text of many ids is read in linear time. */
+const CONTEXT = 80
+
+/**
+ * Whether the 40 hex at `at` sit where a git object does: after `commit ` or another git word
+ * (`sha: `, `"head": "`), in `/commit/<id>`, in `a..b`, or before a `:path` (a path holds a `/` or a `.`
+ * and no second `:`). The start of a line or of the text marks nothing: a token printed alone is one.
+ */
+function gitContext(text: string, at: number): boolean {
+  const start = Math.max(0, at - CONTEXT)
+  // The start of the text is a boundary for the word before the id; a window cut inside a name is read as one.
+  const before = (start === 0 ? '\n' : 'x') + text.slice(start, at)
+  if (AFTER_GIT_WORD.test(before)) return true
+  if (PINNED.test(before) || /\/(?:commits?|tree|blob)\/$/.test(before) || /[\w)]\.{2,3}$/.test(before)) return true
+  const after = text.slice(at + 40, at + 40 + CONTEXT)
+  return /^\.{2,3}[\w(]/.test(after) || /^:[^\s:]*[/.][^\s:]*(?:\s|$)/.test(after)
+}
+
+/** Whether the entropy guess leaves this run alone: the id of a git object, in its context, alone or after a git word. */
+function isGitObject(text: string, at: number, run: string): boolean {
+  if (GIT_OBJECT_ID.test(run)) return gitContext(text, at)
+  return GIT_WORD_RUN.test(run)
+}
+
+/* The directory macOS makes for a user's temporary files: `/var/folders/<2 characters>/<28 to 32 lower-case characters>/T`. */
+const TEMP_DIR_HEAD = /\/var\/folders\/[A-Za-z0-9_]{2}\/$/
+const TEMP_DIR_NAME = /^[a-z0-9_]{28,32}$/
+
+/** Whether the run at `at` in `text` is the random directory name of a macOS temporary directory. */
+const isTempDir = (text: string, at: number, run: string): boolean =>
+  TEMP_DIR_NAME.test(run) && text[at + run.length] === '/' && TEMP_DIR_HEAD.test(text.slice(Math.max(0, at - 16), at))
+
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const byRegex = (name: string, regex: RegExp, keep?: (match: string, ...groups: string[]) => string): Pattern => ({
@@ -64,6 +121,9 @@ export function isHighEntropy(run: string): boolean {
 
 /** A key that names a secret; `pass` and `pwd` anywhere in it (`DB_PASS`, `MYSQL_PWD`, `PASSWORD`). */
 const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:token|secret|pass|pwd|api[_-]?key|apikey|private[_-]?key|access[_-]?key|client[_-]?secret|credential)s?[A-Za-z0-9_.-]*`
+
+/** A whole field name that names a secret. */
+const SECRET_FIELD = new RegExp(`^${SECRET_KEY}$`, 'i')
 
 /** A command-line option that takes a secret: `--password`, `--db-password`, `--token`, `--api-key`... */
 const SECRET_FLAG = String.raw`--(?:[A-Za-z0-9]+-)*(?:token|secret|passw(?:or)?d|passwd|pass|api-?key|apikey|private-key|access-key|credentials?)`
@@ -205,7 +265,10 @@ export const PATTERNS: readonly Pattern[] = [
   byRegex('secret-flag', new RegExp(String.raw`(${SECRET_FLAG})(\s+|=)(?!\[REDACTED)(?:"[^"]*"|'[^']*'|[^\s"'-][^\s"']*)`, 'gi'), (_m, flag, sep) => `${flag}${sep}`),
   quotedAssignment,
   byRegex('secret-assignment', new RegExp(String.raw`\b(${SECRET_KEY})(["']?\s*[:=]\s*["']?)(?!\[REDACTED)[^\s"',;&|)}]+`, 'gi'), (_m, key, sep) => `${key}${sep}`),
-  { name: 'entropy', apply: (text, mark) => text.replace(/[A-Za-z0-9+=_-]{20,}/g, run => (isHighEntropy(run) ? mark : run)) },
+  {
+    name: 'entropy',
+    apply: (text, mark) => text.replace(/[A-Za-z0-9+=_-]{20,}/g, (run, at: number) => (isHighEntropy(run) && !isTempDir(text, at, run) && !isGitObject(text, at, run) ? mark : run)),
+  },
 ]
 
 /** The patterns of the operator's ~/.env: its values, and assignments of its keys. */
@@ -248,11 +311,22 @@ export function redactText(text: string, secrets: EnvSecrets = new Map(), option
  * to their shape as well; a nested field of the same name is plain text.
  */
 export function redactValue(value: unknown, secrets: EnvSecrets): { value: unknown; hits: string[] } {
-  return walk(value, envPatterns(secrets), undefined, 0)
+  return walk(value, envPatterns(secrets), undefined, 0, { secret: false })
 }
 
-function walk(value: unknown, env: readonly Pattern[], key: string | undefined, depth: number): { value: unknown; hits: string[] } {
+/** Where a value sits: the nearest field name above it, arrays passed through, and whether any field above it names a secret. */
+interface Scope {
+  readonly field?: string
+  readonly secret: boolean
+}
+
+function walk(value: unknown, env: readonly Pattern[], key: string | undefined, depth: number, scope: Scope): { value: unknown; hits: string[] } {
   if (typeof value === 'string') {
+    // The value alone carries no context: a git object id is kept under a git field that no secret-named field encloses, and only there.
+    if (GIT_OBJECT_ID.test(value) && !scope.secret && scope.field !== undefined && isGitField(scope.field)) {
+      const { text, hits } = redactWith(value, env, { entropy: false })
+      return { value: text, hits }
+    }
     const shape = depth === 1 && key !== undefined ? IDENTIFIERS[key] : undefined
     // A mark a former pass left in an identifier is accepted as it stands.
     if (shape !== undefined && !shape.test(value) && !MARK_ONLY.test(value)) return { value: '[REDACTED:identifier]', hits: ['identifier'] }
@@ -262,7 +336,7 @@ function walk(value: unknown, env: readonly Pattern[], key: string | undefined, 
   if (Array.isArray(value)) {
     const hits: string[] = []
     const out = value.map(item => {
-      const r = walk(item, env, undefined, depth + 1)
+      const r = walk(item, env, undefined, depth + 1, scope)
       hits.push(...r.hits)
       return r.value
     })
@@ -274,7 +348,7 @@ function walk(value: unknown, env: readonly Pattern[], key: string | undefined, 
     for (const [k, item] of Object.entries(value)) {
       // A key is text a secret can sit in as well as a value; the field's shape is still read from the key as written.
       const name = redactWith(k, env, {})
-      const r = walk(item, env, k, depth + 1)
+      const r = walk(item, env, k, depth + 1, { field: k, secret: scope.secret || SECRET_FIELD.test(k) })
       hits.push(...name.hits, ...r.hits)
       out[name.text] = r.value
     }

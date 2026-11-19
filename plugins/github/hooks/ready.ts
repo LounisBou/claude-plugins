@@ -518,6 +518,15 @@ export function durableWaiver(gate: Gate, found: ReadonlyMap<string, RecordFile[
   return newest?.record.result === 'waived' ? { kind, from: newest.from } : undefined
 }
 
+// The shortest sha of a head that names it: the 7 hex git prints by default.
+const SHA_MIN = 7
+
+// Whether a sha given by an act names the head: the head itself or a prefix of it of SHA_MIN hex or more.
+export function namesHead(sha: string, head: string): boolean {
+  const given = sha.toLowerCase()
+  return given === head || (given.length >= SHA_MIN && /^[0-9a-f]+$/.test(given) && head.startsWith(given))
+}
+
 // What a pull request misses to be ready at its head, as core's readiness contract defines it
 // (readiness.ts), and before that an act that cannot be ready at all (closed, moved head).
 // excused: the kinds its check plan or the operator's exemption excuses, each standing for its record unless a run failed.
@@ -528,7 +537,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
   holder?: Holder, lightCiOff?: string): string[] {
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
-  if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
+  if (sha && !namesHead(sha, gate.head)) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
   const { read, skipped } = headRecordsRead(gate, files)
   const ci = gate.ci
   const lacking = missingEvidence({
