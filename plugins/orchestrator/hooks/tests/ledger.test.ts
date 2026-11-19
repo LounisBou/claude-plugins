@@ -52,6 +52,8 @@ type Over = {
   gate?: Record<number, string | null>
   gateNote?: string
   gateRefused?: string
+  // The tool never answers.
+  gateHangs?: boolean
   // `draft-guard.sh`, run on a draft's failed checks: the names it prints for a pull request (the ones that are no guard); null: it fails.
   guards?: Record<number, string | null>
 }
@@ -87,6 +89,7 @@ function fake(over: Over = {}) {
         const call = input as { tool: string; command: string; args: { pr: number }; repo: string }
         gateRuns.push(call)
         if (over.gateRefused !== undefined) return { deny: over.gateRefused }
+        if (over.gateHangs) return new Promise(() => undefined)
         const said = over.gate?.[call.args.pr]
         return said === undefined || said === null ? { result: 'pr-gate: no answer', isError: true } : { result: said + (over.gateNote === undefined ? '' : `\n${over.gateNote}`) }
       },
@@ -1085,6 +1088,15 @@ test('a gate the tool refuses is said in the log and tells nothing; a note the t
   expect(noted.files.get(KEPT_17)).toEqual(pretty)
 })
 
+test('a gate read the tool never answers is given up at the bound, said in the log; the tick goes on and the pull request waits its five minutes', async () => {
+  const world = checked({ 17: gateJson('FAILURE', AT_A, ['lint']) }, AT_A, { gateHangs: true })
+  const reads = new Map<string, number>()
+  expect((await prWake(world.dollar, new Set(), T0, reads, 20)).lines).toEqual([])
+  expect(world.logged.some(l => l.includes('ci gate of acme/app#17 not read: pr-gate did not answer within 20 ms'))).toBe(true)
+  await prWake(world.dollar, new Set(), T0 + 60_000, reads, 20)
+  expect(world.gateRuns).toHaveLength(1)
+})
+
 // The kept reading of a pull request at its head, taken against `base`; the forge's listing says the pull request's base is `listed`.
 const gateOn = (result: string, head: string, base: string) => JSON.stringify({ ...JSON.parse(gateJson(result, head)), base })
 const onBase = (listed: string, kept: string, answer: string) => checked({ 17: answer }, AT_A, {
@@ -1103,6 +1115,12 @@ test('a verdict kept at the head is read once more when the base was retargeted 
   const same = onBase('main', gateOn('SUCCESS', AT_A, 'main'), gateOn('SUCCESS', AT_A, 'main'))
   await prWake(same.dollar, new Set(), T0, new Map())
   expect(same.gateRuns).toEqual([])
+})
+
+test('a kept reading that names no base is no retarget: the verdict kept is not read again', async () => {
+  const keptWithout = onBase('develop', gateJson('SUCCESS', AT_A), gateJson('SUCCESS', AT_A))
+  await prWake(keptWithout.dollar, new Set(), T0, new Map())
+  expect(keptWithout.gateRuns).toEqual([])
 })
 
 test('a retargeted base is read again at most every five minutes, like any other reading', async () => {
