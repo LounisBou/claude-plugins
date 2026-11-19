@@ -85,6 +85,8 @@ test('a failure the machine just wrote is posted at once, never left to its tool
   expect([failed.posts.map((post) => post.state), failed.waiting, failed.deferred]).toEqual([['failure'], undefined, undefined])
   const passed = forgeSync(sides({ records: [record({ at: fresh })], plan: plan(fresh) }))
   expect([passed.posts, passed.deferred?.map((post) => post.name)]).toEqual([[], ['review', 'plan']])
+  const exempted = forgeSync(sides({ exemption: exemption({ at: fresh }) }))
+  expect([exempted.posts, exempted.deferred?.map((post) => post.name), exempted.waiting]).toEqual([[], ['exemption'], true])
   expect(forgeSync(sides({ records: [record()] })).deferred).toBeUndefined()
 })
 

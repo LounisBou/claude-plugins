@@ -23,6 +23,11 @@ export const FLAP_UNDONE = 3
  * the time that machine takes to post what justifies it (a beat to settle, a beat to be listed).
  */
 export const FOREIGN_WAIT_MS = 2 * TICK_MS
+/**
+ * A label move waits for the copies of the head's records to reach the forge at most this long (the first post, one retry):
+ * a forge that refuses them for good (a token without the right, a status refused) must not freeze the labels.
+ */
+export const PUBLISH_WAIT_MS = 2 * RETRY_MS
 /** A repository whose records directory changed within this is reconciled. */
 export const RECENT_MS = 30 * 24 * 3600 * 1000
 /** A lease runs this long; its holder renews it when less than LEASE_RENEW_MS is left. */

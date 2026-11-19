@@ -6,7 +6,7 @@ import { fieldsOf } from '../core/host.ts'
 import { parseReconcile } from '../core/pr-reconcile.ts'
 import { JOURNAL_EVERY_MS } from './register.ts'
 import { parseAuditEvent } from '../core/learning.ts'
-import { FLAP_UNDONE, FOREIGN_WAIT_MS, GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
+import { FLAP_UNDONE, FOREIGN_WAIT_MS, GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
 import { POSTS_PER_TICK } from './forge-sync.ts'
 
 const T0 = Date.parse('2026-11-19T10:00:00Z')
@@ -631,7 +631,7 @@ const freshRecord = (kind: string, result: string) => ({
 })
 const readyPull = (labels: string[], rollup = 'SUCCESS'): Pull[] => [{ number: 7, draft: false, head: HEAD, base: 'main', labels, rollup, statuses: [] }]
 
-test('a fail written here reaches the forge before the label moves to Not Ready, whatever its age', async ($, on) => {
+test('a fail written here reaches the forge before the label moves to Not Ready, though it is younger than SETTLE_MS', async ($, on) => {
   const files = { ...freshRecord('review', 'fail'), ...freshRecord('e2e', 'pass') }
   const { clock, state } = await started($, on, { pulls: readyPull(['Ready']), files, viewer: 'operator' })
   await beat(clock)
@@ -669,7 +669,7 @@ test('a pass still left to its tool holds no move to Not Ready', async ($, on) =
   expect(state.order).toEqual(['label not-ready'])
 })
 
-test('a Not Ready this machine did not set is not undone before the forge was read FOREIGN_WAIT_MS after it was first seen', async ($, on) => {
+test('a Not Ready this machine did not set stays until the forge was read FOREIGN_WAIT_MS after it was first seen, then the gate decides as before', async ($, on) => {
   const { clock, state, files } = await started($, on, { pulls: readyPull(['Not Ready']), files: passingRecords() })
   await beat(clock)
   expect(count(state.runs, 'pr-gate')).toBe(1)
@@ -686,7 +686,7 @@ test('a Not Ready this machine did not set is not undone before the forge was re
   expect(FOREIGN_WAIT_MS).toBe(2 * TICK_MS)
 })
 
-test('the other machine\'s fail, posted before its Not Ready, is copied at once: this machine\'s pass is judged against it and the label stays', async ($, on) => {
+test('the other machine\'s fail, posted before its Not Ready, is copied at once, and the label stays after the wait: the gate judges against it', async ($, on) => {
   const pulls = readyPull(['Not Ready'])
   const row = pulls[0]
   if (row) row.statuses = [status('readiness/review', 'failure', 'v1 2026-11-19T10:00:30Z fail orchestrator')]
@@ -704,4 +704,30 @@ test('a Not Ready this machine set is undone by the gate at once, with no wait',
   for (const [path, text] of Object.entries(passingRecords())) put(path, text, T0 + 2 * TICK_MS)
   await beat(clock)
   expect(state.labelled).toEqual(['7 not-ready', '7 ready'])
+})
+
+test('a Not Ready this machine did not set stays while the forge only holds what this machine already knew, and goes at the first listing after the wait when the forge brings the missing pass', async ($, on) => {
+  const pulls = readyPull(['Not Ready'])
+  const row = pulls[0]
+  // This machine holds the review pass; the other machine's E2E pass is on the forge alone.
+  if (row) row.statuses = [status('readiness/e2e', 'success', 'v1 2026-11-19T09:30:00Z pass p-e2e')]
+  const review = Object.entries(passingRecords()).filter(([path]) => path.includes('/review.'))
+  const { clock, state } = await started($, on, { pulls, files: Object.fromEntries(review), viewer: 'operator' })
+  await beat(clock)
+  expect(state.copied).toEqual(['e2e pass p-e2e 2026-11-19T09:30:00Z forge'])
+  expect(state.labelled).toEqual([])
+  await beat(clock)
+  expect(state.labelled).toEqual([])
+  await beat(clock)
+  expect(state.labelled).toEqual(['7 ready'])
+})
+
+test('a post the forge refuses for good holds the label no longer than PUBLISH_WAIT_MS, and the move then goes with a line saying so', async ($, on) => {
+  const { clock, state } = await started($, on, { pulls: readyPull(['Ready']), files: freshRecord('review', 'fail'), viewer: 'operator' })
+  state.postFails = true
+  await beat(clock, PUBLISH_WAIT_MS / TICK_MS - 1)
+  expect(state.labelled).toEqual([])
+  await beat(clock, 2)
+  expect(state.labelled).toEqual(['7 not-ready'])
+  expect(state.said.filter((line) => line.includes('no longer waits for readiness/review'))).toHaveLength(1)
 })
