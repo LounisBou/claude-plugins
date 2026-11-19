@@ -139,7 +139,7 @@ query($owner:String!, $name:String!, $first:Int!) {
   repository(owner:$owner, name:$name) {
     pullRequests(states:OPEN, first:$first, orderBy:{field:CREATED_AT, direction:DESC}) {
       nodes {
-        number isDraft headRefOid baseRefName
+        number isDraft headRefOid baseRefName mergeable mergeStateStatus
         labels(first:20) { nodes { name } }
         commits(last:1) { nodes { commit { statusCheckRollup { state } } } }
       }
@@ -159,6 +159,9 @@ def _reconcile_row(pull):
         "base": pull.get("baseRefName") or "",
         "labels": [(n or {}).get("name") or "" for n in ((pull.get("labels") or {}).get("nodes") or [])],
         "rollup": rollup.get("state"),
+        # GitHub's mergeability against the base (MERGEABLE, CONFLICTING, UNKNOWN) and its merge state: a change re-reads the gate.
+        "mergeable": pull.get("mergeable"),
+        "mergeState": pull.get("mergeStateStatus"),
     }
 
 

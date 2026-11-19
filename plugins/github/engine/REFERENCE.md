@@ -8,14 +8,13 @@ below, and the `args` object holds the subcommand's arguments.
 - Positional arguments go by their documented name: `pr-checks` → `{"pr": 12}`,
   `file-at-ref` → `{"path": "a.txt", "ref": "HEAD"}`. Variadic positionals
   (`label...`, `user...`, `term...`, `file...`) take an array.
-- Every other key must be one of the subcommand's own `--flag`s, spelled out
-  whole: `{"branch": "x"}` → `--branch x`, `{"draft": true}` → `--draft`.
-- Text bodies go in `"body"` as a plain string, passed unchanged through a private
-  temporary file. Inline-comment arrays go in `"comments"`, and
+- Other keys are the subcommand's `--flag`s, spelled whole: `{"branch": "x"}` → `--branch x`,
+  `{"draft": true}` → `--draft`.
+- Text bodies go in `"body"` as a plain string. Inline-comment arrays go in `"comments"`, and
   `comments-resolved-batch` takes `"nodes"` (an array of node ids). `body-file`,
   `comments-file` and `json_file` are refused.
 
-`repo` (`owner/name`) overrides the `origin` remote.
+`repo` overrides the `origin` remote.
 
 ## Subcommands
 
@@ -28,7 +27,7 @@ below, and the `args` object holds the subcommand's arguments.
 | `pr-panel` | `[--reconcile]` | The open PRs, newest first (at most 100), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` (`SUCCESS`, `FAILURE`, `PENDING`, `?`) from the head's status check rollup, not the gate's reading. `--reconcile`: the reconciler's, `{"rows", "rate"}` |
 | `pr-status` | `<pr>` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
 | `pr-checks` | `<pr>` | Verdict, counts, failed and skipped names (`checks-summary`); `--json`: commit status and check runs |
-| `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "mergeable", "mergeable_state" (when the pull request answer holds them: `null` while GitHub computes them), "ci": {"result", "failed", "running", "skipped", "total", "checks"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read |
+| `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "mergeable", "mergeable_state" (`null` while computed), "ci": {"result", "failed", "running", "skipped", "total", "checks"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read |
 | `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
 | `pr-files` | `<pr>` | Totals, a line per changed path (`files-summary`); `--json`: with the patches, paginated |
@@ -231,14 +230,12 @@ Core's `pr-record.ts` declares each kind's producer, the only plugin github writ
 | any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, run\|ran, detail?, dir?}` or `{pr, repo?, result: waived\|not-applicable, detail, dir?}`, producer `session-e2e` (below, and « Guards ») |
 
 A review record is refused from a session that pushed the head it reviews
-(`${CLAUDE_CONFIG_DIR:-~/.claude}/pushed-heads/<sha>`, one line per pushing session, read by every
-session of the machine, pruned with the records).
+(`${CLAUDE_CONFIG_DIR:-~/.claude}/pushed-heads/<sha>`, read machine-wide, pruned with the records).
 
 **E2E computed from its run.** `run` (an argv, no shell) is run by the tool in the checkout at the
 head, after the head and clean checks, only when Bash would run it without asking, within 570 s,
-the head unmoved after. `ran` names a command line this session ran to its end in Bash, not in the
-background, in that checkout (its directory or a leading `cd <absolute path> &&`) since its `HEAD`
-last moved. Exit 0 is `pass`, else `fail`; the detail names the command, the head and the exit. A
+the head unmoved after. `ran` names a foreground Bash command line this session ran to its end, in that checkout (its directory or a leading `cd <absolute path> &&`) since its `HEAD`
+last moved. Exit 0 is `pass`, else `fail`; the detail names the command, head and exit. A
 `result: pass|fail` with neither, or with a `ran` not seen, is written, its detail opening `stated, not
 computed: `, and observed (`github.record.e2e-stated`). `waived` and `not-applicable` take no run.
 
@@ -248,28 +245,25 @@ Not producers: `start-review`, `process-comments`, a human `APPROVED` review on 
 
 Both routes are `hooks/e2e-scope.ts`'s.
 
-- **No runtime.** `not-applicable` is written only when no file of the PR (`pr-files` at the
-  head) holds runtime (`runtimeFiles`).
+- **No runtime.** `not-applicable` only when no PR file (`pr-files` at the head) holds runtime (`runtimeFiles`).
 - **Check plan.** `mcp__orchestrator__review`'s `{pr, plan}`: e2e `required|none|screenshots`, norms `required|none`, review
   `required[: max <n>]|one-pass` (core's `readiness.ts`), each `<need>[: <reason>]`, a reason unless the first; rules
   in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR;
-  `pr-plan {pr}`, answered by the mod, prints it as the gate reads it (JSON).
+  `pr-plan {pr}` prints it as the gate reads it (JSON).
 - **Standing exemption.** `{repo, exempt: true, detail, paths?, labels?, until?}` exempts a repository's
   pull requests, all or those carrying one of `labels` or whose files all match `paths` (globs);
-  `exempt: false` revokes it. `detail` quotes the operator's words with their date (« Guards »,
-  « Records »). One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`; one that does
+  `exempt: false` revokes it. `detail` quotes the operator's dated words. One file per repository, `<data dir>/e2e-exempt/<owner>/<name>.json`; one that does
   not parse exempts nothing. `until` (ISO UTC to the second) ends it at that instant: past it, it
   excuses nothing and the gate adds `E2E exemption of <repo> expired at <until>`.
 
 ### Light CI
 
 A stacked PR (`pr-gate`'s `stacked`: its base heads another open PR, unprotected, not default) is ready on
-its review and, where the operator configured light CI, a `tests` pass at its head or its checks green, which
-stand over a failed run; a failed check blocks. With light CI on, its tests pass stands over a forge check still running. File `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/light-ci/<owner>-<name>.json`:
-`{"command": [...], "prepare": [...]?, "timeoutSeconds": 600, "decided": {"at", "words"}}`, or `{"off": "<words>", "at"}`;
-no file or `off`: review, and the forge's checks once they run. A check still running at
-  its head blocks (`CI still running`) until it ends; a failed one blocks; no check at all stays ready on its
-  review, named in `Ready`. An unreadable file reads as light CI on: the tests record is then required.
+review and checks. With light CI, a `tests` pass at its head or green checks stand over a failed run
+and a running check; without it (no file, `off`), a running check blocks (`CI still running`), a failed one
+blocks, and no check at all stays ready on review. File `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/light-ci/<owner>-<name>.json`:
+`{"command": [...], "prepare": [...]?, "timeoutSeconds": 600, "decided": {"at", "words"}}`, or `{"off": "<words>", "at"}`.
+Unreadable reads as on.
 
 - `mcp__github__light_ci {action: "run", pr, dir?}`: clean checkout of the head; `prepare`, then `command` (no
   shell; `{base}`: the merge base); `tests` `pass|fail` by `light-ci`. Past 570 s nothing is written.
@@ -294,8 +288,8 @@ Never « external terminal ».
 `pr-ready`, `pr-merge`; in the shell `gh pr ready` (not `--undo`), `gh pr merge` (not
 `--disable-auto`), `gh api` `PUT`/`POST` on `repos/<o>/<r>/pulls/<n>/merge`, `gh api graphql`
 naming `mergePullRequest`, `markPullRequestReadyForReview` or `enablePullRequestAutoMerge`; the
-engine's same subcommands from Bash. The gate puts `Ready` just before the act, which runs on it,
-or without it, when only records are absent at the head. CI
+engine's same subcommands from Bash. The gate puts `Ready` just before the act, or without it when
+only records are absent at the head. CI
 not green, a failed record, or a `--match-head-commit` or `--sha` off the head refuse it before any
 question, naming what is missing. Refused too: a shell merge or undraft naming no repository
 (`-R`, `--repo`, a URL), a GraphQL merge or undraft, a GraphQL query the line does not show
@@ -303,10 +297,9 @@ question, naming what is missing. Refused too: a shell merge or undraft naming n
 `label-add` or the shell is no act.
 
 **The gate puts `Ready`.** After a record is written, or a `pr-gate` or `pr-checks` read through
-the tool, the module reads readiness at the open PR's head, rereading it just before writing, and
-puts `Ready` when nothing is missing, `Not Ready` back otherwise. A head that conflicts with its base is missing
-(`conflict with base`), and one whose mergeability GitHub is still computing is too on the Ready path
-(`mergeability unknown`, read again by the next gate). It never touches the draft state:
+the tool, the module rereads readiness at the open PR's head just before writing and
+puts `Ready` when nothing is missing, `Not Ready` back otherwise. A head in conflict with its base is missing (`conflict with base`); on the Ready path so is an
+unknown mergeability, read again by the next gate. It never touches the draft state:
 a PR out of draft, for its CI or by the operator, stays out.
 
 A PR carrying `Not Ready` with no passed check at its head may leave draft for its CI, unasked:
@@ -331,8 +324,8 @@ goes through; a write to the exemptions or the plans is observed (`github.exempt
 records is not. Deleting in them (`rm`, `unlink`, `find -delete`, a `mv` out) is refused: README « Observed guards ».
 
 `mcp__github__record {pr, repo?, result?, run?, ran?, detail, kind?, dir?}` writes one record
-through `record.py` when the `HEAD` of `dir` (default: the session's directory) is the head
-`pr-gate` reads and its tracked files are clean. A session writes `e2e` only. `waived` (E2E or
+through `record.py` when the `HEAD` of `dir` (default: the session's directory) is the head `pr-gate`
+reads, its tracked files clean. A session writes `e2e` only. `waived` (E2E or
 norms) and `exempt` rest on his words quoted in `detail` with their date (`YYYY-MM-DD`, a time
 optional), from any channel: « « <his words> », 2026-11-15T08:50Z », and so do `auto-merge-set` and `auto-deploy-set` in `words`.
 

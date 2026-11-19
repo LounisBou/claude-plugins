@@ -17,7 +17,15 @@ const READING = CFG + '/pr-reconcile/acme/app/7.json'
 const LEASE = CFG + '/pr-reconcile/.lease'
 const EDGE = CFG + '/pr-reconcile/.edge'
 
-type Pull = { number: number; draft: boolean; head: string; base: string; labels: string[]; rollup: string | null }
+// mergeable and mergeState: GitHub's listed mergeability against the base, as the listing carries it.
+type Pull = { number: number; draft: boolean; head: string; base: string; labels: string[]; rollup: string | null; mergeable?: string; mergeState?: string }
+
+// The gate's answer for a listed mergeability: pr-gate reads REST's mergeable and mergeable_state, null while computed.
+const mergeableOf = (mergeable: string | undefined): Record<string, unknown> => {
+  if (mergeable === 'CONFLICTING') return { mergeable: false, mergeable_state: 'dirty' }
+  if (mergeable === 'UNKNOWN') return { mergeable: null, mergeable_state: 'unknown' }
+  return mergeable === undefined ? {} : { mergeable: true, mergeable_state: 'clean' }
+}
 
 // The machine and GitHub as the reconciler sees them: files by path with their mtimes, the open pull requests of
 // acme/app, the quota the listing reports, every engine run by its subcommand and every line the module said.
@@ -106,6 +114,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     if (command === 'pr-gate' && pull) {
       return done(JSON.stringify({
         repo: 'acme/app', pr: pull.number, state: 'open', draft: pull.draft, head: pull.head, labels: pull.labels, commits: 1, base: pull.base, stacked: false,
+        ...mergeableOf(pull.mergeable),
         ci: { result: pull.rollup === 'SUCCESS' ? 'SUCCESS' : 'PENDING', failed: [], running: pull.rollup === 'SUCCESS' ? 0 : 1, skipped: [], total: 1, checks: [{ name: 'ci', bucket: 'pass' }] },
       }))
     }
@@ -166,6 +175,54 @@ test('a base retargeted reads the gate again at the next listing', async ($, on)
   await clock.advance(IDLE_MAX_MS)
   await clock.settle()
   expect(count(state.runs, 'pr-gate')).toBe(2)
+})
+
+// The review and E2E records passing at HEAD, so that the pull request is ready on its records alone.
+const passingRecords = (): Record<string, string> => Object.fromEntries(['review', 'e2e'].map((kind) => [
+  RECORDS + '/acme/app/' + HEAD + '/' + kind + '.20261119T090000Z.p-' + kind + '.json',
+  JSON.stringify({ v: 1, repo: 'acme/app', pr: 7, head: HEAD, kind, result: 'pass', producer: 'p-' + kind, detail: '', session: '', at: '2026-11-19T09:00:00Z' }),
+]))
+
+test('a Ready pull request whose base moves into conflict is gated at the next listing, and Ready leaves', async ($, on) => {
+  const { clock, state } = await started($, on, {
+    pulls: [{ number: 7, draft: false, head: HEAD, base: 'main', labels: ['Ready'], rollup: 'SUCCESS', mergeable: 'MERGEABLE', mergeState: 'CLEAN' }],
+    files: passingRecords(),
+  })
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(1)
+  expect(state.pulls[0]?.labels).toEqual(['Ready'])
+  // Only the listed mergeability changes: the head, the base, the labels and the CI are the same.
+  const pull = state.pulls[0]
+  if (pull) {
+    pull.mergeable = 'CONFLICTING'
+    pull.mergeState = 'DIRTY'
+  }
+  await clock.advance(IDLE_MAX_MS)
+  await clock.settle()
+  expect(count(state.runs, 'pr-gate')).toBe(2)
+  expect(state.pulls[0]?.labels).toEqual(['Not Ready'])
+  expect(state.labelled).toContain('7 not-ready')
+})
+
+test('a mergeability GitHub computes lazily is read again at the next beat once it settles', async ($, on) => {
+  const { clock, state } = await started($, on, {
+    pulls: [{ number: 7, draft: false, head: HEAD, base: 'main', labels: ['Not Ready'], rollup: 'SUCCESS', mergeable: 'UNKNOWN', mergeState: 'UNKNOWN' }],
+    files: passingRecords(),
+  })
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(1)
+  // Still unknown: the listing is read at each beat, and the same fingerprint reads no gate.
+  await beat(clock, 2)
+  expect(count(state.runs, 'pr-gate')).toBe(1)
+  const pull = state.pulls[0]
+  if (pull) {
+    pull.mergeable = 'MERGEABLE'
+    pull.mergeState = 'CLEAN'
+  }
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(2)
+  expect(state.pulls[0]?.labels).toEqual(['Ready'])
+  expect(state.labelled).toContain('7 ready')
 })
 
 test('a record written at the head reads the gate again at the next beat, with no new listing', async ($, on) => {

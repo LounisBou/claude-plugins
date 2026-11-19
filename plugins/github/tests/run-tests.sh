@@ -3120,6 +3120,8 @@ def pull(number, head, base, labels, rollup, draft=False):
     return {"number": number, "isDraft": draft, "headRefOid": head, "baseRefName": base, "labels": {"nodes": [{"name": n} for n in labels]},
             "commits": {"nodes": [{"commit": {"statusCheckRollup": rollup}}]}}
 nodes = [pull(9, "A" * 40, "develop", ["Ready"], {"state": "SUCCESS"}), pull(8, "b" * 40, "main", [], None, draft=True)]
+nodes[0].update({"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN"})
+nodes[1].update({"mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY"})
 json.dump({"rateLimit": {"remaining": 4321, "resetAt": "2026-11-19T11:00:00Z", "cost": 1}, "repository": {"pullRequests": {"nodes": nodes}}}, open(sys.argv[1], "w"))
 PY
 check "pr-panel --reconcile answers each open pull request's head, base, labels and rollup, and the quota left, in one GraphQL request" \
@@ -3130,6 +3132,14 @@ a = json.load(sys.stdin)
 rows = [json.loads(l) for l in open(sys.argv[1])]
 print("|".join("%d %s %s %s %s %s" % (r["number"], r["head"][:7], r["base"], ",".join(r["labels"]), r["rollup"], r["draft"]) for r in a["rows"])
       + "|%d %d|%d %s" % (a["rate"]["remaining"], a["rate"]["cost"], len(rows), rows[0]["path"]))' "$FR/sent.jsonl")"
+
+check "pr-panel --reconcile asks each pull request's mergeability and merge state, and answers them" \
+  "9 MERGEABLE CLEAN|8 CONFLICTING DIRTY|True" \
+  "$(env GH_FIXTURES="$FR" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-panel --reconcile | python3 -c '
+import json, sys
+a = json.load(sys.stdin)
+last = json.loads(open(sys.argv[1]).read().splitlines()[-1])
+print("|".join("%d %s %s" % (r["number"], r["mergeable"], r["mergeState"]) for r in a["rows"]) + "|" + str("mergeStateStatus" in last["query"]))' "$FR/sent.jsonl")"
 
 # --json takes the place of --format raw, and loses to a format named beside it.
 check "--json after the subcommand is read as before it" "7" \
