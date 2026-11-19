@@ -41,37 +41,37 @@ const GIT_OBJECT_ID = /^[0-9a-f]{40}$/
 /** The words that name a git object: `sha`, `commit`, `head`, `rev`, `oid`, `hash`, `ref`, plural allowed. */
 const GIT_WORD = String.raw`(?:sha|commit|head|rev|oid|hash|ref)s?`
 
-/** A field name ending in one of them (`sha`, `head_sha`, `headSha`, `commits`). */
-const GIT_FIELD = new RegExp(String.raw`(?:^|[^A-Za-z0-9])${GIT_WORD}$`, 'i')
-const GIT_FIELD_CAMEL = /[a-z0-9](?:Sha|Commit|Head|Rev|Oid|Hash|Ref)s?$/
+/** Whether a field name is exactly one of them (`sha`, `head`, `commits`): not the tail of a longer name. */
+export const isGitField = (field: string): boolean => new RegExp(`^${GIT_WORD}$`, 'i').test(field)
 
-/** Whether a field name is one of a git object's. */
-export const isGitField = (field: string): boolean => GIT_FIELD.test(field) || GIT_FIELD_CAMEL.test(field)
-
-/** What stands before a git word and the id: its quote, its `:` or `=`, its blanks (`"sha": "`, `commit `). */
-const AFTER_GIT_WORD = new RegExp(String.raw`(?:^|[^A-Za-z0-9])${GIT_WORD}["'\x60]?[^\S\n]*(?:[:=][^\S\n]*)?["'\x60]?$`, 'i')
-const AFTER_GIT_WORD_CAMEL = /[a-z0-9](?:Sha|Commit|Head|Rev|Oid|Hash|Ref)s?["'\x60]?[^\S\n]*(?:[:=][^\S\n]*)?["'\x60]?$/
+/**
+ * What stands before the id after a git word that is a whole word (never the tail of `my_secret_ref`,
+ * `token_hash`): its quote, its `:` or `=`, its blanks (`"sha": "`, `commit `, `head \`<id>\``).
+ */
+const AFTER_GIT_WORD = new RegExp(String.raw`[^A-Za-z0-9_-]${GIT_WORD}["'\x60]?[^\S\n]*(?:[:=][^\S\n]*)?["'\x60]?$`, 'i')
 
 /** A pinned dependency or action: `owner/repo@<id>`, `owner/repo/path@<id>`. */
 const PINNED = /[\w.-]+\/[\w.-]+(?:\/[\w./-]+)?@$/
 
 /** A git word, a separator and the id, in one run: `sha=<id>`, `--match-head-commit=<id>`, `head-<id>`, `commit_<id>`. */
-const GIT_WORD_RUN = new RegExp(String.raw`^(?:[A-Za-z0-9_-]*[=_-])?${GIT_WORD}[=_-]+[0-9a-f]{40}$`, 'i')
+const GIT_WORD_RUN = new RegExp(String.raw`^(?:--?(?:match-head-)?)?${GIT_WORD}[=_-]+[0-9a-f]{40}$`, 'i')
 
 /** How far back and forward the context of an id is read: bounded, so a text of many ids is read in linear time. */
 const CONTEXT = 80
 
 /**
- * Whether the 40 hex at `at` sit where a git object does: at the start of a line, after `commit `
- * or another git word (`sha: `, `"head": "`), in `/commit/<id>`, in `a..b`, or before `:path`.
+ * Whether the 40 hex at `at` sit where a git object does: after `commit ` or another git word
+ * (`sha: `, `"head": "`), in `/commit/<id>`, in `a..b`, or before a `:path` (a path holds a `/` or a `.`
+ * and no second `:`). The start of a line or of the text marks nothing: a token printed alone is one.
  */
 function gitContext(text: string, at: number): boolean {
-  if (at === 0 || text[at - 1] === '\n' || text[at - 1] === '\r') return true
-  const before = text.slice(Math.max(0, at - CONTEXT), at)
-  if (AFTER_GIT_WORD.test(before) || AFTER_GIT_WORD_CAMEL.test(before)) return true
+  const start = Math.max(0, at - CONTEXT)
+  // The start of the text is a boundary for the word before the id; a window cut inside a name is read as one.
+  const before = (start === 0 ? '\n' : 'x') + text.slice(start, at)
+  if (AFTER_GIT_WORD.test(before)) return true
   if (PINNED.test(before) || /\/(?:commits?|tree|blob)\/$/.test(before) || /[\w)]\.{2,3}$/.test(before)) return true
   const after = text.slice(at + 40, at + 40 + CONTEXT)
-  return /^\.{2,3}[\w(]/.test(after) || /^:[A-Za-z0-9_./-]/.test(after)
+  return /^\.{2,3}[\w(]/.test(after) || /^:[^\s:]*[/.][^\s:]*(?:\s|$)/.test(after)
 }
 
 /** Whether the entropy guess leaves this run alone: the id of a git object, in its context, alone or after a git word. */
@@ -322,8 +322,11 @@ interface Scope {
 
 function walk(value: unknown, env: readonly Pattern[], key: string | undefined, depth: number, scope: Scope): { value: unknown; hits: string[] } {
   if (typeof value === 'string') {
-    // A bare 40 hex is a git object only under a git field or none; the key is not in the text the patterns read, so it is read here.
-    if (GIT_OBJECT_ID.test(value) && (scope.secret || (scope.field !== undefined && !isGitField(scope.field)))) return { value: '[REDACTED:entropy]', hits: ['entropy'] }
+    // The value alone carries no context: a git object id is kept under a git field that no secret-named field encloses, and only there.
+    if (GIT_OBJECT_ID.test(value) && !scope.secret && scope.field !== undefined && isGitField(scope.field)) {
+      const { text, hits } = redactWith(value, env, { entropy: false })
+      return { value: text, hits }
+    }
     const shape = depth === 1 && key !== undefined ? IDENTIFIERS[key] : undefined
     // A mark a former pass left in an identifier is accepted as it stands.
     if (shape !== undefined && !shape.test(value) && !MARK_ONLY.test(value)) return { value: '[REDACTED:identifier]', hits: ['identifier'] }

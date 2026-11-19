@@ -219,13 +219,12 @@ test('the fixtures are what the entropy guess would redact, so a kept one is the
 
 // One case per shape git prints or a command and a URL carry: the id is kept in each.
 const GIT_SHAPES: readonly (readonly [shape: string, text: string])[] = [
-  ['line start', `${SHA} refs/tags/v1`],
-  ['text start', SHA],
   ['commit word', `commit ${SHA}\nAuthor: me`],
   ['commit url', `https://github.com/acme/thing/commit/${SHA}`],
   ['range', `git log ${SHA}..${SHA_2}`],
   ['three dots', `git diff ${SHA}...${SHA_2}`],
   ['path', `git show ${SHA}:docs/a.md`],
+  ['file at a ref', `git show ${SHA}:README.md and more`],
   ['sha colon', `sha: ${SHA}`],
   ['json sha', `{"sha": "${SHA}"}`],
   ['head word', `head ${SHA}`],
@@ -236,7 +235,6 @@ const GIT_SHAPES: readonly (readonly [shape: string, text: string])[] = [
   ['head dash', `head-${SHA}`],
   ['commit underscore', `commit_${SHA}`],
   ['match head commit', `gh pr merge 12 --match-head-commit=${SHA}`],
-  ['env sha', `GIT_COMMIT_SHA=${SHA} make`],
   ['pinned action', `uses: actions/checkout@${SHA}`],
   ['pinned action path', `uses: acme/thing/.github/workflows/ci.yml@${SHA}`],
   ['quoted by backticks', `head \`${SHA}\``],
@@ -261,6 +259,20 @@ const LEAKS: readonly (readonly [form: string, text: string])[] = [
   ['after an at sign', `password@${SHA}`],
   ['backticks, no git word', `key \`${SHA}\``],
   ['prose', `merged at ${SHA}.`],
+  ['alone on a line', `$ gh auth token\n${SHA}`],
+  ['alone in the text', SHA],
+  ['after any line', `x\n${SHA}`],
+  ['line start with a ref after', `${SHA} refs/tags/v1`],
+  ['assignment, value on the next line', `DD_APP_KEY=\n${SHA}`],
+  ['netrc', `machine a password\n${SHA}`],
+  ['carriage return', `${SHA}\r\n`],
+  ['secret before a colon', `${SHA}:secret`],
+  ['user and password', `${SHA}:pass`],
+  ['a second colon in the path', `${SHA}:a/b:c`],
+  ['git word as the tail of an identifier', `my_secret_ref ${SHA}`],
+  ['git word as the tail of a hyphenated name', `token-hash ${SHA}`],
+  ['hash word of a token', `token_hash ${SHA}`],
+  ['identifier ending in a git word, assigned', `x_ref=${SHA}`],
   ['after a path', `refs/heads/x ${SHA}`],
   ['glued before', `x${SHA}`],
   ['two ids glued', `${SHA}_${SHA_2}`],
@@ -300,10 +312,11 @@ test('a value of ~/.env that is a git object id in a git context is still redact
   assert.deepEqual(out, { text: 'commit [REDACTED:env] ok', hits: ['env'] })
 })
 
-test('redactValue: a git object id is kept under a git field, or none, and redacted under any other', () => {
-  const kept = { sha: SHA, commit: { head: SHA }, shas: [SHA, SHA_2], data: { parent_sha: SHA }, headSha: SHA }
+test('redactValue: a git object id is kept under a git field, and redacted under any other, or none', () => {
+  const kept = { sha: SHA, commit: { head: SHA }, shas: [SHA, SHA_2], data: { rev: SHA } }
   assert.deepEqual(redactValue(kept, new Map()), { value: kept, hits: [] })
-  assert.deepEqual(redactValue([SHA], new Map()), { value: [SHA], hits: [] })
+  assert.deepEqual(redactValue([SHA], new Map()).value, ['[REDACTED:entropy]'])
+  assert.deepEqual(redactValue({ head_sha: SHA, headSha: SHA, parent_hash: SHA }, new Map()).value, { head_sha: '[REDACTED:entropy]', headSha: '[REDACTED:entropy]', parent_hash: '[REDACTED:entropy]' })
   const out = redactValue({ key: SHA, app_key: SHA, value: [SHA], data: { id: SHA } }, new Map())
   assert.deepEqual(out.value, { key: '[REDACTED:entropy]', app_key: '[REDACTED:entropy]', value: ['[REDACTED:entropy]'], data: { id: '[REDACTED:entropy]' } })
 })
