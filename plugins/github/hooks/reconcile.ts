@@ -16,6 +16,8 @@ export const QUOTA_WAIT_MS = 900_000
 export const GATES_PER_TICK = 4
 /** A gate that failed on a fingerprint is not tried again on the same one before this. */
 export const RETRY_MS = 300_000
+/** The times another machine may undo this one's label on a head before the reconciler stops moving that label there. */
+export const FLAP_UNDONE = 3
 /** A repository whose records directory changed within this is reconciled. */
 export const RECENT_MS = 30 * 24 * 3600 * 1000
 /** A lease runs this long; its holder renews it when less than LEASE_RENEW_MS is left. */
@@ -161,4 +163,27 @@ export function leaseDue(lease: Lease | undefined, me: string, now: number): boo
 export function takenLease(current: string | undefined, me: string, now: number, counts: Counts): string | undefined {
   if (leaseOf(parseLease(current), me, now) === 'other') return undefined
   return JSON.stringify({ v: LEASE_VERSION, holder: me, until: now + LEASE_MS, counts }) + '\n'
+}
+
+/** The label a gate puts. */
+export type LabelMove = 'ready' | 'not-ready'
+
+/** The label this machine last wrote to a pull request, at which head, how many times in a row it wrote that same label again, whether it said so. */
+export type Flap = { head: string; wrote: LabelMove; undone: number; said: boolean }
+
+/**
+ * The reconciler is about to put `move` at `head`. A label put again after this machine wrote that very label there, with
+ * no other label between, was taken away in the meantime by another machine (or the operator): past FLAP_UNDONE of them the
+ * label is held (two machines in lasting disagreement would move it forever, each move waking the other). Nothing is
+ * counted here, only when the write goes through (flapWrote). `say` is true once, the first time it holds.
+ */
+export function flapCheck(prev: Flap | undefined, head: string, move: LabelMove): { hold: boolean; say: boolean; flap?: Flap } {
+  if (!prev || prev.head !== head || prev.wrote !== move || prev.undone < FLAP_UNDONE) return { hold: false, say: false }
+  return { hold: true, say: !prev.said, flap: { ...prev, said: true } }
+}
+
+/** What is kept once `move` was written at `head`: the same label again counts one undo, another label (a verdict that changed) or another head starts again. */
+export function flapWrote(prev: Flap | undefined, head: string, move: LabelMove): Flap {
+  const again = prev?.head === head && prev.wrote === move
+  return { head, wrote: move, undone: again ? prev.undone + 1 : 0, said: again ? prev.said : false }
 }

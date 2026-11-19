@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   bashActs, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, namesHead, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, touchesRecords, onlyReads, deletes, deletesRecords, postsStatus,
-  recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove, stackedCi,
+  recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove, stackedCi, supersedes,
   type Gate, type RecordFile,
 } from './ready.ts'
 import { acceptanceDetail, producersOf } from '../core/pr-record.ts'
@@ -560,4 +560,23 @@ test('a status post written another way is caught too: attached values, quotes, 
     'cat plugins/github/engine/forge_status.py',
     'gh api repos/acme/app/issues/3/comments -f body="the statuses/ endpoint"',
   ]) expect(postsStatus(line)).toBe(false)
+})
+
+// Two machines holding a pass and a fail of one second must read the same one, whatever order their files are read in.
+test('two records of one kind dated the same second: the failure decides, in whatever order they are read', () => {
+  const pass = { ...record('review', 'pass'), name: 'review.20261101T100000Z.p-a.json' }
+  const fail = { ...record('review', 'fail'), name: 'review.20261101T100000Z.p-b.json' }
+  expect(missingItems(gate(), [pass, fail, record('e2e', 'pass')])).toEqual(missingItems(gate(), [fail, pass, record('e2e', 'pass')]))
+  expect(missingItems(gate(), [pass, fail, record('e2e', 'pass')])).not.toEqual([])
+})
+
+test('a record decides over another by its instant, then a failure, then the result\'s name; the same result decides nothing', () => {
+  const at = '2026-11-01T10:00:00Z'
+  const later = '2026-11-01T10:00:01Z'
+  expect(supersedes({ at: later, result: 'pass' }, { at, result: 'fail' })).toBe(true)
+  expect(supersedes({ at, result: 'fail' }, { at: later, result: 'pass' })).toBe(false)
+  expect(supersedes({ at, result: 'fail' }, { at, result: 'pass' })).toBe(true)
+  expect(supersedes({ at, result: 'pass' }, { at, result: 'fail' })).toBe(false)
+  expect([supersedes({ at, result: 'pass' }, { at, result: 'waived' }), supersedes({ at, result: 'waived' }, { at, result: 'pass' })]).toEqual([false, true])
+  expect(supersedes({ at, result: 'pass' }, { at, result: 'pass' })).toBe(false)
 })

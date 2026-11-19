@@ -6,7 +6,7 @@ import { fieldsOf } from '../core/host.ts'
 import { parseReconcile } from '../core/pr-reconcile.ts'
 import { JOURNAL_EVERY_MS } from './register.ts'
 import { parseAuditEvent } from '../core/learning.ts'
-import { GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
+import { FLAP_UNDONE, GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
 import { POSTS_PER_TICK } from './forge-sync.ts'
 
 const T0 = Date.parse('2026-11-19T10:00:00Z')
@@ -582,4 +582,39 @@ test('an exemption too long for the forge is said once and never posted', async 
   await beat(clock, 3)
   expect(state.posted).toEqual([])
   expect(state.said.filter((line) => line.includes('E2E exemption of acme/app is too long for the forge'))).toHaveLength(1)
+})
+
+test('two machines in lasting disagreement: after FLAP_UNDONE undos this one stops moving the label and says so once', async ($, on) => {
+  const { clock, state } = await started($, on)
+  const pull = state.pulls[0]
+  // The other machine puts Ready back after each of this one's moves: this one reads the pull request as missing records.
+  for (let i = 0; i < 2 * FLAP_UNDONE + 4; i++) {
+    await beat(clock)
+    if (pull) pull.labels = ['Ready']
+    await clock.advance(IDLE_MAX_MS)
+    await clock.settle()
+  }
+  expect(state.labelled).toHaveLength(FLAP_UNDONE + 1)
+  const flapLines = state.said.filter((line) => line.includes('put back'))
+  expect(flapLines).toHaveLength(1)
+  expect(flapLines[0]).toContain('acme/app#7')
+})
+
+test('a label write that fails counts no undo: the label is put back once the write goes through', async ($, on) => {
+  const { clock, state } = await started($, on)
+  const pull = state.pulls[0]
+  await beat(clock)
+  expect(state.labelled).toHaveLength(1)
+  // The other machine takes the label away; this one's writes then fail for far longer than FLAP_UNDONE retries.
+  if (pull) pull.labels = ['Ready']
+  state.readinessFails = true
+  for (let i = 0; i < 2 * FLAP_UNDONE + 2; i++) {
+    await clock.advance(RETRY_MS)
+    await clock.settle()
+  }
+  state.readinessFails = false
+  await clock.advance(RETRY_MS)
+  await clock.settle()
+  expect(state.labelled).toHaveLength(2)
+  expect(state.said.filter((line) => line.includes('put back'))).toHaveLength(0)
 })

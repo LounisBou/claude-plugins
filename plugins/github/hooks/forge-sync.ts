@@ -11,6 +11,7 @@ import {
 import { KINDS, type PrRecord } from '../core/pr-record.ts'
 import { planInput, type CheckPlan, type Checks } from './check-plan.ts'
 import { parseExemption, type Exemption } from './e2e-scope.ts'
+import { supersedes } from './ready.ts'
 import { TICK_MS } from './reconcile.ts'
 
 /** The statuses one beat posts at most; the others at the next. */
@@ -90,12 +91,20 @@ function newer(here: string | undefined, there: string | undefined): 'import' | 
   return undefined
 }
 
-// The newest record of each kind this machine holds.
+// Which side holds the record that decides (ready.ts supersedes): the later instant, and on the same second the failure,
+// so two machines holding different results of one second end on the same one.
+function decided(here: PrRecord | undefined, there: ForgeRecord | undefined): 'import' | 'post' | undefined {
+  if (there !== undefined && (here === undefined || supersedes(there, here))) return 'import'
+  if (here !== undefined && (there === undefined || supersedes(here, there))) return 'post'
+  return undefined
+}
+
+// The record of each kind this machine holds that decides.
 function newestByKind(records: readonly PrRecord[]): Map<string, PrRecord> {
   const newest = new Map<string, PrRecord>()
   for (const record of records) {
     const kept = newest.get(record.kind)
-    if (!kept || record.at > kept.at) newest.set(record.kind, record)
+    if (!kept || supersedes(record, kept)) newest.set(record.kind, record)
   }
   return newest
 }
@@ -121,7 +130,7 @@ export function forgeSync(sides: ForgeSides): ForgeSync {
     const read = status ? parseRecordStatus(status) : undefined
     const there = read && !ahead(kind, read.at) ? read : undefined
     const here = newest.get(kind)
-    const side = newer(here?.at, there?.at)
+    const side = decided(here, there)
     if (side === 'import' && there) out.records.push(there)
     if (side === 'post' && here && settled(here.at)) {
       const post = recordPost(here)
