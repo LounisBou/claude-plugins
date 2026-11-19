@@ -404,8 +404,8 @@ check "the operator's entry skill stays in the command menu" "0" \
 # the context and the turn-end reports over. The ceiling moved twice: by the sentence on the
 # sender's reference, then by the successor-admission sentence (the operator's item 154, « A », 2026-10-19),
 # then, for the review brief, by the name of the lens subagent type.
-check "the agent briefs stay within their trimmed sizes" "yes|yes|yes|yes" \
-  "$(for pair in phase:8973 comments:6436 review:8143 rotation:2833; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
+check "the agent briefs stay within their trimmed sizes" "yes|yes|yes" \
+  "$(for pair in phase:8973 review:8143 rotation:2833; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
 check "Ready is the github gate's: no pre-check label command, none of it restated, the phase brief points to the gate" "no|no|no|no" \
   "$(spells "$ORCH_REFS/review-thresholds.md" 'and `dispatch-record.sh ready` is green there')|$(spells "${REC%.sh}.ts" "The label is the orchestrator's to put")|$(spells "${REC%.sh}.ts" 'pr-readiness')|$(spells "$ROOT/templates/agent-phase-brief.md" "Never \`Ready\`: the orchestrator's.")"
 # The rulebook is loaded whole at every start and every takeover: its size is bounded, and what

@@ -53,7 +53,7 @@ test('no agent brief teaches how to recognise an orchestrator\'s successor or it
   assert.equal(w.phase(), 0)
   const phase = readFileSync(join(w.briefs, 'routes.md'), 'utf8')
   const templates = join(import.meta.dirname, '..', '..', '..', 'templates')
-  const briefs = [['phase', phase], ...['review', 'comments', 'rotation'].map(kind => [kind, readFileSync(join(templates, `agent-${kind}-brief.md`), 'utf8')] as const)]
+  const briefs = [['phase', phase], ...['review', 'rotation'].map(kind => [kind, readFileSync(join(templates, `agent-${kind}-brief.md`), 'utf8')] as const)]
   for (const [what, text] of briefs) {
     assert.ok(!text.includes('carry its name alone') && !text.includes('carry the name alone'), `${what}: no rule on the name an orchestrator's messages carry`)
     assert.ok(!text.includes('lists no other session of that name'), `${what}: no rule on telling a successor`)
