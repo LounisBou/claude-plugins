@@ -138,7 +138,25 @@ test('password-flag: a separator outside quotes still ends the command', () => {
   assert.equal(redactText(line).text, line)
 })
 
-test('password-flag: linear time, so no input stalls the hook', () => {
+/**
+ * The regex calls (`test`, `exec`, which `test` itself goes through) made while `run` runs: the work of a
+ * reader that loops word by word, counted, not timed, so a loaded host cannot change it.
+ */
+const regexCalls = (run: () => void): number => {
+  const { test: realTest, exec: realExec } = RegExp.prototype
+  let calls = 0
+  RegExp.prototype.test = function (this: RegExp, ...args: [string]) { calls++; return realTest.apply(this, args) }
+  RegExp.prototype.exec = function (this: RegExp, ...args: [string]) { calls++; return realExec.apply(this, args) }
+  try {
+    run()
+  } finally {
+    RegExp.prototype.test = realTest
+    RegExp.prototype.exec = realExec
+  }
+  return calls
+}
+
+test('password-flag: linear work, so no input stalls the hook', () => {
   const inputs = [
     'mysql '.repeat(20000),
     join('mysql -u me ', '\\\n'.repeat(50000)),
@@ -148,10 +166,18 @@ test('password-flag: linear time, so no input stalls the hook', () => {
     '/mysql'.repeat(20000),
   ]
   for (const input of inputs) {
+    let out = ''
     const start = performance.now()
-    const out = redactText(input).text
+    // A reader that starts over from each command word reads the rest of the text each time: n * n calls for
+    // the inputs of many command words. The linear one makes about two per character at most (measured:
+    // 2.2), here allowed four.
+    const calls = regexCalls(() => { out = redactText(input).text })
+    assert.ok(calls <= 4 * input.length, `${input.slice(0, 20)}: ${calls} regex calls for ${input.length} characters`)
+    // The escaped-newline inputs are one command word and one regex run: their work is inside a single call,
+    // which no count sees. They take a few milliseconds; this bound is a stall guard, a thousand times that,
+    // that no host load reaches, not a measure. (Backtracking that never ends hangs the run, here as before.)
     const elapsed = performance.now() - start
-    assert.ok(elapsed < 200, `${input.slice(0, 20)}: ${Math.round(elapsed)} ms`)
+    assert.ok(elapsed < 10000, `${input.slice(0, 20)}: stalled for ${Math.round(elapsed)} ms`)
     assert.ok(!out.includes(HUNTER), input.slice(0, 20))
   }
 })
