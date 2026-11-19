@@ -438,7 +438,7 @@ test('two orchestrators of one name during a handover: the deck row on the prede
   assert.deepEqual(deckOpen(deck, NAME, '/dev/ttys099').agents.map(a => a.name), ['Agent: p10', 'Agent: p17'])
 })
 
-test('an agent spawned since the deck\'s last write is printed from the launcher\'s chain and list, with its tty and brief, and the miss is journaled', () => {
+test('an agent spawned since the deck\'s last write is printed from the launcher\'s chain and list, with its tty and brief, and no miss is journaled', () => {
   const w = world({
     deck: deckOf([seated(NAME, '/dev/ttys009', []), seated(NAME, '/dev/ttys005', ['Agent: api'])]),
     listed: [row('/dev/ttys005', NAME), row('/dev/ttys009', NAME, true), row('/dev/ttys004', 'Agent: api'), row('/dev/ttys006', 'Agent: per-unit restarts'), row('/dev/ttys007', 'Agent: someone else')],
@@ -454,9 +454,8 @@ test('an agent spawned since the deck\'s last write is printed from the launcher
   assert.match(w.text(), /- Agents running \(name and reference, brief path\): Agent: api \(ttys004\); Agent: per-unit restarts \(ttys006, brief \/b\/rows\/57-brief\.md\)\n/)
   // An agent of another orchestrator and a chained tty no session runs on stay out.
   assert.ok(!w.text().includes('someone else') && !w.text().includes('ttys008'))
-  assert.match(w.err.join(''), / agents=2 agents_disagree=1 /)
-  assert.equal(w.journaled.length, 1)
-  assert.deepEqual((w.journaled[0] as { fact: unknown }).fact, { failure: 'succession-lost-state', count: 1, prs: [] })
+  assert.match(w.err.join(''), / agents=2 agents_disagree=0 /)
+  assert.equal(w.journaled.length, 0)
 })
 
 test('rowOfBrief reads the row a brief was printed for: a phase brief\'s, a rotation brief\'s; none from free text', () => {
@@ -524,8 +523,15 @@ test('the deck and the launcher agreeing journal nothing; no list leaves the dec
   assert.equal(unread.run('--tty', '/dev/ttys009'), 0)
   assert.ok(!unread.err.join('').includes('agents_disagree'))
   assert.equal(unread.journaled.length, 0)
+  // A deck agent the list does not show is the one miss still journaled.
+  const lost = world({ listed: [row('/dev/ttys009', NAME, true)] })
+  assert.equal(lost.run('--tty', '/dev/ttys009'), 0)
+  assert.match(lost.err.join(''), / agents_disagree=1 /)
+  assert.deepEqual(lost.journaled.map(e => (e as { fact: unknown }).fact), [{ failure: 'succession-lost-state', count: 1, prs: [] }])
   // A deck agent the list does not show counts as a miss, and stays printed: the successor reads its pull request.
   assert.deepEqual(liveAgents([{ name: 'Agent: gone', tty: null }], [], []), { agents: [{ name: 'Agent: gone', tty: null }], disagree: 1 })
+  // An agent in its first turn has no measure, so the deck lacks it: the chain and `list` print it, and that is no miss.
+  assert.deepEqual(liveAgents([], ['/dev/ttys006'], [row('/dev/ttys006', 'Agent: fresh')]), { agents: [{ name: 'Agent: fresh', tty: '/dev/ttys006' }], disagree: 0 })
 })
 
 test('the launcher\'s list rows: the name, else the title without its glyph, and the caller\'s own row', () => {

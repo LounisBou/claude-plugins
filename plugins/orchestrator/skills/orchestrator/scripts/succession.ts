@@ -33,9 +33,11 @@
 // pull request in its label (`<repo>#<n>`, the repository's short name too) or in the heads its review
 // recorded; the forge says which of them is open, and the ledger who is on it. Before printing,
 // the command moves the round's entries settled over a day ago to its archive (round-archive's
-// rule): what a takeover reads is only what is live. Its measure goes to stderr. When the
-// launcher's `list` names an agent the deck does not, or the deck one `list` does not show, one
-// journal line says how many (`succession-lost-state`), so the succession is tuned on its misses.
+// rule): what a takeover reads is only what is live. Its measure goes to stderr. When the deck
+// names an agent the launcher's `list` does not show, one journal line says how many
+// (`succession-lost-state`), so the succession is tuned on its misses. An agent `list` shows that
+// the deck lacks is no miss: the deck holds an agent from the end of its first turn, so one
+// spawned since is in the chain and `list` alone, and is printed from them.
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -177,7 +179,7 @@ export interface OpenState {
   readonly questions: readonly Question[]
   /** The questions the operator answered, to apply; the withdrawn ones to ask again. */
   readonly settled?: SettledQuestions
-  /** How many agents the launcher's `list` and the deck disagree on; undefined when `list` was not read. */
+  /** How many deck agents the launcher's `list` does not show; undefined when `list` was not read. */
   readonly disagree?: number
 }
 
@@ -233,20 +235,21 @@ export function parseList(text: string): ListedRow[] {
  * The agents of this orchestration as they run now: the deck's, each given the tty `list` shows
  * under its name, then each agent the launcher's chains hold that `list` shows running and the deck
  * does not name (spawned since the deck's last write). With no `list`, the deck's as they are.
- * `disagree` counts the agents only one side names: a chained agent the deck lacks, a deck agent
- * `list` does not show.
+ * `disagree` counts the deck agents `list` does not show. A chained agent the deck lacks is not
+ * counted: the deck is written from the sessions' measures, taken when a turn ends, so an agent
+ * still in its first turn is in the chain and `list` alone, and that is the usual state of a
+ * takeover, not a lost one.
  */
 export function liveAgents(deck: readonly LiveAgent[], chained: readonly string[], listed: readonly ListedRow[] | undefined): { agents: LiveAgent[]; disagree?: number } {
   if (listed === undefined) return { agents: [...deck] }
   const byTty = new Map(listed.map(row => [ttyName(row.tty), row]))
   const shown = (agent: LiveAgent): ListedRow | undefined => (agent.tty !== null ? byTty.get(ttyName(agent.tty)) : undefined) ?? listed.find(row => row.name === agent.name)
   const agents = deck.map(agent => ({ ...agent, tty: agent.tty ?? shown(agent)?.tty ?? null }))
-  let disagree = deck.filter(agent => shown(agent) === undefined).length
+  const disagree = deck.filter(agent => shown(agent) === undefined).length
   for (const tty of chained) {
     const row = byTty.get(ttyName(tty))
     if (row === undefined || agents.some(agent => agent.name === row.name || (agent.tty !== null && ttyName(agent.tty) === ttyName(row.tty)))) continue
     agents.push({ name: row.name, tty: row.tty })
-    disagree++
   }
   return { agents, disagree }
 }

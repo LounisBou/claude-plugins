@@ -44,6 +44,9 @@ const passed = async (x: unknown) => ({ passed: x })
 test('the writer is asked from an installed plugin, or wherever an override points, never from a checkout', () => {
   expect(syncArgv(INSTALLED, `${HOME}/.claude`, undefined)).toEqual(['bash', `${INSTALLED}/short-commands.sh`, 'sync', '--dir', `${HOME}/.claude/commands`])
   expect(syncArgv('/work/claude-orchestrator', `${HOME}/.claude`, undefined)).toBeNull()
+  // The continuous deploy's directory is read in place by the host: its root is an installed one.
+  const deployed = `${HOME}/.claude/deploys/lounisbou/${'a'.repeat(40)}/plugins/orchestrator`
+  expect(syncArgv(deployed, `${HOME}/.claude`, undefined)).toEqual(['bash', `${deployed}/short-commands.sh`, 'sync', '--dir', `${HOME}/.claude/commands`])
   expect(syncArgv('/work/claude-orchestrator', `${HOME}/.claude`, '/sandbox/work/.claude/commands'))
     .toEqual(['bash', '/work/claude-orchestrator/short-commands.sh', 'sync', '--dir', '/sandbox/work/.claude/commands'])
 })

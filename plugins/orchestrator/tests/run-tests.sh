@@ -2003,11 +2003,7 @@ ok_brief "$B/twoaddr.md"; printf 'For example `other-12 [9f9f9f]`.\n' >> "$B/two
 check_status "a second session reference is a finding" 1 bash "$LINT" "$B/twoaddr.md"
 check "the second address is named" "1" "$(bash "$LINT" "$B/twoaddr.md" 2>&1 | grep -c 'more than one session reference')"
 
-# A succession brief lists its running agents with their references beside the predecessor's:
-# each is a real address, not an example. The bound of one reference is the other briefs'.
-printf '# Orchestrator succession brief — scratch\n\nMode: build\n\n- Agents running: `Agent: a [a1b2c3]`, `Agent: b [d4e5f6]`; predecessor `Orch: x [0a1b2c]`.\n' > "$B/succaddr.md"
-check "a succession brief naming several agents with their references raises no second-address finding" "0" \
-  "$(bash "$LINT" "$B/succaddr.md" 2>&1 | grep -c 'more than one session reference')"
+# The bound of one reference holds for every brief.
 check "the same references in an implementer brief are still refused" "1" \
   "$(ok_brief "$B/succaddr-impl.md"; printf 'Peers `Agent: a [a1b2c3]` and `Agent: b [d4e5f6]`.\n' >> "$B/succaddr-impl.md"; bash "$LINT" "$B/succaddr-impl.md" 2>&1 | grep -c 'more than one session reference')"
 
@@ -5015,44 +5011,17 @@ references_named_missing() {  # $1 the rulebook, $2 the references directory: th
 }
 check "the kernel reads the file or files a moment names, and names only files the references carry" "0|0|yes|yes|" \
   "$(printf '%s' "$SKILL_FLAT" | grep -c 'binds whole')|$(printf '%s' "$SKILL_FLAT" | grep -c 'read it again at each such moment')|$(printf '%s' "$SKILL_FLAT" | grep -qF '`references/pause-opening-move.md`' && echo yes || echo no)|$(printf '%s' "$SKILL_FLAT" | grep -qF 'read the file or files the moment names' && echo yes || echo no)|$(references_named_missing "$ROOT/skills/orchestrator/SKILL.md" "$ORCH_REFS" | paste -sd, -)"
-# The lint: a succession brief past 9,000 characters is a finding naming the count and the limit.
+# The takeover text is printed, no longer linted by a check of its own: this fill is linted for holes and held to 9,000 characters.
 SUCCFILL="$WORK/succession-filled.md"
 # {{GAUGE}} is gone from the template with the gauge script it named — the module's measure
-# file replaced both — and what this fill proves is the size limit over a full brief. Each path
+# file replaced both — and what this fill proves is the size over a full text. Each path
 # is one that exists, short and the same on every machine, so the count does not move with the
 # length of the temporary directory the suite runs in.
 sed -E -e 's#\{\{PROJECT\}\}#scratch#g' -e 's#\{\{PREDECESSOR_NAME_PATTERN\}\}#Orch: scratch#g' -e 's#\{\{MODE\}\}#build#g' -e 's#\{\{SCRIPTS\}\}#/tmp#g' \
   -e 's#\{\{CLOSE_VERB\}\}#close#g' -e 's#\{\{LIVE_[A-Z_]+\}\}#none open#g' -e 's#\{\{[A-Z_]+\}\}#/tmp#g' "$SUCC" > "$SUCCFILL"
-# Measured as the lint measures: the open-questions field's value is left out, its label counted.
+# The size is counted with the open-questions value left out, its label counted: a verbatim question block is several hundred characters.
 check "a succession brief, every placeholder filled, lints clean and stays under 9,000 characters" "0|yes" \
   "$(bash "$LINT" "$SUCCFILL" >/dev/null 2>&1; echo $?)|$([ "$(sed "/^- The operator's open questions/s/:.*\$/:/" "$SUCCFILL" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')" -le 9000 ] && echo yes || echo no)"
-# The Live state carries the operator's open questions, verbatim: the lint refuses a succession
-# brief whose Live state lacks the field, leaves it empty or leaves its placeholder, and passes
-# `none` and a filled one. The fixtures are the filled brief with that one line replaced.
-oq_brief() {  # $1 out file, $2 the field's value, or the single word ABSENT to drop the field, $3 its label
-  local l label="${3:-"- The operator's open questions, or \`none\` when there is none:"}"
-  while IFS= read -r l; do
-    case "$l" in
-      "- The operator's open questions"*) continue ;;
-      "- To-do items"*) [ "$2" = ABSENT ] || printf '%s\n' "$label $2" ;;
-    esac
-    printf '%s\n' "$l"
-  done < "$SUCCFILL" > "$1"
-}
-OQ_MISSING="$WORK/succession-oq-missing.md"; oq_brief "$OQ_MISSING" ABSENT
-OQ_EMPTY="$WORK/succession-oq-empty.md"; oq_brief "$OQ_EMPTY" ""
-OQ_PLACEHOLDER="$WORK/succession-oq-placeholder.md"; oq_brief "$OQ_PLACEHOLDER" "{{LIVE_OPEN_QUESTIONS}}"
-OQ_NONE="$WORK/succession-oq-none.md"; oq_brief "$OQ_NONE" "none"
-OQ_FILLED="$WORK/succession-oq-filled.md"
-oq_brief "$OQ_FILLED" $'(id q-12) Question 1 of 2\n  Should the release wait for the review?\n  A. wait  B. ship'
-check "a succession brief without the open-questions field is a finding" "1|1" \
-  "$(bash "$LINT" "$OQ_MISSING" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$OQ_MISSING" 2>&1 | grep -c "Live state has no open-questions field")"
-check "a succession brief with the open-questions field empty is a finding" "1|1" \
-  "$(bash "$LINT" "$OQ_EMPTY" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$OQ_EMPTY" 2>&1 | grep -c "open-questions field is empty")"
-check "a succession brief with the open-questions field left as its placeholder is a finding" "1|1" \
-  "$(bash "$LINT" "$OQ_PLACEHOLDER" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$OQ_PLACEHOLDER" 2>&1 | grep -c "open-questions field is still its placeholder")"
-check "a succession brief with none as its open questions lints clean" "0" "$(bash "$LINT" "$OQ_NONE" >/dev/null 2>&1; echo $?)"
-check "a succession brief with its open questions filled, over several lines, lints clean" "0" "$(bash "$LINT" "$OQ_FILLED" >/dev/null 2>&1; echo $?)"
 check "the template's open-questions placeholder comes before the to-do items" "1|yes" \
   "$(grep -cF '{{LIVE_OPEN_QUESTIONS}}' "$SUCC")|$([ "$(grep -nF '{{LIVE_OPEN_QUESTIONS}}' "$SUCC" | cut -d: -f1)" -lt "$(grep -nF '{{LIVE_TODO}}' "$SUCC" | cut -d: -f1)" ] && echo yes || echo no)"
 # The re-ask runs once the predecessor is closed: the module moves its open entries to the
@@ -5069,71 +5038,12 @@ check "the template carries the predecessor's tty, the launcher and the scripts"
 # The successor reads its own file of the succession, never the predecessor's.
 check "review and briefs split « Review on evidence » and « Standing rules » into subsections" "yes|yes" \
   "$(awk '/^## Review on evidence$/ { f = 1; next } f && /^## / { exit } f && /^### / { n++ } END { print (n >= 2 ? "yes" : "no") }' "$ORCH_REFS/review-verdict.md")|$(awk '/^## Standing rules/ { f = 1; next } f && /^## / { exit } f && /^### / { n++ } END { print (n >= 2 ? "yes" : "no") }' "$ORCH_REFS/standing-rules.md")"
-# The open-questions value sits outside the 9,000-character cap, its label inside: a verbatim
-# `Question i of N` block is several hundred characters, and a Live state already brings the
-# brief near the limit, so the cap would refuse the very handover the field exists for.
-OQ_BLOCK="(id q-12) Question 1 of 3"
-while [ "${#OQ_BLOCK}" -lt 7000 ]; do OQ_BLOCK+=$'\n  Should the release wait for the review of the pending pull request, or ship now? A. wait  B. ship'; done
-OQ_BLOCK=${OQ_BLOCK:0:7000}
-OQ_BIG="$WORK/succession-oq-big.md"; oq_brief "$OQ_BIG" "$OQ_BLOCK"
-OQ_BIG_PLUS="$WORK/succession-oq-big-plus.md"
-# The padding brings the rest of the brief past the limit whatever the template's own size.
-OQ_PAD=$(( 9100 - $(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ') + 7000 ))
-{ cat "$OQ_BIG"; printf '%s\n' "$(head -c "$OQ_PAD" /dev/zero | tr '\0' 'x')"; } > "$OQ_BIG_PLUS"
-check "a succession brief whose open-questions value is a 7,000-character block, the rest within the limit, lints clean" "yes|0" \
-  "$([ "$(LC_ALL=C tr -d '\200-\277' < "$OQ_BIG" | wc -c | tr -d ' ')" -gt 9000 ] && echo yes || echo no)|$(bash "$LINT" "$OQ_BIG" >/dev/null 2>&1; echo $?)"
-# The design gives the filled brief's cap the lint enforces (the operator's ruling of 2026-11-04,
+# The design gives the filled brief's cap (the operator's ruling of 2026-11-04,
 # 9,000 characters) and sends the reader to a lifecycle heading that exists, the section holding
 # the steps' how whatever its subsections are called. A hand-started predecessor is closed on the
 # tty and the name pattern its brief carries, the title no longer read from `list`.
 check "the design gives the 9,000 cap and points at a lifecycle heading that exists" "yes|yes|yes" \
   "$(spells "$ROOT/docs/design.md" '6,000 characters of template and 9,000 filled')|$(spells "$ROOT/docs/design.md" "the steps' how in the lifecycle's « Your own context (the orchestrator is not exempt) »")|$(grep -qx '## Your own context (the orchestrator is not exempt)' "$ORCH_REFS/rotation.md" && echo yes || echo no)"
-check "the same brief with the rest padded past 9,000 characters is over the limit" "1|1" \
-  "$(bash "$LINT" "$OQ_BIG_PLUS" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$OQ_BIG_PLUS" 2>&1 | grep -c 'succession brief is .* characters, over the limit of 9000')"
-# The value is read from the label's first colon, on that line and on the lines after it up to
-# the next field of the Live state: a label worded otherwise, and a value that starts on the next
-# line, are read as their real value.
-OQ_LABEL='- The operator'"'"'s open questions (verbatim, with their round ids):'
-OQ_OTHER_EMPTY="$WORK/succession-oq-other-empty.md"; oq_brief "$OQ_OTHER_EMPTY" "" "$OQ_LABEL"
-OQ_OTHER_PLACEHOLDER="$WORK/succession-oq-other-placeholder.md"; oq_brief "$OQ_OTHER_PLACEHOLDER" "{{LIVE_OPEN_QUESTIONS}}" "$OQ_LABEL"
-OQ_OTHER_FILLED="$WORK/succession-oq-other-filled.md"; oq_brief "$OQ_OTHER_FILLED" "(id q-12) Question 1 of 2: wait or ship?" "$OQ_LABEL"
-OQ_NEXT_LINE="$WORK/succession-oq-next-line.md"
-oq_brief "$OQ_NEXT_LINE" $'\n- (id q-12) Question 1 of 2\n- (id q-13) Question 2 of 2'
-OQ_NEXT_LINE_INDENTED="$WORK/succession-oq-next-line-indented.md"
-oq_brief "$OQ_NEXT_LINE_INDENTED" $'\n  - (id q-12) Question 1 of 2\n  - (id q-13) Question 2 of 2' "$OQ_LABEL"
-check "an open-questions label worded otherwise, left empty, is a finding" "1|1" \
-  "$(bash "$LINT" "$OQ_OTHER_EMPTY" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$OQ_OTHER_EMPTY" 2>&1 | grep -c "open-questions field is empty")"
-check "an open-questions label worded otherwise, left as its placeholder, is a finding" "1|1" \
-  "$(bash "$LINT" "$OQ_OTHER_PLACEHOLDER" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$OQ_OTHER_PLACEHOLDER" 2>&1 | grep -c "open-questions field is still its placeholder")"
-check "an open-questions label worded otherwise, with a value after its colon, lints clean" "0" "$(bash "$LINT" "$OQ_OTHER_FILLED" >/dev/null 2>&1; echo $?)"
-check "an open-questions value that starts on the next line, as items, lints clean" "0|0" \
-  "$(bash "$LINT" "$OQ_NEXT_LINE" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$OQ_NEXT_LINE_INDENTED" >/dev/null 2>&1; echo $?)"
-SUCCBIG="$WORK/succession-big.md"
-{ cat "$SUCCFILL"; printf '\n'; head -c 10000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$SUCCBIG"
-SUCCBIG_N=$(LC_ALL=C tr -d '\200-\277' < "$SUCCBIG" | wc -c | tr -d ' ')
-check "a succession brief over 9,000 characters is a finding naming the count and the limit" "1|1|1" \
-  "$(bash "$LINT" "$SUCCBIG" 2>&1 | grep -c "succession brief is $SUCCBIG_N characters, over the limit of 9000")|$(bash "$LINT" "$SUCCBIG" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$SUCCBIG" 2>&1 | grep -c ': 1 finding(s)')"
-# The limit is 9,000 characters: the filled brief padded to 9,100 is refused, to 8,900 it passes.
-succ_padded() {  # $1 out file, $2 the characters the lint counts
-  local rest; rest=$(sed "/^- The operator's open questions/s/:.*\$/:/" "$SUCCFILL" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')
-  { cat "$SUCCFILL"; head -c $(( $2 - rest - 1 )) /dev/zero | tr '\0' 'x'; printf '\n'; } > "$1"
-}
-SUCC9100="$WORK/succession-9100.md"; succ_padded "$SUCC9100" 9100
-SUCC8900="$WORK/succession-8900.md"; succ_padded "$SUCC8900" 8900
-check "a filled succession brief of 9,100 characters is refused, one of 8,900 passes" "1|1|0" \
-  "$(bash "$LINT" "$SUCC9100" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$SUCC9100" 2>&1 | grep -c 'over the limit of 9000 once the open-questions value is set apart (9100)')|$(bash "$LINT" "$SUCC8900" >/dev/null 2>&1; echo $?)"
-# Check 18: a succession brief carries its mode on one line, `Mode: build` or `Mode: investigate`,
-# the line the launcher reads to start the successor on it; prose alone, a missing line or another
-# word is refused.
-M_NONE="$WORK/succ-m-none.md"; grep -v '^Mode: ' "$SUCCFILL" > "$M_NONE"
-M_PROSE="$WORK/succ-m-prose.md"; sed 's/^Mode: .*/Mode: `build` (load the rulebook with it)/' "$SUCCFILL" > "$M_PROSE"
-M_OTHER="$WORK/succ-m-other.md"; sed 's/^Mode: .*/Mode: both/' "$SUCCFILL" > "$M_OTHER"
-M_INV="$WORK/succ-m-inv.md"; sed 's/^Mode: .*/Mode: investigate/' "$SUCCFILL" > "$M_INV"
-check "a succession brief with no Mode line, a prose mode or another word is refused; build and investigate pass" "1|1|1|1|0|0" \
-  "$(bash "$LINT" "$M_NONE" 2>&1 | grep -c 'succession brief carries no .Mode: build. or .Mode: investigate. line')|$(bash "$LINT" "$M_PROSE" 2>&1 | grep -c 'carries no .Mode: build. or .Mode: investigate. line')|$(bash "$LINT" "$M_OTHER" 2>&1 | grep -c 'carries no .Mode: build. or .Mode: investigate. line')|$(bash "$LINT" "$M_NONE" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$M_INV" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$SUCCFILL" >/dev/null 2>&1; echo $?)"
-SUCCOTHER="$WORK/not-a-succession.md"
-{ cat "$B/good.md"; head -c 10000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$SUCCOTHER"
-check "the size limit binds a succession brief only" "0" "$(bash "$LINT" "$SUCCOTHER" >/dev/null 2>&1; echo $?)"
 # A succession brief written by hand dropped the template's step 4, and the predecessor stayed
 # open a day after the takeover: a brief whose reader confirms the takeover to its predecessor
 # carries the launcher's close, and a brief whose reader is the one handed over from is not held.

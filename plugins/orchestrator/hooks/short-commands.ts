@@ -6,11 +6,13 @@
 // `sync`, which rewrites the copies marked as this plugin's that differ from what this version
 // would write: never an unmarked file, never one the operator removed.
 //
-// Only from an installed plugin, under the config dir's plugins/: a session that loads a
+// Only from an installed plugin, under the config dir's plugins/ or the continuous deploy's
+// deploys/ (the host reads a directory marketplace in place, from there): a session that loads a
 // checkout (a test, a development host) would otherwise point the operator's commands at a
 // directory that may be gone tomorrow. The override (ORCHESTRATOR_COMMANDS_DIR) names a
 // directory the caller chose, and is synced from any root. The run is bounded, a failure is
 // logged, and the start goes on either way.
+import { DEPLOYS_DIR } from '../core/deploy-state.ts'
 import { commandsDirOf } from './short-names.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { messageOf, type Host, type On } from './host.ts'
@@ -31,7 +33,7 @@ export function startBoundMs(remainingMs: number | undefined): number {
 
 // The writer's argv, or null where the start has nothing to sync from this root.
 export function syncArgv(root: string, configDir: string, override: string | undefined): string[] | null {
-  if (!override && !root.startsWith(`${configDir}/plugins/`)) return null
+  if (!override && !root.startsWith(`${configDir}/plugins/`) && !root.startsWith(`${configDir}/${DEPLOYS_DIR}/`)) return null
   return ['bash', `${root}/short-commands.sh`, 'sync', '--dir', commandsDirOf(override, configDir)]
 }
 
