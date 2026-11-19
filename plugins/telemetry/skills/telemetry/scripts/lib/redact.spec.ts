@@ -253,3 +253,17 @@ test('entropy: the temporary directory macOS names under /var/folders is a path,
     assert.deepEqual(redactText(text).hits, ['entropy'], text)
   }
 })
+
+test('redactValue: a git object id is kept as a value, but redacted under a field that names a secret', () => {
+  const out = redactValue({ sha: SHA, commit: { head: SHA }, list: [SHA], token: SHA, nested: { api_key: SHA, app_password: SHA } }, new Map())
+  assert.deepEqual(out.value, {
+    sha: SHA, commit: { head: SHA }, list: [SHA], token: '[REDACTED:entropy]', nested: { api_key: '[REDACTED:entropy]', app_password: '[REDACTED:entropy]' },
+  })
+})
+
+test('entropy: only the random name of a macOS temporary directory is kept after /var/folders/xx/', () => {
+  const secret = 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gj'
+  for (const text of [`/var/folders/fz/${secret}/T`, `/var/folders/fz/${secret.toLowerCase()}`, `/var/folders/fz/${secret.toLowerCase()}${secret.toLowerCase()}/T`]) {
+    assert.deepEqual(redactText(text).hits, ['entropy'], text)
+  }
+})

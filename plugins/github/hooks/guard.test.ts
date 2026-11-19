@@ -564,6 +564,19 @@ for (const [command, flag] of [
   })
 }
 
+for (const [command, flag] of [
+  ['gh pr merge 12 -R acme/thing --squash --match-head-commit ' + HEAD.slice(0, 7), '--match-head-commit '],
+  ['python3 /plugins/github/engine/gh.py pr-merge 12 --repo acme/thing --sha ' + HEAD.slice(0, 7), '--sha '],
+  ['gh api -X PUT repos/acme/thing/pulls/12/merge -f sha=' + HEAD.slice(0, 7), '-f sha='],
+] as const) {
+  test('a Bash merge pinned by a prefix of the head is refused with the full head to pin: ' + flag.trim(), async ($, on) => {
+    const seen = await world($, on, { autoMerge: ['acme/thing'] })
+    const out = await $.tool.call(bash(command))
+    expect(out.deny).toContain('refused on acme/thing#12: pin the head the gate checked, ' + flag + HEAD + '.')
+    expect(seen.bash).toEqual([])
+  })
+}
+
 test('a Bash merge through gh api pinned to a head that moved is refused', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['acme/thing'] })
   const out = await $.tool.call(bash('gh api -X PUT repos/acme/thing/pulls/12/merge -f sha=' + MOVED))

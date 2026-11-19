@@ -38,8 +38,13 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
  */
 const GIT_OBJECT_ID = /^[0-9a-f]{40}$/
 
-/* The directory macOS makes for a user's temporary files: `/var/folders/<2 characters>/<random run>/T`. */
+/* The directory macOS makes for a user's temporary files: `/var/folders/<2 characters>/<28 to 32 lower-case characters>/T`. */
 const TEMP_DIR_HEAD = /\/var\/folders\/[A-Za-z0-9_]{2}\/$/
+const TEMP_DIR_NAME = /^[a-z0-9_]{28,32}$/
+
+/** Whether the run at `at` in `text` is the random directory name of a macOS temporary directory. */
+const isTempDir = (text: string, at: number, run: string): boolean =>
+  TEMP_DIR_NAME.test(run) && text[at + run.length] === '/' && TEMP_DIR_HEAD.test(text.slice(Math.max(0, at - 16), at))
 
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -74,6 +79,9 @@ export function isHighEntropy(run: string): boolean {
 
 /** A key that names a secret; `pass` and `pwd` anywhere in it (`DB_PASS`, `MYSQL_PWD`, `PASSWORD`). */
 const SECRET_KEY = String.raw`[A-Za-z0-9_.-]*(?:token|secret|pass|pwd|api[_-]?key|apikey|private[_-]?key|access[_-]?key|client[_-]?secret|credential)s?[A-Za-z0-9_.-]*`
+
+/** A whole field name that names a secret. */
+const SECRET_FIELD = new RegExp(`^${SECRET_KEY}$`, 'i')
 
 /** A command-line option that takes a secret: `--password`, `--db-password`, `--token`, `--api-key`... */
 const SECRET_FLAG = String.raw`--(?:[A-Za-z0-9]+-)*(?:token|secret|passw(?:or)?d|passwd|pass|api-?key|apikey|private-key|access-key|credentials?)`
@@ -217,7 +225,7 @@ export const PATTERNS: readonly Pattern[] = [
   byRegex('secret-assignment', new RegExp(String.raw`\b(${SECRET_KEY})(["']?\s*[:=]\s*["']?)(?!\[REDACTED)[^\s"',;&|)}]+`, 'gi'), (_m, key, sep) => `${key}${sep}`),
   {
     name: 'entropy',
-    apply: (text, mark) => text.replace(/[A-Za-z0-9+=_-]{20,}/g, (run, at: number) => (isHighEntropy(run) && !TEMP_DIR_HEAD.test(text.slice(Math.max(0, at - 16), at)) ? mark : run)),
+    apply: (text, mark) => text.replace(/[A-Za-z0-9+=_-]{20,}/g, (run, at: number) => (isHighEntropy(run) && !isTempDir(text, at, run) ? mark : run)),
   },
 ]
 
@@ -266,6 +274,8 @@ export function redactValue(value: unknown, secrets: EnvSecrets): { value: unkno
 
 function walk(value: unknown, env: readonly Pattern[], key: string | undefined, depth: number): { value: unknown; hits: string[] } {
   if (typeof value === 'string') {
+    // A git object id is kept as a name, not as the value of a field that names a secret: the key is not in the text the patterns read.
+    if (key !== undefined && GIT_OBJECT_ID.test(value) && SECRET_FIELD.test(key)) return { value: '[REDACTED:entropy]', hits: ['entropy'] }
     const shape = depth === 1 && key !== undefined ? IDENTIFIERS[key] : undefined
     // A mark a former pass left in an identifier is accepted as it stands.
     if (shape !== undefined && !shape.test(value) && !MARK_ONLY.test(value)) return { value: '[REDACTED:identifier]', hits: ['identifier'] }

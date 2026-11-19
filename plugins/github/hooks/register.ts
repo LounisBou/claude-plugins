@@ -1396,7 +1396,8 @@ async function bashReady($: Mod, act: Act, after: Array<(result: unknown) => Pro
   }
   if (pr === undefined) return unverifiedRefusal(repo, '?', r.error ?? '')
   const held = (await gateHeld($, act.name, repo, pr, r, true))?.refusal
-  if (!held && act.kind === 'merge' && !act.sha && r.gate) return unpinnedMergeRefusal(act.name, repo, pr, r.gate.head)
+  // A shell merge cannot be rewritten: a prefix the gate accepted is refused with the full head to pin, not left to fail downstream as a moved head.
+  if (!held && act.kind === 'merge' && r.gate && (!act.sha || act.sha.length < r.gate.head.length)) return unpinnedMergeRefusal(act.name, repo, pr, r.gate.head)
   return held
 }
 
