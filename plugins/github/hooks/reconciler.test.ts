@@ -4,7 +4,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, MockClock, NounEvents, TestOn } from 'claude-code/testing'
 import { fieldsOf } from '../core/host.ts'
 import { parseReconcile } from '../core/pr-reconcile.ts'
-import { IDLE_MAX_MS, LEASE_MS, QUOTA_LOW, TICK_MS } from './reconcile.ts'
+import { GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
 
 const T0 = Date.parse('2026-11-19T10:00:00Z')
 const HEAD = 'a'.repeat(40)
@@ -18,7 +18,8 @@ const EDGE = CFG + '/pr-reconcile/.edge'
 type Pull = { number: number; draft: boolean; head: string; base: string; labels: string[]; rollup: string | null }
 
 // The machine and GitHub as the reconciler sees them: files by path with their mtimes, the open pull requests of
-// acme/app, the quota the listing reports, and every engine run by its subcommand.
+// acme/app, the quota the listing reports, every engine run by its subcommand and every line the module said.
+// `gateFails` makes the gate fail; `panelFails` makes the listing fail with that text on stderr.
 function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string>; remaining?: number; resetAt?: string } = {}) {
   const files = new Map<string, { text: string; mtime: number }>()
   const dirs = new Map<string, number>()
@@ -34,12 +35,18 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     remaining: over.remaining ?? 4000, resetAt: over.resetAt ?? '2026-11-19T11:00:00Z',
     runs: [] as string[],
     labelled: [] as string[],
+    said: [] as string[],
+    gateFails: false,
+    panelFails: undefined as string | undefined,
   }
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'session-r' }))
   on('tool.register', () => ({ value: undefined }))
   on('command.register', () => ({ value: undefined }))
-  on('ui.log', () => ({ value: undefined }))
+  on('ui.log', (_$, e) => {
+    state.said.push(e.text)
+    return { value: undefined }
+  })
   on('env.get', (_$, e) => ({ value: ({ CLAUDE_CONFIG_DIR: CFG, CLAUDE_PLUGIN_DATA: '/data/github' } as Record<string, string>)[e.name] }))
   on('fs.read', (_$, e) => (files.has(e.path) ? { value: files.get(e.path)?.text } : { deny: 'ENOENT ' + e.path }))
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) || dirs.has(e.path) }))
@@ -63,7 +70,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
   })
   on('process.run', (_$, e: NounEvents['process.run']) => {
     const argv = e.argv
-    const done = (stdout = '', exitCode = 0) => ({ value: { exitCode, stdout, stderr: exitCode === 0 ? '' : 'refused' } })
+    const done = (stdout = '', exitCode = 0, stderr = 'refused') => ({ value: { exitCode, stdout, stderr: exitCode === 0 ? '' : stderr } })
     if (argv[0] === 'sh') {
       const lock = String(argv[argv.length - 1])
       if (files.has(lock)) return done('', 1)
@@ -86,9 +93,11 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     const command = String(request['command'] ?? '')
     state.runs.push(command + (args['head-only'] ? ' head' : '') + (args['state'] ? ' ' + String(args['state']) : ''))
     if (command === 'pr-panel') {
+      if (state.panelFails !== undefined) return done('', 1, state.panelFails)
       return done(JSON.stringify({ rows: state.pulls, rate: { remaining: state.remaining, resetAt: state.resetAt, cost: 1 } }))
     }
     const pull = state.pulls.find((p) => p.number === Number(args['pr']))
+    if (command === 'pr-gate' && state.gateFails) return done('', 1, 'gh: HTTP 502')
     if (command === 'pr-gate' && pull) {
       return done(JSON.stringify({
         repo: 'acme/app', pr: pull.number, state: 'open', draft: pull.draft, head: pull.head, labels: pull.labels, commits: 1, base: pull.base, stacked: false,
@@ -219,4 +228,54 @@ test('a pull request no longer listed open loses its reading', async ($, on) => 
   state.pulls = []
   await beat(clock)
   expect(files.has(READING)).toBe(false)
+})
+
+test('no more than GATES_PER_TICK gates are read at one beat, the others at the next', async ($, on) => {
+  const pulls = [1, 2, 3, 4, 5, 6].map((number) => ({ number, draft: false, head: HEAD, base: 'main', labels: ['Not Ready'], rollup: 'SUCCESS' }))
+  const { clock, state } = await started($, on, { pulls })
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(GATES_PER_TICK)
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(6)
+})
+
+test('a gate that failed is not tried again on the same fingerprint before RETRY_MS, said once', async ($, on) => {
+  const { clock, state } = await started($, on)
+  state.gateFails = true
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(1)
+  await beat(clock, RETRY_MS / TICK_MS - 1)
+  expect(count(state.runs, 'pr-gate')).toBe(1)
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(2)
+  expect(state.said.filter((line) => line.includes('HTTP 502'))).toHaveLength(1)
+  expect(state.labelled).toEqual([])
+})
+
+test('a listing refused for the rate limit lists nothing more for QUOTA_WAIT_MS, said once', async ($, on) => {
+  const { clock, state, files } = await started($, on)
+  state.panelFails = 'gh: API rate limit exceeded'
+  await beat(clock, QUOTA_WAIT_MS / TICK_MS)
+  expect(count(state.runs, 'pr-panel')).toBe(1)
+  expect(state.said.filter((line) => line.includes('could not list acme/app: gh: API rate limit exceeded'))).toHaveLength(1)
+  expect(files.has(READING)).toBe(false)
+  state.panelFails = undefined
+  await beat(clock)
+  expect(count(state.runs, 'pr-panel')).toBe(2)
+  expect(files.has(READING)).toBe(true)
+})
+
+test('a listing that fails keeps the rows last listed: a record written at the head still reads the gate', async ($, on) => {
+  const { clock, state, put, files } = await started($, on)
+  await beat(clock)
+  state.panelFails = 'gh: HTTP 502'
+  await beat(clock)
+  expect(count(state.runs, 'pr-panel')).toBe(2)
+  expect(files.has(READING)).toBe(true)
+  const gates = count(state.runs, 'pr-gate')
+  put(RECORDS + '/acme/app/' + HEAD + '/e2e.y.json', '{}', T0 + 2 * TICK_MS)
+  await beat(clock)
+  expect(count(state.runs, 'pr-panel')).toBe(2)
+  expect(count(state.runs, 'pr-gate')).toBe(gates + 1)
+  expect(state.said.filter((line) => line.includes('could not list acme/app'))).toHaveLength(1)
 })
