@@ -6557,6 +6557,10 @@ ia.terminal = lambda *a, **k: fake
 ia.time.sleep = lambda s: None
 ia.host_cli_on = lambda t: "4242"
 ia.wait_gone = lambda t, timeout=None: "4242" if scenario == "survivor" else None
+# No host identity: the close's proof is wait_gone's, stubbed above. Left real, host_identity
+# reads the stub's pid 4242 in the machine's own process table, and a runner that holds a
+# process of that number takes the close through a real host and its proof, not the stub's.
+ia.host_identity = lambda t: None
 out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
