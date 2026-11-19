@@ -97,8 +97,8 @@ check_status "no scope file at all exits 10" 10 pfs
 echo "== skills =="
 for skill in feature phase check close prepare; do
   doc="$ROOT/skills/$skill/SKILL.md"
-  # Every guard below reads this file. A missing document answers all eight of them
-  # with an empty string, which is what six of them expect from a correct one.
+  # Every guard below reads this file. A missing document answers them with an empty
+  # string, which is what the guards expecting no match take from a correct one.
   check "$skill document exists" "1" "$([ -f "$doc" ] && echo 1 || echo 0)"
   check "$skill frontmatter names itself" "$skill" "$(awk '/^name:/{print $2; exit}' "$doc" 2>/dev/null)"
   check "$skill reaches no other plugin's cache" "" "$(grep -o 'plugins/cache' "$doc" 2>/dev/null || true)"
@@ -182,8 +182,8 @@ done)
 check "every skill reference names something real" "" "$phantoms"
 
 # A heading inside a fence is content the reader is shown, not a section of the
-# document: this one shows the verdict table. Left uncounted, it moves every line
-# after it into a section that does not exist. A fence opens on three or more
+# document. Left uncounted, it moves every line after it into a section that does not
+# exist. A fence opens on three or more
 # backticks and closes on at least as many.
 FENCE_TRACK='function bt(  c) { c = 0; while (substr($0, c + 1, 1) == "`") c++; return c }
 /^```/ { n = bt(); if (!f) { f = 1; fence = n } else if (n >= fence) { f = 0 } next }'
