@@ -50,6 +50,8 @@ type Over = {
   // The github plugin's `pr-gate` the module runs at its tick: what it prints for a pull request (null: it fails), and whether the plugin is installed.
   gate?: Record<number, string | null>
   githubMissing?: boolean
+  // `draft-guard.sh`, run on a draft's failed checks: the names it prints for a pull request (the ones that are no guard); null: it fails.
+  guards?: Record<number, string | null>
 }
 
 // The orchestrator s-orch (its record registered, owned), the agent s-agent on /dev/ttys005 launched for it.
@@ -71,6 +73,7 @@ function fake(over: Over = {}) {
   const logged: string[] = []
   const runs: string[][] = []
   const gateRuns: string[][] = []
+  const guardRuns: { argv: string[]; stdin: string }[] = []
   const reportsTo = over.reportsTo === undefined ? `${ORCH} [a1b2c3]` : over.reportsTo
   let listed = over.launcher
   const dollar = hostOf({
@@ -93,7 +96,7 @@ function fake(over: Over = {}) {
         .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 1, isLink: false, mtimeMs: 0 })),
     },
     process: {
-      run: async (argv: readonly string[]) => {
+      run: async (argv: readonly string[], init?: { stdin?: string }) => {
         const log = logLineOf(argv)
         if (log !== null) { logged.push(log); return { exitCode: 0, stdout: '', stderr: '' } }
         runs.push([...argv])
@@ -104,6 +107,11 @@ function fake(over: Over = {}) {
           if (over.closeFails) return { exitCode: 1, stdout: '', stderr: `ERROR: close: refused: the window on ${argv[4]} is named 'Other'` }
           listed = (listed ?? '').split('\n').filter(line => !line.includes(` | ${argv[4]} | `)).join('\n')
           return { exitCode: 0, stdout: '', stderr: '' }
+        }
+        if (argv[0] === 'bash' && argv[1] === '/plugins/orch/skills/orchestrator/scripts/draft-guard.sh') {
+          guardRuns.push({ argv: [...argv], stdin: init?.stdin ?? '' })
+          const said = over.guards?.[Number(argv[3])]
+          return said === undefined || said === null ? { exitCode: 5, stdout: '', stderr: 'draft-guard: gh failed' } : { exitCode: 0, stdout: said, stderr: '' }
         }
         if (argv[0] === 'python3' && argv[1] === '/plugins/github/engine/gh.py') {
           gateRuns.push([...argv])
@@ -121,7 +129,7 @@ function fake(over: Over = {}) {
       },
     },
   })
-  return { dollar, files, logged, runs, gateRuns }
+  return { dollar, files, logged, runs, gateRuns, guardRuns }
 }
 
 type World = Host<Noun>
@@ -996,12 +1004,37 @@ test('a pending or green check, or a head with no check, tells nothing', async (
   }
 })
 
-test('a failing head the gate has no agent to tell about says so; a draft is neither read nor told', async () => {
+test('a failing head with no agent on its pull request says so', async () => {
   const alone = checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)']) }, AT_A, { launcher: '' })
   expect((await prWake(alone.dollar, new Set(), T0)).lines[0]).toEqual("[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4) ; personne n'y travaille, mets-y un agent.")
-  const draft = checked({ 17: gateJson('FAILURE', AT_A, ['guard']) }, AT_A, {}, true)
-  expect((await prWake(draft.dollar, new Set(), T0)).lines).toEqual([])
-  expect(draft.gateRuns).toEqual([])
+})
+
+test('a draft is read and told like any pull request, its failed checks without its draft guards, classified once per head', async () => {
+  const gate = gateJson('FAILURE', AT_A, ['tests (8.4)', 'draft guard'])
+  const draft = checked({ 17: gate }, AT_A, { guards: { 17: 'tests (8.4)\n' } }, true)
+  const told = new Set<string>()
+  expect((await prWake(draft.dollar, told, T0)).lines).toEqual(['[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4) ; dis-le à son agent Agent: p17 (session s-p17).'])
+  expect(draft.guardRuns).toEqual([{ argv: ['bash', '/plugins/orch/skills/orchestrator/scripts/draft-guard.sh', 'acme/app', '17'], stdin: gate }])
+  expect((await prWake(draft.dollar, told, T0 + 60_000)).lines).toEqual([])
+  expect(draft.guardRuns).toHaveLength(1)
+})
+
+test('a draft whose only failed check is a draft guard is told nothing, and not classified again at that head', async () => {
+  const draft = checked({ 17: gateJson('FAILURE', AT_A, ['draft guard']) }, AT_A, { guards: { 17: '' } }, true)
+  const told = new Set<string>()
+  expect((await prWake(draft.dollar, told, T0)).lines).toEqual([])
+  expect((await prWake(draft.dollar, told, T0 + 60_000)).lines).toEqual([])
+  expect(draft.guardRuns).toHaveLength(1)
+  // The same failure on a pull request out of draft is no guard's: it is told.
+  const ready = checked({ 17: gateJson('FAILURE', AT_A, ['draft guard']) }, AT_A, { guards: { 17: '' } })
+  expect((await prWake(ready.dollar, new Set(), T0)).lines).toHaveLength(1)
+  expect(ready.guardRuns).toEqual([])
+})
+
+test('a draft whose guards cannot be classified keeps every failed check: a red is reported, never lost', async () => {
+  const draft = checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)', 'draft guard']) }, AT_A, { guards: { 17: null } }, true)
+  expect((await prWake(draft.dollar, new Set(), T0)).lines).toEqual(['[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4), draft guard ; dis-le à son agent Agent: p17 (session s-p17).'])
+  expect(draft.logged.some(l => l.includes('draft guards of acme/app#17 not classified: draft-guard: gh failed'))).toBe(true)
 })
 
 test('a reading already kept as a verdict at the head is told without any new read; one of another head is read again', async () => {

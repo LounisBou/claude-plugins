@@ -21,7 +21,7 @@ import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldR
 import { agentLine, closeFailedLine, holdsOf } from './ready-agent.ts'
 import { closeAgent, closeFacts, type CloseFacts as CloseNow, type ToClose } from './close-agent.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
-import { gateArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
+import { draftGuardArgv, gateArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
 import { ciGatePath } from '../core/orchestration.ts'
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { GATE_CI } from './relay.ts'
@@ -332,6 +332,7 @@ const conflictKey = (key: string, pr: FilePr): string => `${key} conflict ${pr.s
 // The gate's reading of a pull request is refreshed at most this often, each read bound by CI_READ_MS.
 export const CI_REFRESH_MS = 5 * 60_000
 const CI_READ_MS = 15_000
+const CI_GUARD_MS = 30_000
 // The gate makes about five forge reads: no more pull requests than this are read at one tick, the others at the next.
 const CI_READS_PER_TICK = 4
 
@@ -358,7 +359,7 @@ async function githubRoot($: Held): Promise<string | undefined> {
  * The gate's reading kept for each open pull request of the orchestration, refreshed when it is missing, speaks of another
  * head, or is not yet a verdict (the same `pr-gate` ci-watch reads, its answer kept in the same file): at most once per
  * CI_REFRESH_MS a pull request (`reads`, when each was tried, a failed try included), every read at once and bound.
- * A pull request whose reading is a verdict at its head is never read again; a draft is left out (a draft guard fails on purpose).
+ * A pull request whose reading is a verdict at its head is never read again.
  */
 async function refreshGates($: Held, open: readonly FilePr[], reads: Map<string, number>, now: number): Promise<void> {
   const state = await stateDir($)
@@ -368,7 +369,7 @@ async function refreshGates($: Held, open: readonly FilePr[], reads: Map<string,
   for (const pr of open) {
     const key = prKey(pr.repo, pr.pr)
     const last = reads.get(key)
-    if (due.length >= CI_READS_PER_TICK || pr.draft || (last !== undefined && now - last < CI_REFRESH_MS) || isVerdict(await keptGateOf($, state, pr), pr)) continue
+    if (due.length >= CI_READS_PER_TICK || (last !== undefined && now - last < CI_REFRESH_MS) || isVerdict(await keptGateOf($, state, pr), pr)) continue
     reads.set(key, now)
     due.push(pr)
   }
@@ -387,6 +388,20 @@ async function refreshGates($: Held, open: readonly FilePr[], reads: Map<string,
       await logLine($, 'ledger', `ci gate of ${prKey(pr.repo, pr.pr)} not read: ${messageOf(err)}`)
     }
   }))
+}
+
+// A draft's failed checks without its draft guards (a job that fails on purpose while the pull request is a draft), by
+// `draft-guard.sh`, the classification `ci-watch` reads too. A classification that cannot be read keeps every failed check:
+// a red is reported, never lost.
+async function withoutGuards($: Held, gate: GateCi, pr: FilePr): Promise<readonly string[]> {
+  try {
+    const ran = await $.process.run(draftGuardArgv($.plugin.root, pr.repo, String(pr.pr)), { stdin: gate.raw, timeoutMs: CI_GUARD_MS })
+    if (ran.exitCode !== 0) throw new Error(ran.stderr.trim().split('\n')[0] || `exit ${ran.exitCode}`)
+    return ran.stdout.split('\n').map(name => name.trim()).filter(name => name !== '')
+  } catch (err) {
+    await logLine($, 'ledger', `draft guards of ${prKey(pr.repo, pr.pr)} not classified: ${messageOf(err)}`)
+    return gate.failed
+  }
 }
 
 // The checks a line names: the first few, the rest counted.
@@ -411,6 +426,8 @@ export function ciFailingLine(c: { repo: string; pr: number; head: string; faile
 
 // The key a failing check is told under: once per head.
 const ciFailingKey = (key: string, pr: FilePr): string => `${key} ci-failing ${pr.sha}`
+// The key of a draft's failure that was only its draft guards, decided once per head: it is told nothing, and read again as a pull request out of draft.
+const ciGuardKey = (key: string, pr: FilePr): string => `${key} ci-guard ${pr.sha}`
 
 // The key an anomaly is told under: by its cause, so one told without an agent is told again on turning conflicting.
 const anomalyKey = (u: Unattended): string => u.conflict ? `${prKey(u.repo, u.pr)} anomaly conflict` : prKey(u.repo, u.pr)
@@ -462,10 +479,15 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   const open = [...reading.forge.values()].filter(pr => pr.state === 'OPEN' && pr.sha !== '')
   await refreshGates($, open, gateReads, now)
   const state = await stateDir($)
-  const failing: { pr: FilePr; gate: GateCi }[] = []
+  const failing: { pr: FilePr; gate: GateCi; names: readonly string[] }[] = []
   for (const pr of open) {
     const gate = await keptGateOf($, state, pr)
-    if (!pr.draft && atHead(gate, pr) && GATE_CI.get(gate.result) === 'failing') failing.push({ pr, gate })
+    if (!atHead(gate, pr) || GATE_CI.get(gate.result) !== 'failing') continue
+    const key = prKey(pr.repo, pr.pr)
+    if (told.has(ciFailingKey(key, pr)) || (pr.draft && told.has(ciGuardKey(key, pr)))) continue
+    const names = pr.draft ? await withoutGuards($, gate, pr) : gate.failed
+    if (names.length > 0 || !pr.draft) failing.push({ pr, gate, names })
+    else told.add(ciGuardKey(key, pr))
   }
   // A file a session of an earlier version refreshed reads no base: what was told of the head stays, whatever its base head.
   const unmergedKeys = unmerged.flatMap(([key, pr]) => pr.baseSha !== undefined ? [conflictKey(key, pr)]
@@ -475,7 +497,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   const anomalyKeys = anomalies.flatMap(u => reading.forge.get(prKey(u.repo, u.pr))?.mergeable === 'MERGEABLE'
     ? [prKey(u.repo, u.pr)] : [prKey(u.repo, u.pr), `${prKey(u.repo, u.pr)} anomaly conflict`])
   const current = new Set([...anomalyKeys, ...reading.ended.flatMap(e => [`${prKey(e.line.repo, e.line.pr)} ended`, `${prKey(e.line.repo, e.line.pr)} ended refused`]),
-    ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...unmergedKeys, ...open.map(pr => ciFailingKey(prKey(pr.repo, pr.pr), pr))])
+    ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...unmergedKeys, ...open.flatMap(pr => [ciFailingKey(prKey(pr.repo, pr.pr), pr), ciGuardKey(prKey(pr.repo, pr.pr), pr)])])
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
@@ -558,13 +580,13 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     const agent = line === undefined ? undefined : agentsOf(line).find(name => reading.live.has(name))
     lines.push(conflictLine({ repo: pr.repo, pr: pr.pr, base: pr.base ?? '', agent, session: agent === undefined ? undefined : await sessionOf($, agent) }))
   }
-  for (const { pr, gate } of failing) {
+  for (const { pr, names } of failing) {
     const key = prKey(pr.repo, pr.pr)
     if (told.has(ciFailingKey(key, pr))) continue
     told.add(ciFailingKey(key, pr))
     const line = reading.kept.find(kept => prKey(kept.repo, kept.pr) === key)
     const agent = line === undefined ? undefined : agentsOf(line).find(name => reading.live.has(name))
-    lines.push(ciFailingLine({ repo: pr.repo, pr: pr.pr, head: pr.sha, failed: gate.failed, agent, session: agent === undefined ? undefined : await sessionOf($, agent) }))
+    lines.push(ciFailingLine({ repo: pr.repo, pr: pr.pr, head: pr.sha, failed: names, agent, session: agent === undefined ? undefined : await sessionOf($, agent) }))
   }
   for (const u of anomalies) {
     if (told.has(anomalyKey(u))) continue

@@ -45,3 +45,11 @@ export function parseGate(stdout: string): GateCi | null {
 export function gateArgv(root: string, repo: string, pr: string): [string, ...string[]] {
   return ['python3', `${root.replace(/\/+$/, '')}/engine/gh.py`, '--repo', repo, 'pr-gate', pr, '--json']
 }
+
+/**
+ * The command that names, of a draft's failing checks (its `pr-gate` answer on stdin), those that are no draft guard, one a
+ * line: `draft-guard.sh` of the orchestrator installed at `root`, the one classification `ci-watch` reads too.
+ */
+export function draftGuardArgv(root: string, repo: string, pr: string): [string, ...string[]] {
+  return ['bash', `${root.replace(/\/+$/, '')}/skills/orchestrator/scripts/draft-guard.sh`, repo, pr]
+}
