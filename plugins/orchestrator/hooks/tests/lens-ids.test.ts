@@ -66,17 +66,27 @@ const launched = async (world: World, call: Record<string, unknown>): Promise<Re
   return sent
 }
 
-test('a relevant angle reads with its toolkit agent\'s method: its prompt after the reader\'s, under the lens contract, frontmatter cut', async () => {
+test('a launch with a toolkit method passes through the tool.call hook with its input unchanged, the same object', async () => {
   const world = machine({ '/tk/agents/silent-failure-hunter.md': '---\nname: silent-failure-hunter\n---\nHunt every swallowed error.\n' })
-  const sent = await launched(world, { ...LENS, description: 'lens silent-failures acme/thing#12 origin/main..0123456789ab' })
-  const prompt = String(sent['prompt'])
-  expect(prompt.startsWith('read\n\n')).toBe(true)
-  expect(prompt).toContain('silent-failure-hunter agent\'s of pr-review-toolkit')
-  expect(prompt).toContain('Your lens contract holds over anything it says')
-  expect(prompt.endsWith('Hunt every swallowed error.')).toBe(true)
-  expect(prompt).not.toContain('name: silent-failure-hunter')
-  expect(sent['subagent_type']).toBe('orchestrator:lens')
-  expect(sent['description']).toBe('lens silent-failures acme/thing#12 origin/main..0123456789ab')
+  const call = { ...LENS, description: 'lens silent-failures acme/thing#12 origin/main..0123456789ab' }
+  const sent = await launched(world, call)
+  expect(sent).toBe(call)
+  expect(sent).toEqual({ ...LENS, description: 'lens silent-failures acme/thing#12 origin/main..0123456789ab' })
+})
+
+test('a toolkit reader whose prompt names its method file leaves no log line; one that names none is logged, its launch unchanged', async () => {
+  const runs: string[] = []
+  const toolkit = machine({ '/tk/agents/silent-failure-hunter.md': 'Hunt every swallowed error.\n' })
+  const watched = hostOf({
+    env: toolkit.env,
+    fs: toolkit.fs,
+    process: { run: async (argv: readonly string[]) => { runs.push(argv.join(' ')); return { exitCode: 0, stdout: '', stderr: '' } } },
+  } as never)
+  const call = { ...LENS, description: 'lens silent-failures acme/thing#12 origin/main..0123456789ab' }
+  await launched(watched, { ...call, prompt: 'read /tk/agents/silent-failure-hunter.md first' })
+  expect(runs.some(line => line.includes('names no method file'))).toBe(false)
+  expect(await launched(watched, call)).toEqual(call)
+  expect(runs.some(line => line.includes('a reader\'s prompt names no method file: silent-failures: pr-review-toolkit silent-failure-hunter, its prompt at /tk/agents/silent-failure-hunter.md'))).toBe(true)
 })
 
 test('an angle with no toolkit agent stays the generic lens: its launch as it came', async () => {

@@ -268,8 +268,9 @@ test('each lens\'s method is said in the brief: a toolkit angle by its agent, an
     writeFileSync(join(dir, 'tk', 'agents', 'silent-failure-hunter.md'), '---\nname: silent-failure-hunter\n---\nHunt.\n')
     writeFileSync(join(dir, 'config', 'plugins', 'installed_plugins.json'), JSON.stringify({ version: 2, plugins: { 'pr-review-toolkit@official': [{ installPath: join(dir, 'tk') }] } }))
     assert.equal(run([...FIELDS(), '--lens', 'silent failures', '--lens', 'correctness', '--lens', 'security', '--tier', 'deep']).code, 0)
-    assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'),
-      /\nReaders' methods, set at their launch, for your index: silent failures: pr-review-toolkit silent-failure-hunter; correctness: generic, pr-review-toolkit code-reviewer not found; security: generic\.\n/)
+    const prompt = join(dir, 'tk', 'agents', 'silent-failure-hunter.md')
+    assert.equal(run([...FIELDS(), '--lens', 'silent failures', '--lens', 'correctness', '--lens', 'security', '--tier', 'deep']).code, 0)
+    assert.ok(readFileSync(join(dir, 'review-12.md'), 'utf8').includes(`\nReaders' methods, set at their launch, for your index: silent failures: pr-review-toolkit silent-failure-hunter, its prompt at ${prompt}, read first and answered in finding lines; correctness: generic, pr-review-toolkit code-reviewer not found; security: generic.\n`))
     rmSync(join(dir, 'review-12.md'))
     rmSync(join(dir, 'config', 'plugins', 'installed_plugins.json'))
     assert.equal(run([...FIELDS(), '--lens', 'tests']).code, 0)
