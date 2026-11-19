@@ -11,6 +11,7 @@ import { isSpawned } from '../core/env.ts'
 import { answerOf, fieldsOf, reasonOf, type Host, type Events, type On } from '../core/host.ts'
 import { findingEvent } from '../core/learning.ts'
 import { REVIEW_ROUNDS, reviewRounds } from '../core/readiness.ts'
+import { wakeReconciler } from '../core/reconcile-wake.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
 import { journal, noteSubject, notedSubject, observed, resetSubject } from './observe.ts'
 import { REPORT_REQUEST, agentText, carriesRequest, answerText, isBlocking, isRefusedRewrite, launchedAgent, passFindings, reportOf } from './report.ts'
@@ -327,7 +328,7 @@ const short = (head: string | undefined): string => head ? head.slice(0, 12) : '
 // whether the record is owed: a github call failed transiently and the write did not happen.
 // Never throws.
 // `found` takes the repository and the pull request once they are known, for the verdict line.
-async function recordReview($: Host<'tool' | 'process'>, exit: string, isRetry: boolean, found: { repo?: string; pr?: number } = {}): Promise<{ line: string | null; isOwed: boolean }> {
+async function recordReview($: Host<'tool' | 'process' | 'env' | 'fs'>, exit: string, isRetry: boolean, found: { repo?: string; pr?: number } = {}): Promise<{ line: string | null; isOwed: boolean }> {
   const outcome = verdict(exit)
   if (!outcome) return { line: null, isOwed: false }
   // A pass whose findings were never accepted read nothing: its count is no verdict.
@@ -369,6 +370,7 @@ async function recordReview($: Host<'tool' | 'process'>, exit: string, isRetry: 
     found.pr = pr
     const written = await ask({ tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail, dir })
     if (isFailed(written)) return none(textOf(written) || 'refused')
+    await wakeReconciler($)
     return { line: 'record: ' + textOf(written), isOwed: false }
   } catch (err) {
     return none(reasonOf(err))

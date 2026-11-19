@@ -635,6 +635,41 @@ test("the github tool's error text is shown verbatim", async ($, on) => {
   expect(String(out.result)).toContain('record: none — record.py: bad head')
 })
 
+test('a record written touches the reconciler\'s edge marker, so the readings are listed at once', async ($, on) => {
+  wireRecord(on, { records: [], prCalls: 0 })
+  const touched: string[] = []
+  on('env.get', (_$, e) => ({ value: e.name === 'HOME' ? '/home/op' : undefined }))
+  on('fs.write', (_$, e) => {
+    touched.push(String(e.path))
+    return { value: undefined }
+  })
+  const out = await cleanLoop($)
+  expect(String(out.result)).toContain('record: ' + WRITTEN)
+  expect(touched.filter((path) => path.endsWith('/.edge'))).toEqual(['/home/op/.claude/pr-reconcile/.edge'])
+})
+
+test('a record the github tool refuses touches no edge marker', async ($, on) => {
+  wireRecord(on, { records: [], prCalls: 0, recordAnswer: { deny: 'github: refused' } })
+  const touched: string[] = []
+  on('env.get', (_$, e) => ({ value: e.name === 'HOME' ? '/home/op' : undefined }))
+  on('fs.write', (_$, e) => {
+    touched.push(String(e.path))
+    return { value: undefined }
+  })
+  await cleanLoop($)
+  expect(touched.filter((path) => path.endsWith('/.edge'))).toEqual([])
+})
+
+test('a record whose edge marker cannot be written is still the answer, the record\'s path', async ($, on) => {
+  wireRecord(on, { records: [], prCalls: 0 })
+  on('env.get', (_$, e) => ({ value: e.name === 'HOME' ? '/home/op' : undefined }))
+  on('fs.write', () => {
+    throw new Error('ENOSPC: no space left')
+  })
+  const out = await cleanLoop($)
+  expect(String(out.result)).toContain('record: ' + WRITTEN)
+})
+
 test('a github plugin without the record tool leaves no record and says so', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0, listed: ['mcp__github__gh'] }
   wireRecord(on, stubs)
