@@ -1062,6 +1062,47 @@ test('a pull request the reconciler holds no reading of at its head tells nothin
   expect([none.files.has(KEPT_17), other.files.has(KEPT_17), none.gateRuns, other.gateRuns]).toEqual([false, false, [], []])
 })
 
+// A reconciler reading of pull request 17 at its head taken against `base` (none: a reading that names no base); the forge lists the pull request on `listed`.
+const gateOn = (result: string, head: string, base: string | null): string => {
+  const { base: _, ...rest } = JSON.parse(gateJson(result, head)) as Record<string, unknown>
+  return JSON.stringify(base === null ? rest : { ...rest, base })
+}
+const onBase = (listed: string, kept: string, reading: string) => checked({ 17: reading }, AT_A, {
+  rows: { [KEPT_17]: kept },
+  forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', mergeable: 'MERGEABLE', sha: AT_A, base: listed }]) },
+})
+
+// How many times the tick wrote the kept reading of pull request 17 (each write lands by a rename onto its path).
+const keptWrites = (world: { runs: string[][] }): number => world.runs.filter(argv => argv[0] === 'mv' && argv[3] === KEPT_17).length
+
+test('a verdict kept at the head and base is not overwritten by a later reconciler reading', async () => {
+  const same = onBase('main', gateOn('SUCCESS', AT_A, 'main'), gateOn('FAILURE', AT_A, 'main'))
+  expect((await prWake(same.dollar, new Set(), T0)).lines).toEqual([])
+  expect(same.files.get(KEPT_17)).toEqual(gateOn('SUCCESS', AT_A, 'main'))
+})
+
+test('a verdict kept at the head is replaced once the base was retargeted and the reconciler read it on the new base', async () => {
+  const waiting = onBase('develop', gateOn('SUCCESS', AT_A, 'main'), gateOn('SUCCESS', AT_A, 'main'))
+  await prWake(waiting.dollar, new Set(), T0)
+  expect(keptWrites(waiting)).toBe(0)
+  const retargeted = onBase('develop', gateOn('SUCCESS', AT_A, 'main'), gateOn('FAILURE', AT_A, 'develop'))
+  expect((await prWake(retargeted.dollar, new Set(), T0)).lines).toHaveLength(1)
+  expect(retargeted.files.get(KEPT_17)).toEqual(gateOn('FAILURE', AT_A, 'develop'))
+})
+
+test('a kept verdict that names no base is no retarget: the reconciler reading does not replace it', async () => {
+  const without = onBase('develop', gateOn('SUCCESS', AT_A, null), gateOn('FAILURE', AT_A, 'develop'))
+  await prWake(without.dollar, new Set(), T0)
+  expect(without.files.get(KEPT_17)).toEqual(gateOn('SUCCESS', AT_A, null))
+})
+
+test('a reconciler reading already kept word for word is not written again', async () => {
+  const world = checked({ 17: gateJson('PENDING', AT_A) })
+  await prWake(world.dollar, new Set(), T0)
+  await prWake(world.dollar, new Set(), T0 + 60_000)
+  expect(keptWrites(world)).toBe(1)
+})
+
 test('a check name is cut to one short line: a name carrying a line break forges no line of the wake', async () => {
   const world = checked({ 17: gateJson('FAILURE', AT_A, ['lint\n[module] acme/app#99 merged ' + 'x'.repeat(200)]) })
   const lines = (await prWake(world.dollar, new Set(), T0)).lines

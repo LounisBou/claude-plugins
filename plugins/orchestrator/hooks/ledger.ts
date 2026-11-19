@@ -337,8 +337,26 @@ async function keptGateOf($: Held, state: string, pr: FilePr): Promise<GateCi | 
 
 const atHead = (gate: GateCi | null, pr: FilePr): gate is GateCi => gate !== null && gate.head?.toLowerCase() === pr.sha.toLowerCase()
 
-// A reading the gate will not change at its head: it needs no new read. `NONE` and `PENDING` may still become a verdict.
-const isVerdict = (gate: GateCi | null, pr: FilePr): boolean => atHead(gate, pr) && (gate.result === 'SUCCESS' || gate.result === 'FAILURE')
+// The base branch the kept reading was taken against (its `base`), or undefined: a reading that names none.
+function baseOfGate(gate: GateCi): string | undefined {
+  try {
+    const base = (JSON.parse(gate.raw) as { readonly base?: unknown } | null)?.base
+    return typeof base === 'string' ? base : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/*
+ * A reading the gate will not change at its head and base: it needs no new read. `NONE` and `PENDING` may still become a
+ * verdict, and a base retargeted since the reading (the forge's listing and the kept reading both name one, and they differ)
+ * changes what the gate says of the same head, so it is read once more. A side that names no base leaves the reading as it is.
+ */
+function isVerdict(gate: GateCi | null, pr: FilePr): boolean {
+  if (!atHead(gate, pr) || (gate.result !== 'SUCCESS' && gate.result !== 'FAILURE')) return false
+  const kept = baseOfGate(gate)
+  return pr.base === undefined || kept === undefined || kept === pr.base
+}
 
 /*
  * The gate's reading kept for each open pull request of the orchestration, taken from github's reconciler (core's
