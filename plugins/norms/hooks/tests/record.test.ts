@@ -132,6 +132,26 @@ test('a record whose wake cannot write the edge marker is still written, and the
   expect(recordCalls(calls).length).toBe(1)
 })
 
+test('a record the github tool refuses touches no edge marker', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $, written } = setup({ record: { deny: 'github: refused' } }, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  await m.done($, { open: 0, fixed: 0, passed: 1 })
+  expect(written['/home/u/.claude/pr-reconcile/.edge']).toBeUndefined()
+})
+
+test('the wake marks the edge under CLAUDE_CONFIG_DIR when it is set', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $, written } = setup({}, {}, calls, { CLAUDE_CONFIG_DIR: '/cfg' })
+  const m = mounted()
+  await m.scope($)
+  await m.done($, { open: 0, fixed: 0, passed: 1 })
+  expect(written['/cfg/pr-reconcile/.edge']).toBe('\n')
+})
+
 test('the record names the checkout the check read, whatever the session\'s directory is by then', async () => {
   resetCache()
   const checked = setup()

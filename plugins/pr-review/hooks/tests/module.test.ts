@@ -660,6 +660,16 @@ test('a record the github tool refuses touches no edge marker', async ($, on) =>
   expect(touched.filter((path) => path.endsWith('/.edge'))).toEqual([])
 })
 
+test('a record whose edge marker cannot be written is still the answer, the record\'s path', async ($, on) => {
+  wireRecord(on, { records: [], prCalls: 0 })
+  on('env.get', (_$, e) => ({ value: e.name === 'HOME' ? '/home/op' : undefined }))
+  on('fs.write', () => {
+    throw new Error('ENOSPC: no space left')
+  })
+  const out = await cleanLoop($)
+  expect(String(out.result)).toContain('record: ' + WRITTEN)
+})
+
 test('a github plugin without the record tool leaves no record and says so', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0, listed: ['mcp__github__gh'] }
   wireRecord(on, stubs)

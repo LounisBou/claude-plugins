@@ -170,6 +170,14 @@ test('a verdict github refuses touches no edge marker', async () => {
   expect(edgesOf(written)).toEqual([])
 })
 
+test('a verdict whose edge marker cannot be written is still answered with its record', async () => {
+  const fx = fake('Orch: belt', { result: WRITTEN })
+  const dollar = { ...fx.dollar, fs: { ...fx.dollar.fs, write: async () => { throw new Error('ENOSPC: no space left') } } }
+  const out = await handler()(dollar, { pr: 128, verdict: 'pass', detail: 'read at 0123456' })
+  expect(out.result.split('\n')[0]).toBe(WRITTEN)
+  expect(out.isError).toBeUndefined()
+})
+
 test('a check plan touches no edge marker: it is no record', async () => {
   const fx = fake('Orch: belt', { result: WRITTEN })
   const { written, dollar } = writesOf(fx.dollar)
