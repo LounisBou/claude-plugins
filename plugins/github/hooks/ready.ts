@@ -904,14 +904,43 @@ export const STATUS_REFUSAL = 'github: commit statuses are posted by the github 
 
 // A commit status's write path, `…/statuses/<sha>`; the reads are `…/commits/<ref>/status(es)`, with no slash after.
 const STATUS_PATH = /\/statuses\//
-// What makes a call to it a write: a method that writes, or the fields, data or body that make gh api and curl post.
-const STATUS_WRITE = /(?:^|\s)(?:-X\s*|--request[=\s]|--method[=\s])['"]?(?:POST|PUT|PATCH)\b|(?:^|\s)(?:-f|-F|--field|--raw-field|--input|-d|--data(?:-raw|-binary|-urlencode)?|--json)(?=[\s=]|$)/i
-const STATUS_CLIENT = /\b(?:gh\s+api|curl|wget|http|https|xh)\b/
+// What makes a call to it a write: a method that writes, or the fields, data or body that make gh api, curl and wget post.
+const STATUS_WRITE = /(?:^|\s)(?:-X\s*|--request[=\s]|--method[=\s])['"]?(?:POST|PUT|PATCH)\b|(?:^|\s)(?:-f|-F|--field|--raw-field|--input|-d|--data(?:-raw|-binary|-urlencode|-ascii)?|--json|--form|--post-data|--post-file)(?=[\s=]|$)/i
+// The same written as one word, its value attached: `-fstate=success`, `-d@body.json`, `-XPOST`.
+const WRITE_WORD = /^(?:-[fF][^\s=]+=|-d.|-X(?:POST|PUT|PATCH)$|--(?:request|method)=(?:POST|PUT|PATCH)$)/i
+// httpie and xh write with a method word or with `key=value` / `key:=value` items.
+const HTTPIE_WRITE = /^(?:POST|PUT|PATCH|[\w.-]+:?=.*)$/i
+const STATUS_CLIENT = /\b(?:gh\s+api|gh\s+alias\s+set|curl|wget|http|https|xh)\b/
+const INTERPRETER = /^(?:python[\d.]*|node|deno|bun|ruby|perl)$/
+// The module's writer, by its file (a glob included) or its function.
+const FORGE_WRITER = /forge_(?:status|[*?[])|forge\.post\b/
+
+// Whether one simple command, quotes removed, posts a status: a client calling the statuses path to write, or an
+// interpreter given that path or the module's writer.
+function commandPostsStatus(argv: readonly string[]): boolean {
+  const [program = '', ...rest] = argv
+  const name = program.slice(program.lastIndexOf('/') + 1)
+  if (!rest.some((word) => STATUS_PATH.test(word))) return INTERPRETER.test(name) && rest.some((word) => FORGE_WRITER.test(word))
+  if (INTERPRETER.test(name)) return true
+  const words = rest.join(' ')
+  if (name === 'http' || name === 'https' || name === 'xh') return rest.some((word) => HTTPIE_WRITE.test(word)) || STATUS_WRITE.test(words)
+  const client = name === 'curl' || name === 'wget' || (name === 'gh' && (rest[0] === 'api' || (rest[0] === 'alias' && rest[1] === 'set')))
+  return client && (STATUS_WRITE.test(words) || rest.some((word) => WRITE_WORD.test(word)))
+}
 
 // Whether a Bash command line posts a commit status: it runs the module's writer, or calls the statuses API to write.
+// The text, then each simple command as the shell reads it: quotes removed, so `statu""ses` is statuses.
 export function postsStatus(line: string): boolean {
-  if (line.includes('forge_status.py') && !onlyReads(line)) return true
-  return STATUS_CLIENT.test(line) && STATUS_PATH.test(line) && STATUS_WRITE.test(line)
+  let commands: string[][] | undefined
+  try {
+    commands = simpleCommands(line)
+  } catch {
+    // A line the reader cannot read is judged on its text.
+  }
+  const words = commands?.flat() ?? []
+  if ((FORGE_WRITER.test(line) || words.some((word) => FORGE_WRITER.test(word))) && !onlyReads(line)) return true
+  if (STATUS_CLIENT.test(line) && STATUS_PATH.test(line) && STATUS_WRITE.test(line)) return true
+  return (commands ?? []).some(commandPostsStatus)
 }
 
 // The record kind a caller of mcp__github__record may write, by the plugin whose hook made the
