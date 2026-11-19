@@ -1,7 +1,7 @@
 // When a pull request needs no E2E record: files that hold no runtime, and a repository's standing exemption.
 import { expect, test } from 'claude-code/testing'
 import {
-  covers, exemptingLabels, expired, expiryLine, exemptionLine, isExpiryLine, exemptionPath, globMatches, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption,
+  covers, expired, expiryLine, exemptionLine, isExpiryLine, exemptionPath, globMatches, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption,
 } from './e2e-scope.ts'
 
 const VERSION_ONLY = '@@ -2,3 +2,3 @@\n   "name": "github",\n-  "version": "0.19.4",\n+  "version": "0.19.5",\n   "author": {'
@@ -109,14 +109,6 @@ test('a repository named with a part made of dots only is no repository, and has
     expect(parseExemption({ ...EXEMPTION, repo })).toBeUndefined()
   }
   for (const repo of ['acme/thing', 'o/.github', 'o/a..b', '.o/x']) expect(isRepoName(repo)).toBe(true)
-})
-
-test('the labels of a list an exemption in force names, without regard to case', () => {
-  const labelled = { ...EXEMPTION, labels: ['no-e2e'] }
-  expect(exemptingLabels(labelled, ['bug', 'No-E2E'])).toEqual(['No-E2E'])
-  expect(exemptingLabels(labelled, ['bug'])).toEqual([])
-  expect(exemptingLabels({ ...labelled, exempt: false }, ['no-e2e'])).toEqual([])
-  expect(exemptingLabels(undefined, ['no-e2e'])).toEqual([])
 })
 
 test('an expiry is an instant in UTC to the second, a real one', () => {

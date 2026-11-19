@@ -178,13 +178,6 @@ export function covers(exemption: Exemption, labels: readonly string[], files: r
   return files.every((file) => matched(file.filename) && (!file.previous_filename || matched(file.previous_filename)))
 }
 
-/** The labels of a list an exemption in force names: a session neither puts nor takes them off. */
-export function exemptingLabels(exemption: Exemption | undefined, labels: readonly string[]): string[] {
-  if (!exemption?.exempt) return []
-  const named = new Set(exemption.labels.map((label) => label.trim().toLowerCase()))
-  return labels.filter((label) => named.has(label.trim().toLowerCase()))
-}
-
 /** How the gate names the exemption that stands for a pull request's E2E. */
 export function exemptionLine(exemption: Exemption): string {
   const rules = [

@@ -59,7 +59,7 @@ section carries the order. `**Related PRs:**` lists the PRs truly linked to this
 batch, the origin of the bug, or a link of that strength. A follow-up PR, one that must come
 after this one, is never listed
 in Related PRs. Two PRs never depend on each other. English always. No workflow vocabulary.
-Every PR is opened as a draft, is never put back to draft, and leaves
+Every PR is opened as a draft and leaves
 draft only for its CI to run or to be merged. Outside auto-merge, leaving draft (a CI undraft aside) is the operator's,
 on GitHub after their review, and a merge needs their explicit word, given through this tool.
 A deployment needs its repository listed for its environment (`auto-deploy-set`).
@@ -80,7 +80,7 @@ A pull request that changes an interface carries screenshots of what it changes,
 desktop AND mobile on a project with a mobile version, above the four sections, as the
 block `image-upload --title` writes. Each title names the screen, the state shown, the
 screen size, and before or after when there is a pair (`Devices list, desktop 1440 px, after`).
-A PR without both is not ready. When
+When
 a visual is fixed after the merge, retake the screenshots and replace them on GitHub
 and Notion.
 
