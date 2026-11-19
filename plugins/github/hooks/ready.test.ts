@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, touchesRecords, onlyReads, deletes, deletesRecords,
+  bashActs, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, namesHead, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, touchesRecords, onlyReads, deletes, deletesRecords,
   recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove, stackedCi,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -168,6 +168,18 @@ test('a closed pull request and a moved head are named first', () => {
   expect(missingItems(gate({ state: 'closed' }), ALL)).toEqual(['the pull request is closed'])
   expect(missingItems(gate(), ALL, OTHER)).toEqual(['the head moved: ' + OTHER + ' given, ' + HEAD + ' on GitHub'])
   expect(missingItems(gate(), ALL, HEAD.toUpperCase())).toEqual([])
+})
+
+test('a sha naming the head by a prefix of 7 hex or more is accepted, a wrong or too short one is a moved head', () => {
+  for (const given of [HEAD.slice(0, 7), HEAD.slice(0, 12), HEAD.slice(0, 39), HEAD.slice(0, 7).toUpperCase()]) {
+    expect(missingItems(gate(), ALL, given)).toEqual([])
+  }
+  for (const given of [OTHER.slice(0, 7), HEAD.slice(0, 6), HEAD.slice(0, 6) + 'f', HEAD.slice(1, 8), HEAD + '0', 'zzzzzzz', OTHER]) {
+    expect(missingItems(gate(), ALL, given)).toEqual(['the head moved: ' + given + ' given, ' + HEAD + ' on GitHub'])
+  }
+  expect(namesHead(HEAD, HEAD)).toBe(true)
+  expect(namesHead(HEAD.slice(0, 7), HEAD)).toBe(true)
+  expect(namesHead(HEAD.slice(0, 6), HEAD)).toBe(false)
 })
 
 test('pr-gate\'s answer is read, a malformed one throws', () => {

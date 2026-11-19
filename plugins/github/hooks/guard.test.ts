@@ -534,6 +534,15 @@ test('a merge pinned to a head that moved is refused', async ($, on) => {
   expect(out.deny).toContain('the head moved: ' + MOVED + ' given, ' + HEAD + ' on GitHub')
 })
 
+test('a merge pinned by a short prefix of the head runs, pinned to the full head; a wrong prefix is refused', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/thing'] })
+  const out = await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD.slice(0, 7) }))
+  expect(out.deny).toBeUndefined()
+  expect(seen.runs.find((r) => r.command === 'pr-merge')?.args?.['sha']).toBe(HEAD)
+  const wrong = await $.tool.call(gh('pr-merge', { pr: 12, sha: MOVED.slice(0, 7) }))
+  expect(wrong.deny).toContain('the head moved: ' + MOVED.slice(0, 7) + ' given, ' + HEAD + ' on GitHub')
+})
+
 // A push between the gate's read and the merge must not merge a head nobody checked.
 test('a tool merge with no sha is pinned to the head the gate checked', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['acme/thing'] })

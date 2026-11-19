@@ -48,9 +48,8 @@ draft-time run skips its jobs again: push a new commit.
 `file-at-ref` returns `content` and `binary`: a file not valid UTF-8 has `binary` true and
 `content` in base64.
 
-`pr-merge --sha <full sha>` pins the verified head: GitHub refuses the merge if it moved. Take
-the sha (as for `--match-head-commit`) from `git rev-parse` or `headRefOid`, never a short form.
-Without one, the tool pins the head the gate checked; a shell merge must pin it.
+`pr-merge --sha <sha>` pins the verified head: GitHub refuses the merge if it moved. Without one,
+the tool pins the head the gate checked; a shell merge must pin it.
 A PR in a stack refuses the synchronous merge (403): `pr-merge` then uses the
 asynchronous merge endpoint, same method and `--sha`, and waits for the merge at most `GH_MERGE_WAIT` seconds
 (default 60), printing the merge commit sha, or exiting 3 with the request's uuid.

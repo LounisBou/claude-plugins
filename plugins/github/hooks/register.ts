@@ -1304,7 +1304,9 @@ function toolReady($: Mod, e: GhCall, act: Act) {
   // A merge the gate lets through is pinned to the head it checked: GitHub refuses it if that head moved.
   const heldAct = async (repo: string, pr: number, r: Readiness): Promise<string | undefined> => {
     const held = await gateHeld($, act.name, repo, pr, r, true)
-    if (!held && act.kind === 'merge' && r.gate && typeof e.args['sha'] !== 'string') e.args = { ...e.args, sha: r.gate.head }
+    // A sha the gate accepted as a prefix of the head reaches the tool as the full head, the only form it takes.
+    const given = e.args['sha']
+    if (!held && act.kind === 'merge' && r.gate && (typeof given !== 'string' || given.length < r.gate.head.length)) e.args = { ...e.args, sha: r.gate.head }
     return held?.refusal
   }
   return {
