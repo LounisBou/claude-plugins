@@ -18,6 +18,11 @@ export const GATES_PER_TICK = 4
 export const RETRY_MS = 300_000
 /** The times another machine may undo this one's label on a head before the reconciler stops moving that label there. */
 export const FLAP_UNDONE = 3
+/**
+ * A Not Ready this machine did not set is left this long to the other machine's records before Ready goes back over it:
+ * the time that machine takes to post what justifies it (a beat to settle, a beat to be listed).
+ */
+export const FOREIGN_WAIT_MS = 2 * TICK_MS
 /** A repository whose records directory changed within this is reconciled. */
 export const RECENT_MS = 30 * 24 * 3600 * 1000
 /** A lease runs this long; its holder renews it when less than LEASE_RENEW_MS is left. */
@@ -186,4 +191,40 @@ export function flapCheck(prev: Flap | undefined, head: string, move: LabelMove)
 export function flapWrote(prev: Flap | undefined, head: string, move: LabelMove): Flap {
   const again = prev?.head === head && prev.wrote === move
   return { head, wrote: move, undone: again ? prev.undone + 1 : 0, said: again ? prev.said : false }
+}
+
+/**
+ * The label a pull request carries at a head as this machine last saw it, whether this machine wrote it, and when it was
+ * first seen (ms). A label this machine did not write, or one of unknown origin, is another machine's.
+ */
+export type Seen = { head: string; label: LabelMove | undefined; own: boolean; since: number }
+
+/** Not Ready wins over Ready on a pull request carrying both, as the gate reads it. */
+function labelOf(labels: readonly string[]): LabelMove | undefined {
+  const named = labels.map((label) => label.toLowerCase())
+  if (named.includes('not ready')) return 'not-ready'
+  return named.includes('ready') ? 'ready' : undefined
+}
+
+/** What is kept once the gate read `labels` at `head` at `now`: the same label at the same head is the same sighting; another is one of another machine's. */
+export function seenLabel(prev: Seen | undefined, head: string, labels: readonly string[], now: number): Seen {
+  const label = labelOf(labels)
+  if (prev && prev.head === head && prev.label === label) return prev
+  return { head, label, own: false, since: now }
+}
+
+/** What is kept once this machine wrote `move` at `head` at `now`. */
+export function seenWrote(head: string, move: LabelMove, now: number): Seen {
+  return { head, label: move, own: true, since: now }
+}
+
+/**
+ * Until when Ready is held back, or undefined when it may go: it does not go over a Not Ready this machine did not set
+ * until the forge was read at least FOREIGN_WAIT_MS after that Not Ready was first seen (`listedAt`: the last listing, ms),
+ * whose statuses the gate then judges. Any other move goes at once.
+ */
+export function foreignHold(seen: Seen | undefined, move: LabelMove, listedAt: number | undefined): number | undefined {
+  if (move !== 'ready' || !seen || seen.label !== 'not-ready' || seen.own) return undefined
+  const until = seen.since + FOREIGN_WAIT_MS
+  return listedAt !== undefined && listedAt >= until ? undefined : until
 }

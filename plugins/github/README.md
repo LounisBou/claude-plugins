@@ -98,6 +98,10 @@ it. `/github:doctor` then confirms everything is ready.
   copy, and posts what this machine holds newer, eight statuses a beat at most. The CI the gate, the reconciler and the
   pane's CI cell read leaves them out. Only `engine/forge_status.py` posts them: a session posting a status from the
   shell is refused (`github.status.write`).
+  A label never moves ahead of the copy that justifies it: a failure is posted at once, a move to `Ready` waits
+  for every copy of the head to reach the forge, a move to `Not Ready` for the failures'. `Ready` does not go
+  back over a `Not Ready` this machine did not set (or of unknown origin) before the forge was listed two beats
+  after it was first seen; the gate then decides as before.
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's quoted, dated words, and `auto-merge-list`
   prints the list (below).

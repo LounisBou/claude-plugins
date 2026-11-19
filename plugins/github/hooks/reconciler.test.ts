@@ -6,7 +6,7 @@ import { fieldsOf } from '../core/host.ts'
 import { parseReconcile } from '../core/pr-reconcile.ts'
 import { JOURNAL_EVERY_MS } from './register.ts'
 import { parseAuditEvent } from '../core/learning.ts'
-import { FLAP_UNDONE, GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
+import { FLAP_UNDONE, FOREIGN_WAIT_MS, GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
 import { POSTS_PER_TICK } from './forge-sync.ts'
 
 const T0 = Date.parse('2026-11-19T10:00:00Z')
@@ -57,6 +57,8 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     // Run inside the next label write, as a record written while the gate runs.
     duringReadiness: undefined as (() => void) | undefined,
     posted: [] as string[],
+    // What reached GitHub, in order: each status posted ('post <name> <state>') and each label written ('label <state>').
+    order: [] as string[],
     postFails: false,
     copied: [] as string[],
   }
@@ -113,6 +115,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     const flag = (name: string) => String(argv[argv.indexOf(name) + 1] ?? '')
     if (String(argv[1] ?? '').endsWith('/engine/forge_status.py')) {
       state.posted.push(flag('--what') + ' ' + flag('--head').slice(0, 1) + ' ' + flag('--description'))
+      if (!state.postFails) state.order.push('post ' + flag('--what') + ' ' + flag('--state'))
       return state.postFails ? done('', 1, 'error: cannot post: HTTP 403') : done('posted')
     }
     if (String(argv[1] ?? '').endsWith('/engine/record.py')) {
@@ -146,6 +149,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
       state.duringReadiness = undefined
       pull.labels = [...pull.labels.filter((l) => !['ready', 'not ready'].includes(l.toLowerCase())), args['state'] === 'ready' ? 'Ready' : 'Not Ready']
       state.labelled.push(pull.number + ' ' + String(args['state']))
+      state.order.push('label ' + String(args['state']))
       return done('ok')
     }
     return done('', 1)
@@ -617,4 +621,87 @@ test('a label write that fails counts no undo: the label is put back once the wr
   await clock.settle()
   expect(state.labelled).toHaveLength(2)
   expect(state.said.filter((line) => line.includes('put back'))).toHaveLength(0)
+})
+
+// A record this machine wrote at the first beat's instant, which that beat's listing finds younger than SETTLE_MS.
+const FRESH = new Date(T0 + TICK_MS).toISOString().replace(/\.\d+Z$/, 'Z')
+const freshRecord = (kind: string, result: string) => ({
+  [RECORDS + '/acme/app/' + HEAD + '/' + kind + '.a.json']:
+    JSON.stringify({ v: 1, repo: 'acme/app', pr: 7, head: HEAD, kind, result, producer: 'p-' + kind, detail: '', session: 's', at: FRESH }),
+})
+const readyPull = (labels: string[], rollup = 'SUCCESS'): Pull[] => [{ number: 7, draft: false, head: HEAD, base: 'main', labels, rollup, statuses: [] }]
+
+test('a fail written here reaches the forge before the label moves to Not Ready, whatever its age', async ($, on) => {
+  const files = { ...freshRecord('review', 'fail'), ...freshRecord('e2e', 'pass') }
+  const { clock, state } = await started($, on, { pulls: readyPull(['Ready']), files, viewer: 'operator' })
+  await beat(clock)
+  expect(state.labelled).toEqual(['7 not-ready'])
+  expect(state.order.indexOf('post review failure')).toBeGreaterThanOrEqual(0)
+  expect(state.order.indexOf('post review failure')).toBeLessThan(state.order.indexOf('label not-ready'))
+})
+
+test('a fail whose post is refused holds the move to Not Ready, the post tried again after RETRY_MS and the label moved once it reached the forge', async ($, on) => {
+  const { clock, state } = await started($, on, { pulls: readyPull(['Ready']), files: freshRecord('review', 'fail'), viewer: 'operator' })
+  state.postFails = true
+  await beat(clock)
+  await beat(clock, RETRY_MS / TICK_MS - 1)
+  expect(state.posted).toHaveLength(1)
+  expect(state.labelled).toEqual([])
+  expect(count(state.runs, 'pr-gate')).toBe(1)
+  state.postFails = false
+  await beat(clock)
+  expect(state.order).toEqual(['post review failure', 'label not-ready'])
+})
+
+test('a pass left to its tool holds the move to Ready until it is posted, and the move follows the post', async ($, on) => {
+  const files = { ...freshRecord('review', 'pass'), ...freshRecord('e2e', 'pass') }
+  const { clock, state } = await started($, on, { pulls: readyPull([]), files, viewer: 'operator' })
+  await beat(clock)
+  expect(state.labelled).toEqual([])
+  expect(state.posted).toEqual([])
+  await beat(clock)
+  expect(state.order).toEqual(['post review success', 'post e2e success', 'label ready'])
+})
+
+test('a pass still left to its tool holds no move to Not Ready', async ($, on) => {
+  const { clock, state } = await started($, on, { pulls: readyPull(['Ready'], 'PENDING'), files: freshRecord('review', 'pass'), viewer: 'operator' })
+  await beat(clock)
+  expect(state.order).toEqual(['label not-ready'])
+})
+
+test('a Not Ready this machine did not set is not undone before the forge was read FOREIGN_WAIT_MS after it was first seen', async ($, on) => {
+  const { clock, state, files } = await started($, on, { pulls: readyPull(['Not Ready']), files: passingRecords() })
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(1)
+  expect(state.labelled).toEqual([])
+  // Held back: no gate read while it waits, then the forge listed once the wait is over, and the gate decides as before.
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(1)
+  expect(count(state.runs, 'pr-panel')).toBe(2)
+  await beat(clock)
+  expect(count(state.runs, 'pr-panel')).toBe(3)
+  expect(state.labelled).toEqual(['7 ready'])
+  expect(state.runs.filter((run) => run === 'pr-gate')).toHaveLength(2)
+  expect(parseReconcile(files.get(READING)?.text ?? '')?.labels).toEqual(['Ready'])
+  expect(FOREIGN_WAIT_MS).toBe(2 * TICK_MS)
+})
+
+test('the other machine\'s fail, posted before its Not Ready, is copied at once: this machine\'s pass is judged against it and the label stays', async ($, on) => {
+  const pulls = readyPull(['Not Ready'])
+  const row = pulls[0]
+  if (row) row.statuses = [status('readiness/review', 'failure', 'v1 2026-11-19T10:00:30Z fail orchestrator')]
+  const { clock, state } = await started($, on, { pulls, files: passingRecords(), viewer: 'operator' })
+  await beat(clock, 6)
+  expect(state.copied).toEqual(['review fail orchestrator 2026-11-19T10:00:30Z forge'])
+  expect(state.labelled).toEqual([])
+  expect(state.pulls[0]?.labels).toEqual(['Not Ready'])
+})
+
+test('a Not Ready this machine set is undone by the gate at once, with no wait', async ($, on) => {
+  const { clock, state, put } = await started($, on)
+  await beat(clock)
+  expect(state.labelled).toEqual(['7 not-ready'])
+  for (const [path, text] of Object.entries(passingRecords())) put(path, text, T0 + 2 * TICK_MS)
+  await beat(clock)
+  expect(state.labelled).toEqual(['7 not-ready', '7 ready'])
 })

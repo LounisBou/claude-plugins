@@ -1,7 +1,7 @@
 // The reconciler's pure decisions: its listing, its fingerprint, its schedule and its lease.
 import { expect, test } from 'claude-code/testing'
 import {
-  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, IDLE_MAX_MS, LEASE_MS, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, RECENT_MS, reconciledRepos, takenLease, TICK_MS,
+  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, foreignHold, FOREIGN_WAIT_MS, IDLE_MAX_MS, LEASE_MS, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, RECENT_MS, reconciledRepos, seenLabel, seenWrote, takenLease, TICK_MS,
   type Flap, type ListedPr, type Local,
 } from './reconcile.ts'
 
@@ -107,4 +107,34 @@ test('a label put again after this machine wrote it is held past FLAP_UNDONE of 
   expect(flapWrote(flap, HEAD, 'not-ready')).toEqual({ head: HEAD, wrote: 'not-ready', undone: 0, said: false })
   expect(flapWrote(flapWrote(flap, HEAD, 'not-ready'), HEAD, 'ready').undone).toBe(0)
   expect(flapWrote(flap, OTHER_HEAD, 'ready')).toEqual({ head: OTHER_HEAD, wrote: 'ready', undone: 0, said: false })
+})
+
+test('a label is the sighting of another machine\'s until this machine wrote it, and a new label or head starts the sighting again', () => {
+  const OTHER_HEAD = 'b'.repeat(40)
+  const seen = seenLabel(undefined, HEAD, ['Not Ready', 'Bug'], T0)
+  expect(seen).toEqual({ head: HEAD, label: 'not-ready', own: false, since: T0 })
+  // The same label at the same head is the same sighting, its first instant kept.
+  expect(seenLabel(seen, HEAD, ['not ready'], T0 + TICK_MS)).toBe(seen)
+  expect(seenLabel(seen, OTHER_HEAD, ['Not Ready'], T0 + TICK_MS)).toEqual({ head: OTHER_HEAD, label: 'not-ready', own: false, since: T0 + TICK_MS })
+  expect(seenLabel(seen, HEAD, ['Ready'], T0 + TICK_MS)).toMatchObject({ label: 'ready', own: false, since: T0 + TICK_MS })
+  expect(seenLabel(seen, HEAD, ['Ready', 'Not Ready'], T0 + TICK_MS)).toBe(seen)
+  expect(seenLabel(seen, HEAD, [], T0 + TICK_MS)).toMatchObject({ label: undefined })
+  // What this machine wrote is its own, until the label read differs.
+  const wrote = seenWrote(HEAD, 'not-ready', T0)
+  expect(seenLabel(wrote, HEAD, ['Not Ready'], T0 + TICK_MS)).toBe(wrote)
+  expect(seenLabel(wrote, HEAD, ['Ready'], T0 + TICK_MS).own).toBe(false)
+})
+
+test('Ready is held over a Not Ready of another machine, or of unknown origin, until the forge was read FOREIGN_WAIT_MS after it was first seen', () => {
+  const foreign = seenLabel(undefined, HEAD, ['Not Ready'], T0)
+  const until = T0 + FOREIGN_WAIT_MS
+  expect(foreignHold(foreign, 'ready', undefined)).toBe(until)
+  expect(foreignHold(foreign, 'ready', until - 1)).toBe(until)
+  expect(foreignHold(foreign, 'ready', until)).toBeUndefined()
+  // Not Ready, a Not Ready this machine wrote, a pull request with another label or none, or nothing seen: nothing held.
+  expect(foreignHold(foreign, 'not-ready', undefined)).toBeUndefined()
+  expect(foreignHold(seenWrote(HEAD, 'not-ready', T0), 'ready', undefined)).toBeUndefined()
+  expect(foreignHold(seenLabel(undefined, HEAD, ['Ready'], T0), 'ready', undefined)).toBeUndefined()
+  expect(foreignHold(seenLabel(undefined, HEAD, [], T0), 'ready', undefined)).toBeUndefined()
+  expect(foreignHold(undefined, 'ready', undefined)).toBeUndefined()
 })
