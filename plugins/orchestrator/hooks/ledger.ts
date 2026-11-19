@@ -15,21 +15,20 @@ import { updateOver } from '../core/store-io.ts'
 import { answerText, PULL_URL } from './audit-events.ts'
 import { chainOwner, isDegradedPass, orchestrationOf, ownerOf, withDeadline } from './stop-gate.ts'
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
-import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
-import { configDir, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { answerOf, messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
+import { logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
 import { agentLine, closeFailedLine, holdsOf } from './ready-agent.ts'
 import { closeAgent, closeFacts, type CloseFacts as CloseNow, type ToClose } from './close-agent.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
-import { draftGuardArgv, gateArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
+import { draftGuardArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
 import { ciGatePath } from '../core/orchestration.ts'
-import { recordedInstallPaths } from '../core/install-record.ts'
 import { GATE_CI } from './relay.ts'
 import { archive, boundedReading, readOr, registered, republish } from './unattended.ts'
 import type { FilePr } from './pr-file-format.ts'
 
 // The nouns a write holds.
-type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock' | 'tool'>
 type Call = Events['tool.call']
 
 // The bound of one write: the lookups of the mapping and the record's lock.
@@ -329,9 +328,8 @@ export function conflictLine(c: { repo: string; pr: number; base: string; agent?
 // The key a conflict is told under: once per head and base head.
 const conflictKey = (key: string, pr: FilePr): string => `${key} conflict ${pr.sha} ${pr.baseSha ?? ''}`
 
-// The gate's reading of a pull request is refreshed at most this often, each read bound by CI_READ_MS.
+// The gate's reading of a pull request is refreshed at most this often.
 export const CI_REFRESH_MS = 5 * 60_000
-const CI_READ_MS = 15_000
 const CI_GUARD_MS = 30_000
 // The gate makes about five forge reads: no more pull requests than this are read at one tick, the others at the next.
 const CI_READS_PER_TICK = 4
@@ -344,22 +342,44 @@ async function keptGateOf($: Held, state: string, pr: FilePr): Promise<GateCi | 
 
 const atHead = (gate: GateCi | null, pr: FilePr): gate is GateCi => gate !== null && gate.head?.toLowerCase() === pr.sha.toLowerCase()
 
-// A reading the gate will not change at its head: it needs no new read. `NONE` and `PENDING` may still become a verdict.
-const isVerdict = (gate: GateCi | null, pr: FilePr): boolean => atHead(gate, pr) && (gate.result === 'SUCCESS' || gate.result === 'FAILURE')
+// The base branch the kept reading was taken against (its `base`), or undefined: a reading that names none.
+function baseOfGate(gate: GateCi): string | undefined {
+  try {
+    const base = (JSON.parse(gate.raw) as { readonly base?: unknown } | null)?.base
+    return typeof base === 'string' ? base : undefined
+  } catch {
+    return undefined
+  }
+}
 
-// Where the github plugin's engine is installed: the override, else the host's install record. Undefined when it is not.
-async function githubRoot($: Held): Promise<string | undefined> {
-  const forced = await $.env.get('CLAUDE_GITHUB_ROOT')
-  if (forced !== undefined && forced !== '') return forced
-  const recorded = recordedInstallPaths(await readOr($, `${await configDir($)}/plugins/installed_plugins.json`), 'github', ['lounisbou'])
-  return 'paths' in recorded ? recorded.paths[0] : undefined
+/*
+ * A reading the gate will not change at its head and base: it needs no new read. `NONE` and `PENDING` may still become a
+ * verdict, and a base retargeted since the reading (the forge's listing and the kept reading both name one, and they differ)
+ * changes what the gate says of the same head, so it is read once more. A side that names no base leaves the reading as it is.
+ */
+function isVerdict(gate: GateCi | null, pr: FilePr): boolean {
+  if (!atHead(gate, pr) || (gate.result !== 'SUCCESS' && gate.result !== 'FAILURE')) return false
+  const kept = baseOfGate(gate)
+  return pr.base === undefined || kept === undefined || kept === pr.base
+}
+
+// The text github's `pr-gate` tool answered: the JSON the gate prints, without the note the tool may add after it. Throws the reason it gave none.
+function gateText(answer: unknown): string {
+  const read = answerOf(answer)
+  if (read.deny !== undefined) throw new Error(`refused: ${read.deny}`)
+  if (read.isError) throw new Error(read.text.split('\n')[0] ?? 'an error')
+  if (typeof read.result !== 'string') throw new Error('no text')
+  const text = read.result.trim()
+  const end = text.lastIndexOf('\n}')
+  return end === -1 ? text : text.slice(0, end + 2)
 }
 
 /*
  * The gate's reading kept for each open pull request of the orchestration, refreshed when it is missing, speaks of another
- * head, or is not yet a verdict (the same `pr-gate` ci-watch reads, its answer kept in the same file): at most once per
- * CI_REFRESH_MS a pull request (`reads`, when each was tried, a failed try included), every read at once and bound.
- * A pull request whose reading is a verdict at its head is never read again.
+ * head or base, or is not yet a verdict: at most once per CI_REFRESH_MS a pull request (`reads`, when each was tried, a
+ * failed try included). The reading goes through github's own `pr-gate` tool (as gate-recheck.ts reads `pr-readiness`), not
+ * through its engine: the plugin's hook that follows the gate then moves the Ready label with what it reads, and the
+ * answer is kept in the file ci-watch reads. A pull request whose reading is a verdict at its head and base is never read again.
  */
 async function refreshGates($: Held, open: readonly FilePr[], reads: Map<string, number>, now: number): Promise<void> {
   const state = await stateDir($)
@@ -373,17 +393,11 @@ async function refreshGates($: Held, open: readonly FilePr[], reads: Map<string,
     reads.set(key, now)
     due.push(pr)
   }
-  if (due.length === 0) return
-  const root = await githubRoot($)
-  if (root === undefined) {
-    await logLine($, 'ledger', 'ci gate not read: the github plugin is not installed')
-    return
-  }
   await Promise.all(due.map(async pr => {
     try {
-      const ran = await $.process.run(gateArgv(root, pr.repo, String(pr.pr)), { timeoutMs: CI_READ_MS })
-      if (ran.exitCode !== 0 || parseGate(ran.stdout) === null) throw new Error(`pr-gate said ${ran.exitCode === 0 ? 'no ci result' : ran.stderr.trim().split('\n')[0] ?? ran.exitCode}`)
-      await writeAtomic($, ciGatePath(state, pr.repo, String(pr.pr)), ran.stdout)
+      const text = gateText(await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-gate', args: { pr: pr.pr }, repo: pr.repo }))
+      if (parseGate(text) === null) throw new Error('pr-gate said no ci result')
+      await writeAtomic($, ciGatePath(state, pr.repo, String(pr.pr)), text)
     } catch (err) {
       await logLine($, 'ledger', `ci gate of ${prKey(pr.repo, pr.pr)} not read: ${messageOf(err)}`)
     }
