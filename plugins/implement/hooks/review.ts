@@ -5,6 +5,7 @@
 // `claude -p` session whose report lands in a log file. The reviewer writes the review record
 // itself, through pr-review's loop in its reviewer mode; github refuses a record written by the
 // session that pushed the head, so the implementer can never stand in for it.
+// pr-review's loop stays here as the review record's writer outside an orchestration.
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { sessionName } from '../core/names.ts'
 import { launcherOf } from '../core/orchestration.ts'
