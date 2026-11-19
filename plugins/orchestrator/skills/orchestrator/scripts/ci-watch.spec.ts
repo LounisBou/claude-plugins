@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { countBucket, firstLine, gateCall, joinNames, logPath, main, parseArgs, parseGate, parseTarget, parseView, Said, USAGE, watch, type Deps, type Options } from './ci-watch.ts'
+import { countBucket, firstLine, gateCall, joinNames, listed, logPath, main, parseArgs, parseGate, parseTarget, parseView, registeredCount, Said, USAGE, watch, type Deps, type Options } from './ci-watch.ts'
 import type { Ran, RunOptions } from './lib/process.ts'
 import { parseJournalEvent } from '../../../core/learning.ts'
 
@@ -40,6 +40,16 @@ interface Script {
   gateHead?: string
   /** What the gate lists as unverified. */
   gateUnverified?: string[]
+  /** The contexts `gh pr checks --json name` lists on the head, one per line (none: `reg` gives a count). */
+  names?: string
+  /** What each poll of the checks reads, `name:bucket` entries separated by commas; the last repeated (none: `buckets`). */
+  polls?: string[]
+  /** The exit code of each `gh pr checks --json name,bucket` read (default 0). */
+  pollExit?: number
+  /** A failed `gh pr checks --json name,bucket` read: its stderr. */
+  pollFails?: string
+  /** A poll answer that is printed as it is, not as a list of checks. */
+  pollRaw?: string
 }
 
 /**
@@ -110,12 +120,17 @@ function fake(script: Script): Deps & { readonly calls: string[]; readonly gates
         if (line.includes('--watch')) return { status: Number(nth('watch', (script.watchCodes ?? [0]).map(String))), stdout: '', stderr: '' }
         if (line.includes('select')) return script.failing === undefined ? { status: 0, stdout: '', stderr: '' } : ok(`${script.failing}\n`)
         if (line.includes('name,bucket')) {
-          if (script.buckets === undefined) return failed('gh: HTTP 502\n')
-          return ok(script.buckets.split('\n').map(entry => { const [name, bucket] = entry.split(':'); return `${bucket}\t${name}\n` }).join(''))
+          // A poll's checks: `name:bucket` entries, one list per poll (its last repeated), else the buckets.
+          const answer = nth('polls', script.polls) ?? script.buckets ?? ''
+          if (script.pollFails !== undefined) return failed(script.pollFails)
+          if (script.pollRaw !== undefined) return ok(script.pollRaw)
+          return { status: script.pollExit ?? 0, stdout: JSON.stringify(answer.split(/[\n,]/).filter(Boolean).map(entry => { const [name = '', bucket = ''] = entry.split(':'); return { name, bucket } })), stderr: '' }
         }
         const reg = nth('reg', script.reg) ?? '0'
         if (reg === 'none') return failed("no checks reported on the 'feat' branch\n")
         if (reg === 'fail') return failed('error connecting to api.github.com\r\nmore\n')
+        if (script.names !== undefined) return ok(JSON.stringify(script.names.split('\n').filter(Boolean).map(name => ({ name }))))
+        if (/^[0-9]+$/.test(reg)) return ok(JSON.stringify(Array.from({ length: Number(reg) }, (_, k) => ({ name: `check-${k}` }))))
         return ok(`${reg}\n`)
       }
       if (verb === 'run list') {
@@ -260,12 +275,64 @@ test('a green line ends with the github tool\'s read of the gate, on the reposit
   assert.equal(gateCall('7', 'o/r'), 'next: mcp__github__gh pr-gate {"pr": 7} on o/r')
 })
 
+test('a readiness/ status is no registered check: the watch waits for a check of its own', async () => {
+  assert.equal(registeredCount('[{"name":"build"},{"name":"readiness/review"}]'), 1)
+  assert.equal(registeredCount('[{"name":"readiness/plan"}]'), 0)
+  assert.equal(registeredCount('[]'), 0)
+  assert.equal(registeredCount('many'), undefined)
+  assert.equal(registeredCount('[{"context":"x"}]'), undefined)
+  // Only the operator's readiness status is on the head: no check registered, so no-checks at the bound.
+  assert.equal(await said({ view: [`OPEN ${HA}`], names: 'readiness/review' }), `no-checks 7 ${HA}|2`)
+  // Without the filter this head counts a check, and the gate reads it green.
+  assert.equal(await said({ view: [`OPEN ${HA}`], names: 'readiness/review\nbuild', buckets: 'build:pass' }), `green 7 ${HA} ${GATE}|0`)
+})
+
+test('a failed readiness/ status while a real check runs: the wait goes on until that check is done', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['readiness/review:fail,build:pending', 'readiness/review:fail,build:pass'] })
+  assert.equal((await watch(options(), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
+})
+
+test('a real check failing while another runs: the wait returns at once, the gate reads the red', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:fail\ntest:pending', polls: ['build:fail,test:pending', 'build:fail,test:pass'] })
+  assert.equal((await watch(options(), deps)).line, `red 7 ${HA} build`)
+  assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 1)
+})
+
+test('a pending check is an answer, even when gh exits 8 for it: the wait goes on, then green', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['build:pending', 'build:pass'], pollExit: 8 })
+  assert.equal((await watch(options(), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
+})
+
+test('a poll that fails is unread, a poll that answers no list is unread, a poll that finds no checks returns quietly', async () => {
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollFails: 'error connecting to api.github.com\n' }), 'unread 7 gh pr checks failed: error connecting to api.github.com|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollRaw: 'many\n' }), 'unread 7 gh pr checks failed: an answer that is no list of checks|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollFails: "no checks reported on the 'feat' branch\n" }), `green 7 ${HA} ${GATE}|0`)
+})
+
+test('the poll sleeps 30 s between two reads by default', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['build:pending', 'build:pass'] })
+  const start = deps.now()
+  assert.equal((await watch(parseArgs(['7'], { ORCHESTRATOR_STATE_DIR: state }), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal(deps.now() - start, 30000)
+})
+
+test('the checks are read each interval: the wait sleeps the interval between two reads, 30 s by default', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['build:pending', 'build:pass'] })
+  const start = deps.now()
+  assert.equal((await watch(options(['7', '--interval', '3']), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal(deps.now() - start, 3000)
+  assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
+  assert.equal(parseArgs(['7'], { ORCHESTRATOR_STATE_DIR: state }).interval, '30')
+})
+
 test('green: one passed check at least, the watch output in the log', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' })
   assert.equal(await main(['7', '--interval', '3'], { ORCHESTRATOR_STATE_DIR: state, CLAUDE_CODE_SESSION_ID: 'sess-42' }, deps), 0)
   assert.deepEqual(deps.out, [`ci-watch: green 7 ${HA} ${GATE}\n`])
   const log = join(state, 'ci-watch', 'here-pr7.log')
-  assert.deepEqual(deps.logs.get('gh pr checks 7 --watch --fail-fast --interval 3'), { path: log, append: false })
+  assert.equal(readFileSync(log, 'utf8'), '')
   assert.equal(readFileSync(`${log}.session`, 'utf8'), 'sess-42\n')
   await main(['7'], { ORCHESTRATOR_STATE_DIR: state }, fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' }))
   assert.equal(existsSync(`${log}.session`), false)
@@ -353,8 +420,7 @@ test('the head\'s unfinished runs are watched, then the checks again', async () 
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], failing: 'e2e', gate: ['PENDING:1', 'PENDING:1', 'FAILURE:0'], headRuns: ['201:completed;202:in_progress', '-'] })
   assert.equal((await watch(options(), deps)).line, `red 7 ${HA} e2e`)
   assert.equal(deps.calls.filter(call => call.startsWith('gh run watch 202')).length, 1)
-  assert.equal(deps.calls.filter(call => call.includes('--watch')).length, 2)
-  assert.equal(deps.logs.get('gh pr checks 7 --watch --fail-fast --interval 1')?.append, true)
+  assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
   assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA}`, `OPEN ${HB}`], reg: ['2'], headRuns: ['201:in_progress', '-'] }), `moved 7 ${HA} ${HB}|3`)
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['201:in_progress'] }), 'unread 7 workflow runs of the head still unfinished: 201|5')
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['fail'] }), 'unread 7 gh run list failed: gh: HTTP 502|5')
@@ -379,7 +445,7 @@ test('a head with a third-party check alone is no green: it waits for the reposi
   const late = fake({ ...alone, headRuns: ['-', '-', '201:in_progress', '201:completed'], gate: ['PENDING:1', 'PENDING:1', 'SUCCESS:0'], buckets: 'scanner:pass\nci:pass' })
   assert.equal((await watch(options(), late)).line, `green 7 ${HA} ${GATE}`)
   assert.equal(late.calls.filter(call => call.startsWith('gh run watch 201')).length, 1)
-  assert.equal(late.calls.filter(call => call.includes('--watch')).length, 2)
+  assert.equal(late.calls.filter(call => call.includes('name,bucket')).length, 2)
   // The gate is read on the repository the watch names.
   const named = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' })
   await watch(options(['7', '--repo', 'o/r', '--interval', '1']), named)

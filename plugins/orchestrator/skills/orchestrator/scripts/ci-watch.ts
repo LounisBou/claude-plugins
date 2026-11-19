@@ -10,6 +10,7 @@ import { setting, stateDir, type Env } from '../../../core/paths.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { ENV } from '../../../core/env.ts'
 import { gateArgv, parseGate, type GateCheck, type GateCi } from '../../../core/ci-gate.ts'
+import { FORGE } from '../../../core/forge-status.ts'
 import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
 import { CI_GATE_DIR, ciGatePath, CI_WATCH_DIR, ciWatchLogPath, MODULE_DIR } from '../../../core/orchestration.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
@@ -150,6 +151,34 @@ export function logPath(options: Options, base: boolean): string {
   return ciWatchLogPath(options.stateDir, options.repo, options.pr, base)
 }
 
+/** The exit code `gh pr checks` gives while a check is pending (its help: "Checks pending"). */
+const PENDING_EXIT = 8
+
+/** The checks of a `gh pr checks --json name[,bucket]` answer; undefined when it is no such list. */
+export function listed(json: string): { readonly name: string; readonly bucket?: string }[] | undefined {
+  let entries: unknown
+  try {
+    entries = JSON.parse(json)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(entries)) return undefined
+  const checks: { readonly name: string; readonly bucket?: string }[] = []
+  for (const entry of entries) {
+    if (typeof entry?.name !== 'string') return undefined
+    checks.push(typeof entry.bucket === 'string' ? { name: entry.name, bucket: entry.bucket } : { name: entry.name })
+  }
+  return checks
+}
+
+/**
+ * The checks registered on a head, from `gh pr checks --json name`: the readiness statuses the
+ * operator's records post (FORGE's prefix) are no check. Undefined when the answer is no list of names.
+ */
+export function registeredCount(json: string): number | undefined {
+  return listed(json)?.filter(check => !check.name.startsWith(FORGE.prefix)).length
+}
+
 /** Counts the gate's checks in `bucket`, among `names` when given. */
 export function countBucket(checks: readonly GateCheck[], bucket: string, names?: ReadonlySet<string>): number {
   return checks.filter(check => check.bucket === bucket && (names === undefined || names.has(check.name))).length
@@ -231,9 +260,37 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     (ci.head !== undefined && ci.head.toLowerCase() !== head.toLowerCase())
     || (ci.result !== 'SUCCESS' && ci.result !== 'NONE' && (ci.running > 0 || ci.unverified))
 
-  // `gh pr checks --watch` only waits: its exit code decides nothing, the gate's reading does.
+  /*
+   * The wait on the checks. A draft's is `gh pr checks --watch`, which only waits: its exit code
+   * decides nothing, the gate's reading does. Any other pull request's is this loop, not
+   * `--fail-fast`: that flag returns at once on a failed `readiness/*` status, and cannot be told to
+   * skip one, so the checks are read each interval, the readiness contexts left out, and the wait
+   * ends at the first real failure or once no real check is pending.
+   */
   const checksWatch = async (draft: boolean, append: boolean): Promise<void> => {
-    await gh(['pr', 'checks', pr, '--watch', ...(draft ? [] : ['--fail-fast']), '--interval', interval], { log: { path: log, append } })
+    if (draft) {
+      await gh(['pr', 'checks', pr, '--watch', '--interval', interval], { log: { path: log, append } })
+      return
+    }
+    if (!append) {
+      try {
+        writeFileSync(log, '')
+      } catch {
+        // As the watch's own log: a write that fails stops no watch.
+      }
+    }
+    for (;;) {
+      const ran = await gh(['pr', 'checks', pr, '--json', 'name,bucket'], { stderr: 'pipe' })
+      if (firstLine(ran.stderr).includes('no checks reported')) return
+      // `gh pr checks` exits 8 while a check is pending (its list is printed all the same): that is an answer.
+      if (ran.status !== 0 && ran.status !== PENDING_EXIT) throw fail('gh pr checks', ran)
+      const checks = listed(chomp(ran.stdout))
+      if (checks === undefined) throw unread(pr, 'gh pr checks failed: an answer that is no list of checks')
+      const real = checks.filter(check => !check.name.startsWith(FORGE.prefix))
+      if (real.some(check => check.bucket === 'fail')) return
+      if (!real.some(check => check.bucket === 'pending')) return
+      await deps.sleep(Number(interval))
+    }
   }
 
   const ensureLogDir = (): void => {
@@ -344,14 +401,14 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   // Wait, bounded, for checks to be registered on the head.
   let deadline = deps.now() + options.registerWait * 1000
   for (;;) {
-    const ran = await gh(['pr', 'checks', pr, '--json', 'name', '--jq', 'length'], { stderr: 'pipe' })
+    const ran = await gh(['pr', 'checks', pr, '--json', 'name'], { stderr: 'pipe' })
     const why = firstLine(ran.stderr)
     if (!why.includes('no checks reported')) {
-      // Any other failure, or an answer that is no number, is a gh failure.
+      // Any other failure, or an answer that is no list of names, is a gh failure.
       if (ran.status !== 0) throw unread(pr, `gh pr checks failed: ${why || 'no answer'}`)
-      const count = chomp(ran.stdout)
-      if (!DIGITS.test(count)) throw unread(pr, `gh pr checks failed: ${why || 'an answer that is no count'}`)
-      if (Number(count) > 0) break
+      const count = registeredCount(chomp(ran.stdout))
+      if (count === undefined) throw unread(pr, `gh pr checks failed: ${why || 'an answer that is no count'}`)
+      if (count > 0) break
     }
     if (deps.now() >= deadline) return new Said(`no-checks ${pr} ${first}`, 2)
     await sleep(deadline)

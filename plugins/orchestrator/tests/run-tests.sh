@@ -4632,7 +4632,7 @@ case "\$1 \$2" in
          case "\$r" in
            none) echo "no checks reported on the 'feat' branch" >&2; exit 1 ;;
            fail) echo "error connecting to api.github.com" >&2; exit 1 ;;
-           *) echo "\$r" ;;
+           *) jq -nc --argjson n "\${r:-0}" '[range(\$n) | {name: "check-\\(.)"}]' ;;
          esac ;;
     esac ;;
   "repo view") echo "acme/thing" ;;
@@ -4710,7 +4710,7 @@ cw() {
 check "ci-watch exists" "yes" "$([ -f "$CWSCRIPT" ] && echo yes || echo no)"
 check "green: one line, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
   "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
-check "the watch's own output never reaches stdout, it lands in a log file" "1|0" \
+check "the checks are polled, no gh watch runs: its output marker never reaches a log or stdout" "0|0" \
   "$(grep -rl WATCH-OUTPUT-MARKER "$CWS" 2>/dev/null | wc -l | tr -d ' ')|$(cw "OPEN $HA" "2" 0 "" 7 --interval 1 | grep -c WATCH-OUTPUT-MARKER)"
 check "red: the failing names are on the line, exit 1" "ci-watch: red 7 $HA test, e2e|1" \
   "$(cw "OPEN $HA" "2" 1 "test\ne2e" 7 --interval 1)"
@@ -4741,17 +4741,17 @@ check "a gate read that fails is unread, exit 5" "ci-watch: unread 7 pr-gate fai
 # a run still going is watched to its end, then the checks are watched again.
 check "a run of the head unfinished while the gate awaits it, then a failure the gate reads: red, exit 1" "ci-watch: red 7 $HA e2e|1" \
   "$(CW_GATE="PENDING:1\nPENDING:1\nFAILURE:0" CW_HEAD_RUNS="201:completed;202:in_progress\n201:completed;202:completed" cw "OPEN $HA" "2" 0 "e2e" 7 --interval 1)"
-check "the unfinished run is watched, then the checks once more" "1|0|2" \
-  "$(grep -c '^run watch 202' "$CW/gh-calls")|$(grep -c '^run watch 201' "$CW/gh-calls")|$(grep -c -e '--watch' "$CW/gh-calls")"
+check "the unfinished run is watched, then the checks polled once more" "1|0|2" \
+  "$(grep -c '^run watch 202' "$CW/gh-calls")|$(grep -c '^run watch 201' "$CW/gh-calls")|$(grep -c -e 'name,bucket' "$CW/gh-calls")"
 check "the head's runs are read at the head" "2" "$(grep -c "^run list --commit $HA --json databaseId,status" "$CW/gh-calls")"
-check "every run of the head completed and every check passed: green, no extra watch" "ci-watch: green 7 $HA $CWGATE|0|1|0" \
-  "$(CW_HEAD_RUNS="201:completed;202:completed" cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep -c -e '--watch' "$CW/gh-calls")|$(grep -c '^run watch' "$CW/gh-calls")"
-check "a run of the head unfinished at a passing watch that ends green: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0|2" \
-  "$(CW_HEAD_RUNS="201:queued\n201:completed" cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep -c -e '--watch' "$CW/gh-calls")"
+check "every run of the head completed and every check passed: green, no extra poll, no run watched" "ci-watch: green 7 $HA $CWGATE|0|1|0" \
+  "$(CW_HEAD_RUNS="201:completed;202:completed" cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep -c -e 'name,bucket' "$CW/gh-calls")|$(grep -c '^run watch' "$CW/gh-calls")"
+check "a run of the head unfinished at a passing poll that ends green: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0|2" \
+  "$(CW_HEAD_RUNS="201:queued\n201:completed" cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep -c -e 'name,bucket' "$CW/gh-calls")"
 check "the head moves while its runs are waited for: exit 3" "ci-watch: moved 7 $HA $HB|3" \
   "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA\nOPEN $HA\nOPEN $HB" "2" 0 "" 7 --interval 1)"
-check "a head moved during a run watch is seen at once, before any second checks watch" "ci-watch: moved 7 $HA $HB|3|1" \
-  "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA\nOPEN $HA\nOPEN $HB" "2" 0 "" 7 --interval 1)|$(grep -c -e '--watch' "$CW/gh-calls")"
+check "a head moved during a run watch is seen at once, before any second checks poll" "ci-watch: moved 7 $HA $HB|3|1" \
+  "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA\nOPEN $HA\nOPEN $HB" "2" 0 "" 7 --interval 1)|$(grep -c -e 'name,bucket' "$CW/gh-calls")"
 check "closed while its runs are waited for: exit 4" "ci-watch: closed 7 CLOSED|4" \
   "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA\nOPEN $HA\nCLOSED $HA" "2" 0 "" 7 --interval 1)"
 check "unread: the head's runs cannot be read, exit 5" "ci-watch: unread 7 gh run list failed: gh: HTTP 502|5" \
@@ -4765,8 +4765,8 @@ check "the head's run watch never reaches stdout, it lands in the pull request's
 # The base branch's checks below count the logs holding a run watch's output: start them clean.
 rm -rf "$CWS/ci-watch"
 # The verdict is the gate's alone: gh pr checks counts the checks registered and waits, nothing more.
-check "no bucket read after the watch: gh pr checks counts and watches only" "ci-watch: green 7 $HA $CWGATE|0|0" \
-  "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep '^pr checks' "$CW/gh-calls" | grep -vc -e '--json name --jq length' -e '--watch')"
+check "gh pr checks is read to count the checks and to poll them, nothing else: green, 1 poll" "ci-watch: green 7 $HA $CWGATE|0|0" \
+  "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep '^pr checks' "$CW/gh-calls" | grep -vc -e 'name,bucket' -e '--json name$')"
 check "no checks within the bound: exit 2" "ci-watch: no-checks 7 $HA|2" \
   "$(cw "OPEN $HA" "none" 0 "" 7 --interval 1)"
 check "and the watch never started" "0" "$(grep -c -e '--watch' "$CW/gh-calls")"
@@ -4873,10 +4873,10 @@ check "the repository is passed on to every gh call" "0" \
   "$(cw "OPEN $HA" "2" 0 "" 7 --repo o/r --interval 1 >/dev/null; grep -vc -e '-R o/r' "$CW/gh-calls")"
 check "the repository is passed on to every gh call of the base branch's follow" "0" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" cw "MERGED $HA" "2" 0 "" 7 --repo o/r --interval 1 >/dev/null; grep -vc -e '-R o/r' "$CW/gh-calls")"
-check "the interval is passed on to the watch" "1" \
-  "$(cw "OPEN $HA" "2" 0 "" 7 --interval 3 >/dev/null; grep -c -e '--watch --fail-fast --interval 3' "$CW/gh-calls")"
-check "the default interval is 30 s, passed on to the watch" "1" \
-  "$(cw "OPEN $HA" "2" 0 "" 7 >/dev/null; grep -c -e '--watch --fail-fast --interval 30$' "$CW/gh-calls")"
+check "the checks are polled, not watched: one poll on green, the interval is the spec's" "1|0" \
+  "$(cw "OPEN $HA" "2" 0 "" 7 --interval 3 >/dev/null; echo "$(grep -c -e 'name,bucket' "$CW/gh-calls")|$(grep -c -e '--watch' "$CW/gh-calls")")"
+check "the default interval is 30 s, the spec's: the poll reads the checks, no watch runs" "1|0" \
+  "$(cw "OPEN $HA" "2" 0 "" 7 >/dev/null; echo "$(grep -c -e 'name,bucket' "$CW/gh-calls")|$(grep -c -e '--watch' "$CW/gh-calls")")"
 check "no loop on gh pr view: two reads in all, before and after the watch" "2" \
   "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1 >/dev/null; grep -c '^pr view' "$CW/gh-calls")"
 check "without a pull request number: exit 5" "5" "$(cw "OPEN $HA" "2" 0 "" | sed 's/.*|//')"
@@ -4915,8 +4915,8 @@ check "and with a real failure too: red, naming only the real one" "ci-watch: re
 check "a draft's watch runs without --fail-fast, once" "0|1" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1 >/dev/null
      grep -c -e '--fail-fast' "$CW/gh-calls")|$(grep -c -e '--watch' "$CW/gh-calls")"
-check "the same failures on a pull request that is no draft: red naming both, --fail-fast kept, no run read" \
-  "ci-watch: red 7 $HA wip-check / wip-check, tests|1|1|0" \
+check "the same failures on a pull request that is no draft: red naming both, --fail-fast never passed, no run read" \
+  "ci-watch: red 7 $HA wip-check / wip-check, tests|1|0|0" \
   "$(rm -rf "$CWS/draft-guard"; cw "OPEN $HA" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1)|$(grep -c -e '--fail-fast' "$CW/gh-calls")|$(grep -c '^api' "$CW/gh-calls")"
 check "a pull request made ready during the watch reads its guard as a red" "ci-watch: red 7 $HA wip-check / wip-check, tests|1" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD\nOPEN $HA" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1)"

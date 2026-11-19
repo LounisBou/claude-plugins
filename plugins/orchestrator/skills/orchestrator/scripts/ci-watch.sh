@@ -14,9 +14,10 @@
 #
 # What it does: reads the head once; waits, bounded, for checks to be registered on it (a
 # push is seen before its checks, and « no checks reported » right then is not a red); runs
-# `gh pr checks --watch --fail-fast` as a wait only (its exit code decides nothing), its output in a
-# log file under the state directory, never on stdout, the arming session's id beside it
-# (`<log>.session`); reads the pull request once more when the watch returns. Then the github plugin's `pr-gate` decides (its engine,
+# the checks read each interval (`gh pr checks --json name,bucket`) until a real check fails or none is
+# pending, the `readiness/*` statuses left out (a draft: `gh pr checks --watch`, as a wait only; its
+# exit code decides nothing), its output in a log file under the state directory, never on stdout,
+# the arming session's id beside it (`<log>.session`); reads the pull request once more when the watch returns. Then the github plugin's `pr-gate` decides (its engine,
 # found where the host installed the plugin, or at the checkout the override names): it is the one
 # reading of CI, and the watch counts nothing of its own. Each answer read is kept whole, the last
 # one replacing the one before, in `<state>/ci-gate/<owner_name>-pr<n>.json`: the hooks module's
@@ -32,7 +33,7 @@
 # skipped) is `no-checks` with the count skipped. A gate that cannot be read is `unread`.
 # A draft pull request may carry a draft guard: a job that fails on purpose while the pull request
 # is a draft, recognised by its definition testing the draft flag (`draft-guard.ts`, given the gate's
-# answer). On a draft the watch runs without `--fail-fast`, and a failure whose every failing check
+# answer). On a draft the watch runs `gh pr checks --watch` without `--fail-fast`, and a failure whose every failing check
 # is a guard is no red: the draft is green only when a passed check's job needs a guard
 # (`draft-guard.ts --dependents`), else `no-checks` with the count skipped. A pull request that is
 # no draft, or no longer one, keeps the path above exactly.
