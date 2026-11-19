@@ -365,7 +365,7 @@ def _no_ci(owner, name, pull, statuses, runs, required, unverified):
         if checked.get("total_count") or checked.get("check_runs"):
             return False
         status = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, branch)) or {}
-        return not (status.get("statuses") or [])
+        return not (forge.without_readiness(status).get("statuses") or [])
     except (errors.GhError, OSError) as exc:
         why = exc.message if isinstance(exc, errors.GhError) else exc
         print("error: cannot read whether %s/%s has CI: %s" % (owner, name, why), file=sys.stderr)
@@ -411,7 +411,8 @@ def pr_checks(args):
     owner, name = repo.owner_repo()
     pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, args.pr))
     sha = (pull.get("head") or {}).get("sha", "")
-    statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
+    # The gate's own copies on the forge (forge.PREFIX) are no CI.
+    statuses = forge.without_readiness(http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha)))
     runs = _check_runs(owner, name, sha)
     workflows, suite_runs, states = _suite_workflows(owner, name, sha)
     required, unverified = _required_checks(owner, name, _base(pull))
