@@ -64,6 +64,7 @@ query($owner:String!, $name:String!, $first:Int!) {
               statusCheckRollup {
                 state
                 contexts(first:100) {
+                  pageInfo { hasNextPage }
                   nodes {
                     __typename
                     ... on CheckRun { name status conclusion }
@@ -147,7 +148,7 @@ query($owner:String!, $name:String!, $first:Int!) {
         number isDraft headRefOid baseRefName mergeable mergeStateStatus
         labels(first:20) { nodes { name } }
         commits(last:1) { nodes { commit {
-          statusCheckRollup { state contexts(first:100) { nodes {
+          statusCheckRollup { state contexts(first:100) { pageInfo { hasNextPage } nodes {
             __typename ... on CheckRun { status conclusion } ... on StatusContext { context state }
           } } }
           status { contexts { context state description creator { login } } }
@@ -167,9 +168,13 @@ _STATUS_WAITING = ("PENDING", "EXPECTED")
 
 def _ci_rollup(rollup):
     """The head's CI rollup without the gate's copies on the forge (forge.PREFIX): GitHub's own state when it holds
-    none of them; otherwise the state of the other contexts, failed over waiting over passed, None when none is left."""
-    nodes = [n for n in ((rollup.get("contexts") or {}).get("nodes") or []) if isinstance(n, dict)]
-    if not any(n.get("__typename") == "StatusContext" and forge.is_readiness(n.get("context")) for n in nodes):
+    none of them; otherwise the state of the other contexts, failed over waiting over passed, None when none is left.
+    A context list truncated by the page (hasNextPage) is never recomputed: GitHub's own state is kept, which may show
+    a false readiness/ failure, but never hides a real one past the page."""
+    contexts = rollup.get("contexts") or {}
+    nodes = [n for n in (contexts.get("nodes") or []) if isinstance(n, dict)]
+    truncated = bool((contexts.get("pageInfo") or {}).get("hasNextPage"))
+    if truncated or not any(n.get("__typename") == "StatusContext" and forge.is_readiness(n.get("context")) for n in nodes):
         return rollup.get("state")
     states = []
     for n in nodes:

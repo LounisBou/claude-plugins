@@ -3180,10 +3180,15 @@ nodes = [
     pull(8, "FAILURE", status("readiness/review", "FAILURE"), status("ci/legacy", "ERROR")),
     pull(7, "FAILURE", status("readiness/review", "FAILURE")),
 ]
+# A head whose contexts run past the page (hasNextPage): GitHub's state is kept, although the page holds only a green record,
+# so a real failure past the page is shown, never recomputed away.
+truncated = pull(6, "FAILURE", status("readiness/review", "SUCCESS"))
+truncated["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"]["pageInfo"] = {"hasNextPage": True}
+nodes.append(truncated)
 json.dump({"repository": {"pullRequests": {"nodes": nodes}}}, open(sys.argv[1], "w"))
 PY
-check "pr-panel reads the CI cell without the readiness/ statuses: a failed record with green CI is SUCCESS, and nothing else is no CI yet" \
-  "9 SUCCESS []|8 FAILURE [ci/legacy]|7 PENDING []" \
+check "pr-panel reads the CI cell without the readiness/ statuses: a failed record with green CI is SUCCESS, nothing else is no CI yet, and a truncated page keeps GitHub's state" \
+  "9 SUCCESS []|8 FAILURE [ci/legacy]|7 PENDING []|6 FAILURE []" \
   "$(env GH_FIXTURES="$FPR" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-panel | python3 -c '
 import json, sys
 print("|".join("%d %s [%s]" % (r["number"], r["ci"], ",".join(r["failed"])) for r in json.load(sys.stdin)))')"
