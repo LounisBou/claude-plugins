@@ -101,7 +101,7 @@ test('a missing toolkit falls back to the generic lens: no record, no install, o
   }
 })
 
-test('the method changes the prompt only: the answer is still marked with its finding ids', async () => {
+test('a reader whose lens has a method: the answer is still marked with its finding ids', async () => {
   const world = machine({ '/tk/agents/code-reviewer.md': 'Review the code.' })
   expect(await agent.handler(world, LENS as never, (async () => ({ result: ANSWER })) as never)).toEqual({ result: MARKED })
 })
