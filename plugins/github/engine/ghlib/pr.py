@@ -10,7 +10,7 @@ import sys
 import time
 from urllib.parse import quote
 
-from . import bodies, errors, fmt, http, meta, related, repo, writing
+from . import bodies, errors, fmt, forge, http, meta, related, repo, writing
 
 
 def _current_branch():
@@ -131,17 +131,22 @@ def _panel_row(pull):
     }
 
 
-# The reconciler's listing: what its fingerprint of each open pull request reads, and the quota left, in one
-# GraphQL query lighter than the pane's (no comments, no checks: the gate reads those once something changed).
+# The reconciler's listing: what its fingerprint of each open pull request reads, the gate's copies on the forge at
+# its head (the commit statuses, their creator) and the account that reads, and the quota left, in one GraphQL query
+# lighter than the pane's (no comments, no checks: the gate reads those once something changed).
 _RECONCILE_QUERY = """
 query($owner:String!, $name:String!, $first:Int!) {
   rateLimit { remaining resetAt cost }
+  viewer { login }
   repository(owner:$owner, name:$name) {
     pullRequests(states:OPEN, first:$first, orderBy:{field:CREATED_AT, direction:DESC}) {
       nodes {
         number isDraft headRefOid baseRefName
         labels(first:20) { nodes { name } }
-        commits(last:1) { nodes { commit { statusCheckRollup { state } } } }
+        commits(last:1) { nodes { commit {
+          statusCheckRollup { state }
+          status { contexts { context state description creator { login } } }
+        } } }
       }
     }
   }
@@ -151,7 +156,9 @@ query($owner:String!, $name:String!, $first:Int!) {
 
 def _reconcile_row(pull):
     commits = (pull.get("commits") or {}).get("nodes") or []
-    rollup = (((commits[0] if commits else None) or {}).get("commit") or {}).get("statusCheckRollup") or {}
+    commit = ((commits[0] if commits else None) or {}).get("commit") or {}
+    rollup = commit.get("statusCheckRollup") or {}
+    contexts = (commit.get("status") or {}).get("contexts") or []
     return {
         "number": pull.get("number"),
         "draft": bool(pull.get("isDraft")),
@@ -159,6 +166,16 @@ def _reconcile_row(pull):
         "base": pull.get("baseRefName") or "",
         "labels": [(n or {}).get("name") or "" for n in ((pull.get("labels") or {}).get("nodes") or [])],
         "rollup": rollup.get("state"),
+        "statuses": [
+            {
+                "context": c.get("context"),
+                "state": (c.get("state") or "").lower(),
+                "description": c.get("description") or "",
+                "creator": (c.get("creator") or {}).get("login") or "",
+            }
+            for c in contexts
+            if isinstance(c, dict) and forge.is_readiness(c.get("context"))
+        ],
     }
 
 
@@ -167,6 +184,7 @@ def _reconcile_listing(owner, name):
     nodes = (((data.get("repository") or {}).get("pullRequests") or {}).get("nodes")) or []
     rate = data.get("rateLimit") or {}
     return {
+        "viewer": (data.get("viewer") or {}).get("login") or "",
         "rows": [_reconcile_row(p) for p in nodes if isinstance(p, dict)],
         "rate": {"remaining": rate.get("remaining"), "resetAt": rate.get("resetAt"), "cost": rate.get("cost")},
     }
@@ -353,7 +371,8 @@ def _no_ci(owner, name, pull, statuses, runs, required, unverified):
 
 def _gate_ci(owner, name, pull, sha, statuses, runs, reads=None):
     """CI at the head as the ready guard reads it (fmt.gate_ci), the checks the base requires and whether
-    the repository has no CI at all read beside it."""
+    the repository has no CI at all read beside it. The gate's own copies on the forge (forge.PREFIX) are no CI."""
+    statuses = forge.without_readiness(statuses)
     workflows, suite_runs, states = _suite_workflows(owner, name, sha)
     required, unverified = _required_checks(owner, name, _base(pull), reads)
     no_ci = _no_ci(owner, name, pull, statuses, runs, required, unverified)

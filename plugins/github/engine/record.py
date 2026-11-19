@@ -33,6 +33,7 @@ USAGE_EXIT = 2
 _HEAD = re.compile(_CONTRACT["patterns"]["head"])
 _PART = re.compile(_CONTRACT["patterns"]["repo_part"])
 _PRODUCER = re.compile(_CONTRACT["patterns"]["producer"])
+_INSTANT = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 class UsageError(Exception):
@@ -58,6 +59,7 @@ def build_parser():
     parser.add_argument("--producer", required=True, help="the producer's slug, [a-z0-9-]")
     parser.add_argument("--detail", default="")
     parser.add_argument("--session", default=None, help="defaults to CLAUDE_CODE_SESSION_ID")
+    parser.add_argument("--at", default=None, help="the instant of a record copied from the forge, UTC to the second; defaults to now")
     return parser
 
 
@@ -92,6 +94,14 @@ def validate(args):
         if args.result not in SCRIPTED["results"]:
             raise UsageError("a %s record is %s" % (SCRIPTED["kind"], " or ".join(SCRIPTED["results"])))
     session = args.session if args.session is not None else os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    at = getattr(args, "at", None)
+    if at is not None:
+        try:
+            if not _INSTANT.match(at):
+                raise ValueError(at)
+            datetime.datetime.strptime(at, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            raise UsageError("--at expects an instant in UTC to the second, 2026-11-19T10:00:00Z, got: " + at)
     now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
     return {
         "v": VERSION,
@@ -103,7 +113,7 @@ def validate(args):
         "producer": args.producer,
         "detail": args.detail,
         "session": session,
-        "at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "at": at if at is not None else now.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
 
 

@@ -880,6 +880,21 @@ export function deletesRecords(line: string, root?: string): boolean {
   return touches && deletes(line, names)
 }
 
+export const STATUS_REFUSAL = 'github: commit statuses are posted by the github module alone (engine/forge_status.py, after a record'
+  + ' is written and from its reconciler): the readiness/ copies of the records are its own, and any other status reads as CI.'
+
+// A commit status's write path, `…/statuses/<sha>`; the reads are `…/commits/<ref>/status(es)`, with no slash after.
+const STATUS_PATH = /\/statuses\//
+// What makes a call to it a write: a method that writes, or the fields, data or body that make gh api and curl post.
+const STATUS_WRITE = /(?:^|\s)(?:-X\s*|--request[=\s]|--method[=\s])['"]?(?:POST|PUT|PATCH)\b|(?:^|\s)(?:-f|-F|--field|--raw-field|--input|-d|--data(?:-raw|-binary|-urlencode)?|--json)(?=[\s=]|$)/i
+const STATUS_CLIENT = /\b(?:gh\s+api|curl|wget|http|https|xh)\b/
+
+// Whether a Bash command line posts a commit status: it runs the module's writer, or calls the statuses API to write.
+export function postsStatus(line: string): boolean {
+  if (line.includes('forge_status.py') && !onlyReads(line)) return true
+  return STATUS_CLIENT.test(line) && STATUS_PATH.test(line) && STATUS_WRITE.test(line)
+}
+
 // The record kind a caller of mcp__github__record may write, by the plugin whose hook made the
 // call: the one the record contract names it the producer of, the open kind (E2E) for the model
 // (the engine) and any other plugin.

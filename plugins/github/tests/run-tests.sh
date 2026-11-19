@@ -2335,6 +2335,12 @@ check "pr-gate reads no check at all as pending, total 0" "PENDING   0" "$(ci8)"
 gate8 failed "$PULL8" '{"state":"failure","statuses":[{"context":"ci/legacy","state":"error"}]}' '{"check_runs":[{"name":"lint","status":"completed","conclusion":"failure"},{"name":"test","status":"completed","conclusion":"success"}]}'
 check "pr-gate names the failed checks and statuses" "FAILURE lint,ci/legacy  3" "$(ci8)"
 
+# The readiness/ statuses are the gate's own copies of its records on the forge (engine/forge_status.py): no CI.
+gate8 readiness "$PULL8" '{"state":"failure","statuses":[{"context":"readiness/review","state":"failure"},{"context":"ci/legacy","state":"success"}]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
+check "pr-gate leaves the readiness/ statuses out of CI" "SUCCESS   2" "$(ci8)"
+gate8 readiness-only "$PULL8" '{"state":"success","statuses":[{"context":"readiness/plan","state":"success"}]}' '{"total_count":0,"check_runs":[]}'
+check "pr-gate reads a head whose only statuses are readiness/ copies as one with no check" "PENDING   0" "$(ci8)"
+
 gate8 running "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"in_progress","conclusion":null}]}'
 check "pr-gate reads a running check as pending" "PENDING   1" "$(ci8)"
 
@@ -2820,9 +2826,46 @@ check "record.py prints one error line on a usage error" "1" \
   "$(rec --repo acme/thing --pr 12 --head 0123 --kind review --result pass --producer x 2>&1 >/dev/null | grep -c '^error: ')"
 check "record.py writes nothing on a usage error" "no" \
   "$(rm -rf "$WORK/cfgrec2"; env CLAUDE_CONFIG_DIR="$WORK/cfgrec2" python3 "$RECORD" --repo acme/thing --pr 12 --head 0123 --kind review --result pass --producer x 2>/dev/null; [ -e "$WORK/cfgrec2/pr-records" ] && echo yes || echo no)"
+path=$(recbase --kind review --result fail --session forge --at 2026-11-19T10:00:00Z)
+check "record.py writes a record copied from the forge at the instant it gives" "2026-11-19T10:00:00Z review.20261119T100000Z.pr-review.json" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["at"])' "$path") $(basename "$path")"
+for at in 2026-11-19 2026-11-19T10:00:00.123Z 2026-13-01T10:00:00Z "2026-11-19 10:00:00"; do
+  check_status "record.py refuses --at $at with exit 2" 2 recbase --kind review --result pass --at "$at"
+done
 check "record.py imports nothing outside the standard library" "" \
   "$(grep -E '^(import|from) ' "$RECORD" | grep -vE '^(import|from) (argparse|datetime|json|os|re|sys|tempfile)( |$)')"
 
+
+echo "== forge statuses =="
+
+FORGE="$ROOT/engine/forge_status.py"
+FF="$WORK/fixforge"; rm -rf "$FF"; mkdir -p "$FF"
+fs() { env GH_FIXTURES="$FF" GH_TOKEN=x python3 "$FORGE" --repo acme/thing --head "$HEAD40" "$@"; }
+out=$(fs --what review --state failure --description "v1 2026-11-19T10:00:00Z fail orchestrator")
+check "forge_status.py posts the status under readiness/, and says so" "0|readiness/review failure at 0123456 of acme/thing" "$?|$out"
+check "forge_status.py posts state, context and description at the head, one request" \
+  "1|POST /repos/acme/thing/statuses/$HEAD40 failure readiness/review v1 2026-11-19T10:00:00Z fail orchestrator" \
+  "$(python3 -c '
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1])]
+b = rows[0]["body"]
+print("%d|%s %s %s %s %s" % (len(rows), rows[0]["method"], rows[0]["path"], b["state"], b["context"], b["description"]))' "$FF/sent.jsonl")"
+fs --what plan --state success --description "v1 2026-11-19T10:00:00Z e2e=none norms=required review=required/2" >/dev/null
+check "forge_status.py posts the check plan as readiness/plan" "readiness/plan" \
+  "$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readlines()[-1])["body"]["context"])' "$FF/sent.jsonl")"
+rm -f "$FF/sent.jsonl"
+long=$(python3 -c 'print("v1 2026-11-19T10:00:00Z " + "x" * 120)')
+for case in \
+  "context it does not copy|--what lint --state success --description v1-x" \
+  "state GitHub has none of|--what review --state ok --description v1-x" \
+  "pending state|--what review --state pending --description v1-x" \
+  "description of another version|--what review --state success --description v2-x" \
+  "short head|--what review --state success --description v1-x --head 0123"; do
+  # shellcheck disable=SC2086
+  check_status "forge_status.py refuses a ${case%%|*} with exit 2" 2 fs $(printf '%s' "${case#*|}" | sed 's/v1-x/v1 2026-11-19T10:00:00Z pass x/; s/v2-x/v2 2026-11-19T10:00:00Z pass x/')
+done
+check_status "forge_status.py refuses a description longer than GitHub keeps with exit 2" 2 fs --what review --state success --description "$long"
+check "forge_status.py posts nothing on a usage error" "no" "$([ -e "$FF/sent.jsonl" ] && echo yes || echo no)"
 
 echo "== light CI =="
 
@@ -3126,6 +3169,28 @@ a = json.load(sys.stdin)
 rows = [json.loads(l) for l in open(sys.argv[1])]
 print("|".join("%d %s %s %s %s %s" % (r["number"], r["head"][:7], r["base"], ",".join(r["labels"]), r["rollup"], r["draft"]) for r in a["rows"])
       + "|%d %d|%d %s" % (a["rate"]["remaining"], a["rate"]["cost"], len(rows), rows[0]["path"]))' "$FR/sent.jsonl")"
+
+# The listing reads the readiness/ statuses at each head, with their creator, and the account that reads: the reconciler
+# copies between the machine and the forge only what that account posted.
+FS="$WORK/fixforgelist"; mkdir -p "$FS"
+python3 - "$FS/graphql.json" <<'PY'
+import json, sys
+def status(context, state, description, login):
+    return {"context": context, "state": state, "description": description, "creator": {"login": login}}
+contexts = [status("ci/legacy", "SUCCESS", "build", "ci-bot"), status("readiness/review", "FAILURE", "v1 2026-11-19T10:00:00Z fail orchestrator", "operator")]
+nodes = [{"number": 9, "isDraft": False, "headRefOid": "a" * 40, "baseRefName": "main", "labels": {"nodes": []},
+          "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}, "status": {"contexts": contexts}}}]}},
+         {"number": 8, "isDraft": False, "headRefOid": "b" * 40, "baseRefName": "main", "labels": {"nodes": []},
+          "commits": {"nodes": [{"commit": {"statusCheckRollup": None, "status": None}}]}}]
+json.dump({"rateLimit": {"remaining": 4321, "resetAt": "2026-11-19T11:00:00Z", "cost": 1}, "viewer": {"login": "operator"},
+           "repository": {"pullRequests": {"nodes": nodes}}}, open(sys.argv[1], "w"))
+PY
+check "pr-panel --reconcile answers the readiness/ statuses of each head, lowercased, with their creator, and the account that reads" \
+  'operator|9 [["readiness/review", "failure", "v1 2026-11-19T10:00:00Z fail orchestrator", "operator"]]|8 []' \
+  "$(env GH_FIXTURES="$FS" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-panel --reconcile | python3 -c '
+import json, sys
+a = json.load(sys.stdin)
+print("|".join([a["viewer"]] + ["%d %s" % (r["number"], json.dumps([[s["context"], s["state"], s["description"], s["creator"]] for s in r["statuses"]])) for r in a["rows"]]))')"
 
 # --json takes the place of --format raw, and loses to a format named beside it.
 check "--json after the subcommand is read as before it" "7" \

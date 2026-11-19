@@ -10,8 +10,7 @@ below, and the `args` object holds the subcommand's arguments.
   (`label...`, `user...`, `term...`, `file...`) take an array.
 - Every other key must be one of the subcommand's own `--flag`s, spelled out
   whole: `{"branch": "x"}` → `--branch x`, `{"draft": true}` → `--draft`.
-- Text bodies go in `"body"` as a plain string, passed unchanged through a private
-  temporary file. Inline-comment arrays go in `"comments"`, and
+- Text bodies go in `"body"`, a plain string. Inline-comment arrays go in `"comments"`, and
   `comments-resolved-batch` takes `"nodes"` (an array of node ids). `body-file`,
   `comments-file` and `json_file` are refused.
 
@@ -25,8 +24,8 @@ below, and the `args` object holds the subcommand's arguments.
 |---|---|---|
 | `pr-get` | `[--branch B \| --pr N]` | The PR of a branch (default: the current one) or number `N`, as a list of one (`pr-lines`; `--json`: the list). An unknown number exits 4 |
 | `pr-list` | | Open PRs, a line each (`pr-lines`); `--json`: the full list |
-| `pr-panel` | `[--reconcile]` | The open PRs, newest first (at most 100), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` (`SUCCESS`, `FAILURE`, `PENDING`, `?`) from the head's status check rollup, not the gate's reading. `--reconcile`: the reconciler's, `{"rows", "rate"}` |
-| `pr-status` | `<pr>` | Five lines: state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
+| `pr-panel` | `[--reconcile]` | The open PRs, newest first (at most 100), for the `/prs` pane, in one GraphQL query: `[{"number", "title", "url", "draft", "comments", "ci", "failed"}]`, `ci` (`SUCCESS`, `FAILURE`, `PENDING`, `?`) from the head's status check rollup, not the gate's reading. `--reconcile`: the reconciler's, `{"viewer", "rows", "rate"}` |
+| `pr-status` | `<pr>` | Five lines (`pr-summary`): state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
 | `pr-checks` | `<pr>` | Verdict, counts, failed and skipped names (`checks-summary`); `--json`: commit status and check runs |
 | `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "ci": {"result", "failed", "running", "skipped", "total", "checks"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read |
 | `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
@@ -83,8 +82,7 @@ asynchronous merge endpoint, same method and `--sha`, and waits for the merge at
 
 ### Pending reviews
 
-A PENDING review is invisible to the PR author until its owner submits it. The tool opens one,
-adds to it and reads it back, and never submits one: that is the operator's act, on GitHub.
+A PENDING review stays invisible until its owner submits it, on GitHub: the tool opens, adds to and reads one, never submits it.
 
 | Subcommand | Arguments | Description |
 |---|---|---|
@@ -144,15 +142,11 @@ directory (README « Repositories in auto-merge »).
 | `auto-merge-set` | `{"repo": "owner/name", "on": true\|false, "words": "« <his words> », <their date>"}` | Put the repository in auto-merge or take it out, on the operator's quoted word |
 | `auto-merge-list` | | The repositories in auto-merge, one per line, or `no repository in auto-merge` |
 
-`words` quote the operator with their date, as a waiver's `detail` does.
-The file keeps its other keys, names compare without regard to case, and it is written whole
-under a lock; a malformed file is never overwritten.
+The file keeps its other keys, compares names in any case, is written whole under a lock, and is never overwritten when malformed.
 
 ## Formatters
 
-`--format NAME`, default: the few lines named in the command rows above (`pr-lines`, `checks-summary`,
-`review-comments`, `thread-summary`, `issue-comments-summary`, `pr-summary`, `reviews-summary`, `files-summary`, `commits-summary`, `issue-lines`, `issue-detail`),
-else `raw`. `--json` (or `--format raw`) is the full object a program parses; a format beside it wins.
+`--format NAME`, default: the one a command's row above names, else `raw`. `--json` (or `--format raw`) is the full object a program parses; a format beside it wins.
 
 | Format | Input from | Output |
 |---|---|---|
@@ -194,11 +188,12 @@ rule and the JSON has `images`, one `{url, path, reused, title}` per file.
 
 ### The one writer: `engine/record.py`
 
-`python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e|tests --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>]`
+`python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e|tests --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>] [--at <instant>]`
 
-- The contract is core's `pr-record.ts`, loaded here as the generated `core/pr-record.json`.
+- Contract: core's `pr-record.ts` (`core/pr-record.json`).
 - It validates the sha shape, the kind, `waived` for `e2e` or `norms`, `not-applicable` for `e2e` (its `--detail` giving its reason), `accepted` for `review` only, `tests` `pass|fail` by `light-ci` only, a detail of 500 characters at most.
-- It writes under a temporary name, then renames; prints the path; exits 2 on a usage error.
+- It writes under a temporary name, then renames; prints the path; exits 2 on a usage error. `--at`: a copy from the forge.
+- Forge: each record, the plan and the exemption are also a status `readiness/<name>` at the head, no CI, posted by `forge_status.py` alone; the reconciler imports the operator's newer ones.
 
 ### Fields (one JSON object per file)
 
@@ -324,7 +319,7 @@ script or subprocess running `gh` or the engine, `curl` on the API.
 **Records.** Writing under the records root, the E2E exemptions or the check plans (Write, Edit,
 MultiEdit, NotebookEdit, or a shell command naming the root, `pr-records/` or `engine/record.py`)
 goes through; a write to the exemptions or the plans is observed (`github.exemption.write`), a write to the
-records is not. Deleting in them (`rm`, `unlink`, `find -delete`, a `mv` out) is refused: README « Observed guards ».
+records is not. Deleting in them (`rm`, `unlink`, `find -delete`, a `mv` out), or a shell status post (`…/statuses/<sha>`, `forge_status.py`), is refused: README « Observed guards ».
 
 `mcp__github__record {pr, repo?, result?, run?, ran?, detail, kind?, dir?}` writes one record
 through `record.py` when the `HEAD` of `dir` (default: the session's directory) is the head
