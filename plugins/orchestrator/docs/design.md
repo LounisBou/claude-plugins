@@ -109,7 +109,6 @@ skills/model-routing/defaults/README.md  what the shipped tier/effort tables are
 templates/agent-phase-brief.md       one implementer, one phase, one PR
 templates/agent-rotation-brief.md    resume brief for a fresh implementer
 templates/agent-review-brief.md      one review round, read-only, readers sized by the orchestrator
-templates/agent-comments-brief.md    one pass over a pull request's open threads
 templates/orchestrator-succession-brief.md
 templates/agent-audit-brief.md       one audit of the method: the stock, the net balance, proposals, then stop or, with work the operator gave it after the report still in hand, succeed
 templates/coordinator-succession-brief.md  the coordinator's successor: close the predecessor, then register
@@ -536,7 +535,7 @@ Temporary files across the plugin are anchored to `TMPDIR`: the platform default
 
 ## 5. Templates
 
-No date or hour is written from memory (`skills/orchestrator/SKILL.md`, « The principles »): a brief is a file named by its subject, the coordinator's succession brief is the one `succession-brief.md` its successor overwrites, and a time a record must carry is a command's output. Six briefs with `{{PLACEHOLDER}}` markers, each carrying the sections the orchestrator skill makes mandatory: `agent-phase-brief.md` (one implementer, one phase, one pull request), `agent-rotation-brief.md` (a fresh implementer resuming a phase), `agent-review-brief.md` (one review round, read-only, readers sized by the orchestrator), `agent-comments-brief.md` (one pass over a pull request's open threads), `agent-audit-brief.md` (one audit of the method, one report, then stop or, with work the operator gave it after the report still in hand, succeed) and `orchestrator-succession-brief.md` (a successor taking the orchestration over). How a brief is built from them is `skills/orchestrator/references/brief.md`, « The brief is printed, never typed ».
+No date or hour is written from memory (`skills/orchestrator/SKILL.md`, « The principles »): a brief is a file named by its subject, the coordinator's succession brief is the one `succession-brief.md` its successor overwrites, and a time a record must carry is a command's output. Five briefs with `{{PLACEHOLDER}}` markers, each carrying the sections the orchestrator skill makes mandatory: `agent-phase-brief.md` (one implementer, one phase, one pull request), `agent-rotation-brief.md` (a fresh implementer resuming a phase), `agent-review-brief.md` (one review round, read-only, readers sized by the orchestrator), `agent-audit-brief.md` (one audit of the method, one report, then stop or, with work the operator gave it after the report still in hand, succeed) and `orchestrator-succession-brief.md` (a successor taking the orchestration over). How a brief is built from them is `skills/orchestrator/references/brief.md`, « The brief is printed, never typed ».
 
 A template is read by an agent that does not load the orchestrator skill, so it keeps in full the rules that agent needs — the orchestrator's address, the STOP-and-ask clause, synchronous commands, the measured context as it nears the gate — and the skill points at the template rather than restating them. No template points at a plugin path, and none carries a host variable or a session reference (section 11): `brief-lint.sh` flags a brief that does.
 
@@ -764,7 +763,7 @@ One file travelled by hand on every live run of this family: the project's instr
 
 ## 41. What the live rounds paid for, in text
 
-Four readings of the live rounds each became a sentence where it binds: a stand-down acknowledgment that reports anything uncommitted is an unfinished delivery (now a fact the module reads before it closes an agent, `hooks/close-agent.ts`); a reader writes no git configuration and carries every path inside each tool call (`templates/agent-review-brief.md`); a brief's context line names the agent's own measure file, never a checkout of this repository (`templates/agent-review-brief.md`, `templates/agent-comments-brief.md`; it named the plugin's installed gauge script until the hooks module replaced both the script and the rule); and a fresh tab reads « Chat » for a few seconds before the session names itself (`skills/iterm-agents/SKILL.md`, « Reading the tabs »).
+Four readings of the live rounds each became a sentence where it binds: a stand-down acknowledgment that reports anything uncommitted is an unfinished delivery (now a fact the module reads before it closes an agent, `hooks/close-agent.ts`); a reader writes no git configuration and carries every path inside each tool call (`templates/agent-review-brief.md`); a brief's context line names the agent's own measure file, never a checkout of this repository (`templates/agent-review-brief.md`, and the comments brief since removed; it named the plugin's installed gauge script until the hooks module replaced both the script and the rule); and a fresh tab reads « Chat » for a few seconds before the session names itself (`skills/iterm-agents/SKILL.md`, « Reading the tabs »).
 
 ## 42. Short names, chosen servers, and a hand-launched orchestrator named on the spot
 
