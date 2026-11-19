@@ -151,19 +151,29 @@ export function logPath(options: Options, base: boolean): string {
   return ciWatchLogPath(options.stateDir, options.repo, options.pr, base)
 }
 
+/** The checks of a `gh pr checks --json name[,bucket]` answer; undefined when it is no such list. */
+export function listed(json: string): { readonly name: string; readonly bucket?: string }[] | undefined {
+  let entries: unknown
+  try {
+    entries = JSON.parse(json)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(entries)) return undefined
+  const checks: { readonly name: string; readonly bucket?: string }[] = []
+  for (const entry of entries) {
+    if (typeof entry?.name !== 'string') return undefined
+    checks.push(typeof entry.bucket === 'string' ? { name: entry.name, bucket: entry.bucket } : { name: entry.name })
+  }
+  return checks
+}
+
 /**
  * The checks registered on a head, from `gh pr checks --json name`: the readiness statuses the
  * operator's records post (FORGE's prefix) are no check. Undefined when the answer is no list of names.
  */
 export function registeredCount(json: string): number | undefined {
-  let names: unknown
-  try {
-    names = JSON.parse(json)
-  } catch {
-    return undefined
-  }
-  if (!Array.isArray(names) || !names.every(entry => typeof entry?.name === 'string')) return undefined
-  return names.filter(entry => !entry.name.startsWith(FORGE.prefix)).length
+  return listed(json)?.filter(check => !check.name.startsWith(FORGE.prefix)).length
 }
 
 /** Counts the gate's checks in `bucket`, among `names` when given. */
@@ -247,9 +257,36 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     (ci.head !== undefined && ci.head.toLowerCase() !== head.toLowerCase())
     || (ci.result !== 'SUCCESS' && ci.result !== 'NONE' && (ci.running > 0 || ci.unverified))
 
-  // `gh pr checks --watch` only waits: its exit code decides nothing, the gate's reading does.
+  /*
+   * The wait on the checks. A draft's is `gh pr checks --watch`, which only waits: its exit code
+   * decides nothing, the gate's reading does. Any other pull request's is this loop, not
+   * `--fail-fast`: that flag returns at once on a failed `readiness/*` status, and cannot be told to
+   * skip one, so the checks are read each interval, the readiness contexts left out, and the wait
+   * ends at the first real failure or once no real check is pending.
+   */
   const checksWatch = async (draft: boolean, append: boolean): Promise<void> => {
-    await gh(['pr', 'checks', pr, '--watch', ...(draft ? [] : ['--fail-fast']), '--interval', interval], { log: { path: log, append } })
+    if (draft) {
+      await gh(['pr', 'checks', pr, '--watch', '--interval', interval], { log: { path: log, append } })
+      return
+    }
+    if (!append) {
+      try {
+        writeFileSync(log, '')
+      } catch {
+        // As the watch's own log: a write that fails stops no watch.
+      }
+    }
+    for (;;) {
+      const ran = await gh(['pr', 'checks', pr, '--json', 'name,bucket'], { stderr: 'pipe' })
+      if (firstLine(ran.stderr).includes('no checks reported')) return
+      if (ran.status !== 0) throw fail('gh pr checks', ran)
+      const checks = listed(chomp(ran.stdout))
+      if (checks === undefined) throw unread(pr, 'gh pr checks failed: an answer that is no list of checks')
+      const real = checks.filter(check => !check.name.startsWith(FORGE.prefix))
+      if (real.some(check => check.bucket === 'fail')) return
+      if (!real.some(check => check.bucket === 'pending')) return
+      await deps.sleep(Number(interval))
+    }
   }
 
   const ensureLogDir = (): void => {
