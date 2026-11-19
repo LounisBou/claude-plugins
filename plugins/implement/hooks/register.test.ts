@@ -303,8 +303,8 @@ test('on macOS with the orchestrator, the reviewer opens in iTerm through its la
   const out = await review($)
   const spawn = runs.find(argv => argv[0] === LAUNCHER) ?? []
   expect(spawn.slice(0, 6)).toEqual([LAUNCHER, 'spawn', '--dir', '/work', '--title', 'Agent: review demo'])
-  expect(spawn[7]).toContain('"review_only": true')
-  expect(spawn.slice(-2)).toEqual(['--keep-tool', 'mcp__pr-review'])
+  expect(spawn[7]).toContain('mcp__orchestrator__review')
+  expect(spawn.slice(-2)).toEqual(['--keep-tool', 'mcp__orchestrator__review'])
   expect(String(out.text)).toContain('launched in iTerm on /dev/ttys004')
 })
 
@@ -330,6 +330,14 @@ test('the headless reviewer starts with Remote Control off', async ($, on) => {
   await review($)
   const headless = runs.find(argv => argv[0] === 'sh') ?? []
   expect(headless[2]).toContain(`--settings '{"remoteControlAtStartup":false}'`)
+})
+
+test('the headless reviewer carries its session name, the one the review tool knows a review session by', async ($, on) => {
+  const runs = machine(on, { system: 'Linux', record: RECORD, launcher: true })
+  await review($)
+  const headless = runs.find(argv => argv[0] === 'sh') ?? []
+  expect(headless[2]).toContain('-n "$3"')
+  expect(headless[6]).toBe('Agent: review demo')
 })
 
 test('a macOS without the orchestrator installed runs the reviewer headless too', async ($, on) => {

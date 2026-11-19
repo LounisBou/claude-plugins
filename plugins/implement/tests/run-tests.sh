@@ -40,7 +40,7 @@ check_status() {
 echo "== manifests =="
 MAN="$ROOT/.claude-plugin/plugin.json"
 check "plugin is named implement" "implement" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$MAN")"
-check "the dependencies are superpowers and the method" "superpowers method" \
+check "the dependencies are superpowers, the method and the orchestrator" "superpowers method orchestrator" \
   "$(python3 -c 'import json,sys; print(" ".join(d.split("@")[0] if isinstance(d, str) else d["name"] for d in json.load(open(sys.argv[1]))["dependencies"]))' "$MAN")"
 check "both commands run the preflight" "2" "$(grep -l 'scripts/preflight.sh' "$ROOT"/commands/*.md | wc -l | tr -d ' ')"
 check "both commands check the dependency only" "2" "$(grep -l 'scripts/preflight.sh" --deps-only$' "$ROOT"/commands/*.md | wc -l | tr -d ' ')"

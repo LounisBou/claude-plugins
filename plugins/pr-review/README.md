@@ -65,8 +65,7 @@ its own a reason to make it.
 **`/pr-review:auto-fix-loop`** — the autonomous counterpart: review, fix, re-review,
 until no Critical or Important finding is left, or until a pass limit. Use it when you want the cycle run for you rather
 than presented to you. Its reviewer mode (`review_only`), run by a session that did not
-write the code (implement's `/implement:review` launches one), makes one pass and fixes
-nothing: its findings are the verdict.
+write the code, makes one pass and fixes nothing: its findings are the verdict.
 
 ## The GitHub tool
 

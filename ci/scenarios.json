@@ -5,7 +5,7 @@
     "implement: run a phase": ["method/skills/lifecycle/SKILL.md", "implement/skills/phase/SKILL.md", "method/skills/lifecycle/references/report.md"],
     "implement: check a delivery": ["method/skills/lifecycle/SKILL.md", "implement/skills/check/SKILL.md"],
     "implement: close": ["method/skills/lifecycle/SKILL.md", "implement/skills/close/SKILL.md", "method/skills/lifecycle/references/report.md"],
-    "pr-review: reviewer session": ["method/skills/lifecycle/SKILL.md", "pr-review/skills/auto-fix-loop/SKILL.md"],
+    "implement: reviewer session": ["method/skills/lifecycle/SKILL.md", "orchestrator/agents/lens.md"],
     "pr-review: walkthrough": ["pr-review/skills/start-review/SKILL.md"],
     "pr-review: process comments": ["pr-review/skills/process-comments/SKILL.md"],
     "norms: check": ["norms/commands/check.md"],

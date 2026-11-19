@@ -22,18 +22,21 @@ const HOME = '/tmp/h'
 const ROW = `${HOME}/.claude/claude-orchestrator/store/sessions/s-one`
 const WRITTEN = '/cfg/records/x/review.json\ngithub: Ready'
 
-function fake(name: string, answer: unknown = { result: 'written' }) {
+// `more` adds environment variables and files: a launch's record of the orchestrator its session reports to.
+function fake(name: string, answer: unknown = { result: 'written' }, more: { env?: Record<string, string>; files?: Record<string, string> } = {}) {
   const calls: Record<string, unknown>[] = []
   const logged: string[] = []
   const files: Record<string, string> = {
     [ROW]: JSON.stringify({ role: null, name, pid: '501', updated_at: '2026-11-13T19:00:00.000Z' }) + '\n',
+    ...more.files,
   }
   const dollar = hostOf({
     session: { id: async () => 's-one' },
-    env: { get: async (key: string) => ({ HOME } as Record<string, string>)[key] },
+    env: { get: async (key: string) => ({ HOME, ...more.env } as Record<string, string>)[key] },
     plugin: { root: '/plugins/orch-root' },
     fs: {
       read: async (p: string) => { const text = files[p]; if (text !== undefined) return text; throw new Error(`ENOENT: ${p}`) },
+      list: async (dir: string) => Object.keys(files).filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/')).map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 0, isLink: false })),
     },
     process: {
       run: async (argv: readonly string[]) => {
@@ -156,6 +159,47 @@ for (const name of ['Agent: review record', 'Coord: general', 'Audit: method']) 
   test(`a session named ${name} is refused and calls nothing`, async () => {
     const fx = fake(name)
     expect(await handler()(fx.dollar, ACCEPTED)).toEqual({ result: NOT_ORCHESTRATOR, isError: true })
+    expect(fx.calls).toEqual([])
+  })
+}
+
+// A review session outside an orchestration (implement's /implement:review, `Agent: review <subject>`)
+// records its own pass or fail through the same tool; github still refuses the session that pushed the head.
+for (const verdict of ['pass', 'fail']) {
+  test(`a review session's ${verdict} is written as a review record, its answer counting no round`, async () => {
+    const fx = fake('Agent: review demo', { result: '/cfg/records/x/review.json\ngithub: acme/thing#128 Ready at 0123456: a clean review.' })
+    const out = await handler()(fx.dollar, { pr: 128, repo: 'acme/thing', verdict, detail: 'read at 0123456' })
+    expect(fx.calls).toEqual([{ tool: 'mcp__github__record', pr: 128, repo: 'acme/thing', kind: 'review', result: verdict, detail: 'read at 0123456' }])
+    expect(out).toEqual({ result: '/cfg/records/x/review.json\nReady at 0123456' })
+  })
+}
+
+for (const [label, input] of [
+  ['an acceptance', ACCEPTED],
+  ['a check plan', { pr: 128, plan: { review: 'required: max 1' } }],
+  ['a dispatch row', { pr: 128, verdict: 'pass', record: '/b/record.jsonl', row: 4 }],
+] as const) {
+  test(`a review session's ${label} is the orchestrator's: refused, nothing called`, async () => {
+    const fx = fake('Agent: review demo')
+    expect(await handler()(fx.dollar, input)).toEqual({ result: NOT_ORCHESTRATOR, isError: true })
+    expect(fx.calls).toEqual([])
+  })
+}
+
+// An orchestration's agent named like a review session is no review session: the verdict is its orchestrator's.
+test('an `Agent: review` session launched for a live orchestrator is refused, nothing called', async () => {
+  const fx = fake('Agent: review 17 r1', { result: 'written' }, {
+    env: { ORCHESTRATOR_REPORTS_TO: 'Orch: belt [a1b2c3]' },
+    files: { [`${HOME}/.claude/sessions/77.json`]: JSON.stringify({ sessionId: 's-orch', name: 'Orch: belt', startedAt: 1 }) },
+  })
+  expect(await handler()(fx.dollar, { pr: 128, verdict: 'fail' })).toEqual({ result: NOT_ORCHESTRATOR, isError: true })
+  expect(fx.calls).toEqual([])
+})
+
+for (const name of ['Agent: reviewrecord', 'Agent: demo p3', 'Coord: review x']) {
+  test(`a session named ${name} is no review session: its pass is refused`, async () => {
+    const fx = fake(name)
+    expect(await handler()(fx.dollar, { pr: 128, verdict: 'pass' })).toEqual({ result: NOT_ORCHESTRATOR, isError: true })
     expect(fx.calls).toEqual([])
   })
 }

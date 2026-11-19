@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
-import { candidateLaunchers, lastLine, reviewerPrompt, reviewerTitle } from './review.ts'
+import { candidateLaunchers, lastLine, REVIEWER_LENSES, reviewerPrompt, reviewerTitle } from './review.ts'
+import { parseLensDescription } from '../core/lens.ts'
 import {
   IDLE, armedBy, bandLine, bandOf, bandSegments, codenameOf, doctorText, guardOf,
   ignoreVerdict, markRow, modeOf, nextRow, onTurnEnd, parseState,
@@ -288,6 +289,19 @@ describe('the reviewer', () => {
     expect(reviewerTitle('a-very-long-codename-for-a-feature')).toBe('Agent: review a-very-long-codena')
     expect(reviewerPrompt('feat/demo')).toContain('branch feat/demo')
     expect(reviewerPrompt('feat/demo')).toContain('you change no code')
+  })
+  test('its prompt is the one review instrument: lens readers, the verdict through the orchestrator\'s review tool, never pr-review\'s loop', () => {
+    const prompt = reviewerPrompt('feat/demo')
+    expect(prompt).toContain('orchestrator:lens')
+    expect(prompt).toContain('mcp__orchestrator__review')
+    expect(prompt).not.toContain('pr-review')
+    expect(prompt).not.toContain('review_only')
+  })
+  test('each lens the prompt names makes a description core\'s review reader contract parses', () => {
+    for (const lens of REVIEWER_LENSES) {
+      expect(reviewerPrompt('feat/demo')).toContain(lens)
+      expect(parseLensDescription(`lens ${lens} acme/app#12 main..0123456789ab`)?.lens).toBe(lens)
+    }
   })
   test('the launcher is looked for in every recorded install, none from a broken record', () => {
     expect(candidateLaunchers(JSON.stringify({ plugins: { 'orchestrator@lounisbou': [{ installPath: '/a/' }] } }))).toEqual(['/a/skills/iterm-agents/scripts/iterm-agent.sh'])
