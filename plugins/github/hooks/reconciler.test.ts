@@ -595,7 +595,26 @@ test('two machines in lasting disagreement: after FLAP_UNDONE undos this one sto
     await clock.settle()
   }
   expect(state.labelled).toHaveLength(FLAP_UNDONE + 1)
-  const flapLines = state.said.filter((line) => line.includes('taken away'))
+  const flapLines = state.said.filter((line) => line.includes('put back'))
   expect(flapLines).toHaveLength(1)
   expect(flapLines[0]).toContain('acme/app#7')
+})
+
+test('a label write that fails counts no undo: the label is put back once the write goes through', async ($, on) => {
+  const { clock, state } = await started($, on)
+  const pull = state.pulls[0]
+  await beat(clock)
+  expect(state.labelled).toHaveLength(1)
+  // The other machine takes the label away; this one's writes then fail for far longer than FLAP_UNDONE retries.
+  if (pull) pull.labels = ['Ready']
+  state.readinessFails = true
+  for (let i = 0; i < 2 * FLAP_UNDONE + 2; i++) {
+    await clock.advance(RETRY_MS)
+    await clock.settle()
+  }
+  state.readinessFails = false
+  await clock.advance(RETRY_MS)
+  await clock.settle()
+  expect(state.labelled).toHaveLength(2)
+  expect(state.said.filter((line) => line.includes('put back'))).toHaveLength(0)
 })

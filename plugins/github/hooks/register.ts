@@ -19,7 +19,7 @@ import {
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { normalise } from './guards.ts'
 import {
-  fingerprintOf, flapCheck, flapWrote, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS, sortedStatuses, takenLease, TICK_MS,
+  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS, sortedStatuses, takenLease, TICK_MS,
   type Counts, type Flap, type LabelMove, type ListedPr, type Listing, type Local, type Schedule,
 } from './reconcile.ts'
 import { parseReconcile, reconcileEdgePath, reconcilePath, reconcileRoot, RECONCILE_VERSION } from '../core/pr-reconcile.ts'
@@ -1105,8 +1105,10 @@ async function readiness($: Mod, repo: string, pr: number, sha?: string): Promis
  * labels the gate leaves (labels, draft) when it wrote, and the line it says, or none: always
  * names what is missing too. It never fails the call it follows.
  */
-// `moved`: the label it wrote. `unwritten`: the gate read at the head, its label not written (the reconciler keeps the reading all the same).
-type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; moved?: LabelMove; unwritten?: { gate: Gate; missing: string[] } }
+// `unwritten`: the gate read at the head, its label not written (the reconciler keeps the reading all the same).
+type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] } }
+
+const flapKey = (repo: string, pr: number) => repo.toLowerCase() + '#' + pr
 
 // The reconciler's say on a label about to move: whether to hold it (reconcile.ts flapCheck); it says so itself, once.
 type FlapGuard = (head: string, move: LabelMove) => boolean
@@ -1150,10 +1152,12 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
   } catch (err: unknown) {
     return { line: gateUnwrittenLine(repo, pr, reasonOf(err).trim()), unwritten: { gate, missing } }
   }
+  // Every write is noted, the tool's too: only the same label put again counts as undone by another machine.
+  if (reconciler) reconciler.flaps.set(flapKey(repo, pr), flapWrote(reconciler.flaps.get(flapKey(repo, pr)), gate.head, move))
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, accepted, excused, carried, ciText), labels, draft, missing, gate, moved: move }
-  return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft, missing, gate, moved: move }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, accepted, excused, carried, ciText), labels, draft, missing, gate }
+  return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft, missing, gate }
 }
 
 /*
@@ -1266,10 +1270,10 @@ async function dropClosed($: Mod, rec: Reconciler, config: string, repo: string,
   const gone = (await Promise.resolve().then(() => $.fs.list(dir)).catch((): FsEntry[] => []))
     .map((entry) => String(entry?.name ?? ''))
     .filter((name) => /^\d+\.json$/.test(name) && !open.has(name))
-  for (const name of gone) {
-    rec.kept.delete(repo + '#' + name.slice(0, -'.json'.length))
-    rec.flaps.delete(repo + '#' + name.slice(0, -'.json'.length))
-  }
+  for (const name of gone) rec.kept.delete(repo + '#' + name.slice(0, -'.json'.length))
+  // The label notes of a pull request no longer listed open go with its reading.
+  const listed = new Set(rows.map((row) => flapKey(repo, row.number)))
+  for (const key of [...rec.flaps.keys()]) if (key.startsWith(repo.toLowerCase() + '#') && !listed.has(key)) rec.flaps.delete(key)
   if (gone.length === 0) return
   const ran = await $.process.run(['rm', '-f', '--', ...gone.map((name) => dir + '/' + name)], { timeoutMs: 10_000 })
   if (ran.exitCode !== 0) sayOnce($, rec, 'github: the reconciler could not remove the readings of closed pull requests of ' + repo + ': ' + (String(ran.stderr ?? '').trim() || 'exit ' + ran.exitCode))
@@ -1335,11 +1339,11 @@ async function reconcilePr(
   const key = repo + '#' + row.number
   rec.counts.gates += 1
   const flap: FlapGuard = (head, move) => {
-    const checked = flapCheck(rec.flaps.get(key), head, move)
-    if (checked.flap) rec.flaps.set(key, checked.flap)
+    const checked = flapCheck(rec.flaps.get(flapKey(repo, row.number)), head, move)
+    if (checked.flap) rec.flaps.set(flapKey(repo, row.number), checked.flap)
     if (checked.say) {
-      sayOnce($, rec, 'github: the ' + (move === 'ready' ? 'Ready' : 'Not Ready') + ' label of ' + key + ' at ' + head.slice(0, 7) + ' was taken away ' + String(checked.flap?.undone)
-        + ' times by another machine: this machine no longer moves it there, the two machines disagree on what the pull request misses')
+      sayOnce($, rec, 'github: the ' + (move === 'ready' ? 'Ready' : 'Not Ready') + ' label of ' + key + ' at ' + head.slice(0, 7) + ' was put back ' + String(FLAP_UNDONE)
+        + ' times after it was taken away: this machine no longer moves it there, another machine disagrees on what the pull request misses')
     }
     return checked.hold
   }
@@ -1355,7 +1359,6 @@ async function reconcilePr(
     return
   }
   if (followed.labels) rec.counts.moves += 1
-  if (followed.moved) rec.flaps.set(key, flapWrote(rec.flaps.get(key), gate.head, followed.moved))
   // The labels the gate left are those the next listing reads: the fingerprint is kept with them.
   // The machine's side as it stood before the gate read it: a record written during the gate changes the next fingerprint.
   const kept = followed.labels ? fingerprintOf(row, local, followed.labels) : fingerprint
@@ -1552,7 +1555,7 @@ async function startReconciler($: Mod): Promise<void> {
   const now = await nowMs($)
   const rec: Reconciler = {
     // The same session started again (resume, clear, compact) keeps its name, and with it the lease it holds.
-    me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(), synced: new Map(), flaps: new Map(),
+    me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(), synced: new Map(), flaps: reconciler?.flaps ?? new Map(),
     edgeSeen: 0, said: undefined, saidNow: false, quotaUntil: 0, session,
     journaled: { since: '', ticks: 0, listings: 0, gates: 0, moves: 0 }, journaledAt: 0,
     counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0, posts: 0 },

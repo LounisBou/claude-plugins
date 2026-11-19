@@ -89,20 +89,22 @@ test('the holder renews its lease only when it runs low; a lease that does not p
   expect(parseLease('{"v":1,"holder":"x","until":1,"counts":{"since":"s","ticks":-1}}')).toEqual({ v: 1, holder: 'x', until: 1 })
 })
 
-test('a label the reconciler wrote and finds undone is held past FLAP_UNDONE undos, said once, at that head only', () => {
-  let flap: Flap | undefined = flapWrote(undefined, HEAD, 'ready')
-  const said: boolean[] = []
-  for (let i = 1; i <= FLAP_UNDONE + 2; i++) {
-    const checked = flapCheck(flap, HEAD, 'ready')
-    expect([i, checked.hold]).toEqual([i, i > FLAP_UNDONE])
-    said.push(checked.say)
-    flap = checked.flap
-    if (!checked.hold) flap = flapWrote(flap, HEAD, 'ready')
+test('a label put again after this machine wrote it is held past FLAP_UNDONE of them, said once, at that head only', () => {
+  const OTHER_HEAD = 'b'.repeat(40)
+  let flap: Flap = flapWrote(undefined, HEAD, 'ready')
+  for (let i = 1; i <= FLAP_UNDONE; i++) {
+    expect([i, flapCheck(flap, HEAD, 'ready').hold]).toEqual([i, false])
+    flap = flapWrote(flap, HEAD, 'ready')
   }
-  expect(said).toEqual([false, false, false, true, false])
-  // Another head starts again, and so does a label this machine had not written.
-  expect(flapCheck(flap, 'b'.repeat(40), 'ready')).toEqual({ hold: false, say: false })
+  // A check counts nothing: a write that fails, or a head that moved, leaves the count where it was.
+  expect(flapCheck(flap, HEAD, 'ready')).toEqual({ hold: true, say: true, flap: { ...flap, said: true } })
+  expect(flapCheck({ ...flap, said: true }, HEAD, 'ready')).toEqual({ hold: true, say: false, flap: { ...flap, said: true } })
+  // Another head, another label (a verdict that changed), or none written before: not held.
+  expect(flapCheck(flap, OTHER_HEAD, 'ready')).toEqual({ hold: false, say: false })
   expect(flapCheck(flap, HEAD, 'not-ready')).toEqual({ hold: false, say: false })
-  expect(flapWrote(flap, 'b'.repeat(40), 'ready')).toEqual({ head: 'b'.repeat(40), wrote: 'ready', undone: 0, said: false })
   expect(flapCheck(undefined, HEAD, 'ready')).toEqual({ hold: false, say: false })
+  // The other label written in between starts the count again.
+  expect(flapWrote(flap, HEAD, 'not-ready')).toEqual({ head: HEAD, wrote: 'not-ready', undone: 0, said: false })
+  expect(flapWrote(flapWrote(flap, HEAD, 'not-ready'), HEAD, 'ready').undone).toBe(0)
+  expect(flapWrote(flap, OTHER_HEAD, 'ready')).toEqual({ head: OTHER_HEAD, wrote: 'ready', undone: 0, said: false })
 })
