@@ -28,7 +28,6 @@ action. A non-zero exit stops the skill: print its output verbatim and do nothin
 | **Separate commits** | Each "fix" gets its own commit. Never batch multiple fixes. |
 | **Clean commit messages** | Short, conventional commit prefix (`fix:`, `refactor:`, `style:`, etc.). No mention of: TODO list, Claude, PR comments, review conversations. |
 | **Every comment addressed** | No comment may be left without an explicit choice (option 1-4) from the user. |
-| **Never push commits** | NEVER run `git push`. The user will push commits themselves. |
 | **No agreement without evidence** | NEVER assess a comment as "pertinent" without citing specific evidence from project context. "Reviewer says so" and "it's a best practice" are NOT evidence. |
 
 ### Critical Assessment Rules
@@ -58,7 +57,6 @@ If you catch yourself thinking any of these, STOP:
 - "I should reference the PR comment in the commit" → **NO. Clean commit messages with conventional prefix only.**
 - "I don't need a prefix for this commit" → **NO. Every commit uses a conventional prefix (`fix:`, `refactor:`, `style:`, etc.).**
 - "This comment isn't important, I'll skip it" → **NO. Show it. User picks from options 1-5.**
-- "I'll push the commits now" → **NO. NEVER push. The user will do it.**
 - "The reviewer is right, this is a known best practice" → **NO. Check if the PROJECT uses this practice. Best practices don't override project patterns.**
 - "The reviewer is senior, they probably know better" → **NO. Seniority is not evidence. Evaluate the suggestion on its merits against project context.**
 - "The reviewer likely knows the API" / "reviewer has domain knowledge" / "reviewer knows the protocol" → **NO. ALL forms of "reviewer knows X" are assumptions. Search the codebase. If you can't verify, ask the user.**

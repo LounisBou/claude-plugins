@@ -193,8 +193,7 @@ the files stay on disk and nothing under `docs/features/` is ever staged.
 
 Close on it, in the user's language: the codename, the branch, the number of phases
 and the title of the first one, the artifacts mode, and the next command,
-`/implement:phase`. Nothing is pushed: the branch is local until the user says
-otherwise, and this skill never says it for them.
+`/implement:phase`.
 
 ---
 

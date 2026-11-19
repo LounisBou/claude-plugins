@@ -84,7 +84,7 @@ git commit -F /tmp/claude-pr-review-<PR>/commit-<n>.msg -- <the item's files>
    Two fixed items that changed the same file cannot be separated: commit them
    together under a message covering both, and say which items share that commit.
    Report the short SHA and the subject of every commit created. **Nothing is
-   pushed** — pushing is the user's, as submitting the review is.
+   pushed**.
 
 9. **On `drop <n>` or `drop all`**, discard the prepared commit(s): unstage
    the item's files, delete its message file, and say so.
