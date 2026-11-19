@@ -36,6 +36,4 @@ After all comments are processed, present a detailed summary:
 | 3 | `utils.ts:5` | Extract to `TIMEOUT_MS` | User preferred `API_TIMEOUT_MS` | Fixed with user's naming |
 ```
 
-Remind the user to push commits when ready. **NEVER push yourself.**
-
 Confirm: "All PR comments have been addressed."
