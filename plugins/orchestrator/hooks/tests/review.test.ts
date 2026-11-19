@@ -149,6 +149,34 @@ for (const verdict of ['pass', 'fail']) {
   })
 }
 
+// The files a verdict's handler writes, by path: the edge marker the reconciler watches among them.
+const edgesOf = (paths: string[]): string[] => paths.filter(p => p.endsWith('/.edge'))
+function writesOf(dollar: World): { written: string[]; dollar: World } {
+  const written: string[] = []
+  return { written, dollar: { ...dollar, fs: { ...dollar.fs, write: async (path: string) => { written.push(path) } } } }
+}
+
+test('a verdict written touches the reconciler\'s edge marker, so the readings are listed at once', async () => {
+  const fx = fake('Orch: belt', { result: WRITTEN })
+  const { written, dollar } = writesOf(fx.dollar)
+  await handler()(dollar, { pr: 128, verdict: 'pass', detail: 'read at 0123456' })
+  expect(edgesOf(written)).toEqual([`${HOME}/.claude/pr-reconcile/.edge`])
+})
+
+test('a verdict github refuses touches no edge marker', async () => {
+  const fx = fake('Orch: belt', { deny: 'github: refused' })
+  const { written, dollar } = writesOf(fx.dollar)
+  await handler()(dollar, { pr: 128, verdict: 'pass' })
+  expect(edgesOf(written)).toEqual([])
+})
+
+test('a check plan touches no edge marker: it is no record', async () => {
+  const fx = fake('Orch: belt', { result: WRITTEN })
+  const { written, dollar } = writesOf(fx.dollar)
+  await handler()(dollar, { pr: 128, plan: { e2e: 'none' } })
+  expect(edgesOf(written)).toEqual([])
+})
+
 test('github\'s refusal comes back as the tool\'s error', async () => {
   const fx = fake('Orch: belt', { deny: 'github: the latest review at 0123456 failed: a pass does not override it.' })
   expect(await handler()(fx.dollar, { pr: 128, verdict: 'pass' }))

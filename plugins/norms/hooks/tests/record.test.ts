@@ -109,6 +109,29 @@ test('no open finding records a pass with its detail', async () => {
   ])
 })
 
+test('a record written touches the reconciler\'s edge marker, so the readings are listed at once', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $, written } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  const out = await m.done($, { open: 0, fixed: 0, passed: 1 })
+  expect(fieldsOf(out)?.['result']).toBe('record: ' + WRITTEN)
+  expect(written['/home/u/.claude/pr-reconcile/.edge']).toBe('\n')
+})
+
+test('a record whose wake cannot write the edge marker is still written, and the answer is the record\'s', async () => {
+  resetCache()
+  const calls: Call[] = []
+  const { $ } = setup({}, {}, calls)
+  const broken = { ...$, fs: { ...$.fs, write: async () => { throw new Error('ENOSPC: no space left') } } }
+  const m = mounted()
+  await m.scope(broken)
+  const out = await m.done(broken, { open: 0, fixed: 0, passed: 1 })
+  expect(fieldsOf(out)?.['result']).toBe('record: ' + WRITTEN)
+  expect(recordCalls(calls).length).toBe(1)
+})
+
 test('the record names the checkout the check read, whatever the session\'s directory is by then', async () => {
   resetCache()
   const checked = setup()

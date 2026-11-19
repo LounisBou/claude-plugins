@@ -19,6 +19,7 @@ import { isOrchestratorSession, reportsToOrchestrator, sessionNameOf } from './s
 import { roleOf } from '../core/names.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
+import { wakeReconciler } from '../core/reconcile-wake.ts'
 import { countRound } from './review-rounds.ts'
 
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock'>
@@ -329,6 +330,7 @@ export function register(on: On<Held>): void {
     const written = answerOf(await $.tool.call(call))
     // A verdict is a review round: the row of the pull request counts it, and the answer says which row, or that none matched.
     if (written.isError === true || !('result' in call)) return written
+    await wakeReconciler($)
     // github's line repeats the detail the orchestrator just wrote, in the two places its gate puts
     // it (« orchestrator (<detail>) », « by orchestrator, <detail> »): named there, never carried back.
     const sent = text(call['detail'])

@@ -12,6 +12,7 @@ import type { NormsScopeMark } from '../types/index.d.ts'
 import { isSpawned } from '../core/env.ts'
 import { answerOf, fieldsOf, reasonOf, type Host, type Events, type On } from '../core/host.ts'
 import { findingEvent } from '../core/learning.ts'
+import { wakeReconciler } from '../core/reconcile-wake.ts'
 import { reportPathOf, verdictLine } from '../core/verdict.ts'
 import { agentText, launchedId, noteHandback, noteRun, reportOf, reported, resetReports, type Found } from './findings.ts'
 import { journal, noteSubject, resetSubject } from './observe.ts'
@@ -336,6 +337,7 @@ export async function checkDone($: RecordHost, input: Events['tool.call']): Prom
       return { result: none(NO_GITHUB) }
     }
     if ('why' in recorded) return { result: none(recorded.why) }
+    await wakeReconciler($)
     // In a session the orchestrator spawned, the answer ends on the verdict line its agent sends up.
     if (!(await spawned($))) return { result: `record: ${recorded.text}` }
     const line = verdictLine({
