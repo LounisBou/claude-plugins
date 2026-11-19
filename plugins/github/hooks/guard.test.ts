@@ -5,6 +5,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, NounEvents, Reply, TestOn } from 'claude-code/testing'
 import { EXEMPT_REFUSAL } from './register.js'
 import { RECORDS_REFUSAL, STATUS_REFUSAL, STDIN_REFUSAL } from './ready.js'
+import { FOREIGN_WAIT_MS } from './reconcile.ts'
 import { parseLearningEvent } from '../core/learning.ts'
 // The choices a consent question offered, which an old consent file still holds.
 const CONSENT_GRANT = 'Accorder'
@@ -80,6 +81,8 @@ type World = {
   exemption?: unknown
   // The pull request's check plan file, as written.
   plan?: unknown
+  // The pull request's Not Ready was written by this machine, as the machine's sighting of its label keeps it.
+  ownLabel?: boolean
   // What pr-fingerprint answers, by head, over two commits; a head absent fails with this error, or a merge's.
   fingerprints?: Record<string, string>
   fingerprintFails?: string
@@ -155,6 +158,7 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
   if (w.autoMerge !== undefined) seen.files[AUTO_MERGE] = JSON.stringify({ repositories: w.autoMerge })
   if (w.deployList !== undefined) seen.files[AUTO_DEPLOY] = typeof w.deployList === 'string' ? w.deployList : JSON.stringify(w.deployList)
   if (w.plan !== undefined) seen.files[PLAN] = JSON.stringify(w.plan)
+  if (w.ownLabel) seen.files['/data/label-seen/acme/thing/12.json'] = JSON.stringify({ v: 1, head: HEAD, label: 'not-ready', own: true, since: 0 })
   if (w.exemption !== undefined) seen.files[EXEMPTION] = typeof w.exemption === 'string' ? w.exemption : JSON.stringify(w.exemption)
   const session = 'guard-session-' + ++sessions
   const records: Record<string, string> = { ...(w.records ?? FOUR) }
@@ -2445,7 +2449,8 @@ const BEHIND = '2026-11-01T12:00:00Z'
 
 test('an exemption whose expiry is ahead covers a pull request, its line naming the expiry', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: AHEAD } })
+  // The test's subject is the expiry, not the Not Ready's origin: this machine wrote it.
+  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: AHEAD }, ownLabel: true })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
   expect(seen.logs).toEqual([EXEMPT_LINE.replace('2026-11-13:', '2026-11-13, until ' + AHEAD + ':')])
@@ -2539,6 +2544,35 @@ test('an exemption with a limit rests on the operator\'s quoted, dated words, wi
   expect(Object.keys(seen.files).filter((path) => path.includes('/consents/'))).toEqual([])
 })
 
+const SEEN_FILE = '/data/label-seen/acme/thing/12.json'
+const LISTED_FILE = '/data/label-seen/acme/thing/.listed'
+
+test('a pr-gate read does not put Ready over a Not Ready this machine did not set before the forge was listed after the wait', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, {})
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+  expect(seen.logs.join('\n')).toContain('the Not Ready it carries was not set by this machine')
+  expect(JSON.parse(seen.files[SEEN_FILE] ?? '{}')).toMatchObject({ head: HEAD, label: 'not-ready', own: false, since: RECEIVED })
+  // The wait is over, the forge was last listed before it: still held, until a listing follows.
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  seen.files[LISTED_FILE] = String(RECEIVED)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+  seen.files[LISTED_FILE] = String(RECEIVED + FOREIGN_WAIT_MS + 500)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  // What the tool wrote is its own.
+  expect(JSON.parse(seen.files[SEEN_FILE] ?? '{}')).toMatchObject({ label: 'ready', own: true })
+})
+
+test('a Not Ready another session of this machine wrote is undone by a pr-gate read at once', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: true })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
 // The operator's case at the gate: until 2026-11-16T11:00:00Z (Paris noon), it excuses E2E before that instant and nothing at it.
 const OPERATOR_UNTIL = '2026-11-16T11:00:00Z'
 for (const [label, now, covered] of [
@@ -2547,7 +2581,8 @@ for (const [label, now, covered] of [
 ] as const) {
   test('the operator\'s exemption until ' + OPERATOR_UNTIL + ' ' + (covered ? 'covers' : 'covers nothing') + ' a pull request ' + label + ' it', async ($, on) => {
     mock.clock(on, { now })
-    const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: OPERATOR_UNTIL }, autoMerge: ['acme/thing'] })
+    // The test's subject is the expiry, not the Not Ready's origin: this machine wrote it.
+    const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: OPERATOR_UNTIL }, autoMerge: ['acme/thing'], ownLabel: true })
     await $.tool.call(gh('pr-gate', { pr: 12 }))
     if (covered) {
       expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])

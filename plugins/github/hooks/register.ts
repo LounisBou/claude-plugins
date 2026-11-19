@@ -1346,7 +1346,10 @@ async function dropClosed($: Mod, rec: Reconciler, config: string, repo: string,
   const listed = new Set(rows.map((row) => flapKey(repo, row.number)))
   for (const map of [rec.flaps, rec.unpublished, rec.held]) for (const key of [...map.keys()]) if (key.startsWith(repo.toLowerCase() + '#') && !listed.has(key)) map.delete(key)
   if (gone.length === 0) return
-  const ran = await $.process.run(['rm', '-f', '--', ...gone.map((name) => dir + '/' + name)], { timeoutMs: 10_000 })
+  // What the machine saw of their labels goes with the readings.
+  const data = await dataDir($)
+  const forgotten = data ? gone.map((name) => seenPath(data, repo, Number(name.slice(0, -'.json'.length)))) : []
+  const ran = await $.process.run(['rm', '-f', '--', ...gone.map((name) => dir + '/' + name), ...forgotten], { timeoutMs: 10_000 })
   if (ran.exitCode !== 0) sayOnce($, rec, 'github: the reconciler could not remove the readings of closed pull requests of ' + repo + ': ' + (String(ran.stderr ?? '').trim() || 'exit ' + ran.exitCode))
 }
 

@@ -1,7 +1,7 @@
 // The reconciler's pure decisions: its listing, its fingerprint, its schedule and its lease.
 import { expect, test } from 'claude-code/testing'
 import {
-  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, foreignHold, FOREIGN_WAIT_MS, IDLE_MAX_MS, LEASE_MS, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, RECENT_MS, reconciledRepos, seenLabel, seenWrote, takenLease, TICK_MS,
+  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, foreignHold, FOREIGN_WAIT_MS, IDLE_MAX_MS, LEASE_MS, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, RECENT_MS, reconciledRepos, parseSeen, seenLabel, seenPath, seenText, seenWrote, listedPath, takenLease, TICK_MS,
   type Flap, type ListedPr, type Local,
 } from './reconcile.ts'
 
@@ -137,4 +137,11 @@ test('Ready is held over a Not Ready of another machine, or of unknown origin, u
   expect(foreignHold(seenLabel(undefined, HEAD, ['Ready'], T0), 'ready', undefined)).toBeUndefined()
   expect(foreignHold(seenLabel(undefined, HEAD, [], T0), 'ready', undefined)).toBeUndefined()
   expect(foreignHold(undefined, 'ready', undefined)).toBeUndefined()
+})
+
+test('a sighting is kept in a file of the data directory, per pull request, and read back whole or not at all', () => {
+  expect(seenPath('/data', 'Acme/App', 7)).toBe('/data/label-seen/acme/app/7.json')
+  expect(listedPath('/data', 'Acme/App')).toBe('/data/label-seen/acme/app/.listed')
+  for (const seen of [seenWrote('a'.repeat(40), 'ready', T0), seenLabel(undefined, 'b'.repeat(40), [], T0)]) expect(parseSeen(seenText(seen))).toEqual(seen)
+  for (const text of [undefined, '', '[]', '{"v":2}', '{"v":1,"head":"a","label":"x","own":true,"since":1}', '{"v":1,"head":"a","label":null,"own":"yes","since":1}', '{"v":1,"head":"a","label":null,"own":true,"since":"1"}']) expect(parseSeen(text)).toBeUndefined()
 })
