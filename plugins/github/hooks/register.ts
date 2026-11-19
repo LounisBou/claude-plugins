@@ -1273,7 +1273,7 @@ async function holdLease($: Mod, rec: Reconciler, io: ReturnType<typeof journalI
 // The gate on one pull request whose fingerprint changed, its reading kept; whether the gate could be read.
 async function reconcilePr(
   $: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, at: { config: string; root: string; data: string; now: number },
-  repo: string, row: ListedPr, exemption: Exemption | undefined, fingerprint: string,
+  repo: string, row: ListedPr, local: Local, fingerprint: string,
 ): Promise<void> {
   const key = repo + '#' + row.number
   rec.counts.gates += 1
@@ -1290,7 +1290,8 @@ async function reconcilePr(
   }
   if (followed.labels) rec.counts.moves += 1
   // The labels the gate left are those the next listing reads: the fingerprint is kept with them.
-  const kept = followed.labels ? fingerprintOf(row, await localOf($, at.root, at.data, repo, row, exemption), followed.labels) : fingerprint
+  // The machine's side as it stood before the gate read it: a record written during the gate changes the next fingerprint.
+  const kept = followed.labels ? fingerprintOf(row, local, followed.labels) : fingerprint
   const reading = readingOf(repo, row, gate, followed.missing, followed.labels ?? gate.labels, followed.draft ?? gate.draft, at.now, kept)
   await writeAtomicOver(io, reconcilePath(at.config, repo, row.number), JSON.stringify(reading) + '\n')
   rec.kept.set(key, kept)
@@ -1332,7 +1333,8 @@ async function reconcileTick($: Mod): Promise<void> {
       const exemption = data ? await readExemption($, repo) : undefined
       for (const row of rows) {
         const key = repo + '#' + row.number
-        const fingerprint = fingerprintOf(row, await localOf($, root, data, repo, row, exemption))
+        const local = await localOf($, root, data, repo, row, exemption)
+        const fingerprint = fingerprintOf(row, local)
         if (!rec.kept.has(key)) {
           const reading = parseReconcile((await textOf($, reconcilePath(config, repo, row.number))) ?? '')
           if (reading) rec.kept.set(key, reading.fingerprint)
@@ -1343,7 +1345,7 @@ async function reconcileTick($: Mod): Promise<void> {
         // A beat can outlast what the lease had left: it is held again before each gate, the time read anew.
         if (!(await holdLease($, rec, io, leasePath, await nowMs($)))) return
         gates += 1
-        await reconcilePr($, rec, io, at, repo, row, exemption, fingerprint)
+        await reconcilePr($, rec, io, at, repo, row, local, fingerprint)
       }
     }
   } catch (err: unknown) {

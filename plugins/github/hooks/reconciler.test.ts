@@ -39,6 +39,8 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     gateFails: false,
     panelFails: undefined as string | undefined,
     readinessFails: false,
+    // Run inside the next label write, as a record written while the gate runs.
+    duringReadiness: undefined as (() => void) | undefined,
   }
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'session-r' }))
@@ -107,6 +109,8 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     }
     if (command === 'pr-readiness' && state.readinessFails) return done('', 1, 'gh: HTTP 403 label')
     if (command === 'pr-readiness' && pull) {
+      state.duringReadiness?.()
+      state.duringReadiness = undefined
       pull.labels = [...pull.labels.filter((l) => !['ready', 'not ready'].includes(l.toLowerCase())), args['state'] === 'ready' ? 'Ready' : 'Not Ready']
       state.labelled.push(pull.number + ' ' + String(args['state']))
       return done('ok')
@@ -312,4 +316,13 @@ test('the same session started again keeps its lease: it reconciles at the next 
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await beat(clock)
   expect(count(state.runs, 'pr-panel')).toBe(2)
+})
+
+test('a record written while the gate moves the label reads the gate again at the next beat', async ($, on) => {
+  const { clock, state, put } = await started($, on)
+  state.duringReadiness = () => put(RECORDS + '/acme/app/' + HEAD + '/e2e.y.json', '{}', T0 + TICK_MS)
+  await beat(clock)
+  expect(state.labelled).toEqual(['7 not-ready'])
+  await beat(clock)
+  expect(count(state.runs, 'pr-gate')).toBe(2)
 })
