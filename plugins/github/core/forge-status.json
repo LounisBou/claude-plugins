@@ -1,0 +1,15 @@
+{
+  "$comment": "Generated from packages/core/src by `npm run core`: edit the source, never this copy.",
+  "version": 1,
+  "prefix": "readiness/",
+  "plan": "plan",
+  "exemption": "exemption",
+  "states": {
+    "pass": "success",
+    "fail": "failure",
+    "waived": "success",
+    "not-applicable": "success",
+    "accepted": "success"
+  },
+  "description_max": 140
+}

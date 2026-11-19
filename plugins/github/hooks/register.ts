@@ -9,7 +9,9 @@ import { reasonOf, type Events, type FsEntry, type Host, type On } from '../core
 import {
   AUTO_DEPLOY_FILE, bashDeploys, DEPLOY_ENVS, type DeployEnv, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
 } from './deploy.ts'
-import { ACCEPTANCE, DETAIL_MAX, KINDS, SCRIPTED, type PrRecord } from '../core/pr-record.ts'
+import { ACCEPTANCE, DETAIL_MAX, KINDS, parsePrRecord, SCRIPTED, type PrRecord } from '../core/pr-record.ts'
+import { forgeContext, recordPost, type ForgePost } from '../core/forge-status.ts'
+import { FORGE_SESSION, forgeSync, POSTS_PER_TICK } from './forge-sync.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
   covers, EXEMPT_DIR, expired, expiryLine, exemptionLine, exemptionPath, isExpiryLine, isInstant, isRepoName, parseExemption, parsePrFiles, runtimeFiles, type Exemption, type PrFile,
@@ -17,7 +19,7 @@ import {
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { normalise } from './guards.ts'
 import {
-  fingerprintOf, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS, takenLease, TICK_MS,
+  fingerprintOf, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS, sortedStatuses, takenLease, TICK_MS,
   type Counts, type ListedPr, type Listing, type Local, type Schedule,
 } from './reconcile.ts'
 import { parseReconcile, reconcileEdgePath, reconcilePath, reconcileRoot, RECONCILE_VERSION } from '../core/pr-reconcile.ts'
@@ -33,7 +35,7 @@ import {
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
-  RECORDS_REFUSAL, deletes, deletesRecords,
+  RECORDS_REFUSAL, deletes, deletesRecords, postsStatus, STATUS_REFUSAL,
   type Act, type Carried, type Gate, type HeadRead, type RecordFile,
 } from './ready.ts'
 
@@ -286,7 +288,7 @@ export function quotedWordsRefusal(what: string, detail: string, field = 'detail
 }
 
 // What a guard's net refuses when the guard itself failed: only what the guard still refuses (a merge, the
-// auto-merge and deploy lists, a deletion of the records, the exemptions or the plans), judged from the call alone (no state can be read once the hook has
+// auto-merge and deploy lists, a deletion of the records, the exemptions or the plans, a commit status), judged from the call alone (no state can be read once the hook has
 // thrown); the rest, observed guards included, goes through.
 export const NET_REFUSAL = 'github: its guard failed on this call, which it protects; nothing was run. Try again, or run /github:doctor.'
 
@@ -295,7 +297,7 @@ const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create', 'create-draft', 'r
 
 export function bashNetRefusal(command: string): string | null {
   try {
-    if (command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE) || deletesRecords(command)) return NET_REFUSAL
+    if (command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE) || deletesRecords(command) || postsStatus(command)) return NET_REFUSAL
     if (namesExemptions(command) && deletes(command, namesExemptions)) return NET_REFUSAL
     return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
   } catch {
@@ -1161,11 +1163,13 @@ type Reconciler = {
   timer?: { cancel: () => void }
   me: string
   running: boolean
-  // Each repository's next listing and the open pull requests it last listed.
-  repos: Map<string, { schedule: Schedule; rows: ListedPr[] }>
+  // Each repository's next listing, the open pull requests it last listed, the account that listed them and when (ms).
+  repos: Map<string, Listed>
   // The fingerprint of each pull request's last reading, by repo#pr; a gate that failed, with its fingerprint and when.
   kept: Map<string, string>
   failed: Map<string, { fingerprint: string; at: number }>
+  // What each head was last copied with to and from the forge (forge-sync.ts), by repo#pr: what it read, when, and whether all went through.
+  synced: Map<string, { key: string; at: number; ok: boolean }>
   edgeSeen: number
   counts: Counts
   // The last line said, and whether this beat said one: a beat that said none lets the same failure be said again.
@@ -1179,6 +1183,8 @@ type Reconciler = {
   // No listing and no gate before this (ms): the quota ran low, or a listing was refused for the rate limit.
   quotaUntil: number
 }
+
+type Listed = { schedule: Schedule; rows: ListedPr[]; viewer?: string; listedAt?: number }
 
 let reconciler: Reconciler | undefined
 
@@ -1234,7 +1240,7 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
     const limited = /rate limit/i.test(why)
     const schedule = limited ? { nextAt: now + QUOTA_WAIT_MS, idle: before?.schedule.idle ?? 0 } : nextListing(before?.schedule, now, false, [], {})
     if (limited) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
-    rec.repos.set(repo, { rows: before?.rows ?? [], schedule })
+    rec.repos.set(repo, { ...before, rows: before?.rows ?? [], schedule })
     sayOnce($, rec, 'github: the reconciler could not list ' + repo + ': ' + why)
     return false
   }
@@ -1242,7 +1248,7 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
   const schedule = nextListing(before?.schedule, now, changed, listing.rows, listing.rate)
   // The quota is the account's: once low, no repository is listed and no gate read before its reset.
   if (listing.rate.remaining !== undefined && listing.rate.remaining < QUOTA_LOW) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
-  rec.repos.set(repo, { rows: listing.rows, schedule })
+  rec.repos.set(repo, { rows: listing.rows, schedule, ...(listing.viewer !== undefined ? { viewer: listing.viewer } : {}), listedAt: now })
   return true
 }
 
@@ -1339,6 +1345,123 @@ async function reconcilePr(
   rec.failed.delete(key)
 }
 
+// Posts the status that copies a record, the plan or the exemption at a head (engine/forge_status.py); the line that
+// says why it failed, or undefined.
+async function postForge($: Mod, repo: string, head: string, post: ForgePost): Promise<string | undefined> {
+  const run = await $.process.run([
+    'python3', $.plugin.root + '/engine/forge_status.py', '--repo', repo, '--head', head, '--what', post.name, '--state', post.state, '--description', post.description,
+  ], { timeoutMs: 30_000 })
+  return run.exitCode === 0 ? undefined : String(run.stderr || 'forge_status.py exited ' + run.exitCode).trim()
+}
+
+// Copies to the forge the record a tool just wrote at `path`. A copy that fails is one line in the log, the tool's
+// answer unchanged: the reconciler posts it at a later beat.
+async function postWritten($: Mod, path: string): Promise<void> {
+  const record = parsePrRecord(await Promise.resolve().then(() => $.fs.read(path)).then((text) => JSON.parse(String(text)) as unknown, () => undefined))
+  const post = record ? recordPost(record) : undefined
+  const failed = record && post ? await postForge($, record.repo, record.head, post) : 'the record at ' + path + ' cannot be read back'
+  if (failed) note($, 'github: the record is not copied to the forge yet (' + failed + '): the reconciler copies it at a later beat.')
+}
+
+// The records a head holds on this machine, or undefined when its directory is there but cannot be listed.
+async function recordsAt($: Mod, root: string, repo: string, head: string): Promise<PrRecord[] | undefined> {
+  const dir = root + '/' + repo + '/' + head
+  let entries: FsEntry[]
+  try {
+    entries = await $.fs.list(dir)
+  } catch {
+    return (await Promise.resolve().then(() => $.fs.exists(dir)).catch(() => true)) ? undefined : []
+  }
+  const records: PrRecord[] = []
+  for (const entry of entries) {
+    const name = String(entry?.name ?? '')
+    if (entry?.kind === 'dir' || name.startsWith('.') || !name.endsWith('.json')) continue
+    const text = await textOf($, dir + '/' + name)
+    let raw: unknown
+    try {
+      raw = JSON.parse(text ?? '')
+    } catch {
+      continue
+    }
+    const record = parsePrRecord(raw)
+    if (record && record.head === head) records.push(record)
+  }
+  return records
+}
+
+/*
+ * Copies one head between this machine and the forge (forge-sync.ts): the newer copies the forge holds of its records,
+ * its plan and its repository's exemption are written here, and those this machine holds newer are posted, the beat's
+ * `budget` of posts at most. Nothing is done again while what it read is unchanged, nor before RETRY_MS after a
+ * failure. Whether it wrote something here.
+ */
+async function syncForge(
+  $: Mod, rec: Reconciler, at: { root: string; data: string; now: number }, repo: string, listed: Listed, row: ListedPr,
+  exemption: Exemption | undefined, budget: { posts: number },
+): Promise<boolean> {
+  const viewer = listed.viewer
+  if (row.statuses === undefined || !viewer || listed.listedAt === undefined) return false
+  const local = await localOf($, at.root, at.data, repo, row, exemption)
+  const key = JSON.stringify([row.head, row.statuses, local.records, local.plan, local.exemption])
+  const id = repo + '#' + row.number
+  const last = rec.synced.get(id)
+  if (last?.key === key && (last.ok || at.now - last.at < RETRY_MS)) return false
+  const records = await recordsAt($, at.root, repo, row.head)
+  if (records === undefined) {
+    sayOnce($, rec, 'github: the reconciler could not read the records of ' + id + ' at ' + row.head.slice(0, 7) + ': its forge copies wait')
+    return false
+  }
+  const plan = at.data ? await readPlan($, repo, row.number) : undefined
+  const sync = forgeSync({ repo, statuses: row.statuses, viewer, records, plan, exemption: at.data ? exemption : undefined, listedAt: listed.listedAt })
+  let ok = true
+  for (const copy of sync.records) {
+    const run = await $.process.run([
+      'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(row.number), '--head', row.head, '--kind', copy.kind,
+      '--result', copy.result, '--producer', copy.producer, '--detail', 'copied from the forge, ' + forgeContext(copy.kind) + ' posted by ' + viewer,
+      '--session', FORGE_SESSION, '--at', copy.at,
+    ], { timeoutMs: 30_000 })
+    if (run.exitCode !== 0) {
+      ok = false
+      sayOnce($, rec, 'github: the reconciler could not copy ' + forgeContext(copy.kind) + ' of ' + id + ' from the forge: ' + (String(run.stderr ?? '').trim() || 'exit ' + run.exitCode))
+    }
+  }
+  // The plan and the exemption are written as their tools write them, under the list's lock.
+  const copies: Array<{ what: string; path: string; body: object }> = []
+  if (sync.plan && at.data) copies.push({ what: 'readiness/plan', path: planPath(at.data, repo, row.number), body: { v: 1, repo: repo.toLowerCase(), pr: row.number, ...sync.plan.checks, at: sync.plan.at } })
+  if (sync.exemption && at.data) copies.push({ what: 'readiness/exemption', path: exemptionPath(at.data, repo), body: sync.exemption })
+  for (const copy of copies) {
+    try {
+      await withListLock($, copy.path, () => writeAutoMerge($, copy.path, JSON.stringify(copy.body, null, 2) + '\n'))
+    } catch (err: unknown) {
+      ok = false
+      sayOnce($, rec, 'github: the reconciler could not copy ' + copy.what + ' of ' + id + ' from the forge: ' + reasonOf(err).trim())
+    }
+  }
+  for (const line of sync.unposted) sayOnce($, rec, line)
+  for (const post of sync.posts) {
+    if (budget.posts >= POSTS_PER_TICK) {
+      ok = false
+      break
+    }
+    budget.posts += 1
+    rec.counts.posts = (rec.counts.posts ?? 0) + 1
+    const failed = await postForge($, repo, row.head, post)
+    if (failed) {
+      ok = false
+      sayOnce($, rec, 'github: the reconciler could not post ' + forgeContext(post.name) + ' of ' + id + ': ' + failed)
+      continue
+    }
+    // What the next listing reads: the status as posted, so the same post is not made twice.
+    const context = forgeContext(post.name)
+    row.statuses = sortedStatuses([...row.statuses.filter((s) => s.context !== context), { context, state: post.state, description: post.description, creator: viewer }])
+  }
+  // A copy left to its tool, or a budget spent, leaves the rest to the next beat at once; a failure, to RETRY_MS later.
+  if (sync.waiting && ok) rec.synced.delete(id)
+  else if (ok || budget.posts < POSTS_PER_TICK) rec.synced.set(id, { key, at: at.now, ok })
+  else rec.synced.delete(id)
+  return sync.records.length > 0 || sync.plan !== undefined || sync.exemption !== undefined
+}
+
 async function reconcileTick($: Mod): Promise<void> {
   const rec = reconciler
   if (!rec || rec.running) return
@@ -1369,8 +1492,13 @@ async function reconcileTick($: Mod): Promise<void> {
     const data = await dataDir($)
     const at = { config, root, data, now }
     let gates = 0
-    for (const [repo, { rows }] of rec.repos) {
+    const budget = { posts: 0 }
+    for (const [repo, entry] of rec.repos) {
+      const { rows } = entry
       if (listed.has(repo)) await dropClosed($, rec, config, repo, rows)
+      // The forge's copies first, so the gate reads the same truth on both machines.
+      let copied = data ? await readExemption($, repo) : undefined
+      for (const row of rows) if (await syncForge($, rec, at, repo, entry, row, copied, budget)) copied = data ? await readExemption($, repo) : undefined
       const exemption = data ? await readExemption($, repo) : undefined
       for (const row of rows) {
         const key = repo + '#' + row.number
@@ -1404,10 +1532,10 @@ async function startReconciler($: Mod): Promise<void> {
   const now = await nowMs($)
   const rec: Reconciler = {
     // The same session started again (resume, clear, compact) keeps its name, and with it the lease it holds.
-    me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(),
+    me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(), synced: new Map(),
     edgeSeen: 0, said: undefined, saidNow: false, quotaUntil: 0, session,
     journaled: { since: '', ticks: 0, listings: 0, gates: 0, moves: 0 }, journaledAt: 0,
-    counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0 },
+    counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0, posts: 0 },
   }
   reconciler = rec
   // The edge marker as it stands at the start is no news.
@@ -2264,6 +2392,8 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   ]
   const run = await $.process.run(argv, { timeoutMs: 30_000 })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
+  // Its copy on the forge, for the other machine's gate.
+  await postWritten($, String(run.stdout).trim())
   // The record may complete readiness: the gate reads it at the head it just checked.
   const { line } = await followGate($, repo, pr, gate, true)
   return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
@@ -2307,6 +2437,9 @@ async function lightCi($: Mod, e: ToolInput): Promise<Answer> {
   const run = await $.process.run([...script, 'run', '--pr', String(pr), '--session', session, '--budget', String(LIGHT_CI_BUDGET_S), ...repoArgs],
     { timeoutMs: LIGHT_CI_TIMEOUT_MS, ...inDir })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'light_ci.py exited ' + run.exitCode).trim(), isError: true }
+  // Its copy on the forge: the line names the record it wrote last.
+  const written = / record (\S+\.json)$/.exec(String(run.stdout).trim())?.[1]
+  if (written) await postWritten($, written)
   const repo = await targetRepo($, { repo: named, args: {} }, dir).catch(() => undefined)
   // The record may complete readiness, or break it: the gate reads the pull request again.
   const { line } = repo ? await followGate($, repo, pr, undefined, true) : { line: undefined }
@@ -2496,6 +2629,7 @@ export function register(on: On<Mod>): void {
       // The records and the exemptions are refused a deletion (irreversible); any other write to the exemptions is observed.
       const root = await recordsRoot($)
       if (deletesRecords(line, root)) return await refuse($, REFUSED.recordsDelete, RECORDS_REFUSAL)
+      if (postsStatus(line)) return await refuse($, REFUSED.statusWrite, STATUS_REFUSAL)
       const exempt = await touchesExemptions($, line)
       if (exempt && deletes(line, namesExemptions)) return await refuse($, REFUSED.exemptionDelete, EXEMPT_REFUSAL)
       if (exempt && !onlyReads(line)) observations.push(OBSERVED.exemption)

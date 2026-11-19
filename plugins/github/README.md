@@ -87,9 +87,17 @@ it. `/github:doctor` then confirms everything is ready.
   less often, up to every five minutes; a low quota waits for its reset; touching
   `<config>/pr-reconcile/.edge` lists at the next beat. Each reading is kept in
   `<config>/pr-reconcile/<owner>/<name>/<pr>.json` (core's `pr-reconcile.ts`), where the
-  orchestrator reads CI; the lease file counts its beats, listings, gates and label moves, and
-  a renewal of the lease journals those since the previous one at most once an hour (an audit
-  event of kind `reconcile`, which telemetry's sweep records).
+  orchestrator reads CI; the lease file counts its beats, listings, gates, label moves and statuses
+  posted, and a renewal of the lease journals the first four since the previous one at most once an
+  hour (an audit event of kind `reconcile`, which telemetry's sweep records).
+- **Records on the forge** — each record, check plan and E2E exemption is copied as a commit
+  status at the pull request's head, `readiness/<kind|plan|exemption>`, `v1 <at> <body>` in its
+  description (core's `forge-status.ts`), so the operator's two machines judge on the same truth:
+  `mcp__github__record` and `mcp__github__light_ci` post the record they wrote, and the reconciler,
+  from the same listing, imports here what the operator's account posted newer than this machine's
+  copy, and posts what this machine holds newer, eight statuses a beat at most. The CI the gate and the reconciler read
+  leaves them out. Only `engine/forge_status.py` posts them: a session posting a status from the
+  shell is refused (`github.status.write`).
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's quoted, dated words, and `auto-merge-list`
   prints the list (below).
@@ -333,7 +341,7 @@ written is one line in the transcript, and the call still goes through.
 A refusal that protects something writes one refusal event too, under its own code (`REFUSED` in
 `hooks/observe.ts`): `github.ready.held` (the Ready gate), `github.auto-merge.*` and `github.auto-deploy.*`
 (the lists and their tools), `github.deploy.unlisted`, `github.records.delete`, `github.exemption.delete`,
-`github.net.blocked`, and `github.record.*` for each refusal of `mcp__github__record`. A refusal that only
+`github.status.write`, `github.net.blocked`, and `github.record.*` for each refusal of `mcp__github__record`. A refusal that only
 asks for a missing or malformed argument writes none.
 
 ## Tests

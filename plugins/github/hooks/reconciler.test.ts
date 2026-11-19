@@ -7,6 +7,7 @@ import { parseReconcile } from '../core/pr-reconcile.ts'
 import { JOURNAL_EVERY_MS } from './register.ts'
 import { parseAuditEvent } from '../core/learning.ts'
 import { GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
+import { POSTS_PER_TICK } from './forge-sync.ts'
 
 const T0 = Date.parse('2026-11-19T10:00:00Z')
 const HEAD = 'a'.repeat(40)
@@ -18,7 +19,10 @@ const LEASE = CFG + '/pr-reconcile/.lease'
 const EDGE = CFG + '/pr-reconcile/.edge'
 
 // mergeable and mergeState: GitHub's listed mergeability against the base, as the listing carries it.
-type Pull = { number: number; draft: boolean; head: string; base: string; labels: string[]; rollup: string | null; mergeable?: string; mergeState?: string }
+type Status = { context: string; state: string; description: string; creator: string }
+type Pull = {
+  number: number; draft: boolean; head: string; base: string; labels: string[]; rollup: string | null; mergeable?: string; mergeState?: string; statuses?: Status[]
+}
 
 // The gate's answer for a listed mergeability: pr-gate reads REST's mergeable and mergeable_state, null while computed.
 const mergeableOf = (mergeable: string | undefined): Record<string, unknown> => {
@@ -29,8 +33,9 @@ const mergeableOf = (mergeable: string | undefined): Record<string, unknown> => 
 
 // The machine and GitHub as the reconciler sees them: files by path with their mtimes, the open pull requests of
 // acme/app, the quota the listing reports, every engine run by its subcommand and every line the module said.
-// `gateFails` makes the gate fail; `panelFails` makes the listing fail with that text on stderr.
-function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string>; remaining?: number; resetAt?: string } = {}) {
+// `gateFails` makes the gate fail; `panelFails` makes the listing fail with that text on stderr. With `viewer`, the listing
+// names the account that reads; `posted` and `copied` are the statuses posted and the records copied from the forge.
+function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string>; remaining?: number; resetAt?: string; viewer?: string } = {}) {
   const files = new Map<string, { text: string; mtime: number }>()
   const dirs = new Map<string, number>()
   const put = (path: string, text: string, mtime = T0) => {
@@ -51,6 +56,9 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     readinessFails: false,
     // Run inside the next label write, as a record written while the gate runs.
     duringReadiness: undefined as (() => void) | undefined,
+    posted: [] as string[],
+    postFails: false,
+    copied: [] as string[],
   }
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'session-r' }))
@@ -90,6 +98,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
       put(lock, '1\n')
       return done()
     }
+    if (argv[0] === 'mkdir') return done()
     if (argv[0] === 'mv') {
       const [from, to] = argv.slice(-2).map(String)
       const moved = files.get(from ?? '')
@@ -101,13 +110,26 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
       for (const path of argv.slice(1)) files.delete(String(path))
       return done()
     }
+    const flag = (name: string) => String(argv[argv.indexOf(name) + 1] ?? '')
+    if (String(argv[1] ?? '').endsWith('/engine/forge_status.py')) {
+      state.posted.push(flag('--what') + ' ' + flag('--head').slice(0, 1) + ' ' + flag('--description'))
+      return state.postFails ? done('', 1, 'error: cannot post: HTTP 403') : done('posted')
+    }
+    if (String(argv[1] ?? '').endsWith('/engine/record.py')) {
+      const at = flag('--at')
+      state.runs.push('record.py')
+      state.copied.push(flag('--kind') + ' ' + flag('--result') + ' ' + flag('--producer') + ' ' + at + ' ' + flag('--session'))
+      const record = { v: 1, repo: flag('--repo'), pr: Number(flag('--pr')), head: flag('--head'), kind: flag('--kind'), result: flag('--result'), producer: flag('--producer'), detail: flag('--detail'), session: flag('--session'), at }
+      put(RECORDS + '/' + record.repo + '/' + record.head + '/' + record.kind + '.' + at.replace(/[-:]/g, '') + '.' + record.producer + '.json', JSON.stringify(record), T0 + 10 * TICK_MS)
+      return done('written')
+    }
     const request = fieldsOf(JSON.parse(e.init?.stdin ?? '{}')) ?? {}
     const args = fieldsOf(request['args']) ?? {}
     const command = String(request['command'] ?? '')
     state.runs.push(command + (args['head-only'] ? ' head' : '') + (args['state'] ? ' ' + String(args['state']) : ''))
     if (command === 'pr-panel') {
       if (state.panelFails !== undefined) return done('', 1, state.panelFails)
-      return done(JSON.stringify({ rows: state.pulls, rate: { remaining: state.remaining, resetAt: state.resetAt, cost: 1 } }))
+      return done(JSON.stringify({ rows: state.pulls, ...(over.viewer ? { viewer: over.viewer } : {}), rate: { remaining: state.remaining, resetAt: state.resetAt, cost: 1 } }))
     }
     const pull = state.pulls.find((p) => p.number === Number(args['pr']))
     if (command === 'pr-gate' && state.gateFails) return done('', 1, 'gh: HTTP 502')
@@ -435,4 +457,129 @@ test('an hour with no forge call journals nothing; its beats go with the next ev
   expect(events).toHaveLength(2)
   expect(events[1]?.kind === 'reconcile' && events[1].fact.ticks).toBeGreaterThan(3 * JOURNAL_EVERY_MS / TICK_MS - 10)
   expect(summed(events)).toEqual(leaseCounts(files))
+})
+
+// ---- the forge's copies (forge-sync.ts) ----
+
+const reviewAt = (at: string, result = 'pass', producer = 'orchestrator') => JSON.stringify({
+  v: 1, repo: 'acme/app', pr: 7, head: HEAD, kind: 'review', result, producer, detail: '', session: 's', at,
+})
+const status = (context: string, state: string, description: string, creator = 'operator'): Status => ({ context, state, description, creator })
+const PLAN = '/data/github/check-plans/acme/app/7.json'
+const pullWith = (statuses: Status[]): Pull[] => [{ number: 7, draft: false, head: HEAD, base: 'main', labels: [], rollup: 'SUCCESS', statuses }]
+
+test('a record the other machine posted is copied here before the gate reads it', async ($, on) => {
+  const pulls = pullWith([status('readiness/review', 'success', 'v1 2026-11-19T09:00:00Z pass orchestrator')])
+  const { clock, state } = await started($, on, { pulls, viewer: 'operator' })
+  await beat(clock)
+  expect(state.copied).toEqual(['review pass orchestrator 2026-11-19T09:00:00Z forge'])
+  expect(state.runs.slice(0, 3)).toEqual(['pr-panel', 'record.py', 'pr-gate'])
+  expect(state.posted).toEqual([])
+  await beat(clock, 3)
+  expect(state.copied).toHaveLength(1)
+})
+
+test('a status another account posted is never copied', async ($, on) => {
+  const pulls = pullWith([status('readiness/review', 'success', 'v1 2026-11-19T09:00:00Z pass orchestrator', 'intruder')])
+  const { clock, state } = await started($, on, { pulls, viewer: 'operator' })
+  await beat(clock)
+  expect(state.copied).toEqual([])
+})
+
+test('a listing that names no account copies nothing either way', async ($, on) => {
+  const pulls = pullWith([status('readiness/review', 'success', 'v1 2026-11-19T09:00:00Z pass orchestrator')])
+  const { clock, state } = await started($, on, { pulls, files: { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T08:00:00Z') } })
+  await beat(clock)
+  expect([state.copied, state.posted]).toEqual([[], []])
+})
+
+test('a record this machine holds newer than the forge\'s is posted over it, once', async ($, on) => {
+  const pulls = pullWith([status('readiness/review', 'success', 'v1 2026-11-19T08:00:00Z pass orchestrator')])
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z', 'fail') }
+  const { clock, state } = await started($, on, { pulls, files, viewer: 'operator' })
+  await beat(clock)
+  expect(state.posted).toEqual(['review a v1 2026-11-19T09:00:00Z fail orchestrator'])
+  expect(state.copied).toEqual([])
+  await beat(clock, 3)
+  expect(state.posted).toHaveLength(1)
+})
+
+test('a post refused is said once and tried again after RETRY_MS', async ($, on) => {
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  state.postFails = true
+  await beat(clock)
+  await beat(clock, RETRY_MS / TICK_MS - 1)
+  expect(state.posted).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7'))).toHaveLength(1)
+  state.postFails = false
+  await beat(clock)
+  expect(state.posted).toHaveLength(2)
+})
+
+test('no more than POSTS_PER_TICK statuses are posted at one beat, the others at the next', async ($, on) => {
+  const numbers = Array.from({ length: POSTS_PER_TICK + 2 }, (_, i) => i + 1)
+  const headOf = (n: number) => n.toString(16).padStart(40, 'c')
+  const pulls = numbers.map((number) => ({ number, draft: false, head: headOf(number), base: 'main', labels: [], rollup: 'SUCCESS', statuses: [] }))
+  const files = Object.fromEntries(numbers.map((number) => [RECORDS + '/acme/app/' + headOf(number) + '/review.a.json',
+    JSON.stringify({ v: 1, repo: 'acme/app', pr: number, head: headOf(number), kind: 'review', result: 'pass', producer: 'orchestrator', detail: '', session: 's', at: '2026-11-19T09:00:00Z' })]))
+  const { clock, state } = await started($, on, { pulls, files, viewer: 'operator' })
+  await beat(clock)
+  expect(state.posted).toHaveLength(POSTS_PER_TICK)
+  await beat(clock)
+  expect(state.posted).toHaveLength(POSTS_PER_TICK + 2)
+})
+
+test('a check plan the other machine posted is written here', async ($, on) => {
+  const pulls = pullWith([status('readiness/plan', 'success', 'v1 2026-11-19T09:00:00Z e2e=none norms=required review=required/2')])
+  const { clock, state, files } = await started($, on, { pulls, viewer: 'operator' })
+  await beat(clock)
+  const plan = JSON.parse(files.get(PLAN)?.text ?? '{}')
+  expect([plan.at, plan.e2e, plan.review]).toEqual(['2026-11-19T09:00:00Z', { need: 'none', reason: 'copied from the forge' }, { need: 'required', reason: '', max: 2 }])
+  expect(state.posted).toEqual([])
+})
+
+test('this machine\'s check plan is posted at a head where the forge lacks it', async ($, on) => {
+  const plan = JSON.stringify({ v: 1, repo: 'acme/app', pr: 7, e2e: { need: 'none', reason: 'docs' }, norms: { need: 'required', reason: '' }, review: { need: 'required', reason: '', max: 2 }, at: '2026-11-19T09:00:00Z' })
+  const { clock, state } = await started($, on, { pulls: pullWith([]), viewer: 'operator', files: { [PLAN]: plan } })
+  await beat(clock)
+  expect(state.posted).toEqual(['plan a v1 2026-11-19T09:00:00Z e2e=none norms=required review=required/2'])
+})
+
+test('a record this machine just wrote, left to its tool at the first listing, is posted at a later beat', async ($, on) => {
+  // Written at the first beat's instant: that listing leaves it to the tool, whose post failed.
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt(new Date(T0 + TICK_MS).toISOString().replace(/\.\d+Z$/, 'Z')) }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  await beat(clock)
+  expect(state.posted).toEqual([])
+  await beat(clock, 4)
+  expect(state.posted).toEqual(['review a v1 2026-11-19T10:01:00Z pass orchestrator'])
+})
+
+const EXEMPTION = '/data/github/e2e-exempt/acme/app.json'
+const exemptionAt = (at: string, detail = '« docs only », 2026-11-19') =>
+  JSON.stringify({ v: 1, repo: 'acme/app', exempt: true, paths: ['docs/**'], labels: [], detail, session: 's', at })
+
+test('an exemption the other machine posted is written here before the gate reads it, its words left there', async ($, on) => {
+  const pulls = pullWith([status('readiness/exemption', 'success', 'v1 2026-11-19T09:00:00Z {"e":true,"p":["docs/**"],"l":[]}')])
+  const { clock, state, files } = await started($, on, { pulls, viewer: 'operator' })
+  await beat(clock)
+  const exemption = JSON.parse(files.get(EXEMPTION)?.text ?? '{}')
+  expect([exemption.exempt, exemption.paths, exemption.at, exemption.detail]).toEqual([true, ['docs/**'], '2026-11-19T09:00:00Z', 'copied from the forge, posted by operator'])
+  expect(state.posted).toEqual([])
+  expect(count(state.runs, 'pr-gate')).toBe(1)
+})
+
+test('this machine\'s exemption is posted where the forge lacks it', async ($, on) => {
+  const { clock, state } = await started($, on, { pulls: pullWith([]), viewer: 'operator', files: { [EXEMPTION]: exemptionAt('2026-11-19T09:00:00Z') } })
+  await beat(clock)
+  expect(state.posted).toEqual(['exemption a v1 2026-11-19T09:00:00Z {"e":true,"p":["docs/**"],"l":[]}'])
+})
+
+test('an exemption too long for the forge is said once and never posted', async ($, on) => {
+  const long = JSON.stringify({ v: 1, repo: 'acme/app', exempt: true, paths: Array.from({ length: 12 }, (_, i) => 'docs/part-' + i + '/**'), labels: [], detail: '« ok », 2026-11-19', session: 's', at: '2026-11-19T09:00:00Z' })
+  const { clock, state } = await started($, on, { pulls: pullWith([]), viewer: 'operator', files: { [EXEMPTION]: long } })
+  await beat(clock, 3)
+  expect(state.posted).toEqual([])
+  expect(state.said.filter((line) => line.includes('E2E exemption of acme/app is too long for the forge'))).toHaveLength(1)
 })

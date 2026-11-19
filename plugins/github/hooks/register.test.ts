@@ -1730,6 +1730,12 @@ test('a failed guard lets a write naming the E2E exemption files through (observ
 })
 
 
+test('a failed guard refuses a session posting a commit status, and lets a read of them through', () => {
+  expect(bashNetRefusal('gh api repos/acme/app/statuses/abc -f state=success -f context=readiness/review')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('python3 ~/.claude/plugins/x/engine/forge_status.py --repo acme/app')).toBe(NET_REFUSAL)
+  expect(bashNetRefusal('gh api repos/acme/app/commits/abc/status')).toBe(null)
+})
+
 test('a failed guard lets a write naming the check plan files through (observed), and refuses a deletion in them', () => {
   expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/check-plans/o/r/1.json')).toBe(null)
   expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/check-plans/o"')).toBe(NET_REFUSAL)

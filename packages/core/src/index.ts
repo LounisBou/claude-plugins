@@ -9,6 +9,7 @@ export { DEPLOY_MARKETPLACE, DEPLOY_STATE_FILE, DEPLOY_STATE_VERSION, deployedAt
 export { gitSubcommand, innerLine, readCommands, redirectsToFile, simpleCommands } from './shell.ts'
 export type { ShellCommand } from './shell.ts'
 export { accepts, DETAIL_MAX, KINDS, kindFor, parsePrRecord, producersOf, RECORD_VERSION, type Kind, type PrRecord, type Result } from './pr-record.ts'
+export { FORGE, FORGE_CONTRACT, FORGE_VERSION, forgeContext, forgeDescription, forgeName, parseForgeDescription, parseRecordStatus, recordPost, trustedStatuses, type ForgeDescription, type ForgeName, type ForgePost, type ForgeRecord, type ForgeStatus } from './forge-status.ts'
 export { blocks, carriesAcross, CI_CHECK, heldBy, missingEvidence, PLAN_NEEDS, PLAN_OMITTED, READINESS_CONTRACT, WAIVABLE, type Condition, type HeadEvidence, type Holder, type Missing, type Planned, type Waivable } from './readiness.ts'
 export { configDirOf, ENV, gateThresholds, isSpawned } from './env.ts'
 export {

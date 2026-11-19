@@ -10,7 +10,7 @@ import sys
 import time
 from urllib.parse import quote
 
-from . import bodies, errors, fmt, http, meta, related, repo, writing
+from . import bodies, errors, fmt, forge, http, meta, related, repo, writing
 
 
 def _current_branch():
@@ -131,17 +131,24 @@ def _panel_row(pull):
     }
 
 
-# The reconciler's listing: what its fingerprint of each open pull request reads, and the quota left, in one
-# GraphQL query lighter than the pane's (no comments, no checks: the gate reads those once something changed).
+# The reconciler's listing: what its fingerprint of each open pull request reads, the gate's copies on the forge at
+# its head (the commit statuses, their creator) and the account that reads, and the quota left, in one GraphQL query
+# lighter than the pane's (no comments, no checks: the gate reads those once something changed).
 _RECONCILE_QUERY = """
 query($owner:String!, $name:String!, $first:Int!) {
   rateLimit { remaining resetAt cost }
+  viewer { login }
   repository(owner:$owner, name:$name) {
     pullRequests(states:OPEN, first:$first, orderBy:{field:CREATED_AT, direction:DESC}) {
       nodes {
         number isDraft headRefOid baseRefName mergeable mergeStateStatus
         labels(first:20) { nodes { name } }
-        commits(last:1) { nodes { commit { statusCheckRollup { state } } } }
+        commits(last:1) { nodes { commit {
+          statusCheckRollup { state contexts(first:100) { nodes {
+            __typename ... on CheckRun { status conclusion } ... on StatusContext { context state }
+          } } }
+          status { contexts { context state description creator { login } } }
+        } } }
       }
     }
   }
@@ -149,16 +156,55 @@ query($owner:String!, $name:String!, $first:Int!) {
 """
 
 
+# A completed check run that failed, as GitHub's rollup counts it; a status's states that fail or wait.
+_ROLLUP_FAILED = ("FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE")
+_STATUS_FAILED = ("FAILURE", "ERROR")
+_STATUS_WAITING = ("PENDING", "EXPECTED")
+
+
+def _ci_rollup(rollup):
+    """The head's CI rollup without the gate's copies on the forge (forge.PREFIX): GitHub's own state when it holds
+    none of them; otherwise the state of the other contexts, failed over waiting over passed, None when none is left."""
+    nodes = [n for n in ((rollup.get("contexts") or {}).get("nodes") or []) if isinstance(n, dict)]
+    if not any(n.get("__typename") == "StatusContext" and forge.is_readiness(n.get("context")) for n in nodes):
+        return rollup.get("state")
+    states = []
+    for n in nodes:
+        if n.get("__typename") == "CheckRun":
+            done = n.get("status") == "COMPLETED"
+            states.append("FAILURE" if done and n.get("conclusion") in _ROLLUP_FAILED else "SUCCESS" if done else "PENDING")
+        elif not forge.is_readiness(n.get("context")):
+            state = n.get("state")
+            states.append("FAILURE" if state in _STATUS_FAILED else "PENDING" if state in _STATUS_WAITING else "SUCCESS")
+    for state in ("FAILURE", "PENDING", "SUCCESS"):
+        if state in states:
+            return state
+    return None
+
+
 def _reconcile_row(pull):
     commits = (pull.get("commits") or {}).get("nodes") or []
-    rollup = (((commits[0] if commits else None) or {}).get("commit") or {}).get("statusCheckRollup") or {}
+    commit = ((commits[0] if commits else None) or {}).get("commit") or {}
+    rollup = commit.get("statusCheckRollup") or {}
+    contexts = (commit.get("status") or {}).get("contexts") or []
     return {
         "number": pull.get("number"),
         "draft": bool(pull.get("isDraft")),
         "head": (pull.get("headRefOid") or "").lower(),
         "base": pull.get("baseRefName") or "",
         "labels": [(n or {}).get("name") or "" for n in ((pull.get("labels") or {}).get("nodes") or [])],
-        "rollup": rollup.get("state"),
+        # The CI the reconciler watches (its fingerprint, whether something runs): the gate's copies are no CI.
+        "rollup": _ci_rollup(rollup),
+        "statuses": [
+            {
+                "context": c.get("context"),
+                "state": (c.get("state") or "").lower(),
+                "description": c.get("description") or "",
+                "creator": (c.get("creator") or {}).get("login") or "",
+            }
+            for c in contexts
+            if isinstance(c, dict) and forge.is_readiness(c.get("context"))
+        ],
         # GitHub's mergeability against the base (MERGEABLE, CONFLICTING, UNKNOWN) and its merge state: a change re-reads the gate.
         "mergeable": pull.get("mergeable"),
         "mergeState": pull.get("mergeStateStatus"),
@@ -170,6 +216,7 @@ def _reconcile_listing(owner, name):
     nodes = (((data.get("repository") or {}).get("pullRequests") or {}).get("nodes")) or []
     rate = data.get("rateLimit") or {}
     return {
+        "viewer": (data.get("viewer") or {}).get("login") or "",
         "rows": [_reconcile_row(p) for p in nodes if isinstance(p, dict)],
         "rate": {"remaining": rate.get("remaining"), "resetAt": rate.get("resetAt"), "cost": rate.get("cost")},
     }
@@ -347,7 +394,7 @@ def _no_ci(owner, name, pull, statuses, runs, required, unverified):
         if checked.get("total_count") or checked.get("check_runs"):
             return False
         status = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, branch)) or {}
-        return not (status.get("statuses") or [])
+        return not (forge.without_readiness(status).get("statuses") or [])
     except (errors.GhError, OSError) as exc:
         why = exc.message if isinstance(exc, errors.GhError) else exc
         print("error: cannot read whether %s/%s has CI: %s" % (owner, name, why), file=sys.stderr)
@@ -356,7 +403,8 @@ def _no_ci(owner, name, pull, statuses, runs, required, unverified):
 
 def _gate_ci(owner, name, pull, sha, statuses, runs, reads=None):
     """CI at the head as the ready guard reads it (fmt.gate_ci), the checks the base requires and whether
-    the repository has no CI at all read beside it."""
+    the repository has no CI at all read beside it. The gate's own copies on the forge (forge.PREFIX) are no CI."""
+    statuses = forge.without_readiness(statuses)
     workflows, suite_runs, states = _suite_workflows(owner, name, sha)
     required, unverified = _required_checks(owner, name, _base(pull), reads)
     no_ci = _no_ci(owner, name, pull, statuses, runs, required, unverified)
@@ -392,7 +440,8 @@ def pr_checks(args):
     owner, name = repo.owner_repo()
     pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, args.pr))
     sha = (pull.get("head") or {}).get("sha", "")
-    statuses = http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha))
+    # The gate's own copies on the forge (forge.PREFIX) are no CI.
+    statuses = forge.without_readiness(http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha)))
     runs = _check_runs(owner, name, sha)
     workflows, suite_runs, states = _suite_workflows(owner, name, sha)
     required, unverified = _required_checks(owner, name, _base(pull))

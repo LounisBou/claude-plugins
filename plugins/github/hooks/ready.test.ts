@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, namesHead, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, touchesRecords, onlyReads, deletes, deletesRecords,
+  bashActs, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, namesHead, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, touchesRecords, onlyReads, deletes, deletesRecords, postsStatus,
   recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove, stackedCi,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -521,4 +521,43 @@ test('a plan that requires norms makes a missing norms record missing', () => {
 
 test('with no plan nothing changes: norms on demand, E2E required', () => {
   expect(missingItems(gate(), [record('review', 'pass')], undefined, {})).toEqual(['e2e: no record at 0123456'])
+})
+
+test('a session posting a commit status is caught, through gh api, curl or the module\'s writer; a read of the statuses is not', () => {
+  for (const line of [
+    'gh api repos/acme/app/statuses/' + 'a'.repeat(40) + ' -f state=success -f context=readiness/review',
+    'gh api -X POST /repos/acme/app/statuses/abc --input body.json',
+    'gh api --method=POST repos/acme/app/statuses/abc',
+    'curl -X POST -H "Authorization: token x" https://api.github.com/repos/acme/app/statuses/abc -d \'{"state":"success"}\'',
+    'python3 ~/.claude/plugins/x/engine/forge_status.py --repo acme/app --head abc --what review --state success --description v1',
+  ]) expect(postsStatus(line)).toBe(true)
+})
+
+test('a status post written another way is caught too: attached values, quotes, globs, httpie, an alias, an interpreter', () => {
+  for (const line of [
+    'gh api repos/acme/app/statuses/abc -fstate=success -fcontext=readiness/review',
+    'curl https://api.github.com/repos/acme/app/statuses/abc -d@body.json',
+    'curl --data-ascii \'{"state":"success"}\' https://api.github.com/repos/acme/app/statuses/abc',
+    'wget --post-data=\'{"state":"success"}\' https://api.github.com/repos/acme/app/statuses/abc',
+    'http POST https://api.github.com/repos/acme/app/statuses/abc state=success',
+    'xh https://api.github.com/repos/acme/app/statuses/abc state=success context=readiness/review',
+    'gh api repos/acme/app/statu""ses/abc -f state=success',
+    'python3 ~/.claude/plugins/x/engine/forge_sta\'\'tus.py --repo acme/app',
+    'python3 ~/.claude/plugins/x/engine/forge_*.py --repo acme/app',
+    "gh alias set st 'api repos/acme/app/statuses/abc -f state=success'",
+    'python3 -c "import urllib.request as u; u.urlopen(u.Request(\'https://api.github.com/repos/acme/app/statuses/abc\', data=b\'{}\'))"',
+    'python3 -c "from ghlib import forge; forge.post(\'acme/app\', \'abc\', \'review\', \'success\', \'v1\')"',
+  ]) expect(postsStatus(line)).toBe(true)
+  for (const line of [
+    'curl -fsSL https://api.github.com/repos/acme/app/commits/abc/status',
+    'http https://api.github.com/repos/acme/app/commits/abc/statuses',
+    'python3 -m pytest tests/test_forge.py',
+  ]) expect(postsStatus(line)).toBe(false)
+  for (const line of [
+    'gh api repos/acme/app/commits/abc/statuses',
+    'gh api repos/acme/app/commits/abc/status',
+    'gh api repos/acme/app/statuses/abc',
+    'cat plugins/github/engine/forge_status.py',
+    'gh api repos/acme/app/issues/3/comments -f body="the statuses/ endpoint"',
+  ]) expect(postsStatus(line)).toBe(false)
 })

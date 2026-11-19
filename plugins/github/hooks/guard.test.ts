@@ -4,7 +4,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, NounEvents, Reply, TestOn } from 'claude-code/testing'
 import { EXEMPT_REFUSAL } from './register.js'
-import { RECORDS_REFUSAL, STDIN_REFUSAL } from './ready.js'
+import { RECORDS_REFUSAL, STATUS_REFUSAL, STDIN_REFUSAL } from './ready.js'
 import { parseLearningEvent } from '../core/learning.ts'
 // The choices a consent question offered, which an old consent file still holds.
 const CONSENT_GRANT = 'Accorder'
@@ -93,6 +93,8 @@ type World = {
   lightCi?: { exitCode: number; stdout: string; stderr: string; result?: string }
   // The exit code of the E2E command (E2E_RUN): 0 when not given.
   e2eExit?: number
+  // What engine/forge_status.py answers on stderr when it fails; omitted, it posts.
+  forgeFails?: string
 }
 
 // A command the session ran: its argv, and for the engine the request it read on stdin.
@@ -275,6 +277,9 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
       const [name, text] = record(String(option('--kind')), String(option('--result')), '2026-11-02T10:00:00Z', { producer: 'session-e2e', ...acceptance })
       records[name] = text
       return { value: { exitCode: 0, stdout: HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json\n', stderr: '' } }
+    }
+    if (String(e.argv[1] ?? '').endsWith('/engine/forge_status.py') && w.forgeFails) {
+      return { value: { exitCode: 1, stdout: '', stderr: w.forgeFails } }
     }
     if (e.argv.join(' ') === E2E_RUN.join(' ')) {
       return { value: { exitCode: w.e2eExit ?? 0, stdout: '', stderr: w.e2eExit ? '2 scenarios failed\n' : '' } }
@@ -3624,6 +3629,34 @@ test('light_ci run runs the script in the checkout named with the session, then 
   expect(seen.pull?.labels).toEqual(['Ready'])
 })
 
+const forgeRun = (seen: Seen) => seen.runs.filter((r) => String(r.argv[1]).endsWith('/engine/forge_status.py')).map((r) => r.argv.slice(2))
+const flagOf = (argv: readonly string[], name: string) => argv[argv.indexOf(name) + 1]
+
+test('a record the tool writes is posted to the forge at its head at once', async ($, on) => {
+  const written = HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json'
+  const [, text] = record('e2e', 'pass', '2026-11-02T10:00:00Z', { producer: 'session-e2e' })
+  const seen = await world($, on, { git: CLEAN, labels: ['Ready'], tree: { [written]: { kind: 'file', mtimeMs: 1, text } } })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  expect(out.result).toBe(written)
+  const posts = forgeRun(seen)
+  expect(posts).toHaveLength(1)
+  expect(['--repo', '--head', '--what', '--state', '--description'].map((name) => flagOf(posts[0] ?? [], name)))
+    .toEqual(['acme/thing', HEAD, 'e2e', 'success', 'v1 2026-11-02T10:00:00Z pass session-e2e'])
+})
+
+test('light_ci run posts the record its line names, and a post refused is one line, the answer unchanged', async ($, on) => {
+  const [name] = record('tests', 'pass', '2026-11-02T10:00:00Z')
+  const line = 'tests pass at 0123456 of acme/thing#12: npm test — exit 0 — 9s; output /tmp/x.log; record ' + HEAD_DIR + '/' + name + '\n'
+  const seen = await world($, on, { ...PENDING, stacked: true, tree: { ...CHECKOUTS, ...LIGHT_CI_ON }, gitIn: { [REVIEW_DIR]: REVIEW_ORIGIN },
+    lightCi: { exitCode: 0, stdout: line, stderr: '', result: 'pass' }, forgeFails: 'error: cannot post: HTTP 403' })
+  const out = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, dir: REVIEW_DIR })
+  expect(forgeRun(seen).map((argv) => flagOf(argv, '--what') + ' ' + flagOf(argv, '--description'))).toEqual(['tests v1 2026-11-02T10:00:00Z pass light-ci'])
+  expect(out.result).toBe(line + READY_BEFORE_CI + ' passed local tests (light-ci) hold at its head.')
+  expect(seen.logs.filter((log) => log.startsWith('github: the record is not copied to the forge yet'))).toEqual([
+    'github: the record is not copied to the forge yet (error: cannot post: HTTP 403): the reconciler copies it at a later beat.',
+  ])
+})
+
 test('light_ci run that writes nothing is an error with its line, and the gate is not read', async ($, on) => {
   const seen = await world($, on, { lightCi: { exitCode: 1, stdout: '', stderr: 'error: acme/thing has no light CI: no /cfg/light-ci/acme-thing.json\n' } })
   const out = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, repo: 'acme/thing' })
@@ -3651,4 +3684,14 @@ test('light_ci refused by a permission rule runs nothing', async ($, on) => {
   const out = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12 })
   expect(out.deny).toBe('no light CI here')
   expect(lightCiRun(seen)).toBeUndefined()
+})
+
+test('a session posting a commit status from the shell is refused and journaled, nothing run; reading the statuses passes', async ($, on) => {
+  const seen = await world($, on)
+  const post = await $.tool.call(bash('gh api repos/acme/app/statuses/' + 'a'.repeat(40) + ' -f state=success -f context=readiness/review'))
+  expect(post.deny).toBe(STATUS_REFUSAL)
+  expect(seen.journal).toEqual(['github.status.write'])
+  const read = await $.tool.call(bash('gh api repos/acme/app/commits/' + 'a'.repeat(40) + '/statuses'))
+  expect(read.deny).toBeUndefined()
+  expect(seen.bash).toEqual(['gh api repos/acme/app/commits/' + 'a'.repeat(40) + '/statuses'])
 })

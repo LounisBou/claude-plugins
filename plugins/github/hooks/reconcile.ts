@@ -2,6 +2,8 @@
 // pull request again, when a repository is listed next, and the lease that keeps one reconciler per machine.
 // The loop that runs them is the module's (register.ts), the gate's rule core's readiness contract.
 
+import type { ForgeStatus } from '../core/forge-status.ts'
+
 /** The timer's beat: each beat checks the local inputs, and lists the repositories whose listing is due. */
 export const TICK_MS = 60_000
 /** A repository where nothing changed and no CI runs is listed less often, up to this. */
@@ -25,15 +27,29 @@ export const LEASE_VERSION = 1
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const isText = (value: unknown): value is string => typeof value === 'string'
 
-/** One open pull request as the listing reads it. */
+/** One open pull request as the listing reads it, with the gate's copies on the forge at its head (core's forge-status.ts) when it read them. */
 // mergeable and mergeState: GitHub's mergeability against the base (MERGEABLE, CONFLICTING, UNKNOWN) and its merge state, when listed.
 export type ListedPr = {
   number: number; draft: boolean; head: string; base: string; labels: string[]; rollup: string | null
-  mergeable?: string; mergeState?: string
+  mergeable?: string; mergeState?: string; statuses?: ForgeStatus[]
 }
 /** What the quota had left after the listing, and when it resets (ms), when GitHub said. */
 export type Rate = { remaining?: number; resetAt?: number }
-export type Listing = { rows: ListedPr[]; rate: Rate }
+/** The rows, the account that listed them (whose statuses the reconciler trusts) when it said, and the quota. */
+export type Listing = { rows: ListedPr[]; viewer?: string; rate: Rate }
+
+// A status as the listing gives it, or undefined.
+function statusOf(raw: unknown): ForgeStatus | undefined {
+  if (!isRecord(raw)) return undefined
+  const { context, state, description, creator } = raw
+  if (!isText(context) || !isText(state) || !isText(description) || !isText(creator)) return undefined
+  return { context, state, description, creator }
+}
+
+/** The statuses of a row in context order, so two listings of the same statuses read equal. */
+export function sortedStatuses(statuses: readonly ForgeStatus[]): ForgeStatus[] {
+  return [...statuses].sort((a, b) => (a.context < b.context ? -1 : a.context > b.context ? 1 : 0))
+}
 
 /** `pr-panel --reconcile`'s answer, or a throw naming what is wrong with it. */
 export function parseListing(text: string): Listing {
@@ -47,15 +63,18 @@ export function parseListing(text: string): Listing {
     const labels = Array.isArray(row['labels']) ? row['labels'].filter(isText) : []
     const mergeable = isText(row['mergeable']) ? row['mergeable'] : undefined
     const mergeState = isText(row['mergeState']) ? row['mergeState'] : undefined
+    const listed = row['statuses']
+    const statuses = Array.isArray(listed) ? { statuses: sortedStatuses(listed.map(statusOf).filter((s): s is ForgeStatus => s !== undefined)) } : {}
     rows.push({
       number: row['number'], draft: row['draft'] === true, head, base: isText(row['base']) ? row['base'] : '', labels,
-      rollup: isText(row['rollup']) ? row['rollup'] : null, ...(mergeable === undefined ? {} : { mergeable }), ...(mergeState === undefined ? {} : { mergeState }),
+      rollup: isText(row['rollup']) ? row['rollup'] : null, ...(mergeable === undefined ? {} : { mergeable }), ...(mergeState === undefined ? {} : { mergeState }), ...statuses,
     })
   }
   const rate = isRecord(raw['rate']) ? raw['rate'] : {}
   const remaining = rate['remaining']
   const resetAt = isText(rate['resetAt']) ? Date.parse(rate['resetAt']) : NaN
-  return { rows, rate: { ...(typeof remaining === 'number' ? { remaining } : {}), ...(Number.isFinite(resetAt) ? { resetAt } : {}) } }
+  const viewer = isText(raw['viewer']) ? { viewer: raw['viewer'] } : {}
+  return { rows, ...viewer, rate: { ...(typeof remaining === 'number' ? { remaining } : {}), ...(Number.isFinite(resetAt) ? { resetAt } : {}) } }
 }
 
 /**
@@ -100,8 +119,8 @@ export function reconciledRepos(records: ReadonlyArray<{ repo: string; mtimeMs: 
   return [...repos].sort()
 }
 
-/** What the reconciler counted since it took the lease: its beats, its listings (one GitHub call each) and its gates. */
-export type Counts = { since: string; ticks: number; listings: number; gates: number; moves: number }
+/** What the reconciler counted since it took the lease: its beats, its listings (one GitHub call each), its gates, and its statuses posted (one call each). */
+export type Counts = { since: string; ticks: number; listings: number; gates: number; moves: number; posts?: number }
 /** The machine's lease: who reconciles, until when (ms), and what it counted. */
 export type Lease = { v: number; holder: string; until: number; counts?: Counts }
 
@@ -118,7 +137,7 @@ export function parseLease(text: string | undefined): Lease | undefined {
   if (!isRecord(raw) || raw['v'] !== LEASE_VERSION || !isText(raw['holder']) || typeof raw['until'] !== 'number') return undefined
   const c = raw['counts']
   const counts = isRecord(c) && isText(c['since']) && isCount(c['ticks']) && isCount(c['listings']) && isCount(c['gates']) && isCount(c['moves'])
-    ? { since: c['since'], ticks: c['ticks'], listings: c['listings'], gates: c['gates'], moves: c['moves'] }
+    ? { since: c['since'], ticks: c['ticks'], listings: c['listings'], gates: c['gates'], moves: c['moves'], ...(isCount(c['posts']) ? { posts: c['posts'] } : {}) }
     : undefined
   return { v: LEASE_VERSION, holder: raw['holder'], until: raw['until'], ...(counts ? { counts } : {}) }
 }
