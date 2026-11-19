@@ -38,6 +38,9 @@ type World = {
   // pr-get's pull requests, by branch ('' for the current one).
   pulls?: Record<string, unknown[]>
   autoMerge?: string[]
+  // pr-gate's mergeability of the head against its base, carried into the gate answer when given.
+  mergeable?: boolean | null
+  mergeable_state?: string
   // The deploy list file, as written (an object) or as raw text.
   deployList?: unknown
   // git's answers, by its argv after git.
@@ -139,6 +142,8 @@ function gateOf(w: World, pull?: Pull) {
     repo: 'acme/thing', pr: 12, state: 'open', draft: pull?.draft ?? w.draft ?? true, head, labels: pull?.labels ?? w.labels ?? ['Not Ready'],
     ...(w.commits === undefined ? {} : { commits: w.commits }),
     ...(w.stacked === undefined ? {} : { stacked: w.stacked, base: 'feat-a' }),
+    ...(w.mergeable === undefined ? {} : { mergeable: w.mergeable }),
+    ...(w.mergeable_state === undefined ? {} : { mergeable_state: w.mergeable_state }),
     ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1, ...(w.ci ?? {}) },
   }
 }
@@ -3532,11 +3537,18 @@ test('a failed local run keeps a stacked pull request of a repository with no CI
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
-test('a stacked pull request of a repository with no light CI file is ready on its review, the line saying so', async ($, on) => {
-  const seen = await world($, on, { ...PENDING, stacked: true })
+test('a stacked pull request of a repository with no light CI file is ready on its review when no check runs at its head, the line saying so', async ($, on) => {
+  const seen = await world($, on, { stacked: true, ci: { result: 'NONE', total: 0, running: 0 } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.pull?.labels).toEqual(['Ready'])
   expect(seen.logs).toEqual([READY_BEFORE_CI + ' no light CI configured for this repository hold at its head.'])
+})
+
+test('a stacked pull request of a repository with no light CI file is not ready while its check runs, CI still running', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true })
+  const out = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.result).toEndWith('Missing: CI still running.')
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
 test('a check that failed at a stacked pull request\'s head blocks it though its tests passed, and the gate refuses its merge', async ($, on) => {
@@ -3553,12 +3565,27 @@ test('the bottom pull request is unchanged: a tests record stands for no CI, and
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
-test('a stacked pull request of a repository whose light CI the operator refused is ready on its review, the line saying so with its date', async ($, on) => {
-  const seen = await world($, on, { ...PENDING, stacked: true,
+test('a stacked pull request of a repository whose light CI the operator refused is ready on its review when no check runs at its head, the line saying so with its date', async ($, on) => {
+  const seen = await world($, on, { stacked: true, ci: { result: 'NONE', total: 0, running: 0 },
     tree: { [LIGHT_CI_FILE]: { kind: 'file', mtimeMs: 0, text: JSON.stringify({ off: 'non, pas pour ce projet', at: '2026-11-14T18:30:00Z' }) } } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.pull?.labels).toEqual(['Ready'])
   expect(seen.logs).toEqual([READY_BEFORE_CI + ' the operator\'s refusal of light CI for this repository (2026-11-14) hold at its head.'])
+})
+
+test('a stacked pull request of a repository whose light CI the operator refused is not ready while its check runs, CI still running', async ($, on) => {
+  const seen = await world($, on, { ...PENDING, stacked: true,
+    tree: { [LIGHT_CI_FILE]: { kind: 'file', mtimeMs: 0, text: JSON.stringify({ off: 'non, pas pour ce projet', at: '2026-11-14T18:30:00Z' }) } } })
+  const out = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.result).toEndWith('Missing: CI still running.')
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+})
+
+test('a Ready pull request that conflicts with its base moves to Not Ready, and the answer names the conflict', async ($, on) => {
+  const seen = await world($, on, { labels: ['Ready'], mergeable: false, mergeable_state: 'dirty' })
+  const out = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.result).toEndWith('Missing: conflict with base.')
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
 test('a light CI file that cannot be read refuses nothing', async ($, on) => {

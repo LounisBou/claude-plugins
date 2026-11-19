@@ -258,8 +258,9 @@ Each repository's command lives outside the repository, in
 ```
 
 or, for a repository where the operator refused it, `{ "off": "<his words>", "at": "…" }`. With
-no file, or that refusal, its stacked pull requests are ready on their review alone, and the
-`Ready` line says so. The gate reads that key alone, never the command.
+no file, or that refusal, its stacked pull requests are ready on their review and their forge checks: a check
+still running at their head blocks them (`CI still running`), a failed one blocks them, and no check at all
+leaves them ready on their review. The `Ready` line says so. The gate reads that key alone, never the command.
 
 ## Guards
 

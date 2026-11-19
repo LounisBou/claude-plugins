@@ -26,7 +26,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 const isText = (value: unknown): value is string => typeof value === 'string'
 
 /** One open pull request as the listing reads it. */
-export type ListedPr = { number: number; draft: boolean; head: string; base: string; labels: string[]; rollup: string | null }
+// mergeable and mergeState: GitHub's mergeability against the base (MERGEABLE, CONFLICTING, UNKNOWN) and its merge state, when listed.
+export type ListedPr = {
+  number: number; draft: boolean; head: string; base: string; labels: string[]; rollup: string | null
+  mergeable?: string; mergeState?: string
+}
 /** What the quota had left after the listing, and when it resets (ms), when GitHub said. */
 export type Rate = { remaining?: number; resetAt?: number }
 export type Listing = { rows: ListedPr[]; rate: Rate }
@@ -41,7 +45,12 @@ export function parseListing(text: string): Listing {
     const head = row['head']
     if (!isText(head) || !/^[0-9a-f]{40}$/.test(head)) continue
     const labels = Array.isArray(row['labels']) ? row['labels'].filter(isText) : []
-    rows.push({ number: row['number'], draft: row['draft'] === true, head, base: isText(row['base']) ? row['base'] : '', labels, rollup: isText(row['rollup']) ? row['rollup'] : null })
+    const mergeable = isText(row['mergeable']) ? row['mergeable'] : undefined
+    const mergeState = isText(row['mergeState']) ? row['mergeState'] : undefined
+    rows.push({
+      number: row['number'], draft: row['draft'] === true, head, base: isText(row['base']) ? row['base'] : '', labels,
+      rollup: isText(row['rollup']) ? row['rollup'] : null, ...(mergeable === undefined ? {} : { mergeable }), ...(mergeState === undefined ? {} : { mergeState }),
+    })
   }
   const rate = isRecord(raw['rate']) ? raw['rate'] : {}
   const remaining = rate['remaining']
@@ -51,18 +60,21 @@ export function parseListing(text: string): Listing {
 
 /**
  * What the gate reads that may change without the session asking: on GitHub, the head, the base, the draft, the
- * labels and the CI rollup; on the machine, the mtimes of the head's records directory, the check plan and the
+ * labels, the CI rollup and the mergeability against the base; on the machine, the mtimes of the head's records directory, the check plan and the
  * repository's exemption, and whether that exemption ran out. Two equal fingerprints need no new gate.
  */
 export type Local = { records: number; plan: number; exemption: number; expired: boolean }
 
 export function fingerprintOf(row: ListedPr, local: Local, labels: readonly string[] = row.labels): string {
   const named = [...labels].map((label) => label.toLowerCase()).sort()
-  return JSON.stringify([row.head, row.base, row.draft, row.rollup, named, local.records, local.plan, local.exemption, local.expired])
+  return JSON.stringify([row.head, row.base, row.draft, row.rollup, named, row.mergeable ?? null, row.mergeState ?? null,
+    local.records, local.plan, local.exemption, local.expired])
 }
 
 // A rollup still on its way: the repository is not idle while one runs.
 const RUNNING = new Set(['PENDING', 'EXPECTED'])
+// A mergeability GitHub has not computed yet: it resolves lazily, so the repository is listed again at the next beat.
+const computing = (row: ListedPr): boolean => row.mergeable === 'UNKNOWN'
 
 /** When a repository is listed next, and how many listings in a row found it idle. */
 export type Schedule = { nextAt: number; idle: number }
@@ -75,7 +87,7 @@ export function nextListing(before: Schedule | undefined, now: number, changed: 
   if (rate.remaining !== undefined && rate.remaining < QUOTA_LOW) {
     return { nextAt: rate.resetAt !== undefined && rate.resetAt > now ? rate.resetAt : now + QUOTA_WAIT_MS, idle: before?.idle ?? 0 }
   }
-  if (changed || rows.some((row) => row.rollup !== null && RUNNING.has(row.rollup))) return { nextAt: now + TICK_MS, idle: 0 }
+  if (changed || rows.some((row) => (row.rollup !== null && RUNNING.has(row.rollup)) || computing(row))) return { nextAt: now + TICK_MS, idle: 0 }
   const idle = (before?.idle ?? 0) + 1
   return { nextAt: now + Math.min(TICK_MS * 2 ** idle, IDLE_MAX_MS), idle }
 }

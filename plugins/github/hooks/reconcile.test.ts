@@ -21,6 +21,15 @@ test('the listing keeps each open pull request with a head, and the quota left w
   expect(() => parseListing('[]')).toThrow('no rows')
 })
 
+test('the listing keeps each pull request\'s mergeability and merge state, when it lists them', () => {
+  const listing = parseListing(JSON.stringify({
+    rows: [{ number: 7, draft: false, head: HEAD, base: 'main', labels: [], rollup: null, mergeable: 'CONFLICTING', mergeState: 'DIRTY' }, { number: 8, draft: false, head: HEAD, base: 'main', labels: [], rollup: null }],
+    rate: {},
+  }))
+  expect(listing.rows[0]).toMatchObject({ mergeable: 'CONFLICTING', mergeState: 'DIRTY' })
+  expect(listing.rows[1]).not.toHaveProperty('mergeable')
+})
+
 test('the fingerprint changes with each input of the gate, and not with the labels\' order or case', () => {
   const base = fingerprintOf(row(), LOCAL)
   expect(fingerprintOf(row({ labels: ['not ready'] }), LOCAL)).toBe(base)
@@ -28,8 +37,14 @@ test('the fingerprint changes with each input of the gate, and not with the labe
   for (const changed of [
     fingerprintOf(row({ head: 'b'.repeat(40) }), LOCAL), fingerprintOf(row({ base: 'develop' }), LOCAL), fingerprintOf(row({ draft: true }), LOCAL),
     fingerprintOf(row({ rollup: 'FAILURE' }), LOCAL), fingerprintOf(row({ labels: ['Ready'] }), LOCAL), fingerprintOf(row(), { ...LOCAL, records: 2 }),
+    fingerprintOf(row({ mergeable: 'CONFLICTING' }), LOCAL), fingerprintOf(row({ mergeable: 'UNKNOWN' }), LOCAL), fingerprintOf(row({ mergeState: 'DIRTY' }), LOCAL),
     fingerprintOf(row(), { ...LOCAL, plan: 3 }), fingerprintOf(row(), { ...LOCAL, exemption: 4 }), fingerprintOf(row(), { ...LOCAL, expired: true }),
   ]) expect(changed).not.toBe(base)
+})
+
+test('a mergeability GitHub is still computing keeps the repository listed at the next beat, a settled one does not', () => {
+  expect(nextListing({ nextAt: T0, idle: 3 }, T0, false, [row({ mergeable: 'UNKNOWN', mergeState: 'UNKNOWN' })], {})).toEqual({ nextAt: T0 + TICK_MS, idle: 0 })
+  expect(nextListing(undefined, T0, false, [row({ mergeable: 'MERGEABLE', mergeState: 'CLEAN' })], {})).toEqual({ nextAt: T0 + 2 * TICK_MS, idle: 1 })
 })
 
 test('a repository is listed at the next beat while something changes or a CI runs, later and later while idle', () => {
