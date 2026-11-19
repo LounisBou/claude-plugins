@@ -234,7 +234,7 @@ WATCHER_UNUSED = ORCH_SERVERS_UNUSED + (PR_REVIEW_SERVER, "mcp__orchestrator__re
                                         "mcp__github__light_ci", "mcp__github__record")
 # What an implementer never calls: it asks its orchestrator, never the operator by dialog, and
 # deploys, triages bugs and runs pr-review's loop nowhere. The spawns that do keep theirs: the
-# bugs-bot agent `mcp__bugs-bot`, a review or comments agent `mcp__pr-review`.
+# bugs-bot agent `mcp__bugs-bot`, a comments agent `mcp__pr-review`.
 AGENT_UNUSED = ("AskUserQuestion", "mcp__cloudflare", "mcp__bugs-bot", PR_REVIEW_SERVER)
 # The plugins a role never uses, by name, set false in the launch's own --settings
 # `enabledPlugins` under each key the host's install record holds for that name: their skills,

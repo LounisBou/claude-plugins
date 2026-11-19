@@ -6,10 +6,11 @@
 // is marked in its answer; one run in the background in its hand-back, its only delivery. Any other
 // agent, and every other line, passes as it came; a failure here passes the answer unmarked.
 // The same launch gives the reader its lens's method (lens-method.ts): a lens whose angle has a
-// pr-review-toolkit agent reads with that agent's prompt after its own; a failure leaves it generic.
+// pr-review-toolkit agent reads with that agent's prompt after its own; one not found, or a failure, leaves
+// it generic, with a line in the module's log.
 import { parseLensDescription, withFindingIds } from '../core/lens.ts'
 import { configDir, logLine } from './module-io.ts'
-import { agentPaths, lensMethod, methodAgent, withMethod } from './lens-method.ts'
+import { agentPaths, lensMethod, methodAgent, methodWords, withMethod } from './lens-method.ts'
 import { messageOf, type Host, type On } from './host.ts'
 
 type Held = Host<'fs' | 'process' | 'plugin' | 'env'>
@@ -46,7 +47,9 @@ async function withLensMethod($: Held, e: Record<string, unknown>, lens: string)
   const texts = new Map<string, string | undefined>()
   for (const path of agentPaths(record, agent)) texts.set(path, await read(path))
   const method = lensMethod(lens, record, path => texts.get(path))
-  return method.kind === 'generic' ? e : { ...e, prompt: withMethod(e['prompt'], method) }
+  if (method.kind === 'toolkit') return { ...e, prompt: withMethod(e['prompt'], method) }
+  await logLine($, 'lens-ids', `a reader launched generic: ${methodWords(lens, method)}`)
+  return e
 }
 
 /** The id the host gave a reader it launched in the background. */

@@ -95,3 +95,17 @@ test('the method changes the prompt only: the answer is still marked with its fi
   const world = machine({ '/tk/agents/code-reviewer.md': 'Review the code.' })
   expect(await agent.handler(world, LENS as never, (async () => ({ result: ANSWER })) as never)).toEqual({ result: MARKED })
 })
+
+test('a relevant angle launched generic leaves a line in the module\'s log; a failure to read the machine launches the reader as it came', async () => {
+  const runs: string[] = []
+  const logged = (parts: Record<string, unknown>) => hostOf({
+    ...parts,
+    process: { run: async (argv: readonly string[]) => { runs.push(argv.join(' ')); return { exitCode: 0, stdout: '', stderr: '' } } },
+  } as never)
+  const missing = machine({})
+  await launched(logged({ env: missing.env, fs: missing.fs }), LENS)
+  expect(runs.some(line => line.includes('a reader launched generic: correctness: generic, pr-review-toolkit code-reviewer not found'))).toBe(true)
+  runs.length = 0
+  const broken = logged({ env: { get: async () => { throw new Error('no env') } }, fs: missing.fs })
+  expect(await launched(broken, LENS)).toEqual(LENS)
+})
