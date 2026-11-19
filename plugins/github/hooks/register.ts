@@ -16,6 +16,16 @@ import {
 } from './e2e-scope.ts'
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { normalise } from './guards.ts'
+import {
+  fingerprintOf, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS, takenLease, TICK_MS,
+  type Counts, type ListedPr, type Listing, type Local, type Schedule,
+} from './reconcile.ts'
+import { parseReconcile, reconcileEdgePath, reconcilePath, reconcileRoot, RECONCILE_VERSION } from '../core/pr-reconcile.ts'
+import { moduleDirOf } from '../core/orchestration.ts'
+import { prFilePath, prFileRepos } from '../core/pr-file.ts'
+import { updateOver, writeAtomicOver } from '../core/store-io.ts'
+import { appendEventOver, journalIoOf, randomPart } from '../core/journal.ts'
+import { auditEvent, journalDir } from '../core/learning.ts'
 import { isCatchable, observe, OBSERVED, REFUSED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
@@ -1093,9 +1103,11 @@ async function readiness($: Mod, repo: string, pr: number, sha?: string): Promis
  * labels the gate leaves (labels, draft) when it wrote, and the line it says, or none: always
  * names what is missing too. It never fails the call it follows.
  */
-type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[] }
+// `unwritten`: the gate read at the head, its label not written (the reconciler keeps the reading all the same).
+type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] } }
 
-async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false): Promise<Followed> {
+// unlabelled: Not Ready goes on a pull request carrying neither label too (the reconciler's, labelMove).
+async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false, unlabelled = false): Promise<Followed> {
   let gate: Gate
   let missing: string[]
   let excused: Excused
@@ -1114,10 +1126,10 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
   } catch (err: unknown) {
     return { line: gateLeftLine(repo, pr, reasonOf(err).trim()) }
   }
-  const move = labelMove(gate, missing)
+  const move = labelMove(gate, missing, unlabelled)
   if (!move) {
-    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted, carried), missing }
-    return { missing }
+    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, accepted, carried), missing, gate }
+    return { missing, gate }
   }
   let now: HeadRead
   try {
@@ -1129,12 +1141,281 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
   try {
     await runGh($, 'pr-readiness', { pr, state: move }, repo)
   } catch (err: unknown) {
-    return { line: gateUnwrittenLine(repo, pr, reasonOf(err).trim()) }
+    return { line: gateUnwrittenLine(repo, pr, reasonOf(err).trim()), unwritten: { gate, missing } }
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, accepted, excused, carried, ciText), labels, draft, missing }
-  return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft, missing }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, accepted, excused, carried, ciText), labels, draft, missing, gate }
+  return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft, missing, gate }
+}
+
+/*
+ * The reconciler: one per machine, the session holding the lease (reconcile.ts). At each beat it lists the open pull
+ * requests of the repositories it follows when their listing is due (`pr-panel --reconcile`, one GitHub call a
+ * repository), then runs the gate (followGate) on each pull request whose fingerprint changed since its last reading,
+ * GATES_PER_TICK at most, Not Ready put on one carrying neither label. Each reading is kept under the configuration
+ * directory (core's pr-reconcile.ts), where the orchestrator reads it. It runs on the module's timer, never inside a
+ * tool call or a hook, one beat at a time; a beat that fails is one line, and the next beat tries again.
+ */
+type Reconciler = {
+  timer?: { cancel: () => void }
+  me: string
+  running: boolean
+  // Each repository's next listing and the open pull requests it last listed.
+  repos: Map<string, { schedule: Schedule; rows: ListedPr[] }>
+  // The fingerprint of each pull request's last reading, by repo#pr; a gate that failed, with its fingerprint and when.
+  kept: Map<string, string>
+  failed: Map<string, { fingerprint: string; at: number }>
+  edgeSeen: number
+  counts: Counts
+  // The last line said, and whether this beat said one: a beat that said none lets the same failure be said again.
+  said: string | undefined
+  saidNow: boolean
+  // The host's session id, and the counts the journal last received.
+  session: string
+  journaled: Counts
+  // When the journal last received them (ms), 0 before the first.
+  journaledAt: number
+  // No listing and no gate before this (ms): the quota ran low, or a listing was refused for the rate limit.
+  quotaUntil: number
+}
+
+let reconciler: Reconciler | undefined
+
+// A file's text, undefined when it is not there or cannot be read.
+const textOf = ($: Mod, path: string): Promise<string | undefined> => Promise.resolve().then(() => $.fs.read(path)).then(String, () => undefined)
+// A path's mtime, 0 when it is not there or cannot be read.
+const mtimeOf = ($: Mod, path: string): Promise<number> => Promise.resolve().then(() => $.fs.stat(path)).then((stat) => Number(stat.mtimeMs) || 0, () => 0)
+// The directories of a directory, by name; none when it cannot be listed.
+const dirsOf = async ($: Mod, path: string): Promise<string[]> =>
+  (await Promise.resolve().then(() => $.fs.list(path)).catch((): FsEntry[] => [])).filter((x) => x?.kind === 'dir').map((x) => String(x.name))
+
+// The repositories the reconciler follows at `now`: those whose records directory changed within RECENT_MS, and
+// those the orchestrator's pull request file read.
+async function followedRepos($: Mod, config: string, root: string, now: number): Promise<string[]> {
+  const records: Array<{ repo: string; mtimeMs: number }> = []
+  for (const owner of await dirsOf($, root)) {
+    for (const name of await dirsOf($, root + '/' + owner)) {
+      const repo = owner + '/' + name
+      if (isRepoName(repo)) records.push({ repo, mtimeMs: await mtimeOf($, root + '/' + repo) })
+    }
+  }
+  // The orchestrator's state directory where it stands by default: its override is a variable of its own.
+  return reconciledRepos(records, prFileRepos((await textOf($, prFilePath(moduleDirOf(config)))) ?? ''), now)
+}
+
+// What the gate reads on this machine for a pull request: its head's records directory, its plan, its repository's exemption.
+async function localOf($: Mod, root: string, data: string, repo: string, row: ListedPr, exemption: Exemption | undefined): Promise<Local> {
+  return {
+    records: await mtimeOf($, root + '/' + repo + '/' + row.head),
+    plan: data ? await mtimeOf($, planPath(data, repo, row.number)) : 0,
+    exemption: data ? await mtimeOf($, exemptionPath(data, repo)) : 0,
+    expired: exemption !== undefined && (await runOut($, exemption)),
+  }
+}
+
+// A line the reconciler says once until it says another: a failure that repeats at every beat is not repeated.
+function sayOnce($: Mod, rec: Reconciler, line: string): void {
+  rec.saidNow = true
+  if (rec.said === line) return
+  rec.said = line
+  note($, line)
+}
+
+// Lists a repository: its rows and its next listing, the rows kept on a failure. Whether it was listed.
+async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Promise<boolean> {
+  const before = rec.repos.get(repo)
+  let listing: Listing
+  try {
+    rec.counts.listings += 1
+    listing = parseListing(await runGh($, 'pr-panel', { reconcile: true }, repo))
+  } catch (err: unknown) {
+    const why = reasonOf(err).trim()
+    const limited = /rate limit/i.test(why)
+    const schedule = limited ? { nextAt: now + QUOTA_WAIT_MS, idle: before?.schedule.idle ?? 0 } : nextListing(before?.schedule, now, false, [], {})
+    if (limited) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
+    rec.repos.set(repo, { rows: before?.rows ?? [], schedule })
+    sayOnce($, rec, 'github: the reconciler could not list ' + repo + ': ' + why)
+    return false
+  }
+  const changed = JSON.stringify(before?.rows ?? null) !== JSON.stringify(listing.rows)
+  const schedule = nextListing(before?.schedule, now, changed, listing.rows, listing.rate)
+  // The quota is the account's: once low, no repository is listed and no gate read before its reset.
+  if (listing.rate.remaining !== undefined && listing.rate.remaining < QUOTA_LOW) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
+  rec.repos.set(repo, { rows: listing.rows, schedule })
+  return true
+}
+
+// The readings of a repository's pull requests no longer open, removed once a listing says so.
+async function dropClosed($: Mod, rec: Reconciler, config: string, repo: string, rows: readonly ListedPr[]): Promise<void> {
+  const open = new Set(rows.map((row) => row.number + '.json'))
+  const dir = reconcileRoot(config) + '/' + repo
+  const gone = (await Promise.resolve().then(() => $.fs.list(dir)).catch((): FsEntry[] => []))
+    .map((entry) => String(entry?.name ?? ''))
+    .filter((name) => /^\d+\.json$/.test(name) && !open.has(name))
+  for (const name of gone) rec.kept.delete(repo + '#' + name.slice(0, -'.json'.length))
+  if (gone.length === 0) return
+  const ran = await $.process.run(['rm', '-f', '--', ...gone.map((name) => dir + '/' + name)], { timeoutMs: 10_000 })
+  if (ran.exitCode !== 0) sayOnce($, rec, 'github: the reconciler could not remove the readings of closed pull requests of ' + repo + ': ' + (String(ran.stderr ?? '').trim() || 'exit ' + ran.exitCode))
+}
+
+// A pull request's reading as the orchestrator reads it (core's pr-reconcile.ts).
+function readingOf(repo: string, row: ListedPr, gate: Gate, missing: string[], labels: string[], draft: boolean, now: number, fingerprint: string) {
+  return {
+    v: RECONCILE_VERSION, repo, pr: row.number, head: gate.head, base: gate.base ?? row.base, draft, labels, ci: gate.ci, missing,
+    at: new Date(now).toISOString(), fingerprint,
+  }
+}
+
+// A session id of the host's shape, the only one an event names.
+const SESSION_ID = /^[A-Za-z0-9._-]{1,80}$/
+export const RECONCILE_CODE = 'github.reconcile.counts'
+
+// The reconciler's counts are journaled at most this often: the journal's cap is shared with the module's refusals.
+export const JOURNAL_EVERY_MS = 3_600_000
+
+/*
+ * What the reconciler did since its last event (core's audit kind `reconcile`), where telemetry's sweep reads it: looked
+ * at each renewal of its lease, written at most once per JOURNAL_EVERY_MS. No forge call since (no listing, gate or move),
+ * nothing written: its beats go with the next event. A journal that cannot be written is said once, and its counts go
+ * with the next event.
+ */
+async function journalCounts($: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, config: string, now: number): Promise<void> {
+  const { ticks, listings, gates, moves } = rec.counts
+  const fact = { ticks: ticks - rec.journaled.ticks, listings: listings - rec.journaled.listings, gates: gates - rec.journaled.gates, moves: moves - rec.journaled.moves }
+  if (now - rec.journaledAt < JOURNAL_EVERY_MS || fact.listings + fact.gates + fact.moves === 0) return
+  const at = new Date(now).toISOString().replace(/\.[0-9]{3}Z$/, 'Z')
+  const event = auditEvent({
+    at, random: randomPart(), source: { plugin: 'github', code: RECONCILE_CODE }, context: { session: SESSION_ID.test(rec.session) ? rec.session : null },
+    trust: 'computed', kind: 'reconcile', fact,
+  })
+  try {
+    if (event === undefined) throw new Error('the event breaks the audit contract')
+    await appendEventOver(io, journalDir(config, 'github'), event, at, false)
+    rec.journaled = { ...rec.counts }
+    rec.journaledAt = now
+  } catch (err: unknown) {
+    sayOnce($, rec, 'github: the reconciler\'s counts could not be journaled: ' + reasonOf(err).trim())
+  }
+}
+
+// Holds the lease at `now`: takes or renews it when due, its counts journaled. False when another session holds it.
+async function holdLease($: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, config: string, now: number): Promise<boolean> {
+  const leasePath = reconcileRoot(config) + '/' + LEASE_FILE
+  const lease = parseLease(await textOf($, leasePath))
+  const whose = leaseOf(lease, rec.me, now)
+  if (whose === 'other') return false
+  if (!leaseDue(lease, rec.me, now)) return true
+  if ((await updateOver(io, leasePath, (current) => takenLease(current, rec.me, now, rec.counts))) === undefined) return false
+  await journalCounts($, rec, io, config, now)
+  return true
+}
+
+// The gate on one pull request whose fingerprint changed, its reading kept; whether the gate could be read.
+async function reconcilePr(
+  $: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, at: { config: string; root: string; data: string; now: number },
+  repo: string, row: ListedPr, local: Local, fingerprint: string,
+): Promise<void> {
+  const key = repo + '#' + row.number
+  rec.counts.gates += 1
+  const followed = await followGate($, repo, row.number, undefined, false, true)
+  const gate = followed.gate
+  if (!gate || followed.missing === undefined) {
+    rec.failed.set(key, { fingerprint, at: at.now })
+    if (followed.line) sayOnce($, rec, followed.line)
+    // The gate was read at the head, only its label failed: the reading is kept, the label tried again after RETRY_MS.
+    // Its fingerprint is none, so a restart that seeds from the file reads the gate again too.
+    const read = followed.unwritten
+    if (read) await writeAtomicOver(io, reconcilePath(at.config, repo, row.number), JSON.stringify(readingOf(repo, row, read.gate, read.missing, read.gate.labels, read.gate.draft, at.now, '')) + '\n')
+    return
+  }
+  if (followed.labels) rec.counts.moves += 1
+  // The labels the gate left are those the next listing reads: the fingerprint is kept with them.
+  // The machine's side as it stood before the gate read it: a record written during the gate changes the next fingerprint.
+  const kept = followed.labels ? fingerprintOf(row, local, followed.labels) : fingerprint
+  const reading = readingOf(repo, row, gate, followed.missing, followed.labels ?? gate.labels, followed.draft ?? gate.draft, at.now, kept)
+  await writeAtomicOver(io, reconcilePath(at.config, repo, row.number), JSON.stringify(reading) + '\n')
+  rec.kept.set(key, kept)
+  rec.failed.delete(key)
+}
+
+async function reconcileTick($: Mod): Promise<void> {
+  const rec = reconciler
+  if (!rec || rec.running) return
+  rec.running = true
+  rec.saidNow = false
+  try {
+    const now = await nowMs($)
+    const config = await configDir($)
+    const root = await recordsRoot($)
+    if (!Number.isFinite(now) || !config || !root) return
+    const leasePath = reconcileRoot(config) + '/' + LEASE_FILE
+    if (leaseOf(parseLease(await textOf($, leasePath)), rec.me, now) === 'other') return
+    const repos = await followedRepos($, config, root, now)
+    if (repos.length === 0) return
+    const io = journalIoOf($)
+    if (!(await holdLease($, rec, io, config, now))) return
+    rec.counts.ticks += 1
+    const edge = await mtimeOf($, reconcileEdgePath(config))
+    const woken = edge > rec.edgeSeen
+    rec.edgeSeen = Math.max(rec.edgeSeen, edge)
+    for (const repo of [...rec.repos.keys()]) if (!repos.includes(repo)) rec.repos.delete(repo)
+    const listed = new Set<string>()
+    for (const repo of repos) {
+      if (now < rec.quotaUntil) break
+      if ((woken || now >= (rec.repos.get(repo)?.schedule.nextAt ?? 0)) && (await listRepo($, rec, repo, now))) listed.add(repo)
+    }
+    if (now < rec.quotaUntil) return
+    const data = await dataDir($)
+    const at = { config, root, data, now }
+    let gates = 0
+    for (const [repo, { rows }] of rec.repos) {
+      if (listed.has(repo)) await dropClosed($, rec, config, repo, rows)
+      const exemption = data ? await readExemption($, repo) : undefined
+      for (const row of rows) {
+        const key = repo + '#' + row.number
+        const local = await localOf($, root, data, repo, row, exemption)
+        const fingerprint = fingerprintOf(row, local)
+        if (!rec.kept.has(key)) {
+          const reading = parseReconcile((await textOf($, reconcilePath(config, repo, row.number))) ?? '')
+          if (reading) rec.kept.set(key, reading.fingerprint)
+        }
+        const failed = rec.failed.get(key)
+        if (rec.kept.get(key) === fingerprint || (failed?.fingerprint === fingerprint && now - failed.at < RETRY_MS)) continue
+        if (gates >= GATES_PER_TICK) break
+        // A beat can outlast what the lease had left: it is held again before each gate, the time read anew.
+        if (!(await holdLease($, rec, io, config, await nowMs($)))) return
+        gates += 1
+        await reconcilePr($, rec, io, at, repo, row, local, fingerprint)
+      }
+    }
+  } catch (err: unknown) {
+    sayOnce($, rec, 'github: the reconciler\'s beat failed: ' + reasonOf(err).trim())
+  } finally {
+    if (!rec.saidNow) rec.said = undefined
+    rec.running = false
+  }
+}
+
+// The reconciler's timer, started again at each start of the session (a reload of the module cancels it with the old copy).
+async function startReconciler($: Mod): Promise<void> {
+  reconciler?.timer?.cancel()
+  const session = String(await Promise.resolve().then(() => $.session.id()).catch(() => ''))
+  const now = await nowMs($)
+  const rec: Reconciler = {
+    // The same session started again (resume, clear, compact) keeps its name, and with it the lease it holds.
+    me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(),
+    edgeSeen: 0, said: undefined, saidNow: false, quotaUntil: 0, session,
+    journaled: { since: '', ticks: 0, listings: 0, gates: 0, moves: 0 }, journaledAt: 0,
+    counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0 },
+  }
+  reconciler = rec
+  // The edge marker as it stands at the start is no news.
+  const config = await configDir($)
+  if (config) rec.edgeSeen = await mtimeOf($, reconcileEdgePath(config))
+  rec.timer = $.clock.every(TICK_MS, () => {
+    void reconcileTick($)
+  })
 }
 
 // The reads after which the gate puts the label.
@@ -2177,6 +2458,11 @@ export function register(on: On<Mod>): void {
       await pruneRecords($)
     } catch (err: unknown) {
       note($, 'github: the old records could not be pruned: ' + reasonOf(err))
+    }
+    try {
+      await startReconciler($)
+    } catch (err: unknown) {
+      note($, 'github: the reconciler could not start: ' + reasonOf(err))
     }
     ownedCommands.clear()
     // Commands last: a taken name throws and would skip the rest of the hook.

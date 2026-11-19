@@ -131,10 +131,54 @@ def _panel_row(pull):
     }
 
 
+# The reconciler's listing: what its fingerprint of each open pull request reads, and the quota left, in one
+# GraphQL query lighter than the pane's (no comments, no checks: the gate reads those once something changed).
+_RECONCILE_QUERY = """
+query($owner:String!, $name:String!, $first:Int!) {
+  rateLimit { remaining resetAt cost }
+  repository(owner:$owner, name:$name) {
+    pullRequests(states:OPEN, first:$first, orderBy:{field:CREATED_AT, direction:DESC}) {
+      nodes {
+        number isDraft headRefOid baseRefName
+        labels(first:20) { nodes { name } }
+        commits(last:1) { nodes { commit { statusCheckRollup { state } } } }
+      }
+    }
+  }
+}
+"""
+
+
+def _reconcile_row(pull):
+    commits = (pull.get("commits") or {}).get("nodes") or []
+    rollup = (((commits[0] if commits else None) or {}).get("commit") or {}).get("statusCheckRollup") or {}
+    return {
+        "number": pull.get("number"),
+        "draft": bool(pull.get("isDraft")),
+        "head": (pull.get("headRefOid") or "").lower(),
+        "base": pull.get("baseRefName") or "",
+        "labels": [(n or {}).get("name") or "" for n in ((pull.get("labels") or {}).get("nodes") or [])],
+        "rollup": rollup.get("state"),
+    }
+
+
+def _reconcile_listing(owner, name):
+    data = http.graphql(_RECONCILE_QUERY, {"owner": owner, "name": name, "first": _PANEL_PRS})
+    nodes = (((data.get("repository") or {}).get("pullRequests") or {}).get("nodes")) or []
+    rate = data.get("rateLimit") or {}
+    return {
+        "rows": [_reconcile_row(p) for p in nodes if isinstance(p, dict)],
+        "rate": {"remaining": rate.get("remaining"), "resetAt": rate.get("resetAt"), "cost": rate.get("cost")},
+    }
+
+
 def pr_panel(args):
     """What the PR pane shows, one GraphQL query: the open pull requests, newest first, each with its
-    CI verdict (the head's status check rollup), the checks that failed and its comment count."""
+    CI verdict (the head's status check rollup), the checks that failed and its comment count.
+    --reconcile: the reconciler's listing instead, {"rows", "rate"}."""
     owner, name = repo.owner_repo()
+    if getattr(args, "reconcile", False):
+        return _reconcile_listing(owner, name)
     data = http.graphql(_PANEL_QUERY, {"owner": owner, "name": name, "first": _PANEL_PRS})
     nodes = (((data.get("repository") or {}).get("pullRequests") or {}).get("nodes")) or []
     return [_panel_row(p) for p in nodes if isinstance(p, dict)]
@@ -636,6 +680,7 @@ def register(subparsers):
     parser.set_defaults(handler=pr_list)
 
     parser = subparsers.add_parser("pr-panel", help="the open PRs with CI and comment counts, one GraphQL query")
+    parser.add_argument("--reconcile", action="store_true", help="the reconciler's listing: head, base, labels, rollup and the quota left")
     parser.set_defaults(handler=pr_panel)
 
     parser = subparsers.add_parser("pr-status", help="get PR state")

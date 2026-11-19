@@ -471,6 +471,11 @@ test('the gate moves the label: Ready when the three hold, Not Ready back when R
   expect(labelMove(gate({ labels: [] }), [])).toBe('ready')
   expect(labelMove(gate({ labels: ['ready'] }), ['CI still running'])).toBe('not-ready')
   expect(labelMove(gate(), ['CI still running'])).toBeUndefined()
+  // The reconciler's: a pull request carrying neither label gets Not Ready, one carrying it keeps it.
+  expect(labelMove(gate({ labels: [] }), ['CI still running'])).toBeUndefined()
+  expect(labelMove(gate({ labels: ['bug'] }), ['CI still running'], true)).toBe('not-ready')
+  expect(labelMove(gate(), ['CI still running'], true)).toBeUndefined()
+  expect(labelMove(gate({ state: 'closed', labels: [] }), ['the pull request is closed'], true)).toBeUndefined()
   // A closed or merged pull request keeps its labels.
   expect(labelMove(gate({ state: 'merged' }), [])).toBeUndefined()
   expect(labelMove(gate({ state: 'closed', labels: ['Ready'] }), ['the pull request is closed'])).toBeUndefined()

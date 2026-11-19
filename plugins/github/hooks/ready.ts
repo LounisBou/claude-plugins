@@ -619,13 +619,13 @@ export function carriesReady(gate: Gate): boolean {
 }
 
 // The label the gate puts on an open pull request, or undefined to leave it: Ready when nothing is
-// missing and it does not carry Ready alone, Not Ready when it carries Ready and something is.
-// A closed or merged one keeps its labels.
-export function labelMove(gate: Gate, missing: string[]): 'ready' | 'not-ready' | undefined {
+// missing and it does not carry Ready alone, Not Ready when it carries Ready and something is, or
+// carries neither label and `unlabelled` asks it (the reconciler's). A closed or merged one keeps its labels.
+export function labelMove(gate: Gate, missing: string[], unlabelled = false): 'ready' | 'not-ready' | undefined {
   if (gate.state !== 'open') return undefined
   const notReady = gate.labels.some((label) => label.toLowerCase() === NOT_READY)
   if (missing.length === 0) return carriesReady(gate) && !notReady ? undefined : 'ready'
-  return carriesReady(gate) ? 'not-ready' : undefined
+  return carriesReady(gate) || (unlabelled && !notReady) ? 'not-ready' : undefined
 }
 
 // ---- the texts ----

@@ -154,6 +154,27 @@ test('a dispatch the orchestrator\'s journal holds is recorded once, with its ro
   })
 })
 
+test('a count of github\'s reconciler its journal holds is recorded once as a reconcile event; one with no session is not', () => {
+  scratch(r => {
+    const journal = join(r.config, 'github', 'journal')
+    mkdirSync(journal, { recursive: true })
+    const put = (at: string, random: string, session: string | null): void => {
+      const event = auditEvent({ at, random, source: { plugin: 'github', code: 'github.reconcile.counts' }, trust: 'computed', context: { session }, kind: 'reconcile', fact: { ticks: 3, listings: 2, gates: 1, moves: 1 } })
+      assert.ok(event)
+      writeFileSync(join(journal, journalFileOf(event.id)), JSON.stringify(event))
+    }
+    put('2026-11-14T09:00:00Z', '0000000a', S)
+    put('2026-11-14T09:03:00Z', '0000000b', null)
+    put('2026-11-01T09:00:00Z', '0000000c', S)
+    assert.deepEqual(r.run(), { sessions: 0, questions: 0, dispatches: 0, reconciles: 1, refused: [] })
+    assert.deepEqual(r.stored(), [{
+      v: 1, ts: '2026-11-14T09:00:00.000Z', event: 'reconcile', session: S, source: 'journal', id: '20261114T090000Z-0000000a', ticks: 3, listings: 2, gates: 1, moves: 1,
+    }])
+    assert.deepEqual(r.run(), { sessions: 0, questions: 0, dispatches: 0, refused: [] })
+    assert.equal(r.stored().length, 1)
+  })
+})
+
 test('no round directory, no store: a sweep that finds nothing writes nothing', () => {
   scratch(r => {
     assert.deepEqual(sweep({ config: join(r.config, 'none'), stateDir: join(r.config, 'none', 'telemetry'), secrets: new Map(), now: NOW }), { sessions: 0, questions: 0, dispatches: 0, refused: [] })

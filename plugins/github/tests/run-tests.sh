@@ -3109,6 +3109,24 @@ import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1])]
 print(len(rows), rows[0]["path"])' "$FP/sent.jsonl")"
 
+FR="$WORK/fixreconcile"; mkdir -p "$FR"
+python3 - "$FR/graphql.json" <<'PY'
+import json, sys
+def pull(number, head, base, labels, rollup, draft=False):
+    return {"number": number, "isDraft": draft, "headRefOid": head, "baseRefName": base, "labels": {"nodes": [{"name": n} for n in labels]},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": rollup}}]}}
+nodes = [pull(9, "A" * 40, "develop", ["Ready"], {"state": "SUCCESS"}), pull(8, "b" * 40, "main", [], None, draft=True)]
+json.dump({"rateLimit": {"remaining": 4321, "resetAt": "2026-11-19T11:00:00Z", "cost": 1}, "repository": {"pullRequests": {"nodes": nodes}}}, open(sys.argv[1], "w"))
+PY
+check "pr-panel --reconcile answers each open pull request's head, base, labels and rollup, and the quota left, in one GraphQL request" \
+  "9 aaaaaaa develop Ready SUCCESS False|8 bbbbbbb main  None True|4321 1|1 /graphql" \
+  "$(env GH_FIXTURES="$FR" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-panel --reconcile | python3 -c '
+import json, sys
+a = json.load(sys.stdin)
+rows = [json.loads(l) for l in open(sys.argv[1])]
+print("|".join("%d %s %s %s %s %s" % (r["number"], r["head"][:7], r["base"], ",".join(r["labels"]), r["rollup"], r["draft"]) for r in a["rows"])
+      + "|%d %d|%d %s" % (a["rate"]["remaining"], a["rate"]["cost"], len(rows), rows[0]["path"]))' "$FR/sent.jsonl")"
+
 # --json takes the place of --format raw, and loses to a format named beside it.
 check "--json after the subcommand is read as before it" "7" \
   "$(gh9 --json pr-list | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["number"])')"

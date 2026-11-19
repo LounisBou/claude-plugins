@@ -15,20 +15,21 @@ import { updateOver } from '../core/store-io.ts'
 import { answerText, PULL_URL } from './audit-events.ts'
 import { chainOwner, isDegradedPass, orchestrationOf, ownerOf, withDeadline } from './stop-gate.ts'
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
-import { answerOf, messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
-import { logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
+import { configDir, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
 import { agentLine, closeFailedLine, holdsOf } from './ready-agent.ts'
 import { closeAgent, closeFacts, type CloseFacts as CloseNow, type ToClose } from './close-agent.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { draftGuardArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
+import { parseReconcile, reconcilePath } from '../core/pr-reconcile.ts'
 import { ciGatePath } from '../core/orchestration.ts'
 import { GATE_CI } from './relay.ts'
 import { archive, boundedReading, readOr, registered, republish } from './unattended.ts'
 import type { FilePr } from './pr-file-format.ts'
 
 // The nouns a write holds.
-type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock' | 'tool'>
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
 type Call = Events['tool.call']
 
 // The bound of one write: the lookups of the mapping and the record's lock.
@@ -328,14 +329,6 @@ export function conflictLine(c: { repo: string; pr: number; base: string; agent?
 // The key a conflict is told under: once per head and base head.
 const conflictKey = (key: string, pr: FilePr): string => `${key} conflict ${pr.sha} ${pr.baseSha ?? ''}`
 
-// The gate's reading of a pull request is refreshed at most this often.
-export const CI_REFRESH_MS = 5 * 60_000
-// Each read through github's tool is bound: the tool follows the gate (records, plan, exemption, the label) behind its answer, a few forge reads more than the gate's own.
-export const CI_READ_MS = 60_000
-const CI_GUARD_MS = 30_000
-// A read through the tool makes about ten forge reads at most: no more pull requests than this are read at one tick, the others at the next.
-const CI_READS_PER_TICK = 4
-
 // The gate's reading ci-watch or this tick kept for a pull request (core's ciGatePath), or null: none, or one unreadable.
 async function keptGateOf($: Held, state: string, pr: FilePr): Promise<GateCi | null> {
   const text = await readOr($, ciGatePath(state, pr.repo, String(pr.pr)))
@@ -365,48 +358,31 @@ function isVerdict(gate: GateCi | null, pr: FilePr): boolean {
   return pr.base === undefined || kept === undefined || kept === pr.base
 }
 
-// The text github's `pr-gate` tool answered: the JSON the gate prints, without the note the tool may add after it. Throws the reason it gave none.
-function gateText(answer: unknown): string {
-  const read = answerOf(answer)
-  if (read.deny !== undefined) throw new Error(`refused: ${read.deny}`)
-  if (read.isError) throw new Error(read.text.split('\n')[0] ?? 'an error')
-  if (typeof read.result !== 'string') throw new Error('no text')
-  const text = read.result.trim()
-  const end = text.lastIndexOf('\n}')
-  return end === -1 ? text : text.slice(0, end + 2)
-}
-
 /*
- * The gate's reading kept for each open pull request of the orchestration, refreshed when it is missing, speaks of another
- * head or base, or is not yet a verdict: at most once per CI_REFRESH_MS a pull request (`reads`, when each was tried, a
- * failed try included). The reading goes through github's own `pr-gate` tool (as gate-recheck.ts reads `pr-readiness`), not
- * through its engine: the plugin's hook that follows the gate then moves the Ready label with what it reads, and the
- * answer is kept in the file ci-watch reads. A pull request whose reading is a verdict at its head and base is never read again.
+ * The gate's reading kept for each open pull request of the orchestration, taken from github's reconciler (core's
+ * pr-reconcile.ts), which reads the gate once each time what it reads changes: kept when the reconciler holds a reading
+ * at the pull request's head and base and the kept one is missing, of another head or base, or not yet a verdict. No forge call here.
  */
-async function refreshGates($: Held, open: readonly FilePr[], reads: Map<string, number>, now: number, bound: number): Promise<void> {
+async function refreshGates($: Held, open: readonly FilePr[]): Promise<void> {
   const state = await stateDir($)
-  const due: FilePr[] = []
-  // A pull request no longer open is forgotten.
-  for (const key of [...reads.keys()]) if (!open.some(pr => prKey(pr.repo, pr.pr) === key)) reads.delete(key)
+  const config = await configDir($)
   for (const pr of open) {
-    const key = prKey(pr.repo, pr.pr)
-    const last = reads.get(key)
-    if (due.length >= CI_READS_PER_TICK || (last !== undefined && now - last < CI_REFRESH_MS) || isVerdict(await keptGateOf($, state, pr), pr)) continue
-    reads.set(key, now)
-    due.push(pr)
-  }
-  await Promise.all(due.map(async pr => {
+    const kept = await keptGateOf($, state, pr)
+    if (isVerdict(kept, pr)) continue
+    const text = await readOr($, reconcilePath(config, pr.repo, pr.pr))
+    const reading = parseReconcile(text)
+    // A reading of another head, or taken against another base than the forge lists, waits for the reconciler's next.
+    if (reading?.head !== pr.sha.toLowerCase() || (pr.base !== undefined && reading.base !== pr.base) || kept?.raw === text) continue
     try {
-      const answer = await withDeadline($.tool.call({ tool: 'mcp__github__gh', command: 'pr-gate', args: { pr: pr.pr }, repo: pr.repo }), bound)
-      if (isDegradedPass(answer)) throw new Error(`pr-gate did not answer within ${bound} ms`)
-      const text = gateText(answer)
-      if (parseGate(text) === null) throw new Error('pr-gate said no ci result')
       await writeAtomic($, ciGatePath(state, pr.repo, String(pr.pr)), text)
     } catch (err) {
-      await logLine($, 'ledger', `ci gate of ${prKey(pr.repo, pr.pr)} not read: ${messageOf(err)}`)
+      await logLine($, 'ledger', `ci gate of ${prKey(pr.repo, pr.pr)} not kept: ${messageOf(err)}`)
     }
-  }))
+  }
 }
+
+// The bound of a draft guard's classification.
+const CI_GUARD_MS = 30_000
 
 // A draft's failed checks without its draft guards (a job that fails on purpose while the pull request is a draft), by
 // `draft-guard.sh`, the classification `ci-watch` reads too. A classification that cannot be read keeps every failed check:
@@ -469,7 +445,7 @@ export function anomalyLine(u: Unattended): string {
  * took new pull requests from this reading, which the deck and the remote row are then told (guards.ts).
  * A reading that failed tells nothing and keeps watching.
  */
-export async function prWake($: Held, told: Set<string>, now: number = Date.now(), gateReads: Map<string, number> = new Map(), readBound: number = CI_READ_MS): Promise<{ lines: string[]; watching: boolean; moved: boolean; settle: () => Promise<void> }> {
+export async function prWake($: Held, told: Set<string>, now: number = Date.now()): Promise<{ lines: string[]; watching: boolean; moved: boolean; settle: () => Promise<void> }> {
   const reading = await boundedReading($, await $.session.id(), now)
   if (reading === null) return { lines: [], watching: true, moved: false, settle: async () => undefined }
   // The row's pull requests follow the forge between turn ends: a session waiting on the operator's merge takes no turn.
@@ -495,7 +471,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // A check failed at the head of an open pull request, from the gate's reading kept for it (refreshed here when it is not a verdict):
   // told once per head, whatever the pull request's mergeability, and kept told while the head stands.
   const open = [...reading.forge.values()].filter(pr => pr.state === 'OPEN' && pr.sha !== '')
-  await refreshGates($, open, gateReads, now, readBound)
+  await refreshGates($, open)
   const state = await stateDir($)
   const failing: { pr: FilePr; gate: GateCi; names: readonly string[] }[] = []
   for (const pr of open) {
