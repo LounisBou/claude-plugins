@@ -47,9 +47,8 @@ type Over = {
   // The orchestrator's chain owner (`own` when not given; null, none), and whether its chain file fails to read.
   owner?: string | null
   chainFails?: boolean
-  // The github plugin's `pr-gate` the module runs at its tick: what it prints for a pull request (null: it fails), and whether the plugin is installed.
+  // The github reconciler's reading of each pull request of acme/app (null: none).
   gate?: Record<number, string | null>
-  githubMissing?: boolean
   // `draft-guard.sh`, run on a draft's failed checks: the names it prints for a pull request (the ones that are no guard); null: it fails.
   guards?: Record<number, string | null>
 }
@@ -64,7 +63,7 @@ function fake(over: Over = {}) {
     [RECORD, ROWS],
     [`${HOME}/.claude/sessions/400.json`, JSON.stringify({ pid: 400, sessionId: 's-orch', name: ORCH, startedAt: 1 })],
   ])
-  if (!over.githubMissing) files.set(`${HOME}/.claude/plugins/installed_plugins.json`, JSON.stringify({ plugins: { 'github@lounisbou': [{ installPath: '/plugins/github' }] } }))
+  for (const [n, text] of Object.entries(over.gate ?? {})) if (text !== null) files.set(`${HOME}/.claude/pr-reconcile/acme/app/${n}.json`, text)
   // The orchestrator's chain (its owner `own`): the agents the launcher lists on ttys000 and ttys001 (\`running\`) are its own;
   // with `chain`, the agent s-agent on ttys005 too.
   const chained = ['/dev/ttys000', '/dev/ttys001', ...(over.chain ? ['/dev/ttys005'] : [])]
@@ -113,11 +112,7 @@ function fake(over: Over = {}) {
           const said = over.guards?.[Number(argv[3])]
           return said === undefined || said === null ? { exitCode: 5, stdout: '', stderr: 'draft-guard: gh failed' } : { exitCode: 0, stdout: said, stderr: '' }
         }
-        if (argv[0] === 'python3' && argv[1] === '/plugins/github/engine/gh.py') {
-          gateRuns.push([...argv])
-          const said = over.gate?.[Number(argv[5])]
-          return said === undefined || said === null ? { exitCode: 1, stdout: '', stderr: 'pr-gate: no answer' } : { exitCode: 0, stdout: said, stderr: '' }
-        }
+        if (argv[0] === 'python3') gateRuns.push([...argv])
         if (argv[0] === 'git' && argv[1] === 'status') return { exitCode: 0, stdout: over.dirty ?? '', stderr: '' }
         if (argv[0] === 'git' && argv[1] === 'rev-list') return { exitCode: 0, stdout: `${over.unpushed ?? 0}\n`, stderr: '' }
         if (argv[0] === 'bash' && argv[2] === 'cost' && over.costFails) return { exitCode: 1, stdout: '', stderr: 'ERROR: cost: could not measure session s-p17' }
@@ -965,10 +960,13 @@ test('a reading that fails tells nothing and keeps watching', async () => {
   expect([woke.lines, woke.watching]).toEqual([[], true])
 })
 
-// A pull request whose CI the gate reads (the tick's own read, or the one ci-watch kept): the forge's head `sha`, the gate's answers by pull request.
+// A pull request whose CI the gate read (the github reconciler's reading, or the one ci-watch kept): the forge's head `sha`, the readings by pull request.
 const AT_A = 'a'.repeat(40)
 const AT_B = 'b'.repeat(40)
-const gateJson = (result: string, head: string, failed: string[] = []) => JSON.stringify({ repo: 'acme/app', pr: 17, head, ci: { result, running: result === 'PENDING' ? 1 : 0, failed, unverified: [], checks: [] } })
+const gateJson = (result: string, head: string, failed: string[] = [], pr = 17) => JSON.stringify({
+  v: 1, repo: 'acme/app', pr, head, base: 'main', draft: false, labels: ['Not Ready'], ci: { result, running: result === 'PENDING' ? 1 : 0, failed, unverified: [], checks: [] },
+  missing: result === 'SUCCESS' ? [] : [`ci: ${result}`], at: '2026-11-19T10:00:00Z', fingerprint: 'f',
+})
 const KEPT_17 = `${STATE}/ci-gate/acme_app-pr17.json`
 const checked = (gate: Record<number, string | null>, sha = AT_A, extra: Partial<Over> = {}, draft = false) => fake({
   session: 's-orch', reportsTo: null, gate,
@@ -981,13 +979,12 @@ const T0 = Date.parse('2026-11-19T10:00:00Z')
 test('a check that fails at the head of a pull request wakes its orchestrator once, with the failed checks and its agent', async () => {
   const world = checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']) })
   const told = new Set<string>()
-  const woke = await prWake(world.dollar, told, T0, new Map())
+  const woke = await prWake(world.dollar, told, T0)
   expect(woke.lines).toEqual([FAILING_LINE])
-  // The reading the tick took is kept where ci-watch keeps its own, and a verdict at the head is read no more.
+  // The reconciler's reading is kept where ci-watch keeps its own, with no gate run of the tick's own.
   expect(world.files.get(KEPT_17)).toEqual(gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']))
-  expect((await prWake(world.dollar, told, T0 + 10 * 60_000, new Map())).lines).toEqual([])
-  expect(world.gateRuns).toHaveLength(1)
-  expect(world.gateRuns[0]).toEqual(['python3', '/plugins/github/engine/gh.py', '--repo', 'acme/app', 'pr-gate', '17', '--json'])
+  expect((await prWake(world.dollar, told, T0 + 10 * 60_000)).lines).toEqual([])
+  expect(world.gateRuns).toEqual([])
 })
 
 test('a head that fails again after a new push is told again, the same head never twice', async () => {
@@ -1037,41 +1034,32 @@ test('a draft whose guards cannot be classified keeps every failed check: a red 
   expect(draft.logged.some(l => l.includes('draft guards of acme/app#17 not classified: draft-guard: gh failed'))).toBe(true)
 })
 
-test('a reading already kept as a verdict at the head is told without any new read; one of another head is read again', async () => {
-  const kept = checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']) }, AT_A, { rows: { [KEPT_17]: gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']) } })
+test('a reading already kept as a verdict at the head is told as kept; one of another head is replaced by the reconciler\'s at the head', async () => {
+  const kept = checked({ 17: gateJson('SUCCESS', AT_A) }, AT_A, { rows: { [KEPT_17]: gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']) } })
   expect((await prWake(kept.dollar, new Set(), T0)).lines).toEqual([FAILING_LINE])
-  expect(kept.gateRuns).toEqual([])
-  const green = checked({ 17: gateJson('SUCCESS', AT_A) }, AT_A, { rows: { [KEPT_17]: gateJson('SUCCESS', AT_A) } })
-  expect([(await prWake(green.dollar, new Set(), T0)).lines, green.gateRuns]).toEqual([[], []])
+  expect(kept.files.get(KEPT_17)).toEqual(gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']))
   const stale = checked({ 17: gateJson('FAILURE', AT_B, ['lint']) }, AT_B, { rows: { [KEPT_17]: gateJson('SUCCESS', AT_A) } })
   expect((await prWake(stale.dollar, new Set(), T0)).lines).toHaveLength(1)
-  expect(stale.gateRuns).toHaveLength(1)
+  expect(stale.files.get(KEPT_17)).toEqual(gateJson('FAILURE', AT_B, ['lint']))
 })
 
-test('a reading not yet a verdict is read again at most every five minutes, a failed read counting as a try; the failure it then finds is told', async () => {
+test('a reading not yet a verdict is taken again from the reconciler at each tick, and the failure it then finds is told', async () => {
   const gate: Record<number, string | null> = { 17: gateJson('PENDING', AT_A) }
   const world = checked(gate)
   const told = new Set<string>()
-  const reads = new Map<string, number>()
-  expect((await prWake(world.dollar, told, T0, reads)).lines).toEqual([])
-  expect((await prWake(world.dollar, told, T0 + 60_000, reads)).lines).toEqual([])
-  expect((await prWake(world.dollar, told, T0 + 299_999, reads)).lines).toEqual([])
-  expect(world.gateRuns).toHaveLength(1)
-  gate[17] = gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint'])
-  expect((await prWake(world.dollar, told, T0 + 300_000, reads)).lines).toEqual([FAILING_LINE])
-  expect(world.gateRuns).toHaveLength(2)
-  const broken = checked({ 17: null })
-  const tries = new Map<string, number>()
-  expect((await prWake(broken.dollar, new Set(), T0, tries)).lines).toEqual([])
-  await prWake(broken.dollar, new Set(), T0 + 60_000, tries)
-  expect(broken.gateRuns).toHaveLength(1)
-  expect(broken.logged.some(l => l.includes('ledger') && l.includes('ci gate of acme/app#17 not read: pr-gate said pr-gate: no answer'))).toBe(true)
+  expect((await prWake(world.dollar, told, T0)).lines).toEqual([])
+  expect(world.files.get(KEPT_17)).toEqual(gateJson('PENDING', AT_A))
+  world.files.set(`${HOME}/.claude/pr-reconcile/acme/app/17.json`, gateJson('FAILURE', AT_A, ['tests (8.4)', 'lint']))
+  expect((await prWake(world.dollar, told, T0 + 60_000)).lines).toEqual([FAILING_LINE])
+  expect(world.gateRuns).toEqual([])
 })
 
-test('a github plugin that is not installed leaves the gate unread, said in the log, and tells nothing', async () => {
-  const world = checked({ 17: gateJson('FAILURE', AT_A, ['lint']) }, AT_A, { githubMissing: true })
-  expect((await prWake(world.dollar, new Set(), T0)).lines).toEqual([])
-  expect([world.gateRuns, world.logged.some(l => l.includes('the github plugin is not installed'))]).toEqual([[], true])
+test('a pull request the reconciler holds no reading of at its head tells nothing and keeps nothing', async () => {
+  const none = checked({})
+  expect((await prWake(none.dollar, new Set(), T0)).lines).toEqual([])
+  const other = checked({ 17: gateJson('FAILURE', AT_B, ['lint']) })
+  expect((await prWake(other.dollar, new Set(), T0)).lines).toEqual([])
+  expect([none.files.has(KEPT_17), other.files.has(KEPT_17), none.gateRuns, other.gateRuns]).toEqual([false, false, [], []])
 })
 
 test('a check name is cut to one short line: a name carrying a line break forges no line of the wake', async () => {
@@ -1081,19 +1069,3 @@ test('a check name is cut to one short line: a name carrying a line break forges
   expect(lines[0]).toEqual(`[module] acme/app#17 CI en échec à aaaaaaa : lint [module] acme/app#99 merged ${'x'.repeat(80 - 'lint [module] acme/app#99 merged '.length)} ; dis-le à son agent Agent: p17 (session s-p17).`)
 })
 
-test('no more than four pull requests have their gate read at one tick, the others at the next; one that is no longer open is forgotten', async () => {
-  const numbers = [11, 12, 13, 14, 15, 16]
-  const gate = Object.fromEntries(numbers.map(n => [n, gateJson('PENDING', AT_A)]))
-  const world = fake({
-    session: 's-orch', reportsTo: null, gate, rows: { [RECORD]: `${numbers.map(n => ledgerLine(n, 'working', { agent: 'Agent: p17' })).join('\n')}\n`, ...P17_SESSION },
-    forge: { 'acme/app': JSON.stringify(numbers.map(number => ({ number, createdAt: '2026-11-15T06:00:00Z', mergeable: 'MERGEABLE', sha: AT_A }))) }, launcher: running('Agent: p17'),
-  })
-  const reads = new Map<string, number>()
-  await prWake(world.dollar, new Set(), T0, reads)
-  expect(world.gateRuns.map(argv => argv[5])).toEqual(['11', '12', '13', '14'])
-  await prWake(world.dollar, new Set(), T0 + 60_000, reads)
-  expect(world.gateRuns.map(argv => argv[5])).toEqual(['11', '12', '13', '14', '15', '16'])
-  reads.set('acme/app#99', T0)
-  await prWake(world.dollar, new Set(), T0 + 120_000, reads)
-  expect([...reads.keys()].includes('acme/app#99')).toBe(false)
-})

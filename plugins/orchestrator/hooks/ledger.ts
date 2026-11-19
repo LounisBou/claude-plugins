@@ -21,9 +21,9 @@ import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldR
 import { agentLine, closeFailedLine, holdsOf } from './ready-agent.ts'
 import { closeAgent, closeFacts, type CloseFacts as CloseNow, type ToClose } from './close-agent.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
-import { draftGuardArgv, gateArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
+import { draftGuardArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
+import { parseReconcile, reconcilePath } from '../core/pr-reconcile.ts'
 import { ciGatePath } from '../core/orchestration.ts'
-import { recordedInstallPaths } from '../core/install-record.ts'
 import { GATE_CI } from './relay.ts'
 import { archive, boundedReading, readOr, registered, republish } from './unattended.ts'
 import type { FilePr } from './pr-file-format.ts'
@@ -329,13 +329,6 @@ export function conflictLine(c: { repo: string; pr: number; base: string; agent?
 // The key a conflict is told under: once per head and base head.
 const conflictKey = (key: string, pr: FilePr): string => `${key} conflict ${pr.sha} ${pr.baseSha ?? ''}`
 
-// The gate's reading of a pull request is refreshed at most this often, each read bound by CI_READ_MS.
-export const CI_REFRESH_MS = 5 * 60_000
-const CI_READ_MS = 15_000
-const CI_GUARD_MS = 30_000
-// The gate makes about five forge reads: no more pull requests than this are read at one tick, the others at the next.
-const CI_READS_PER_TICK = 4
-
 // The gate's reading ci-watch or this tick kept for a pull request (core's ciGatePath), or null: none, or one unreadable.
 async function keptGateOf($: Held, state: string, pr: FilePr): Promise<GateCi | null> {
   const text = await readOr($, ciGatePath(state, pr.repo, String(pr.pr)))
@@ -347,48 +340,29 @@ const atHead = (gate: GateCi | null, pr: FilePr): gate is GateCi => gate !== nul
 // A reading the gate will not change at its head: it needs no new read. `NONE` and `PENDING` may still become a verdict.
 const isVerdict = (gate: GateCi | null, pr: FilePr): boolean => atHead(gate, pr) && (gate.result === 'SUCCESS' || gate.result === 'FAILURE')
 
-// Where the github plugin's engine is installed: the override, else the host's install record. Undefined when it is not.
-async function githubRoot($: Held): Promise<string | undefined> {
-  const forced = await $.env.get('CLAUDE_GITHUB_ROOT')
-  if (forced !== undefined && forced !== '') return forced
-  const recorded = recordedInstallPaths(await readOr($, `${await configDir($)}/plugins/installed_plugins.json`), 'github', ['lounisbou'])
-  return 'paths' in recorded ? recorded.paths[0] : undefined
+/*
+ * The gate's reading kept for each open pull request of the orchestration, taken from github's reconciler (core's
+ * pr-reconcile.ts), which reads the gate once each time what it reads changes: kept when the reconciler holds a reading
+ * at the pull request's head and the kept one is missing, of another head or not yet a verdict. No forge call here.
+ */
+async function refreshGates($: Held, open: readonly FilePr[]): Promise<void> {
+  const state = await stateDir($)
+  const config = await configDir($)
+  for (const pr of open) {
+    const kept = await keptGateOf($, state, pr)
+    if (isVerdict(kept, pr)) continue
+    const text = await readOr($, reconcilePath(config, pr.repo, pr.pr))
+    if (parseReconcile(text)?.head !== pr.sha.toLowerCase() || kept?.raw === text) continue
+    try {
+      await writeAtomic($, ciGatePath(state, pr.repo, String(pr.pr)), text)
+    } catch (err) {
+      await logLine($, 'ledger', `ci gate of ${prKey(pr.repo, pr.pr)} not kept: ${messageOf(err)}`)
+    }
+  }
 }
 
-/*
- * The gate's reading kept for each open pull request of the orchestration, refreshed when it is missing, speaks of another
- * head, or is not yet a verdict (the same `pr-gate` ci-watch reads, its answer kept in the same file): at most once per
- * CI_REFRESH_MS a pull request (`reads`, when each was tried, a failed try included), every read at once and bound.
- * A pull request whose reading is a verdict at its head is never read again.
- */
-async function refreshGates($: Held, open: readonly FilePr[], reads: Map<string, number>, now: number): Promise<void> {
-  const state = await stateDir($)
-  const due: FilePr[] = []
-  // A pull request no longer open is forgotten.
-  for (const key of [...reads.keys()]) if (!open.some(pr => prKey(pr.repo, pr.pr) === key)) reads.delete(key)
-  for (const pr of open) {
-    const key = prKey(pr.repo, pr.pr)
-    const last = reads.get(key)
-    if (due.length >= CI_READS_PER_TICK || (last !== undefined && now - last < CI_REFRESH_MS) || isVerdict(await keptGateOf($, state, pr), pr)) continue
-    reads.set(key, now)
-    due.push(pr)
-  }
-  if (due.length === 0) return
-  const root = await githubRoot($)
-  if (root === undefined) {
-    await logLine($, 'ledger', 'ci gate not read: the github plugin is not installed')
-    return
-  }
-  await Promise.all(due.map(async pr => {
-    try {
-      const ran = await $.process.run(gateArgv(root, pr.repo, String(pr.pr)), { timeoutMs: CI_READ_MS })
-      if (ran.exitCode !== 0 || parseGate(ran.stdout) === null) throw new Error(`pr-gate said ${ran.exitCode === 0 ? 'no ci result' : ran.stderr.trim().split('\n')[0] ?? ran.exitCode}`)
-      await writeAtomic($, ciGatePath(state, pr.repo, String(pr.pr)), ran.stdout)
-    } catch (err) {
-      await logLine($, 'ledger', `ci gate of ${prKey(pr.repo, pr.pr)} not read: ${messageOf(err)}`)
-    }
-  }))
-}
+// The bound of a draft guard's classification.
+const CI_GUARD_MS = 30_000
 
 // A draft's failed checks without its draft guards (a job that fails on purpose while the pull request is a draft), by
 // `draft-guard.sh`, the classification `ci-watch` reads too. A classification that cannot be read keeps every failed check:
@@ -451,7 +425,7 @@ export function anomalyLine(u: Unattended): string {
  * took new pull requests from this reading, which the deck and the remote row are then told (guards.ts).
  * A reading that failed tells nothing and keeps watching.
  */
-export async function prWake($: Held, told: Set<string>, now: number = Date.now(), gateReads: Map<string, number> = new Map()): Promise<{ lines: string[]; watching: boolean; moved: boolean; settle: () => Promise<void> }> {
+export async function prWake($: Held, told: Set<string>, now: number = Date.now()): Promise<{ lines: string[]; watching: boolean; moved: boolean; settle: () => Promise<void> }> {
   const reading = await boundedReading($, await $.session.id(), now)
   if (reading === null) return { lines: [], watching: true, moved: false, settle: async () => undefined }
   // The row's pull requests follow the forge between turn ends: a session waiting on the operator's merge takes no turn.
@@ -477,7 +451,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // A check failed at the head of an open pull request, from the gate's reading kept for it (refreshed here when it is not a verdict):
   // told once per head, whatever the pull request's mergeability, and kept told while the head stands.
   const open = [...reading.forge.values()].filter(pr => pr.state === 'OPEN' && pr.sha !== '')
-  await refreshGates($, open, gateReads, now)
+  await refreshGates($, open)
   const state = await stateDir($)
   const failing: { pr: FilePr; gate: GateCi; names: readonly string[] }[] = []
   for (const pr of open) {

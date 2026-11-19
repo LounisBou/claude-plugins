@@ -78,6 +78,16 @@ it. `/github:doctor` then confirms everything is ready.
   requests »). `pr-readiness <pr> ready` puts it only on a pull request the gate reads
   ready, through the check `pr-ready` and `pr-merge` run, and otherwise answers, with no error,
   the label the pull request carries and what is missing.
+- **Reconciler** — one session per machine (the holder of `<config>/pr-reconcile/.lease`) keeps the
+  label on the gate without anyone asking: each minute it lists the open pull requests of the
+  repositories it follows (records written within 30 days, and those the orchestrator's `prs.json`
+  read) in one GraphQL query a repository (`pr-panel --reconcile`), and runs the gate on a pull
+  request only when its head, base, draft, labels, CI rollup, records, check plan or exemption
+  changed. A pull request carrying neither label gets `Not Ready`. An idle repository is listed
+  less often, up to every five minutes; a low quota waits for its reset; touching
+  `<config>/pr-reconcile/.edge` lists at the next beat. Each reading is kept in
+  `<config>/pr-reconcile/<owner>/<name>/<pr>.json` (core's `pr-reconcile.ts`), where the
+  orchestrator reads CI; the lease file counts its beats, listings, gates and label moves.
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's quoted, dated words, and `auto-merge-list`
   prints the list (below).

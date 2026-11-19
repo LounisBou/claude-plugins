@@ -276,7 +276,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   let lastTyped: { sessionId: string; text: string; at: string } | null = null
   // The module's tick (moduleTick): armed by a stop a busy agent released or that leaves a pull
   // request of the orchestration open, it stands across the turns until a later stop arms it again.
-  const tick: TickMemory = { timer: null, told: new Map(), own: null, busy: [], busyAt: null, watch: false, anomalies: new Set(), gateReads: new Map() }
+  const tick: TickMemory = { timer: null, told: new Map(), own: null, busy: [], busyAt: null, watch: false, anomalies: new Set() }
   on('prompt.submit', async ($, e, next) => {
     if (typedByOperator(String(e.origin?.kind ?? ''))) {
       try {
@@ -637,13 +637,11 @@ async function inTime<T>($: Held, work: () => Promise<T>, until: number): Promis
  * whose record says whether it is between turns; `busy` and `busyAt`: the busy agents and the instant
  * their next bound falls (busyWake), null when none is; `told`, the bounds told per agent turn;
  * `watch`, whether its pull requests are read at each tick (prWake, every PR_FILE_INTERVAL_MS);
- * `anomalies`, those told in anomaly; `gateReads`, when each one's CI gate was last read.
+ * `anomalies`, those told in anomaly.
  */
 type TickMemory = {
   timer: { cancel(): void } | null; told: Map<string, number>; own: string | null
   busy: readonly OwnAgent[]; busyAt: number | null; watch: boolean; anomalies: Set<string>
-  // When each pull request's CI gate was last tried (ledger.ts refreshGates): kept across a failed tick, which never restores it.
-  gateReads: Map<string, number>
 }
 
 // The tick armed `delay` ms from now, any timer before it cancelled; a timer no longer the one armed
@@ -691,7 +689,7 @@ async function moduleTick($: Held, memory: TickMemory, timer: unknown): Promise<
     }
     let settle = async (): Promise<void> => undefined
     if (memory.watch) {
-      const prs = await prWake($, memory.anomalies, now, memory.gateReads)
+      const prs = await prWake($, memory.anomalies, now)
       lines.push(...prs.lines)
       memory.watch = prs.watching
       settle = prs.settle

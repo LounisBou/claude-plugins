@@ -4,11 +4,13 @@
 // takeover): `<state>/prs.json`, its change log `prs.log`, and `prs.wanted`, the repositories of the
 // workspace checkouts, which the sweep alone writes, one `<owner/name> <ISO time>` a line, dropped
 // past ENDED_KEPT_MS. The pull requests the dispatch records name (their ledger lines) are read from
-// the records themselves, never copied here.
+// the records themselves, never copied here. Its path and version are core's (pr-file.ts): github reads its repositories.
+import { PR_FILE_VERSION } from '../core/pr-file.ts'
+
+export { PR_FILE_VERSION, prFilePath } from '../core/pr-file.ts'
 
 /** The file's age past which a reader refreshes it: 60 calls an hour at most, about 1 % of the forge's 5 000. */
 export const PR_FILE_INTERVAL_MS = 60_000
-export const PR_FILE_VERSION = 1
 const VERSION = PR_FILE_VERSION
 /** How long a pull request seen merged or closed stays in the file, for the sweep's clones. */
 export const ENDED_KEPT_MS = 7 * 24 * 60 * 60 * 1000
@@ -51,7 +53,6 @@ export interface PrFile {
   readonly prs: readonly FilePr[]
 }
 
-export const prFilePath = (state: string): string => `${state}/prs.json`
 export const prLogPath = (state: string): string => `${state}/prs.log`
 
 const STATES = ['OPEN', 'MERGED', 'CLOSED'] as const
