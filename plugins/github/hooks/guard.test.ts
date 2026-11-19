@@ -1433,8 +1433,13 @@ test('an E2E "ran" not seen is written as stated under the result given, and obs
   expect(argv[9]).toBe('fail')
   expect(argv[13]).toBe('stated, not computed: `npm run e2e` at 0123456 not observed in /work; ran on the test box')
   expect(seen.journal).toEqual(['github.record.e2e-stated'])
-  const passed = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', result: 'pass' })
-  expect(passed.deny).toBeUndefined()
+})
+
+test('an E2E "ran" not seen is written as a stated pass when the session says it passed', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved } })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', result: 'pass' })
+  expect(out.deny).toBeUndefined()
   expect(recordRun(seen)![9]).toBe('pass')
   expect(recordRun(seen)![13]).toMatch(/^stated, not computed: /)
 })
