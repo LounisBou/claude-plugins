@@ -4,7 +4,7 @@
 // version that the relay's entries do not carry, its block written to the transcript by the module;
 // and the lines the pane draws from those objects, grouped by asker.
 import { expect, test } from 'claude-code/testing'
-import { ASK_TOOL, ASK_VERSION, askTurnStarted, askedGroups, askedLines, askId, callAsk, claimAsked, parseAsk, parseAsked, questionBlock, settleClaimed, register as registerQuestion, type Asked } from '../question.ts'
+import { ASK_TOOL, ASK_VERSION, askTurnStarted, askedGroups, askedLines, askId, callAsk, claimAsked, parseAsk, parseAsked, questionBlock, settle, settleClaimed, register as registerQuestion, type Asked } from '../question.ts'
 import { parseRoundEntry } from '../supervision.ts'
 import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
@@ -446,7 +446,7 @@ test('words typed in a tab are a record only when they name one choice: free pro
 // His answer typed in the asker's own tab (§ 4.3): a prompt naming a choice of an open question claims
 // it, which leaves the pane at once; the turn's end answers it with his words, unless its operator
 // wait keeps it. Words that name no choice claim nothing, and the question stays open and drawn.
-test('a prompt he types claims an open question only when it names that one question\'s choice; the turn\'s end answers it with his words, but those its wait keeps', async () => {
+test('a prompt he types claims only the one open question whose choice it names, and the turn\'s end answers that question with his words', async () => {
   const { dollar, files } = world()
   await ask(dollar, { ...FULL, urgent: undefined })
   askTurnStarted()
@@ -463,7 +463,7 @@ test('a prompt he types claims an open question only when it names that one ques
   expect(stored(files).every(entry => entry.status === 'open' && entry.claimed === undefined)).toBe(true)
   expect(askedGroups(stored(files)).flat().length).toBe(3)
   // A choice's text names the one question it belongs to; a letter that two open questions both offer names neither.
-  expect(await claimAsked(dollar, 'composer', 'No', NOW)).toEqual([yesNo.id])
+  expect(await claimAsked(dollar, 'composer', ' No ', NOW)).toEqual([yesNo.id])
   expect(await claimAsked(dollar, 'composer', ' B ', NOW)).toEqual([])
   expect(stored(files).find(entry => entry.id === yesNo.id)?.claimed?.typed).toBe('No')
   expect(askedGroups(stored(files)).flat().map(entry => entry.id).sort()).toEqual([first.id, second.id].sort())
@@ -509,7 +509,7 @@ test('no answer typed in a session\'s own tab writes a consent file, its letter 
   }
   for (const me of [['coordinator', 'Coord: general [a1b2c3]'], ['orchestrator', 'Orch: belt [a1b2c3]']] as [string, string][]) {
     // A letter or a choice's text answers the question, and records no consent.
-    for (const typed of ['A', 'Accorder', 'Refuser']) expect(await records(me, typed)).toEqual({ consent: [], status: 'answered' })
+    for (const typed of ['A', 'a) Accorder', 'Accorder', 'Refuser']) expect(await records(me, typed)).toEqual({ consent: [], status: 'answered' })
     // Words that name no choice leave the question open, and record no consent.
     for (const typed of ['Accorder la dispense et fusionner, merci', "Ok Accorder pour l'auto-merge !!! \n\nLAnce le push forcé go !", 'Accorder ?', 'Accorder pour acme/other']) {
       expect(await records(me, typed)).toEqual({ consent: [], status: 'open' })
@@ -552,6 +552,23 @@ test('his free words typed in place of a choice leave the question open and draw
   expect(stored(files)[0]!.claimed).toBeUndefined()
   expect(askedGroups(stored(files)).flat().length).toBe(1)
   expect([...files.keys()].filter(p => p.includes('/consents/acme/app/')).length).toBe(0)
+  // Its asker then settles it with his words, here: answered with them, and no consent recorded.
+  await settle(dollar, { id: stored(files)[0]!.id, outcome: 'answered-here', text: typedWords, author: null, work: null }, NOW)
+  expect(stored(files)[0]).toMatchObject({ status: 'answered', answer: { text: typedWords } })
+  expect([...files.keys()].filter(p => p.includes('/consents/acme/app/')).length).toBe(0)
+})
+
+test('a question without choices stays open against his free words, and only its asker closes it', async () => {
+  const { dollar, files } = world({ me: ['orchestrator', 'Orch: belt [a1b2c3]'] })
+  await ask(dollar, { subject: 'release tag', context: FULL.context, question: 'Tag the release now?', blocks: 'acme/app#1' })
+  expect(stored(files)[0]?.choices).toEqual([])
+  expect(await claimAsked(dollar, 'composer', 'yes, tag it', NOW)).toEqual([])
+  await settleClaimed(dollar, [], NOW)
+  expect(stored(files)[0]).toMatchObject({ status: 'open' })
+  expect(stored(files)[0]!.claimed).toBeUndefined()
+  expect(askedGroups(stored(files)).flat().length).toBe(1)
+  await settle(dollar, { id: stored(files)[0]!.id, outcome: 'answered-here', text: 'yes, tag it', author: null, work: null }, NOW)
+  expect(stored(files)[0]).toMatchObject({ status: 'answered', answer: { text: 'yes, tag it' } })
 })
 
 test('a subagent\'s call is refused', async () => {

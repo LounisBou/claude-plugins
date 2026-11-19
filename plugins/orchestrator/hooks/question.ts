@@ -82,7 +82,7 @@ export type Asked = AskFields & {
   replica?: { seq: number; state: 'sent' | 'acked' | 'failed'; attempts: number; at: string; reason?: string }
   /** The session it was asked by, before a succession moved it to its successor. */
   movedFrom?: string
-  /** What the operator typed in its asker's tab while it was open: off the pane until that turn's end answers it. */
+  /** What the operator typed in its asker's tab that names one of its choices: off the pane until that turn's end answers it with those words. */
   claimed?: { typed: string; at: string }
   seq: number
 }
@@ -836,7 +836,7 @@ export function register(on: On<Held>): void {
     return next(e)
   })
 
-  // His prompt in the asker's own tab claims its open questions: they leave the pane at once.
+  // His prompt in the asker's own tab claims the one open question its choice names, if any: it leaves the pane at once.
   on('prompt.submit', {}, async ($, e, next) => {
     try {
       await claimAsked($, String(e.origin?.kind ?? ''), String(e.text ?? ''))
