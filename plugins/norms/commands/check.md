@@ -21,7 +21,6 @@ $ARGUMENTS
 | **One commit per fix** | Each "fix" gets its own commit. Never batch multiple fixes. |
 | **Clean commit messages** | Describe the code change only. No mention of: norms check, TODO list, Claude, agent name. |
 | **Every finding addressed** | No finding may be left without an explicit "fix", "pass", or "discuss→fix/pass" from the user. |
-| **Never push commits** | NEVER run `git push`. User pushes themselves. |
 | **Run tests after each fix** | Run project test suite after applying a fix. Never commit broken code. |
 
 ### Red Flags — STOP If You Think This
@@ -32,7 +31,6 @@ $ARGUMENTS
 | "I'll batch these two related fixes" | One commit per fix. Always. |
 | "Tests are probably fine" | Run them. Verify. Every time. |
 | "This INFO is not important, skip it" | Show it. User decides fix or pass. |
-| "I should push these commits" | NEVER push. Remind user to do it. |
 
 ## Workflow
 

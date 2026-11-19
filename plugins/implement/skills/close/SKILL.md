@@ -10,7 +10,7 @@ description: Use to close a feature, finish a branch, or cut the release commit 
 Closes one feature on its branch: the project's full gate, the version bump the
 feature declared, a summary of everything the branch carries, and the removal of the
 local working notes. It refuses while a phase is not done or the tree is not clean.
-What comes after the branch is the user's and is never done here.
+What comes after the branch follows `method:lifecycle`.
 
 **Preflight:** when this text opens on a `Preflight: passed` line, the check already
 ran before the text was loaded: skip it. Otherwise run

@@ -63,7 +63,7 @@ Who merges: the auto-merge bullet of the repository's CLAUDE.md states it.
   a quote that is false stays visible there.
 - A gate decides on structured facts (a tool call such as `declare_wait`, a record), never on
   the wording of a model's last line.
-- Separation holds by construction: a review or norms record is written by a session other
+- Separation holds by construction: a review record is written by a session other
   than the one that wrote the code, bound to the head it read, computed from the tool's output
   rather than from figures the model reports.
 
