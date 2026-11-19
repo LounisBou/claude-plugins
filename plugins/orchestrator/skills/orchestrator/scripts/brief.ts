@@ -170,7 +170,7 @@ function openRow(f: Fields): { readonly row: Row } | { readonly error: string } 
 
 /** The rules a build brief adds for the work's checks: the browser captures and the E2E. An investigate brief carries none. */
 const buildRulesOf = (mode: string): string => mode === 'investigate' ? '' : [
-  `- A frontend surface created or substantially changed is tested in a real browser with Playwright, on seeded or fixture data, its screenshots in the pull request's description, never committed. Audit each capture against \`${CHECKLIST}\`; the report carries \`<image>: clean\` or \`<image>: <defect>\` per image. A capture that shows a defect is not delivered: fix it, retake, audit again. A screen with no data for your account is seeded, never skipped; if you cannot, STOP. A minor change says so and why in the report.`,
+  `- A frontend surface created or substantially changed is tested in a real browser with Playwright, on seeded or fixture data, its screenshots in the pull request's description, never committed. The report names the Playwright run. No secret, token, personal data, internal host or local path is visible in a capture. Audit each capture against \`${CHECKLIST}\`; the report carries \`<image>: clean\` or \`<image>: <defect>\` per image. A capture that shows a defect is not delivered: fix it, retake, audit again. A screen with no data for your account is seeded, never skipped; if you cannot, STOP. A minor change says so and why in the report.`,
   '- E2E as the pull request\'s check plan requires; the report carries `E2E: <test path(s)> — <command> — passed` or `E2E: none — <reason>`, never the description.',
 ].join('\n')
 

@@ -100,7 +100,8 @@ test('phase, build mode: the brief carries the push, the draft pull request and 
   assert.equal(w.phase('--mode', 'build'), 0)
   const brief = readFileSync(join(w.briefs, 'routes.md'), 'utf8')
   for (const part of ['git push -u origin feat/routes`', 'Draft pull request on `origin/main`', 'pr-create --draft', '`<repo>#<pr> <head7> — <verdict>', `report: ${join(w.briefs, 'report-routes.md')}`, 'then the status line.',
-    'tested in a real browser with Playwright', 'its screenshots in the pull request\'s description', 'E2E as the pull request\'s check plan requires'])
+    'tested in a real browser with Playwright', 'its screenshots in the pull request\'s description', 'E2E as the pull request\'s check plan requires',
+    'The report names the Playwright run.', 'No secret, token, personal data, internal host or local path is visible in a capture.'])
     assert.ok(brief.includes(part), `the build brief holds ${part}`)
   assert.ok(!/\{\{[A-Z_?]+\}\}/.test(brief))
   assert.deepEqual(lintOf(brief), [])

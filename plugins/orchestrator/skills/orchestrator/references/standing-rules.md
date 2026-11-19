@@ -17,7 +17,7 @@
 - Produced code must match the project's existing patterns over generic best practice.
 - **An existing test's assertion is never edited to make it pass.** If a test or the spec looks wrong, STOP and report it: the report is the agent's path out. A brief or a ruling that orders the change names the test.
 - TDD always; whether tests are COMMITTED follows each repo's own policy (some front-end repos deliberately keep tests out of the branch), so state the policy in the prompt, never let the agent assume.
-- The frontend surface, E2E, command and delegate rules are carried by the brief the launcher writes (`brief.ts`, its build rules and delivery lines) and by `templates/agent-phase-brief.md`; they are not retyped here.
+- The frontend capture rules are carried by the build rules the launcher writes (`brief.ts`, `buildRulesOf`); the command and delegate rules by `templates/agent-phase-brief.md`. They are not retyped here.
 
 ### Commands and delegates
 
