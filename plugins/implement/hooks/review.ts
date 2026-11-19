@@ -13,13 +13,16 @@ import { launcherOf } from '../core/orchestration.ts'
 
 export const SUBJECT_MAX = 25
 
+/** The reviewer's lenses, as core's lens description takes them (lens.ts: lower case, dashed); security if relevant. */
+export const REVIEWER_LENSES = ['correctness', 'tests', 'silent-failures', 'spec-conformity', 'security'] as const
+
 export function reviewerPrompt(branch: string): string {
   return [
     `You are the reviewer of the pull request of branch ${branch}, a session other than the one that wrote it:`,
     'you change no code, commit nothing and push nothing.',
     'Load the method:lifecycle skill. From a clean checkout at the pull request\'s head, launch one read-only',
-    'orchestrator:lens reader per lens the diff calls for (correctness, tests, silent failures, spec conformity, security',
-    'if relevant) over origin/<base>...HEAD, each described `lens <lens> <owner/name>#<pr> <base>..<head, 12 characters>`.',
+    `orchestrator:lens reader per lens the diff calls for (${REVIEWER_LENSES.join(', ')} if relevant) over`,
+    'origin/<base>...HEAD, each described `lens <lens, as written here> <owner/name>#<pr> <base>..<head, 12 characters>`.',
     'Then record the verdict at that head with mcp__orchestrator__review: pass when no critical or important finding',
     'stands, else fail, and its detail in one line. End with the method\'s report: the findings by severity, the record',
     'line, the status line.',
