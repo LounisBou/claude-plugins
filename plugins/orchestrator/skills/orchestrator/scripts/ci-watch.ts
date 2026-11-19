@@ -151,6 +151,9 @@ export function logPath(options: Options, base: boolean): string {
   return ciWatchLogPath(options.stateDir, options.repo, options.pr, base)
 }
 
+/** The exit code `gh pr checks` gives while a check is pending (its help: "Checks pending"). */
+const PENDING_EXIT = 8
+
 /** The checks of a `gh pr checks --json name[,bucket]` answer; undefined when it is no such list. */
 export function listed(json: string): { readonly name: string; readonly bucket?: string }[] | undefined {
   let entries: unknown
@@ -279,7 +282,8 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     for (;;) {
       const ran = await gh(['pr', 'checks', pr, '--json', 'name,bucket'], { stderr: 'pipe' })
       if (firstLine(ran.stderr).includes('no checks reported')) return
-      if (ran.status !== 0) throw fail('gh pr checks', ran)
+      // `gh pr checks` exits 8 while a check is pending (its list is printed all the same): that is an answer.
+      if (ran.status !== 0 && ran.status !== PENDING_EXIT) throw fail('gh pr checks', ran)
       const checks = listed(chomp(ran.stdout))
       if (checks === undefined) throw unread(pr, 'gh pr checks failed: an answer that is no list of checks')
       const real = checks.filter(check => !check.name.startsWith(FORGE.prefix))

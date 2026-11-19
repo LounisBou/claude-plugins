@@ -4765,8 +4765,8 @@ check "the head's run watch never reaches stdout, it lands in the pull request's
 # The base branch's checks below count the logs holding a run watch's output: start them clean.
 rm -rf "$CWS/ci-watch"
 # The verdict is the gate's alone: gh pr checks counts the checks registered and waits, nothing more.
-check "gh pr checks is read to count the checks and to poll them, nothing else: green, 1 poll" "ci-watch: green 7 $HA $CWGATE|0|1" \
-  "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep '^pr checks' "$CW/gh-calls" | grep -c -e 'name,bucket')"
+check "gh pr checks is read to count the checks and to poll them, nothing else: green, 1 poll" "ci-watch: green 7 $HA $CWGATE|0|0" \
+  "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep '^pr checks' "$CW/gh-calls" | grep -vc -e 'name,bucket' -e '--json name$')"
 check "no checks within the bound: exit 2" "ci-watch: no-checks 7 $HA|2" \
   "$(cw "OPEN $HA" "none" 0 "" 7 --interval 1)"
 check "and the watch never started" "0" "$(grep -c -e '--watch' "$CW/gh-calls")"

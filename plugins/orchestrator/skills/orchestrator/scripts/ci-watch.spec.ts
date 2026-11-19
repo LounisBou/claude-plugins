@@ -44,6 +44,12 @@ interface Script {
   names?: string
   /** What each poll of the checks reads, `name:bucket` entries separated by commas; the last repeated (none: `buckets`). */
   polls?: string[]
+  /** The exit code of each `gh pr checks --json name,bucket` read (default 0). */
+  pollExit?: number
+  /** A failed `gh pr checks --json name,bucket` read: its stderr. */
+  pollFails?: string
+  /** A poll answer that is printed as it is, not as a list of checks. */
+  pollRaw?: string
 }
 
 /**
@@ -116,7 +122,9 @@ function fake(script: Script): Deps & { readonly calls: string[]; readonly gates
         if (line.includes('name,bucket')) {
           // A poll's checks: `name:bucket` entries, one list per poll (its last repeated), else the buckets.
           const answer = nth('polls', script.polls) ?? script.buckets ?? ''
-          return ok(JSON.stringify(answer.split(/[\n,]/).filter(Boolean).map(entry => { const [name = '', bucket = ''] = entry.split(':'); return { name, bucket } })))
+          if (script.pollFails !== undefined) return failed(script.pollFails)
+          if (script.pollRaw !== undefined) return ok(script.pollRaw)
+          return { status: script.pollExit ?? 0, stdout: JSON.stringify(answer.split(/[\n,]/).filter(Boolean).map(entry => { const [name = '', bucket = ''] = entry.split(':'); return { name, bucket } })), stderr: '' }
         }
         const reg = nth('reg', script.reg) ?? '0'
         if (reg === 'none') return failed("no checks reported on the 'feat' branch\n")
@@ -291,6 +299,25 @@ test('a real check failing while another runs: the wait returns at once, the gat
   assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 1)
 })
 
+test('a pending check is an answer, even when gh exits 8 for it: the wait goes on, then green', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['build:pending', 'build:pass'], pollExit: 8 })
+  assert.equal((await watch(options(), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
+})
+
+test('a poll that fails is unread, a poll that answers no list is unread, a poll that finds no checks returns quietly', async () => {
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollFails: 'error connecting to api.github.com\n' }), 'unread 7 gh pr checks failed: error connecting to api.github.com|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollRaw: 'many\n' }), 'unread 7 gh pr checks failed: an answer that is no list of checks|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollFails: "no checks reported on the 'feat' branch\n" }), `green 7 ${HA} ${GATE}|0`)
+})
+
+test('the poll sleeps 30 s between two reads by default', async () => {
+  const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['build:pending', 'build:pass'] })
+  const start = deps.now()
+  assert.equal((await watch(parseArgs(['7'], { ORCHESTRATOR_STATE_DIR: state }), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal(deps.now() - start, 30000)
+})
+
 test('the checks are read each interval: the wait sleeps the interval between two reads, 30 s by default', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['build:pending', 'build:pass'] })
   const start = deps.now()
@@ -393,7 +420,6 @@ test('the head\'s unfinished runs are watched, then the checks again', async () 
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], failing: 'e2e', gate: ['PENDING:1', 'PENDING:1', 'FAILURE:0'], headRuns: ['201:completed;202:in_progress', '-'] })
   assert.equal((await watch(options(), deps)).line, `red 7 ${HA} e2e`)
   assert.equal(deps.calls.filter(call => call.startsWith('gh run watch 202')).length, 1)
-  assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
   assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
   assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA}`, `OPEN ${HB}`], reg: ['2'], headRuns: ['201:in_progress', '-'] }), `moved 7 ${HA} ${HB}|3`)
   assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['201:in_progress'] }), 'unread 7 workflow runs of the head still unfinished: 201|5')
