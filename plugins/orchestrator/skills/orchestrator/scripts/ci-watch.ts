@@ -10,6 +10,7 @@ import { setting, stateDir, type Env } from '../../../core/paths.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { ENV } from '../../../core/env.ts'
 import { gateArgv, parseGate, type GateCheck, type GateCi } from '../../../core/ci-gate.ts'
+import { FORGE } from '../../../core/forge-status.ts'
 import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
 import { CI_GATE_DIR, ciGatePath, CI_WATCH_DIR, ciWatchLogPath, MODULE_DIR } from '../../../core/orchestration.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
@@ -148,6 +149,21 @@ export function parseView(out: string): PullRequest {
 /** The log of this pull request's watch, or of its base branch's watch after the merge (core's ciWatchLogPath). */
 export function logPath(options: Options, base: boolean): string {
   return ciWatchLogPath(options.stateDir, options.repo, options.pr, base)
+}
+
+/**
+ * The checks registered on a head, from `gh pr checks --json name`: the readiness statuses the
+ * operator's records post (FORGE's prefix) are no check. Undefined when the answer is no list of names.
+ */
+export function registeredCount(json: string): number | undefined {
+  let names: unknown
+  try {
+    names = JSON.parse(json)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(names) || !names.every(entry => typeof entry?.name === 'string')) return undefined
+  return names.filter(entry => !entry.name.startsWith(FORGE.prefix)).length
 }
 
 /** Counts the gate's checks in `bucket`, among `names` when given. */
@@ -344,14 +360,14 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   // Wait, bounded, for checks to be registered on the head.
   let deadline = deps.now() + options.registerWait * 1000
   for (;;) {
-    const ran = await gh(['pr', 'checks', pr, '--json', 'name', '--jq', 'length'], { stderr: 'pipe' })
+    const ran = await gh(['pr', 'checks', pr, '--json', 'name'], { stderr: 'pipe' })
     const why = firstLine(ran.stderr)
     if (!why.includes('no checks reported')) {
-      // Any other failure, or an answer that is no number, is a gh failure.
+      // Any other failure, or an answer that is no list of names, is a gh failure.
       if (ran.status !== 0) throw unread(pr, `gh pr checks failed: ${why || 'no answer'}`)
-      const count = chomp(ran.stdout)
-      if (!DIGITS.test(count)) throw unread(pr, `gh pr checks failed: ${why || 'an answer that is no count'}`)
-      if (Number(count) > 0) break
+      const count = registeredCount(chomp(ran.stdout))
+      if (count === undefined) throw unread(pr, `gh pr checks failed: ${why || 'an answer that is no count'}`)
+      if (count > 0) break
     }
     if (deps.now() >= deadline) return new Said(`no-checks ${pr} ${first}`, 2)
     await sleep(deadline)

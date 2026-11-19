@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { countBucket, firstLine, gateCall, joinNames, logPath, main, parseArgs, parseGate, parseTarget, parseView, Said, USAGE, watch, type Deps, type Options } from './ci-watch.ts'
+import { countBucket, firstLine, gateCall, joinNames, logPath, main, parseArgs, parseGate, parseTarget, parseView, registeredCount, Said, USAGE, watch, type Deps, type Options } from './ci-watch.ts'
 import type { Ran, RunOptions } from './lib/process.ts'
 import { parseJournalEvent } from '../../../core/learning.ts'
 
@@ -40,6 +40,8 @@ interface Script {
   gateHead?: string
   /** What the gate lists as unverified. */
   gateUnverified?: string[]
+  /** The contexts `gh pr checks --json name` lists on the head, one per line (none: `reg` gives a count). */
+  names?: string
 }
 
 /**
@@ -116,6 +118,8 @@ function fake(script: Script): Deps & { readonly calls: string[]; readonly gates
         const reg = nth('reg', script.reg) ?? '0'
         if (reg === 'none') return failed("no checks reported on the 'feat' branch\n")
         if (reg === 'fail') return failed('error connecting to api.github.com\r\nmore\n')
+        if (script.names !== undefined) return ok(JSON.stringify(script.names.split('\n').filter(Boolean).map(name => ({ name }))))
+        if (/^[0-9]+$/.test(reg)) return ok(JSON.stringify(Array.from({ length: Number(reg) }, (_, k) => ({ name: `check-${k}` }))))
         return ok(`${reg}\n`)
       }
       if (verb === 'run list') {
@@ -258,6 +262,18 @@ test('the small readings', () => {
 test('a green line ends with the github tool\'s read of the gate, on the repository the watch names', () => {
   assert.equal(gateCall('7', undefined), 'next: mcp__github__gh pr-gate {"pr": 7}')
   assert.equal(gateCall('7', 'o/r'), 'next: mcp__github__gh pr-gate {"pr": 7} on o/r')
+})
+
+test('a readiness/ status is no registered check: the watch waits for a check of its own', async () => {
+  assert.equal(registeredCount('[{"name":"build"},{"name":"readiness/review"}]'), 1)
+  assert.equal(registeredCount('[{"name":"readiness/plan"}]'), 0)
+  assert.equal(registeredCount('[]'), 0)
+  assert.equal(registeredCount('many'), undefined)
+  assert.equal(registeredCount('[{"context":"x"}]'), undefined)
+  // Only the operator's readiness status is on the head: no check registered, so no-checks at the bound.
+  assert.equal(await said({ view: [`OPEN ${HA}`], names: 'readiness/review' }), `no-checks 7 ${HA}|2`)
+  // Without the filter this head counts a check, and the gate reads it green.
+  assert.equal(await said({ view: [`OPEN ${HA}`], names: 'readiness/review\nbuild', buckets: 'build:pass' }), `green 7 ${HA} ${GATE}|0`)
 })
 
 test('green: one passed check at least, the watch output in the log', async () => {
