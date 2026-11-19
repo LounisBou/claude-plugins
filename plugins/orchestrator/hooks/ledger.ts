@@ -361,7 +361,7 @@ function isVerdict(gate: GateCi | null, pr: FilePr): boolean {
 /*
  * The gate's reading kept for each open pull request of the orchestration, taken from github's reconciler (core's
  * pr-reconcile.ts), which reads the gate once each time what it reads changes: kept when the reconciler holds a reading
- * at the pull request's head and the kept one is missing, of another head or not yet a verdict. No forge call here.
+ * at the pull request's head and base and the kept one is missing, of another head or base, or not yet a verdict. No forge call here.
  */
 async function refreshGates($: Held, open: readonly FilePr[]): Promise<void> {
   const state = await stateDir($)
@@ -370,7 +370,9 @@ async function refreshGates($: Held, open: readonly FilePr[]): Promise<void> {
     const kept = await keptGateOf($, state, pr)
     if (isVerdict(kept, pr)) continue
     const text = await readOr($, reconcilePath(config, pr.repo, pr.pr))
-    if (parseReconcile(text)?.head !== pr.sha.toLowerCase() || kept?.raw === text) continue
+    const reading = parseReconcile(text)
+    // A reading of another head, or taken against another base than the forge lists, waits for the reconciler's next.
+    if (reading?.head !== pr.sha.toLowerCase() || (pr.base !== undefined && reading.base !== pr.base) || kept?.raw === text) continue
     try {
       await writeAtomic($, ciGatePath(state, pr.repo, String(pr.pr)), text)
     } catch (err) {

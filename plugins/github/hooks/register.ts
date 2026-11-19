@@ -17,7 +17,7 @@ import {
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { normalise } from './guards.ts'
 import {
-  fingerprintOf, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS, takenLease, TICK_MS,
+  fingerprintOf, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS, takenLease, TICK_MS,
   type Counts, type ListedPr, type Listing, type Local, type Schedule,
 } from './reconcile.ts'
 import { parseReconcile, reconcileEdgePath, reconcilePath, reconcileRoot, RECONCILE_VERSION } from '../core/pr-reconcile.ts'
@@ -1102,7 +1102,8 @@ async function readiness($: Mod, repo: string, pr: number, sha?: string): Promis
  * labels the gate leaves (labels, draft) when it wrote, and the line it says, or none: always
  * names what is missing too. It never fails the call it follows.
  */
-type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate }
+// `unwritten`: the gate read at the head, its label not written (the reconciler keeps the reading all the same).
+type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] } }
 
 // unlabelled: Not Ready goes on a pull request carrying neither label too (the reconciler's, labelMove).
 async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false, unlabelled = false): Promise<Followed> {
@@ -1139,7 +1140,7 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
   try {
     await runGh($, 'pr-readiness', { pr, state: move }, repo)
   } catch (err: unknown) {
-    return { line: gateUnwrittenLine(repo, pr, reasonOf(err).trim()) }
+    return { line: gateUnwrittenLine(repo, pr, reasonOf(err).trim()), unwritten: { gate, missing } }
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = now.draft
@@ -1166,7 +1167,11 @@ type Reconciler = {
   failed: Map<string, { fingerprint: string; at: number }>
   edgeSeen: number
   counts: Counts
+  // The last line said, and whether this beat said one: a beat that said none lets the same failure be said again.
   said: string | undefined
+  saidNow: boolean
+  // No listing and no gate before this (ms): the quota ran low, or a listing was refused for the rate limit.
+  quotaUntil: number
 }
 
 let reconciler: Reconciler | undefined
@@ -1205,6 +1210,7 @@ async function localOf($: Mod, root: string, data: string, repo: string, row: Li
 
 // A line the reconciler says once until it says another: a failure that repeats at every beat is not repeated.
 function sayOnce($: Mod, rec: Reconciler, line: string): void {
+  rec.saidNow = true
   if (rec.said === line) return
   rec.said = line
   note($, line)
@@ -1219,13 +1225,18 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
     listing = parseListing(await runGh($, 'pr-panel', { reconcile: true }, repo))
   } catch (err: unknown) {
     const why = reasonOf(err).trim()
-    const schedule = /rate limit/i.test(why) ? { nextAt: now + QUOTA_WAIT_MS, idle: before?.schedule.idle ?? 0 } : nextListing(before?.schedule, now, false, [], {})
+    const limited = /rate limit/i.test(why)
+    const schedule = limited ? { nextAt: now + QUOTA_WAIT_MS, idle: before?.schedule.idle ?? 0 } : nextListing(before?.schedule, now, false, [], {})
+    if (limited) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
     rec.repos.set(repo, { rows: before?.rows ?? [], schedule })
     sayOnce($, rec, 'github: the reconciler could not list ' + repo + ': ' + why)
     return false
   }
   const changed = JSON.stringify(before?.rows ?? null) !== JSON.stringify(listing.rows)
-  rec.repos.set(repo, { rows: listing.rows, schedule: nextListing(before?.schedule, now, changed, listing.rows, listing.rate) })
+  const schedule = nextListing(before?.schedule, now, changed, listing.rows, listing.rate)
+  // The quota is the account's: once low, no repository is listed and no gate read before its reset.
+  if (listing.rate.remaining !== undefined && listing.rate.remaining < QUOTA_LOW) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
+  rec.repos.set(repo, { rows: listing.rows, schedule })
   return true
 }
 
@@ -1237,7 +1248,26 @@ async function dropClosed($: Mod, rec: Reconciler, config: string, repo: string,
     .map((entry) => String(entry?.name ?? ''))
     .filter((name) => /^\d+\.json$/.test(name) && !open.has(name))
   for (const name of gone) rec.kept.delete(repo + '#' + name.slice(0, -'.json'.length))
-  if (gone.length > 0) await $.process.run(['rm', '-f', '--', ...gone.map((name) => dir + '/' + name)], { timeoutMs: 10_000 })
+  if (gone.length === 0) return
+  const ran = await $.process.run(['rm', '-f', '--', ...gone.map((name) => dir + '/' + name)], { timeoutMs: 10_000 })
+  if (ran.exitCode !== 0) sayOnce($, rec, 'github: the reconciler could not remove the readings of closed pull requests of ' + repo + ': ' + (String(ran.stderr ?? '').trim() || 'exit ' + ran.exitCode))
+}
+
+// A pull request's reading as the orchestrator reads it (core's pr-reconcile.ts).
+function readingOf(repo: string, row: ListedPr, gate: Gate, missing: string[], labels: string[], draft: boolean, now: number, fingerprint: string) {
+  return {
+    v: RECONCILE_VERSION, repo, pr: row.number, head: gate.head, base: gate.base ?? row.base, draft, labels, ci: gate.ci, missing,
+    at: new Date(now).toISOString(), fingerprint,
+  }
+}
+
+// Holds the lease at `now`: takes or renews it when due. False when another session holds it.
+async function holdLease($: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, leasePath: string, now: number): Promise<boolean> {
+  const lease = parseLease(await textOf($, leasePath))
+  const whose = leaseOf(lease, rec.me, now)
+  if (whose === 'other') return false
+  if (!leaseDue(lease, rec.me, now)) return true
+  return (await updateOver(io, leasePath, (current) => takenLease(current, rec.me, now, rec.counts))) !== undefined
 }
 
 // The gate on one pull request whose fingerprint changed, its reading kept; whether the gate could be read.
@@ -1252,15 +1282,16 @@ async function reconcilePr(
   if (!gate || followed.missing === undefined) {
     rec.failed.set(key, { fingerprint, at: at.now })
     if (followed.line) sayOnce($, rec, followed.line)
+    // The gate was read at the head, only its label failed: the reading is kept, the label tried again after RETRY_MS.
+    // Its fingerprint is none, so a restart that seeds from the file reads the gate again too.
+    const read = followed.unwritten
+    if (read) await writeAtomicOver(io, reconcilePath(at.config, repo, row.number), JSON.stringify(readingOf(repo, row, read.gate, read.missing, read.gate.labels, read.gate.draft, at.now, '')) + '\n')
     return
   }
   if (followed.labels) rec.counts.moves += 1
   // The labels the gate left are those the next listing reads: the fingerprint is kept with them.
   const kept = followed.labels ? fingerprintOf(row, await localOf($, at.root, at.data, repo, row, exemption), followed.labels) : fingerprint
-  const reading = {
-    v: RECONCILE_VERSION, repo, pr: row.number, head: gate.head, base: gate.base ?? row.base, draft: followed.draft ?? gate.draft,
-    labels: followed.labels ?? gate.labels, ci: gate.ci, missing: followed.missing, at: new Date(at.now).toISOString(), fingerprint: kept,
-  }
+  const reading = readingOf(repo, row, gate, followed.missing, followed.labels ?? gate.labels, followed.draft ?? gate.draft, at.now, kept)
   await writeAtomicOver(io, reconcilePath(at.config, repo, row.number), JSON.stringify(reading) + '\n')
   rec.kept.set(key, kept)
   rec.failed.delete(key)
@@ -1270,18 +1301,18 @@ async function reconcileTick($: Mod): Promise<void> {
   const rec = reconciler
   if (!rec || rec.running) return
   rec.running = true
+  rec.saidNow = false
   try {
     const now = await nowMs($)
     const config = await configDir($)
     const root = await recordsRoot($)
     if (!Number.isFinite(now) || !config || !root) return
     const leasePath = reconcileRoot(config) + '/' + LEASE_FILE
-    const lease = parseLease(await textOf($, leasePath))
-    if (leaseOf(lease, rec.me, now) === 'other') return
+    if (leaseOf(parseLease(await textOf($, leasePath)), rec.me, now) === 'other') return
     const repos = await followedRepos($, config, root, now)
     if (repos.length === 0) return
     const io = journalIoOf($)
-    if (leaseDue(lease, rec.me, now) && (await updateOver(io, leasePath, (current) => takenLease(current, rec.me, now, rec.counts))) === undefined) return
+    if (!(await holdLease($, rec, io, leasePath, now))) return
     rec.counts.ticks += 1
     const edge = await mtimeOf($, reconcileEdgePath(config))
     const woken = edge > rec.edgeSeen
@@ -1289,8 +1320,10 @@ async function reconcileTick($: Mod): Promise<void> {
     for (const repo of [...rec.repos.keys()]) if (!repos.includes(repo)) rec.repos.delete(repo)
     const listed = new Set<string>()
     for (const repo of repos) {
+      if (now < rec.quotaUntil) break
       if ((woken || now >= (rec.repos.get(repo)?.schedule.nextAt ?? 0)) && (await listRepo($, rec, repo, now))) listed.add(repo)
     }
+    if (now < rec.quotaUntil) return
     const data = await dataDir($)
     const at = { config, root, data, now }
     let gates = 0
@@ -1307,6 +1340,8 @@ async function reconcileTick($: Mod): Promise<void> {
         const failed = rec.failed.get(key)
         if (rec.kept.get(key) === fingerprint || (failed?.fingerprint === fingerprint && now - failed.at < RETRY_MS)) continue
         if (gates >= GATES_PER_TICK) break
+        // A beat can outlast what the lease had left: it is held again before each gate, the time read anew.
+        if (!(await holdLease($, rec, io, leasePath, await nowMs($)))) return
         gates += 1
         await reconcilePr($, rec, io, at, repo, row, exemption, fingerprint)
       }
@@ -1314,6 +1349,7 @@ async function reconcileTick($: Mod): Promise<void> {
   } catch (err: unknown) {
     sayOnce($, rec, 'github: the reconciler\'s beat failed: ' + reasonOf(err).trim())
   } finally {
+    if (!rec.saidNow) rec.said = undefined
     rec.running = false
   }
 }
@@ -1324,8 +1360,9 @@ async function startReconciler($: Mod): Promise<void> {
   const session = String(await Promise.resolve().then(() => $.session.id()).catch(() => ''))
   const now = await nowMs($)
   const rec: Reconciler = {
-    me: (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(),
-    edgeSeen: 0, said: undefined,
+    // The same session started again (resume, clear, compact) keeps its name, and with it the lease it holds.
+    me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(),
+    edgeSeen: 0, said: undefined, saidNow: false, quotaUntil: 0,
     counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0 },
   }
   reconciler = rec

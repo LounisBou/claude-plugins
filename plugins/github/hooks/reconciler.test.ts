@@ -38,6 +38,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     said: [] as string[],
     gateFails: false,
     panelFails: undefined as string | undefined,
+    readinessFails: false,
   }
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'session-r' }))
@@ -104,6 +105,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
         ci: { result: pull.rollup === 'SUCCESS' ? 'SUCCESS' : 'PENDING', failed: [], running: pull.rollup === 'SUCCESS' ? 0 : 1, skipped: [], total: 1, checks: [{ name: 'ci', bucket: 'pass' }] },
       }))
     }
+    if (command === 'pr-readiness' && state.readinessFails) return done('', 1, 'gh: HTTP 403 label')
     if (command === 'pr-readiness' && pull) {
       pull.labels = [...pull.labels.filter((l) => !['ready', 'not ready'].includes(l.toLowerCase())), args['state'] === 'ready' ? 'Ready' : 'Not Ready']
       state.labelled.push(pull.number + ' ' + String(args['state']))
@@ -239,7 +241,7 @@ test('no more than GATES_PER_TICK gates are read at one beat, the others at the 
   expect(count(state.runs, 'pr-gate')).toBe(6)
 })
 
-test('a gate that failed is not tried again on the same fingerprint before RETRY_MS, said once', async ($, on) => {
+test('a gate that failed is not tried again on the same fingerprint before RETRY_MS; said again only after beats that said nothing', async ($, on) => {
   const { clock, state } = await started($, on)
   state.gateFails = true
   await beat(clock)
@@ -248,7 +250,7 @@ test('a gate that failed is not tried again on the same fingerprint before RETRY
   expect(count(state.runs, 'pr-gate')).toBe(1)
   await beat(clock)
   expect(count(state.runs, 'pr-gate')).toBe(2)
-  expect(state.said.filter((line) => line.includes('HTTP 502'))).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('HTTP 502'))).toHaveLength(2)
   expect(state.labelled).toEqual([])
 })
 
@@ -278,4 +280,36 @@ test('a listing that fails keeps the rows last listed: a record written at the h
   expect(count(state.runs, 'pr-panel')).toBe(2)
   expect(count(state.runs, 'pr-gate')).toBe(gates + 1)
   expect(state.said.filter((line) => line.includes('could not list acme/app'))).toHaveLength(1)
+})
+
+test('a low quota reads no gate and heeds no edge marker until its reset', async ($, on) => {
+  const resetAt = new Date(T0 + 20 * 60_000).toISOString()
+  const { clock, state, put } = await started($, on, { remaining: QUOTA_LOW - 1, resetAt })
+  await beat(clock)
+  expect([count(state.runs, 'pr-panel'), count(state.runs, 'pr-gate')]).toEqual([1, 0])
+  put(RECORDS + '/acme/app/' + HEAD + '/e2e.y.json', '{}', T0 + TICK_MS)
+  put(EDGE, '', T0 + TICK_MS + 1)
+  await beat(clock, 5)
+  expect([count(state.runs, 'pr-panel'), count(state.runs, 'pr-gate')]).toEqual([1, 0])
+})
+
+test('a gate read whose label cannot be written still keeps its reading for the orchestrator, the label tried again after RETRY_MS', async ($, on) => {
+  const { clock, state, files } = await started($, on)
+  state.readinessFails = true
+  await beat(clock)
+  const reading = parseReconcile(files.get(READING)?.text ?? '')
+  expect([reading?.head, reading?.ci.result, reading?.labels]).toEqual([HEAD, 'SUCCESS', []])
+  await beat(clock, RETRY_MS / TICK_MS - 1)
+  expect(count(state.runs, 'pr-readiness not-ready')).toBe(1)
+  state.readinessFails = false
+  await beat(clock)
+  expect(state.labelled).toEqual(['7 not-ready'])
+})
+
+test('the same session started again keeps its lease: it reconciles at the next beat', async ($, on) => {
+  const { clock, state } = await started($, on)
+  await beat(clock)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await beat(clock)
+  expect(count(state.runs, 'pr-panel')).toBe(2)
 })

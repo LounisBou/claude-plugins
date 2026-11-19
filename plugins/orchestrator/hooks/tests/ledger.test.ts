@@ -1090,6 +1090,12 @@ test('a verdict kept at the head is replaced once the base was retargeted and th
   expect(retargeted.files.get(KEPT_17)).toEqual(gateOn('FAILURE', AT_A, 'develop'))
 })
 
+test('a reconciler reading taken against the base before a retarget does not replace the reading kept on the new base', async () => {
+  const world = onBase('develop', gateOn('PENDING', AT_A, 'develop'), gateOn('FAILURE', AT_A, 'main'))
+  expect((await prWake(world.dollar, new Set(), T0)).lines).toEqual([])
+  expect(world.files.get(KEPT_17)).toEqual(gateOn('PENDING', AT_A, 'develop'))
+})
+
 test('a kept verdict that names no base is no retarget: the reconciler reading does not replace it', async () => {
   const without = onBase('develop', gateOn('SUCCESS', AT_A, null), gateOn('FAILURE', AT_A, 'develop'))
   await prWake(without.dollar, new Set(), T0)
