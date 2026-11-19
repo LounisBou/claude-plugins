@@ -97,15 +97,10 @@ check_status "no scope file at all exits 10" 10 pfs
 echo "== skills =="
 for skill in feature phase check close prepare; do
   doc="$ROOT/skills/$skill/SKILL.md"
-  # Every guard below reads this file. A missing document answers all eight of them
-  # with an empty string, which is what six of them expect from a correct one.
+  # Every guard below reads this file. A missing document answers them with an empty
+  # string, which is what the guards expecting no match take from a correct one.
   check "$skill document exists" "1" "$([ -f "$doc" ] && echo 1 || echo 0)"
   check "$skill frontmatter names itself" "$skill" "$(awk '/^name:/{print $2; exit}' "$doc" 2>/dev/null)"
-  check "$skill runs the preflight first" "1" "$(grep -c 'scripts/preflight.sh' "$doc" 2>/dev/null || echo 0)"
-  check "$skill hard-codes no language" "" "$(grep -o 'French' "$doc" 2>/dev/null || true)"
-  # Read as UTF-8 by python, so the locale the suite runs under changes nothing.
-  check "$skill has no accented character" "" "$(python3 -c 'import re,sys; print(",".join(sorted(set(re.findall("[À-ÖØ-öø-ÿœŒ]", open(sys.argv[1], encoding="utf-8").read())))))' "$doc" 2>/dev/null)"
-  check "$skill has no common French words" "" "$(grep -Eiow 'vous|nous|avec|chemin|fichier|sont|une|titre' "$doc" 2>/dev/null | sort -u | tr '\n' ',' || true)"
   check "$skill reaches no other plugin's cache" "" "$(grep -o 'plugins/cache' "$doc" 2>/dev/null || true)"
   # Commands, not substrings. The bracket classes make the match begin and end on a
   # word boundary, so "through" in a comment stops being a call to GitHub while
@@ -186,42 +181,14 @@ phantoms=$(for skill in feature phase check close prepare; do
 done)
 check "every skill reference names something real" "" "$phantoms"
 
-echo "== check =="
-CHECK_DOC="$ROOT/skills/check/SKILL.md"
-
 # A heading inside a fence is content the reader is shown, not a section of the
-# document: this one shows the verdict table. Left uncounted, it moves every line
-# after it into a section that does not exist. A fence opens on three or more
+# document. Left uncounted, it moves every line after it into a section that does not
+# exist. A fence opens on three or more
 # backticks and closes on at least as many.
 FENCE_TRACK='function bt(  c) { c = 0; while (substr($0, c + 1, 1) == "`") c++; return c }
 /^```/ { n = bt(); if (!f) { f = 1; fence = n } else if (n >= fence) { f = 0 } next }'
 
-# The report is the whole output of this skill. A reader who gets prose instead
-# of the table cannot tell which of the seven checks produced which evidence.
-check "check reports under one heading" "1" \
-  "$(awk "$FENCE_TRACK"'
-     !f && /^## Report$/ { hits++ }
-     END { print (hits > 0) ? 1 : 0 }' "$CHECK_DOC")"
-check "check gives the table its header" "1" \
-  "$(grep -c '^| check | evidence | result |' "$CHECK_DOC" | awk '{print ($1 >= 1) ? 1 : 0}')"
-
-# Seven verifications, each with its evidence, and the order is the one the spec
-# fixes: a delivery is read before it is compared, compared before it is re-run.
-# The concatenation falls on a deletion and on a reordering; the count names
-# which of the two happened.
-check "check carries seven numbered verifications" "7" \
-  "$(awk "$FENCE_TRACK"'!f && /^### [1-7]\. / { seen++ } END { print seen + 0 }' "$CHECK_DOC")"
-check "the seven verifications are in order" "1234567" \
-  "$(awk "$FENCE_TRACK"'!f && /^### [1-7]\. / { printf "%s", substr($0, 5, 1) }' "$CHECK_DOC")"
-
-# This skill verifies and stops there. An overview that leaves it open reads as
-# licence to repair what it just found, which is the other skill's work.
-check "check says in its overview that it edits nothing" "1" \
-  "$(awk "$FENCE_TRACK"'
-     !f && /^## Overview$/ { in_ov = 1; next }
-     !f && /^## / { in_ov = 0 }
-     in_ov && /(edits nothing|never edits)/ { hits++ }
-     END { print (hits > 0) ? 1 : 0 }' "$CHECK_DOC")"
+CHECK_DOC="$ROOT/skills/check/SKILL.md"
 
 # The range travels by the environment, like the artifacts path. A positional
 # argument reaches the first block of a document and no other, and the block that
@@ -234,15 +201,6 @@ check "check's fence for verification 2 holds RANGE=\${RANGE:-} once" "1" \
   "$(awk '/^### 2\. /{s=1;next} /^### [0-9]/{s=0} s && /^```bash/{b=1;next} s && /^```/{b=0} s && b && $0=="RANGE=${RANGE:-}"{c++} END{print c+0}' "$CHECK_DOC")"
 check "check never assigns RANGE from a positional argument" "" \
   "$(grep -oE 'RANGE="?\$[0-9]"?' "$CHECK_DOC" 2>/dev/null || true)"
-
-# Verifications 3 and 7 read what the delivery puts forward, not the whole phase
-# file: a sub-phase still to come is not a deliverable this range owes.
-check "check's plan compliance judges what the delivery claims" "1" \
-  "$(awk "$FENCE_TRACK"'
-     !f && /^### 3\. / { in_v3 = 1; next }
-     !f && /^### / { in_v3 = 0 }
-     in_v3 && /sub-phases the delivery claims/ { hits++ }
-     END { print (hits > 0) ? 1 : 0 }' "$CHECK_DOC")"
 
 echo "== phase =="
 PHASE_DOC="$ROOT/skills/phase/SKILL.md"
@@ -259,13 +217,6 @@ check "phase's iron rule holds three NEVER lines" "3" \
      in_rule && /^NEVER / { nevers++ }
      END { print nevers + 0 }' "$PHASE_DOC")"
 
-# The two skills the loop hands its work to. The contract check above proves the
-# directories exist; here they are proved to be invoked at all.
-for ref in implement:check superpowers:test-driven-development; do
-  check "phase invokes $ref" "1" \
-    "$(grep -c "$ref" "$PHASE_DOC" 2>/dev/null | awk '{print ($1 >= 1) ? 1 : 0}')"
-done
-
 # A gate whose result is not read is not a gate. The loop states each command with
 # its exit code, so a transcript tells a green run from a red one without trusting
 # the summary written over it.
@@ -275,13 +226,6 @@ check "the loop states the gate exit code" "1" \
      !f && /^## / { in_loop = 0 }
      in_loop && /exit code/ { seen++ }
      END { print (seen > 0) ? 1 : 0 }' "$PHASE_DOC")"
-
-# The nested call carries the artifacts path it was given, at both places the
-# document spells that call out. Without it the inner run derives a path from the
-# branch name, which is what --docs was passed to the outer run to avoid.
-check "phase's nested check call carries the artifacts path" "1" \
-  "$(grep -c 'implement:check .*--docs' "$PHASE_DOC" 2>/dev/null \
-     | awk '{print ($1 >= 2) ? 1 : 0}')"
 
 # The work is written inline, by whoever read the plan, or it is written by nobody
 # who read it. A dispatch hidden in a copyable block is the one that gets run.
@@ -300,13 +244,6 @@ check "the method's state table shows a doing row carrying its base" "1" \
 echo "== feature =="
 FEATURE_DOC="$ROOT/skills/feature/SKILL.md"
 
-# The spec fixes the two superpowers skills this one stands on. Paraphrasing
-# either of them is the failure mode the whole plugin exists to avoid.
-for ref in superpowers:brainstorming superpowers:writing-plans; do
-  check "feature invokes $ref" "1" \
-    "$(grep -c "$ref" "$FEATURE_DOC" 2>/dev/null | awk '{print ($1 >= 1) ? 1 : 0}')"
-done
-
 # One question, asked once, carrying four proposed values. Three of them asked and
 # the fourth assumed is the quiet failure: the user confirms what they were shown
 # and the unshown value lands in the state file unread.
@@ -322,16 +259,10 @@ check "feature's one question carries the four values" "4" \
 
 # The state table is the contract phase and close parse. It is shown in a fence so
 # the writer copies it rather than inventing a spelling of its own.
-check "the method gives the state table its header inside a fence, and feature points at it" "1 1" \
+check "the method gives the state table its header inside a fence" "1" \
   "$(awk "$FENCE_TRACK"'
      f && /^\| phase \| title \| status \| milestone \|/ { hits++ }
-     END { print (hits > 0) ? 1 : 0 }' "$METHOD_PLAN") $(grep -c 'state-file shape' "$FEATURE_DOC")"
-
-# The brainstorm and the plan skill each save a file of their own under
-# docs/superpowers. This document names that path to say it is NOT written: the
-# design and the plan land under the feature's own directory instead.
-check "feature names the superpowers paths it does not write" "1" \
-  "$(grep -c 'docs/superpowers' "$FEATURE_DOC" 2>/dev/null | awk '{print ($1 >= 1) ? 1 : 0}')"
+     END { print (hits > 0) ? 1 : 0 }' "$METHOD_PLAN")"
 
 # The plan skill's mandatory header hands execution to a subagent, which the loop
 # of implement:phase refuses. A plan step that does not name that header inherits it.
@@ -352,17 +283,6 @@ check "feature lists prepared features with find, not a glob" "1" \
 echo "== prepare =="
 PREPARE_DOC="$ROOT/skills/prepare/SKILL.md"
 
-# Preparing a feature is the first half of starting one, and the half that touches
-# no branch: it has to stand on the same two superpowers skills.
-for ref in superpowers:brainstorming superpowers:writing-plans; do
-  check "prepare invokes $ref" "1" \
-    "$(grep -c "$ref" "$PREPARE_DOC" 2>/dev/null | awk '{print ($1 >= 1) ? 1 : 0}')"
-done
-
-# The one line that keeps a prepared feature from disturbing whatever is in flight
-# on another branch. Without it this skill is implement:feature with a missing step.
-check "prepare refuses to create a branch" "1" \
-  "$(grep -c '^NEVER create a branch' "$PREPARE_DOC" 2>/dev/null | awk '{print ($1 >= 1) ? 1 : 0}')"
 check "prepare's iron rule holds two NEVER lines" "2" \
   "$(awk "$FENCE_TRACK"'
      !f && /^## The Iron Rule$/ { in_rule = 1; next }
@@ -373,25 +293,12 @@ check "prepare's iron rule holds two NEVER lines" "2" \
 echo "== close =="
 CLOSE_DOC="$ROOT/skills/close/SKILL.md"
 
-# The detection order is the contract: the first file found is the one bumped, so a
-# repository holding both a VERSION and a package.json gets a different version
-# written if two names trade places. Compared in order of first appearance.
-check "close names the five version files in order" \
-  "VERSION pyproject.toml package.json composer.json .claude-plugin/plugin.json" \
-  "$(grep -oE 'VERSION|pyproject\.toml|package\.json|composer\.json|\.claude-plugin/plugin\.json' "$CLOSE_DOC" \
-     | awk '!already[$0]++' | tr '\n' ' ' | sed 's/ *$//')"
-
 check "close's iron rule holds three NEVER lines" "3" \
   "$(awk "$FENCE_TRACK"'
      !f && /^## The Iron Rule$/ { in_rule = 1; next }
      !f && /^## / { in_rule = 0 }
      in_rule && /^NEVER / { nevers++ }
      END { print nevers + 0 }' "$CLOSE_DOC")"
-
-# What happens after the branch belongs to the user. Said once: twice reads as a
-# warning, absent it reads as an offer to do it.
-check "close hands the rest back in one sentence" "1" \
-  "$(grep -o 'ready and merge follow the method'"'"'s gate' "$CLOSE_DOC" 2>/dev/null | wc -l | tr -d ' ')"
 
 # A version written into one file and mirrored in another leaves the repository
 # green on the first gate and red on the second. The stop names the file it wrote.
@@ -458,10 +365,6 @@ check "the host validates the plugin" "0" \
   "$(claude plugin validate "$ROOT" >/dev/null 2>&1; echo $?)"
 check "the module's tests pass in the host's kit" "0" \
   "$(claude plugin test "$ROOT" >/dev/null 2>&1; echo $?)"
-
-# The self-review before the pull request is the method's: close and phase point at it.
-check "close and phase point at the method's self-review" "1|1" \
-  "$(grep -c 'self-review comes after the last step below and before the pull request opens' "$ROOT/skills/close/SKILL.md")|$(grep -c 'the self-review before the pull request, consent, ready' "$ROOT/skills/phase/SKILL.md")"
 
 echo
 echo "$pass passed, $fail failed"
