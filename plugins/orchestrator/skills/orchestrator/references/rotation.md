@@ -2,7 +2,7 @@
 
 ## Context rotation
 
-The module says when a gate trips; this is what you do then. It also tells the agent itself, which cannot read its own figure, but that line does not stand it down: a gate notice for an agent with work left gets your stand-down in the same turn, never left to its brief's gate line.
+The module says when a gate trips; this is what you do then. A gate notice for an agent with work left gets your stand-down in the same turn.
 
 Rotation = a **resume brief** for a fresh session, printed from the state, never typed. The stand-down asks the agent to finish the unit in hand, stop, and answer two lines: what is in flight, the decisions taken (a message to your own agent carries no `notify_when_idle`: its reply wakes you). On its answer — or at once, with neither line, when it is gone (ended by the host or by an error) — print the brief:
 

@@ -30,5 +30,5 @@ Read {{READ}}, the repository's own instructions (its quality gate, its workflow
 
 - A question, a blocker (with a proposed resolution) or the final report ends your turn on one line, `status: question|blocked|done — <one line>`; the hooks module relays it.
 - The final report goes to {{REPORT_PATH}}: suite exit code and counts, the E2E line, the image lines, deviations, doubts.
-- Past your context gate: finish the current unit, then stop and say so. Work that needs more judgment than this brief anticipated: say so with the evidence and stop.
+- Work that needs more judgment than this brief anticipated: say so with the evidence and stop.
 {{DELIVERY?}}

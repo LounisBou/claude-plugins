@@ -6,8 +6,7 @@ allowed-tools: Read, Write, Edit, ListAgents, SendMessage, Bash(${CLAUDE_PLUGIN_
 Run a DECISION ROUND with the user. Use it when an agent has sent a STOP that is the
 user's to decide, when an entry in the project's register or plan carries a proposed
 owner or a proposed reading, when a review returned an arbitration, or when the user
-says « one question at a time ». The user arbitrates scope; you decide nothing of
-theirs and never ask two things in one message.
+says « one question at a time ». The user arbitrates scope; you decide nothing of theirs.
 
 **The operator's time is the scarce thing.** A round is a WAVE: the questions follow one another,
 each ruling relayed to its agent at once. A question never stops the rest of the work
@@ -34,10 +33,8 @@ target, what that target already holds. A row or a register says what was true w
 written; the user's own merge or close most often settles a question behind it. Collect wide: add the questions the next steps will need from him — a choice the next phase's brief must name, a premise its plan assumes — so that
 he answers them now. Every goal
 `dispatch-record.sh goals <record> status` lists in `no phase` is a question of the wave:
-plan it, or rule it out? Write the list to `decision-round.md` in the session's scratch
-directory — number, title, where it comes from, status — so the round survives a
-compaction, in asking order: the urgent first (a production fault, a detected
-regression, a decision under a real deadline), then the oldest first. An item found settled is written there as « already done: <evidence> »,
+plan it, or rule it out? Order the list in asking order: the urgent first (a production fault, a detected
+regression, a decision under a real deadline), then the oldest first. Each question is held in the state's `round/` by the module, which survives a compaction. An item found settled is recorded as « already done: <evidence> »,
 dropped from the count, and not asked. Announce it in one line,
 « N questions, back to back. », then the goals line of the same `goals status`. A question that arises mid-round is appended as N + 1, announced in one line, and
 taken in order; the count in the header moves with it.
@@ -54,7 +51,7 @@ language, one field per line: the operator's pane draws these fields alone. The 
 the goal of `goals.md` the question serves. Close with « You decide: », the letters offered,
 « or your own words ». Launch first, in this turn, what the question does not block; then ask it
 with one `ask` call (the module writes its block: write none) and
-`declare_wait({kind: "operator"})`, without `question`. Split references in `blocks` by `, `, never `/`. One question per message.
+`declare_wait({kind: "operator"})`, without `question`. Split references in `blocks` by `, `, never `/`.
 
 ## 3. While the answer is awaited
 
@@ -77,8 +74,8 @@ fact that changes a question still to come updates it before it is presented.
    (a goal) with `--ruling "<his words, dated>"`, never left open as a question; the turn then
    declares `declare_wait({kind: "deferred", blocks: "<n> items"})`, which asks him nothing.
 3. Relay it at once, showing nothing of it, to the agent whose STOP it answers, if any — `SendMessage`,
-   the ruling verbatim, dated (`date -u +%FT%TZ`, pasted), « the operator ruled » — and mark
-   it « relayed » in `decision-round.md`.
+   the ruling verbatim, dated (`date -u +%FT%TZ`, pasted), « the operator ruled » — and its
+   round entry records the `delivery`.
 4. Launch what the ruling unblocks, then present the next question IN FULL (step 2) at the
    end of this same message.
 
@@ -92,7 +89,7 @@ purpose because it is written. Never re-argue a question inside another one.
 
 « The wave is complete: N/N. » Then, in this same turn:
 
-1. Check every ruling is marked « relayed », and relay one that is not as step 4 says.
+1. Check every ruling's round entry records its `delivery`, and relay one that does not as step 4 says.
 2. Draw the consequences not yet drawn: briefs amended, directives corrected in the same
    move, agents relaunched, sessions spawned.
 3. Collect again (step 1): the questions the consequences raise, the agents' STOPs, a

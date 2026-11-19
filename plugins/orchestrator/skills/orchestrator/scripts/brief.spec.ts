@@ -114,7 +114,6 @@ test('phase, investigate mode: the brief carries no delivery line, and still say
     'Playwright', 'screenshots in the pull request\'s description', 'E2E as the pull request\'s check plan requires', 'Audit each capture'])
     assert.ok(!brief.includes(part), `the investigate brief holds no ${part}`)
   assert.ok(brief.includes('In `investigate` mode you read and report only: no commit, no push, no pull request.'))
-  assert.ok(brief.includes('then stop and say so.'))
   assert.ok(!/\{\{[A-Z_?]+\}\}/.test(brief))
   assert.deepEqual(lintOf(brief), [])
 })
