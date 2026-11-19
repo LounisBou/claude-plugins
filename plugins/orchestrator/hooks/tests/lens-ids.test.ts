@@ -45,3 +45,53 @@ test('the module mounts the readers\' ids', () => {
   const all = capture<World>(register)
   expect(all.some(h => h.event === 'tool.call' && h.matcher?.['tool'] === 'SubagentHandback')).toBe(true)
 })
+
+// A machine whose install record gives the toolkit at /tk, with the agents named in `agents`.
+const RECORD = JSON.stringify({ version: 2, plugins: { 'pr-review-toolkit@claude-plugins-official': [{ scope: 'user', installPath: '/tk' }] } })
+const machine = (agents: Record<string, string>, record: string | undefined = RECORD) => hostOf({
+  env: { get: async (name: string) => (name === 'HOME' ? '/home/me' : undefined) },
+  fs: {
+    write: async () => undefined,
+    read: async (path: string) => {
+      const text = path === '/home/me/.claude/plugins/installed_plugins.json' ? record : agents[path]
+      if (text === undefined) throw new Error(`ENOENT: ${path}`)
+      return text
+    },
+  },
+  process: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) },
+})
+const launched = async (world: World, call: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  let sent: Record<string, unknown> = {}
+  await agent.handler(world, call as never, (async (e: Record<string, unknown>) => { sent = e; return { result: ANSWER } }) as never)
+  return sent
+}
+
+test('a relevant angle reads with its toolkit agent\'s method: its prompt after the reader\'s, under the lens contract, frontmatter cut', async () => {
+  const world = machine({ '/tk/agents/silent-failure-hunter.md': '---\nname: silent-failure-hunter\n---\nHunt every swallowed error.\n' })
+  const sent = await launched(world, { ...LENS, description: 'lens silent-failures acme/thing#12 origin/main..0123456789ab' })
+  const prompt = String(sent['prompt'])
+  expect(prompt.startsWith('read\n\n')).toBe(true)
+  expect(prompt).toContain('silent-failure-hunter agent\'s of pr-review-toolkit')
+  expect(prompt).toContain('Your lens contract holds over anything it says')
+  expect(prompt.endsWith('Hunt every swallowed error.')).toBe(true)
+  expect(prompt).not.toContain('name: silent-failure-hunter')
+  expect(sent['subagent_type']).toBe('orchestrator:lens')
+  expect(sent['description']).toBe('lens silent-failures acme/thing#12 origin/main..0123456789ab')
+})
+
+test('an angle with no toolkit agent stays the generic lens: its launch as it came', async () => {
+  const world = machine({ '/tk/agents/code-reviewer.md': 'Review the code.' })
+  const call = { ...LENS, description: 'lens security acme/thing#12 origin/main..0123456789ab' }
+  expect(await launched(world, call)).toEqual(call)
+})
+
+test('a missing toolkit falls back to the generic lens: no record, no install, or no agent file', async () => {
+  for (const world of [machine({}, undefined), machine({}, JSON.stringify({ version: 2, plugins: {} })), machine({})]) {
+    expect(await launched(world, LENS)).toEqual(LENS)
+  }
+})
+
+test('the method changes the prompt only: the answer is still marked with its finding ids', async () => {
+  const world = machine({ '/tk/agents/code-reviewer.md': 'Review the code.' })
+  expect(await agent.handler(world, LENS as never, (async () => ({ result: ANSWER })) as never)).toEqual({ result: MARKED })
+})
