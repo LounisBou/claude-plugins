@@ -213,8 +213,8 @@ export const EVENT_SCHEMA = {
     ],
   },
   reconcile: {
-    summary: 'What github\'s reconciler did between two renewals of its lease: its beats, its forge listings, its gates and its label moves.',
-    writers: ['`telemetry.ts sweep`, from the `reconcile` event github\'s hooks module writes in its journal at each renewal of the reconciler\'s lease (source `journal`): the event\'s `session` is the one holding the lease, its `ts` the renewal\'s'],
+    summary: 'What github\'s reconciler did since its previous event, at most an hour apart: its beats, its forge listings, its gates and its label moves.',
+    writers: ['`telemetry.ts sweep`, from the `reconcile` event github\'s hooks module writes in its journal at a renewal of the reconciler\'s lease, at most once an hour (source `journal`): the event\'s `session` is the one holding the lease, its `ts` the renewal\'s'],
     fields: [
       field('source', 'string', '`journal`.'),
       field('id', 'string', 'The journal event\'s id: a reconcile is recorded once.'),

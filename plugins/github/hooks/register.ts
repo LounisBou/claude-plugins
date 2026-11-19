@@ -1174,6 +1174,8 @@ type Reconciler = {
   // The host's session id, and the counts the journal last received.
   session: string
   journaled: Counts
+  // When the journal last received them (ms), 0 before the first.
+  journaledAt: number
   // No listing and no gate before this (ms): the quota ran low, or a listing was refused for the rate limit.
   quotaUntil: number
 }
@@ -1269,15 +1271,19 @@ function readingOf(repo: string, row: ListedPr, gate: Gate, missing: string[], l
 const SESSION_ID = /^[A-Za-z0-9._-]{1,80}$/
 export const RECONCILE_CODE = 'github.reconcile.counts'
 
+// The reconciler's counts are journaled at most this often: the journal's cap is shared with the module's refusals.
+export const JOURNAL_EVERY_MS = 3_600_000
+
 /*
- * What the reconciler did since its last event, journaled at each renewal of its lease (core's audit kind `reconcile`),
- * where telemetry's sweep reads it. Nothing done since, nothing written. A journal that cannot be written is said once,
- * and its counts go with the next event.
+ * What the reconciler did since its last event (core's audit kind `reconcile`), where telemetry's sweep reads it: looked
+ * at each renewal of its lease, written at most once per JOURNAL_EVERY_MS. No forge call since (no listing, gate or move),
+ * nothing written: its beats go with the next event. A journal that cannot be written is said once, and its counts go
+ * with the next event.
  */
 async function journalCounts($: Mod, rec: Reconciler, io: ReturnType<typeof journalIoOf>, config: string, now: number): Promise<void> {
   const { ticks, listings, gates, moves } = rec.counts
   const fact = { ticks: ticks - rec.journaled.ticks, listings: listings - rec.journaled.listings, gates: gates - rec.journaled.gates, moves: moves - rec.journaled.moves }
-  if (fact.ticks + fact.listings + fact.gates + fact.moves === 0) return
+  if (now - rec.journaledAt < JOURNAL_EVERY_MS || fact.listings + fact.gates + fact.moves === 0) return
   const at = new Date(now).toISOString().replace(/\.[0-9]{3}Z$/, 'Z')
   const event = auditEvent({
     at, random: randomPart(), source: { plugin: 'github', code: RECONCILE_CODE }, context: { session: SESSION_ID.test(rec.session) ? rec.session : null },
@@ -1287,6 +1293,7 @@ async function journalCounts($: Mod, rec: Reconciler, io: ReturnType<typeof jour
     if (event === undefined) throw new Error('the event breaks the audit contract')
     await appendEventOver(io, journalDir(config, 'github'), event, at, false)
     rec.journaled = { ...rec.counts }
+    rec.journaledAt = now
   } catch (err: unknown) {
     sayOnce($, rec, 'github: the reconciler\'s counts could not be journaled: ' + reasonOf(err).trim())
   }
@@ -1399,7 +1406,7 @@ async function startReconciler($: Mod): Promise<void> {
     // The same session started again (resume, clear, compact) keeps its name, and with it the lease it holds.
     me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(),
     edgeSeen: 0, said: undefined, saidNow: false, quotaUntil: 0, session,
-    journaled: { since: '', ticks: 0, listings: 0, gates: 0, moves: 0 },
+    journaled: { since: '', ticks: 0, listings: 0, gates: 0, moves: 0 }, journaledAt: 0,
     counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0 },
   }
   reconciler = rec

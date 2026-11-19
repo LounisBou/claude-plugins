@@ -88,8 +88,8 @@ it. `/github:doctor` then confirms everything is ready.
   `<config>/pr-reconcile/.edge` lists at the next beat. Each reading is kept in
   `<config>/pr-reconcile/<owner>/<name>/<pr>.json` (core's `pr-reconcile.ts`), where the
   orchestrator reads CI; the lease file counts its beats, listings, gates and label moves, and
-  each renewal of the lease journals those since the previous one (an audit event of kind
-  `reconcile`, which telemetry's sweep records).
+  a renewal of the lease journals those since the previous one at most once an hour (an audit
+  event of kind `reconcile`, which telemetry's sweep records).
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's quoted, dated words, and `auto-merge-list`
   prints the list (below).

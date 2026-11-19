@@ -933,8 +933,8 @@ export function retrospectiveStartArgv(root: string, configDir: string): string[
 // record as its script performed it (the subcommand, the row, the class and the pair it runs on, a
 // one-word verdict), so a reader takes it from its owner rather than from a command line. Version 5
 // adds one kind and changes none: `reconcile`, what github's reconciler did since its last one (its
-// beats, its listings, its gates, its label moves), written at each renewal of its lease. Each kind
-// is written at the version it entered with (`kind_versions`), so a reader of an older release still
+// beats, its listings, its gates, its label moves), written at a renewal of its lease at most once an
+// hour. Each kind is written at the version it entered with (`kind_versions`), so a reader of an older release still
 // reads the kinds it knows.
 
 export const AUDIT_CONTRACT = {
