@@ -1,6 +1,6 @@
 ---
 name: telemetry
-description: Use when asked to scan the recorded session events for secrets, to summarize past session transcripts into them (a backfill), or for the weekly report. The export is the /telemetry:export command.
+description: Use when asked to scan the recorded session events for secrets, to summarize past session transcripts into them (a backfill), or for the weekly report. Export is /telemetry:export.
 ---
 
 # telemetry
