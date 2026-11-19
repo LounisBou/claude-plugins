@@ -3193,6 +3193,35 @@ a = json.load(sys.stdin)
 last = json.loads(open(sys.argv[1]).read().splitlines()[-1])
 print("|".join("%d %s %s" % (r["number"], r["mergeable"], r["mergeState"]) for r in a["rows"]) + "|" + str("mergeStateStatus" in last["query"]))' "$FR/sent.jsonl")"
 
+# The rollup the reconciler watches leaves out the readiness/ copies: a failed record never reads as a failed or finished CI.
+FC="$WORK/fixreconcileci"; mkdir -p "$FC"
+python3 - "$FC/graphql.json" <<'PY'
+import json, sys
+def status(context, state):
+    return {"__typename": "StatusContext", "context": context, "state": state}
+def run(status, conclusion=None):
+    return {"__typename": "CheckRun", "status": status, "conclusion": conclusion}
+def pull(number, state, contexts):
+    rollup = {"state": state, "contexts": {"nodes": contexts}}
+    return {"number": number, "isDraft": False, "headRefOid": str(number) * 40, "baseRefName": "main", "labels": {"nodes": []},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": rollup}}]}}
+review_failed = status("readiness/review", "FAILURE")
+nodes = [pull(9, "FAILURE", [review_failed, run("IN_PROGRESS")]),
+         pull(8, "FAILURE", [review_failed, run("COMPLETED", "SUCCESS")]),
+         pull(7, "FAILURE", [review_failed, status("ci/legacy", "ERROR"), run("IN_PROGRESS")]),
+         pull(6, "SUCCESS", [status("readiness/plan", "SUCCESS")]),
+         pull(5, "PENDING", [run("QUEUED")])]
+json.dump({"rateLimit": {"remaining": 4321, "resetAt": "2026-11-19T11:00:00Z", "cost": 1}, "viewer": {"login": "operator"},
+           "repository": {"pullRequests": {"nodes": nodes}}}, open(sys.argv[1], "w"))
+PY
+check "pr-panel --reconcile reads the CI rollup without the readiness/ statuses: a failed record with CI running is PENDING" \
+  "9 PENDING|8 SUCCESS|7 FAILURE|6 None|5 PENDING|True" \
+  "$(env GH_FIXTURES="$FC" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-panel --reconcile | python3 -c '
+import json, sys
+a = json.load(sys.stdin)
+query = json.loads(open(sys.argv[1]).read().splitlines()[-1])["query"]
+print("|".join("%d %s" % (r["number"], r["rollup"]) for r in a["rows"]) + "|" + str("... on CheckRun { status conclusion }" in query))' "$FC/sent.jsonl")"
+
 # The listing reads the readiness/ statuses at each head, with their creator, and the account that reads: the reconciler
 # copies between the machine and the forge only what that account posted.
 FS="$WORK/fixforgelist"; mkdir -p "$FS"

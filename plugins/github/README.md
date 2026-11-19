@@ -95,7 +95,7 @@ it. `/github:doctor` then confirms everything is ready.
   description (core's `forge-status.ts`), so the operator's two machines judge on the same truth:
   `mcp__github__record` and `mcp__github__light_ci` post the record they wrote, and the reconciler,
   from the same listing, imports here what the operator's account posted newer than this machine's
-  copy, and posts what this machine holds newer, eight statuses a beat at most. The gate's CI reading
+  copy, and posts what this machine holds newer, eight statuses a beat at most. The CI the gate and the reconciler read
   leaves them out. Only `engine/forge_status.py` posts them: a session posting a status from the
   shell is refused (`github.status.write`).
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
