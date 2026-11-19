@@ -5,17 +5,19 @@
 // the id the review index carries and the review's decision names. A reader run in the foreground
 // is marked in its answer; one run in the background in its hand-back, its only delivery. Any other
 // agent, and every other line, passes as it came; a failure here passes the answer unmarked.
-// The launch is passed as it came: the host's auto mode refuses a call a hook changed. A reader's
-// method is named in its prompt by the review brief (lens-method.ts); this module only logs a launch
-// whose prompt names no method file, or whose lens has none.
+// The launch is passed as it came, or refused: the host's auto mode refuses a call a hook changed, so
+// a toolkit reader whose prompt names no method file is refused with that file named, and the session
+// relaunches it with a prompt it wrote. A reader whose toolkit is not found launches generic, journaled.
 import { parseLensDescription, withFindingIds } from '../core/lens.ts'
 import { configDir, logLine } from './module-io.ts'
-import { agentPaths, lensMethod, methodAgent, methodWords } from './lens-method.ts'
+import { observed } from './observe.ts'
+import { agentPaths, lensMethod, methodAgent, TOOLKIT, type LensMethod } from './lens-method.ts'
 import { messageOf, type Host, type On } from './host.ts'
 
-type Held = Host<'fs' | 'process' | 'plugin' | 'env'>
+type Held = Host<'fs' | 'process' | 'plugin' | 'env' | 'session' | 'clock'>
 
 export const LENS_AGENT = 'orchestrator:lens'
+export const LENS_GENERIC_CODE = 'orchestrator.lens.generic'
 const HANDBACK_TOOL = 'SubagentHandback'
 
 // The lens of each reader run in the background, by agent id, until its hand-back. Module memory: a
@@ -32,10 +34,10 @@ function marked(value: unknown, lens: string): unknown {
   return value
 }
 
-/** Logs a reader launched without its lens's method: a lens with none, or a prompt that names no method file. Never changes the launch. */
-async function checkLensMethod($: Held, e: Record<string, unknown>, lens: string): Promise<void> {
+/** The lens's method as this machine gives it; undefined for a lens with no toolkit agent. */
+async function methodOf($: Held, lens: string): Promise<LensMethod | undefined> {
   const agent = methodAgent(lens)
-  if (agent === undefined) return
+  if (agent === undefined) return undefined
   const read = async (path: string): Promise<string | undefined> => {
     try {
       return await $.fs.read(path)
@@ -46,12 +48,12 @@ async function checkLensMethod($: Held, e: Record<string, unknown>, lens: string
   const record = await read(`${await configDir($)}/plugins/installed_plugins.json`)
   const texts = new Map<string, string | undefined>()
   for (const path of agentPaths(record, agent)) texts.set(path, await read(path))
-  const method = lensMethod(lens, record, path => texts.get(path))
-  if (method.kind === 'generic') {
-    await logLine($, 'lens-ids', `a reader launched generic: ${methodWords(lens, method)}`)
-  } else if (typeof e['prompt'] !== 'string' || !e['prompt'].includes(method.path)) {
-    await logLine($, 'lens-ids', `a reader's prompt names no method file: ${methodWords(lens, method)}`)
-  }
+  return lensMethod(lens, record, path => texts.get(path))
+}
+
+/** The refusal of a toolkit launch whose prompt names no file: the file the session writes into its prompt. */
+function missingFile(lens: string, method: LensMethod & { readonly kind: 'toolkit' }): string {
+  return `the ${lens} reader's prompt must name its method's file, which it reads first: ${method.path} (${TOOLKIT} ${method.agent}). Relaunch the reader with that path in its prompt.`
 }
 
 /** The id the host gave a reader it launched in the background. */
@@ -65,10 +67,17 @@ export function register(on: On<Held>): void {
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     const facts = e['subagent_type'] === LENS_AGENT && typeof e['description'] === 'string' ? parseLensDescription(e['description']) : undefined
     if (facts === undefined) return next(e)
+    let method: LensMethod | undefined
     try {
-      await checkLensMethod($, e, facts.lens)
+      method = await methodOf($, facts.lens)
     } catch (err) {
-      await logLine($, 'lens-ids', `a reader's method was not checked: ${messageOf(err)}`)
+      await logLine($, 'lens-ids', `a reader's method was not read: ${messageOf(err)}`)
+    }
+    if (method?.kind === 'toolkit') {
+      const prompt = typeof e['prompt'] === 'string' ? e['prompt'] : ''
+      if (!prompt.includes(method.path)) return { deny: missingFile(facts.lens, method) }
+    } else if (method?.kind === 'generic') {
+      await observed($, LENS_GENERIC_CODE)
     }
     const answer = await next(e)
     try {

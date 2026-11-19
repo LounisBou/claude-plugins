@@ -26,7 +26,7 @@ The orchestrator sized this round by the work, its volume, its scope and its cri
 
 The norms check is no default lens: it runs only when the pull request's check plan says `norms: required`, and then the orchestrator names its command here.
 
-Each reader's launch prompt carries its method: {{LENS_METHODS}}.
+Put each toolkit reader's method file in its prompt: {{LENS_METHODS}}.
 
 When the delivery creates or substantially modifies a frontend surface, or creates the interface of a new feature, one more check is fixed: the screenshots on the pull request against the diff. They must show the surface the diff changes, and the implementer's report must name the Playwright run; a missing or unrelated screenshot is a finding. A change the implementer's report calls minor is reported as such, with its reason, and the orchestrator rules. Your report opens this check with one line, `frontend surface: yes|minor|no`, and with `yes`, the number of images in the description. The screenshots agent audits every image before your verdict, against the checklist in `{{SCREENSHOT_CHECKLIST}}`; you do not audit them yourself.
 
