@@ -144,7 +144,9 @@ query($owner:String!, $name:String!, $first:Int!) {
         number isDraft headRefOid baseRefName mergeable mergeStateStatus
         labels(first:20) { nodes { name } }
         commits(last:1) { nodes { commit {
-          statusCheckRollup { state }
+          statusCheckRollup { state contexts(first:100) { nodes {
+            __typename ... on CheckRun { status conclusion } ... on StatusContext { context state }
+          } } }
           status { contexts { context state description creator { login } } }
         } } }
       }
@@ -152,6 +154,32 @@ query($owner:String!, $name:String!, $first:Int!) {
   }
 }
 """
+
+
+# A completed check run that failed, as GitHub's rollup counts it; a status's states that fail or wait.
+_ROLLUP_FAILED = ("FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE")
+_STATUS_FAILED = ("FAILURE", "ERROR")
+_STATUS_WAITING = ("PENDING", "EXPECTED")
+
+
+def _ci_rollup(rollup):
+    """The head's CI rollup without the gate's copies on the forge (forge.PREFIX): GitHub's own state when it holds
+    none of them; otherwise the state of the other contexts, failed over waiting over passed, None when none is left."""
+    nodes = [n for n in ((rollup.get("contexts") or {}).get("nodes") or []) if isinstance(n, dict)]
+    if not any(n.get("__typename") == "StatusContext" and forge.is_readiness(n.get("context")) for n in nodes):
+        return rollup.get("state")
+    states = []
+    for n in nodes:
+        if n.get("__typename") == "CheckRun":
+            done = n.get("status") == "COMPLETED"
+            states.append("FAILURE" if done and n.get("conclusion") in _ROLLUP_FAILED else "SUCCESS" if done else "PENDING")
+        elif not forge.is_readiness(n.get("context")):
+            state = n.get("state")
+            states.append("FAILURE" if state in _STATUS_FAILED else "PENDING" if state in _STATUS_WAITING else "SUCCESS")
+    for state in ("FAILURE", "PENDING", "SUCCESS"):
+        if state in states:
+            return state
+    return None
 
 
 def _reconcile_row(pull):
@@ -165,7 +193,8 @@ def _reconcile_row(pull):
         "head": (pull.get("headRefOid") or "").lower(),
         "base": pull.get("baseRefName") or "",
         "labels": [(n or {}).get("name") or "" for n in ((pull.get("labels") or {}).get("nodes") or [])],
-        "rollup": rollup.get("state"),
+        # The CI the reconciler watches (its fingerprint, whether something runs): the gate's copies are no CI.
+        "rollup": _ci_rollup(rollup),
         "statuses": [
             {
                 "context": c.get("context"),
