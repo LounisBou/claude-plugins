@@ -36,7 +36,7 @@ change: a change that crosses plugins is one pull request.
         ▲                     │
         │      plugins/method ◀── implement, orchestrator
         │      plugins/github ◀── norms, pr-review, orchestrator
-        │      plugins/orchestrator ◀── bugs-bot
+        │      plugins/orchestrator ◀── bugs-bot, implement
         └───── bugs-bot, drift, github, implement, learning, norms, orchestrator, pr-review,
                statusbar, telemetry (a copy in core/)
 ```
@@ -44,9 +44,7 @@ change: a change that crosses plugins is one pull request.
 - `core` depends on the host's API and on nothing in `plugins/`.
 - A plugin depends on `core`, and on another plugin only through that plugin's published
   contract (`contracts.md`) and a dependency declared, with a version range, in its manifest.
-- The edges above are the dependencies the manifests declare. One reading is not declared
-  yet and is listed in `contracts.md`: implement and bugs-bot run the orchestrator's
-  launcher. statusbar, cloudflare, telemetry and learning depend on no plugin (learning reads the journals the others write through the contract in `contracts.md`).
+- The edges above are the dependencies the manifests declare. statusbar, cloudflare, telemetry and learning depend on no plugin (learning reads the journals the others write through the contract in `contracts.md`).
 - The graph is acyclic. A plugin never imports another plugin's source and never reads another
   plugin's private state.
 
