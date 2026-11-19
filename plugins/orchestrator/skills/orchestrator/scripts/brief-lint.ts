@@ -6,7 +6,7 @@
 // yet (an audit's report); the path check accepts exactly that path as absent. Repeatable.
 //
 // Prints one line per finding and exits 1 when there is any; exits 0 and says so otherwise.
-// Every check reads the file's structure: a hole, a path, an address, a field, a size. None
+// Every check reads the file's structure: a hole, a path, an address, a field. None
 // reads the wording of an instruction. A brief that names its checkout and the head its base stood
 // at when it was printed (`Checkout: <dir>`, `from <base>, which stood at <sha>`) also gets one line
 // listing the files the base changed since: information, never a finding.
@@ -21,11 +21,8 @@ import { isEntry, processIo, resolvedPath, type Io } from './lib/process.ts'
 import { rows } from './short-commands.ts'
 
 export const USAGE = 'usage: brief-lint.sh <brief-path> [--expect-created <path>]...'
-export const SUCCESSION_LIMIT = 9000
-const OPEN_QUESTIONS = /^- The operator.s open questions/
 /** The line of a review brief's §4 that names the index its review writes: a file that does not exist yet. */
 const REVIEW_INDEX = /^\d+\. \*\*Your index\*\*, `(\/[^`]+)`/
-const NEXT_FIELD = /^- (Rows open|Row owners|Pull requests open|Agents running|The operator.s open questions|Questions the operator answered|Questions withdrawn|To-do items|Project)/
 
 export interface Finding {
   readonly line: number
@@ -41,25 +38,6 @@ export interface Context {
 }
 
 const count = (text: string, re: RegExp): number => text.match(re)?.length ?? 0
-/** Characters, not bytes or UTF-16 units. */
-const chars = (text: string): number => [...text].length
-
-/**
- * The open-questions field of a succession brief's Live state: its value (what follows the first
- * colon of its line and the lines after it, up to the next field or heading), and the brief
- * without that value. No such field: `value` is undefined and `rest` the whole brief.
- */
-export function openQuestions(lines: readonly string[]): { readonly value: string | undefined; readonly rest: string; readonly line: number } {
-  const start = lines.findIndex(l => OPEN_QUESTIONS.test(l))
-  if (start < 0) return { value: undefined, rest: lines.map(l => `${l}\n`).join(''), line: 0 }
-  let end = start + 1
-  while (end < lines.length && !(lines[end] ?? '').startsWith('#') && !NEXT_FIELD.test(lines[end] ?? '')) end++
-  const first = lines[start] ?? ''
-  const colon = first.indexOf(':')
-  const value = [...(colon < 0 ? [] : [first.slice(colon + 1)]), ...lines.slice(start + 1, end)].join('\n')
-  const rest = [...lines.slice(0, start), colon < 0 ? first : first.slice(0, colon + 1), ...lines.slice(end)]
-  return { value, rest: rest.map(l => `${l}\n`).join(''), line: start + 1 }
-}
 
 /** Every finding of a brief's text, in the order the checks run. */
 export function lint(text: string, context: Context): Finding[] {
@@ -69,7 +47,6 @@ export function lint(text: string, context: Context): Finding[] {
   const say = (line: number, message: string): void => { found.push({ line, text: message }) }
   const some = (re: RegExp): boolean => lines.some(l => re.test(l))
   const implementer = some(/^You are the implementer/)
-  const succession = (lines[0] ?? '').startsWith('# Orchestrator succession brief')
 
   /*
    * A placeholder that survived instantiation is a hole the agent reads as literal text. The one
@@ -111,12 +88,11 @@ export function lint(text: string, context: Context): Finding[] {
 
   /*
    * One session reference. An implementer brief with none leaves the agent to discover its
-   * orchestrator; two put a decoy beside the real address. A succession brief lists the agents
-   * running with their references, each a real address: it is not held to the bound.
+   * orchestrator; two put a decoy beside the real address.
    */
   const refs = [...new Set(lines.flatMap(l => l.match(/\[[0-9a-f]{6}\]/g) ?? []))].sort()
   if (implementer && refs.length === 0) say(1, 'no orchestrator address: name the exact ListAgents name and reference')
-  if (!succession && refs.length > 1) {
+  if (refs.length > 1) {
     say(1, `more than one session reference (${refs.map(r => `${r} `).join('')}): one address, no example beside it`)
   }
 
@@ -124,31 +100,6 @@ export function lint(text: string, context: Context): Finding[] {
   // or `Spec: none` for a build that has none); the path's existence is the path check's.
   if (implementer && !some(/^(\d+\.\s+|[-*]\s+)?Spec:\s*\S/)) {
     say(1, 'no spec field: name the design this phase builds on a line of its own, `Spec: <path>`, or `Spec: none`')
-  }
-
-  /*
-   * A succession brief is read whole by a session with nothing else in its context yet. The
-   * open-questions field's value is not counted, its label is: a verbatim question block is
-   * several hundred characters, and the cap would refuse the handover the field exists for.
-   */
-  const questions = openQuestions(lines)
-  if (succession && chars(questions.rest) > SUCCESSION_LIMIT) {
-    say(1, `succession brief is ${chars(text)} characters, over the limit of ${SUCCESSION_LIMIT} once the open-questions value is set apart (${chars(questions.rest)}): keep Live state to what is live and the rest as pointers`)
-  }
-
-  // The Live state carries the operator's open questions, verbatim: one the successor never saw
-  // is lost at the handover. Missing, empty or still its placeholder is a finding; `none` passes.
-  if (some(/^## Live state/)) {
-    const value = questions.value?.replace(/\s/g, '')
-    if (value === undefined) say(1, 'Live state has no open-questions field: add "The operator\'s open questions", each verbatim, or none')
-    else if (value === '') say(questions.line, 'the open-questions field is empty: write each question verbatim, or none after reading the round')
-    else if (value === '{{LIVE_OPEN_QUESTIONS}}') say(questions.line, 'the open-questions field is still its placeholder: write each question verbatim, or none after reading the round')
-  }
-
-  // A succession brief carries its mode on a line of its own, the line the launcher reads to
-  // start the successor with that mode. A placeholder still there is the first check's.
-  if (succession && !some(/^Mode: (build|investigate) *$/) && !some(/^Mode: \{\{[A-Za-z0-9_]+\}\} *$/)) {
-    say(1, 'succession brief carries no `Mode: build` or `Mode: investigate` line: add it on a line of its own, the mode of the orchestrator that writes it')
   }
 
   /*

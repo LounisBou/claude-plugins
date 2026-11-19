@@ -1,20 +1,19 @@
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
-import { CHANGED_SHOWN, changedLine, lint, main, openQuestions, SUCCESSION_LIMIT, USAGE, type Context } from './brief-lint.ts'
+import { CHANGED_SHOWN, changedLine, lint, main, USAGE, type Context } from './brief-lint.ts'
 
 const context = (over: Partial<Context> = {}): Context => ({ expected: [], shortNames: new Set(), exists: () => true, ...over })
 const texts = (text: string, over: Partial<Context> = {}): string[] => lint(text, context(over)).map(f => `${f.line}: ${f.text}`)
 
 const IMPLEMENTER = '# p\n\nYou are the implementer for this phase.\n\n1. Spec: `/s.md`\n\nYour orchestrator is `p [a1b2c3]`.\n'
-const SUCCESSION = '# Orchestrator succession brief\n\nMode: build\n\n## Live state\n\n- The operator\'s open questions: none\n- Project: p\n'
 
-test('a complete implementer brief and a complete succession brief have no finding', () => {
+test('a complete implementer brief has no finding', () => {
   assert.deepEqual(texts(IMPLEMENTER), [])
-  assert.deepEqual(texts(SUCCESSION), [])
   assert.deepEqual(texts(''), [])
 })
 
@@ -64,53 +63,11 @@ test('an implementer brief names one orchestrator and a spec field', () => {
   assert.deepEqual(texts(IMPLEMENTER.replace('1. Spec: `/s.md`', 'The Spec: is elsewhere')).length, 1)
 })
 
-test('a second session reference is a finding, but in a succession brief; the class is read at the start of a line', () => {
+test('a second session reference is a finding; the class is read at the start of a line', () => {
   assert.deepEqual(texts('# r\nYou are the REVIEW agent.\n`a [a1b2c3]` `b [d4e5f6]` `a [a1b2c3]`\n'), [
     '1: more than one session reference ([a1b2c3] [d4e5f6] ): one address, no example beside it',
   ])
-  assert.deepEqual(texts(`${SUCCESSION}- a [a1b2c3]\n- b [d4e5f6]\n`), [])
   assert.deepEqual(texts('# memo\nThe brief said "You are the implementer for this phase." inline.\n'), [])
-})
-
-test('the open-questions field: its value, and the brief without it', () => {
-  assert.deepEqual(openQuestions(['a', '- Project: p']), { value: undefined, rest: 'a\n- Project: p\n', line: 0 })
-  assert.deepEqual(openQuestions(['a', "- The operator's open questions: one", '  two', '- Project: p', "- The operator's open questions: x"]), {
-    value: ' one\n  two', rest: "a\n- The operator's open questions:\n- Project: p\n- The operator's open questions: x\n", line: 2,
-  })
-  assert.deepEqual(openQuestions(["- The operator's open questions", 'q', '# next']), { value: 'q', rest: "- The operator's open questions\n# next\n", line: 1 })
-})
-
-test('the open questions\' value ends at each of the fields that follow it, the answered and withdrawn questions\' too', () => {
-  for (const label of ['Questions the operator answered', 'Questions withdrawn', 'To-do items', 'Project'])
-    assert.deepEqual(openQuestions(["- The operator's open questions: one", '  two', `- ${label}: x`]), { value: ' one\n  two', rest: `- The operator's open questions:\n- ${label}: x\n`, line: 1 })
-})
-
-test('a Live state carries the open questions, filled or none', () => {
-  const live = (field: string): string => `# b\n\n## Live state\n\n${field}- Project: p\n`
-  assert.deepEqual(texts(live('')), ['1: Live state has no open-questions field: add "The operator\'s open questions", each verbatim, or none'])
-  assert.deepEqual(texts(live("- The operator's open questions: \n")), ['5: the open-questions field is empty: write each question verbatim, or none after reading the round'])
-  assert.deepEqual(texts(live('- The operator’s open questions, verbatim: `x`\n  {{LIVE_OPEN_QUESTIONS}}\n').replace('`x`', '')).filter(t => t.startsWith('5: the open-questions field is still its placeholder')).length, 1)
-  assert.deepEqual(texts(live("- The operator's open questions:\n  Question 1 of 2\n  why?\n")), [])
-  assert.deepEqual(texts("- The operator's open questions:\n"), [])
-})
-
-test('a succession brief is capped once the open-questions value is set apart, in characters', () => {
-  const pad = (n: number): string => `${'é'.repeat(n - 1)}\n`
-  const big = `${SUCCESSION.replace(': none', `: ${'q'.repeat(4000)}`)}`
-  assert.deepEqual(texts(big + pad(SUCCESSION_LIMIT - [...SUCCESSION].length + ' none'.length)), [])
-  const over = big + pad(SUCCESSION_LIMIT - [...SUCCESSION].length + ' none'.length + 1)
-  assert.deepEqual(texts(over), [
-    `1: succession brief is ${[...over].length} characters, over the limit of 9000 once the open-questions value is set apart (9001): keep Live state to what is live and the rest as pointers`,
-  ])
-  assert.deepEqual(texts(`# other\n${'x'.repeat(20000)}`), [])
-})
-
-test('a succession brief carries its mode on a line of its own', () => {
-  const finding = '1: succession brief carries no `Mode: build` or `Mode: investigate` line: add it on a line of its own, the mode of the orchestrator that writes it'
-  assert.deepEqual(texts(SUCCESSION.replace('Mode: build', 'The mode is build.')), [finding])
-  assert.deepEqual(texts(SUCCESSION.replace('Mode: build', 'Mode: other')), [finding])
-  assert.deepEqual(texts(SUCCESSION.replace('Mode: build', 'Mode: investigate  ')), [])
-  assert.deepEqual(texts(SUCCESSION.replace('Mode: build', 'Mode: {{MODE}}')), ['3: unfilled placeholder {{MODE}}'])
 })
 
 test('a brief whose reader confirms the takeover to its predecessor carries the close', () => {
@@ -121,6 +78,19 @@ test('a brief whose reader confirms the takeover to its predecessor carries the 
   assert.equal(texts(`${hand}Then close --tty ttys001.\n`).length, 1)
   assert.deepEqual(texts('# audit\nReport « takeover confirmed » to the session handed over from.\n'), [])
 })
+
+// The succession briefs still written are the coordinator's and the auditor's: filled, each lints
+// clean, and each is refused once its close of the predecessor is dropped, whatever else it holds.
+const TEMPLATES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'templates')
+for (const name of ['coordinator-succession-brief.md', 'auditor-succession-brief.md']) {
+  test(`the ${name.replace('.md', '')} template, filled, carries the predecessor's close the lint holds it to`, () => {
+    const filled = readFileSync(join(TEMPLATES, name), 'utf8').replace(/\{\{[A-Z_]+\}\}/g, 'x')
+    assert.deepEqual(texts(filled), [])
+    const open = filled.split('\n').filter(line => !line.includes('--expect-title')).join('\n')
+    assert.equal(open.length < filled.length, true)
+    assert.match(texts(open).join('\n'), /^1: succession brief without the predecessor's close: /)
+  })
+}
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'brief-lint-')) })
