@@ -528,16 +528,58 @@ def diff_fingerprint(files):
         patch = entry.get("patch")
         body = _HUNK_HEADER.sub("@@", patch) if isinstance(patch, str) else "blob " + str(entry.get("sha") or "")
         head = "%s %s %s" % (entry.get("status") or "", entry.get("previous_filename") or "", entry.get("filename") or "")
+        # The mode of a file, where the listing holds it: a chmod leaves the patch and the blob as they are.
+        if entry.get("mode"):
+            head += " " + str(entry["mode"])
         parts.append(hashlib.sha256((head + "\n" + body).encode("utf-8")).hexdigest())
     if not parts:
         return None
     return hashlib.sha256("\n".join(sorted(parts)).encode("utf-8")).hexdigest()
 
 
+# The most files GitHub lists for a comparison, on its first page only: one that reaches it may hold more.
+_COMPARE_FILES_MAX = 300
+
+
+def _pull_diff_fingerprint(owner, name, pr, head):
+    """The fingerprint of the pull request's own diff at a head: the files of base...head, the
+    changes since the merge base, with the mode each file holds at the head, fingerprinted as
+    `diff_fingerprint` does. Unlike the commits' fingerprint it holds across a merge of the base into the branch, and changes with any change
+    of what the pull request alters."""
+    pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, pr))
+    base = (pull.get("base") or {}).get("ref") if isinstance(pull, dict) else None
+    if not isinstance(base, str) or not base:
+        raise errors.ApiError("pull request %s has no base branch" % pr)
+    # The comparison pages its commits, not its files: they all stand on the first page, up to the cap.
+    comparison = http.rest("GET", "/repos/%s/%s/compare/%s...%s?per_page=1" % (owner, name, quote(base, safe="/"), head))
+    files = comparison.get("files") if isinstance(comparison, dict) else None
+    if not isinstance(files, list):
+        raise errors.ApiError("the comparison of %s with %s lists no files" % (base, head[:7]))
+    if len(files) >= _COMPARE_FILES_MAX:
+        raise errors.ApiError("the comparison of %s with %s reaches %d files, more may be left out" % (base, head[:7], len(files)))
+    # The comparison holds no file mode: a chmod leaves its patches and blobs as they are. The tree at the head does.
+    tree = http.rest("GET", "/repos/%s/%s/git/trees/%s?recursive=1" % (owner, name, head))
+    entries = tree.get("tree") if isinstance(tree, dict) else None
+    if not isinstance(entries, list) or tree.get("truncated"):
+        raise errors.ApiError("the tree of %s lists no complete files, the modes cannot be read" % head[:7])
+    modes = {entry.get("path"): entry.get("mode") for entry in entries if isinstance(entry, dict)}
+    listed = []
+    for entry in files:
+        mode = modes.get(entry.get("filename"))
+        if entry.get("status") != "removed" and not mode:
+            raise errors.ApiError("%s has no mode in the tree of %s" % (entry.get("filename"), head[:7]))
+        listed.append(dict(entry, mode=mode) if mode else entry)
+    return hashlib.sha256((diff_fingerprint(listed) or "empty").encode("utf-8")).hexdigest()
+
+
 def pr_fingerprint(args):
     """The fingerprint of the pull request's own commits at a head: the k commits ending at that
     head along first parents, k the pull request's commit count (or --count), each by its diff,
-    in order. A rewrite below them (a rebase, a parent branch rewritten) leaves it as it is."""
+    in order. A rewrite below them (a rebase, a parent branch rewritten) leaves it as it is.
+    A merge met refuses, unless --merges: then the head is told by the pull request's diff, which
+    a merge of the base into the branch leaves as it is when it changes nothing of the pull
+    request's files (`diff`, answered with --merges for every head, `fingerprint` left out
+    when a merge was met)."""
     if not _FULL_SHA.fullmatch(args.head):
         raise errors.UsageError("the head must be the full 40-character sha, got: %s" % args.head)
     owner, name = repo.owner_repo()
@@ -560,13 +602,23 @@ def pr_fingerprint(args):
         if not isinstance(files, list):
             raise errors.ApiError("commit %s lists no files" % sha[:7])
         if len(parents) > 1:
-            raise errors.ApiError("commit %s is a merge" % sha[:7])
+            if not args.merges:
+                raise errors.ApiError("commit %s is a merge" % sha[:7])
+            return {"head": args.head.lower(), "commits": count, "diff": _pull_diff_fingerprint(owner, name, args.pr, args.head.lower())}
         if len(files) >= _COMMIT_FILES_MAX:
             raise errors.ApiError("commit %s reaches %d files, more may be left out" % (sha[:7], len(files)))
         prints.append(diff_fingerprint(files) or "empty")
         sha = parents[0].lower() if parents else ""
     fingerprint = hashlib.sha256("\n".join(reversed(prints)).encode("utf-8")).hexdigest()
-    return {"head": args.head.lower(), "commits": count, "fingerprint": fingerprint}
+    answer = {"head": args.head.lower(), "commits": count, "fingerprint": fingerprint}
+    if args.merges:
+        # A head with no merge keeps its carry as it was whatever the comparison answers: the diff is
+        # left out, and a head compared by it then reads as having none.
+        try:
+            answer["diff"] = _pull_diff_fingerprint(owner, name, args.pr, args.head.lower())
+        except errors.GhError:
+            pass
+    return answer
 
 
 def pr_diff(args):
@@ -794,6 +846,7 @@ def register(subparsers):
     parser.add_argument("pr", type=int)
     parser.add_argument("head")
     parser.add_argument("--count", type=int, default=None, help="the commits to take, by default the pull request's")
+    parser.add_argument("--merges", action="store_true", help="a merge met answers the pull request's diff in place of a refusal, and every head answers it too")
     parser.set_defaults(handler=pr_fingerprint)
 
     parser = subparsers.add_parser("pr-checks", help="combined status and check runs")

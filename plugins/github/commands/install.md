@@ -14,8 +14,7 @@ device page in the browser and prints a one-time code (exit code 14). Tell the
 user to enter that code, then run `/github:doctor`. The token stays where `gh`
 keeps it; the script never prints or writes it.
 
-It then verifies that python3, curl and a GitHub token are available. It needs
-no repository: it runs from any directory. On failure it prints the exact
+It then verifies that python3, curl and a GitHub token are available. On failure it prints the exact
 command that fixes the first problem it found.
 
 $ARGUMENTS

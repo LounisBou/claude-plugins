@@ -2784,6 +2784,54 @@ check "pr-fingerprint refuses a pull request of 100 commits" "error: pull reques
 fp9 files 1 "$H9:$C9:$(python3 -c 'import json; print(json.dumps([{"filename": "f%d" % i, "status": "added", "sha": "x", "patch": "+x"} for i in range(300)]))')"
 check "pr-fingerprint refuses a commit of 300 files" "error: commit aaaaaaa reaches 300 files, more may be left out" "$(gh9 "$H9")"
 
+# cmp9 <head> <files json> [mode]: the comparison of the pull request's base with a head, as GitHub lists it, and
+# the tree at that head, each file in it with the mode given (a regular file by default).
+cmp9() {
+  printf '{"base":{"ref":"main"}}' > "$F9/GET_repos_acme_thing_pulls_12.json"
+  printf '{"files":%s}' "$2" > "$F9/GET_repos_acme_thing_compare_main...$1__per_page=1.json"
+  python3 - "$F9/GET_repos_acme_thing_git_trees_$1__recursive=1.json" "$2" "${3:-100644}" <<'PY2'
+import json, sys
+with open(sys.argv[1], "w") as fh:
+    json.dump({"truncated": False, "tree": [{"path": f["filename"], "mode": sys.argv[3], "type": "blob"} for f in json.loads(sys.argv[2])]}, fh)
+PY2
+}
+dfof() { gh9 "$@" --merges | python3 -c 'import json,sys; print(json.load(sys.stdin).get("diff", "none"))'; }
+fpm() { gh9 "$@" --merges | python3 -c 'import json,sys; print(json.load(sys.stdin).get("fingerprint", "none"))'; }
+
+# The pull request's own commits, then the base merged into the branch: the merge commit lists what the base brought.
+fp9 plain 1 "$O9:$D9:$A9"; cmp9 "$O9" "$A9"; plaindiff=$(dfof "$O9")
+check "pr-fingerprint --merges answers the pull request's diff as a sha-256" "64" "$(printf '%s' "$plaindiff" | wc -c | tr -d ' ')"
+check "pr-fingerprint --merges tells a head with no merge by its commits, and by its diff too" "$(fpof "$O9" --count 1)" "$(fpm "$O9")"
+check "pr-fingerprint --merges reads the pull request, then the comparison of its base with the head" \
+  "GET /repos/acme/thing/pulls/12/commits?per_page=100|GET /repos/acme/thing/commits/$O9|GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/compare/main...$O9?per_page=1|GET /repos/acme/thing/git/trees/$O9?recursive=1" \
+  "$(rm -f "$F9/sent.jsonl"; gh9 "$O9" --merges >/dev/null; python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F9/sent.jsonl")"
+fp9 merged 2 "$H9:$C9:$B9" "$C9:$P9,$M9:$A9"; cmp9 "$H9" "$A9"
+check "pr-fingerprint --merges tells a head holding a merge by its diff: the same diff as the head before the merge" "$plaindiff" "$(dfof "$H9")"
+check "pr-fingerprint --merges leaves out the commits' fingerprint when a merge was met" "none" "$(fpm "$H9")"
+fp9 merged 2 "$H9:$C9:$B9" "$C9:$P9,$M9:$A9"; cmp9 "$H9" "$A9MOVED"
+check "pr-fingerprint --merges tells the diff of a merge that left the hunks elsewhere as the same" "$plaindiff" "$(dfof "$H9")"
+fp9 merged 2 "$H9:$C9:$B9" "$C9:$P9,$M9:$A9"; cmp9 "$H9" "$(printf '%s' "$A9" | sed 's/+b/+resolved/')"
+check "pr-fingerprint --merges tells a merge that changed a file of the pull request by another diff" "yes" "$([ "$(dfof "$H9")" != "$plaindiff" ] && echo yes || echo no)"
+fp9 merged 2 "$H9:$C9:$B9" "$C9:$P9,$M9:$A9"; cmp9 "$H9" "$B9"
+check "pr-fingerprint --merges tells a head whose pull request changed another file by another diff" "yes" "$([ "$(dfof "$H9")" != "$plaindiff" ] && echo yes || echo no)"
+fp9 chmod 2 "$H9:$C9:$B9" "$C9:$P9,$M9:$A9"; cmp9 "$H9" "$A9" 100755
+check "pr-fingerprint --merges tells a head whose pull request file was made executable by another diff" "yes" "$([ "$(dfof "$H9")" != "$plaindiff" ] && echo yes || echo no)"
+fp9 cuttree 2 "$H9:$C9:$B9" "$C9:$P9,$M9:$A9"; cmp9 "$H9" "$A9"
+printf '{"truncated":true,"tree":[]}' > "$F9/GET_repos_acme_thing_git_trees_${H9}__recursive=1.json"
+check "pr-fingerprint --merges refuses a head whose tree is cut" "error: the tree of aaaaaaa lists no complete files, the modes cannot be read" "$(gh9 "$H9" --merges)"
+fp9 nocompare 2 "$H9:$C9:$B9" "$C9:$P9,$M9:$A9"
+printf '{"base":{"ref":"main"}}' > "$F9/GET_repos_acme_thing_pulls_12.json"
+check "pr-fingerprint --merges refuses a head whose comparison lists no files" "error: the comparison of main with aaaaaaa lists no files" "$(gh9 "$H9" --merges)"
+fp9 capped 2 "$H9:$C9:$B9" "$C9:$P9,$M9:$A9"
+many=$(python3 -c 'import json; print(json.dumps([{"filename": "f%d" % i, "status": "added", "sha": "x", "patch": "+x"} for i in range(300)]))')
+cmp9 "$H9" "$many"
+check "pr-fingerprint --merges refuses a comparison of 300 files" "error: the comparison of main with aaaaaaa reaches 300 files, more may be left out" "$(gh9 "$H9" --merges)"
+fp9 nodiff 1 "$O9:$D9:$A9"
+check "pr-fingerprint --merges leaves the diff out of a head with no merge when the comparison cannot be read" "none" "$(dfof "$O9")"
+check "pr-fingerprint --merges keeps the commits' fingerprint of that head" "$(fpof "$O9" --count 1)" "$(fpm "$O9")"
+fp9 refused 2 "$H9:$C9:$B9" "$C9:$P9,$M9:$A9"; cmp9 "$H9" "$A9"
+check "pr-fingerprint without --merges still refuses a merge commit" "error: commit bbbbbbb is a merge" "$(gh9 "$H9")"
+
 echo "== draft and back =="
 
 new7 to-draft
