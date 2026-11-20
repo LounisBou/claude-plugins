@@ -319,9 +319,10 @@ export type HomeHold = { left: { readonly name: string } | null; moving: Promise
 async function moveHome($: Held, hold: HomeHold, name: string, prompt: string): Promise<'moved' | 'home' | null> {
   hold.tried = true
   const run = movedHome($, name, prompt, waitS => {
+    // Armed first: a timer that cannot be armed must not leave the prompts held with nothing to free them.
     const mine = { name }
-    hold.left = mine
     $.clock.after(waitS * 1000 + HOME_GRACE_MS, () => failedMove($, hold, mine, waitS))
+    hold.left = mine
   })
   const tracked = run.then(() => undefined, () => undefined)
   hold.moving = tracked
@@ -336,7 +337,7 @@ async function failedMove($: Held, hold: HomeHold, mine: { readonly name: string
   hold.left = null
   await logLine($, 'naming', `the old session did not end within ${waitS}s after the move into its home session: it stays here, and the launcher closes the home server and its tab`)
   try {
-    $.ui.toast(`The move into the home session did not end this session within ${waitS}s: it stays in this tab, the new tab is closed.`)
+    $.ui.toast(`The move into the home session did not end this session within ${waitS}s: the launcher closes the new tab, and this session stays here.`)
   } catch (err) {
     await logLine($, 'naming', `the failed move could not be said in the session: ${reasonOf(err)}`)
   }

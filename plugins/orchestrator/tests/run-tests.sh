@@ -8554,10 +8554,14 @@ import contextlib, io, sys
 sys.path.insert(0, sys.argv[1])
 import iterm_agent as ia
 socket = sys.argv[2]
+scenario = sys.argv[3] if len(sys.argv) > 3 else "ok"
 calls = []
 class FakeIterm(ia.Terminal):
     def find(self, tty): calls.append("find %s" % tty); return True
-    def close(self, tty, expect): calls.append("close %s" % tty); return "NEW-SESSION"
+    def close(self, tty, expect):
+        calls.append("close %s" % tty)
+        if scenario == "vanished": sys.exit("no session on %s" % tty)
+        return "NEW-SESSION"
 ia.ITERM = FakeIterm()
 ia.time.sleep = lambda s: None
 out, err = io.StringIO(), io.StringIO()
@@ -8572,11 +8576,15 @@ print("calls=%s" % ",".join(calls))
 print("OUT:" + " ".join(out.getvalue().split()))
 print("ERR:" + " ".join(err.getvalue().split()))
 PYEOF
-aprobe() { homecmd "$py" "$WORK/abandon_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" 2>&1; }
+aprobe() { homecmd "$py" "$WORK/abandon_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" "${2:-ok}" 2>&1; }
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(aprobe orch-abcdef12)
 check "an abandoned move ends the home server and closes the tab that showed it" "0|find /dev/ttys970,close /dev/ttys970|1|1" \
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(hcalls | grep -c '\[kill-server\]')|$(sfield "$res" OUT | grep -c 'the server orch-abcdef12 was ended and 1 tab(s) closed')"
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(aprobe orch-abcdef12 vanished)
+check "a tab that cannot be closed is said, counted as not closed, and does not stop the abandon" "0|1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c 'the tab on /dev/ttys970 could not be closed: close it by hand')|$(sfield "$res" OUT | grep -c 'and 0 tab(s) closed')"
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"; printf 'server busy\n' > "$HR/kill-err"
 res=$(aprobe orch-abcdef12)
 check "a server that is not ended is said, with the command that ends it, and the tab is still closed" "1|close /dev/ttys970|1" \

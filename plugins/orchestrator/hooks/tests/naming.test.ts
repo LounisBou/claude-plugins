@@ -331,6 +331,15 @@ test('a prompt typed while the move is still being made waits for its answer', a
   expect(await again.handlers['prompt.submit'](failed.dollar, typed, pass)).toBe(typed)
 })
 
+test('a timer that cannot be armed holds no prompt', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(MOVED_WAITING)
+  const broken: World = { ...fx.dollar, clock: { ...fx.dollar.clock, after: () => { throw new Error('no clock') } } }
+  await handlers['tool.call'](broken, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](broken, {}, pass)
+  expect(await handlers['prompt.submit'](broken, typed, pass)).toBe(typed)
+})
+
 test('a move that says no wait holds no prompt and arms no timer', async () => {
   const { handlers } = mounted()
   const fx = heldDollar({ exitCode: 0, stdout: 'moved: orch-S1, shown on /dev/ttys970\n' })

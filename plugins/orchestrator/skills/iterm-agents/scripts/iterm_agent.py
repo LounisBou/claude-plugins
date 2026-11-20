@@ -4090,12 +4090,18 @@ def abandon_home(socket):
     except TmuxError:
         pass
     ended = kill_watched_home(socket)
+    closed = 0
     for tty in ttys:
-        if ITERM.find(tty):
-            ITERM.close(tty, "")
+        try:
+            if ITERM.find(tty):
+                ITERM.close(tty, "")
+                closed += 1
+        except SystemExit:
+            print("home-release: the tab on %s could not be closed: close it by hand" % tty,
+                  file=sys.stderr)
         trace_home(socket, "server", "abandoned (the session did not end in its old place)", tty)
     print("home-release: the session did not end in its old place; the server %s was %s and %d "
-          "tab(s) closed" % (socket, "ended" if ended else "NOT ended", len(ttys)))
+          "tab(s) closed" % (socket, "ended" if ended else "NOT ended", closed))
     if not ended:
         die("home-release: the home server %s was NOT ended: end it with %s -L %s kill-server"
             % (socket, TMUX_BIN, socket))
