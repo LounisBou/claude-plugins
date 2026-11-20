@@ -6,14 +6,14 @@
 // the orchestrator on a pull request merged, closed or entering the anomaly. Every read is bounded;
 // one that fails is said, never a refusal.
 import {
-  agentsOf, archiveOf, ledgerLines, prKey, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
+  agentsOf, archiveOf, ledgerLines, prKey, READY_LABEL, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
 import { launcherOf, RECORDS_DIR, recordsRegistryPath } from '../core/orchestration.ts'
 import { tabsOf, isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, ownerOf, withDeadline, type DeclaredWait } from './stop-gate.ts'
 import { parseSessionRow, publishUnattended, sessionKey, storeOf } from './supervision.ts'
-import { messageOf, type Host, type On } from './host.ts'
+import { fieldsOf, messageOf, type Host, type On } from './host.ts'
 import { logLine, stateDir, storeIo } from './module-io.ts'
 import { fileWanted, readPrFile, refreshPrFile } from './pr-file.ts'
 import { prsOfRepo, type FilePr, type PrFile } from './pr-file-format.ts'
@@ -21,7 +21,7 @@ import { readyHeadsOf } from './ready-agent.ts'
 import type { RecordText } from './row-owner.ts'
 
 // The nouns a reading holds.
-type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock' | 'tool'>
 
 // The bound of one reading: the machine file's refresh, the launcher's list, the records and the archive writes.
 export const UNATTENDED_BOUND_MS = 20_000
@@ -48,6 +48,19 @@ export function openOf(file: PrFile | undefined, repo: string, now: number): Ope
   return prsOfRepo(file, repo, now)?.filter(pr => pr.state === 'OPEN').map(pr => ({
     repo, pr: pr.pr, labels: pr.labels, ...(pr.mergeable === null ? {} : { mergeable: pr.mergeable }),
   }))
+}
+
+// The repositories github's auto-merge list names, lowercased, read through github's own `auto-merge-list`. Empty when the
+// list names none, cannot be read or the call fails: a Ready pull request then stays the operator's, as it was.
+export async function autoMergeOf($: Host<'tool'>): Promise<ReadonlySet<string>> {
+  let answer: Readonly<Record<string, unknown>> | undefined
+  try {
+    answer = fieldsOf(await $.tool.call({ tool: 'mcp__github__gh', command: 'auto-merge-list' }))
+  } catch {
+    return new Set()
+  }
+  if (answer === undefined || answer['isError'] === true || answer['deny'] !== undefined) return new Set()
+  return new Set(String(answer['result'] ?? '').split('\n').map(name => name.trim().toLowerCase()).filter(name => /^[\w.-]+\/[\w.-]+$/.test(name)))
 }
 
 // The refusal of a done or deferred wait while a pull request is in anomaly: what to do instead.
@@ -157,7 +170,9 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   }
   const named = new Set([...kept, ...ended.map(e => e.line)].flatMap(agentsOf))
   const live = named.size > 0 ? await running() ?? named : named
-  const list = unattended({ open, lines: kept, live, now })
+  // github's list is asked only when a pull request carries Ready: nothing else leaves the operator's line by it.
+  const autoMerge = open.some(pr => (pr.labels ?? []).some(name => name.trim().toLowerCase() === READY_LABEL.toLowerCase())) ? await autoMergeOf($) : new Set<string>()
+  const list = unattended({ open, lines: kept, live, now, autoMerge })
   const texts = own.map(record => record.text)
   let ready: ReadyRow[] = []
   if (readyRows({ texts, lines: kept, live: new Set(), now }).length > 0) {

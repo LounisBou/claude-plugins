@@ -366,8 +366,9 @@ describe('an unattended pull request', () => {
 describe('what waits on the operator, and what is in anomaly', () => {
   const open = (pr: number, labels: string[] = ['Not Ready']) => ({ repo: 'acme/app', pr, labels })
   // Each pull request has its line, an agent that no longer runs on it unless the test gives its own.
-  const read = (input: { open: ReturnType<typeof open>[]; lines?: LedgerLine[]; live?: string[] }) =>
-    unattended({ open: input.open, lines: input.lines ?? input.open.map(o => line({ pr: o.pr, agent: 'Agent: gone' })), live: new Set(input.live ?? []), now: NOW })
+  const read = (input: { open: ReturnType<typeof open>[]; lines?: LedgerLine[]; live?: string[]; autoMerge?: string[] }) =>
+    unattended({ open: input.open, lines: input.lines ?? input.open.map(o => line({ pr: o.pr, agent: 'Agent: gone' })), live: new Set(input.live ?? []), now: NOW,
+      ...(input.autoMerge === undefined ? {} : { autoMerge: new Set(input.autoMerge) }) })
 
   it('puts a Ready pull request with no agent on the operator', () => {
     assert.deepEqual(read({ open: [open(9, ['Ready'])] }), [{ repo: 'acme/app', pr: 9, since: AT, waits: { why: 'ready' } }])
@@ -375,6 +376,18 @@ describe('what waits on the operator, and what is in anomaly', () => {
     assert.deepEqual(read({ open: [open(7, ['Ready'])], lines: [line()] }), [{ repo: 'acme/app', pr: 7, since: AT, waits: { why: 'ready' } }])
     // The label is read whatever its case.
     assert.equal(read({ open: [open(9, ['ready'])] })[0]?.waits?.why, 'ready')
+  })
+
+  it('leaves a Ready pull request off the operator\'s line only where the auto-merge list names its repository', () => {
+    // Named: it is the orchestrator's to merge.
+    assert.deepEqual(read({ open: [open(9, ['Ready'])], autoMerge: ['acme/app'] }), [])
+    // Not named (another repository, an empty list, no list): it stays his, as before.
+    for (const autoMerge of [['acme/other'], [], undefined]) {
+      assert.deepEqual(read({ open: [open(9, ['Ready'])], ...(autoMerge === undefined ? {} : { autoMerge }) }), [{ repo: 'acme/app', pr: 9, since: AT, waits: { why: 'ready' } }])
+    }
+    // The list changes nothing else: his pause and a Not Ready pull request are told as they were.
+    const rest = read({ open: [open(8, ['On Hold']), open(9, ['Not Ready'])], autoMerge: ['acme/app'] })
+    assert.deepEqual(rest.map(u => [u.pr, u.waits?.why]), [[8, 'hold'], [9, undefined]])
   })
 
   it('says Not Ready, a label that only looks like Ready, to be in anomaly', () => {
