@@ -28,7 +28,7 @@ below, and the `args` object holds the subcommand's arguments.
 | `pr-status` | `<pr>` | Five lines (`pr-summary`): state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
 | `pr-checks` | `<pr>` | Verdict, counts, failed and skipped names (`checks-summary`); `--json`: commit status and check runs |
 | `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "mergeable", "mergeable_state" (`null` while computed), "ci": {"result", "failed", "running", "skipped", "total", "checks"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read |
-| `pr-fingerprint` | `<pr> <head> [--count K] [--merges]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, a merge refused; with `--merges` also `"diff"` (the PR's diff against its base), and a merge met answers `diff` alone |
+| `pr-fingerprint` | `<pr> <head> [--count K] [--merges]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge; `--merges` adds `diff` (the PR's diff), alone at a merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
 | `pr-files` | `<pr>` | Totals, a line per changed path (`files-summary`); `--json`: with the patches, paginated |
 | `pr-commits` | `<pr>` | A line per commit (`commits-summary`); `--json`: the commits, paginated |
@@ -197,11 +197,7 @@ rule and the JSON has `images`, one `{url, path, reused, title}` per file.
 
 ### Fields (one JSON object per file)
 
-```json
-{"v": 1, "repo": "owner/name", "pr": 12, "head": "<40 hex>", "kind": "review",
- "result": "pass", "producer": "pr-review", "detail": "clean at pass 3",
- "session": "<CLAUDE_CODE_SESSION_ID or empty>", "at": "2026-11-01T10:00:00Z"}
-```
+`v` (1), `repo`, `pr`, `head`, `kind`, `result`, `producer`, `detail`, `session` (`CLAUDE_CODE_SESSION_ID` or empty), `at` (`2026-11-01T10:00:00Z`).
 
 ### How the guard reads it, and how a head voids it
 
@@ -209,7 +205,7 @@ rule and the JSON has `images`, one `{url, path, reused, title}` per file.
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
 - What a record lets pass and what is owed: core's `pr-record.ts` (`accepts`) and `readiness.ts` (`missingEvidence`).
 - The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest; named in `Ready`; a `fail` holds.
-- A kind missing at the head takes its latest accepted record across earlier heads of the same commit count and `pr-fingerprint` (`<kind> carried from <head7>`). A head that merged the base into the branch, or compared with one, is told by the PR's diff against its base instead (`diff`): the same diff carries, whatever the commit counts.
+- A kind missing at the head takes its latest accepted record across earlier heads of the same commit count and `pr-fingerprint` (`<kind> carried from <head7>`). A head with a merge of the base, or compared with one, goes by `diff`.
 - Otherwise a moved head voids every record; one of an unpushed commit counts once that sha is on the PR.
 - Pruning: once a day at `session.start`, `<head>` directories and fingerprints untouched for 90 days go.
 
