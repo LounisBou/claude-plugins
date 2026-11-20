@@ -78,7 +78,7 @@ export function register(on: On<Held>): void {
   let ending = false
   let tookOver = false
   // The move made and not yet over: what a prompt typed now must know of it.
-  const hold: HomeHold = { left: null, moving: null, tried: false }
+  const hold: HomeHold = { left: null, moving: null, tried: false, exits: 0, stale: 0 }
   // A session the operator started (the launcher's own are moved by their takeover): under this
   // module from its start, so its turn end may find it an orchestrator already, resumed outside its
   // home session, and move it.
@@ -191,6 +191,20 @@ export function register(on: On<Held>): void {
     return next(e)
   })
 
+  // The exit the move queued, run late: the move was declared failed and the session stays here, so
+  // the exit that waited for an idle host must not end it with no home. Only the module's own runs.
+  on('command.run', { command: 'exit' }, async ($, e, next) => {
+    if (hold.stale > 0 && (e as { origin?: { kind?: string } }).origin?.kind === 'plugin') {
+      hold.stale--
+      await logLine($, 'naming', 'an exit queued by the failed move into the home session was dropped: this session stays here')
+      return { text: 'The exit queued by the failed move into the home session is dropped: this session stays here.' }
+    }
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'naming', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     // A subagent's turn completes inside the main one: what the main loop asked waits
     // for the main loop's own completion, never run while the turn still waits on it.
@@ -198,8 +212,7 @@ export function register(on: On<Held>): void {
     // A turn that ends after the move: a prompt typed before the move was known ran in this session.
     // The exit queued by the move is asked again, so this session ends at once and nothing else runs.
     if (hold.left !== null) {
-      $.command.run({ command: 'exit' })
-        .catch((err: unknown) => logLine($, 'naming', `exit after a turn that ended past the move failed: ${reasonOf(err)}`))
+      askMoveExit($, hold, 'exit after a turn that ended past the move failed')
       return next(e)
     }
     const homeAfterTakeover = tookOver && !e.isAborted
@@ -223,8 +236,7 @@ export function register(on: On<Held>): void {
       // and the tab that shows it, then this session ends and window 0 takes over with
       // the resume's prompt. Anything but a move leaves the session where it is.
       if (!ending && parseSessionName(name)?.role === 'orchestrator' && await moveHome($, hold, name, resumeText(name)) === 'moved') {
-        $.command.run({ command: 'exit' })
-          .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
+        askMoveExit($, hold, 'exit after the move into the home session failed')
         return next(e)
       }
       // Then the turn that resumes it, queued behind the rename: a session started
@@ -243,8 +255,7 @@ export function register(on: On<Held>): void {
     else if (homeAfterTakeover && !ending) {
       const done = await moveHome($, hold, '', TAKEN_OVER_TEXT)
       if (done === 'moved') {
-        $.command.run({ command: 'exit' })
-          .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
+        askMoveExit($, hold, 'exit after the move into the home session failed')
         return next(e)
       }
       $.prompt.submit({ text: done === 'home' ? TAKEN_OVER_HOME_TEXT : TAKEN_OVER_STAYED_TEXT })
@@ -257,8 +268,7 @@ export function register(on: On<Held>): void {
     else if (operatorStarted && !hold.tried && !ending) {
       const name = await ownOrchestratorName($)
       if (name !== null && await moveHome($, hold, name, resumeText(name)) === 'moved') {
-        $.command.run({ command: 'exit' })
-          .catch((err: unknown) => logLine($, 'naming', `exit after the move into the home session failed: ${reasonOf(err)}`))
+        askMoveExit($, hold, 'exit after the move into the home session failed')
         return next(e)
       }
     }
@@ -312,7 +322,21 @@ async function ownOrchestratorName($: Held): Promise<string | null> {
 // The move made and not yet over: the tab it opened, until the old host ends (this process then ends with
 // it) or fails to within window 0's wait (the timer). While it stands, a prompt the operator types is
 // turned away: run here, it would go ahead of the queued exit and the old host would never end.
-export type HomeHold = { left: { readonly name: string } | null; moving: Promise<unknown> | null; tried: boolean }
+// `exits` counts the exits the move queued and the host has not run; the failure turns them into `stale`,
+// the ones the command hook drops when they run, so a failed move never ends the session it left in place.
+export type HomeHold = { left: { readonly name: string } | null; moving: Promise<unknown> | null; tried: boolean; exits: number; stale: number }
+
+// The exit that ends the old host once the move is made, queued until the host is idle and counted.
+function askMoveExit($: Held, hold: HomeHold, failure: string): void {
+  hold.exits++
+  $.command.run({ command: 'exit' })
+    .catch((err: unknown) => {
+      // An exit the host refused never runs: it is no longer one to count or to drop.
+      if (hold.exits > 0) hold.exits--
+      else if (hold.stale > 0) hold.stale--
+      return logLine($, 'naming', `${failure}: ${reasonOf(err)}`)
+    })
+}
 
 // The move, with what it holds: the launcher's `home`, and once it moved, the prompts held until the
 // old session ends or the wait for it is over.
@@ -335,6 +359,8 @@ async function moveHome($: Held, hold: HomeHold, name: string, prompt: string): 
 async function failedMove($: Held, hold: HomeHold, mine: { readonly name: string }, waitS: number): Promise<void> {
   if (hold.left !== mine) return
   hold.left = null
+  hold.stale += hold.exits
+  hold.exits = 0
   await logLine($, 'naming', `the old session did not end within ${waitS}s after the move into its home session: it stays here, and the launcher closes the home server and its tab`)
   try {
     $.ui.toast(`The move into the home session did not end this session within ${waitS}s: the launcher closes the new tab, and this session stays here.`)

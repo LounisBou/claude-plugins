@@ -40,6 +40,7 @@ function mounted() {
     'tool.call:takeover': callOf(takeover),
     'turn.complete': callOf(complete),
     'prompt.submit': callOf(hookOf(hooks, 'prompt.submit', {})),
+    'command.run': callOf(hookOf(hooks, 'command.run', { command: 'exit' })),
   }
   const matchers = {
     'session.start': start.matcher, 'tool.call': rename.matcher, 'tool.call:end': end.matcher,
@@ -368,6 +369,34 @@ test('an old host that does not end says so, takes prompts again, and moves clea
   expect(fx.processes.length).toBe(2)
   expect(fx.order.filter(o => o === 'command:exit').length).toBe(2)
   expect(await handlers['prompt.submit'](fx.dollar, typed, noNext)).toEqual({ drop: movedPromptLine('Orch: phase-3') })
+})
+
+test('an exit the failed move left queued is dropped when it runs late, and never ends the session', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(MOVED_WAITING)
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  // A turn that ended past the move asked the exit again: two are queued in the host.
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  await fx.timers[0]!.run()
+  const fromPlugin = { command: 'exit', args: '', origin: { kind: 'plugin', name: 'orchestrator' } }
+  const ran = (e: typeof fromPlugin) => handlers['command.run'](fx.dollar, e, async () => ({ text: 'exit ran' }))
+  // The host goes idle later and runs what was queued: both are dropped, the session goes on.
+  expect(await ran(fromPlugin)).toEqual({ text: expect.stringContaining('dropped') })
+  expect(await ran(fromPlugin)).toEqual({ text: expect.stringContaining('dropped') })
+  expect(fx.logged.filter(l => l.includes('exit queued by the failed move')).length).toBe(2)
+  // An exit that is not left over from the move runs: the operator's own, and a later one of the module.
+  expect(await ran(fromPlugin)).toEqual({ text: 'exit ran' })
+  expect(await ran({ command: 'exit', args: '', origin: { kind: 'composer' } } as typeof fromPlugin)).toEqual({ text: 'exit ran' })
+})
+
+test('an exit runs when the move did not fail', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(MOVED_WAITING)
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  const e = { command: 'exit', args: '', origin: { kind: 'plugin', name: 'orchestrator' } }
+  expect(await handlers['command.run'](fx.dollar, e, async () => ({ text: 'exit ran' }))).toEqual({ text: 'exit ran' })
 })
 
 test("a successor's move holds its typed prompts the same way, naming the tab without a name", async () => {
