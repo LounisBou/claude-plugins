@@ -120,7 +120,7 @@ def shorten(text, room):
     if len(text) <= room:
         return text
     head = room * 6 // 10
-    return text[:head].rstrip() + CUT + text[len(text) - (room - head):].lstrip()
+    return text[:head].rstrip() + CUT + text[len(text) - (room - head - len(CUT)):].lstrip()
 
 
 def cap_reply(text, cap=REPLY_CAP):
@@ -181,14 +181,13 @@ def mask(name):
 # headers, the URLs and the assignments that name one. Each is `(name, regex, kept groups)`.
 SECRET_WORD = re.compile(r"token|secret|pass|pwd|api[_-]?key|apikey|private[_-]?key|access[_-]?key"
                          r"|client[_-]?secret|credential", re.I)
-# A name is read whole from its first character, so its length is no bound and the scan stays linear.
-NAME = r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)"
+# A name is read whole from its first character, and only one that holds a secret word matches: a
+# name that holds none (`Error:`) cannot swallow the assignment after it. The scan stays linear.
+NAME = r"(?<![A-Za-z0-9_.-])(?=[A-Za-z0-9_.-]*?(?:" + SECRET_WORD.pattern + r"))([A-Za-z0-9_.-]+)"
 
 
 def assignment(m):
     """`NAME=value` where the name holds a secret word: the value masked, the name kept."""
-    if not SECRET_WORD.search(m.group(1)):
-        return m.group(0)
     return m.group(1) + m.group(2) + mask("secret-assignment")
 
 
@@ -211,8 +210,8 @@ PATTERNS = [
     ("secret-flag", re.compile(r"(--(?:[A-Za-z0-9]+-)*(?:token|secret|passw(?:or)?d|passwd|pass|api-?key|apikey|private-key|access-key|credentials?)(?:\s+|=))(?!\[REDACTED)(?:\"[^\"]*\"|'[^']*'|[^\s\"'-][^\s\"']*)", re.I), 1),
     ("user-password", re.compile(r"((?:^|[\s;&|(])(?:-u\s*|--user(?:\s+|=)))(?!\[REDACTED)(?:\"[^\"]*:[^\"]*\"|'[^']*:[^']*'|[^\s\"'-][^\s\"']*:[^\s\"']*)"), 1),
     ("password-flag", re.compile(r"\b((?:mysql\w*|mariadb[\w-]*)\b[^\n;&|]{0,200}?\s-p|\bsshpass\s+-p\s*|\b(?:docker|podman)\s+login\b[^\n;&|]{0,200}?\s-p\s*)(?!\[REDACTED)(?:\"[^\"]*\"|'[^']*'|[^\s\"']+)"), 1),
-    ("secret-assignment", re.compile(NAME + r"([\"']?\s*[:=]\s*)(?:\"(?:[^\"\\]|\\.)+\"|'[^']+')"), assignment),
-    ("secret-assignment", re.compile(NAME + r"([\"']?\s*[:=]\s*[\"']?)(?!\[REDACTED)[^\s\"',;&|)}]+"), assignment),
+    ("secret-assignment", re.compile(NAME + r"([\"']?\s*[:=]\s*)(?:\"(?:[^\"\\]|\\.)+\"|'[^']+')", re.I), assignment),
+    ("secret-assignment", re.compile(NAME + r"([\"']?\s*[:=]\s*[\"']?)(?!\[REDACTED)[^\s\"',;&|)}]+", re.I), assignment),
 ]
 
 
@@ -358,7 +357,7 @@ def fit(groups, cap=SECTION_CAP):
             groups[newest].pop()
     while len(groups) > 1 and size(groups) > cap:
         groups.pop(0)
-    if size(groups) > cap:
+    if size(groups) > cap and len(groups[0][0]) + 1 > cap:
         line = groups[0][0]
         head = line[:line.index(": ") + 2] + CUT.lstrip()
         groups[0][0] = head + line[len(line) - (cap - len(head) - 1):]

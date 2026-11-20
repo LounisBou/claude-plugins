@@ -276,3 +276,27 @@ out("startup", has(text, "Load the skill", "STARTUP-REPLY", "REAL-ASK", "REAL-AN
 LONGVALUE = "hunt" + "er2xyz" + "-long"
 text = section([user(2, "Q"), reply(1, "MY_VERY_LONG_ENVIRONMENT_VARIABLE_FOR_THE_SERVICE_TOKEN=%s" % LONGVALUE)], "longname")
 out("longname", has(text, LONGVALUE, "SERVICE_TOKEN=[REDACTED:secret-assignment]"))
+
+# A name that holds no secret word does not swallow the secret assignment after it.
+PFX = "hunt" + "er2" + "-pfx"
+text = section([user(2, "Q"), reply(1, "\n".join([
+    "Error: password=%s" % PFX, "note: token=%s" % PFX, "run: DB_PASS=%s" % PFX, "X:token=%s" % PFX,
+    "foo=bar_token=%s" % PFX]))], "prefixed")
+out("prefixed", "%s|%d" % (has(text, PFX), text.count("[REDACTED:secret-assignment]")))
+began = time.time()
+ct.redact("a" * 300000 + "=1 " + "note: " * 20000, ENV)
+out("fast_names", 1 if time.time() - began < 10 else 0)
+
+# His messages near the cap: none dropped, none cut, the section within 12,000 characters.
+def long_ask(tag, size):
+    return tag + " " + "x " * ((size - len(tag) - 1) // 2)
+near = [user(5, long_ask("NC-A", 3500)), user(4.9, long_ask("NC-B", 3600)), user(4.8, long_ask("NC-C", 3700)),
+        reply(4.7, "NC-R1 " + "word " * 290), reply(4.6, "NC-R2 " + "word " * 290)]
+text = section(near, "near")
+body = text.split("\n", 1)[1]
+out("near", "%s|%d" % (has(text, "NC-A", "NC-B", "NC-C"), 1 if len(body) <= 12000 else 0))
+text = section([user(3, "BIG-START " + "w" * 10480 + " BIG-END"), reply(2, "BIG-R " + "word " * 296)], "bigask")
+asked = [line for line in text.split("\n") if "operator: BIG-START" in line]
+out("bigask", "%s|%d|%d" % (has(text, "BIG-START", "BIG-END"), len(asked[0]) if asked else 0,
+                            1 if len(text.split("\n", 1)[1]) <= 12000 else 0))
+out("shorten", "|".join(str(len(ct.shorten("a b " * 2000, room))) for room in (1000, 40, 13)))
