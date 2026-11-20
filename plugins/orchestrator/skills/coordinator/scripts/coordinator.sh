@@ -54,6 +54,11 @@
 #     each on a line of its own, as the hooks module of a live orchestrator read them
 #     against the forge at its last turn end and wrote them on its row; « unattended » is core's
 #     pr-ledger.ts, docs/contracts.md; a repository the forge did not list is said unknown)
+#   quota <plan> | 5h <n>% | 7d <n>% | read <UTC time>[ (stale)]
+#     (each account's quota as the status lines keep it in <state>/quota/, core's quota.ts,
+#     docs/contracts.md; <plan> is plan1 for ~/.claude, plan2 for ~/.claude-bis, else the
+#     configuration directory; « - » a window the payload did not carry; « (stale) » when no
+#     session of the account has refreshed it for over 30 minutes; a file that is no reading is skipped)
 #   remote <orchestrator> | on <machine> | updated <UTC time> | context <tokens> (<percent>%) | repository <owner/name or none> | prs <owner/name#n>, ... or none | <wait>
 #     (an orchestrator on another machine, its row as the hooks module received it; <wait> is
 #     « operator since <UTC time or ?> | blocks: <what it blocks> », « done since <UTC time or ?> »

@@ -431,6 +431,34 @@ describe('facts', () => {
     ])
   })
 
+  it('says each plan\'s quota from the files the status lines keep, the stale ones marked, the unreadable ones skipped', () => {
+    const { f } = bench({ env: { HOME: '/Users/me' } })
+    const put = (name: string, text: string) => {
+      mkdirSync(join(f.state, 'quota'), { recursive: true })
+      writeFileSync(join(f.state, 'quota', name), text)
+    }
+    const file = (account: string, config: string, five: number, at: string, seven?: number) => JSON.stringify({
+      version: 1, account, config, five_hour: { used_percentage: five, resets_at: 1 }, ...(seven === undefined ? {} : { seven_day: { used_percentage: seven, resets_at: 2 } }), at,
+    })
+    put('b-two.json', file('b-two', '/Users/me/.claude-bis', 12.4, '2026-10-18T10:00:00Z'))
+    put('a-one.json', file('a-one', '/Users/me/.claude', 80.5, '2026-10-18T09:30:00Z', 33))
+    put('torn.json', '{"version":1,')
+    put('other.json', JSON.stringify({ version: 9 }))
+    put('.config-x', 'a-one 1 - - - -')
+    put('c.json.tmp-1', file('c', '/Users/me/.claude', 1, '2026-10-18T10:00:00Z'))
+    assert.equal(run(f, 'facts'), 2)
+    assert.deepEqual(f.out.filter(l => l.startsWith('quota')), [
+      'quota plan1 | 5h 81% | 7d 33% | read 2026-10-18T09:30:00Z (stale)',
+      'quota plan2 | 5h 12% | 7d - | read 2026-10-18T10:00:00Z',
+    ])
+  })
+
+  it('says no quota line where no status line has kept one', () => {
+    const { f } = bench()
+    assert.equal(run(f, 'facts'), 2)
+    assert.deepEqual(f.out.filter(l => l.startsWith('quota')), [])
+  })
+
   it('refuses an argument', () => {
     const f = fixture()
     assert.equal(run(f, 'facts', 'x'), 1)
