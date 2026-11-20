@@ -530,9 +530,8 @@ def diff_fingerprint(files):
     return hashlib.sha256("\n".join(sorted(parts)).encode("utf-8")).hexdigest()
 
 
-# The most pages of a comparison read: a diff that reaches it may hold more files.
-_COMPARE_PAGES_MAX = 30
-_COMPARE_PAGE = 100
+# The most files GitHub lists for a comparison, on its first page only: one that reaches it may hold more.
+_COMPARE_FILES_MAX = 300
 
 
 def _pull_diff_fingerprint(owner, name, pr, head):
@@ -544,17 +543,14 @@ def _pull_diff_fingerprint(owner, name, pr, head):
     base = (pull.get("base") or {}).get("ref") if isinstance(pull, dict) else None
     if not isinstance(base, str) or not base:
         raise errors.ApiError("pull request %s has no base branch" % pr)
-    files = []
-    for page in range(1, _COMPARE_PAGES_MAX + 1):
-        path = "/repos/%s/%s/compare/%s...%s?per_page=%d&page=%d" % (owner, name, quote(base, safe="/"), head, _COMPARE_PAGE, page)
-        comparison = http.rest("GET", path)
-        listed = comparison.get("files") if isinstance(comparison, dict) else None
-        if not isinstance(listed, list):
-            raise errors.ApiError("the comparison of %s with %s lists no files" % (base, head[:7]))
-        files.extend(listed)
-        if len(listed) < _COMPARE_PAGE:
-            return hashlib.sha256((diff_fingerprint(files) or "empty").encode("utf-8")).hexdigest()
-    raise errors.ApiError("the comparison of %s with %s reaches %d files, more may be left out" % (base, head[:7], len(files)))
+    # The comparison pages its commits, not its files: they all stand on the first page, up to the cap.
+    comparison = http.rest("GET", "/repos/%s/%s/compare/%s...%s?per_page=1" % (owner, name, quote(base, safe="/"), head))
+    files = comparison.get("files") if isinstance(comparison, dict) else None
+    if not isinstance(files, list):
+        raise errors.ApiError("the comparison of %s with %s lists no files" % (base, head[:7]))
+    if len(files) >= _COMPARE_FILES_MAX:
+        raise errors.ApiError("the comparison of %s with %s reaches %d files, more may be left out" % (base, head[:7], len(files)))
+    return hashlib.sha256((diff_fingerprint(files) or "empty").encode("utf-8")).hexdigest()
 
 
 def pr_fingerprint(args):
@@ -597,7 +593,12 @@ def pr_fingerprint(args):
     fingerprint = hashlib.sha256("\n".join(reversed(prints)).encode("utf-8")).hexdigest()
     answer = {"head": args.head.lower(), "commits": count, "fingerprint": fingerprint}
     if args.merges:
-        answer["diff"] = _pull_diff_fingerprint(owner, name, args.pr, args.head.lower())
+        # A head with no merge keeps its carry as it was whatever the comparison answers: the diff is
+        # left out, and a head compared by it then reads as having none.
+        try:
+            answer["diff"] = _pull_diff_fingerprint(owner, name, args.pr, args.head.lower())
+        except errors.GhError:
+            pass
     return answer
 
 

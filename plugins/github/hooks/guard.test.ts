@@ -3065,7 +3065,7 @@ test('a head that merged the base carries from an earlier head that merged it to
   expect(fingerprintRuns(seen)).toEqual([HEAD + ' x4', OLD + ' x3'])
 })
 
-test('a head with no merge carries from an earlier head that merged the base when the diffs are the same', async ($, on) => {
+test('a head with no merge carries from an earlier head that merged the base, of as many commits, when the diffs are the same', async ($, on) => {
   const seen = await world($, on, {
     records: {}, tree: earlier(CLEAN_OLD), merged: [OLD], fingerprints: { [HEAD]: SAME }, diffs: { [HEAD]: SAME, [OLD]: SAME },
   })
@@ -3082,6 +3082,14 @@ test('an earlier head whose kept fingerprint holds no diff is asked again for it
   expect(JSON.parse(String(out.result)).labels).toEqual(['Ready'])
   expect(fingerprintRuns(seen)).toEqual([HEAD + ' x3', OLD + ' x2'])
   expect(JSON.parse(String(seen.files[fingerprintFile(OLD)]))).toEqual({ v: 3, repo: 'acme/thing', pr: 12, head: OLD, commits: 2, fingerprint: SAME, diff: SAME })
+})
+
+test('a head whose own diff cannot be read is blamed, not the earlier head that merged the base', async ($, on) => {
+  const seen = await world($, on, {
+    records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), merged: [OLD], fingerprints: { [HEAD]: SAME }, diffs: { [OLD]: SAME },
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no review, norms record carried to 0123456: 0123456\'s commits cannot be fingerprinted: pr-fingerprint answered no fingerprint')
 })
 
 test('a head that merged the base carries nothing from an earlier head with another diff', async ($, on) => {

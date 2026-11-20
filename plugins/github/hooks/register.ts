@@ -822,9 +822,11 @@ async function headRecords($: Mod, gate: Gate, head = gate.head): Promise<Record
  * request as the head: the count each gate read finds at its head is kept in the data directory, with
  * the fingerprint once computed over that count (version 3: the files of version 1 and 2, whose count
  * may be another head's, are never read). A merge of the base into the branch changes the commits and their
- * count, so a head holding one, or compared with one, is told by the pull request's own diff against its base
- * (the engine's `diff`) instead, whatever the counts: a merge that touches none of the pull request's files
- * leaves it as it is, a conflict resolved inside them changes it and carries nothing.
+ * count, so a head holding one is told by the pull request's own diff against its base (the engine's `diff`),
+ * whatever the counts, and so is an earlier head holding one when the head has none and as many commits: a merge
+ * that touches none of the pull request's files leaves the diff as it is, a conflict resolved inside them
+ * changes it and carries nothing. A head with no merge is told by its commits against an earlier head with none,
+ * as before, and its diff is left out when the comparison cannot be read.
  */
 const SHA = /^[0-9a-f]{40}$/
 const FINGERPRINT = /^[0-9a-f]{64}$/
@@ -983,28 +985,38 @@ async function carriedRecords($: Mod, gate: Gate, files: RecordFile[]): Promise<
     uncarried(gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + reasonOf(err).trim())
     return withWaiver([])
   }
-  // A head with no merge of the base is told by its commits (then of the same count); one with a merge, or
-  // compared with one, by the pull request's diff, which a merge that changes none of its files leaves as it is.
-  const sameDiff = async (earlier: Fingerprint): Promise<boolean> => {
-    current = current.diff ? current : await headFingerprint($, gate.repo, gate.pr, gate.head, current.commits, true)
-    return earlier.diff !== undefined && earlier.diff === current.diff
-  }
   const newest = new Map<PrRecord['kind'], { record: PrRecord; from: string }>()
   const blocked = new Set<PrRecord['kind']>()
   for (const { head, latest, unreadable } of candidates) {
     const unreadKinds = wanted.filter((kind) => unreadable.some((file) => file.kinds.includes(kind)))
-    let same: boolean
+    // A head with no merge of the base is told by its commits (then of the same count); one with a merge, or
+    // compared with one, by the pull request's diff, which a merge that changes none of its files leaves as it is.
+    let same: boolean | undefined
+    let earlier: Fingerprint
+    const blame = (err: unknown, whose: string): void => {
+      const kinds = wanted.filter((kind) => unreadKinds.includes(kind) || latest.some((record) => record.kind === kind))
+      for (const kind of kinds) blocked.add(kind)
+      uncarried(whose + "'s commits cannot be fingerprinted: " + reasonOf(err).trim(), kinds)
+    }
     try {
       const kept = await keptOf($, await fingerprintPath($, gate.repo, gate.pr, head))
       if (!kept) throw new Error('the pull request was never read at that head, its commit count is not known')
       if (current.fingerprint && kept.commits !== current.commits) continue
-      const earlier = await headFingerprint($, gate.repo, gate.pr, head, kept.commits, !current.fingerprint)
-      same = current.fingerprint && earlier.fingerprint ? earlier.fingerprint === current.fingerprint : await sameDiff(earlier)
+      earlier = await headFingerprint($, gate.repo, gate.pr, head, kept.commits, !current.fingerprint)
+      if (current.fingerprint && earlier.fingerprint) same = earlier.fingerprint === current.fingerprint
     } catch (err: unknown) {
-      const kinds = wanted.filter((kind) => unreadKinds.includes(kind) || latest.some((record) => record.kind === kind))
-      for (const kind of kinds) blocked.add(kind)
-      uncarried(head.slice(0, 7) + "'s commits cannot be fingerprinted: " + reasonOf(err).trim(), kinds)
+      blame(err, head.slice(0, 7))
       continue
+    }
+    if (same === undefined) {
+      // The head's own diff, which may not have been asked yet: a failure to read it is the head's, not the earlier one's.
+      try {
+        current = current.diff ? current : await headFingerprint($, gate.repo, gate.pr, gate.head, current.commits, true)
+      } catch (err: unknown) {
+        blame(err, gate.head.slice(0, 7))
+        continue
+      }
+      same = earlier.diff !== undefined && earlier.diff === current.diff
     }
     if (!same) continue
     if (unreadKinds.length > 0) {

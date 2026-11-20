@@ -205,7 +205,7 @@ rule and the JSON has `images`, one `{url, path, reused, title}` per file.
 - Per kind, the latest `at` decides: a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or the PR, is skipped, named in the refusal when a kind is missing or not accepted.
 - What a record lets pass and what is owed: core's `pr-record.ts` (`accepts`) and `readiness.ts` (`missingEvidence`).
 - The check plan and the E2E exemption (below) stand for the kinds they excuse, a `waived` at an earlier head for later ones while newest; named in `Ready`; a `fail` holds.
-- A kind missing at the head takes its latest accepted record across earlier heads of the same commit count and `pr-fingerprint` (`<kind> carried from <head7>`). A head with a merge of the base, or compared with one, goes by `diff`.
+- A kind missing at the head takes its latest accepted record across earlier heads of the same commit count and `pr-fingerprint` (`<kind> carried from <head7>`). A head with a merge of the base goes by `diff`.
 - Otherwise a moved head voids every record; one of an unpushed commit counts once that sha is on the PR.
 - Pruning: once a day at `session.start`, `<head>` directories and fingerprints untouched for 90 days go.
 
