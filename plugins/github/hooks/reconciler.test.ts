@@ -69,6 +69,8 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     postRefusal: undefined as string | undefined,
     // With `postFails`, only the posts to this repository are refused (all, when undefined).
     postFailsRepo: undefined as string | undefined,
+    // Whether the forge's listing says acme/app is archived (read-only).
+    archived: false,
     // The open pull requests of acme/other, a second followed repository; and the repositories listed and posted to, in order.
     otherPulls: over.other ?? [],
     listedRepos: [] as string[],
@@ -161,7 +163,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     if (command === 'pr-panel') {
       state.listedRepos.push(String(request['repo']))
       if (state.panelFails !== undefined && (state.panelFailsRepo === undefined || state.panelFailsRepo === request['repo'])) return done('', 1, state.panelFails)
-      return done(JSON.stringify({ rows: request['repo'] === 'acme/other' ? state.otherPulls : state.pulls, ...(over.viewer ? { viewer: over.viewer } : {}), rate: { remaining: state.remaining, resetAt: state.resetAt, cost: 1 } }))
+      return done(JSON.stringify({ rows: request['repo'] === 'acme/other' ? state.otherPulls : state.pulls, ...(state.archived && request['repo'] === 'acme/app' ? { archived: true } : {}), ...(over.viewer ? { viewer: over.viewer } : {}), rate: { remaining: state.remaining, resetAt: state.resetAt, cost: 1 } }))
     }
     const pull = state.pulls.find((p) => p.number === Number(args['pr']))
     if (command === 'pr-gate' && state.gateFails) return done('', 1, 'gh: HTTP 502')
@@ -739,6 +741,103 @@ test('a failure that recovers is said again when it fails again, though another 
   expect(state.posted.length).toBeGreaterThan(posted)
   expect(posting(2)).toBe(true)
   expect(state.said.filter((line) => line.includes('could not list acme/other: gh: HTTP 502'))).toHaveLength(1)
+})
+
+test('a repository the forge lists as archived is left alone: no post, no gate, no label, no second listing, said once', async ($, on) => {
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  state.archived = true
+  await beat(clock, 3 * RETRY_MS / TICK_MS)
+  await clock.advance(IDLE_MAX_MS)
+  await clock.settle()
+  expect(state.posted).toEqual([])
+  expect(count(state.runs, 'pr-panel')).toBe(1)
+  expect(count(state.runs, 'pr-gate')).toBe(0)
+  expect(state.labelled).toEqual([])
+  expect(state.said.filter((line) => line.includes('acme/app') && line.includes('archived'))).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not'))).toHaveLength(0)
+})
+
+test('the posts a repository had waiting are not tried again once the forge lists it as archived, said once', async ($, on) => {
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const { clock, state, put } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  state.postFails = true
+  await beat(clock)
+  expect(state.posted).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7'))).toHaveLength(1)
+  // The repository is archived meanwhile: the edge marker wakes a listing, which says so.
+  const gates = count(state.runs, 'pr-gate')
+  state.archived = true
+  put(EDGE, '', T0 + 2 * TICK_MS)
+  await beat(clock)
+  const posted = state.posted.length
+  const listed = count(state.runs, 'pr-panel')
+  await beat(clock, 3 * RETRY_MS / TICK_MS)
+  expect(state.posted).toHaveLength(posted)
+  expect(count(state.runs, 'pr-panel')).toBe(listed)
+  expect(count(state.runs, 'pr-gate')).toBe(gates)
+  expect(state.said.filter((line) => line.includes('acme/app') && line.includes('archived'))).toHaveLength(1)
+})
+
+test('the other repositories go on when the forge lists one as archived: still listed, still posted to', async ($, on) => {
+  const other = { number: 9, draft: false, head: 'e'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
+  const files = {
+    [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z'),
+    [RECORDS + '/acme/other/' + other.head + '/review.a.json']: JSON.stringify({ v: 1, repo: 'acme/other', pr: 9, head: other.head, kind: 'review', result: 'pass', producer: 'orchestrator', detail: '', session: 's', at: '2026-11-19T09:00:00Z' }),
+  }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), other: [other], files, viewer: 'operator' })
+  state.archived = true
+  await beat(clock)
+  expect(state.postedRepos).toEqual(['acme/other'])
+  state.listedRepos.length = 0
+  await beat(clock, 12)
+  expect(state.listedRepos.length).toBeGreaterThan(0)
+  expect(state.listedRepos.every((repo) => repo === 'acme/other')).toBe(true)
+})
+
+test('a repository found archived stays left alone after the session restarts, its line unsaid again', async ($, on) => {
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  state.archived = true
+  await beat(clock)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await beat(clock, 3)
+  expect(count(state.runs, 'pr-panel')).toBe(1)
+  expect(state.posted).toEqual([])
+  expect(state.said.filter((line) => line.includes('acme/app') && line.includes('archived'))).toHaveLength(1)
+})
+
+test('a repository found archived by a refused post leaves no failing marker for the tools of the sessions', async ($, on) => {
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const { clock, state, files: written } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  state.postFails = true
+  state.postRefusal = 'error: cannot post readiness/review at aaaaaaa: Repository was archived so is read-only.'
+  await beat(clock, 3)
+  expect(written.has(FAILING)).toBe(false)
+})
+
+test('a failure said before the session restarts (resume, clear, compact) is not said again', async ($, on) => {
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  state.postFails = true
+  await beat(clock)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await beat(clock, 2 * RETRY_MS / TICK_MS)
+  expect(state.posted.length).toBeGreaterThanOrEqual(2)
+  expect(state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7'))).toHaveLength(1)
+})
+
+test('a post failing another way is said again, once', async ($, on) => {
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  state.postFails = true
+  await beat(clock, RETRY_MS / TICK_MS + 1)
+  state.postRefusal = 'error: cannot post: HTTP 502'
+  await beat(clock, 2 * RETRY_MS / TICK_MS)
+  const said = state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7'))
+  expect(said).toHaveLength(2)
+  expect(said[0]).toContain('HTTP 403')
+  expect(said[1]).toContain('HTTP 502')
 })
 
 test('a refusal that only names "archived" is no archive: the post is tried again after RETRY_MS', async ($, on) => {

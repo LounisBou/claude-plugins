@@ -143,6 +143,7 @@ query($owner:String!, $name:String!, $first:Int!) {
   rateLimit { remaining resetAt cost }
   viewer { login }
   repository(owner:$owner, name:$name) {
+    isArchived
     pullRequests(states:OPEN, first:$first, orderBy:{field:CREATED_AT, direction:DESC}) {
       nodes {
         number isDraft headRefOid baseRefName mergeable mergeStateStatus
@@ -221,10 +222,13 @@ def _reconcile_row(pull):
 
 def _reconcile_listing(owner, name):
     data = http.graphql(_RECONCILE_QUERY, {"owner": owner, "name": name, "first": _PANEL_PRS})
-    nodes = (((data.get("repository") or {}).get("pullRequests") or {}).get("nodes")) or []
+    repository = data.get("repository") or {}
+    nodes = ((repository.get("pullRequests") or {}).get("nodes")) or []
     rate = data.get("rateLimit") or {}
     return {
         "viewer": (data.get("viewer") or {}).get("login") or "",
+        # An archived repository is read-only for good: the reconciler reads and posts nothing there.
+        "archived": repository.get("isArchived") is True,
         "rows": [_reconcile_row(p) for p in nodes if isinstance(p, dict)],
         "rate": {"remaining": rate.get("remaining"), "resetAt": rate.get("resetAt"), "cost": rate.get("cost")},
     }
