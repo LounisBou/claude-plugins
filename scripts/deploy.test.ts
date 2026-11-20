@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -47,6 +47,8 @@ interface Fake {
   failRepoint: string
   /** The plugins of the commits extracted. */
   tree: string[]
+  /** The status bar's launcher of the commits extracted; none when undefined. */
+  launcher: string | undefined
   /** The installed plugins of the marketplace, by id, with the version the host records. */
   readonly versions: Map<string, string>
   /** The pids that no longer run. */
@@ -66,6 +68,7 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
     repointed: [],
     failRepoint: '',
     tree: ['alpha'],
+    launcher: undefined,
     versions: new Map([[ALPHA, '1.2.3']]),
     dead: new Set(),
     host: {
@@ -76,6 +79,10 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
       extract: (repo, commit, into) => {
         self.calls.push(`extract ${repo} ${commit.slice(0, 1)}`)
         treeAt(into, '1.2.3', MARKETPLACE, self.tree)
+        if (self.launcher !== undefined) {
+          mkdirSync(join(into, 'plugins', 'statusbar', 'statusline'), { recursive: true })
+          writeFileSync(join(into, 'plugins', 'statusbar', 'statusline', 'launcher.sh'), self.launcher)
+        }
       },
       smoke: dir => {
         if (self.failSmoke) throw new Error(`${dir}/scripts/deploy.ts --status: SyntaxError`)
@@ -231,6 +238,89 @@ describe('the configurations sharing the plugins', () => {
     assert.match(box.err.join('\n'), /\.claude-bis: repoint of \.claude-bis refused.*run npm run deploy again/)
     assert.deepEqual(f.repointed.map(config => basename(config)), ['.claude', '.claude-ter'])
     assert.equal(existsSync(join(box.root, 'current')), false)
+  })
+})
+
+/** Installs the bar's launcher copy `text` in the configuration directory `config`, as its installer does. */
+function installedLauncher(config: string, text: string): string {
+  const path = join(config, 'statusbar', 'statusline.sh')
+  mkdirSync(join(config, 'statusbar'), { recursive: true })
+  writeFileSync(path, text, { mode: 0o755 })
+  return path
+}
+
+describe('the status line launcher', () => {
+  it('is replaced by the installed tree\'s where the bar is installed, mode 755, and the refresh is told once', () => {
+    const box = sandbox()
+    const copy = installedLauncher(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'old\n')
+    const f = fake()
+    f.launcher = 'new\n'
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(readFileSync(copy, 'utf8'), 'new\n')
+    assert.equal(statSync(copy).mode & 0o777, 0o755)
+    assert.deepEqual(box.out.filter(line => line.includes('launcher')), [`deploy: refreshed the status line launcher ${realpathSync(copy)}`])
+  })
+
+  it('is left alone in a configuration where the bar is not installed, and settings.json is never written', () => {
+    const box = sandbox()
+    const config = box.env['CLAUDE_CONFIG_DIR'] ?? ''
+    writeFileSync(join(config, 'settings.json'), '{}')
+    const f = fake()
+    f.launcher = 'new\n'
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(existsSync(join(config, 'statusbar')), false)
+    assert.equal(readFileSync(join(config, 'settings.json'), 'utf8'), '{}')
+    assert.equal(box.out.some(line => line.includes('launcher')), false)
+  })
+
+  it('is written through a linked statusbar directory, to its target, which stays a link', () => {
+    const root = home()
+    const target = installedLauncher(join(root, '.claude'), 'old\n')
+    symlinkSync(join(root, '.claude', 'statusbar'), join(root, '.claude-bis', 'statusbar'))
+    const box = { env: { CLAUDE_CONFIG_DIR: join(root, '.claude-bis') }, root: join(root, '.claude-bis', DEPLOYS_DIR, MARKETPLACE), out: [] as string[], err: [] as string[] }
+    const f = fake()
+    f.launcher = 'new\n'
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(readFileSync(target, 'utf8'), 'new\n')
+    assert.equal(lstatSync(join(root, '.claude-bis', 'statusbar')).isSymbolicLink(), true)
+    assert.equal(box.out.filter(line => line.includes('launcher')).length, 1)
+  })
+
+  it('is not rewritten when it is the tree\'s already', () => {
+    const box = sandbox()
+    const copy = installedLauncher(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'same\n')
+    const before = statSync(copy).ino
+    const f = fake()
+    f.launcher = 'same\n'
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(statSync(copy).ino, before)
+    assert.equal(box.out.some(line => line.includes('launcher')), false)
+  })
+
+  it('is refreshed by a run that installs nothing, so a copy gone stale is mended at the next run', () => {
+    const box = sandbox()
+    const f = fake()
+    f.launcher = 'new\n'
+    deploy(box, f.host)
+    const copy = installedLauncher(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'old\n')
+    assert.equal(deploy(box, f.host), 0)
+    assert.match(box.out.at(-2) ?? '', /is installed/)
+    assert.equal(readFileSync(copy, 'utf8'), 'new\n')
+  })
+
+  it('is told on stderr, without failing the run, when it cannot be written', () => {
+    const box = sandbox()
+    const copy = installedLauncher(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'old\n')
+    chmodSync(join(copy, '..'), 0o500)
+    const f = fake()
+    f.launcher = 'new\n'
+    try {
+      assert.equal(deploy(box, f.host), 0)
+    } finally {
+      chmodSync(join(copy, '..'), 0o700)
+    }
+    assert.match(box.err.join('\n'), /status line launcher of .* was not refreshed/)
+    assert.equal(readFileSync(copy, 'utf8'), 'old\n')
   })
 })
 
