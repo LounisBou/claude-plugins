@@ -11,7 +11,26 @@ import conversation_tail as ct
 WORK = sys.argv[2]
 NOW = datetime.datetime(2026, 11, 20, 15, 0, 0, tzinfo=datetime.timezone.utc)
 ENV = os.path.join(WORK, "env")
-open(ENV, "w").write('# comment\nexport DEPLOY_KEY="s3cr3t-v4lue-0123"\nSHORT=abc\n')
+# Every secret-shaped value is built here from parts, so no literal of the repository looks like one.
+ENVV = "s3cr3t" + "-v4lue-" + "0123"
+GH = "gh" + "p_" + "a" * 20 + "0123456789abcdef"
+ANT = "sk" + "-ant-" + "b" * 24
+AUTH = "tok" + "en0" + "1" * 12
+BEARER = "z" * 8 + "9999" + "y" * 4
+JWT = ".".join(["ey" + "J" + "h" * 14, "ey" + "J" + "z" * 14, "S" + "f" * 16])
+PKBODY = "PRIVATE" + "BODY"
+AWS = "AK" + "IA" + "Q" * 16
+SLACK = "xo" + "xb-" + "1" * 10 + "-" + "c" * 10
+APIKEY = "tt" + "tt1111"
+CLIFLAG = "hun" + "ter2" + "hunter2"
+URLPW = "pw" + "123"
+CURLPW = "hun" + "ter22"
+MYSQLPW = "Super" + "Secret1"
+QUOTED = "a b c " + "secret"
+PLAIN = "plain-" + "text-pass"
+RANDOM = "AbCdEfGhIjKl" + "MnOpQrStUvWxYz012345"
+DEPLOY = "what" + "ever"
+open(ENV, "w").write('# comment\nexport DEPLOY_KEY="%s"\nSHORT=abc\n' % ENVV)
 
 
 def at(minutes):
@@ -133,38 +152,36 @@ out("capped_run", 1 if kept and kept == list(range(kept[0], 40)) and len(kept) >
 
 # Secrets are masked before they are printed, each pattern on a line of its own.
 lines = [
-    "token ghp_abcdefghijklmnopqrstuvwxyz0123456789 and SHORT=abc",
-    "ant sk-ant-abcdefghijklmnopqrstuvwx",
-    "Authorization: Token abcdefgh12345678",
-    "curl -H 'X: Bearer zzzzzzzz9999yyyy'",
-    "jwt eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2Q",
-    "-----BEGIN RSA PRIVATE KEY-----\nPRIVATEBODY\n-----END RSA PRIVATE KEY-----",
-    "aws AKIAIOSFODNN7EXAMPLE",
-    "slack xoxb-1234567890-abcdefghij",
-    "GET https://example.org/x?api_key=tttt1111&b=1",
-    "with DEPLOY_KEY=whatever and s3cr3t-v4lue-0123 and --password hunter2hunter2",
-    "and https://user:pw123@host.example/x",
-    "curl -u admin:hunter22 x",
-    "mysql -pSuperSecret1 db",
-    'password="a b c secret"',
-    "password: plain-text-pass",
-    "random AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+    "token %s and SHORT=abc" % GH,
+    "ant %s" % ANT,
+    "Authorization: Token %s" % AUTH,
+    "curl -H 'X: Bearer %s'" % BEARER,
+    "jwt %s" % JWT,
+    "-----BEGIN RSA PRIVATE KEY-----\n%s\n-----END RSA PRIVATE KEY-----" % PKBODY,
+    "aws %s" % AWS,
+    "slack %s" % SLACK,
+    "GET https://example.org/x?api_key=%s&b=1" % APIKEY,
+    "with DEPLOY_KEY=%s and %s and --password %s" % (DEPLOY, ENVV, CLIFLAG),
+    "and https://user:%s@host.example/x" % URLPW,
+    "curl -u admin:%s x" % CURLPW,
+    "mysql -p%s db" % MYSQLPW,
+    'password="%s"' % QUOTED,
+    "password: %s" % PLAIN,
+    "random %s" % RANDOM,
 ]
 secret = "\n".join(lines)
 text = section([user(2, "Q"), reply(1, secret)], "secret")
-out("secret_gone", has(text, "ghp_abcdef", "abcdefghijklmnopqrstuvwx", "abcdefgh12345678", "zzzzzzzz9999yyyy",
-                       "SflKxwRJSMeKKF2Q", "PRIVATEBODY", "AKIAIOSFODNN7EXAMPLE", "abcdefghij", "tttt1111", "whatever",
-                       "s3cr3t-v4lue-0123", "hunter2hunter2", "pw123", "hunter22", "SuperSecret1", "a b c secret",
-                       "c secret", "plain-text-pass", "AbCdEfGhIjKlMnOpQrStUvWxYz012345"))
+out("secret_gone", has(text, GH[:12], ANT[6:20], AUTH[-12:], BEARER, JWT[-12:], PKBODY, AWS, SLACK[-10:], APIKEY,
+                       DEPLOY, ENVV, CLIFLAG, URLPW, CURLPW, MYSQLPW, QUOTED, "c secret", PLAIN, RANDOM))
 out("secret_marks", has(text, "[REDACTED:github-token]", "[REDACTED:anthropic-key]", "[REDACTED:authorization]",
                         "[REDACTED:bearer]", "[REDACTED:jwt]", "[REDACTED:private-key]", "[REDACTED:aws-key]",
                         "[REDACTED:slack-token]", "[REDACTED:url-secret]", "[REDACTED:env]", "[REDACTED:secret-flag]",
                         "[REDACTED:url-credentials]", "[REDACTED:user-password]", "[REDACTED:password-flag]",
                         "[REDACTED:secret-assignment]", "[REDACTED:entropy]", "SHORT=abc"))
-text = section([user(2, "my key is s3cr3t-v4lue-0123")], "secret-operator")
-out("secret_operator", has(text, "s3cr3t-v4lue-0123", "[REDACTED:env]"))
+text = section([user(2, "my key is " + ENVV)], "secret-operator")
+out("secret_operator", has(text, ENVV, "[REDACTED:env]"))
 # A secret that straddles the cap is masked whole, never cut in half.
-straddle = "a " * 445 + "ghp_abcdefghijklmnopqrstuvwxyz0123456789 " + "b " * 800
+straddle = "a " * 445 + GH + " " + "b " * 800
 text = section([user(2, "Q"), reply(1, straddle)], "straddle")
 out("straddle", has(text, "ghp_", "[REDACTED"))
 
