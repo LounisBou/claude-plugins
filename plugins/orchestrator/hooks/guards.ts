@@ -784,7 +784,7 @@ async function mustRun($: Held, argv: readonly string[], what: string, until: nu
 // basename), that process's working directory, that checkout's branch, then one gh read
 // run in that checkout — the only network the turn end pays, for an idle agent alone. Any
 // read that fails, or cannot answer in time, is no pull request: its window is left as it is.
-// The branch's own pull request (null on the default branch) beside the agent's checkout reads; null when none could be read.
+// The branch's own pull request (null where the checkout's HEAD is not its head) beside the agent's checkout reads; null when none could be read.
 async function pullRequestRead($: Held, tty: string, until: number): Promise<{ own: { number: string; state: string; ready?: boolean; repo?: string } | null } | null> {
   const left = () => Math.max(1, until - Date.now())
   const config = await configDir($)
@@ -802,19 +802,29 @@ async function pullRequestRead($: Held, tty: string, until: number): Promise<{ o
   const git = await inTime($, () => runUntil($, ['git', '-C', cwd, 'symbolic-ref', '--short', '-q', 'HEAD'], until), until)
   const branch = git && git.exitCode === 0 ? String(git.stdout ?? '').trim() : ''
   if (!branch) return null
-  // The default branch names no pull request of the agent: an old pull request whose head is main
-  // (a release, merged long ago) is not the agent's. Read from the checkout's origin/HEAD, no network.
-  const base = await inTime($, () => runUntil($, ['git', '-C', cwd, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], until), until)
-  const defaultBranch = base && base.exitCode === 0 ? String(base.stdout ?? '').trim().replace(/^origin\//, '') : ''
-  // Only the branch's own read is skipped: the pull requests the dispatch record entrusts still count.
-  if (branch === defaultBranch) return { own: null }
+  const head = await inTime($, () => runUntil($, ['git', '-C', cwd, 'rev-parse', 'HEAD'], until), until)
+  const headSha = head && head.exitCode === 0 ? String(head.stdout ?? '').trim() : ''
   // One --json argument, the fields comma-joined: gh reads a second word as a second
   // positional and refuses the call. Run in the agent's checkout, the repository its
   // branch is pushed to.
-  const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', branch, '--json', 'number,state,labels,url'], until, cwd), until)
+  const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', branch, '--json', 'number,state,labels,url,headRefOid'], until, cwd), until)
   if (!gh || gh.exitCode !== 0) return null
   const own = pullRequestOf(branch, String(gh.stdout ?? ''))
-  return own === null ? null : { own }
+  if (own === null) return null
+  // The branch's pull request counts only where the checkout's HEAD is its head: a long-lived branch
+  // has moved past an old pull request. Only that read is skipped; the entrusted ones still count.
+  if (headSha === '' || headOf(String(gh.stdout ?? '')) !== headSha) return { own: null }
+  return { own }
+}
+
+// The head commit a pull request's `gh pr view --json headRefOid` answer names, or '' when none.
+function headOf(answer: string): string {
+  try {
+    const pr: unknown = JSON.parse(answer)
+    return typeof pr === 'object' && pr !== null && typeof (pr as { headRefOid?: unknown }).headRefOid === 'string' ? (pr as { headRefOid: string }).headRefOid : ''
+  } catch {
+    return ''
+  }
 }
 
 // Another pull request entrusted to an agent, read by its repository and number: its state and
