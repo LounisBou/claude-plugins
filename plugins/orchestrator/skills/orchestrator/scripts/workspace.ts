@@ -2,9 +2,12 @@
 //
 //   workspace.sh create <source-repo> <name> [--base <branch|origin/branch>]   prints the checkout's path; --base <branch> starts from origin/<branch>, the local branch only when origin has none
 //   workspace.sh pin <source-repo> <name> <ref> [--pr <n>]     a detached worktree at that commit, of the local material only the global excludes' files; prints its path
-//   workspace.sh delete <path> [--discard] [--push]            refuses unpushed work unless told; --push pushes its branches
+//   workspace.sh delete <path> [--discard] [--push] [--by <close|sweep|delete>]   refuses unpushed work unless told; --push pushes its branches
 //                                                              first; also removes the host's temporary directory of the
-//                                                              path when no live process uses it
+//                                                              path when no live process uses it; the archive line names
+//                                                              the command or sweep that made the deletion (`by`)
+//   workspace.sh keep <path>                                   the sweep never ends this checkout, whoever made it and whoever lives
+//                                                              (`close --keep-checkout` says so); only a `delete` does
 //   workspace.sh sweep [--deadline <seconds>] [--dry-run]      the leftovers, decided on facts: one line per item,
 //                                                              "deleted <path>" | "kept <path>: <reason>" (a dry run says "would delete"),
 //                                                              "pushed <branch> of <path>" before a checkout no one lives in goes
@@ -70,7 +73,7 @@ import {
   type LiveSession, type WorkspaceEntry,
 } from './lib/workspace-ledger.ts'
 
-export const USAGE = 'usage: workspace.sh {create|pin|delete|sweep|list|ledger} ... (see header)'
+export const USAGE = 'usage: workspace.sh {create|pin|delete|keep|sweep|list|ledger} ... (see header)'
 
 /** How long the process table is given to answer. */
 export const LSOF_MS = 20_000
@@ -875,9 +878,12 @@ export function underRoot(real: string, root: string): boolean {
 }
 
 export async function remove(ctx: Context, argv: readonly string[]): Promise<void> {
-  const { pos, opts } = parseLine(argv, 'delete', [], ['--discard', '--push'], 1)
+  const { pos, opts } = parseLine(argv, 'delete', ['--by'], ['--discard', '--push'], 1)
   const [path = ''] = pos
   if (path === '') throw new Refused('delete: usage: delete <path> [--discard]')
+  // Who asks, written on the archive line: `close` (a session's end), `sweep`, or `delete` (by hand).
+  const by = opts.get('--by') ?? 'delete'
+  if (!['close', 'sweep', 'delete'].includes(by)) throw new Refused(`delete: --by names close, sweep or delete, not '${by}'`)
   // A relative path is read against the caller's directory, both ways the shell read it: the
   // real path the guards judge, and the logical one a host directory may be named after.
   const logical = resolve(ctx.deps.cwd, path)
@@ -926,9 +932,36 @@ export async function remove(ctx: Context, argv: readonly string[]): Promise<voi
   }
   if (present(real)) throw new Refused(`delete: still there after the removal: ${real}`)
   const end = opts.has('--discard') ? 'discarded' : pushed.length > 0 ? 'pushed and removed' : 'removed'
-  ledgerWrite(ctx, `the close of ${real}`, () => closeEntry(ctx.root, real, end, iso(ctx.deps.now())))
+  ledgerWrite(ctx, `the close of ${real}`, () => closeEntry(ctx.root, real, end, iso(ctx.deps.now()), by))
   out(ctx, `deleted ${real}`)
   await removeHostTmp(ctx, [real, logical])
+}
+
+/**
+ * `keep <path>`: the checkout is marked on its ledger line (adopted first when it has none), so the sweep
+ * never ends it. A line that cannot be written is a refusal, never a mark that was not made.
+ */
+export async function markKept(ctx: Context, argv: readonly string[]): Promise<void> {
+  const { pos } = parseLine(argv, 'keep', [], [], 1)
+  const [path = ''] = pos
+  if (path === '') throw new Refused('keep: usage: keep <path>')
+  const logical = resolve(ctx.deps.cwd, path)
+  if (!isDir(logical)) throw new Refused(`keep: no such checkout: ${path}`)
+  const real = realpathSync(logical)
+  let root: string
+  try {
+    root = realpathSync(ctx.root)
+  } catch {
+    throw new Refused(`keep: cannot read the root ${ctx.root}`)
+  }
+  if (!underRoot(real, root)) throw new Refused(`keep: refusing a path outside ${root}: ${path}`)
+  try {
+    const held = adoptEntry(ctx.root, await adoptedEntry(ctx, real))
+    if (held.kept === undefined) changeEntry(ctx.root, real, e => ({ ...e, kept: iso(ctx.deps.now()) }))
+  } catch (error) {
+    throw new Refused(`keep: the ledger line of ${real} cannot be written: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  out(ctx, `kept ${real}`)
 }
 
 export async function list(ctx: Context, argv: readonly string[] = []): Promise<void> {
@@ -1112,7 +1145,7 @@ async function removeInSweep(s: Sweep, real: string, flags: readonly string[] = 
   const inner: Context = { ...ctx, deps: { ...ctx.deps, io: { out: t => lines.push(t), err: t => errs.push(t) } } }
   let done = true
   try {
-    await remove(inner, [real, ...flags])
+    await remove(inner, [real, '--by', 'sweep', ...flags])
   } catch (error) {
     if (!(error instanceof Refused)) throw error
     errs.push(`workspace: ${error.message}\n`)
@@ -1142,6 +1175,9 @@ async function sweepOne(s: Sweep, d: string): Promise<void> {
     // A line `create` wrote since the ledger was read wins over the adoption.
     if (!s.dry) ledgerWrite(ctx, `the line of ${real}`, () => { entry = adoptEntry(ctx.root, adopted) })
   }
+  // A checkout kept by `close --keep-checkout` stays whoever made it and whoever lives: a sweep once
+  // ended one its dead maker left, minutes after the close that said to keep it.
+  if (entry.kept !== undefined) return keep(ctx, real, `kept since ${entry.kept} by close --keep-checkout: only delete ends it`)
   const agent = agentIn(ctx, real)
   if (agent !== undefined) {
     if (!s.dry && entry.agent !== agent.name) ledgerWrite(ctx, `the agent of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, agent: agent.name })))
@@ -1321,7 +1357,7 @@ export async function sweep(ctx: Context, argv: readonly string[]): Promise<void
     // A line whose checkout is no longer there (removed by hand) is closed: the ledger names what exists.
     if (!dry) {
       for (const e of s.ledger.values()) {
-        if (!present(e.path)) ledgerWrite(ctx, `the close of ${e.path}`, () => closeEntry(ctx.root, e.path, 'gone', iso(ctx.deps.now())))
+        if (!present(e.path)) ledgerWrite(ctx, `the close of ${e.path}`, () => closeEntry(ctx.root, e.path, 'gone', iso(ctx.deps.now()), 'sweep'))
       }
     }
     for (const d of checkoutDirs(ctx.root)) {
@@ -1353,6 +1389,7 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
     if (cmd === 'create') await create(ctx, rest)
     else if (cmd === 'pin') await pin(ctx, rest)
     else if (cmd === 'delete') await remove(ctx, rest)
+    else if (cmd === 'keep') await markKept(ctx, rest)
     else if (cmd === 'sweep') await sweep(ctx, rest)
     else if (cmd === 'list') await list(ctx, rest)
     else if (cmd === 'ledger') await ledger(ctx, rest)
