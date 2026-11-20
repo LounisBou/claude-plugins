@@ -408,13 +408,18 @@ const checksText = (failed: readonly string[]): string => {
   return names.length === 0 ? 'a check' : names.length <= CHECKS_NAMED ? names.join(', ') : `${names.slice(0, CHECKS_NAMED).join(', ')} (+${names.length - CHECKS_NAMED})`
 }
 
+// A recorded wait is told as the operator's record words it: one line, no control character.
+const waitText = (on: string | undefined): string => (on ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim()
+
 /*
  * The line a pull request of the orchestration whose check failed at its head wakes its orchestrator with, as a conflict
- * does: the failed checks named, its agent to be told, or none on it.
+ * does: the failed checks named, its agent to be told, or none on it. With no agent, a line waiting on something names that wait.
  */
-export function ciFailingLine(c: { repo: string; pr: number; head: string; failed: readonly string[]; agent?: string | undefined; session?: string | undefined }): string {
-  const who = c.agent === undefined ? 'personne n\'y travaille, mets-y un agent'
-    : `dis-le à son agent ${c.agent}${c.session === undefined ? '' : ` (session ${c.session})`}`
+export function ciFailingLine(c: { repo: string; pr: number; head: string; failed: readonly string[]; agent?: string | undefined; session?: string | undefined; waits?: string | undefined }): string {
+  const wait = waitText(c.waits)
+  const who = c.agent !== undefined ? `dis-le à son agent ${c.agent}${c.session === undefined ? '' : ` (session ${c.session})`}`
+    : wait !== '' ? `attend ${wait}`
+    : 'personne n\'y travaille, mets-y un agent'
   return `[module] ${prKey(c.repo, c.pr)} CI en échec à ${c.head.slice(0, 7)} : ${checksText(c.failed)} ; ${who}.`
 }
 
@@ -580,7 +585,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     told.add(ciFailingKey(key, pr))
     const line = reading.kept.find(kept => prKey(kept.repo, kept.pr) === key)
     const agent = line === undefined ? undefined : agentsOf(line).find(name => reading.live.has(name))
-    lines.push(ciFailingLine({ repo: pr.repo, pr: pr.pr, head: pr.sha, failed: names, agent, session: agent === undefined ? undefined : await sessionOf($, agent) }))
+    // A line waiting on something, with no agent on it, names that wait.
+    const waits = line?.status === 'waiting' ? line.on : undefined
+    lines.push(ciFailingLine({ repo: pr.repo, pr: pr.pr, head: pr.sha, failed: names, agent, session: agent === undefined ? undefined : await sessionOf($, agent), waits }))
   }
   for (const u of anomalies) {
     if (told.has(anomalyKey(u))) continue
