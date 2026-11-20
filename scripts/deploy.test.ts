@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { describe, it } from 'node:test'
-import { DEPLOYS_DIR, greenCommit, isNew, KEEP_MS, MARKETPLACE, parseState, prunable, run, stamped, stampTree, statusLine, versionsIn, type Host, type State } from './deploy.ts'
+import { DEPLOYS_DIR, greenCommit, isNew, KEEP_MS, MARKETPLACE, parseState, prunable, run, sharingConfigs, stamped, stampTree, statusLine, versionsIn, type Host, type State } from './deploy.ts'
 
 const A = 'a'.repeat(40)
 const B = 'b'.repeat(40)
@@ -41,6 +41,10 @@ interface Fake {
   failOn: string
   /** The installed tree's own `--status` fails. */
   failSmoke: boolean
+  /** The configuration directories the marketplace was pointed in, in order. */
+  readonly repointed: string[]
+  /** The repoint in the configuration directory of this name throws. */
+  failRepoint: string
   /** The plugins of the commits extracted. */
   tree: string[]
   /** The installed plugins of the marketplace, by id, with the version the host records. */
@@ -59,6 +63,8 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
     idleUpdate: false,
     failOn: '',
     failSmoke: false,
+    repointed: [],
+    failRepoint: '',
     tree: ['alpha'],
     versions: new Map([[ALPHA, '1.2.3']]),
     dead: new Set(),
@@ -74,7 +80,9 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
       smoke: dir => {
         if (self.failSmoke) throw new Error(`${dir}/scripts/deploy.ts --status: SyntaxError`)
       },
-      repoint: dir => {
+      repoint: (dir, config) => {
+        if (basename(config) === self.failRepoint) throw new Error(`repoint of ${basename(config)} refused`)
+        self.repointed.push(config)
         pointed = dir
         self.calls.push(`repoint ${dir.slice(-1)}`)
       },
@@ -161,6 +169,68 @@ describe('the stamp', () => {
     mkdirSync(join(bare, 'plugins', 'gamma', '.claude-plugin'), { recursive: true })
     writeFileSync(join(bare, 'plugins', 'gamma', '.claude-plugin', 'plugin.json'), '{}')
     assert.throws(() => versionsIn(bare), /no version/)
+  })
+})
+
+/** A home with `.claude` (the plugins), `.claude-bis` and `.claude-ter` (links to them), `.claude-own` (plugins of its own) and `.other` (not a sibling). */
+function home(): string {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'home-')))
+  mkdirSync(join(root, '.claude', 'plugins'), { recursive: true })
+  for (const name of ['.claude-bis', '.claude-ter']) {
+    mkdirSync(join(root, name))
+    symlinkSync(join(root, '.claude', 'plugins'), join(root, name, 'plugins'))
+  }
+  mkdirSync(join(root, '.claude-own', 'plugins'), { recursive: true })
+  mkdirSync(join(root, '.claude-bare'))
+  mkdirSync(join(root, '.other'))
+  symlinkSync(join(root, '.claude', 'plugins'), join(root, '.other', 'plugins'))
+  return root
+}
+
+describe('the configurations sharing the plugins', () => {
+  it('are the config and each sibling whose plugins resolve to the same directory', () => {
+    const root = home()
+    assert.deepEqual(sharingConfigs(join(root, '.claude')), [join(root, '.claude'), join(root, '.claude-bis'), join(root, '.claude-ter')])
+  })
+
+  it('are the same, the owner first, whichever of them runs', () => {
+    const root = home()
+    const all = [join(root, '.claude'), join(root, '.claude-bis'), join(root, '.claude-ter')]
+    assert.deepEqual(sharingConfigs(join(root, '.claude-bis')), all)
+    assert.deepEqual(sharingConfigs(join(root, '.claude-ter')), all)
+  })
+
+  it('are the config alone when it has no plugins directory', () => {
+    const root = home()
+    assert.deepEqual(sharingConfigs(join(root, '.claude-bare')), [join(root, '.claude-bare')])
+  })
+
+  it('are reached by the deploy: the marketplace is pointed in each, the cron\'s own first, and a sibling with plugins of its own is left alone', () => {
+    const root = home()
+    const box = { env: { CLAUDE_CONFIG_DIR: join(root, '.claude') }, root: join(root, '.claude', DEPLOYS_DIR, MARKETPLACE), out: [] as string[], err: [] as string[] }
+    const f = fake()
+    assert.equal(deploy(box, f.host), 0)
+    assert.deepEqual(f.repointed.map(config => basename(config)), ['.claude', '.claude-bis', '.claude-ter'])
+    assert.equal(f.calls.filter(call => call.startsWith('update')).length, 1)
+  })
+
+  it('are reached by a deploy run from a sibling: the owner is pointed first', () => {
+    const root = home()
+    const box = { env: { CLAUDE_CONFIG_DIR: join(root, '.claude-bis') }, root: join(root, '.claude-bis', DEPLOYS_DIR, MARKETPLACE), out: [] as string[], err: [] as string[] }
+    const f = fake()
+    assert.equal(deploy(box, f.host), 0)
+    assert.deepEqual(f.repointed.map(config => basename(config)), ['.claude', '.claude-bis', '.claude-ter'])
+  })
+
+  it('fail the run with the name of the one that cannot be pointed, the others still pointed', () => {
+    const root = home()
+    const box = { env: { CLAUDE_CONFIG_DIR: join(root, '.claude') }, root: join(root, '.claude', DEPLOYS_DIR, MARKETPLACE), out: [] as string[], err: [] as string[] }
+    const f = fake()
+    f.failRepoint = '.claude-bis'
+    assert.equal(deploy(box, f.host), 1)
+    assert.match(box.err.join('\n'), /\.claude-bis: repoint of \.claude-bis refused.*run npm run deploy again/)
+    assert.deepEqual(f.repointed.map(config => basename(config)), ['.claude', '.claude-ter'])
+    assert.equal(existsSync(join(box.root, 'current')), false)
   })
 })
 

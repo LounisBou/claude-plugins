@@ -4,7 +4,9 @@
 // by its version. So each green commit is extracted, once, into a directory of its own that never
 // changes, its manifests' versions stamped with the commit (`0.23.2+e458d00`), and the marketplace
 // is pointed at it: a new session reads the new directory, a running one keeps the one it loaded,
-// and the stamp gives each plugin a new version, so the host's copy (`installPath`) follows.
+// and the stamp gives each plugin a new version, so the host's copy (`installPath`) follows. The
+// marketplace is pointed at it in every configuration directory sharing this one's plugins
+// (`~/.claude-*` whose `plugins` is a link to it): each keeps its own settings.
 //
 //   npm run deploy                          installs the newest green commit, when not installed yet
 //   npm run deploy -- --commit <sha>        installs that commit (a full sha), when green, even an older one
@@ -21,7 +23,7 @@
 // another machine reads. Reads GitHub through `gh`, the host through `claude plugin`.
 import { execFileSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { configDir } from '../packages/core/src/paths.ts'
 import { readText, withLock, writeAtomic } from '../packages/core/src/store.ts'
 import { lockOf } from '../packages/core/src/store-io.ts'
@@ -130,6 +132,31 @@ export function statusLine(state: State, timeZone?: string): string {
   return `${state.marketplace} ${current.commit.slice(0, 7)} installed ${format.format(new Date(current.at))}${before}${pending}: ${versions}${failure}`
 }
 
+/**
+ * The configuration directories whose `plugins` resolve to the same directory as `config`'s, the owner of
+ * that directory first (`~/.claude`) and its `<owner>-*` siblings after, whichever of them runs: the
+ * ones a marketplace pointed at in one is read from in all. `config` alone when it has no `plugins`.
+ */
+export function sharingConfigs(config: string): string[] {
+  const real = realOf(join(config, 'plugins'))
+  if (real === undefined) return [config]
+  const home = dirname(real)
+  const owner = realOf(join(home, 'plugins')) === real ? home : config
+  const parent = dirname(owner)
+  const prefix = `${basename(owner)}-`
+  const siblings = readdirSync(parent).filter(name => name.startsWith(prefix)).sort().map(name => join(parent, name))
+  const sharing = [owner, ...siblings.filter(sibling => realOf(join(sibling, 'plugins')) === real)]
+  return sharing.some(each => realOf(each) === realOf(config)) ? sharing : [...sharing, config]
+}
+
+function realOf(path: string): string | undefined {
+  try {
+    return realpathSync(path)
+  } catch {
+    return undefined
+  }
+}
+
 /** What the deploy reaches outside: GitHub, the host's plugin commands, the clock. */
 export interface Host {
   /** The API's JSON answer at `path`. */
@@ -138,8 +165,8 @@ export interface Host {
   readonly extract: (repo: string, commit: string, into: string) => void
   /** Runs the tree's own `scripts/deploy.ts --status`, which the scheduler runs once it is installed; throws when it fails. */
   readonly smoke: (dir: string) => void
-  /** Points the marketplace at the directory. */
-  readonly repoint: (dir: string) => void
+  /** Points the marketplace of the configuration directory `config` at the directory. */
+  readonly repoint: (dir: string, config: string) => void
   /** The installed plugins: `<name>@<marketplace>` and the version the host records. */
   readonly installed: () => { id: string; version: string }[]
   /** Updates one installed plugin to the version its marketplace now names. */
@@ -149,7 +176,7 @@ export interface Host {
   readonly now: () => number
 }
 
-function commandOf(file: string, args: readonly string[], options: { input?: Buffer; encoding?: 'utf8' } = {}): string | Buffer {
+function commandOf(file: string, args: readonly string[], options: { input?: Buffer; encoding?: 'utf8'; env?: NodeJS.ProcessEnv } = {}): string | Buffer {
   return execFileSync(file, args, { ...options, stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], timeout: COMMAND_TIMEOUT_MS, maxBuffer: 1 << 30 })
 }
 
@@ -162,7 +189,7 @@ export function processHost(): Host {
       commandOf('tar', ['-xzf', '-', '-C', into, '--strip-components=1'], { input: Buffer.from(archive) })
     },
     smoke: dir => void commandOf(process.execPath, ['--experimental-strip-types', '--no-warnings', join(dir, 'scripts', 'deploy.ts'), '--status']),
-    repoint: dir => void commandOf('claude', ['plugin', 'marketplace', 'add', dir]),
+    repoint: (dir, config) => void commandOf('claude', ['plugin', 'marketplace', 'add', dir], { env: { ...process.env, CLAUDE_CONFIG_DIR: config } }),
     installed: () => {
       const list: unknown = JSON.parse(String(commandOf('claude', ['plugin', 'list', '--json'], { encoding: 'utf8' })))
       if (!Array.isArray(list)) throw new Error('claude plugin list --json is not a list')
@@ -194,6 +221,8 @@ function optionOf(args: readonly string[], name: string): string | undefined {
 }
 
 interface Paths {
+  /** The configuration directory the run belongs to. */
+  readonly config: string
   readonly root: string
   readonly state: string
 }
@@ -236,6 +265,19 @@ function readState(paths: Paths): State | undefined {
   return text === undefined ? undefined : parseState(text)
 }
 
+/** Points the marketplace at `dir` in every configuration directory sharing the plugins of `config`, `config` first; one that cannot be pointed fails the run, named. */
+function repointAll(host: Host, dir: string, config: string): void {
+  const failures: string[] = []
+  for (const each of sharingConfigs(config)) {
+    try {
+      host.repoint(dir, each)
+    } catch (error) {
+      failures.push(`${each}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  if (failures.length > 0) throw new Error(`${failures.join('; ')}: run npm run deploy again`)
+}
+
 /** Points the marketplace and the `current` link at `commit`'s directory, then updates every plugin of it. */
 function install(paths: Paths, host: Host, state: State, io: Io): State {
   const commit = state.history[0]?.commit ?? ''
@@ -245,7 +287,7 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
   } catch (error) {
     throw new Error(`${commit.slice(0, 7)} does not run: ${error instanceof Error ? error.message : String(error)}`)
   }
-  host.repoint(dir)
+  repointAll(host, dir, paths.config)
   const link = join(paths.root, `current${TEMPORARY}${process.pid}`)
   remove(link)
   symlinkSync(dir, link)
@@ -340,8 +382,9 @@ function prune(paths: Paths, state: State, now: number): void {
 }
 
 export function run(args: readonly string[], io: Io, host: Host = processHost()): number {
-  const root = join(configDir(io.env), DEPLOYS_DIR, MARKETPLACE)
-  const paths: Paths = { root, state: join(root, DEPLOY_STATE_FILE) }
+  const config = configDir(io.env)
+  const root = join(config, DEPLOYS_DIR, MARKETPLACE)
+  const paths: Paths = { config, root, state: join(root, DEPLOY_STATE_FILE) }
   try {
     if (args.includes('--status')) {
       const state = readState(paths)
