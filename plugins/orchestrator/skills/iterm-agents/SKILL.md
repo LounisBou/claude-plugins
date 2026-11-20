@@ -18,13 +18,12 @@ Its commands are `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`,
 
 - **tty numbers are recycled**: a freshly closed `/dev/ttys000` can be reassigned to the next spawned tab. Never reuse a session's tty after its close.
 - **A fresh tab is titled « Chat » for a few seconds**: to find a session right after a spawn, read `list`'s name column, not its title.
-- The spawned session takes a few seconds to appear in `ListAgents`.
 
 ## An agent is a window of its orchestrator's home session, or a tab
 
-An orchestrator's tab is a real terminal that holds a tmux session of its own, its **home session**: the orchestrator runs in window 0 and **every agent it spawns is a window of that session**, one server per orchestrator tab. The orchestrator command converts its own tab into the home session at the end of the turn that names it, resuming the conversation in window 0; the operator types nothing. A successor that took over in a plain tab converts its tab the same way at the end of its takeover turn; its tab agents stay. A session that is neither a window of the home session nor a tab in the window the operator reads is one he cannot see, place or close: never hand him one. **Never spawn an agent outside the home session and outside iTerm2** — not through a tmux server of your own, not through `screen`, not by hand.
+An orchestrator's tab is a real terminal that holds a tmux session of its own, its **home session**: the orchestrator runs in window 0 and **every agent it spawns is a window of that session**, one server per orchestrator tab. A successor that took over in a plain tab converts its tab the same way at the end of its takeover turn; its tab agents stay. A session that is neither a window of the home session nor a tab in the window the operator reads is one he cannot see, place or close: never hand him one. **Never spawn an agent outside the home session and outside iTerm2** — not through a tmux server of your own, not through `screen`, not by hand.
 
-- **Windows are a placement, not a rung.** Which one a spawn gets is decided by the caller's own session (below), never by a failure. When both iTerm2 rungs are down, the app is wedged and has a one-keystroke remedy: the launcher names it and stops, never offering `tmux` as a way round for any tab it must make. Stopping loudly on a fault with a known remedy IS the repair.
+- **Windows are a placement, not a rung.** Which one a spawn gets is decided by the caller's own session (below), never by a failure. When both iTerm2 rungs are down, the app is wedged and has a one-keystroke remedy: the launcher names it and stops, never offering `tmux` as a way round for any tab it must make.
 - **One agent = one window (or one tab), never a pane.** A pane shares a window's title and fate; an operator's layout is no place for an agent.
 - **The auditor stays an iTerm2 tab.** It is read beside the build, not part of it, and its place directly right of the orchestrator it audits is a tab position that means nothing in a window bar.
 - **The operator switches** by clicking a block of the tab bar, or with `C-b n` and `C-b p` (next and previous window). The windows keep their numbers, 0 for the orchestrator and 1, 2, … after it, though the bar shows none, so `C-b <digit>` still selects one. `C-b C-b` sends a Ctrl-B to the program in the pane, which is how the host's « run in background » key is typed.
@@ -33,7 +32,7 @@ An orchestrator's tab is a real terminal that holds a tmux session of its own, i
 
 ## Reading the placement
 
-The launcher chooses the terminal from where the caller runs: **inside a home session** — `$TMUX` set and the session carrying the mark the plugin's configuration gives it — an agent is a window made with `new-window -d`, which never takes the operator's view; **anywhere else** (a plain tab, or a tmux session the operator made by hand) it is an iTerm2 tab, exactly as before. A tmux that cannot answer inside a pane is a refusal that names the cause, never a silent fall to the tab.
+The launcher chooses the terminal from where the caller runs: **inside a home session** — `$TMUX` set and the session carrying the mark the plugin's configuration gives it — an agent is a window made with `new-window -d`, which never takes the operator's view; **anywhere else** (a plain tab, or a tmux session the operator made by hand) it is an iTerm2 tab, exactly as before.
 
 ## Layout convention
 

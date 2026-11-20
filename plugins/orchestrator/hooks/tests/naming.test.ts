@@ -7,7 +7,7 @@ import type { Reply } from 'claude-code/testing'
 import { journalled, logLineOf } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type CapturedOn } from '../../core/capture.ts'
 import type { Events, Host, Noun, ProcessRunInit, ToolSpec } from '../../core/host.ts'
-import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, homeArgv, resumeText, HOME_MOVE_MS, runsTakeover, TAKEN_OVER_TEXT, TAKEN_OVER_STAYED_TEXT, TAKEN_OVER_HOME_TEXT } from '../naming.ts'
+import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, homeArgv, resumeText, HOME_MOVE_MS, HOME_GRACE_MS, movedPromptLine, runsTakeover, TAKEN_OVER_TEXT, TAKEN_OVER_STAYED_TEXT, TAKEN_OVER_HOME_TEXT } from '../naming.ts'
 
 type World = Host<Noun>
 
@@ -39,6 +39,8 @@ function mounted() {
     'tool.call:end': callOf(end),
     'tool.call:takeover': callOf(takeover),
     'turn.complete': callOf(complete),
+    'prompt.submit': callOf(hookOf(hooks, 'prompt.submit', {})),
+    'command.run': callOf(hookOf(hooks, 'command.run', { command: 'exit' })),
   }
   const matchers = {
     'session.start': start.matcher, 'tool.call': rename.matcher, 'tool.call:end': end.matcher,
@@ -254,6 +256,231 @@ test("an orchestrator's naming turn moves it into its home session, then ends it
   expect(fx.processes).toEqual([{ argv: ['/plugin/skills/iterm-agents/scripts/iterm-agent.sh', 'home', '--session', 'S-1', '--name', 'Orch: phase-3', '--prompt', resumeText('Orch: phase-3')], opts: { timeoutMs: HOME_MOVE_MS } }])
   expect(fx.order).toEqual(['command:rename', 'command:exit'])
   expect(fx.submits).toEqual([])
+})
+
+// A prompt typed once the move is made never starts a turn in the old host: the old host would run
+// it ahead of the queued exit and go on in its old tab, window 0 waiting for a session that never
+// ends. The launcher says how long window 0 waits (`wait:`), and the module holds the typed prompts
+// no longer than that, the old host having then failed to end.
+const MOVED_WAITING = { exitCode: 0, stdout: 'moved: orch-S1, shown on /dev/ttys970\nwait: 120\n' }
+const typed = { origin: { kind: 'composer' }, text: 'and the next phase?' }
+
+// A host with the clock and the toast a held move reads: the timers armed, the toasts said.
+function heldDollar(answer: Parameters<typeof movingDollar>[0], gate?: Promise<void>) {
+  const fx = movingDollar(answer)
+  const timers: { ms: number; run: () => unknown }[] = []
+  const toasts: string[] = []
+  const dollar: World = {
+    ...fx.dollar,
+    clock: { ...fx.dollar.clock, after: (ms: number, run: () => unknown) => { timers.push({ ms, run }); return {} } },
+    ui: { ...fx.dollar.ui, toast: (text: string) => { toasts.push(text) } },
+    process: {
+      ...fx.dollar.process,
+      run: async (argv: readonly string[], opts?: ProcessRunInit) => { if (argv[1] === 'home') await gate; return fx.dollar.process.run(argv, opts) },
+    },
+  }
+  return { ...fx, dollar, timers, toasts }
+}
+
+test('a prompt typed after the move is refused with the new tab named, and the old host ends', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(MOVED_WAITING)
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.order).toEqual(['command:rename', 'command:exit'])
+  const answer = await handlers['prompt.submit'](fx.dollar, typed, noNext)
+  expect(answer).toEqual({ drop: movedPromptLine('Orch: phase-3') })
+  expect(movedPromptLine('Orch: phase-3')).toContain('Orch: phase-3')
+  // A delivery that is not the operator's own typing goes on: only his prompt is turned away.
+  const peer = { origin: { kind: 'peer' }, text: 'a report' }
+  expect(await handlers['prompt.submit'](fx.dollar, peer, pass)).toBe(peer)
+})
+
+test('a turn that ends after the move asks the exit again, so the old host ends whatever ran in it', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(MOVED_WAITING)
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.order).toEqual(['command:rename', 'command:exit'])
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  await handlers['turn.complete'](fx.dollar, { isAborted: true, reason: 'aborted' }, pass)
+  expect(fx.order).toEqual(['command:rename', 'command:exit', 'command:exit', 'command:exit'])
+  // A subagent's turn is inside the main one: it asks nothing.
+  await handlers['turn.complete'](fx.dollar, { agentId: 'sub' }, pass)
+  expect(fx.runs.length).toBe(4)
+  // Once the wait is over and the session is still here, a turn end asks nothing more.
+  await fx.timers[0]!.run()
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.runs.length).toBe(4)
+})
+
+test('a prompt typed while the move is still being made waits for its answer', async () => {
+  const { handlers } = mounted()
+  let release: () => void = () => undefined
+  const fx = heldDollar(MOVED_WAITING, new Promise<void>(done => { release = done }))
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
+  const turn = handlers['turn.complete'](fx.dollar, {}, pass)
+  const prompt = handlers['prompt.submit'](fx.dollar, typed, noNext)
+  release()
+  await turn
+  expect(await prompt).toEqual({ drop: movedPromptLine('Orch: phase-3') })
+  // The same prompt, the move having failed, is the session's own turn.
+  const failed = heldDollar({ exitCode: 1, stdout: '', stderr: 'ERROR: home: no tab' }, Promise.resolve())
+  const again = mounted()
+  await again.handlers['tool.call'](failed.dollar, { name: 'Orch: phase-3' })
+  await again.handlers['turn.complete'](failed.dollar, {}, pass)
+  expect(await again.handlers['prompt.submit'](failed.dollar, typed, pass)).toBe(typed)
+})
+
+test('a timer that cannot be armed holds no prompt', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(MOVED_WAITING)
+  const broken: World = { ...fx.dollar, clock: { ...fx.dollar.clock, after: () => { throw new Error('no clock') } } }
+  await handlers['tool.call'](broken, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](broken, {}, pass)
+  expect(await handlers['prompt.submit'](broken, typed, pass)).toBe(typed)
+})
+
+test('a move that says no wait holds no prompt and arms no timer', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar({ exitCode: 0, stdout: 'moved: orch-S1, shown on /dev/ttys970\n' })
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.timers).toEqual([])
+  expect(await handlers['prompt.submit'](fx.dollar, typed, pass)).toBe(typed)
+})
+
+test('an old host that does not end says so, takes prompts again, and moves cleanly on the next naming turn', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(MOVED_WAITING)
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  // Armed once window 0's wait is over, with its grace: the timer firing means the host is still here.
+  expect(fx.timers.map(t => t.ms)).toEqual([120_000 + HOME_GRACE_MS])
+  expect(fx.toasts).toEqual([])
+  await fx.timers[0]!.run()
+  expect(fx.toasts.length).toBe(1)
+  expect(fx.toasts[0]).toContain('did not end')
+  expect(fx.logged.some(l => l.includes('the old session did not end within 120s') && l.includes('stays here'))).toBe(true)
+  expect(await handlers['prompt.submit'](fx.dollar, typed, pass)).toBe(typed)
+  // The next naming turn tries the whole move again.
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.processes.length).toBe(2)
+  expect(fx.order.filter(o => o === 'command:exit').length).toBe(2)
+  expect(await handlers['prompt.submit'](fx.dollar, typed, noNext)).toEqual({ drop: movedPromptLine('Orch: phase-3') })
+})
+
+test('an exit the failed move left queued is dropped when it runs late, and never ends the session', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(MOVED_WAITING)
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  // A turn that ended past the move asked the exit again: two are queued in the host.
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  await fx.timers[0]!.run()
+  const fromPlugin = { command: 'exit', args: '', origin: { kind: 'plugin', name: 'orchestrator' } }
+  const ran = (e: typeof fromPlugin) => handlers['command.run'](fx.dollar, e, async () => ({ text: 'exit ran' }))
+  // The host goes idle later and runs what was queued: both are dropped, the session goes on.
+  expect(await ran(fromPlugin)).toEqual({ text: expect.stringContaining('dropped') })
+  expect(await ran(fromPlugin)).toEqual({ text: expect.stringContaining('dropped') })
+  expect(fx.logged.filter(l => l.includes('exit queued by the failed move')).length).toBe(2)
+  // An exit that is not left over from the move runs: the operator's own, and a later one of the module.
+  expect(await ran(fromPlugin)).toEqual({ text: 'exit ran' })
+  expect(await ran({ command: 'exit', args: '', origin: { kind: 'composer' } } as typeof fromPlugin)).toEqual({ text: 'exit ran' })
+})
+
+test('an exit runs when the move did not fail', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(MOVED_WAITING)
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: phase-3' })
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  const e = { command: 'exit', args: '', origin: { kind: 'plugin', name: 'orchestrator' } }
+  expect(await handlers['command.run'](fx.dollar, e, async () => ({ text: 'exit ran' }))).toEqual({ text: 'exit ran' })
+})
+
+test("a successor's move holds its typed prompts the same way, naming the tab without a name", async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(MOVED_WAITING)
+  await handlers['tool.call:takeover'](fx.dollar, { command: TAKEOVER_LINE }, async () => ({ result: 'printed' }))
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(await handlers['prompt.submit'](fx.dollar, typed, noNext)).toEqual({ drop: movedPromptLine('') })
+})
+
+// An orchestrator the operator resumed outside its home session is already named
+// Orch: …, so no turn of its own calls the rename: the end of its first uninterrupted turn moves it.
+const RESUMED = { exitCode: 0, stdout: 'moved: orch-S1, shown on /dev/ttys970\nwait: 120\n' }
+
+test('an orchestrator resumed outside its home session is moved at the end of its first turn, whatever the turn did', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(RESUMED)
+  await handlers['session.start'](fx.dollar, { cwd: '/w' }, pass)
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.processes).toEqual([{ argv: ['/plugin/skills/iterm-agents/scripts/iterm-agent.sh', 'home', '--session', 'S-1', '--name', 'Orch: plugins', '--prompt', resumeText('Orch: plugins')], opts: { timeoutMs: HOME_MOVE_MS } }])
+  expect(fx.order).toEqual(['command:exit'])
+  // Once: the next turn end moves nothing more.
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.processes.length).toBe(1)
+})
+
+test('an interrupted first turn moves nothing, and the next turn end moves it', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(RESUMED)
+  await handlers['session.start'](fx.dollar, { cwd: '/w' }, pass)
+  await handlers['turn.complete'](fx.dollar, { isAborted: true, reason: 'aborted' }, pass)
+  expect(fx.processes).toEqual([])
+  await handlers['turn.complete'](fx.dollar, { agentId: 'sub' }, pass)
+  expect(fx.processes).toEqual([])
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.processes.length).toBe(1)
+  expect(fx.order).toEqual(['command:exit'])
+})
+
+test('a naming turn that was interrupted is moved at the next turn end, the session being named already', async () => {
+  const { handlers } = mounted()
+  const fx = heldDollar(RESUMED)
+  await handlers['session.start'](fx.dollar, { cwd: '/w' }, pass)
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: plugins' })
+  await handlers['turn.complete'](fx.dollar, { isAborted: true, reason: 'aborted' }, pass)
+  expect(fx.processes).toEqual([])
+  await handlers['turn.complete'](fx.dollar, {}, pass)
+  expect(fx.processes.length).toBe(1)
+  expect(fx.order).toEqual(['command:exit'])
+})
+
+test('a resumed orchestrator the launcher keeps, or whose move fails, is tried once and goes on where it is', async () => {
+  for (const answer of [{ exitCode: 0, stdout: 'stay: this session already runs in a home session\n' },
+    { exitCode: 1, stdout: '', stderr: 'ERROR: home: this session is not a tab of iTerm2s' }, new Error('spawn failed')]) {
+    const { handlers } = mounted()
+    const fx = heldDollar(answer)
+    await handlers['session.start'](fx.dollar, { cwd: '/w' }, pass)
+    await handlers['turn.complete'](fx.dollar, {}, pass)
+    await handlers['turn.complete'](fx.dollar, {}, pass)
+    expect(fx.processes.length).toBe(1)
+    expect(fx.order).toEqual([])
+    expect(fx.submits).toEqual([])
+  }
+})
+
+test('a session the launcher opened, or that is no orchestrator, is not moved by a turn end alone', async () => {
+  const spawned = mounted()
+  const fx = heldDollar(RESUMED)
+  const dollar: World = { ...fx.dollar, env: { get: async (name: string) => (name === 'ORCHESTRATOR_SPAWNED' ? '1' : undefined) } }
+  await spawned.handlers['session.start'](dollar, { cwd: '/w' }, pass)
+  await spawned.handlers['turn.complete'](dollar, {}, pass)
+  expect(fx.processes).toEqual([])
+  for (const name of ['Coord: main', 'Agent: x', 'plugins']) {
+    const { handlers } = mounted()
+    const fy = movingDollar(RESUMED, name)
+    await handlers['session.start'](fy.dollar, { cwd: '/w' }, pass)
+    await handlers['turn.complete'](fy.dollar, {}, pass)
+    expect(fy.processes, name).toEqual([])
+  }
+  // A session this module never saw start is left to the rename and the takeover.
+  const unseen = mounted()
+  const fz = heldDollar(RESUMED)
+  await unseen.handlers['turn.complete'](fz.dollar, {}, pass)
+  expect(fz.processes).toEqual([])
 })
 
 test('a session the launcher keeps, or a move that fails, is resumed where it is', async () => {

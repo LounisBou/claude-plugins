@@ -4028,13 +4028,18 @@ def cmd_home(args):
                "--resumed %s >> %s 2>&1 & watcher=$!; "
                % (shq(LAUNCHER_SH), shq(own), shq(old_id), shq(args.session),
                   shq(os.path.join(STATE_DIR, "home-release.log")))) if old_id else ""
+    # The old session did not end in its wait: the launcher closes this server and its tab, so
+    # no empty tab is left, and the hooks module of the old session says so there.
+    abandon = ("%s home-release --abandon %s >> %s 2>&1 || echo 'the home server could not be "
+               "closed: close this tab by hand'; "
+               % (shq(LAUNCHER_SH), shq(socket), shq(os.path.join(STATE_DIR, "home-release.log"))))
     launch = ("cd %s && i=0 && while kill -0 %s 2>/dev/null; do "
               "if [ $i -ge %d ]; then echo 'the session did not end in its old place: it "
-              "goes on there'; sleep 10; exit 1; fi; sleep 0.2; i=$((i+1)); done; "
+              "goes on there'; %ssleep 10; exit 1; fi; sleep 0.2; i=$((i+1)); done; "
               "%s%s; rc=$?; [ $rc -eq 0 ] && exit 0; %sprintf 'the resume of session %%s failed "
               "(exit %%s); resume it by hand: %%s\\n' %s \"$rc\" %s; "
               "exec \"${SHELL:-/bin/sh}\" -l"
-              % (shq(cwd), pid, HOME_WAIT * 5, release, resume_line,
+              % (shq(cwd), pid, HOME_WAIT * 5, abandon, release, resume_line,
                  "kill $watcher 2>/dev/null; " if old_id else "", shq(args.session),
                  shq("cd %s && %s" % (shq(cwd), resume_line))))
     if DRY_RUN:
@@ -4048,9 +4053,13 @@ def cmd_home(args):
     make_home(socket, args.name, cwd, program, "home")
     if no_tab:
         print("moved: %s (no tab: attach with %s -L %s attach)" % (socket, TMUX_BIN, socket))
+        print("wait: %d" % HOME_WAIT)
         return
     tty, _ = open_home_tab(socket, args.name, own, "home")
     print("moved: %s, shown on %s" % (socket, tty))
+    # How long window 0 waits for the session to end where it runs: the module holds what the
+    # operator types until then, and says the move failed past it.
+    print("wait: %d" % HOME_WAIT)
 
 
 def resumed_host_running(pane_tty, session_id):
@@ -4062,12 +4071,50 @@ def resumed_host_running(pane_tty, session_id):
     return bool(pid)
 
 
+def abandon_home(socket):
+    """Window 0's own failure, run by its script once the session did not end in its old place
+    within HOME_WAIT: the home server `socket` is ended and the tab that shows it closed, so the
+    move leaves nothing for the operator to close, and the session, still where it was, can be
+    moved again by the next naming turn. Detached from the server it ends: the server's end
+    hangs up every process of its windows, this one included."""
+    if not socket.startswith(HOME_SOCKET_PREFIX):
+        die("home-release: --abandon names a home server (%s...), not '%s'"
+            % (HOME_SOCKET_PREFIX, socket))
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    # The tab's tty is the client's, read before the server ends: afterwards no client is listed.
+    ttys = []
+    try:
+        done = tmux_call(["-L", socket, "list-clients", "-F", "#{client_tty}"])
+        if done.returncode == 0:
+            ttys = done.stdout.split()
+    except TmuxError:
+        pass
+    ended = kill_watched_home(socket)
+    closed = 0
+    for tty in ttys:
+        try:
+            if ITERM.find(tty):
+                ITERM.close(tty, "")
+                closed += 1
+        except SystemExit:
+            print("home-release: the tab on %s could not be closed: close it by hand" % tty,
+                  file=sys.stderr)
+        trace_home(socket, "server", "abandoned (the session did not end in its old place)", tty)
+    print("home-release: the session did not end in its old place; the server %s was %s and %d "
+          "tab(s) closed" % (socket, "ended" if ended else "NOT ended", closed))
+    if not ended:
+        die("home-release: the home server %s was NOT ended: end it with %s -L %s kill-server"
+            % (socket, TMUX_BIN, socket))
+
+
 def cmd_home_release(args):
     """Close the tab a moved orchestrator left, once its resumed session is proved running:
     run by a watcher of window 0, beside the resume. Guarded by the proof (the resumed host on
     window 0's tty, or in the host's registry), by the tab's own session id, read before the
     move, and by the process table: a tab with a host still on it, or whose session is
     another's by then, is left as it is."""
+    if args.abandon:
+        return abandon_home(args.abandon)
     if not args.tty or not args.session_id or not args.pane_tty or not args.resumed:
         die("home-release: --tty, --session-id, --pane-tty and --resumed are required")
     if host_cli_on(args.tty) is not None:
@@ -4584,7 +4631,10 @@ def shq(s):
     return q
 
 
-TRUST_FILE = os.environ.get("ORCHESTRATOR_TRUST_FILE") or os.path.join(os.path.expanduser("~"), ".claude.json")
+# The host's record of the directories it trusts: its own `.claude.json`, which lives in the account's
+# configuration directory when CLAUDE_CONFIG_DIR names one (a second account), else in the home.
+TRUST_FILE = os.environ.get("ORCHESTRATOR_TRUST_FILE") or os.path.join(
+    os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~"), ".claude.json")
 
 
 def directory_is_trusted(path):
