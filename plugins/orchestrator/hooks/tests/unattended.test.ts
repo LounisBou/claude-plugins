@@ -150,10 +150,31 @@ test('a Ready pull request leaves the operator\'s line only when github\'s auto-
     expect(kept.shown).toEqual(waiting)
     expect(kept.line).toBe('Attend ton geste : acme/app#8 (en pause), acme/app#9 (Ready)')
   }
+  // A list that cannot be read says so in the log, once.
+  const broken = world({ forge, autoMerge: { result: '/data/auto-merge.json: malformed', isError: true } })
+  await readUnattended(broken.dollar, 's-orch', NOW)
+  expect(broken.logs.filter(text => text.includes('auto-merge list unread'))).toHaveLength(1)
   // The list is asked only when a pull request carries Ready.
   const none = world({ forge: labelled({ 8: ['On Hold'] }), autoMerge: { result: 'acme/app' } })
   await readUnattended(none.dollar, 's-orch', NOW)
   expect(none.asked).toEqual([])
+})
+
+test('a Ready pull request the auto-merge list takes off the operator\'s line is still the session\'s to merge: a done is refused on it, an operator wait need not name it', async () => {
+  const declare = declaring(new Declarations())
+  const forge = labelled({ 8: ['On Hold'], 9: ['Ready'] })
+  const listed = world({ forge, autoMerge: { result: 'acme/app' } })
+  closedRows(listed.files)
+  const reading = await readUnattended(listed.dollar, 's-orch', NOW)
+  expect(reading?.line).toBe('Attend ton geste : acme/app#8 (en pause)')
+  expect(reading?.toMerge.map(u => u.pr)).toEqual([9])
+  const refused = await declare(listed.dollar, { kind: 'done' })
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toContain('acme/app#9 (Ready)')
+  expect(refused.result).toContain('in auto-merge')
+  // Outside the list the pull request is his, and nothing is left to merge.
+  const other = world({ forge, autoMerge: { result: 'acme/other' } })
+  expect((await readUnattended(other.dollar, 's-orch', NOW))?.toMerge).toEqual([])
 })
 
 test('a pull request the forge reads in conflict is in anomaly « en conflit », Ready or not; mergeable and unknown are left as they were', async () => {

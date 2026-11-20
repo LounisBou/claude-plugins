@@ -381,6 +381,7 @@ describe('what waits on the operator, and what is in anomaly', () => {
   it('leaves a Ready pull request off the operator\'s line only where the auto-merge list names its repository', () => {
     // Named: it is the orchestrator's to merge.
     assert.deepEqual(read({ open: [open(9, ['Ready'])], autoMerge: ['acme/app'] }), [])
+    assert.deepEqual(read({ open: [{ repo: 'Acme/App', pr: 9, labels: ['Ready'] }], lines: [line({ pr: 9, repo: 'Acme/App', agent: 'Agent: gone' })], autoMerge: ['acme/app'] }), [])
     // Not named (another repository, an empty list, no list): it stays his, as before.
     for (const autoMerge of [['acme/other'], [], undefined]) {
       assert.deepEqual(read({ open: [open(9, ['Ready'])], ...(autoMerge === undefined ? {} : { autoMerge }) }), [{ repo: 'acme/app', pr: 9, since: AT, waits: { why: 'ready' } }])
