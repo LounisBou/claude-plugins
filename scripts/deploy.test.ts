@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -174,7 +174,7 @@ describe('the stamp', () => {
 
 /** A home with `.claude` (the plugins), `.claude-bis` and `.claude-ter` (links to them), `.claude-own` (plugins of its own) and `.other` (not a sibling). */
 function home(): string {
-  const root = mkdtempSync(join(tmpdir(), 'home-'))
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'home-')))
   mkdirSync(join(root, '.claude', 'plugins'), { recursive: true })
   for (const name of ['.claude-bis', '.claude-ter']) {
     mkdirSync(join(root, name))
@@ -193,6 +193,13 @@ describe('the configurations sharing the plugins', () => {
     assert.deepEqual(sharingConfigs(join(root, '.claude')), [join(root, '.claude'), join(root, '.claude-bis'), join(root, '.claude-ter')])
   })
 
+  it('are the same, the owner first, whichever of them runs', () => {
+    const root = home()
+    const all = [join(root, '.claude'), join(root, '.claude-bis'), join(root, '.claude-ter')]
+    assert.deepEqual(sharingConfigs(join(root, '.claude-bis')), all)
+    assert.deepEqual(sharingConfigs(join(root, '.claude-ter')), all)
+  })
+
   it('are the config alone when it has no plugins directory', () => {
     const root = home()
     assert.deepEqual(sharingConfigs(join(root, '.claude-bare')), [join(root, '.claude-bare')])
@@ -205,6 +212,14 @@ describe('the configurations sharing the plugins', () => {
     assert.equal(deploy(box, f.host), 0)
     assert.deepEqual(f.repointed.map(config => basename(config)), ['.claude', '.claude-bis', '.claude-ter'])
     assert.equal(f.calls.filter(call => call.startsWith('update')).length, 1)
+  })
+
+  it('are reached by a deploy run from a sibling: the owner is pointed first', () => {
+    const root = home()
+    const box = { env: { CLAUDE_CONFIG_DIR: join(root, '.claude-bis') }, root: join(root, '.claude-bis', DEPLOYS_DIR, MARKETPLACE), out: [] as string[], err: [] as string[] }
+    const f = fake()
+    assert.equal(deploy(box, f.host), 0)
+    assert.deepEqual(f.repointed.map(config => basename(config)), ['.claude', '.claude-bis', '.claude-ter'])
   })
 
   it('fail the run with the name of the one that cannot be pointed, the others still pointed', () => {

@@ -132,14 +132,21 @@ export function statusLine(state: State, timeZone?: string): string {
   return `${state.marketplace} ${current.commit.slice(0, 7)} installed ${format.format(new Date(current.at))}${before}${pending}: ${versions}${failure}`
 }
 
-/** The configuration directory `config` and every sibling `<config>-*` whose `plugins` resolves to the same directory, `config` first: the ones a marketplace pointed at in one is read from in all. */
+/**
+ * The configuration directories whose `plugins` resolve to the same directory as `config`'s, the owner of
+ * that directory first (`~/.claude`) and its `<owner>-*` siblings after, whichever of them runs: the
+ * ones a marketplace pointed at in one is read from in all. `config` alone when it has no `plugins`.
+ */
 export function sharingConfigs(config: string): string[] {
-  const own = realOf(join(config, 'plugins'))
-  if (own === undefined) return [config]
-  const parent = dirname(config)
-  const prefix = `${basename(config)}-`
+  const real = realOf(join(config, 'plugins'))
+  if (real === undefined) return [config]
+  const home = dirname(real)
+  const owner = realOf(join(home, 'plugins')) === real ? home : config
+  const parent = dirname(owner)
+  const prefix = `${basename(owner)}-`
   const siblings = readdirSync(parent).filter(name => name.startsWith(prefix)).sort().map(name => join(parent, name))
-  return [config, ...siblings.filter(sibling => realOf(join(sibling, 'plugins')) === own)]
+  const sharing = [owner, ...siblings.filter(sibling => realOf(join(sibling, 'plugins')) === real)]
+  return sharing.some(each => realOf(each) === realOf(config)) ? sharing : [...sharing, config]
 }
 
 function realOf(path: string): string | undefined {
