@@ -56,8 +56,8 @@
 #     pr-ledger.ts, docs/contracts.md; a repository the forge did not list is said unknown)
 #   quota <plan> | 5h <n>% | 7d <n>% | read <UTC time>[ (stale)]
 #     (each account's quota as the status lines keep it in <state>/quota/, core's quota.ts,
-#     docs/contracts.md; <plan> is plan1 for ~/.claude, plan2 for ~/.claude-bis, else the
-#     configuration directory; « - » a window the payload did not carry; « (stale) » when no
+#     docs/contracts.md; <plan> is plan1 or plan2 as core's planOfConfig names the account's
+#     configuration directory, else that directory; « - » a window the payload did not carry; « (stale) » when no
 #     session of the account has refreshed it within core's QUOTA_STALE_AFTER_MS; a file that is no reading is skipped)
 #   remote <orchestrator> | on <machine> | updated <UTC time> | context <tokens> (<percent>%) | repository <owner/name or none> | prs <owner/name#n>, ... or none | <wait>
 #     (an orchestrator on another machine, its row as the hooks module received it; <wait> is

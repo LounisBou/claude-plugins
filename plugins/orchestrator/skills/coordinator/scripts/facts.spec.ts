@@ -440,17 +440,17 @@ describe('facts', () => {
     const file = (account: string, config: string, five: number, at: string, seven?: number) => JSON.stringify({
       version: 1, account, config, five_hour: { used_percentage: five, resets_at: 1 }, ...(seven === undefined ? {} : { seven_day: { used_percentage: seven, resets_at: 2 } }), at,
     })
-    put('a-two.json', file('a-two', '/Users/me/.claude-bis', 12.4, '2026-10-18T10:00:00Z'))
-    put('z-one.json', file('z-one', '/Users/me/.claude', 80.5, '2026-10-18T09:30:00Z', 33))
+    put('a-two.json', file('a-two', '/Users/me/zeta', 12.4, '2026-10-18T10:00:00Z'))
+    put('z-one.json', file('z-one', '/Users/me/alpha', 80.5, '2026-10-18T09:30:00Z', 33))
     put('torn.json', '{"version":1,')
     put('other.json', JSON.stringify({ version: 9 }))
     put('.config-x', 'a-one 1 - - - -')
-    put('c.json.tmp-1', file('c', '/Users/me/.claude', 1, '2026-10-18T10:00:00Z'))
+    put('c.json.tmp-1', file('c', '/Users/me/alpha', 1, '2026-10-18T10:00:00Z'))
     assert.equal(run(f, 'facts'), 2)
-    // The files lie in the order of their accounts (a-two, z-one); the lines, in the plans'.
+    // The files lie in the order of their accounts (a-two, z-one); the lines, in the order of their plans.
     assert.deepEqual(f.out.filter(l => l.startsWith('quota')), [
-      'quota plan1 | 5h 81% | 7d 33% | read 2026-10-18T09:30:00Z (stale)',
-      'quota plan2 | 5h 12% | 7d - | read 2026-10-18T10:00:00Z',
+      'quota /Users/me/alpha | 5h 81% | 7d 33% | read 2026-10-18T09:30:00Z (stale)',
+      'quota /Users/me/zeta | 5h 12% | 7d - | read 2026-10-18T10:00:00Z',
     ])
   })
 
