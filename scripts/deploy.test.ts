@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -252,12 +252,15 @@ function installedLauncher(config: string, text: string): string {
 describe('the status line launcher', () => {
   it('is replaced by the installed tree\'s where the bar is installed, mode 755, and the refresh is told once', () => {
     const box = sandbox()
-    const copy = installedLauncher(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'old\n')
+    const config = box.env['CLAUDE_CONFIG_DIR'] ?? ''
+    const copy = installedLauncher(config, 'old\n')
+    writeFileSync(join(config, 'settings.json'), '{"statusLine":{}}')
     const f = fake()
     f.launcher = 'new\n'
     assert.equal(deploy(box, f.host), 0)
     assert.equal(readFileSync(copy, 'utf8'), 'new\n')
     assert.equal(statSync(copy).mode & 0o777, 0o755)
+    assert.equal(readFileSync(join(config, 'settings.json'), 'utf8'), '{"statusLine":{}}')
     assert.deepEqual(box.out.filter(line => line.includes('launcher')), [`deploy: refreshed the status line launcher ${realpathSync(copy)}`])
   })
 
@@ -308,19 +311,66 @@ describe('the status line launcher', () => {
     assert.equal(readFileSync(copy, 'utf8'), 'new\n')
   })
 
-  it('is told on stderr, without failing the run, when it cannot be written', () => {
+  it('is written to the target of a launcher that is itself a link, which stays a link', () => {
     const box = sandbox()
-    const copy = installedLauncher(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'old\n')
-    chmodSync(join(copy, '..'), 0o500)
+    const config = box.env['CLAUDE_CONFIG_DIR'] ?? ''
+    const target = join(mkdtempSync(join(tmpdir(), 'elsewhere-')), 'launcher.sh')
+    writeFileSync(target, 'old\n')
+    mkdirSync(join(config, 'statusbar'))
+    symlinkSync(target, join(config, 'statusbar', 'statusline.sh'))
     const f = fake()
     f.launcher = 'new\n'
-    try {
-      assert.equal(deploy(box, f.host), 0)
-    } finally {
-      chmodSync(join(copy, '..'), 0o700)
-    }
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(lstatSync(join(config, 'statusbar', 'statusline.sh')).isSymbolicLink(), true)
+    assert.equal(readFileSync(target, 'utf8'), 'new\n')
+  })
+
+  it('is told on stderr, without failing the run, when it cannot be written', () => {
+    const box = sandbox()
+    const config = box.env['CLAUDE_CONFIG_DIR'] ?? ''
+    mkdirSync(join(config, 'statusbar', 'statusline.sh'), { recursive: true })
+    const f = fake()
+    f.launcher = 'new\n'
+    assert.equal(deploy(box, f.host), 0)
     assert.match(box.err.join('\n'), /status line launcher of .* was not refreshed/)
+    assert.equal(stateIn(box).pending, false)
+  })
+
+  it('is left alone when the installed tree carries none', () => {
+    const box = sandbox()
+    const copy = installedLauncher(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'old\n')
+    assert.equal(deploy(box, fake().host), 0)
     assert.equal(readFileSync(copy, 'utf8'), 'old\n')
+    assert.deepEqual(box.err, [])
+  })
+
+  it('is refreshed even when a plugin update fails, and again by the run that finishes the update', () => {
+    const box = sandbox()
+    const copy = installedLauncher(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'old\n')
+    const f = fake()
+    f.launcher = 'new\n'
+    f.failUpdate = true
+    assert.equal(deploy(box, f.host), 1)
+    assert.equal(readFileSync(copy, 'utf8'), 'new\n')
+    writeFileSync(copy, 'old\n')
+    f.failUpdate = false
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(stateIn(box).pending, false)
+    assert.equal(readFileSync(copy, 'utf8'), 'new\n')
+  })
+
+  it('is the launcher of the commit rolled back to', () => {
+    const box = sandbox()
+    const copy = installedLauncher(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'old\n')
+    const f = fake()
+    f.launcher = 'first\n'
+    deploy(box, f.host)
+    f.green = B
+    f.launcher = 'second\n'
+    deploy(box, f.host)
+    assert.equal(readFileSync(copy, 'utf8'), 'second\n')
+    assert.equal(deploy(box, f.host, '--rollback'), 0)
+    assert.equal(readFileSync(copy, 'utf8'), 'first\n')
   })
 })
 

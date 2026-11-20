@@ -289,18 +289,22 @@ const LAUNCHER_IN_CONFIG = join('statusbar', 'statusline.sh')
  * not rewritten. One failing configuration is told on stderr and does not hold back the others.
  */
 function refreshLaunchers(paths: Paths, dir: string, io: Io): void {
-  const wanted = readText(join(dir, LAUNCHER_IN_TREE))
-  if (wanted === undefined) return
-  for (const config of sharingConfigs(paths.config)) {
-    try {
-      const copy = realOf(join(config, LAUNCHER_IN_CONFIG))
-      if (copy === undefined || readText(copy) === wanted) continue
-      writeAtomic(copy, wanted, 0o755)
-      chmodSync(copy, 0o755)
-      io.out(`deploy: refreshed the status line launcher ${copy}`)
-    } catch (error) {
-      io.err(`deploy: the status line launcher of ${config} was not refreshed: ${error instanceof Error ? error.message : String(error)}`)
+  try {
+    const wanted = readText(join(dir, LAUNCHER_IN_TREE))
+    if (wanted === undefined) return
+    for (const config of sharingConfigs(paths.config)) {
+      try {
+        const copy = realOf(join(config, LAUNCHER_IN_CONFIG))
+        if (copy === undefined || readText(copy) === wanted) continue
+        writeAtomic(copy, wanted, 0o755)
+        chmodSync(copy, 0o755)
+        io.out(`deploy: refreshed the status line launcher ${copy}`)
+      } catch (error) {
+        io.err(`deploy: the status line launcher of ${config} was not refreshed: ${error instanceof Error ? error.message : String(error)}`)
+      }
     }
+  } catch (error) {
+    io.err(`deploy: the status line launcher was not refreshed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
@@ -319,6 +323,8 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
   symlinkSync(dir, link)
   renameSync(link, join(paths.root, 'current'))
   writeState(paths, { ...state, pending: true })
+  // Before the plugin updates: the launcher does not wait on them, and a plugin that cannot update must not freeze it.
+  refreshLaunchers(paths, dir, io)
   const nameOf = (id: string): string => id.slice(0, -`@${MARKETPLACE}`.length)
   const ours = (): { id: string; version: string }[] => host.installed().filter(plugin => plugin.id.endsWith(`@${MARKETPLACE}`))
   const failures: string[] = []
@@ -339,7 +345,6 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
   const done = { ...state, pending: false }
   writeState(paths, done)
   io.out(statusLine(done))
-  refreshLaunchers(paths, dir, io)
   return done
 }
 
