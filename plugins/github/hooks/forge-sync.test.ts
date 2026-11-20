@@ -79,6 +79,17 @@ test('a copy left to its tool says so, that the reconciler reads the head again 
   expect(forgeSync(sides({ records: [record()] })).waiting).toBeUndefined()
 })
 
+test('a failure the machine just wrote is posted at once, never left to its tool; the passes left are named as deferred', () => {
+  const fresh = new Date(LISTED - SETTLE_MS + 1000).toISOString().replace(/\.\d+Z$/, 'Z')
+  const failed = forgeSync(sides({ records: [record({ at: fresh, result: 'fail' })] }))
+  expect([failed.posts.map((post) => post.state), failed.waiting, failed.deferred]).toEqual([['failure'], undefined, undefined])
+  const passed = forgeSync(sides({ records: [record({ at: fresh })], plan: plan(fresh) }))
+  expect([passed.posts, passed.deferred?.map((post) => post.name)]).toEqual([[], ['review', 'plan']])
+  const exempted = forgeSync(sides({ exemption: exemption({ at: fresh }) }))
+  expect([exempted.posts, exempted.deferred?.map((post) => post.name), exempted.waiting]).toEqual([[], ['exemption'], true])
+  expect(forgeSync(sides({ records: [record()] })).deferred).toBeUndefined()
+})
+
 test('a status dated ahead of the listing is not imported, and said', () => {
   const ahead = new Date(LISTED + AHEAD_MS + 1000).toISOString().replace(/\.\d+Z$/, 'Z')
   const near = new Date(LISTED + AHEAD_MS).toISOString().replace(/\.\d+Z$/, 'Z')

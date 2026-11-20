@@ -16,7 +16,7 @@ import { TICK_MS } from './reconcile.ts'
 
 /** The statuses one beat posts at most; the others at the next. */
 export const POSTS_PER_TICK = 8
-/** How long a copy made here is left to the tool that made it before the reconciler posts it. */
+/** How long a copy made here is left to the tool that made it before the reconciler posts it; a failure is never left. */
 export const SETTLE_MS = TICK_MS
 /** How far ahead of the listing a status's instant may be (two clocks apart); one further ahead is not imported. */
 export const AHEAD_MS = 300_000
@@ -36,6 +36,8 @@ export type ForgeSync = {
   readonly unposted: string[]
   /** A copy made here is left to its tool for now: the reconciler reads this head again at the next beat. */
   readonly waiting?: true
+  /** The posts left to their tool for now (those `waiting` counts): not on the forge yet, nor in `posts`. */
+  readonly deferred?: ForgePost[]
 }
 
 /** What a head holds on each side. `listedAt`: when the listing that read `statuses` was taken (ms). */
@@ -112,11 +114,15 @@ function newestByKind(records: readonly PrRecord[]): Map<string, PrRecord> {
 /** What to import and what to post at one head, the newer side winning for each record kind, the plan and the exemption. */
 export function forgeSync(sides: ForgeSides): ForgeSync {
   const trusted = trustedStatuses(sides.statuses, sides.viewer)
-  const out: { records: ForgeRecord[]; plan?: NonNullable<ForgeSync['plan']>; exemption?: Exemption; posts: ForgePost[]; unposted: string[]; waiting?: true } = { records: [], posts: [], unposted: [] }
-  const settled = (at: string) => {
-    const ok = Date.parse(at) + SETTLE_MS <= sides.listedAt
-    if (!ok) out.waiting = true
-    return ok
+  const out: { records: ForgeRecord[]; plan?: NonNullable<ForgeSync['plan']>; exemption?: Exemption; posts: ForgePost[]; unposted: string[]; waiting?: true; deferred?: ForgePost[] } = { records: [], posts: [], unposted: [] }
+  // A copy made less than SETTLE_MS before the listing is left to its tool, noted as deferred; a failure is posted at once, as
+  // the other machine must see it before the label it causes moves (a second post of the same status is harmless).
+  const post = (made: ForgePost, at: string) => {
+    if (made.state === FORGE.states.fail || Date.parse(at) + SETTLE_MS <= sides.listedAt) out.posts.push(made)
+    else {
+      out.waiting = true
+      out.deferred = [...(out.deferred ?? []), made]
+    }
   }
   // A status dated ahead of the listing would win over every copy made after it, on both machines: it is not read.
   const ahead = (name: ForgeName, at: string | undefined) => {
@@ -132,10 +138,8 @@ export function forgeSync(sides: ForgeSides): ForgeSync {
     const here = newest.get(kind)
     const side = decided(here, there)
     if (side === 'import' && there) out.records.push(there)
-    if (side === 'post' && here && settled(here.at)) {
-      const post = recordPost(here)
-      if (post) out.posts.push(post)
-    }
+    const made = side === 'post' && here ? recordPost(here) : undefined
+    if (made && here) post(made, here.at)
   }
   const planStatus = trusted.get(FORGE.plan)
   const planDescribed = planStatus ? parseForgeDescription(planStatus.description) : undefined
@@ -143,9 +147,9 @@ export function forgeSync(sides: ForgeSides): ForgeSync {
   const planThere = planRead ? planFromBody(planRead.body) : undefined
   const planSide = newer(sides.plan?.at, planThere && planRead ? planRead.at : undefined)
   if (planSide === 'import' && planThere && planRead) out.plan = { checks: planThere, at: planRead.at }
-  if (planSide === 'post' && sides.plan && settled(sides.plan.at)) {
+  if (planSide === 'post' && sides.plan) {
     const description = forgeDescription(sides.plan.at, planBody(sides.plan))
-    if (description) out.posts.push({ name: FORGE.plan, state: 'success', description })
+    if (description) post({ name: FORGE.plan, state: 'success', description }, sides.plan.at)
   }
   const exemptStatus = trusted.get(FORGE.exemption)
   const exemptDescribed = exemptStatus ? parseForgeDescription(exemptStatus.description) : undefined
@@ -153,9 +157,9 @@ export function forgeSync(sides: ForgeSides): ForgeSync {
   const exemptThere = exemptRead && exemptStatus ? exemptionFromBody(exemptRead.body, sides.repo, exemptRead.at, exemptStatus.creator) : undefined
   const exemptSide = newer(sides.exemption?.at, exemptThere?.at)
   if (exemptSide === 'import' && exemptThere) out.exemption = exemptThere
-  if (exemptSide === 'post' && sides.exemption && settled(sides.exemption.at)) {
+  if (exemptSide === 'post' && sides.exemption) {
     const description = forgeDescription(sides.exemption.at, exemptionBody(sides.exemption))
-    if (description) out.posts.push({ name: FORGE.exemption, state: 'success', description })
+    if (description) post({ name: FORGE.exemption, state: 'success', description }, sides.exemption.at)
     else out.unposted.push('github: the E2E exemption of ' + sides.repo + ' is too long for the forge (' + FORGE.description_max + ' characters): the other machine does not see it')
   }
   return out

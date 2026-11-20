@@ -18,6 +18,22 @@ export const GATES_PER_TICK = 4
 export const RETRY_MS = 300_000
 /** The times another machine may undo this one's label on a head before the reconciler stops moving that label there. */
 export const FLAP_UNDONE = 3
+/**
+ * A Not Ready this machine did not set is left this long to the other machine's records before Ready goes back over it:
+ * the time that machine takes to post what justifies it (a beat to settle, a beat to be listed).
+ */
+export const FOREIGN_WAIT_MS = 2 * TICK_MS
+/**
+ * A label move waits for the copies of the head's records to reach the forge at most this long (the first post, one retry):
+ * a forge that refuses them for good (a token without the right, a status refused) must not freeze the labels.
+ */
+export const PUBLISH_WAIT_MS = 2 * RETRY_MS
+/**
+ * A hold ends at this ceiling, with a line, only when the last listing whose statuses were imported is older than the wait and
+ * no import is failing since. Never while the import of the other machine's statuses fails, never with no import known, and
+ * never for an act (`pr-ready`, `pr-merge`, `pr-readiness ready`).
+ */
+export const FOREIGN_CEILING_MS = PUBLISH_WAIT_MS
 /** A repository whose records directory changed within this is reconciled. */
 export const RECENT_MS = 30 * 24 * 3600 * 1000
 /** A lease runs this long; its holder renews it when less than LEASE_RENEW_MS is left. */
@@ -186,4 +202,90 @@ export function flapCheck(prev: Flap | undefined, head: string, move: LabelMove)
 export function flapWrote(prev: Flap | undefined, head: string, move: LabelMove): Flap {
   const again = prev?.head === head && prev.wrote === move
   return { head, wrote: move, undone: again ? prev.undone + 1 : 0, said: again ? prev.said : false }
+}
+
+/**
+ * The label a pull request carries at a head as this machine last saw it, whether this machine wrote it, and when it was
+ * first seen (ms). A label this machine did not write, or one of unknown origin, is another machine's.
+ */
+export type Seen = { head: string; label: LabelMove | undefined; own: boolean; since: number }
+
+/** Not Ready wins over Ready on a pull request carrying both, as the gate reads it. */
+function labelOf(labels: readonly string[]): LabelMove | undefined {
+  const named = labels.map((label) => label.toLowerCase())
+  if (named.includes('not ready')) return 'not-ready'
+  return named.includes('ready') ? 'ready' : undefined
+}
+
+/** What is kept once the gate read `labels` at `head` at `now`: the same label at the same head is the same sighting; another is one of another machine's. */
+export function seenLabel(prev: Seen | undefined, head: string, labels: readonly string[], now: number): Seen {
+  const label = labelOf(labels)
+  if (prev && prev.head === head && prev.label === label) return prev
+  // A label this machine put with no head read (`head` empty) is its own at the head the gate first reads under it.
+  if (prev && prev.head === '' && prev.own && prev.label === label) return { ...prev, head }
+  return { head, label, own: false, since: now }
+}
+
+/** What is kept once this machine wrote `move` at `head` (empty: not read) at `now`. */
+export function seenWrote(head: string, move: LabelMove, now: number): Seen {
+  return { head, label: move, own: true, since: now }
+}
+
+/** The sighting a Ready move is held over: a Not Ready this machine did not set. */
+function foreignOf(seen: Seen | undefined, move: LabelMove): Seen | undefined {
+  return move === 'ready' && seen && seen.label === 'not-ready' && !seen.own ? seen : undefined
+}
+
+/**
+ * Until when Ready is held back, or undefined when it may go: it does not go over a Not Ready this machine did not set
+ * until the forge was read at least FOREIGN_WAIT_MS after that Not Ready was first seen (`listedAt`: when the forge was last
+ * listed and its statuses imported, ms; undefined when it is not known), whose statuses the gate then judges. With `now`, a hold
+ * whose last import is older than the wait is let go FOREIGN_CEILING_MS after the sighting; with no import known, never.
+ * Any other move goes at once.
+ */
+export function foreignHold(seen: Seen | undefined, move: LabelMove, listedAt: number | undefined, now?: number): number | undefined {
+  const foreign = foreignOf(seen, move)
+  if (!foreign) return undefined
+  const until = foreign.since + FOREIGN_WAIT_MS
+  if (listedAt !== undefined && listedAt >= until) return undefined
+  return now !== undefined && listedAt !== undefined && now >= foreign.since + FOREIGN_CEILING_MS ? undefined : until
+}
+
+/** Whether a Ready move goes over a foreign Not Ready by the ceiling alone, no listing of the forge having followed the wait. */
+export function foreignGivenUp(seen: Seen | undefined, move: LabelMove, listedAt: number | undefined, now: number): boolean {
+  return foreignHold(seen, move, listedAt) !== undefined && foreignHold(seen, move, listedAt, now) === undefined
+}
+
+/** The file that keeps what this machine saw of a pull request's label, in the plugin's data directory: one for the reconciler and the tools of every session. */
+export function seenPath(data: string, repo: string, pr: number): string {
+  return data + '/label-seen/' + repo.toLowerCase() + '/' + pr + '.json'
+}
+
+/** The file that keeps the last listing of a repository whose statuses could not be imported (ms), where the tools read that the forge was not read. */
+export function failingPath(data: string, repo: string): string {
+  return data + '/label-seen/' + repo.toLowerCase() + '/.failing'
+}
+
+/** The file that keeps when this machine's reconciler last listed a repository and imported its statuses (ms), where the tools read that the forge was read. */
+export function listedPath(data: string, repo: string): string {
+  return data + '/label-seen/' + repo.toLowerCase() + '/.listed'
+}
+
+/** A sighting as its file's text. */
+export function seenText(seen: Seen): string {
+  return JSON.stringify({ v: 1, head: seen.head, label: seen.label ?? null, own: seen.own, since: seen.since }) + '\n'
+}
+
+/** The sighting a file's text gives, or undefined when it is none. */
+export function parseSeen(text: string | undefined): Seen | undefined {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text ?? '')
+  } catch {
+    return undefined
+  }
+  if (!isRecord(raw) || raw['v'] !== 1 || !isText(raw['head']) || typeof raw['own'] !== 'boolean' || typeof raw['since'] !== 'number' || !Number.isFinite(raw['since'])) return undefined
+  const label = raw['label']
+  if (label !== null && label !== 'ready' && label !== 'not-ready') return undefined
+  return { head: raw['head'], label: label ?? undefined, own: raw['own'], since: raw['since'] }
 }

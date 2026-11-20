@@ -1,11 +1,15 @@
 // The ready guard, the auto-merge split, the label following the head, the
 // records guard and the record tool, through the module as the session runs
 // it: the tool's calls, Bash, Write, and the engine stubbed per scenario.
-import { expect, mock, test } from 'claude-code/testing'
+import { expect, mock as hostMock, test } from 'claude-code/testing'
 import type { Engine, NounEvents, Reply, TestOn } from 'claude-code/testing'
 import { EXEMPT_REFUSAL } from './register.js'
 import { RECORDS_REFUSAL, STATUS_REFUSAL, STDIN_REFUSAL } from './ready.js'
+import { FOREIGN_CEILING_MS, FOREIGN_WAIT_MS } from './reconcile.ts'
 import { parseLearningEvent } from '../core/learning.ts'
+// The tests that set the clock themselves, by their event registry: the other worlds get a clock, and their Not Ready is this machine's.
+const clocked = new WeakSet<object>()
+const mock = { ...hostMock, clock: (on: TestOn, options?: { readonly now?: number }) => (clocked.add(on), hostMock.clock(on, options)) }
 // The choices a consent question offered, which an old consent file still holds.
 const CONSENT_GRANT = 'Accorder'
 const CONSENT_REFUSE = 'Refuser'
@@ -80,6 +84,10 @@ type World = {
   exemption?: unknown
   // The pull request's check plan file, as written.
   plan?: unknown
+  // The pull request's Not Ready was written by this machine, as the machine's sighting of its label keeps it.
+  ownLabel?: boolean
+  // No clock is answered: the module cannot read the time.
+  noClock?: boolean
   // What pr-fingerprint answers, by head, over two commits; a head absent fails with this error, or a merge's.
   fingerprints?: Record<string, string>
   fingerprintFails?: string
@@ -155,7 +163,16 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
   if (w.autoMerge !== undefined) seen.files[AUTO_MERGE] = JSON.stringify({ repositories: w.autoMerge })
   if (w.deployList !== undefined) seen.files[AUTO_DEPLOY] = typeof w.deployList === 'string' ? w.deployList : JSON.stringify(w.deployList)
   if (w.plan !== undefined) seen.files[PLAN] = JSON.stringify(w.plan)
+  if (w.ownLabel) seen.files['/data/label-seen/acme/thing/12.json'] = JSON.stringify({ v: 1, head: HEAD, label: 'not-ready', own: true, since: 0 })
   if (w.exemption !== undefined) seen.files[EXEMPTION] = typeof w.exemption === 'string' ? w.exemption : JSON.stringify(w.exemption)
+  // A test that sets no clock reads the label of its pull request as this machine's own, unless the world says it is not.
+  const own = w.ownLabel ?? (!clocked.has(on) && !w.noClock)
+  // Such a world keeps the machine's sightings out of what its test reads of the files, the writes and the runs.
+  const defaulted = !clocked.has(on)
+  if (defaulted && !w.noClock) hostMock.clock(on, { now: RECEIVED })
+  const hidden: Record<string, string> = {}
+  const quiet = (path: unknown): boolean => defaulted && String(path).includes('/label-seen/')
+  const filesOf = (path: unknown): Record<string, string> => (quiet(path) ? hidden : seen.files)
   const session = 'guard-session-' + ++sessions
   const records: Record<string, string> = { ...(w.records ?? FOUR) }
   const pull: Pull = { labels: [...(w.labels ?? ['Not Ready'])], draft: w.draft ?? true, reads: 0 }
@@ -211,7 +228,8 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
   })
   on('fs.read', (_$, e) => {
     seen.reads.push(e.path)
-    if (e.path in seen.files) return { value: seen.files[e.path] }
+    if (e.path in filesOf(e.path)) return { value: filesOf(e.path)[e.path] }
+    if (own && e.path === '/data/label-seen/acme/thing/12.json') return { value: JSON.stringify({ v: 1, head: HEAD, label: 'not-ready', own: true, since: 0 }) }
     if (tree[e.path]?.text !== undefined) return { value: tree[e.path]?.text }
     if (e.path.startsWith(HEAD_DIR + '/')) {
       const name = e.path.slice(HEAD_DIR.length + 1)
@@ -226,6 +244,10 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
       seen.events.push(e.text)
       return { value: undefined }
     }
+    if (quiet(e.path)) {
+      hidden[e.path] = e.text
+      return { value: undefined }
+    }
     seen.writes.push({ path: e.path, text: e.text })
     if (e.path.startsWith('/data/')) seen.files[e.path] = e.text
     return { value: undefined }
@@ -233,10 +255,17 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
   on('process.run', (_$, e) => {
     if (e.argv[0] === 'sh' && e.argv[2] === 'set -C; echo "$$" > "$1"') {
       // The list's lock, taken with noclobber: refused while the file is there.
-      seen.runs.push({ argv: e.argv })
       const lock = String(e.argv[4])
-      if (lock in seen.files || lock in tree) return { value: { exitCode: 1, stdout: '', stderr: 'sh: cannot overwrite existing file' } }
-      seen.files[String(lock)] = '4242\n'
+      if (!quiet(lock)) seen.runs.push({ argv: e.argv })
+      if (lock in filesOf(lock) || lock in tree) return { value: { exitCode: 1, stdout: '', stderr: 'sh: cannot overwrite existing file' } }
+      filesOf(lock)[String(lock)] = '4242\n'
+      return { value: { exitCode: 0, stdout: '', stderr: '' } }
+    }
+    // The machine's sightings of labels are locked and moved by the same commands: kept out of the runs a test reads.
+    if (e.argv[0] === 'sh' && quiet(e.argv[4])) {
+      const lock = String(e.argv[4])
+      if (lock in hidden) return { value: { exitCode: 1, stdout: '', stderr: 'sh: cannot overwrite existing file' } }
+      hidden[lock] = '4242\n'
       return { value: { exitCode: 0, stdout: '', stderr: '' } }
     }
     if (e.argv[0] === 'sleep') {
@@ -246,15 +275,15 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
     // The journal's event moves into place: no act of the session.
     if (e.argv[0] === 'mv' && String(e.argv[3]).startsWith(JOURNAL)) return { value: { exitCode: 0, stdout: '', stderr: '' } }
     if (e.argv[0] === 'mv' || e.argv[0] === 'rm' || e.argv[0] === 'mkdir') {
-      seen.runs.push({ argv: e.argv })
       const [from, to] = e.argv.slice(-2)
+      if (!quiet(to) && !quiet(e.argv[2])) seen.runs.push({ argv: e.argv })
       if (e.argv[0] === 'mv') {
-        if (w.mvFails) return { value: { exitCode: 1, stdout: '', stderr: w.mvFails } }
-        seen.files[String(to)] = seen.files[String(from)] ?? ''
-        delete seen.files[String(from)]
+        if (w.mvFails && !quiet(to)) return { value: { exitCode: 1, stdout: '', stderr: w.mvFails } }
+        filesOf(to)[String(to)] = filesOf(from)[String(from)] ?? ''
+        delete filesOf(from)[String(from)]
       }
       if (e.argv[0] === 'rm') {
-        delete seen.files[String(to)]
+        delete filesOf(to)[String(to)]
         delete tree[String(to)]
       }
       return { value: { exitCode: 0, stdout: '', stderr: '' } }
@@ -2445,7 +2474,8 @@ const BEHIND = '2026-11-01T12:00:00Z'
 
 test('an exemption whose expiry is ahead covers a pull request, its line naming the expiry', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: AHEAD } })
+  // The test's subject is the expiry, not the Not Ready's origin: this machine wrote it.
+  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: AHEAD }, ownLabel: true })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
   expect(seen.logs).toEqual([EXEMPT_LINE.replace('2026-11-13:', '2026-11-13, until ' + AHEAD + ':')])
@@ -2477,7 +2507,8 @@ test('the gate takes a Ready pull request back to Not Ready on an expired exempt
 
 test('an exemption whose expiry cannot be read exempts nothing', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: 'tomorrow' }, autoMerge: ['acme/thing'] })
+  // The Not Ready is this machine's: the gate alone says no.
+  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: 'tomorrow' }, autoMerge: ['acme/thing'], ownLabel: true })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(readinessRuns(seen)).toEqual([])
 })
@@ -2539,6 +2570,150 @@ test('an exemption with a limit rests on the operator\'s quoted, dated words, wi
   expect(Object.keys(seen.files).filter((path) => path.includes('/consents/'))).toEqual([])
 })
 
+const SEEN_FILE = '/data/label-seen/acme/thing/12.json'
+const LISTED_FILE = '/data/label-seen/acme/thing/.listed'
+const FAILING_FILE = '/data/label-seen/acme/thing/.failing'
+
+test('a pr-gate read does not put Ready over a Not Ready this machine did not set before the forge was listed after the wait', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, {})
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+  expect(seen.logs.join('\n')).toContain('the Not Ready it carries was not set by this machine')
+  expect(JSON.parse(seen.files[SEEN_FILE] ?? '{}')).toMatchObject({ head: HEAD, label: 'not-ready', own: false, since: RECEIVED })
+  // The wait is over, the forge was last listed before it: still held, until a listing follows.
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  seen.files[LISTED_FILE] = String(RECEIVED)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+  seen.files[LISTED_FILE] = String(RECEIVED + FOREIGN_WAIT_MS + 500)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  // What the tool wrote is its own.
+  expect(JSON.parse(seen.files[SEEN_FILE] ?? '{}')).toMatchObject({ label: 'ready', own: true })
+})
+
+test('a Not Ready another session of this machine wrote is undone by a pr-gate read at once', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: true })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('pr-readiness ready, pr-ready and pr-merge are held over a Not Ready this machine did not set, and go once the forge was listed after the wait', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'] })
+  const asked = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(String(asked.result)).toContain('Ready not put: the Not Ready it carries was not set by this machine')
+  const undraft = await $.tool.call(gh('pr-ready', { pr: 12 }))
+  expect(undraft.deny).toContain('pr-ready refused on acme/thing#12')
+  expect(undraft.deny).toContain('not set by this machine')
+  const merge = await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD }))
+  expect(merge.deny).toContain('not set by this machine')
+  expect(readinessRuns(seen)).toEqual([])
+  expect(commands(seen)).not.toContain('pr-ready')
+  expect(commands(seen)).not.toContain('pr-merge')
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  seen.files[LISTED_FILE] = String(RECEIVED + FOREIGN_WAIT_MS + 500)
+  await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(readinessRuns(seen)).toContainEqual(['acme/thing', { pr: 12, state: 'ready' }])
+  // The act goes too, no longer refused.
+  expect((await $.tool.call(gh('pr-ready', { pr: 12 }))).deny).toBeUndefined()
+  expect(commands(seen)).toContain('pr-ready')
+})
+
+test('a clock the module cannot read holds the explicit acts too, naming it', async ($, on) => {
+  const seen = await world($, on, { noClock: true })
+  const asked = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(String(asked.result)).toContain('the clock cannot be read')
+  expect((await $.tool.call(gh('pr-ready', { pr: 12 }))).deny).toContain('pr-ready refused on acme/thing#12')
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('the Not Ready the gate puts back on a Ready pull request through pr-readiness is this machine\'s own, at the head it read', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, labels: ['Ready'], records: TWO })
+  await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+  expect(JSON.parse(seen.files[SEEN_FILE] ?? '{}')).toMatchObject({ head: HEAD, label: 'not-ready', own: true })
+})
+
+test('with the last listing whose statuses were imported older than the wait, Ready stays held, and goes at FOREIGN_CEILING_MS with a line saying so', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false })
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+  expect(seen.logs.join('\n')).toContain('the forge is not known to be listed since the wait')
+  await clock.advance(FOREIGN_CEILING_MS)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs.join('\n')).toContain('no listing of the forge followed the wait within 10 minutes')
+})
+
+test('with no listing whose statuses were imported known, Ready stays held past FOREIGN_CEILING_MS', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_CEILING_MS + FOREIGN_WAIT_MS)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('while the import of the other machine\'s statuses fails, Ready stays held past FOREIGN_CEILING_MS, on the label and on the acts, the line saying why', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'] })
+  // The last import that went through is older than the wait, a listing since could not import.
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  seen.files[FAILING_FILE] = String(RECEIVED)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_CEILING_MS + FOREIGN_WAIT_MS)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+  expect(seen.logs.join('\n')).toContain('cannot be imported here')
+  const asked = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(String(asked.result)).toContain('cannot be imported here')
+  expect((await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD }))).deny).toContain('cannot be imported here')
+  expect(readinessRuns(seen)).toEqual([])
+  // An import that went through after the failure ends it: the listing counts again.
+  seen.files[LISTED_FILE] = String(RECEIVED + FOREIGN_CEILING_MS + FOREIGN_WAIT_MS)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('the ceiling never releases pr-readiness ready, pr-ready or pr-merge: a stale listing keeps them held', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'] })
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_CEILING_MS + FOREIGN_WAIT_MS)
+  expect(String((await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))).result)).toContain('Ready not put')
+  expect((await $.tool.call(gh('pr-ready', { pr: 12 }))).deny).toContain('not set by this machine')
+  expect((await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD }))).deny).toContain('not set by this machine')
+  expect(readinessRuns(seen)).toEqual([])
+  expect(commands(seen)).not.toContain('pr-ready')
+  expect(commands(seen)).not.toContain('pr-merge')
+})
+
+test('a clock the module cannot read holds Ready over a Not Ready, with a line', async ($, on) => {
+  const seen = await world($, on, { noClock: true })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+  expect(seen.logs.join('\n')).toContain('the clock cannot be read')
+})
+
+test('the Not Ready a Bash pull request opening puts is this machine\'s own: the first gate read puts Ready at once', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, bashResult: { result: { stdout: 'https://github.com/acme/thing/pull/12\n', stderr: '', interrupted: false } } })
+  await $.tool.call(bash('gh pr create --draft -t "fix: x" -b "Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"'))
+  expect(JSON.parse(seen.files[SEEN_FILE] ?? '{}')).toMatchObject({ label: 'not-ready', own: true })
+  seen.pull = { ...(seen.pull as Pull), labels: ['Not Ready'] }
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'not-ready' }], ['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
 // The operator's case at the gate: until 2026-11-16T11:00:00Z (Paris noon), it excuses E2E before that instant and nothing at it.
 const OPERATOR_UNTIL = '2026-11-16T11:00:00Z'
 for (const [label, now, covered] of [
@@ -2547,7 +2722,8 @@ for (const [label, now, covered] of [
 ] as const) {
   test('the operator\'s exemption until ' + OPERATOR_UNTIL + ' ' + (covered ? 'covers' : 'covers nothing') + ' a pull request ' + label + ' it', async ($, on) => {
     mock.clock(on, { now })
-    const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: OPERATOR_UNTIL }, autoMerge: ['acme/thing'] })
+    // The test's subject is the expiry, not the Not Ready's origin: this machine wrote it.
+    const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: OPERATOR_UNTIL }, autoMerge: ['acme/thing'], ownLabel: true })
     await $.tool.call(gh('pr-gate', { pr: 12 }))
     if (covered) {
       expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
