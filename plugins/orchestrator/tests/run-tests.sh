@@ -8242,6 +8242,22 @@ for state in states:
 print('ok' if not bad else '; '.join(bad))
 PY
 )"
+  # Both tab formats, every state: the icon's block opens after one space, drawn in the tab's own
+  # background, so no state's block touches the window's name.
+  check "each state of both tab formats opens its icon with a space, so no block touches the name" "ok" \
+    "$(python3 -I - "$HOMECONF" <<'PY'
+import re, sys
+conf = open(sys.argv[1], encoding='utf-8').read()
+bad = []
+for name in ('window-status-format', 'window-status-current-format'):
+    text = re.search(r"^set -g %s '(.*)'$" % name, conf, re.M).group(1)
+    branches = dict(re.findall(r"\{==:#\{@state\},(\w+)\},( ?#\[)", text))
+    if sorted(branches) != sorted(['busy', 'idle', 'asks', 'held', 'review', 'done', 'over', 'gate']): bad.append('%s states %s' % (name, sorted(branches)))
+    for state in branches:
+        if branches[state] != ' #[': bad.append('%s %s has no space before its icon' % (name, state))
+print('ok' if not bad else '; '.join(bad))
+PY
+)"
   # Every icon keeps one colour on every tab, the current one drawing it in a #303030 block of its
   # own, and each pair holds 7:1 (WCAG AAA): the colours read from the conf, ratios computed.
   check "each icon has one colour on both kinds of tab, over a background that holds it at 7:1" "ok" \
