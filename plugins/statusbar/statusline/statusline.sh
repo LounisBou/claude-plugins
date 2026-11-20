@@ -433,17 +433,20 @@ fi
 # the payloads carry them. So each payload with `rate_limits` writes them to
 # `<orchestrator state>/quota/<account>.json` (core's quota.ts, quota.json here), where the
 # coordinator reads each plan's room. Nothing is written without the orchestrator's state directory:
-# a machine with the status line alone keeps nothing. The account is `oauthAccount.accountUuid` of
-# the session's `.claude.json`, a file of megabytes: it is read once per refresh, and a marker beside
-# the quota files (`.config-<directory>`: account, time, figures) answers every other render. A
-# reading is rewritten when its figures change, or when the marker is `refresh_seconds` old, so the
-# time it carries tells how long ago a session of the account last drew it.
+# a machine with the status line alone keeps nothing. A window already reset is no reading. The
+# account is `oauthAccount.accountUuid` of the host's `.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json`,
+# else `~/.claude.json`), a file of megabytes: it is read once per refresh, and a marker beside the
+# quota files (`.config-<directory>`: account, when it was read, when the file was written, figures)
+# answers every other render. A reading is rewritten when its figures change, or when it is a refresh
+# old, so the time it carries tells how long ago a session of the account last drew it.
 keep_quota() {
-  local config=${CLAUDE_CONFIG_DIR:-$HOME/.claude} state dir version refresh qdir marker now fig h5 d7
-  local m_account='' m_at='' m_fig='' account at file tmp body
-  # A window is kept only with both its figures: « <percentage> <reset> », or « - - ».
-  h5="- -"; quota_window "$h5_pct" "$h5_reset" && h5="$h5_pct ${h5_reset%%.*}"
-  d7="- -"; quota_window "$d7_pct" "$d7_reset" && d7="$d7_pct ${d7_reset%%.*}"
+  local config=${CLAUDE_CONFIG_DIR:-$HOME/.claude} host=$HOME/.claude.json
+  local state dir version refresh qdir marker now fig h5 d7 m_account='' m_read='' m_at='' m_fig='' account at file tmp body
+  [ -n "${CLAUDE_CONFIG_DIR:-}" ] && host=$CLAUDE_CONFIG_DIR/.claude.json
+  now=$(date +%s)
+  # A window is kept only with both its figures, and while it has not reset: « <percentage> <reset> », or « - - ».
+  h5="- -"; quota_window "$h5_pct" "$h5_reset" "$now" && h5="$h5_pct ${h5_reset%%.*}"
+  d7="- -"; quota_window "$d7_pct" "$d7_reset" "$now" && d7="$d7_pct ${d7_reset%%.*}"
   fig="$h5 $d7"
   [ "$fig" = "- - - -" ] && return 0
   IFS=' ' read -r dir version refresh state <<<"$(jq -r --slurpfile o "$contract" \
@@ -453,13 +456,13 @@ keep_quota() {
   [ -d "$state" ] || return 0
   qdir="$state/$dir"
   marker="$qdir/.config-${config//[!A-Za-z0-9._-]/_}"
-  now=$(date +%s)
-  [ -f "$marker" ] && read -r m_account m_at m_fig < "$marker"
-  if [ -n "$m_account" ] && is_number "$m_at" && [ "$now" -ge "$m_at" ] && [ $(( now - m_at )) -lt "$refresh" ]; then
-    [ "$m_fig" = "$fig" ] && return 0
-    account=$m_account
-  else
-    account=$(jq -r '.oauthAccount.accountUuid // empty' "$config/.claude.json" 2>/dev/null)
+  [ -f "$marker" ] && read -r m_account m_read m_at m_fig < "$marker"
+  is_number "$m_read" && is_number "$m_at" || { m_account=''; m_read=0; m_at=0; }
+  [ "$m_fig" = "$fig" ] && [ -n "$m_account" ] && [ "$now" -ge "$m_at" ] && [ $(( now - m_at )) -lt "$refresh" ] && return 0
+  account=$m_account
+  if [ -z "$account" ] || [ "$now" -lt "$m_read" ] || [ $(( now - m_read )) -ge "$refresh" ]; then
+    account=$(jq -r '.oauthAccount.accountUuid // empty' "$host" 2>/dev/null)
+    m_read=$now
   fi
   case "$account" in ''|*[!A-Za-z0-9-]*) return 0 ;; esac
   [ "${#account}" -le 64 ] || return 0
@@ -473,13 +476,14 @@ keep_quota() {
   tmp="$file.tmp-$$"
   printf '%s\n' "$body" > "$tmp" && mv -f "$tmp" "$file" || { rm -f "$tmp"; return 0; }
   tmp="$marker.tmp-$$"
-  printf '%s %s %s\n' "$account" "$now" "$fig" > "$tmp" && mv -f "$tmp" "$marker" || rm -f "$tmp"
+  printf '%s %s %s %s\n' "$account" "$m_read" "$now" "$fig" > "$tmp" && mv -f "$tmp" "$marker" || rm -f "$tmp"
 }
 
-# Whether a window's two figures are numbers: a percentage (decimals allowed) and an epoch second.
+# Whether a window is a reading: a percentage (decimals allowed) and the epoch second it resets at,
+# still ahead of `$3`, now.
 quota_window() {
   case "$1" in ''|*[!0-9.]*|.*|*.|*.*.*) return 1 ;; esac
-  is_number "${2%%.*}"
+  is_number "${2%%.*}" && [ "${2%%.*}" -gt "$3" ]
 }
 
 # A string as the inside of a JSON string: the backslash and the quote escaped.

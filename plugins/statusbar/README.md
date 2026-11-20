@@ -176,9 +176,9 @@ is absent or torn, of another version, or stamped ahead past the bound. The file
 When the orchestrator's state directory exists, each payload carrying `rate_limits` also writes the
 account's quota to `<state>/quota/<accountUuid>.json` (`docs/contracts.md`, « Quota file »): the
 quota is the account's, and the payloads are the only place the host shows it. The account is the
-`oauthAccount.accountUuid` of the session's `.claude.json`, read once every five minutes (a marker
-beside the quota files answers the renders between). The file is rewritten when a figure changes,
-or when it is five minutes old; the line drawn and the exit status are the same with or without it.
+`oauthAccount.accountUuid` of the host's `.claude.json`, read once per refresh (a marker beside the
+quota files answers the renders between). The file is rewritten when a figure changes, or when it is
+a refresh old (`refresh_seconds` of `quota.json`); the line drawn and the exit status are the same with or without it.
 
 Reset times are formatted with BSD `date -r`, else GNU `date -d @…`, so they show on macOS and
 Linux alike.

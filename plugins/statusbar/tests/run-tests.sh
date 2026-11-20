@@ -674,10 +674,26 @@ qk_check "a figure that changed is written" "48" "$(jq -r '.five_hour.used_perce
 # An unchanged reading is still renewed once its marker is a refresh old, so a live account never reads stale.
 printf 'sentinel\n' > "$QK_FILE"
 QK_MARKER="$QK_STATE/quota/.config-${QK_CONFIG_ONE//[!A-Za-z0-9._-]/_}"
-read -r qk_account qk_at qk_fig < "$QK_MARKER"
-printf '%s %s %s\n' "$qk_account" "$((qk_at - 400))" "$qk_fig" > "$QK_MARKER"
+read -r qk_account qk_read qk_at qk_fig < "$QK_MARKER"
+printf '%s %s %s %s\n' "$qk_account" "$qk_read" "$((qk_at - 400))" "$qk_fig" > "$QK_MARKER"
 qk_run "${QK_BOTH/47.2/48}" "$QK_STATE" "$QK_CONFIG_ONE" >/dev/null
 qk_check "an unchanged reading is renewed once the marker is 5 minutes old" "$QK_ONE" "$(jq -r '.account' "$QK_FILE" 2>&1)"
+
+# The account is read from the host's file once per refresh, not at each render: a change of account
+# in it is not seen while the marker's reading is fresh, and is seen once that reading is old, even
+# while the figures keep changing.
+printf '{"oauthAccount":{"accountUuid":"%s"}}' "$QK_TWO" > "$QK_CONFIG_ONE/.claude.json"
+qk_run "${QK_BOTH/47.2/49}" "$QK_STATE" "$QK_CONFIG_ONE" >/dev/null
+qk_check "the account of a fresh marker is not read again at each render" "$QK_ONE 49" \
+  "$(jq -r '"\(.account) \(.five_hour.used_percentage)"' "$QK_FILE" 2>&1)"
+read -r qk_account qk_read qk_at qk_fig < "$QK_MARKER"
+printf '%s %s %s %s\n' "$qk_account" "$((qk_read - 400))" "$qk_at" "$qk_fig" > "$QK_MARKER"
+qk_run "${QK_BOTH/47.2/50}" "$QK_STATE" "$QK_CONFIG_ONE" >/dev/null
+qk_check "a changed figure does not keep an old account: it is read again once its reading is old" "50" \
+  "$(jq -r '.five_hour.used_percentage' "$QK_STATE/quota/$QK_TWO.json" 2>&1)"
+printf '{"oauthAccount":{"accountUuid":"%s"}}' "$QK_ONE" > "$QK_CONFIG_ONE/.claude.json"
+rm -f "$QK_STATE/quota/$QK_TWO.json" "$QK_MARKER"
+qk_run "${QK_BOTH/47.2/48}" "$QK_STATE" "$QK_CONFIG_ONE" >/dev/null
 
 # Each configuration keeps its own account's file.
 qk_run "${QK_BOTH/47.2/12}" "$QK_STATE" "$QK_CONFIG_TWO" >/dev/null
@@ -685,7 +701,20 @@ qk_check "another configuration writes its own account's file" "12 $QK_CONFIG_TW
   "$(jq -r '"\(.five_hour.used_percentage) \(.config)"' "$QK_STATE/quota/$QK_TWO.json" 2>&1)"
 qk_check "and leaves the first one's alone" "48" "$(jq -r '.five_hour.used_percentage' "$QK_FILE" 2>&1)"
 
-# A window with a figure missing is left out; with none, nothing is written.
+# With no CLAUDE_CONFIG_DIR the host keeps the account in ~/.claude.json, and the configuration is ~/.claude.
+QK_HOME="$WORK/qk-home"; mkdir -p "$QK_HOME/.claude" "$WORK/qk-state-h"
+printf '{"oauthAccount":{"accountUuid":"%s"}}' "$QK_ONE" > "$QK_HOME/.claude.json"
+printf '{"oauthAccount":{"accountUuid":"%s"}}' "$QK_TWO" > "$QK_HOME/.claude/.claude.json"
+printf '%s' "$QK_BOTH" | env -u CLAUDE_CONFIG_DIR HOME="$QK_HOME" ORCHESTRATOR_STATE_DIR="$WORK/qk-state-h" STATUSBAR_CONFIG="$ALL_ON" bash "$SCRIPT" >/dev/null
+qk_check "with no CLAUDE_CONFIG_DIR the account is ~/.claude.json's, the configuration ~/.claude" "$QK_ONE $QK_HOME/.claude" \
+  "$(jq -r '"\(.account) \(.config)"' "$WORK/qk-state-h/quota/$QK_ONE.json" 2>&1)"
+
+# A window with a figure missing, or already reset, is left out; with none, nothing is written.
+QK_STATE_R="$WORK/qk-state-r"; mkdir -p "$QK_STATE_R"
+qk_run "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":99,\"resets_at\":$((NOW - 60))},\"seven_day\":{\"used_percentage\":9,\"resets_at\":$IN_3D}}}" "$QK_STATE_R" "$QK_CONFIG_ONE" >/dev/null
+qk_check "a window already reset is not kept" "9 false" \
+  "$(jq -r '"\(.seven_day.used_percentage) \(has("five_hour"))"' "$QK_STATE_R/quota/$QK_ONE.json" 2>&1)"
+
 QK_STATE_B="$WORK/qk-state-b"; mkdir -p "$QK_STATE_B"
 qk_run "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":$IN_2H},\"seven_day\":{\"used_percentage\":9}}}" "$QK_STATE_B" "$QK_CONFIG_ONE" >/dev/null
 qk_check "a window without its reset is not kept" "30 false" \
