@@ -42,13 +42,13 @@
 // the deck lacks is no miss: the deck holds an agent from the end of its first turn, so one
 // spawned since is in the chain and `list` alone, and is printed from them.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chainPath, parseChain } from '../../../core/chain-entries.ts'
 import { DECK_FILE, parseDeck } from '../../../core/deck.ts'
 import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../core/orchestration.ts'
-import { readText, writeAtomic } from '../../../core/store.ts'
+import { readText, update, writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo } from '../../../hooks/pr-file-format.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { setting } from '../../../core/env.ts'
@@ -62,7 +62,7 @@ import { isEntry, processIo, type Io } from './lib/process.ts'
 import { GoalsFault, namedGoals, parseGoals } from './lib/goals-file.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { archiveSettled } from './lib/round-archive.ts'
-import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
+import { holderOf, openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
 import { askedKey } from '../../../hooks/asked-key.ts'
 import { holdsOf, readyHeadsOf } from '../../../hooks/ready-agent.ts'
 import { bareName, briefOfLaunch, isAgent, newestLaunch, rowOfBrief } from '../../../hooks/row-owner.ts'
@@ -1005,6 +1005,32 @@ export function takeOwnership(record: string, successor: string, io: Io): string
   }
 }
 
+/**
+ * The operator's open to-do items follow the record to its new owner: a list is keyed by its holder's
+ * title (`todo/<title>.jsonl`), and the next takeover reads the successor's. The previous holder's
+ * list moves when the successor has none, else its open items are appended to the successor's,
+ * numbered after its highest id, and the old file goes. Nothing moves for a previous holder with no
+ * title, the same title once its reference is off, or no open item. Answers the line to say.
+ */
+export function carryTodos(state: string, before: string, successor: string): string | undefined {
+  if (before === '' || successor === '' || holderOf(before) === holderOf(successor)) return undefined
+  const from = todoPath(state, before)
+  const to = todoPath(state, successor)
+  const open = openTodos(todoItems(readText(from) ?? ''))
+  if (open.length === 0) return undefined
+  if (todoItems(readText(to) ?? '').length === 0) {
+    renameSync(from, to)
+    return `takeover: to-do list of ${before} moved to ${successor} (${open.length} open)`
+  }
+  update(to, current => {
+    const kept = current ?? ''
+    const next = todoItems(kept).reduce((highest, item) => Math.max(highest, item.id), 0)
+    return `${kept}${kept === '' || kept.endsWith('\n') ? '' : '\n'}${open.map((item, k) => `${JSON.stringify({ ...item, id: next + 1 + k })}\n`).join('')}`
+  })
+  rmSync(from, { force: true })
+  return `takeover: ${open.length} open to-do of ${before} appended to the list of ${successor}, numbered after its own`
+}
+
 export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { cwd: process.cwd(), now: () => new Date() }): number {
   const parsed = parseArgs(argv, deps.cwd)
   if ('error' in parsed) {
@@ -1080,7 +1106,15 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   // The text is made: only now does the record pass, so a takeover that failed above leaves the owner where it was.
   const successor = sessionOrchestration(env)
   const replaced = takeOwnership(parsed.record, successor, io)
-  if (replaced !== undefined) io.err(`takeover: ${ownerFileOf(parsed.record)} passed from ${replaced === '' ? 'no owner' : replaced} to ${successor}\n`)
+  if (replaced !== undefined) {
+    io.err(`takeover: ${ownerFileOf(parsed.record)} passed from ${replaced === '' ? 'no owner' : replaced} to ${successor}\n`)
+    try {
+      const carried = carryTodos(stateRoot(env), replaced, successor)
+      if (carried !== undefined) io.err(`${carried}\n`)
+    } catch (error) {
+      io.err(`succession: the to-do list of ${replaced} could not follow the record: ${(error as Error).message}\n`)
+    }
+  }
   io.out(text.endsWith('\n') ? text : `${text}\n`)
   io.err(`takeover: chars=${text.length} rows=${open.rows.length} ready=${owners.filter(o => o.endsWith(' READY NOT STARTED')).length} prs=${open.prs.length} agents=${open.agents.length}${open.disagree === undefined ? '' : ` agents_disagree=${open.disagree}`} questions=${open.questions.length} todo_stray=${stray.length} pruned=round:${round}\n`)
   return 0

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { main as recordMain } from './dispatch-record.ts'
-import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, homePanes, homeAgentsOf, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, readyNote, roundOpen, roundSettled, rowLines, rowOfBrief, takeOwnership, TEMPLATE, todoStray, toApply, withHomeAgents, type Artifacts, type HomePane, type ListedRow, type LiveAgent } from './succession.ts'
+import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, carryTodos, fill, homePanes, homeAgentsOf, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, readyNote, roundOpen, roundSettled, rowLines, rowOfBrief, takeOwnership, TEMPLATE, todoStray, toApply, withHomeAgents, type Artifacts, type HomePane, type ListedRow, type LiveAgent } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -1145,3 +1145,57 @@ test('the record is left as it was when the session names no orchestration, what
   assert.equal(readFileSync(`${w.record}.owner`, 'utf8'), `${NAME}\n`)
   assert.ok(!w.err.join('').includes('passed from'))
 })
+
+/** A takeover by a session titled `Orch: refacto firmware` of a record owned by `Orch: belt` (the world's), the successor's own list as given. */
+function successorWorld(own?: string) {
+  const w = world()
+  const config = join(dir, 'config')
+  mkdirSync(join(config, 'sessions'), { recursive: true })
+  writeFileSync(join(config, 'sessions', '9.json'), '{"sessionId":"s-new","name":"Orch: refacto firmware [ab12cd]","updatedAt":5}')
+  const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_SESSION_ID: 's-new' }
+  if (own !== undefined) writeFileSync(join(w.state, 'todo', 'Orch: refacto firmware.jsonl'), own)
+  const errs: string[] = []
+  const takeover = (): string => {
+    const out: string[] = []
+    assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: t => { errs.push(t) } }, { cwd: dir, list: () => [], homes: () => [], now: () => NOW, prState: () => undefined }), 0)
+    return out.join('')
+  }
+  return { w, takeover, errs, old: join(w.state, 'todo', `${NAME}.jsonl`), own: join(w.state, 'todo', 'Orch: refacto firmware.jsonl') }
+}
+
+test('the open to-do items follow the record to a successor titled differently: its next takeover lists them still', () => {
+  const f = successorWorld()
+  const stray = 'to-do 2 → row 1 closed; to-do 3 → row 9 missing'
+  assert.ok(f.takeover().includes(stray), 'the first takeover lists them from the old list')
+  assert.equal(readFileSync(`${f.w.record}.owner`, 'utf8'), 'Orch: refacto firmware\n')
+  // The list moved whole: the old one is gone, the successor's holds the same items.
+  assert.equal(existsSync(f.old), false)
+  assert.equal(todoLines(f.own).length, 5)
+  assert.match(f.errs.join(''), /to-do list of Orch: belt moved to Orch: refacto firmware \(4 open\)/)
+  // The takeover after it, which reads the successor's list, still names them.
+  assert.ok(f.takeover().includes(stray), 'the second takeover lists the item')
+})
+
+test('a successor with a list of its own has the previous holder\'s open items appended after its highest id, the closed ones left', () => {
+  const own = `${todo(7, undefined)}\n`.replace('from":"Orch: belt"', 'from":"Orch: refacto firmware"')
+  const f = successorWorld(own)
+  f.takeover()
+  assert.equal(existsSync(f.old), false)
+  const ids = todoLines(f.own).map(line => (JSON.parse(line) as { id: number }).id)
+  assert.deepEqual(ids, [7, 8, 9, 10, 11])
+  assert.match(f.errs.join(''), /4 open to-do of Orch: belt appended to the list of Orch: refacto firmware, numbered after its own/)
+  assert.ok(f.takeover().includes('to-do 9 → row 1 closed; to-do 10 → row 9 missing'))
+})
+
+test('no list moves for the same title, no previous owner, or no open item', () => {
+  const w = world()
+  assert.equal(carryTodos(w.state, NAME, `${NAME} [ab12cd]`), undefined)
+  assert.equal(carryTodos(w.state, '', 'Orch: next'), undefined)
+  assert.equal(existsSync(join(w.state, 'todo', `${NAME}.jsonl`)), true)
+  writeFileSync(join(w.state, 'todo', 'Orch: closed.jsonl'), `${todo(1, undefined, 'closed')}\n`)
+  assert.equal(carryTodos(w.state, 'Orch: closed', 'Orch: next'), undefined)
+  assert.equal(existsSync(join(w.state, 'todo', 'Orch: next.jsonl')), false)
+  assert.equal(carryTodos(w.state, 'Orch: absent', 'Orch: next'), undefined)
+})
+
+const todoLines = (path: string): string[] => readFileSync(path, 'utf8').split('\n').filter(line => line !== '')
