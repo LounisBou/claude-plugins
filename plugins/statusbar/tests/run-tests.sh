@@ -618,6 +618,22 @@ check_all_lines "SHOW_USAGE=0 hides the pace line with the quotas" "$(config_wit
   "${H5}{\"used_percentage\":80,\"resets_at\":$IN_2H}}}" \
 "plain"
 
+echo "== exit status: the host logs a non-zero exit as a warning =="
+
+# The script ends on a line that prints only when a line exists: it must still exit 0.
+for exit_case in "no pace line:{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"}}" \
+                 "with the pace line:${H5}{\"used_percentage\":80,\"resets_at\":$IN_2H}}}"; do
+  label=${exit_case%%:*}
+  payload=${exit_case#*:}
+  printf '%s' "$payload" | STATUSBAR_CONFIG="$ALL_ON" bash "$SCRIPT" >/dev/null
+  code=$?
+  if [ "$code" -eq 0 ]; then
+    printf '  ok   the status line exits 0 %s\n' "$label"; pass=$((pass + 1))
+  else
+    printf '  FAIL the status line exits %s %s\n' "$code" "$label"; fail=$((fail + 1))
+  fi
+done
+
 echo "== settings are data, dates are portable, git takes no lock =="
 
 # A line of the settings file that is code runs nothing: only KEY=0|1 lines are read.
