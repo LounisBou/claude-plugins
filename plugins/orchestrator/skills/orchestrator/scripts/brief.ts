@@ -34,7 +34,7 @@ import { parseRecord, stateRoot, type Row } from './dispatch-record.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { goalsFileOf } from './lib/record-paths.ts'
 import { placeholdersOf } from './review-brief.ts'
-import { fill, projectOf } from './succession.ts'
+import { fill, projectOf, tmuxWindow } from './succession.ts'
 
 export const USAGE = 'usage: brief.sh {phase|rotation|audit|auditor-takeover|coordinator-takeover} --<field> <value>... (see header)'
 
@@ -108,6 +108,8 @@ export interface Deps {
   readonly now: () => Date
   /** `git -C <dir> <args>`'s stdout trimmed, undefined when it fails. */
   readonly git: (dir: string, args: readonly string[]) => string | undefined
+  /** The index of the home-session window a tty is, undefined for a tab (default: tmux's own answer). */
+  readonly paneWindow?: (tty: string) => number | undefined
 }
 
 /** The command's values, or the reason it cannot fill them. */
@@ -280,11 +282,16 @@ function rotationValues(f: Fields, deps: Deps): Values {
   }
 }
 
-/** The launcher's line that starts the replacement on the rotation brief and closes the old agent. */
-export function rotateLine(f: Fields): string {
+/**
+ * The launcher's line that starts the replacement on the rotation brief and closes the old agent. For a
+ * window of a home session (`window`) it carries `--expect-title`, which the launcher requires there: the
+ * window's name is fixed, and the tty printed here may be another agent's by the time the line runs.
+ */
+export function rotateLine(f: Fields, window = false): string {
   const q = (text: string): string => `'${text.replace(/'/g, `'\\''`)}'`
   return [LAUNCHER, 'rotate', '--old-tty', f['tty'] ?? '', '--dir', q(f['worktree'] ?? ''), '--title', q(f['title'] ?? ''),
-    '--brief', q(f['out'] ?? ''), '--orchestrator', q(f['orchestrator'] ?? ''), '--right-of', 'self'].join(' ')
+    '--brief', q(f['out'] ?? ''), '--orchestrator', q(f['orchestrator'] ?? ''), '--right-of', 'self',
+    ...(window ? ['--expect-title', q(f['title'] ?? '')] : [])].join(' ')
 }
 
 /** A subject as a file name takes it. */
@@ -423,7 +430,7 @@ export function main(argv: readonly string[], io: Io, deps: Deps, templates: Rea
     } catch (error) {
       return fail(`${out} cannot be written: ${(error as Error).message}`)
     }
-    io.out(`${parsed.command} brief: ${out}\nreport: ${values['REPORT_PATH']}\n${parsed.command === 'rotation' ? `rotate: ${rotateLine(parsed.fields)}\n` : ''}`)
+    io.out(`${parsed.command} brief: ${out}\nreport: ${values['REPORT_PATH']}\n${parsed.command === 'rotation' ? `rotate: ${rotateLine(parsed.fields, (deps.paneWindow ?? tmuxWindow)(parsed.fields['tty'] ?? '') !== undefined)}\n` : ''}`)
     return 0
   }
   io.out(filled.endsWith('\n') ? filled : `${filled}\n`)
