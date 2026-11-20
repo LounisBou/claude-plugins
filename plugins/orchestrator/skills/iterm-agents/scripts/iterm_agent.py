@@ -92,7 +92,8 @@ SPAWN_TIMEOUT = int(os.environ.get("ORCHESTRATOR_SPAWN_TIMEOUT", "30"))
 # Where the host keeps one directory per checkout and one transcript per session. The mode
 # a session actually came up in is read there: the process line says what was ASKED for,
 # and the two are not the same thing for every model (§43).
-PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or os.path.expanduser("~/.claude/projects")
+PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or os.path.join(
+    os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "projects")
 # A transcript appears about two seconds after the process starts; twenty is room for a
 # slow machine, and a reading that never comes is not a refusal (§29).
 MODE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_MODE_TIMEOUT", "20"))
@@ -347,13 +348,24 @@ def mode_refusal(asked, got, model):
             % (got, asked, model or "the host default"))
 
 
-def unread_refusal(dir_, timeout):
+def trust_refusal(what, dir_, timeout):
+    """The refusal of a session found stopped on the host's workspace-trust dialog: named, with
+    the record that would have answered it."""
+    return ("%s: refused: %s is stopped on the host's workspace-trust dialog (« Quick safety "
+            "check ») for %s after %ss: the trust record %s does not hold the directory; pass "
+            "--trust for a checkout you prepared, or open the directory once yourself"
+            % (what, HOST_CLI, dir_, timeout, TRUST_FILE))
+
+
+def unread_refusal(dir_, timeout, made=None):
     """What was checked, for how long, why it may have happened, and what to look at next.
     A named exception to "a gate that cannot measure lets the run through and says so"
     (§29): a session whose mode is unread may be parked on a dialog or hung at start, which
     the plugin already calls "not launched" (§43) — so the tab this spawn made is closed
     rather than left for the operator to find blank; whether that close happened is said
-    after this text, by `refuse_made`."""
+    after this text, by `refuse_made`. A dialog the screen shows is named, not guessed."""
+    if made is not None and trust_dialog_on(made):
+        return trust_refusal("spawn", dir_, timeout)
     return ("spawn: refused: no transcript for %s carrying a mode after %ss: the session may "
             "be parked on a dialog or hung at start. Read it next time with `screen` before "
             "retrying, or raise ORCHESTRATOR_MODE_TIMEOUT if the machine is only slow"
@@ -378,7 +390,7 @@ def verify_mode(dir_, launch_epoch, asked_mode, model, made, timeout=None, sleep
         sleep(1)
         waited += 1
     if not mode:
-        refuse_made(made, unread_refusal(dir_, timeout))
+        refuse_made(made, unread_refusal(dir_, timeout, made))
     elif mode != asked_mode:
         refuse_made(made, mode_refusal(asked_mode, mode, model))
     return "spawn: mode %s read on the transcript" % mode
@@ -394,7 +406,8 @@ def transcript_of(session_id):
     return "", 0
 
 
-def verify_resumed(session_id, offset, asked_mode, model, made, timeout=None, sleep=time.sleep):
+def verify_resumed(session_id, offset, asked_mode, model, made, timeout=None, sleep=time.sleep,
+                   dir_=""):
     """The mode a resumed session came up in, read on what its transcript gained since the
     launch (`offset`, its size then): the first mode it carries is the conversation's first
     launch's, not this one's. Refused like a spawn's reading (§43)."""
@@ -420,6 +433,8 @@ def verify_resumed(session_id, offset, asked_mode, model, made, timeout=None, sl
                 break
         sleep(1)
         waited += 1
+    if not mode and trust_dialog_on(made):
+        refuse_made(made, trust_refusal("spawn", dir_ or "the session's directory", timeout))
     if not mode:
         refuse_made(made, "spawn: refused: the transcript of session %s gained no entry carrying "
                     "a mode after %ss: the resume may be parked on a dialog or hung at start"
@@ -3249,6 +3264,7 @@ HOME_ENV_KEPT = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "LC_ALL", "
 # The suite's stand-ins: a test's, never a home server's.
 HOME_ENV_DROPPED = ("ORCHESTRATOR_DRY_RUN", "ORCHESTRATOR_SELF_TTY", "ORCHESTRATOR_SELF_ID",
                     "ORCHESTRATOR_PS_TABLE", "ORCHESTRATOR_CWD_TABLE", "ORCHESTRATOR_HOST_ARGV",
+                    "ORCHESTRATOR_HOST_ENV",
                     "ORCHESTRATOR_HOME_NO_TAB", "ORCHESTRATOR_NEW_SESSION_ID",
                     "ORCHESTRATOR_TEST_RUN")
 # Set by the suite and by the live test script, never by a launch: ORCHESTRATOR_HOME_NO_TAB
@@ -3392,8 +3408,15 @@ def host_argv(pid):
     stand_in = os.environ.get("ORCHESTRATOR_HOST_ARGV")
     if stand_in:
         return json.loads(stand_in)
+    words, _ = kernel_procargs(pid)
+    return words
+
+
+def kernel_procargs(pid):
+    """`(words, environment)` of the process `pid` as the kernel holds them, the environment a
+    list of `NAME=value` strings, or `(None, None)` where they cannot be read."""
     if sys.platform != "darwin":
-        return None
+        return None, None
     import ctypes
     import ctypes.util
     libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
@@ -3402,18 +3425,20 @@ def host_argv(pid):
     size = ctypes.c_size_t(ctypes.sizeof(argmax))
     if libc.sysctl((ctypes.c_int * 2)(ctl_kern, kern_argmax), 2, ctypes.byref(argmax),
                    ctypes.byref(size), None, 0) != 0:
-        return None
+        return None, None
     buf = ctypes.create_string_buffer(argmax.value)
     size = ctypes.c_size_t(argmax.value)
     if libc.sysctl((ctypes.c_int * 3)(ctl_kern, kern_procargs2, int(pid)), 3, buf,
                    ctypes.byref(size), None, 0) != 0:
-        return None
+        return None, None
     raw = buf.raw[:size.value]
     argc = int.from_bytes(raw[:4], sys.byteorder)
-    # The executable's path, its padding, then the words.
+    # The executable's path, its padding, then the words, then the environment.
     _, _, rest = raw[4:].partition(b"\0")
-    words = rest.lstrip(b"\0").split(b"\0")[:argc]
-    return [w.decode("utf-8", "replace") for w in words] if len(words) == argc else None
+    fields = rest.lstrip(b"\0").split(b"\0")
+    words = [w.decode("utf-8", "replace") for w in fields[:argc]]
+    environment = [w.decode("utf-8", "replace") for w in fields[argc:] if w]
+    return (words, environment) if len(words) == argc else (None, None)
 
 
 def session_record(session_id):
@@ -4020,6 +4045,13 @@ def cmd_home(args):
                 "place; the session stays where it is" % own)
     if DRY_RUN and not no_tab:
         old_id = "<old-tab-session-id>"
+    # The plan the session runs on, read on its own process: the home server starts with it, so
+    # window 0 and every window after resume on it, whoever runs the move.
+    config = process_config(pid)
+    if config is None:
+        print("home: the plan of process %s cannot be read: the resume runs on this caller's"
+              % pid, file=sys.stderr)
+    use_config(os.environ.get("CLAUDE_CONFIG_DIR", "") if config is None else config)
     resume_line = " ".join(shlex.quote(w) for w in [cli] + resume)
     # The old tab is released by a watcher of the launcher, started beside the resume and
     # closing it only once the resumed host is proved running on this pane: a resume that
@@ -4046,6 +4078,7 @@ def cmd_home(args):
         print("home_server=%s" % socket)
         print("home_conf=%s" % plugin_path(HOME_CONF))
         print("home_window0=%s" % args.name)
+        print("home_config=%s" % (os.environ.get("CLAUDE_CONFIG_DIR") or "none"))
         print("home_launch=%s" % launch)
         print("home_tab=%s" % ("none" if no_tab else "right of %s" % own))
         return
@@ -4495,6 +4528,11 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
              "export ORCHESTRATOR_SPAWNED=1",
              "printf '\\033]0;%%s\\007' %s" % shq(title),
              None]
+    # The plan the session runs on is its caller's: a tab's login shell, or a home server
+    # started before, would otherwise give it the default one.
+    config = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    if config:
+        parts.insert(2, "export CLAUDE_CONFIG_DIR=%s" % shq(config))
     if title_role(title) == AUDIT:
         # A marker the session carries in its own environment. The auditor's name is read
         # from the process table, which cannot give it back for a session launched without
@@ -4635,6 +4673,86 @@ def shq(s):
 # configuration directory when CLAUDE_CONFIG_DIR names one (a second account), else in the home.
 TRUST_FILE = os.environ.get("ORCHESTRATOR_TRUST_FILE") or os.path.join(
     os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~"), ".claude.json")
+
+
+def use_config(config):
+    """Run the rest of this command on the plan whose configuration directory is `config`
+    ("" is plan 1, the host's default): the variable the launch exports and the home server
+    starts with, the trust record and the transcripts' folder follow it, unless the suite's own
+    overrides name them."""
+    global TRUST_FILE, PROJECTS_DIR
+    if config:
+        os.environ["CLAUDE_CONFIG_DIR"] = config
+    else:
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
+    TRUST_FILE = os.environ.get("ORCHESTRATOR_TRUST_FILE") or os.path.join(
+        config or os.path.expanduser("~"), ".claude.json")
+    PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or (
+        os.path.join(config, "projects") if config else os.path.expanduser("~/.claude/projects"))
+
+
+def sleeper_config(title):
+    """The configuration directory the orchestrator `title` slept on, from the sleeping record
+    (`config`; absent is plan 1, ""), or None when no record names it or the record cannot be
+    read: a wake without a record runs on its caller's plan."""
+    try:
+        with open(os.path.join(STATE_DIR, "sleeping.json")) as fh:
+            records = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    wanted = current_name(title)
+    for record in records if isinstance(records, list) else []:
+        if isinstance(record, dict) and isinstance(record.get("name"), str) \
+                and current_name(record["name"]) == wanted:
+            config = record.get("config")
+            return config if isinstance(config, str) else ""
+    return None
+
+
+def process_config(pid):
+    """The CLAUDE_CONFIG_DIR in the environment of process `pid`, "" when it has none (plan 1),
+    None when it cannot be read: the plan a session runs on is a fact of its own process, whoever
+    asks. ORCHESTRATOR_HOST_ENV, a JSON list of NAME=value, stands in for the suite. Read from the kernel's own record, which tells the words from the environment; `ps`,
+    which joins them, is the fallback and takes the last assignment."""
+    stand_in = os.environ.get("ORCHESTRATOR_HOST_ENV")
+    if stand_in is not None:
+        environment = json.loads(stand_in)
+    else:
+        _, environment = kernel_procargs(pid)
+    if environment is not None:
+        found = [e.partition("=")[2] for e in environment if e.startswith("CLAUDE_CONFIG_DIR=")]
+        return found[-1] if found else ""
+    try:
+        text = subprocess.run(["ps", "eww", "-o", "command=", "-p", str(pid)],
+                              capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not text.strip():
+        return None
+    found = re.findall(r"(?:^|\s)CLAUDE_CONFIG_DIR=(\S*)", text)
+    return found[-1] if found else ""
+
+
+# What the host shows when it asks whether to trust a folder: the session stopped there has
+# started, reads nothing, and waits for a click nobody gives.
+TRUST_DIALOG = re.compile(r"Quick safety check|trust this folder|Do you trust the files")
+
+
+def trust_dialog_on(made):
+    """Whether the session a spawn just made is stopped on the host's workspace-trust dialog,
+    read on its screen (a home session's window 0, else its tab); False when it cannot be read."""
+    if not made.get("home") and not made.get("tty"):
+        return False
+    try:
+        if made.get("home"):
+            text = tmux_on(made["home"], ["capture-pane", "-p", "-t", HOME_SESSION + ":0"],
+                           "screen")
+        else:
+            text = "\n".join(terminal_for(made.get("tty") or "").screen(made.get("tty"), 40)
+                             or [])
+    except (Exception, SystemExit):
+        return False
+    return bool(TRUST_DIALOG.search(text))
 
 
 def directory_is_trusted(path):
@@ -4967,6 +5085,15 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
             if given:
                 die("spawn: refused: %s is not a successor's: a successor runs on your live "
                     "model and effort, read on your transcript" % flag)
+    if args.wake:
+        # A woken orchestrator runs on the plan it slept on, whoever wakes it: its transcripts
+        # (the pair is read there), its trust record and every window of its home server follow.
+        slept_on = sleeper_config(title)
+        if slept_on is None:
+            print("spawn: no sleeping record names %s: it wakes on its caller's plan" % title,
+                  file=sys.stderr)
+        else:
+            use_config(slept_on)
     model, effort, pair_source = pair_of_launch(args, auditor_successor, pair_from)
     if anchor == "self" and defaulted and not own and not DRY_RUN:
         # The default must not turn a spawn that worked into a refusal: a caller with no
@@ -5179,7 +5306,8 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
         # process line and honoured for some models and not others, so the mode the session
         # actually came up in is read on its own transcript (§43).
         if args.resume:
-            print(verify_resumed(args.resume, resumed_from, args.mode, model, made),
+            print(verify_resumed(args.resume, resumed_from, args.mode, model, made,
+                                 dir_=args.dir),
                   file=sys.stderr)
         else:
             print(verify_mode(args.dir, launch_epoch, args.mode, model, made), file=sys.stderr)

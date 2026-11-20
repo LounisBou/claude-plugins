@@ -6,7 +6,7 @@ import { basename, join } from 'node:path'
 import { ROLES } from '../../../core/names.ts'
 import type { WaitKind } from '../../../core/orchestration.ts'
 import { setting } from '../../../core/paths.ts'
-import { parseQuota, QUOTA_DIR, quotaLine, type Quota } from '../../../core/quota.ts'
+import { parseQuota, planOfConfig, QUOTA_DIR, quotaLine, type Quota } from '../../../core/quota.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, repoOfOrigin } from '../../../hooks/pr-file-format.ts'
 import { die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
@@ -30,6 +30,8 @@ export interface Session {
   readonly branch: string
   readonly top: string
   readonly why: string
+  /** The plan the session runs on (`plan1`, `plan2`, else its configuration directory), « - » when its environment was not read. */
+  readonly plan: string
 }
 
 export interface Place {
@@ -396,6 +398,34 @@ function tableOf(ctx: Context, unread: string[]): string {
   return ps.status === 0 ? ps.stdout : ''
 }
 
+/**
+ * The configuration directory in each session's own environment, by pid: « » when it has none (plan 1).
+ * `ps eww` shows a process's environment after its words; COORDINATOR_PS_ENV, `<pid> <words and environment>`
+ * rows, stands in for it when the suite gives a process table of its own. A pid it did not read is not in the map.
+ */
+function configsOf(ctx: Context, pids: readonly string[], unread: string[]): Map<string, string> {
+  const configs = new Map<string, string>()
+  if (pids.length === 0) return configs
+  const given = setting(ctx.env, 'COORDINATOR_PS_ENV')
+  let text: string | undefined
+  if (given !== undefined) {
+    text = readFile(given)
+    if (text === undefined) unread.push(`plans: ${given} cannot be read`)
+  } else if (setting(ctx.env, 'COORDINATOR_PS_TABLE') === undefined) {
+    const ps = ctx.run('ps', ['eww', '-o', 'pid=,command=', '-p', pids.join(',')])
+    if (ps.status === 0) text = ps.stdout
+    else unread.push('plans: ps failed')
+  }
+  for (const row of (text ?? '').split('\n')) {
+    const pid = /^\s*([0-9]+)\s/.exec(row)?.[1]
+    if (pid === undefined) continue
+    // The environment follows the words: the last assignment is the process's own.
+    const found = [...row.matchAll(/(?:^|\s)CLAUDE_CONFIG_DIR=(\S*)/g)]
+    configs.set(pid, found.at(-1)?.[1] ?? '')
+  }
+  return configs
+}
+
 /** Reads the sessions, places (checkouts and session trees), heavy runs, pull requests and remote rows. */
 export function readFacts(ctx: Context): Facts {
   const facts: Facts = { unread: [], table: '', sessions: [], places: [], heavy: [], prs: [], readRepos: [], remote: [], remotePrs: [] }
@@ -411,6 +441,8 @@ export function readFacts(ctx: Context): Facts {
   facts.table = tableOf(ctx, unread)
   const procs = procsOf(facts.table, host)
   const cwds = cwdsOf(ctx, procs.map(p => p.pid), unread)
+  const home = ctx.env['HOME'] ?? ''
+  const configs = configsOf(ctx, procs.filter(p => p.kind !== 'H').map(p => p.pid), unread)
 
   // A pid with no directory, or a directory git could not read, is on no branch and would drop
   // out of every collision unsaid: each one is an unread line.
@@ -441,7 +473,9 @@ export function readFacts(ctx: Context): Facts {
     const named = title.startsWith(`${ORCH}: `) || title.startsWith(`${ORCH} : `)
       ? { orch: currentOrch(title), why: '-' }
       : briefOrchestrator(proc.command, cwd, unread)
-    facts.sessions.push({ pid: proc.pid, tty: proc.tty, title: title === '' ? '-' : title, orch: named.orch, repo, branch, top, why: named.why })
+    const config = configs.get(proc.pid)
+    const plan = config === undefined ? '-' : config === '' ? 'plan1' : planOfConfig(config, home)
+    facts.sessions.push({ pid: proc.pid, tty: proc.tty, title: title === '' ? '-' : title, orch: named.orch, repo, branch, top, why: named.why, plan })
     if (branch !== '-') places.push({ top, repo, branch })
   }
 
@@ -709,7 +743,7 @@ function finish(ctx: Context, facts: Facts, code: number): number {
 export function factsCommand(ctx: Context, args: readonly string[]): number {
   if (args.length > 0) die(`facts: unexpected argument ${args[0]}`)
   const facts = readFacts(ctx)
-  for (const s of facts.sessions) ctx.out(`session ${s.pid} | ${s.tty} | ${s.title} | ${s.orch} | ${s.repo} | ${s.branch} | ${s.top}`)
+  for (const s of facts.sessions) ctx.out(`session ${s.pid} | ${s.tty} | ${s.title} | ${s.orch} | ${s.repo} | ${s.branch} | ${s.top} | ${s.plan}`)
   // The checkout lines are the workspace's trees; a session's own clone is on its line.
   const root = workspacesRoot(ctx)
   for (const p of facts.places) if (root !== '' && p.top.startsWith(`${root}/`)) ctx.out(`checkout ${p.top} | ${p.repo} | ${p.branch}`)
