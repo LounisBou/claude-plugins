@@ -5,7 +5,8 @@
 #   3. only while a quota window, at its pace so far, runs out before it resets
 #
 # Every value comes from the JSON payload the host sends on stdin. No network
-# calls, no state, no credentials. Git status is the only external command.
+# calls, no credentials. Git status is the only external command. The one thing it keeps is the
+# account's quota, as the file keep_quota writes (see there).
 #
 # The 5-hour and 7-day quotas are read from `.rate_limits` in that payload:
 # the host exposes them natively, so no web session cookie is involved. See
@@ -426,7 +427,76 @@ if [ "$show_usage" = "1" ]; then
   fi
 fi
 
+# --- the account's quota, kept ----------------------------------------------
+
+# The quota is the account's, not the session's: any session of it shows the same figures, and only
+# the payloads carry them. So each payload with `rate_limits` writes them to
+# `<orchestrator state>/quota/<account>.json` (core's quota.ts, quota.json here), where the
+# coordinator reads each plan's room. Nothing is written without the orchestrator's state directory:
+# a machine with the status line alone keeps nothing. A window already reset is no reading. The
+# account is `oauthAccount.accountUuid` of the host's `.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json`,
+# else `~/.claude.json`), a file of megabytes: it is read once per refresh, and a marker beside the
+# quota files (`.config-<directory>`: account, when it was read, when the file was written, figures)
+# answers every other render. A reading is rewritten when its figures change, or when it is a refresh
+# old, so the time it carries tells how long ago a session of the account last drew it.
+keep_quota() {
+  local config=${CLAUDE_CONFIG_DIR:-$HOME/.claude} host=$HOME/.claude.json
+  local state dir version refresh qdir marker now fig h5 d7 m_account='' m_read='' m_at='' m_fig='' account at file tmp body
+  [ -n "${CLAUDE_CONFIG_DIR:-}" ] && host=$CLAUDE_CONFIG_DIR/.claude.json
+  now=$(date +%s)
+  # A window is kept only with both its figures, and while it has not reset: « <percentage> <reset> », or « - - ».
+  h5="- -"; quota_window "$h5_pct" "$h5_reset" "$now" && h5="$h5_pct ${h5_reset%%.*}"
+  d7="- -"; quota_window "$d7_pct" "$d7_reset" "$now" && d7="$d7_pct ${d7_reset%%.*}"
+  fig="$h5 $d7"
+  [ "$fig" = "- - - -" ] && return 0
+  IFS=' ' read -r dir version refresh state <<<"$(jq -r --slurpfile o "$contract" \
+    '"\(.dir) \(.file_version) \(.refresh_seconds) \($o[0].measure.module_dir)"' "$here/../core/quota.json" 2>/dev/null)"
+  is_number "$refresh" && is_number "$version" || return 0
+  state=${ORCHESTRATOR_STATE_DIR:-$config/$state}
+  [ -d "$state" ] || return 0
+  qdir="$state/$dir"
+  marker="$qdir/.config-${config//[!A-Za-z0-9._-]/_}"
+  [ -f "$marker" ] && read -r m_account m_read m_at m_fig < "$marker"
+  is_number "$m_read" && is_number "$m_at" || { m_account=''; m_read=0; m_at=0; }
+  [ "$m_fig" = "$fig" ] && [ -n "$m_account" ] && [ "$now" -ge "$m_at" ] && [ $(( now - m_at )) -lt "$refresh" ] && return 0
+  account=$m_account
+  if [ -z "$account" ] || [ "$now" -lt "$m_read" ] || [ $(( now - m_read )) -ge "$refresh" ]; then
+    account=$(jq -r '.oauthAccount.accountUuid // empty' "$host" 2>/dev/null)
+    m_read=$now
+  fi
+  case "$account" in ''|*[!A-Za-z0-9-]*) return 0 ;; esac
+  [ "${#account}" -le 64 ] || return 0
+  mkdir -p "$qdir" || return 0
+  at=$(date -u -r "$now" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ) || return 0
+  body="{\"version\":$version,\"account\":\"$account\",\"config\":\"$(json_text "$config")\""
+  [ "$h5" != "- -" ] && body="$body,\"five_hour\":{\"used_percentage\":${h5% *},\"resets_at\":${h5#* }}"
+  [ "$d7" != "- -" ] && body="$body,\"seven_day\":{\"used_percentage\":${d7% *},\"resets_at\":${d7#* }}"
+  body="$body,\"at\":\"$at\"}"
+  file="$qdir/$account.json"
+  tmp="$file.tmp-$$"
+  printf '%s\n' "$body" > "$tmp" && mv -f "$tmp" "$file" || { rm -f "$tmp"; return 0; }
+  tmp="$marker.tmp-$$"
+  printf '%s %s %s %s\n' "$account" "$m_read" "$now" "$fig" > "$tmp" && mv -f "$tmp" "$marker" || rm -f "$tmp"
+}
+
+# Whether a window is a reading: a percentage (decimals allowed) and the epoch second it resets at,
+# still ahead of `$3`, now.
+quota_window() {
+  case "$1" in ''|*[!0-9.]*|.*|*.|*.*.*) return 1 ;; esac
+  is_number "${2%%.*}" && [ "${2%%.*}" -gt "$3" ]
+}
+
+# A string as the inside of a JSON string: the backslash and the quote escaped.
+json_text() {
+  local text=${1//\\/\\\\}
+  printf '%s' "${text//\"/\\\"}"
+}
+
 [ -n "$line1" ] && printf '%s\n' "$line1"
 [ -n "$line2" ] && printf '%s\n' "$line2"
 [ -n "${line3:-}" ] && printf '%s\n' "$line3"
+
+# Keeps the account's quota, after the line is out and whatever happens to it: the output is never
+# changed by it, nor the exit status.
+keep_quota >/dev/null 2>&1
 exit 0

@@ -6,6 +6,7 @@ import { basename, join } from 'node:path'
 import { ROLES } from '../../../core/names.ts'
 import type { WaitKind } from '../../../core/orchestration.ts'
 import { setting } from '../../../core/paths.ts'
+import { parseQuota, QUOTA_DIR, quotaLine, type Quota } from '../../../core/quota.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, repoOfOrigin } from '../../../hooks/pr-file-format.ts'
 import { die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
@@ -682,6 +683,18 @@ export function collisions(facts: Facts): string[] {
   return [...lines, ...prCollisions(facts)]
 }
 
+/** Each plan's quota, as the status lines keep it under `<state>/quota/`: a file that is no reading is skipped, the plans in order. */
+export function quotaLines(ctx: Context): string[] {
+  const home = ctx.env['HOME'] ?? ''
+  const readings: Quota[] = []
+  for (const file of filesOf(join(stateOf(ctx.env), QUOTA_DIR))) {
+    if (isTemporary(file) || !file.endsWith('.json')) continue
+    const quota = parseQuota(parseJson(readFile(file) ?? ''))
+    if (quota !== null) readings.push(quota)
+  }
+  return readings.map(quota => quotaLine(quota, home, ctx.now().getTime())).sort()
+}
+
 /** The real path of the workspaces' root, empty when it cannot be entered. */
 function workspacesRoot(ctx: Context): string {
   return realOr(setting(ctx.env, 'ORCHESTRATOR_WORKSPACES') ?? `${ctx.env['HOME'] ?? ''}/dev/workspaces`, '')
@@ -703,6 +716,7 @@ export function factsCommand(ctx: Context, args: readonly string[]): number {
   for (const h of facts.heavy) ctx.out(`heavy ${h.pid} | ${h.dir} | ${h.command}`)
   for (const line of waitingLines(ctx, facts.table)) ctx.out(line)
   for (const line of unattendedLines(ctx, facts.table)) ctx.out(line)
+  for (const line of quotaLines(ctx)) ctx.out(line)
   for (const row of facts.remote) ctx.out(remoteLine(row))
   const found = collisions(facts)
   for (const line of found) ctx.out(line)

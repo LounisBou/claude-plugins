@@ -431,6 +431,35 @@ describe('facts', () => {
     ])
   })
 
+  it('says each plan\'s quota from the files the status lines keep, the stale ones marked, the unreadable ones skipped', () => {
+    const { f } = bench({ env: { HOME: '/Users/me' } })
+    const put = (name: string, text: string) => {
+      mkdirSync(join(f.state, 'quota'), { recursive: true })
+      writeFileSync(join(f.state, 'quota', name), text)
+    }
+    const file = (account: string, config: string, five: number, at: string, seven?: number) => JSON.stringify({
+      version: 1, account, config, five_hour: { used_percentage: five, resets_at: 1 }, ...(seven === undefined ? {} : { seven_day: { used_percentage: seven, resets_at: 2 } }), at,
+    })
+    put('a-two.json', file('a-two', '/Users/me/zeta', 12.4, '2026-10-18T10:00:00Z'))
+    put('z-one.json', file('z-one', '/Users/me/alpha', 80.5, '2026-10-18T09:30:00Z', 33))
+    put('torn.json', '{"version":1,')
+    put('other.json', JSON.stringify({ version: 9 }))
+    put('.config-x', 'a-one 1 - - - -')
+    put('c.json.tmp-1', file('c', '/Users/me/alpha', 1, '2026-10-18T10:00:00Z'))
+    assert.equal(run(f, 'facts'), 2)
+    // The files lie in the order of their accounts (a-two, z-one); the lines, in the order of their plans.
+    assert.deepEqual(f.out.filter(l => l.startsWith('quota')), [
+      'quota /Users/me/alpha | 5h 81% | 7d 33% | read 2026-10-18T09:30:00Z (stale)',
+      'quota /Users/me/zeta | 5h 12% | 7d - | read 2026-10-18T10:00:00Z',
+    ])
+  })
+
+  it('says no quota line where no status line has kept one', () => {
+    const { f } = bench()
+    assert.equal(run(f, 'facts'), 2)
+    assert.deepEqual(f.out.filter(l => l.startsWith('quota')), [])
+  })
+
   it('refuses an argument', () => {
     const f = fixture()
     assert.equal(run(f, 'facts', 'x'), 1)
