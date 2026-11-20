@@ -1246,8 +1246,9 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
     const failing = ((await markerAt($, 'failing', repo)) ?? 0) > (listedAt ?? 0)
     const ceiling = act || failing ? undefined : readAt
     const until = foreignHold(seen, move, listedAt, ceiling)
-    // A tool reads the forge itself when the reconciler's listing is not there to wait for: a Not Ready no record holds up goes.
-    if (until !== undefined && (watch !== undefined || !(await forgeBringsNothing($, repo, pr, gate.head)))) {
+    // A tool reads the forge itself once the wait is over, when the reconciler's listing is not there to wait for: a Not Ready no
+    // record holds up goes. Inside the wait the other machine's reconciler may still be posting what justifies it.
+    if (until !== undefined && (watch !== undefined || until > readAt || !(await forgeBringsNothing($, repo, pr, gate.head)))) {
       return { line: gateHeldLine(repo, pr, gate.head, until, readAt, failing), missing, gate, held: { until, failing } }
     }
     if (ceiling !== undefined && foreignGivenUp(seen, move, listedAt, ceiling)) note($, gateHeldGivenUpLine(repo, pr, gate.head, FOREIGN_CEILING_MS / 60_000))

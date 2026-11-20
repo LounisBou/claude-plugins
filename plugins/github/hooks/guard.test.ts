@@ -88,6 +88,10 @@ type World = {
   ownLabel?: boolean
   // pr-create's answer, as the engine prints it.
   created?: string
+  // With forgeStatuses: the listed row is of another head, the listing names no account, or it fails with this stderr.
+  forgeHead?: string
+  forgeNoViewer?: boolean
+  panelFails?: string
   // pr-panel --reconcile's answer: the forge's statuses at the head, by the account that reads; omitted, it answers nothing readable.
   forgeStatuses?: Array<{ context: string; state: string; description: string; creator: string }>
   // No clock is answered: the module cannot read the time.
@@ -331,9 +335,11 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
       return { value: { exitCode: 0, stdout: typeof gate === 'string' ? gate : JSON.stringify(gate), stderr: w.readStderr ?? '' } }
     }
     if (stdin.command === 'pr-create' && w.created !== undefined) return { value: { exitCode: 0, stdout: w.created, stderr: '' } }
-    if (stdin.command === 'pr-panel' && w.forgeStatuses) {
-      const row = { number: 12, draft: false, head: HEAD, base: 'main', labels: ['Not Ready'], rollup: 'SUCCESS', statuses: w.forgeStatuses }
-      return { value: { exitCode: 0, stdout: JSON.stringify({ viewer: 'operator', rows: [row], rate: { remaining: 4000 } }), stderr: '' } }
+    // Only the listing the reconciler reads (pr-panel --reconcile) of the repository answers; the pane's read does not.
+    if (stdin.command === 'pr-panel' && w.forgeStatuses && stdin.args?.['reconcile'] === true && stdin.repo === 'acme/thing') {
+      if (w.panelFails) return { value: { exitCode: 1, stdout: '', stderr: w.panelFails } }
+      const row = { number: 12, draft: false, head: w.forgeHead ?? HEAD, base: 'main', labels: ['Not Ready'], rollup: 'SUCCESS', statuses: w.forgeStatuses }
+      return { value: { exitCode: 0, stdout: JSON.stringify({ ...(w.forgeNoViewer ? {} : { viewer: 'operator' }), rows: [row], rate: { remaining: 4000 } }), stderr: '' } }
     }
     if (stdin.command === 'pr-files' && w.filesFails) return { value: { exitCode: 3, stdout: '', stderr: w.filesFails } }
     if (stdin.command === 'pr-files' && w.files) return { value: { exitCode: 0, stdout: JSON.stringify(w.files), stderr: '' } }
@@ -2713,10 +2719,27 @@ const SAME_ON_FORGE = [forgeCopy('readiness/review', 'success', '2026-11-01T10:0
 // A review failed on the other machine after this machine's pass, posted before its Not Ready.
 const FAILED_ON_FORGE = [forgeCopy('readiness/review', 'failure', '2026-11-02T10:00:00Z', 'fail p-other')]
 
+const panelReads = (seen: Seen) => seen.runs.filter((r) => r.command === 'pr-panel' && r.args?.['reconcile'] === true && r.repo === 'acme/thing').length
+
 test('a Not Ready no record holds up, here or on the forge, does not hold Ready nor the merge, though the reconciler has not listed since the wait', async ($, on) => {
   const clock = mock.clock(on, { now: RECEIVED })
   const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'], forgeStatuses: SAME_ON_FORGE })
   // The last listing is hours old, as the operator's was: the hold has no listing to wait for.
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  // Inside the wait the other machine may still be posting its record: no forge read, Ready held.
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+  expect(panelReads(seen)).toBe(0)
+  // The wait over, the forge read brings nothing: Ready goes.
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(panelReads(seen)).toBe(1)
+})
+
+test('the merge of a pull request carrying a Not Ready no record holds up goes once the wait is over, the last listing being hours old', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'], forgeStatuses: [] })
   seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   await clock.advance(FOREIGN_WAIT_MS + 1000)
@@ -2724,6 +2747,7 @@ test('a Not Ready no record holds up, here or on the forge, does not hold Ready 
   expect(merge.deny).toBeUndefined()
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
   expect(commands(seen)).toContain('pr-merge')
+  expect(panelReads(seen)).toBeGreaterThan(0)
 })
 
 test('a Not Ready the other machine recorded on the forge still holds Ready and the merge, whatever the age of the last listing', async ($, on) => {
@@ -2738,6 +2762,55 @@ test('a Not Ready the other machine recorded on the forge still holds Ready and 
   expect(merge.deny).toContain('try again after it')
   expect(readinessRuns(seen)).toEqual([])
   expect(commands(seen)).not.toContain('pr-merge')
+  expect(panelReads(seen)).toBeGreaterThan(0)
+})
+
+// What the other machine holds on the forge besides a record: a plan or an exemption newer than this machine's, or a status
+// dated ahead of the clock (not imported, so not judged): each keeps the hold.
+const PLAN_ON_FORGE = [forgeCopy('readiness/plan', 'success', '2026-11-02T10:00:00Z', 'e2e=none norms=none review=required')]
+const EXEMPTION_ON_FORGE = [forgeCopy('readiness/exemption', 'success', '2026-11-02T10:00:00Z', '{"e":true,"p":[],"l":[]}')]
+const AHEAD_ON_FORGE = [forgeCopy('readiness/review', 'failure', '2026-11-03T12:00:00Z', 'fail p-other')]
+const HELD_CASES: Array<[string, Record<string, unknown>]> = [
+  ['a plan newer on the forge', { forgeStatuses: PLAN_ON_FORGE }],
+  ['an exemption newer on the forge', { forgeStatuses: EXEMPTION_ON_FORGE }],
+  ['a status dated ahead of the clock', { forgeStatuses: AHEAD_ON_FORGE }],
+  ['a record newer than this machine\'s', { forgeStatuses: [forgeCopy('readiness/review', 'success', '2026-11-02T09:00:00Z', 'pass p-other')] }],
+  ['a listed row of another head', { forgeStatuses: SAME_ON_FORGE, forgeHead: MOVED }],
+  ['a listing naming no account', { forgeStatuses: SAME_ON_FORGE, forgeNoViewer: true }],
+  ['a listing that fails', { forgeStatuses: SAME_ON_FORGE, panelFails: 'error: 502' }],
+]
+for (const [label, over] of HELD_CASES) {
+  test('the hold stays with ' + label + ', the forge read leaving Ready over a Not Ready no record of this machine explains', async ($, on) => {
+    const clock = mock.clock(on, { now: RECEIVED })
+    const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'], ...over })
+    seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+    await $.tool.call(gh('pr-gate', { pr: 12 }))
+    await clock.advance(FOREIGN_WAIT_MS + 1000)
+    expect((await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD }))).deny).toContain('not set by this machine')
+    expect(readinessRuns(seen)).toEqual([])
+  })
+}
+
+test('a failing import of the forge\'s statuses does not hold a Not Ready the direct read finds no record behind, and holds one it finds a record behind', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const empty = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'], forgeStatuses: SAME_ON_FORGE })
+  empty.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  empty.files[FAILING_FILE] = String(RECEIVED)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(empty)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('a failing import still holds a Not Ready the forge holds a record of', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'], forgeStatuses: FAILED_ON_FORGE })
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  seen.files[FAILING_FILE] = String(RECEIVED)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  expect((await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD }))).deny).toContain('cannot be imported here')
+  expect(readinessRuns(seen)).toEqual([])
 })
 
 test('a forge whose listing cannot be read leaves the hold as it was', async ($, on) => {
@@ -2760,6 +2833,12 @@ test('the Not Ready the engine puts on a pull request the tool opens is this mac
   expect(JSON.parse(seen.files[SEEN_FILE] ?? '{}')).toMatchObject({ label: 'not-ready', own: true })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('a pr-create the module cannot date keeps no sighting of its Not Ready', async ($, on) => {
+  const seen = await world($, on, { ownLabel: false, noClock: true, created: CREATED })
+  await $.tool.call(gh('pr-create', { title: 'fix: x', body: 'Adds the reset.\n\n' + SECTIONS }))
+  expect(seen.files[SEEN_FILE]).toBeUndefined()
 })
 
 test('a pr-create whose answer names no Not Ready keeps no sighting of one', async ($, on) => {
