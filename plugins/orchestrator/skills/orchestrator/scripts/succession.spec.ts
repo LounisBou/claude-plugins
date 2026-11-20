@@ -1,10 +1,9 @@
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { chmodSync } from 'node:fs'
 import { main as recordMain } from './dispatch-record.ts'
 import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, homePanes, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, readyNote, roundOpen, roundSettled, rowLines, rowOfBrief, takeOwnership, TEMPLATE, todoStray, toApply, withHomeAgents, type Artifacts, type HomePane, type ListedRow, type LiveAgent } from './succession.ts'
 
@@ -1029,7 +1028,7 @@ const HOME_ROWS = [
 const homePane = (window: number, name: string, tty: string, server = 'orch-451b538b'): HomePane => ({ server, window, tty, name })
 
 test('an agent that runs in a window of the predecessor\'s home server is listed with where it is, and its row is not without a live agent', () => {
-  const homes = [homePane(0, 'Orch: refonte firmware', '/dev/ttys010'), homePane(1, 'Agent: m1a memory', '/dev/ttys011'), homePane(2, 'Agent: m1b secrets', '/dev/ttys012'), homePane(3, 'Agent: not of this record', '/dev/ttys013'), homePane(1, 'Agent: elsewhere', '/dev/ttys020', 'orch-other')]
+  const homes = [homePane(0, 'Orch: refonte firmware', '/dev/ttys010'), homePane(0, 'Agent: m1a memory', '/dev/ttys099', 'orch-other'), homePane(1, 'Agent: m1a memory', '/dev/ttys011'), homePane(2, 'Agent: m1b secrets', '/dev/ttys012'), homePane(3, 'Agent: not of this record', '/dev/ttys013'), homePane(1, 'Agent: elsewhere', '/dev/ttys020', 'orch-other')]
   const w = world({ rows: HOME_ROWS, deck: deckOf([orchestrator(NAME, null)]), round: [], todo: '', listed: [], homes })
   assert.equal(w.run(), 0)
   assert.match(w.text(), /- Agents running \(name and reference, brief path\): Agent: m1a memory \(ttys011, orch-451b538b:1\); Agent: m1b secrets \(ttys012, orch-451b538b:2\)\n/)
@@ -1117,4 +1116,16 @@ test('the ownership passes with the name the command gave when the session names
   writeFileSync(join(dir, 'file'), '')
   assert.equal(takeOwnership(join(dir, 'file', 'r.jsonl'), 'Orch: next', io), undefined)
   assert.equal(quiet.err.filter(line => line.includes('could not pass to Orch: next')).length, 1)
+})
+
+test('a home-server agent whose pull request is Ready is told as the module does; the command line\'s name stands in when the session names none', () => {
+  const rows = [JSON.stringify({ id: 1, label: 'M1A: memory', state: 'open', agent: 'Agent: m1a memory', blocker: 'none' }), ledger('acme/app', 12, 'Agent: m1a memory')].join('\n') + '\n'
+  const w = world({ rows, deck: deckOf([orchestrator(NAME, null)]), round: [], todo: '', listed: [], homes: [homePane(1, 'Agent: m1a memory', '/dev/ttys011')], prs: {}, readyHead: (repo, pr) => (`${repo}#${pr}` === 'acme/app#12' ? 'a'.repeat(40) : undefined) })
+  assert.equal(w.run(), 0)
+  assert.match(w.text(), /- Agents running \(name and reference, brief path\): Agent: m1a memory \(ttys011, orch-451b538b:1\) — Ready \(acme\/app#12\): the module closes it once done\n/)
+  // No session of an orchestration: the name the command gave takes the record, from no owner at all.
+  rmSync(`${w.record}.owner`)
+  assert.equal(w.run('--name', 'Orch: given'), 0)
+  assert.equal(readFileSync(`${w.record}.owner`, 'utf8'), 'Orch: given\n')
+  assert.match(w.err.join(''), /passed from no owner to Orch: given/)
 })
