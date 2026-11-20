@@ -209,6 +209,8 @@ type Setup = {
   ps?: string
   agentCwd?: string
   agentBranch?: string
+  // The agent's checkout HEAD, as `git rev-parse HEAD` prints it.
+  agentHead?: string
   prAnswer?: string
   workspace?: string
   top?: string
@@ -384,6 +386,9 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         }
         if (argv[0] === 'git' && argv[3] === 'symbolic-ref') {
           return setup.agentBranch ? { exitCode: 0, stdout: setup.agentBranch, stderr: '' } : { exitCode: 1, stdout: '', stderr: '' }
+        }
+        if (argv[0] === 'git' && argv[3] === 'rev-parse' && argv[4] === 'HEAD' && argv[2] === '/tmp/h/work/belt') {
+          return setup.agentHead ? { exitCode: 0, stdout: `${setup.agentHead}\n`, stderr: '' } : { exitCode: 128, stdout: '', stderr: '' }
         }
         if (argv[0] === 'git' && argv[3] === 'rev-parse') {
           return argv[2] === '/tmp/h/work/repo' && setup.top
@@ -728,9 +733,12 @@ const HOME_ENV = { TMUX: '/tmp/home.sock,4242,0', TMUX_PANE: '%1' }
 const HOME_CHAIN = '{"tab_id":"T1","tty":"/dev/ttys003","owner":"tmux:/tmp/home.sock:%1"}\n'
 const AGENT_CHAIN = '{"tab_id":"T1","tty":"/dev/ttys003","owner":"17"}\n'
 const stateWrites = (ran: readonly string[]) => ran.filter(c => c.startsWith('tmux ') && c.includes(' set-option '))
+// The agent's checkout HEAD, and the head commit of its branch's pull request: the same commit, as an own pull request has.
+const HEAD = 'abc1234'
+const atHead = (answer: string) => JSON.stringify({ ...JSON.parse(answer), headRefOid: HEAD })
 async function stopOn(prAnswer: string, panes: string, env: Record<string, string> = HOME_ENV) {
   const { handlers } = mounted()
-  const fx = fakeDollar({ listing: IDLE_ROW, chain: env === HOME_ENV ? HOME_CHAIN : AGENT_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer, panes, env })
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: env === HOME_ENV ? HOME_CHAIN : AGENT_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', agentHead: HEAD, prAnswer: atHead(prAnswer), panes, env })
   await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
   return stateWrites(fx.ran)
 }
@@ -740,6 +748,32 @@ test('the window of an idle agent whose pull request is merged or closed shows o
   expect(await stopOn('{"number":160,"state":"MERGED","labels":[]}', '/dev/ttys002 %8 idle\n/dev/ttys003 %9 done\n')).toEqual(over)
   expect(await stopOn('{"number":160,"state":"CLOSED","labels":[]}', '/dev/ttys003 %9 review\n')).toEqual(over)
   expect(await stopOn('{"number":160,"state":"MERGED"}', '/dev/ttys003 %9 over\n')).toEqual([])
+})
+
+// A long-lived branch: the checkout's HEAD is past the head of the old merged pull request its name answers.
+const OLD_MAIN_PR = '{"number":1747,"state":"MERGED","labels":[],"headRefOid":"cbce845"}'
+
+test('a checkout whose HEAD is not the head of its branch\'s merged pull request keeps its window', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'main\n', agentHead: '9b173df', prByRef: { main: OLD_MAIN_PR }, panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  expect(stateWrites(fx.ran)).toEqual([])
+})
+
+test('an agent whose HEAD is the head of its merged pull request shows over', async () => {
+  const { handlers } = mounted()
+  const merged = '{"number":160,"state":"MERGED","labels":[],"headRefOid":"abc1234"}'
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', agentHead: 'abc1234', prAnswer: merged, panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  expect(stateWrites(fx.ran)).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state over'])
+})
+
+test('a branch that moved past its old pull request still counts the pull requests its record entrusts to it', async () => {
+  const { handlers } = mounted()
+  const merged = '{"number":9,"state":"MERGED","labels":[],"headRefOid":"f00ba12"}'
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'main\n', agentHead: '9b173df', prByRef: { main: OLD_MAIN_PR, '9': merged }, records: [LEDGER(9)], panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  expect(stateWrites(fx.ran)).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state over'])
 })
 
 test('the window of a delivery moves between review and done by the Ready label of its open pull request', async () => {
@@ -758,12 +792,12 @@ test('the window of a delivery moves between review and done by the Ready label 
 // An agent holding several pull requests is ready only when each open one carries Ready: the branch's
 // own, and the others the dispatch record entrusts to it (its `working` lines).
 const LEDGER = (...prs: number[]) => prs.map(pr => JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr, status: 'working', agent: 'Agent: idle-p3', since: '2026-11-15T07:00:00Z', updated: '2026-11-15T07:00:00Z' })).join('\n') + '\n'
-const branchPr = (state: string, ready: boolean) => `{"number":160,"state":"${state}","url":"https://github.com/acme/app/pull/160","labels":[${ready ? '{"name":"Ready"}' : ''}]}`
+const branchPr = (state: string, ready: boolean) => `{"number":160,"state":"${state}","url":"https://github.com/acme/app/pull/160","headRefOid":"${HEAD}","labels":[${ready ? '{"name":"Ready"}' : ''}]}`
 const otherPr = (state: string, ready: boolean) => `{"number":9,"state":"${state}","labels":[${ready ? '{"name":"Ready"}' : ''}]}`
 async function stopWithTwo(branch: string, other: string | undefined, shown: string) {
   const { handlers } = mounted()
   const fx = fakeDollar({
-    listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: branch,
+    listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', agentHead: HEAD, prAnswer: branch,
     prByRef: other === undefined ? {} : { '9': other }, records: [LEDGER(160, 9)], panes: `/dev/ttys003 %9 ${shown}\n`, env: HOME_ENV,
   })
   await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
@@ -800,7 +834,7 @@ test('a tmux that fails, or a pane the server does not list, never fails the sto
   expect(await stopOn(merged, '/dev/ttys009 %3 done\n')).toEqual([])
   // The pane list fails: the stop passes, the log says so.
   const { handlers } = mounted()
-  const down = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: merged, panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
+  const down = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', agentHead: HEAD, prAnswer: atHead(merged), panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
   const failing = { ...down.dollar, process: { ...down.dollar.process, run: async (argv: readonly string[], init?: ProcessRunInit) =>
     argv[0] === 'tmux' && argv[3] === 'list-panes' ? { exitCode: 1, stdout: '', stderr: 'no server' } : init === undefined ? down.dollar.process.run(argv) : down.dollar.process.run(argv, init) } }
   const out = await stop(handlers['classic.Stop'], failing as World, stopEvent({}))
@@ -1020,7 +1054,7 @@ test("the idle agent's pull request is read with one --json argument, in the age
     agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}',
   })
   await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
-  const gh = 'gh pr view feat/belt --json number,state,labels,url'
+  const gh = 'gh pr view feat/belt --json number,state,labels,url,headRefOid'
   expect(fx.ran).toContain(gh)
   expect(fx.inits[gh]?.cwd).toBe('/tmp/h/work/belt')
   expect(fx.inits[gh]?.timeoutMs).toBeGreaterThan(0)
@@ -1032,7 +1066,7 @@ test('the agent on a tty is found by its host record, or by the basename of an a
   const { handlers } = mounted()
   const pr = { agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"MERGED"}' }
   // Found, the agent's checkout is read and its pull request asked of the forge.
-  const gh = 'gh pr view feat/belt --json number,state,labels,url'
+  const gh = 'gh pr view feat/belt --json number,state,labels,url,headRefOid'
   const bare = fakeDollar({ ...pr, listing: IDLE_ROW, chain: IDLE_OWNED, agentRow: '   77 hostcli --resume x\n', selfBin: '/opt/homebrew/bin/hostcli', env: { ORCHESTRATOR_HOST_CLI: '/opt/homebrew/bin/hostcli' } })
   await stop(handlers['classic.Stop'], bare.dollar, stopEvent({}))
   expect(bare.ran).toContain(gh)
