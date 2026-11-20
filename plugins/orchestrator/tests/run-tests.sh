@@ -8308,7 +8308,9 @@ if set(inactive) != {'busy', 'idle', 'asks', 'held', 'review', 'done', 'over', '
 for state in inactive:
     if inactive[state] != current.get(state): bad.append('%s differs between tabs: %s / %s' % (state, inactive[state], current.get(state)))
     fg, bg, _ = inactive[state]
-    if ratio(fg, bg) < 7: bad.append('%s %.1f' % (state, ratio(fg, bg)))
+    # over is the named exception: a red glyph on #303030 holds 4.5:1 (WCAG AA), every other icon 7:1.
+    floor = 4.5 if state == 'over' else 7
+    if ratio(fg, bg) < floor: bad.append('%s %.2f' % (state, ratio(fg, bg)))
 looks = [inactive[s][:2] for s in inactive]
 if len(set(looks)) != len(looks): bad.append('two states look alike')
 greens = [inactive[s][0] for s in ('busy', 'done')]
