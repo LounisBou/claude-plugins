@@ -1,8 +1,8 @@
 // hooks/close-agent.ts
 // The module's close of an agent done with its pull request, an act of the module's tick (ledger.ts prWake),
 // never a line asking the orchestrator: read on facts alone, the agent's last turn ended on `status: done`
-// (its wait file `delivered`, cleared at its next turn's start), its host idle, its checkout clean with
-// nothing unpushed (the facts its delivery line reads, relay.ts); then, once the wake that says it is delivered,
+// (its wait file `delivered`, cleared at its next turn's start) unless its pull request is merged or closed, which
+// ends its work whatever its last turn said, its host idle, its checkout clean with nothing unpushed (the facts its delivery line reads, relay.ts); then, once the wake that says it is delivered,
 // the launcher's `close`, its checkout kept so its session resumes with `spawn --resume` within the hour, and its
 // session's cost on its row (`dispatch-record.sh cost`). A close the facts do not allow yet is tried again at a
 // later tick; one they refuse is told once.
@@ -18,8 +18,11 @@ type Held = Host<'plugin' | 'env' | 'fs' | 'process'>
 export const CLOSE_BOUND_MS = 60_000
 const READ_BOUND_MS = 10_000
 
-/** The agent to close: its name, the tty the launcher lists it idle on, its session, and the row its cost goes to. */
-export type ToClose = { agent: string; tty: string; session: string; cost?: { record: string; row: number } | undefined }
+/**
+ * The agent to close: its name, the tty the launcher lists it idle on, its session, and the row its cost goes to.
+ * `ended`: the pull request it is closed for is merged or closed, so its last turn needs no `status: done`.
+ */
+export type ToClose = { agent: string; tty: string; session: string; cost?: { record: string; row: number } | undefined; ended?: boolean }
 
 /** What the facts allow: `close` now, `refused` with the fact that keeps it open (told once), or `later` with why (tried again). */
 export type CloseFacts = { kind: 'close' } | { kind: 'refused'; why: string } | { kind: 'later'; why: string }
@@ -45,10 +48,10 @@ const lastLine = (run: { stdout?: unknown; stderr?: unknown }): string => {
   return last(run.stderr) ?? last(run.stdout) ?? ''
 }
 
-/** What the facts say of closing the agent now: its last turn ended on done, its host idle, its checkout clean and pushed. */
+/** What the facts say of closing the agent now: its last turn ended on done (not asked of one whose pull request ended), its host idle, its checkout clean and pushed. */
 export async function closeFacts($: Held, a: ToClose): Promise<CloseFacts> {
   const wait = parseWaitRecord(await readOr($, `${await storeOf($)}/${waitKey(a.session)}`))
-  if (wait?.waiting !== 'delivered') return { kind: 'later', why: `its last turn did not end on done: ${wait?.waiting ?? 'no status'}` }
+  if (a.ended !== true && wait?.waiting !== 'delivered') return { kind: 'later', why: `its last turn did not end on done: ${wait?.waiting ?? 'no status'}` }
   const host = await hostOf($, a.session)
   if (host === null || typeof host.cwd !== 'string' || host.cwd === '') return { kind: 'later', why: 'no host record of its session read' }
   if (host.status === 'busy') return { kind: 'later', why: 'its host is busy' }
