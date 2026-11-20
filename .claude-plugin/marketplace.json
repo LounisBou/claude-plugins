@@ -40,7 +40,7 @@
       "name": "github",
       "source": "./plugins/github",
       "description": "GitHub API from a native Claude Code tool: pull requests, review threads, comments, reviews, labels, issues, search and image attachments, facading a Python stdlib engine.",
-      "version": "0.24.3",
+      "version": "0.24.4",
       "author": {
         "name": "Lounis Bou"
       }
@@ -85,7 +85,7 @@
       "name": "orchestrator",
       "source": "./plugins/orchestrator",
       "description": "Orchestrate implementer sessions from one supervising session: briefs, evidence-based reviews, agent rotation, succession, terminal tab tooling and a context gauge any session can read.",
-      "version": "0.105.4",
+      "version": "0.105.5",
       "author": {
         "name": "Lounis Bou"
       }
@@ -103,7 +103,7 @@
       "name": "statusbar",
       "source": "./plugins/statusbar",
       "description": "Two-line status bar: directory, git, PR, model, session, context and 5h/7d quotas. No network, no credentials.",
-      "version": "2.2.9",
+      "version": "2.2.10",
       "author": {
         "name": "Lounis Bou"
       }
@@ -112,7 +112,7 @@
       "name": "telemetry",
       "source": "./plugins/telemetry",
       "description": "Records what every session does (role, model, effort, turns, context, tokens, cost, tools, refusals, questions, spawns, dispatches) as redacted JSON lines, one file per day, and exports them on demand to a private repository named by the environment.",
-      "version": "0.1.9",
+      "version": "0.1.10",
       "author": {
         "name": "Lounis Bou"
       }
