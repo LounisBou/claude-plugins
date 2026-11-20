@@ -284,7 +284,7 @@ async function chainTtys($: Held): Promise<Chain> {
  * idle, or with no session row on that tty, waits for a later tick; one with no tab on the chain is not this
  * orchestration's to close, told once.
  */
-async function closeOf($: Held, agent: string, records: readonly RecordText[], tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]>, chain: () => Promise<Chain>): Promise<Act> {
+async function closeOf($: Held, agent: string, records: readonly RecordText[], tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]>, chain: () => Promise<Chain>, ended: boolean): Promise<Act> {
   const listed = tabs.get(agent) ?? []
   if (listed.length === 0) return { kind: 'later', why: 'the launcher does not list it idle' }
   const own = await chain()
@@ -297,7 +297,7 @@ async function closeOf($: Held, agent: string, records: readonly RecordText[], t
   if (session === undefined) return { kind: 'later', why: `no session row of it on ${tty}` }
   const bound = await briefRowOf($, agent)
   const record = bound === undefined ? undefined : records.find(r => dirOf(r.path) === bound.dir && holdsRow(r.text, bound.row))
-  const target = { agent, tty, session, cost: bound === undefined || record === undefined ? undefined : { record: record.path, row: bound.row } }
+  const target = { agent, tty, session, ended, cost: bound === undefined || record === undefined ? undefined : { record: record.path, row: bound.row } }
   const facts = await closeFacts($, target)
   return facts.kind === 'close' ? { kind: 'close', session, target } : { ...facts, session }
 }
@@ -508,7 +508,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   let chain: Promise<Chain> | undefined
   const ownChain = (): Promise<Chain> => (chain ??= chainTtys($).catch((err: unknown): Chain => ({ kind: 'later', why: `the chain unread: ${messageOf(err)}` })))
   const actOn = async (agent: string, key: string, what: string, at: { ready?: string; ended?: string }): Promise<{ act: Act; said: string | null }> => {
-    const act = acts.get(agent) ?? await closeOf($, agent, reading.records, reading.tabs, ownChain)
+    const act = acts.get(agent) ?? await closeOf($, agent, reading.records, reading.tabs, ownChain, at.ended !== undefined)
     acts.set(agent, act)
     if (act.kind === 'close') {
       const close = closes.get(agent) ?? { agent, key, target: act.target, ready: [], ended: [] }
