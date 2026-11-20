@@ -1183,6 +1183,28 @@ async function noteMarker($: Mod, rec: Reconciler, kind: Marker, repo: string, a
   }
 }
 
+// Whether the forge, read now, holds nothing the other machine wrote at the head that this machine lacks (forge-sync.ts: no record,
+// plan or exemption to import): the Not Ready that pull request carries then rests on no record anywhere, and the gate judges the
+// records this machine holds. Anything the read cannot settle (no listing, no account, another head, unreadable records) is no.
+async function forgeBringsNothing($: Mod, repo: string, pr: number, head: string): Promise<boolean> {
+  try {
+    const at = await nowMs($)
+    const root = await recordsRoot($)
+    if (!Number.isFinite(at) || !root || !(await dataDir($))) return false
+    const listing = parseListing(await runGh($, 'pr-panel', { reconcile: true }, repo))
+    const row = listing.rows.find((listed) => listed.number === pr)
+    if (!row || row.head !== head || row.statuses === undefined || !listing.viewer) return false
+    const records = await recordsAt($, root, repo, head)
+    if (records === undefined) return false
+    const sync = forgeSync({
+      repo, statuses: row.statuses, viewer: listing.viewer, records, plan: await readPlan($, repo, pr), exemption: await readExemption($, repo), listedAt: at,
+    })
+    return sync.records.length === 0 && sync.plan === undefined && sync.exemption === undefined && sync.unposted.length === 0
+  } catch {
+    return false
+  }
+}
+
 // unlabelled: Not Ready goes on a pull request carrying neither label too (the reconciler's, labelMove).
 // watch: the reconciler's, which holds a label that another machine keeps undoing and one that waits for a record's copy to
 // reach the forge. Whoever follows, Ready is held over a Not Ready this machine did not set (`held`: when it may go). act: an explicit
@@ -1224,7 +1246,10 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
     const failing = ((await markerAt($, 'failing', repo)) ?? 0) > (listedAt ?? 0)
     const ceiling = act || failing ? undefined : readAt
     const until = foreignHold(seen, move, listedAt, ceiling)
-    if (until !== undefined) return { line: gateHeldLine(repo, pr, gate.head, until, readAt, failing), missing, gate, held: { until, failing } }
+    // A tool reads the forge itself when the reconciler's listing is not there to wait for: a Not Ready no record holds up goes.
+    if (until !== undefined && (watch !== undefined || !(await forgeBringsNothing($, repo, pr, gate.head)))) {
+      return { line: gateHeldLine(repo, pr, gate.head, until, readAt, failing), missing, gate, held: { until, failing } }
+    }
     if (ceiling !== undefined && foreignGivenUp(seen, move, listedAt, ceiling)) note($, gateHeldGivenUpLine(repo, pr, gate.head, FOREIGN_CEILING_MS / 60_000))
   }
   if (watch?.flap(gate, move)) return { missing, gate }
@@ -1843,6 +1868,20 @@ async function labelNotReady($: Mod, repo: string, pr: number, head?: string): P
     await noteWrote($, repo, pr, head ?? '', 'not-ready', now)
   } catch (err: unknown) {
     note($, 'github: the Not Ready put on ' + repo + '#' + pr + ' is not kept as this machine\'s, Ready waits for the forge to be read: ' + reasonOf(err).trim())
+  }
+}
+
+// The Not Ready the engine put on the pull request a pr-create opened (its answer names the labels it carries) is this machine's
+// own, kept as labelNotReady keeps its own: Ready goes over it as soon as the gate allows, no other machine's records awaited.
+async function noteCreated($: Mod, output: string): Promise<void> {
+  const made = createdPr(output)
+  if (!made || !/\blabels Not Ready\b/.test(output)) return
+  const now = await nowMs($)
+  if (!Number.isFinite(now)) return
+  try {
+    await noteWrote($, made.repo, made.pr, '', 'not-ready', now)
+  } catch (err: unknown) {
+    note($, 'github: the Not Ready put on ' + made.repo + '#' + made.pr + ' is not kept as this machine\'s, Ready waits for the forge to be read: ' + reasonOf(err).trim())
   }
 }
 
@@ -3021,6 +3060,7 @@ export function register(on: On<Mod>): void {
       const ran = await runGhRaw($, e.command, e.args, e.repo)
       let result = (READS.has(e.command) ? ran.out : withNote(ran.out, ran.err)) || '(no output)'
       if (ready) await ready.ran()
+      if (e.command === 'pr-create') await noteCreated($, ran.out)
       result = await afterRead($, e, result)
       if (GATE_READS.has(e.command)) result = withNote(result, ran.err)
       // A write changes what the open pane shows: its rows are stale, read again at once when the

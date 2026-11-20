@@ -86,6 +86,10 @@ type World = {
   plan?: unknown
   // The pull request's Not Ready was written by this machine, as the machine's sighting of its label keeps it.
   ownLabel?: boolean
+  // pr-create's answer, as the engine prints it.
+  created?: string
+  // pr-panel --reconcile's answer: the forge's statuses at the head, by the account that reads; omitted, it answers nothing readable.
+  forgeStatuses?: Array<{ context: string; state: string; description: string; creator: string }>
   // No clock is answered: the module cannot read the time.
   noClock?: boolean
   // What pr-fingerprint answers, by head, over two commits; a head absent fails with this error, or a merge's.
@@ -325,6 +329,11 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
       if (w.gateFails) return { value: { exitCode: 3, stdout: '', stderr: w.gateFails } }
       const gate = gateOf(w, pull)
       return { value: { exitCode: 0, stdout: typeof gate === 'string' ? gate : JSON.stringify(gate), stderr: w.readStderr ?? '' } }
+    }
+    if (stdin.command === 'pr-create' && w.created !== undefined) return { value: { exitCode: 0, stdout: w.created, stderr: '' } }
+    if (stdin.command === 'pr-panel' && w.forgeStatuses) {
+      const row = { number: 12, draft: false, head: HEAD, base: 'main', labels: ['Not Ready'], rollup: 'SUCCESS', statuses: w.forgeStatuses }
+      return { value: { exitCode: 0, stdout: JSON.stringify({ viewer: 'operator', rows: [row], rate: { remaining: 4000 } }), stderr: '' } }
     }
     if (stdin.command === 'pr-files' && w.filesFails) return { value: { exitCode: 3, stdout: '', stderr: w.filesFails } }
     if (stdin.command === 'pr-files' && w.files) return { value: { exitCode: 0, stdout: JSON.stringify(w.files), stderr: '' } }
@@ -2695,6 +2704,69 @@ test('the ceiling never releases pr-readiness ready, pr-ready or pr-merge: a sta
   expect(readinessRuns(seen)).toEqual([])
   expect(commands(seen)).not.toContain('pr-ready')
   expect(commands(seen)).not.toContain('pr-merge')
+})
+
+// The forge's copy of a record, as the reconciler's listing carries it.
+const forgeCopy = (context: string, state: string, at: string, body: string) => ({ context, state, description: 'v1 ' + at + ' ' + body, creator: 'operator' })
+// What this machine holds at the head (FOUR): the other machine's copy of it, as the forge keeps it.
+const SAME_ON_FORGE = [forgeCopy('readiness/review', 'success', '2026-11-01T10:00:00Z', 'pass p-review')]
+// A review failed on the other machine after this machine's pass, posted before its Not Ready.
+const FAILED_ON_FORGE = [forgeCopy('readiness/review', 'failure', '2026-11-02T10:00:00Z', 'fail p-other')]
+
+test('a Not Ready no record holds up, here or on the forge, does not hold Ready nor the merge, though the reconciler has not listed since the wait', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'], forgeStatuses: SAME_ON_FORGE })
+  // The last listing is hours old, as the operator's was: the hold has no listing to wait for.
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  const merge = await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD }))
+  expect(merge.deny).toBeUndefined()
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(commands(seen)).toContain('pr-merge')
+})
+
+test('a Not Ready the other machine recorded on the forge still holds Ready and the merge, whatever the age of the last listing', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'], forgeStatuses: FAILED_ON_FORGE })
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  expect(String((await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))).result)).toContain('not set by this machine')
+  const merge = await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD }))
+  expect(merge.deny).toContain('not set by this machine')
+  expect(merge.deny).toContain('try again after it')
+  expect(readinessRuns(seen)).toEqual([])
+  expect(commands(seen)).not.toContain('pr-merge')
+})
+
+test('a forge whose listing cannot be read leaves the hold as it was', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'] })
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  expect((await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD }))).deny).toContain('not set by this machine')
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+const CREATED = 'acme/thing#12 https://github.com/acme/thing/pull/12 head ' + HEAD + ' labels Not Ready'
+
+test('the Not Ready the engine puts on a pull request the tool opens is this machine\'s own: the first gate read puts Ready at once', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, created: CREATED, records: FOUR })
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  await $.tool.call(gh('pr-create', { title: 'fix: x', body: 'Adds the reset.\n\n' + SECTIONS }))
+  expect(JSON.parse(seen.files[SEEN_FILE] ?? '{}')).toMatchObject({ label: 'not-ready', own: true })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('a pr-create whose answer names no Not Ready keeps no sighting of one', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, created: 'acme/thing#12 https://github.com/acme/thing/pull/12 head ' + HEAD + ' labels none' })
+  await $.tool.call(gh('pr-create', { title: 'fix: x', body: 'Adds the reset.\n\n' + SECTIONS }))
+  expect(seen.files[SEEN_FILE]).toBeUndefined()
 })
 
 test('a clock the module cannot read holds Ready over a Not Ready, with a line', async ($, on) => {

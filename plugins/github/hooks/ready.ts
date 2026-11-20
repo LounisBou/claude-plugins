@@ -8,6 +8,7 @@ import { ACCEPTANCE, accepts, isAcceptance, KINDS, kindFor, parsePrRecord, produ
 import { carriesAcross, heldBy, missingEvidence, type Holder } from '../core/readiness.ts'
 import { gitSubcommand, innerLine, readCommands, simpleCommands } from '../core/shell.ts'
 import type { Excused } from './check-plan.ts'
+import { IDLE_MAX_MS } from './reconcile.ts'
 import { type EngineCall, engineCall, engineFlag, engineOption, engineStart } from './shell.ts'
 
 // merge: a merge or an auto-merge armed. undraft: out of draft. create: a pull
@@ -796,7 +797,10 @@ function heldWhy(until: number | undefined, now: number, failing = false): strin
   const set = 'the Not Ready it carries was not set by this machine, and '
   if (until === undefined) return set + 'the clock cannot be read, so the wait cannot be told: Ready waits for it'
   if (failing) return set + 'the statuses the forge holds cannot be imported here (no listing counts until they are): Ready waits for the import'
-  if (until <= now) return set + 'the forge is not known to be listed since the wait: it is read again by the reconciler\'s next listing'
+  if (until <= now) {
+    return set + 'the forge is not known to be listed since the wait: it is read again by the reconciler\'s next listing, '
+      + String(IDLE_MAX_MS / 60_000) + ' minutes at the latest while it runs: try again after it'
+  }
   return set + 'the forge is read again first, in ' + String(Math.max(1, Math.ceil((until - now) / 1000))) + ' s at the earliest'
 }
 
