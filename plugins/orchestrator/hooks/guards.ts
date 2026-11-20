@@ -800,6 +800,11 @@ async function pullRequestRead($: Held, tty: string, until: number): Promise<{ n
   const git = await inTime($, () => runUntil($, ['git', '-C', cwd, 'symbolic-ref', '--short', '-q', 'HEAD'], until), until)
   const branch = git && git.exitCode === 0 ? String(git.stdout ?? '').trim() : ''
   if (!branch) return null
+  // The default branch names no pull request of the agent: an old pull request whose head is main
+  // (a release, merged long ago) is not the agent's. Read from the checkout's origin/HEAD, no network.
+  const base = await inTime($, () => runUntil($, ['git', '-C', cwd, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], until), until)
+  const defaultBranch = base && base.exitCode === 0 ? String(base.stdout ?? '').trim().replace(/^origin\//, '') : ''
+  if (branch === defaultBranch) return null
   // One --json argument, the fields comma-joined: gh reads a second word as a second
   // positional and refuses the call. Run in the agent's checkout, the repository its
   // branch is pushed to.

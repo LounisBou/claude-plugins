@@ -209,6 +209,8 @@ type Setup = {
   ps?: string
   agentCwd?: string
   agentBranch?: string
+  // The checkout's origin/HEAD, as `git symbolic-ref refs/remotes/origin/HEAD` prints it.
+  defaultBranch?: string
   prAnswer?: string
   workspace?: string
   top?: string
@@ -381,6 +383,9 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         }
         if (argv[0] === 'git' && argv[3] === 'remote') {
           return setup.origin ? { exitCode: 0, stdout: `${setup.origin}\n`, stderr: '' } : { exitCode: 128, stdout: '', stderr: 'no origin' }
+        }
+        if (argv[0] === 'git' && argv[3] === 'symbolic-ref' && argv.includes('refs/remotes/origin/HEAD')) {
+          return setup.defaultBranch ? { exitCode: 0, stdout: setup.defaultBranch, stderr: '' } : { exitCode: 1, stdout: '', stderr: '' }
         }
         if (argv[0] === 'git' && argv[3] === 'symbolic-ref') {
           return setup.agentBranch ? { exitCode: 0, stdout: setup.agentBranch, stderr: '' } : { exitCode: 1, stdout: '', stderr: '' }
@@ -740,6 +745,14 @@ test('the window of an idle agent whose pull request is merged or closed shows o
   expect(await stopOn('{"number":160,"state":"MERGED","labels":[]}', '/dev/ttys002 %8 idle\n/dev/ttys003 %9 done\n')).toEqual(over)
   expect(await stopOn('{"number":160,"state":"CLOSED","labels":[]}', '/dev/ttys003 %9 review\n')).toEqual(over)
   expect(await stopOn('{"number":160,"state":"MERGED"}', '/dev/ttys003 %9 over\n')).toEqual([])
+})
+
+test('an idle agent on its default branch names no pull request: an old merged one on main leaves its window as it is', async () => {
+  const { handlers } = mounted()
+  const merged = '{"number":1747,"state":"MERGED","labels":[]}'
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'main\n', defaultBranch: 'origin/main\n', prByRef: { main: merged }, panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  expect(stateWrites(fx.ran)).toEqual([])
 })
 
 test('the window of a delivery moves between review and done by the Ready label of its open pull request', async () => {
