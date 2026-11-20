@@ -18,6 +18,9 @@ function stateOf(history: string[], extra: Partial<State> = {}): State {
   return { version: 1, repo: 'acme/app', marketplace: MARKETPLACE, history: history.map((commit, at) => ({ commit, at: new Date(Date.UTC(2026, 0, 10 - at)).toISOString() })), skipped: [], pending: false, plugins: { alpha: '1.2.3' }, ...extra }
 }
 
+/** The project the plugins are installed in at the project scope. */
+const PROJECT = '/home/me'
+
 /** Writes the tree of a repository at a commit: the catalogue and its plugins (alpha alone by default). */
 function treeAt(into: string, version = '1.2.3', name = MARKETPLACE, plugins: readonly string[] = ['alpha']): void {
   mkdirSync(join(into, '.claude-plugin'), { recursive: true })
@@ -51,6 +54,8 @@ interface Fake {
   launcher: string | undefined
   /** The installed plugins of the marketplace, by id, with the version the host records. */
   readonly versions: Map<string, string>
+  /** The same plugins installed at the project scope too, by id, with the version the host records. */
+  readonly projectVersions: Map<string, string>
   /** The pids that no longer run. */
   readonly dead: Set<number>
 }
@@ -70,6 +75,7 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
     tree: ['alpha'],
     launcher: undefined,
     versions: new Map([[ALPHA, '1.2.3']]),
+    projectVersions: new Map(),
     dead: new Set(),
     host: {
       api: path => {
@@ -93,12 +99,19 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
         pointed = dir
         self.calls.push(`repoint ${dir.slice(-1)}`)
       },
-      installed: () => [...[...self.versions].map(([id, version]) => ({ id, version })), { id: 'other@elsewhere', version: '0.0.1' }],
-      update: id => {
+      installed: () => [
+        ...[...self.versions].map(([id, version]) => ({ id, version, scope: 'user' })),
+        ...[...self.projectVersions].map(([id, version]) => ({ id, version, scope: 'project', projectPath: PROJECT })),
+        { id: 'other@elsewhere', version: '0.0.1', scope: 'user' },
+      ],
+      // As the real host: without a scope, the entry of the project the scheduler runs in (the project's) is the one updated.
+      update: (id, scope, projectPath) => {
         if (self.failUpdate) throw new Error('update refused')
         if (self.failOn === id) throw new Error(`update of ${id} refused`)
-        self.calls.push(`update ${id}`)
-        if (!self.idleUpdate) self.versions.set(id, versionsIn(pointed)[id.split('@')[0] ?? ''] ?? '')
+        const at = (scope as string | undefined) ?? (self.projectVersions.has(id) ? 'project' : 'user')
+        if (at === 'project' && projectPath !== PROJECT) throw new Error('the project scope is updated from the project')
+        self.calls.push(at === 'user' ? `update ${id}` : `update ${id} at ${at}`)
+        if (!self.idleUpdate) (at === 'user' ? self.versions : self.projectVersions).set(id, versionsIn(pointed)[id.split('@')[0] ?? ''] ?? '')
       },
       alive: pid => !self.dead.has(pid),
       now: () => now,
@@ -466,6 +479,36 @@ describe('the deploy', () => {
     f.idleUpdate = true
     assert.equal(deploy(box, f.host), 1)
     assert.match(box.err.join('\n'), /the host did not update alpha@lounisbou \(1\.2\.3\)/)
+    assert.equal(stateIn(box).pending, true)
+  })
+
+  it('updates a plugin installed at the project scope too, each entry at its own scope', () => {
+    const box = sandbox()
+    const f = fake()
+    f.projectVersions.set(ALPHA, '1.2.3')
+    assert.equal(deploy(box, f.host), 0)
+    assert.deepEqual(f.calls.slice(1), ['extract acme/app a', 'repoint a', `update ${ALPHA}`, `update ${ALPHA} at project`])
+    assert.equal(stateIn(box).pending, false)
+  })
+
+  it('names the entry at the project scope whose update fails', () => {
+    const box = sandbox()
+    const f = fake()
+    f.projectVersions.set(ALPHA, '1.2.3')
+    const host: Host = { ...f.host, update: (id, scope, projectPath) => { if (scope === 'project') throw new Error('refused'); f.host.update(id, scope, projectPath) } }
+    assert.equal(deploy(box, host), 1)
+    assert.match(box.err.join('\n'), /alpha@lounisbou at project \/home\/me: refused/)
+    assert.equal(f.versions.get(ALPHA), '1.2.3+aaaaaaa')
+  })
+
+  it('names the entry the host left behind at its scope', () => {
+    const box = sandbox()
+    const f = fake()
+    f.projectVersions.set(ALPHA, '1.2.3')
+    const update = f.host.update
+    const host: Host = { ...f.host, update: (id, scope, projectPath) => { if (scope === 'user') update(id, scope, projectPath) } }
+    assert.equal(deploy(box, host), 1)
+    assert.match(box.err.join('\n'), /the host did not update alpha@lounisbou \(1\.2\.3\) at project \/home\/me: run npm run deploy again/)
     assert.equal(stateIn(box).pending, true)
   })
 

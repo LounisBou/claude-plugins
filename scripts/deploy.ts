@@ -157,6 +157,16 @@ function realOf(path: string): string | undefined {
   }
 }
 
+/** One installation of a plugin: a plugin installed at the user and the project scope has two, each updated on its own. */
+export interface Installed {
+  readonly id: string
+  readonly version: string
+  /** `user`, `project`, `local` or `managed`. */
+  readonly scope: string
+  /** The project a `project` or `local` entry belongs to. */
+  readonly projectPath?: string
+}
+
 /** What the deploy reaches outside: GitHub, the host's plugin commands, the clock. */
 export interface Host {
   /** The API's JSON answer at `path`. */
@@ -167,16 +177,16 @@ export interface Host {
   readonly smoke: (dir: string) => void
   /** Points the marketplace of the configuration directory `config` at the directory. */
   readonly repoint: (dir: string, config: string) => void
-  /** The installed plugins: `<name>@<marketplace>` and the version the host records. */
-  readonly installed: () => { id: string; version: string }[]
-  /** Updates one installed plugin to the version its marketplace now names. */
-  readonly update: (id: string) => void
+  /** The installed plugins, one entry per scope a plugin is installed at: `<name>@<marketplace>`, the version the host records, its scope. */
+  readonly installed: () => Installed[]
+  /** Updates the entry of one installed plugin at `scope` to the version its marketplace now names. */
+  readonly update: (id: string, scope: string, projectPath?: string) => void
   /** Whether the process `pid` still runs. */
   readonly alive: (pid: number) => boolean
   readonly now: () => number
 }
 
-function commandOf(file: string, args: readonly string[], options: { input?: Buffer; encoding?: 'utf8'; env?: NodeJS.ProcessEnv } = {}): string | Buffer {
+function commandOf(file: string, args: readonly string[], options: { input?: Buffer; encoding?: 'utf8'; env?: NodeJS.ProcessEnv; cwd?: string } = {}): string | Buffer {
   return execFileSync(file, args, { ...options, stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], timeout: COMMAND_TIMEOUT_MS, maxBuffer: 1 << 30 })
 }
 
@@ -193,12 +203,17 @@ export function processHost(): Host {
     installed: () => {
       const list: unknown = JSON.parse(String(commandOf('claude', ['plugin', 'list', '--json'], { encoding: 'utf8' })))
       if (!Array.isArray(list)) throw new Error('claude plugin list --json is not a list')
-      return list.map(entry => {
+      const entries = list.map(entry => {
         if (!isRecord(entry) || typeof entry['id'] !== 'string' || typeof entry['version'] !== 'string') throw new Error('claude plugin list --json: an entry has no id or version')
-        return { id: entry['id'], version: entry['version'] }
+        if (typeof entry['scope'] !== 'string') throw new Error('claude plugin list --json: an entry has no scope')
+        const projectPath = typeof entry['projectPath'] === 'string' ? entry['projectPath'] : undefined
+        return { id: entry['id'], version: entry['version'], scope: entry['scope'], ...(projectPath === undefined ? {} : { projectPath }) }
       })
+      // The host updates a project's entry from that project's directory: an entry whose directory is gone cannot be, and must not fail every run.
+      return entries.filter(plugin => plugin.projectPath === undefined || existsSync(plugin.projectPath))
     },
-    update: id => void commandOf('claude', ['plugin', 'update', id]),
+    // Without `--scope` the host updates the one entry its working directory selects (the project's when the scheduler runs from the project's directory), and the other stays behind.
+    update: (id, scope, projectPath) => void commandOf('claude', ['plugin', 'update', id, '--scope', scope], projectPath === undefined ? {} : { cwd: projectPath }),
     alive: pid => {
       try {
         process.kill(pid, 0)
@@ -308,6 +323,11 @@ function refreshLaunchers(paths: Paths, dir: string, io: Io): void {
   }
 }
 
+/** Where an installation other than the user's lives, for a message: ` at project /path`; empty for the user scope. */
+function atScope(plugin: Installed): string {
+  return plugin.scope === 'user' ? '' : ` at ${plugin.scope}${plugin.projectPath === undefined ? '' : ` ${plugin.projectPath}`}`
+}
+
 /** Points the marketplace and the `current` link at `commit`'s directory, then updates every plugin of it. */
 function install(paths: Paths, host: Host, state: State, io: Io): State {
   const commit = state.history[0]?.commit ?? ''
@@ -326,7 +346,7 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
   // Before the plugin updates: the launcher does not wait on them, and a plugin that cannot update must not freeze it.
   refreshLaunchers(paths, dir, io)
   const nameOf = (id: string): string => id.slice(0, -`@${MARKETPLACE}`.length)
-  const ours = (): { id: string; version: string }[] => host.installed().filter(plugin => plugin.id.endsWith(`@${MARKETPLACE}`))
+  const ours = (): Installed[] => host.installed().filter(plugin => plugin.id.endsWith(`@${MARKETPLACE}`))
   const failures: string[] = []
   for (const plugin of ours()) {
     if (!Object.hasOwn(state.plugins, nameOf(plugin.id))) {
@@ -334,14 +354,14 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
       continue
     }
     try {
-      host.update(plugin.id)
+      host.update(plugin.id, plugin.scope, plugin.projectPath)
     } catch (error) {
-      failures.push(`${plugin.id}: ${error instanceof Error ? error.message : String(error)}`)
+      failures.push(`${plugin.id}${atScope(plugin)}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
   if (failures.length > 0) throw new Error(`${failures.join('; ')}: run npm run deploy again`)
   const behind = ours().filter(plugin => Object.hasOwn(state.plugins, nameOf(plugin.id)) && plugin.version !== state.plugins[nameOf(plugin.id)])
-  if (behind.length > 0) throw new Error(`the host did not update ${behind.map(plugin => `${plugin.id} (${plugin.version})`).join(', ')}: run npm run deploy again`)
+  if (behind.length > 0) throw new Error(`the host did not update ${behind.map(plugin => `${plugin.id} (${plugin.version})${atScope(plugin)}`).join(', ')}: run npm run deploy again`)
   const done = { ...state, pending: false }
   writeState(paths, done)
   io.out(statusLine(done))
