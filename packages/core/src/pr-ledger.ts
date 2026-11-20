@@ -225,7 +225,7 @@ export function minuteOf(iso: string | null): string {
 export function statusText(line: LedgerLine, at: (iso: string | null) => string = minuteOf): string {
   if (line.status === 'working') return `en cours (agent ${line.agent ?? '?'})`
   if (line.status === 'waiting') return `attend ${line.on ?? '?'} depuis ${at(line.since)}`
-  return "en attente par l'opérateur"
+  return "mise en attente par l'opérateur"
 }
 
 /** The label of a pull request the operator may merge, and the one he puts to pause it. */

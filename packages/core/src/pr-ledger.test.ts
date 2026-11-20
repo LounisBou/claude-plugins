@@ -127,7 +127,7 @@ describe('the pull request ledger', () => {
   it('says each status in the operator\'s words', () => {
     assert.equal(statusText(line()), 'en cours (agent Agent: seven)')
     assert.equal(statusText(line({ status: 'waiting', on: 'la CI', agent: undefined })), 'attend la CI depuis 2026-11-14T10:00Z')
-    assert.equal(statusText(line({ status: 'parked', ruling: 'plus tard', agent: undefined })), "en attente par l'opérateur")
+    assert.equal(statusText(line({ status: 'parked', ruling: 'plus tard', agent: undefined })), "mise en attente par l'opérateur")
   })
 })
 

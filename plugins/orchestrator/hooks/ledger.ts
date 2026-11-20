@@ -9,7 +9,7 @@
 // file, pr-file.ts), one that became Ready (the module closes its agent once done, close-agent.ts), one entering the anomaly, one its agent still holds turned conflicting with its base (its agent rebases), and one whose check failed at its head (its agent fixes it), wake the orchestrator once each: the module's tick
 // (guards.ts) submits the lines prWake gives, the ended lines then archived.
 import { prRefsOf } from '../core/learning.ts'
-import { agentsOf, isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
+import { agentsOf, HOLD_LABEL, isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
 import { simpleCommands, unwrapPath } from '../core/shell.ts'
 import { updateOver } from '../core/store-io.ts'
 import { answerText, PULL_URL } from './audit-events.ts'
@@ -18,14 +18,14 @@ import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from
 import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
 import { configDir, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
-import { agentLine, closeFailedLine, holdsOf } from './ready-agent.ts'
+import { agentLine, closeFailedLine, holdsOf, mergeNowLine } from './ready-agent.ts'
 import { closeAgent, closeFacts, type CloseFacts as CloseNow, type ToClose } from './close-agent.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { draftGuardArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
 import { parseReconcile, reconcilePath } from '../core/pr-reconcile.ts'
 import { ciGatePath } from '../core/orchestration.ts'
 import { GATE_CI } from './relay.ts'
-import { archive, boundedReading, readOr, registered, republish } from './unattended.ts'
+import { archive, autoMergeOf, boundedReading, readOr, registered, republish } from './unattended.ts'
 import type { FilePr } from './pr-file-format.ts'
 
 // The nouns a write holds.
@@ -558,6 +558,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // A Ready pull request's agent is done with it: acted on once per Ready head, so an agent resumed for a fix is closed again only at
   // the next head; one not done yet is tried again at the next tick. One the forge reads conflicting is no longer ready to merge.
   // It holds another pull request, or a row naming it in its `agent` field besides the row of its brief: told, not closed.
+  // github's list is read with the pull requests; a Ready pull request told with that list empty (a file refresh that failed leaves
+  // the readings behind its labels, a list that did not answer) asks it once more, here, before its line is said.
+  let again: Promise<ReadonlySet<string>> | undefined
   for (const line of reading.atReady) {
     if (reading.forge.get(prKey(line.repo, line.pr))?.mergeable === 'CONFLICTING') continue
     const pk = prKey(line.repo, line.pr)
@@ -569,7 +572,10 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     const said = holds.length > 0 ? agentLine({ key: pk, what: 'is Ready', agent, holds }) : (await actOn(agent, pk, 'is Ready', { ready: key })).said
     if (said === null) continue
     told.add(key)
-    lines.push(said)
+    // In a repository github's auto-merge list names, the merge is this orchestrator's own: unless the operator holds it (On Hold is his pause).
+    const held = (reading.forge.get(pk)?.labels ?? []).some(name => name.trim().toLowerCase() === HOLD_LABEL.toLowerCase())
+    const autoMerge = held ? new Set<string>() : reading.autoMerge.size > 0 ? reading.autoMerge : await (again ??= autoMergeOf($))
+    lines.push(autoMerge.has(line.repo.toLowerCase()) ? `${said} ${mergeNowLine(pk)}` : said)
   }
   for (const [key, pr] of conflicts) {
     if (told.has(conflictKey(key, pr))) continue

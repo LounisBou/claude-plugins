@@ -34,6 +34,11 @@ export function agentLine(a: { key: string; what: string; agent: string; session
   return `${head} is done: the module closes it now (session ${a.session ?? '?'}, resumable within the hour).`
 }
 
+/** What a Ready pull request of a repository in auto-merge adds to its line: the merge is the orchestrator's own. */
+export function mergeNowLine(key: string): string {
+  return `${key} is in an auto-merge repository: merge it now yourself (pr-ready if it is a draft, then pr-merge), without asking the operator.`
+}
+
 /** The line a close that failed after its wake tells at the next tick. */
 export function closeFailedLine(agent: string, key: string, why: string): string {
   return `[module] ${agent} (${key}): ${why}.`
