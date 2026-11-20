@@ -37,7 +37,7 @@ const mergeableOf = (mergeable: string | undefined): Record<string, unknown> => 
 // acme/app, the quota the listing reports, every engine run by its subcommand and every line the module said.
 // `gateFails` makes the gate fail; `panelFails` makes the listing fail with that text on stderr. With `viewer`, the listing
 // names the account that reads; `posted` and `copied` are the statuses posted and the records copied from the forge.
-function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string>; remaining?: number; resetAt?: string; viewer?: string } = {}) {
+function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string>; remaining?: number; resetAt?: string; viewer?: string; other?: Pull[] } = {}) {
   const files = new Map<string, { text: string; mtime: number }>()
   const dirs = new Map<string, number>()
   const put = (path: string, text: string, mtime = T0) => {
@@ -46,6 +46,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
   }
   // A record of acme/app at an earlier head: the repository is followed.
   put(RECORDS + '/acme/app/' + OTHER + '/review.x.json', '{}', T0 - 24 * 3600 * 1000)
+  if (over.other) put(RECORDS + '/acme/other/' + OTHER + '/review.x.json', '{}', T0 - 24 * 3600 * 1000)
   for (const [path, text] of Object.entries(over.files ?? {})) put(path, text)
   const state = {
     pulls: over.pulls ?? [{ number: 7, draft: false, head: HEAD, base: 'main', labels: [] as string[], rollup: 'SUCCESS' }],
@@ -55,6 +56,8 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     said: [] as string[],
     gateFails: false,
     panelFails: undefined as string | undefined,
+    // With `panelFails`, only the listing of this repository fails (all, when undefined).
+    panelFailsRepo: undefined as string | undefined,
     readinessFails: false,
     // Run inside the next label write, as a record written while the gate runs.
     duringReadiness: undefined as (() => void) | undefined,
@@ -62,6 +65,14 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     // What reached GitHub, in order: each status posted ('post <name> <state>') and each label written ('label <state>').
     order: [] as string[],
     postFails: false,
+    // The refusal text on stderr when `postFails`; the default is a 403.
+    postRefusal: undefined as string | undefined,
+    // With `postFails`, only the posts to this repository are refused (all, when undefined).
+    postFailsRepo: undefined as string | undefined,
+    // The open pull requests of acme/other, a second followed repository; and the repositories listed and posted to, in order.
+    otherPulls: over.other ?? [],
+    listedRepos: [] as string[],
+    postedRepos: [] as string[],
     copied: [] as string[],
     // Every copy of a record from the forge fails; a write to a path matching this is refused; this directory cannot be listed, once.
     copyFails: false,
@@ -128,9 +139,10 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     }
     const flag = (name: string) => String(argv[argv.indexOf(name) + 1] ?? '')
     if (String(argv[1] ?? '').endsWith('/engine/forge_status.py')) {
+      state.postedRepos.push(flag('--repo'))
       state.posted.push(flag('--what') + ' ' + flag('--head').slice(0, 1) + ' ' + flag('--description'))
       if (!state.postFails) state.order.push('post ' + flag('--what') + ' ' + flag('--state'))
-      return state.postFails ? done('', 1, 'error: cannot post: HTTP 403') : done('posted')
+      return state.postFails && (state.postFailsRepo === undefined || state.postFailsRepo === flag('--repo')) ? done('', 1, state.postRefusal ?? 'error: cannot post: HTTP 403') : done('posted')
     }
     if (String(argv[1] ?? '').endsWith('/engine/record.py')) {
       const at = flag('--at')
@@ -147,8 +159,9 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     const command = String(request['command'] ?? '')
     state.runs.push(command + (args['head-only'] ? ' head' : '') + (args['state'] ? ' ' + String(args['state']) : ''))
     if (command === 'pr-panel') {
-      if (state.panelFails !== undefined) return done('', 1, state.panelFails)
-      return done(JSON.stringify({ rows: state.pulls, ...(over.viewer ? { viewer: over.viewer } : {}), rate: { remaining: state.remaining, resetAt: state.resetAt, cost: 1 } }))
+      state.listedRepos.push(String(request['repo']))
+      if (state.panelFails !== undefined && (state.panelFailsRepo === undefined || state.panelFailsRepo === request['repo'])) return done('', 1, state.panelFails)
+      return done(JSON.stringify({ rows: request['repo'] === 'acme/other' ? state.otherPulls : state.pulls, ...(over.viewer ? { viewer: over.viewer } : {}), rate: { remaining: state.remaining, resetAt: state.resetAt, cost: 1 } }))
     }
     const pull = state.pulls.find((p) => p.number === Number(args['pr']))
     if (command === 'pr-gate' && state.gateFails) return done('', 1, 'gh: HTTP 502')
@@ -374,6 +387,19 @@ test('a listing refused for the rate limit lists nothing more for QUOTA_WAIT_MS,
   expect(files.has(READING)).toBe(true)
 })
 
+test('two failures that alternate are each said once, not again at every turn', async ($, on) => {
+  const { clock, state, put } = await started($, on)
+  const reasons = ['gh: HTTP 502', 'gh: HTTP 504']
+  // A producer touches the edge marker before each beat: the repository is listed at every beat, and fails by turns.
+  for (let i = 0; i < 6; i++) {
+    state.panelFails = reasons[i % 2]
+    put(EDGE, '', T0 + (i + 1) * TICK_MS - 1)
+    await beat(clock)
+  }
+  expect(count(state.runs, 'pr-panel')).toBe(6)
+  for (const reason of reasons) expect(state.said.filter((line) => line.includes('could not list acme/app: ' + reason))).toHaveLength(1)
+})
+
 test('a listing that fails keeps the rows last listed: a record written at the head still reads the gate', async ($, on) => {
   const { clock, state, put, files } = await started($, on)
   await beat(clock)
@@ -537,6 +563,100 @@ test('a post refused is said once and tried again after RETRY_MS', async ($, on)
   state.postFails = false
   await beat(clock)
   expect(state.posted).toHaveLength(2)
+})
+
+test('a post refused because the repository is archived stops the reconciler on it: no more posts, listings or gates, said once', async ($, on) => {
+  const second = { number: 8, draft: false, head: 'd'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
+  const pulls = [...pullWith([]), second]
+  const files = {
+    [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z'),
+    [RECORDS + '/acme/app/' + second.head + '/review.a.json']: JSON.stringify({ v: 1, repo: 'acme/app', pr: 8, head: second.head, kind: 'review', result: 'pass', producer: 'orchestrator', detail: '', session: 's', at: '2026-11-19T09:00:00Z' }),
+  }
+  const { clock, state } = await started($, on, { pulls, files, viewer: 'operator' })
+  state.postFails = true
+  state.postRefusal = 'error: cannot post readiness/review at aaaaaaa: Repository was archived so is read-only.'
+  await beat(clock)
+  // The first refusal ends the beat for the repository: the second pull request is not posted, nor a gate read.
+  expect(state.posted).toHaveLength(1)
+  expect(count(state.runs, 'pr-gate')).toBe(0)
+  const listed = count(state.runs, 'pr-panel')
+  await beat(clock, 2 * RETRY_MS / TICK_MS)
+  await clock.advance(IDLE_MAX_MS)
+  await clock.settle()
+  expect(state.posted).toHaveLength(1)
+  expect(count(state.runs, 'pr-panel')).toBe(listed)
+  expect(count(state.runs, 'pr-gate')).toBe(0)
+  expect(state.labelled).toEqual([])
+  expect(state.said.filter((line) => line.includes('acme/app') && line.includes('archived'))).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not post'))).toHaveLength(0)
+})
+
+test('two posts of one pull request that keep failing are each said once, over many retries', async ($, on) => {
+  const plan = JSON.stringify({ v: 1, repo: 'acme/app', pr: 7, e2e: { need: 'none', reason: 'docs' }, norms: { need: 'required', reason: '' }, review: { need: 'required', reason: '', max: 2 }, at: '2026-11-19T09:00:00Z' })
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z'), [PLAN]: plan }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  state.postFails = true
+  await beat(clock, 3 * RETRY_MS / TICK_MS + 1)
+  // Each retry posts again (review and plan), and says nothing new.
+  expect(state.posted.length).toBeGreaterThanOrEqual(6)
+  expect(state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7'))).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not post readiness/plan of acme/app#7'))).toHaveLength(1)
+})
+
+test('a failure that recovers is said again when it fails again, though another failure keeps speaking at every beat', async ($, on) => {
+  const other = { number: 9, draft: false, head: 'e'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const { clock, state, put } = await started($, on, { pulls: pullWith([]), other: [other], files, viewer: 'operator' })
+  // acme/other fails to list at every beat (the edge marker wakes each listing), acme/app's post fails, goes through, then fails again.
+  state.panelFails = 'gh: HTTP 502'
+  state.panelFailsRepo = 'acme/other'
+  state.postFails = true
+  const edge = async (n: number) => {
+    put(EDGE, '', T0 + n * TICK_MS - 1)
+    await beat(clock)
+  }
+  const posting = (n: number) => state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7')).length === n
+  for (let n = 1; n <= RETRY_MS / TICK_MS + 1; n++) await edge(n)
+  expect(posting(1)).toBe(true)
+  state.postFails = false
+  const first = RETRY_MS / TICK_MS + 2
+  for (let n = first; n < first + RETRY_MS / TICK_MS; n++) await edge(n)
+  const posted = state.posted.length
+  // A newer record of this machine is due on the forge, and its post is refused again, as before.
+  put(RECORDS + '/acme/app/' + HEAD + '/review.b.json', reviewAt('2026-11-19T09:30:00Z'), T0 + 40 * TICK_MS)
+  state.postFails = true
+  await edge(first + RETRY_MS / TICK_MS)
+  expect(state.posted.length).toBeGreaterThan(posted)
+  expect(posting(2)).toBe(true)
+  expect(state.said.filter((line) => line.includes('could not list acme/other: gh: HTTP 502'))).toHaveLength(1)
+})
+
+test('a refusal that only names "archived" is no archive: the post is tried again after RETRY_MS', async ($, on) => {
+  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+  state.postFails = true
+  state.postRefusal = 'error: HTTP 502 from the proxy of archived-mirror.example'
+  await beat(clock)
+  await beat(clock, RETRY_MS / TICK_MS)
+  expect(state.posted).toHaveLength(2)
+})
+
+test('the other repositories go on when one is archived: still listed, still posted to', async ($, on) => {
+  const other = { number: 9, draft: false, head: 'e'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
+  const files = {
+    [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z'),
+    [RECORDS + '/acme/other/' + other.head + '/review.a.json']: JSON.stringify({ v: 1, repo: 'acme/other', pr: 9, head: other.head, kind: 'review', result: 'pass', producer: 'orchestrator', detail: '', session: 's', at: '2026-11-19T09:00:00Z' }),
+  }
+  const { clock, state } = await started($, on, { pulls: pullWith([]), other: [other], files, viewer: 'operator' })
+  state.postFails = true
+  state.postFailsRepo = 'acme/app'
+  state.postRefusal = 'error: cannot post readiness/review at aaaaaaa: Repository was archived so is read-only.'
+  await beat(clock)
+  expect(state.postedRepos.sort()).toEqual(['acme/app', 'acme/other'])
+  state.listedRepos.length = 0
+  await beat(clock, 12)
+  expect(state.listedRepos.length).toBeGreaterThan(0)
+  expect(state.listedRepos.every((repo) => repo === 'acme/other')).toBe(true)
 })
 
 test('no more than POSTS_PER_TICK statuses are posted at one beat, the others at the next', async ($, on) => {

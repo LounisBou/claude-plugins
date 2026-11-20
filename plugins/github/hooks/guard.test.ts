@@ -3833,6 +3833,18 @@ test('light_ci run posts the record its line names, and a post refused is one li
   ])
 })
 
+test('a record written in an archived repository is not posted again, and its note does not promise a later copy', async ($, on) => {
+  const [name] = record('tests', 'pass', '2026-11-02T10:00:00Z')
+  const line = 'tests pass at 0123456 of acme/thing#12: npm test — exit 0 — 9s; output /tmp/x.log; record ' + HEAD_DIR + '/' + name + '\n'
+  const seen = await world($, on, { ...PENDING, stacked: true, tree: { ...CHECKOUTS, ...LIGHT_CI_ON }, gitIn: { [REVIEW_DIR]: REVIEW_ORIGIN },
+    lightCi: { exitCode: 0, stdout: line, stderr: '', result: 'pass' }, forgeFails: 'error: cannot post tests at 0123456: Repository was archived so is read-only.' })
+  await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, dir: REVIEW_DIR })
+  await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, dir: REVIEW_DIR })
+  expect(forgeRun(seen)).toHaveLength(1)
+  expect(seen.logs.filter((log) => log.includes('later beat'))).toEqual([])
+  expect(seen.logs.filter((log) => log.includes('acme/thing is archived (read-only)'))).toHaveLength(1)
+})
+
 test('light_ci run that writes nothing is an error with its line, and the gate is not read', async ($, on) => {
   const seen = await world($, on, { lightCi: { exitCode: 1, stdout: '', stderr: 'error: acme/thing has no light CI: no /cfg/light-ci/acme-thing.json\n' } })
   const out = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, repo: 'acme/thing' })
