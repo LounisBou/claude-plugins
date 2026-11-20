@@ -9,6 +9,11 @@
 
 set -u
 
+# An inherited CLAUDE_CONFIG_DIR makes a case that sets HOME write the operator's real settings:
+# every case runs without it. The probe mode reports what the suite sees, for its own test.
+unset CLAUDE_CONFIG_DIR
+if [ "${1:-}" = "--probe-config-dir" ]; then printf '%s' "${CLAUDE_CONFIG_DIR-unset}"; exit 0; fi
+
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPT="$HERE/../statusline/statusline.sh"
 WORK=$(mktemp -d)
@@ -1083,6 +1088,19 @@ if command -v claude >/dev/null 2>&1 && claude plugin test "$HERE/.." >/dev/null
   printf '  ok   %s\n' "the module's tests pass in the host's kit"; pass=$((pass + 1))
 else
   printf '  FAIL %s\n' "the module's tests pass in the host's kit (claude plugin test)"; fail=$((fail + 1))
+fi
+
+echo "-- isolation --"
+
+# The suite runs without the operator's CLAUDE_CONFIG_DIR, even when one is inherited: a case that
+# sets HOME would otherwise write the real settings. The probe runs the suite's own first lines
+# with a scratch CLAUDE_CONFIG_DIR inherited; it reports « unset » only if the unset is in place.
+PROBE_DIR=$(mktemp -d "$WORK/probe.XXXXXX")
+probed=$(env CLAUDE_CONFIG_DIR="$PROBE_DIR" bash "$HERE/run-tests.sh" --probe-config-dir)
+if [ "$probed" = "unset" ]; then
+  printf '  ok   %s\n' "the suite runs without an inherited CLAUDE_CONFIG_DIR"; pass=$((pass + 1))
+else
+  printf '  FAIL %s (got: %s)\n' "the suite runs without an inherited CLAUDE_CONFIG_DIR" "$probed"; fail=$((fail + 1))
 fi
 
 echo
