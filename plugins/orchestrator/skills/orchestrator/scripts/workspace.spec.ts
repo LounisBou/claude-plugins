@@ -1156,3 +1156,61 @@ test('sweep: an adoption never overwrites a line written since the ledger was re
   registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
   assert.ok((await bare(w, 'ledger')).out.includes(`${a} | ${join(dir, 'proj.git')} | main | orchestrator Orch: Maker (live) | agent Agent: past (gone) |`))
 })
+
+test('keep: a checkout closed with --keep-checkout is never ended by the sweep once its orchestrator and agent are gone; only a delete ends it; every deletion names its maker', async () => {
+  const src = pushed('proj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41' })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const kept = await clone(w, src, 'kept', 'feat/kept')
+  const lost = await clone(w, src, 'lost', 'feat/lost')
+  // The mark is on the ledger line, dated; marking again changes nothing.
+  const marked = await bare(w, 'keep', kept)
+  assert.deepEqual([marked.code, marked.out], [0, `kept ${kept}\n`], marked.err)
+  const at = lineOf(w, kept)?.kept
+  assert.equal(at, new Date(w.clock).toISOString())
+  w.clock += 1000
+  await bare(w, 'keep', kept)
+  assert.equal(lineOf(w, kept)?.kept, at)
+  assert.equal(lineOf(w, lost)?.kept, undefined)
+  // A checkout with no line is adopted, and marked.
+  rmSync(ledgerPath(join(dir, 'root')))
+  assert.equal((await bare(w, 'keep', kept)).code, 0)
+  assert.equal(lineOf(w, kept)?.adopted, true)
+  assert.ok(lineOf(w, kept)?.kept !== undefined)
+  // Its maker is dead, its agent gone, its hour long past: the sweep ends what is not kept (the clone of
+  // a dead predecessor that a sweep ended minutes after a `close --keep-checkout`) and leaves what is.
+  registry(w, [], new Set())
+  w.cwds = lsofOf('/elsewhere')
+  w.clock += 3 * HOUR
+  const swept = await bare(w, 'sweep')
+  assert.equal(swept.code, 0, swept.err)
+  assert.match(swept.out, new RegExp(`^kept ${kept}: kept since \\S+ by close --keep-checkout: only delete ends it$`, 'm'))
+  assert.ok(existsSync(kept), 'a kept checkout stays')
+  assert.ok(swept.out.includes(`deleted ${lost}`), swept.out)
+  assert.ok(!existsSync(lost))
+  assert.equal(lineOf(w, kept)?.reason, undefined, 'a kept checkout is owed no reason')
+  // While its orchestrator lives the mark does not hold the checkout past its pull request: the hooks module
+  // closes every finished agent with `--keep-checkout`, and the sweep still takes those once the pull request is over.
+  const owned = await clone(w, src, 'owned', 'feat/owned')
+  await bare(w, 'keep', owned)
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const alive = await bare(w, 'sweep', '--dry-run')
+  assert.ok(!alive.out.includes(`kept ${owned}: kept since`), alive.out)
+  registry(w, [], new Set())
+  assert.equal((await bare(w, 'delete', owned)).code, 0)
+  // A dry run says the same.
+  assert.match((await bare(w, 'sweep', '--dry-run')).out, new RegExp(`^kept ${kept}: kept since`, 'm'))
+  // Every deletion names what made it: the sweep, the close, a hand.
+  const hand = await clone(w, src, 'hand', 'feat/hand')
+  const closed = await clone(w, src, 'closed', 'feat/closed')
+  assert.equal((await bare(w, 'delete', hand, '--by', 'close')).code, 0)
+  assert.equal((await bare(w, 'delete', closed)).code, 0)
+  assert.equal((await bare(w, 'delete', kept)).code, 0, 'a delete by hand ends a kept checkout')
+  assert.deepEqual(archived().map(a => [a['path'], a['by']]), [[lost, 'sweep'], [owned, 'delete'], [hand, 'close'], [closed, 'delete'], [kept, 'delete']])
+  // Refused: no such checkout, a path outside the root, no path, a maker the archive has no word for.
+  assert.match((await bare(w, 'keep', join(dir, 'nowhere'))).err, /keep: no such checkout/)
+  assert.match((await bare(w, 'keep', dir)).err, /keep: refusing a path outside/)
+  assert.match((await bare(w, 'keep')).err, /keep: usage/)
+  assert.match((await bare(w, 'delete', closed, '--by', 'me')).err, /--by names close, sweep or delete/)
+  assert.equal(parseEntry(JSON.stringify({ v: 1, path: '/r/p/a', kind: 'clone', repo: '', branch: '', orchestrator: null, agent: null, created: '', kept: 3 })), null)
+})

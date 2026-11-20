@@ -400,6 +400,116 @@ test('two failures that alternate are each said once, not again at every turn', 
   for (const reason of reasons) expect(state.said.filter((line) => line.includes('could not list acme/app: ' + reason))).toHaveLength(1)
 })
 
+const TRACEBACK = (last: string) => 'Traceback (most recent call last):\n  File "/x/engine/gh.py", line 10, in <module>\n    main()\n' + last
+const OFFLINE_LINE = 'the reconciler cannot reach GitHub'
+
+test('an unreachable forge is one line for the machine, and the beat lists no repository after the first', async ($, on) => {
+  const other = { number: 9, draft: false, head: 'e'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
+  const { clock, state } = await started($, on, { other: [other] })
+  state.panelFails = TRACEBACK('socket.gaierror: [Errno 8] nodename nor servname provided, or not known')
+  await beat(clock)
+  expect(state.listedRepos).toEqual(['acme/app'])
+  const lines = state.said.filter((line) => line.includes(OFFLINE_LINE))
+  expect(lines).toEqual(['github: the reconciler cannot reach GitHub (socket.gaierror: [Errno 8] nodename nor servname provided, or not known); listings resume when it answers'])
+  expect(state.said.filter((line) => line.includes('could not list'))).toEqual([])
+  expect(state.said.some((line) => line.includes('Traceback'))).toBe(false)
+  // The next beats keep saying nothing more, whichever repository is tried.
+  await beat(clock, 3)
+  expect(state.said.filter((line) => line.includes(OFFLINE_LINE))).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not list'))).toEqual([])
+})
+
+test('the engine call\'s own timeout is an unreachable forge too: one line, no listing after the first', async ($, on) => {
+  const other = { number: 9, draft: false, head: 'e'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
+  const { clock, state } = await started($, on, { other: [other] })
+  state.panelFails = 'github: $.process.run(python3) aborted: still running after 120000ms'
+  await beat(clock)
+  expect(state.listedRepos).toEqual(['acme/app'])
+  expect(state.said.filter((line) => line.includes(OFFLINE_LINE + ' ($.process.run(python3) aborted: still running after 120000ms)'))).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not list'))).toEqual([])
+})
+
+test('an unreachable forge said once is said again when a listing went through between two outages', async ($, on) => {
+  const { clock, state, put } = await started($, on)
+  const outage = () => state.said.filter((line) => line.includes(OFFLINE_LINE)).length
+  const edge = async (n: number) => {
+    put(EDGE, '', T0 + n * TICK_MS - 1)
+    await beat(clock)
+  }
+  state.panelFails = TRACEBACK('socket.gaierror: [Errno 8] nodename nor servname provided, or not known')
+  await edge(1)
+  await edge(2)
+  expect(outage()).toBe(1)
+  state.panelFails = undefined
+  await edge(3)
+  expect(outage()).toBe(1)
+  state.panelFails = TRACEBACK('socket.gaierror: [Errno 8] nodename nor servname provided, or not known')
+  await edge(4)
+  expect(outage()).toBe(2)
+})
+
+test('an outage under a touched marker retries the failing repository on its back-off, and lists the next one once its schedule comes', async ($, on) => {
+  const other = { number: 9, draft: false, head: 'e'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
+  const { clock, state, put } = await started($, on, { other: [other] })
+  // Both repositories listed at idle intervals that have doubled: neither is due on its own schedule at the beats that follow.
+  await beat(clock, 4)
+  const before = state.listedRepos.length
+  expect(state.listedRepos.filter((repo) => repo === 'acme/other')).toHaveLength(3)
+  // A producer touches the marker while GitHub does not answer: the first repository fails, the second is not tried.
+  put(EDGE, '', T0 + 5 * TICK_MS - 1)
+  state.panelFails = TRACEBACK('socket.gaierror: [Errno 8] nodename nor servname provided, or not known')
+  await beat(clock, 3)
+  // The marker is still newer than at the first beat, yet the failing repository is not retried at every beat.
+  expect(state.listedRepos.slice(before)).toEqual(['acme/app'])
+  state.panelFails = undefined
+  await beat(clock)
+  expect(state.listedRepos.slice(before + 1)).toEqual(['acme/other'])
+})
+
+for (const reason of [
+  'urllib.error.URLError: <urlopen error [Errno 111] Connection refused>',
+  'ConnectionResetError: [Errno 54] Connection reset by peer',
+  'OSError: [Errno 51] Network is unreachable',
+  'OSError: [Errno 65] No route to host',
+  'socket.gaierror: [Errno -2] Name or service not known',
+  'socket.gaierror: [Errno -3] Temporary failure in name resolution',
+  'TimeoutError: _ssl.c:1112: The handshake operation timed out',
+  'TimeoutError: timed out',
+]) {
+  test('a reason that shows the forge cannot be reached says one line for the machine: ' + reason, async ($, on) => {
+    const { clock, state } = await started($, on)
+    state.panelFails = TRACEBACK(reason)
+    await beat(clock)
+    expect(state.said.filter((line) => line.includes(OFFLINE_LINE + ' (' + reason + ')'))).toHaveLength(1)
+    expect(state.said.filter((line) => line.includes('could not list'))).toEqual([])
+  })
+}
+
+test('a traceback whose earlier lines name a timeout is no outage: only its last line tells', async ($, on) => {
+  const { clock, state } = await started($, on)
+  state.panelFails = 'Traceback (most recent call last):\n  File "x.py", line 3, in fetch  # timed out? handshake gaierror\nKeyError: \'rows\''
+  await beat(clock)
+  expect(state.said).toContain('github: the reconciler could not list acme/app: KeyError: \'rows\'')
+  expect(state.said.some((line) => line.includes(OFFLINE_LINE))).toBe(false)
+})
+
+test('a failure that is no outage keeps its line for the repository, cut to the last line of its traceback', async ($, on) => {
+  const { clock, state } = await started($, on)
+  state.panelFails = TRACEBACK('ValueError: the listing is not JSON')
+  await beat(clock)
+  const lines = state.said.filter((line) => line.includes('could not list acme/app'))
+  expect(lines).toEqual(['github: the reconciler could not list acme/app: ValueError: the listing is not JSON'])
+  expect(state.said.some((line) => line.includes(OFFLINE_LINE))).toBe(false)
+})
+
+test('a reason longer than a line is bounded', async ($, on) => {
+  const { clock, state } = await started($, on)
+  state.panelFails = 'error: ' + 'x'.repeat(1000)
+  await beat(clock)
+  const [line] = state.said.filter((said) => said.includes('could not list acme/app'))
+  expect(line?.length ?? 0).toBeLessThan(300)
+})
+
 test('a listing that fails keeps the rows last listed: a record written at the head still reads the gate', async ($, on) => {
   const { clock, state, put, files } = await started($, on)
   await beat(clock)

@@ -44,12 +44,19 @@ export interface WorkspaceEntry {
   /** Why it is still there while no orchestrator and no agent of it lives. */
   readonly reason?: string
   readonly reason_at?: string
+  /**
+   * When `close --keep-checkout` asked for the checkout to stay (`workspace.sh keep`): once its orchestrator and
+   * agent are gone the sweep never ends it, whoever made it, and only a `delete` does.
+   */
+  readonly kept?: string
 }
 
 export interface ClosedEntry extends WorkspaceEntry {
   readonly closed: string
   /** `removed`, `pushed and removed`, `discarded`. */
   readonly end: string
+  /** The command or sweep that made the deletion: `close`, `sweep`, `delete` (a line of before this field has none). */
+  readonly by?: string
 }
 
 const isText = (v: unknown): v is string => typeof v === 'string'
@@ -71,6 +78,7 @@ export function parseEntry(line: string): WorkspaceEntry | null {
   if (!isTextOrNull(r['orchestrator']) || !isTextOrNull(r['agent'])) return null
   if (r['reason'] !== undefined && !isText(r['reason'])) return null
   if (r['reason_at'] !== undefined && !isText(r['reason_at'])) return null
+  if (r['kept'] !== undefined && !isText(r['kept'])) return null
   if (r['adopted'] !== undefined && r['adopted'] !== true) return null
   return read as WorkspaceEntry
 }
@@ -119,14 +127,14 @@ export function changeEntry(root: string, path: string, change: (e: WorkspaceEnt
 }
 
 /** Closes the entry of `path`: out of the ledger, into the archive with how it ended. */
-export function closeEntry(root: string, path: string, end: string, at: string): void {
+export function closeEntry(root: string, path: string, end: string, at: string, by: string): void {
   // The archive line is written under the ledger's lock, before the ledger lets the line go: a
   // failed append leaves the line where it was.
   update(ledgerPath(root), current => {
     const all = parseLedger(current ?? '')
     const closed = all.find(e => e.path === path)
     if (closed === undefined) return current ?? ''
-    const line: ClosedEntry = { ...closed, closed: at, end }
+    const line: ClosedEntry = { ...closed, closed: at, end, by }
     appendFileSync(archivePath(root), `${JSON.stringify(line)}\n`)
     return ledgerText(all.filter(e => e.path !== path))
   }, { waitMs: 2000 })

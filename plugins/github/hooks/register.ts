@@ -1360,8 +1360,18 @@ function forgeAwaited(rec: Reconciler, repo: string, now: number): boolean {
   return [...rec.held].some(([key, held]) => key.startsWith(repo.toLowerCase() + '#') && (held.copies ? now < held.until && listedAt < now : held.until <= now && listedAt < held.until))
 }
 
-// Lists a repository: its rows and its next listing, the rows kept on a failure. Whether it was listed.
-async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Promise<boolean> {
+// A failure of the forge's call that shows GitHub cannot be reached at all: name resolution, a connection refused or reset, no route, a handshake or connection timeout, the call's own timeout.
+const UNREACHABLE = /gaierror|nodename nor servname|name or service not known|temporary failure in name resolution|connection (refused|reset|aborted)|network is unreachable|no route to host|handshake|timed out|still running after/i
+const REASON_MAX = 200
+
+// The last meaningful line of an error's text (the exception line of a traceback, the engine's `error: …`), bounded.
+function shortReason(why: string): string {
+  const last = why.split('\n').map((line) => line.trim()).filter(Boolean).pop() ?? why
+  return (last.length > REASON_MAX ? last.slice(0, REASON_MAX - 1) + '…' : last).replace(/^github:\s*/i, '')
+}
+
+// Lists a repository: its rows and its next listing, the rows kept on a failure. Whether it was listed, failed, or found GitHub unreachable.
+async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Promise<'listed' | 'failed' | 'unreachable'> {
   const before = rec.repos.get(repo)
   let listing: Listing
   try {
@@ -1373,16 +1383,21 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
     const schedule = limited ? { nextAt: now + QUOTA_WAIT_MS, idle: before?.schedule.idle ?? 0 } : nextListing(before?.schedule, now, false, [], {})
     if (limited) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
     rec.repos.set(repo, { ...before, rows: before?.rows ?? [], schedule })
-    sayOnce($, rec, 'github: the reconciler could not list ' + repo + ': ' + why, 'list ' + repo)
-    return false
+    if (UNREACHABLE.test(shortReason(why))) {
+      sayOnce($, rec, 'github: the reconciler cannot reach GitHub (' + shortReason(why) + '); listings resume when it answers', 'unreachable')
+      return 'unreachable'
+    }
+    sayOnce($, rec, 'github: the reconciler could not list ' + repo + ': ' + shortReason(why), 'list ' + repo)
+    return 'failed'
   }
   rec.told.delete('list ' + repo)
+  rec.told.delete('unreachable')
   const changed = JSON.stringify(before?.rows ?? null) !== JSON.stringify(listing.rows)
   const schedule = nextListing(before?.schedule, now, changed, listing.rows, listing.rate)
   // The quota is the account's: once low, no repository is listed and no gate read before its reset.
   if (listing.rate.remaining !== undefined && listing.rate.remaining < QUOTA_LOW) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
   rec.repos.set(repo, { rows: listing.rows, schedule, ...(listing.viewer !== undefined ? { viewer: listing.viewer } : {}), listedAt: now })
-  return true
+  return 'listed'
 }
 
 // The readings of a repository's pull requests no longer open, removed once a listing says so.
@@ -1710,7 +1725,11 @@ async function reconcileTick($: Mod): Promise<void> {
     const listed = new Set<string>()
     for (const repo of repos) {
       if (now < rec.quotaUntil) break
-      if ((woken || now >= (rec.repos.get(repo)?.schedule.nextAt ?? 0) || forgeAwaited(rec, repo, now)) && (await listRepo($, rec, repo, now))) listed.add(repo)
+      if (!(woken || now >= (rec.repos.get(repo)?.schedule.nextAt ?? 0) || forgeAwaited(rec, repo, now))) continue
+      const result = await listRepo($, rec, repo, now)
+      if (result === 'listed') listed.add(repo)
+      // GitHub does not answer: the failing repository takes its back-off, the others keep their rows and are listed on their own schedule, not one call each in this beat.
+      if (result === 'unreachable') break
     }
     if (now < rec.quotaUntil) return
     const data = await dataDir($)
