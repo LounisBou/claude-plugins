@@ -29,8 +29,9 @@ export const FOREIGN_WAIT_MS = 2 * TICK_MS
  */
 export const PUBLISH_WAIT_MS = 2 * RETRY_MS
 /**
- * Ready is held over a foreign Not Ready no longer than this when no listing of the forge follows the wait (a repository the
- * reconciler does not follow, a listing that keeps failing): no forge read is coming, the gate then decides, with a line.
+ * A hold ends at this ceiling, with a line, only when the last listing whose statuses were imported is older than the wait and
+ * no import is failing since. Never while the import of the other machine's statuses fails, never with no import known, and
+ * never for an act (`pr-ready`, `pr-merge`, `pr-readiness ready`).
  */
 export const FOREIGN_CEILING_MS = PUBLISH_WAIT_MS
 /** A repository whose records directory changed within this is reconciled. */
@@ -238,15 +239,16 @@ function foreignOf(seen: Seen | undefined, move: LabelMove): Seen | undefined {
 /**
  * Until when Ready is held back, or undefined when it may go: it does not go over a Not Ready this machine did not set
  * until the forge was read at least FOREIGN_WAIT_MS after that Not Ready was first seen (`listedAt`: when the forge was last
- * listed and its statuses imported, ms; undefined when it is not known), whose statuses the gate then judges. With `now`, a
- * hold no listing has ended is let go FOREIGN_CEILING_MS after the sighting. Any other move goes at once.
+ * listed and its statuses imported, ms; undefined when it is not known), whose statuses the gate then judges. With `now`, a hold
+ * whose last import is older than the wait is let go FOREIGN_CEILING_MS after the sighting; with no import known, never.
+ * Any other move goes at once.
  */
 export function foreignHold(seen: Seen | undefined, move: LabelMove, listedAt: number | undefined, now?: number): number | undefined {
   const foreign = foreignOf(seen, move)
   if (!foreign) return undefined
   const until = foreign.since + FOREIGN_WAIT_MS
   if (listedAt !== undefined && listedAt >= until) return undefined
-  return now !== undefined && now >= foreign.since + FOREIGN_CEILING_MS ? undefined : until
+  return now !== undefined && listedAt !== undefined && now >= foreign.since + FOREIGN_CEILING_MS ? undefined : until
 }
 
 /** Whether a Ready move goes over a foreign Not Ready by the ceiling alone, no listing of the forge having followed the wait. */
@@ -259,7 +261,12 @@ export function seenPath(data: string, repo: string, pr: number): string {
   return data + '/label-seen/' + repo.toLowerCase() + '/' + pr + '.json'
 }
 
-/** The file that keeps when this machine's reconciler last listed a repository (ms), where the tools read that the forge was read. */
+/** The file that keeps the last listing of a repository whose statuses could not be imported (ms), where the tools read that the forge was not read. */
+export function failingPath(data: string, repo: string): string {
+  return data + '/label-seen/' + repo.toLowerCase() + '/.failing'
+}
+
+/** The file that keeps when this machine's reconciler last listed a repository and imported its statuses (ms), where the tools read that the forge was read. */
 export function listedPath(data: string, repo: string): string {
   return data + '/label-seen/' + repo.toLowerCase() + '/.listed'
 }

@@ -19,7 +19,7 @@ import {
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { normalise } from './guards.ts'
 import {
-  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, FOREIGN_CEILING_MS, foreignGivenUp, foreignHold, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS,
+  failingPath, fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, FOREIGN_CEILING_MS, foreignGivenUp, foreignHold, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS,
   listedPath, parseSeen, seenLabel, seenPath, seenText, seenWrote, sortedStatuses, takenLease, TICK_MS,
   type Counts, type Flap, type LabelMove, type ListedPr, type Listing, type Local, type Schedule, type Seen,
 } from './reconcile.ts'
@@ -1108,7 +1108,7 @@ async function readiness($: Mod, repo: string, pr: number, sha?: string): Promis
  */
 // `unwritten`: the gate read at the head, its label not written (the reconciler keeps the reading all the same).
 // `held`: Ready held over a Not Ready this machine did not set, until when (ms) at the earliest; none when the clock cannot be read.
-type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] }; held?: { until: number | undefined } }
+type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] }; held?: { until: number | undefined; failing?: boolean } }
 
 const flapKey = (repo: string, pr: number) => repo.toLowerCase() + '#' + pr
 
@@ -1153,36 +1153,41 @@ async function changeSeen($: Mod, repo: string, pr: number, change: (current: Se
   return next ?? change(undefined)
 }
 
-// When the forge was last listed here and its statuses imported (ms), kept by the reconciler where the tools of every session read it:
-// the file, or what this instance holds when it cannot be written. Undefined when it is not known.
-const listedInMemory = new Map<string, number>()
+// What the reconciler tells the tools of the machine's sessions about the forge, a file each in the data directory (listedPath, failingPath):
+// 'listed' when it last listed a repository and imported its statuses, 'failing' the last listing whose statuses it could not import (ms).
+// The file, or what this instance holds when it cannot be written. Undefined when it is not known.
+type Marker = 'listed' | 'failing'
+const markersInMemory = new Map<string, number>()
+const markerPath = (kind: Marker, data: string, repo: string): string => (kind === 'listed' ? listedPath(data, repo) : failingPath(data, repo))
 
-async function listedAtOf($: Mod, repo: string): Promise<number | undefined> {
+async function markerAt($: Mod, kind: Marker, repo: string): Promise<number | undefined> {
   const data = await dataDir($)
-  const read = data ? Number(await textOf($, listedPath(data, repo))) : NaN
-  const kept = listedInMemory.get(repo.toLowerCase())
+  const read = data ? Number(await textOf($, markerPath(kind, data, repo))) : NaN
+  const kept = markersInMemory.get(kind + ' ' + repo.toLowerCase())
   const known = [read, kept].filter((at): at is number => at !== undefined && Number.isFinite(at) && at > 0)
   return known.length > 0 ? Math.max(...known) : undefined
 }
 
-// Keeps that the forge was listed at `at` and its statuses imported. A file that cannot be written is said once; this instance then holds it.
-async function noteListed($: Mod, rec: Reconciler, repo: string, at: number): Promise<void> {
+// Keeps the marker at `at`. A file that cannot be written is said once; this instance then holds it.
+async function noteMarker($: Mod, rec: Reconciler, kind: Marker, repo: string, at: number): Promise<void> {
   const data = await dataDir($)
+  const memory = kind + ' ' + repo.toLowerCase()
   try {
     if (!data) throw new Error('no data directory')
-    await writeAtomicOver(journalIoOf($), listedPath(data, repo), String(at) + '\n')
-    listedInMemory.delete(repo.toLowerCase())
+    await writeAtomicOver(journalIoOf($), markerPath(kind, data, repo), String(at) + '\n')
+    markersInMemory.delete(memory)
   } catch {
-    listedInMemory.set(repo.toLowerCase(), at)
-    const where = data ? listedPath(data, repo) : 'the data directory'
-    sayOnce($, rec, 'github: the listing of ' + repo + ' could not be kept in ' + where + ' for the tools of the machine\'s other sessions: a Ready they hold over another machine\'s Not Ready waits for the forge to be read')
+    markersInMemory.set(memory, at)
+    const where = data ? markerPath(kind, data, repo) : 'the data directory'
+    sayOnce($, rec, 'github: the ' + (kind === 'listed' ? 'listing' : 'failed import') + ' of ' + repo + ' could not be kept in ' + where + ' for the tools of the machine\'s other sessions: a Ready they hold over another machine\'s Not Ready waits for the forge to be read')
   }
 }
 
 // unlabelled: Not Ready goes on a pull request carrying neither label too (the reconciler's, labelMove).
 // watch: the reconciler's, which holds a label that another machine keeps undoing and one that waits for a record's copy to
-// reach the forge. Whoever follows, Ready is held over a Not Ready this machine did not set (`held`: when it may go).
-async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false, unlabelled = false, watch?: Watch): Promise<Followed> {
+// reach the forge. Whoever follows, Ready is held over a Not Ready this machine did not set (`held`: when it may go). act: an explicit
+// act (pr-ready, pr-merge, pr-readiness ready) follows: its hold has no ceiling.
+async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false, unlabelled = false, watch?: Watch, act = false): Promise<Followed> {
   let gate: Gate
   let missing: string[]
   let excused: Excused
@@ -1214,10 +1219,13 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
     // ceiling: it needs the time too, and a host that cannot tell it is broken, not slow).
     if (move === 'ready' && gate.labels.some((label) => label.toLowerCase() === NOT_READY)) return { line: gateHeldLine(repo, pr, gate.head, undefined, readAt), missing, gate, held: { until: undefined } }
   } else {
-    const listedAt = await listedAtOf($, repo)
-    const until = foreignHold(seen, move, listedAt, readAt)
-    if (until !== undefined) return { line: gateHeldLine(repo, pr, gate.head, until, readAt), missing, gate, held: { until } }
-    if (foreignGivenUp(seen, move, listedAt, readAt)) note($, gateHeldGivenUpLine(repo, pr, gate.head, FOREIGN_CEILING_MS / 60_000))
+    const listedAt = await markerAt($, 'listed', repo)
+    // The ceiling is for the label alone, and not while the import of the other machine's statuses fails.
+    const failing = ((await markerAt($, 'failing', repo)) ?? 0) > (listedAt ?? 0)
+    const ceiling = act || failing ? undefined : readAt
+    const until = foreignHold(seen, move, listedAt, ceiling)
+    if (until !== undefined) return { line: gateHeldLine(repo, pr, gate.head, until, readAt, failing), missing, gate, held: { until, failing } }
+    if (ceiling !== undefined && foreignGivenUp(seen, move, listedAt, ceiling)) note($, gateHeldGivenUpLine(repo, pr, gate.head, FOREIGN_CEILING_MS / 60_000))
   }
   if (watch?.flap(gate, move)) return { missing, gate }
   let now: HeadRead
@@ -1284,8 +1292,8 @@ type Reconciler = {
   quotaUntil: number
 }
 
-// kept: the listing (ms) the tools of the sessions were told of.
-type Listed = { schedule: Schedule; rows: ListedPr[]; viewer?: string; listedAt?: number; kept?: number }
+// kept: the listing the tools of the sessions were told of, and whether its statuses were imported.
+type Listed = { schedule: Schedule; rows: ListedPr[]; viewer?: string; listedAt?: number; kept?: string }
 
 let reconciler: Reconciler | undefined
 
@@ -1567,8 +1575,8 @@ async function syncForge(
   const id = repo + '#' + row.number
   if (row.statuses === undefined || !viewer || listed.listedAt === undefined) {
     rec.unpublished.delete(flapKey(repo, row.number))
-    // Nothing to import: the listing carries no statuses, or no account says whose they are.
-    return { wrote: false, ok: true, imported: true }
+    // Nothing is imported: the listing carries no statuses, or no account says whose they are, so no listing counts.
+    return { wrote: false, ok: true, imported: false }
   }
   const local = await localOf($, at.root, at.data, repo, row, exemption)
   const key = JSON.stringify([row.head, row.statuses, local.records, local.plan, local.exemption])
@@ -1688,9 +1696,10 @@ async function reconcileTick($: Mod): Promise<void> {
         if (synced.wrote) copied = data ? await readExemption($, repo) : undefined
       }
       // The tools of the machine's sessions read there that the forge was listed and its statuses imported, not before.
-      if (imported && entry.listedAt !== undefined && entry.kept !== entry.listedAt) {
-        entry.kept = entry.listedAt
-        await noteListed($, rec, repo, entry.listedAt)
+      const told = String(entry.listedAt) + (imported ? ' listed' : ' failing')
+      if (entry.listedAt !== undefined && entry.kept !== told) {
+        entry.kept = told
+        await noteMarker($, rec, imported ? 'listed' : 'failing', repo, entry.listedAt)
       }
       const exemption = data ? await readExemption($, repo) : undefined
       for (const row of rows) {
@@ -1724,7 +1733,7 @@ async function reconcileTick($: Mod): Promise<void> {
 // The reconciler's timer, started again at each start of the session (a reload of the module cancels it with the old copy).
 async function startReconciler($: Mod): Promise<void> {
   reconciler?.timer?.cancel()
-  listedInMemory.clear()
+  markersInMemory.clear()
   const session = String(await Promise.resolve().then(() => $.session.id()).catch(() => ''))
   const now = await nowMs($)
   const rec: Reconciler = {
@@ -1846,15 +1855,15 @@ async function gateHeld($: Mod, name: string, repo: string, pr: number, r: Readi
   if (r.error) return heldUnverified(repo, pr, r.error, r.gate)
   const passes = (missing: string[]): boolean => missing.length === 0 || (act && missesOnlyRecords(missing))
   if (!passes(r.missing)) return heldNotReady($, name, repo, pr, r)
-  const followed = await followGate($, repo, pr, r.gate)
+  const followed = await followGate($, repo, pr, r.gate, false, false, undefined, true)
   if (followed.missing === undefined) return heldUnverified(repo, pr, followed.line ?? 'the Ready label could not be put', r.gate)
   if (!passes(followed.missing)) return heldNotReady($, name, repo, pr, { ...r, missing: followed.missing })
   // Ready held over a Not Ready this machine did not set: the act waits as the gate does.
   if (followed.held && followed.gate) {
     const at = await nowMs($)
     return {
-      refusal: gateHeldRefusal(name, repo, pr, followed.gate.head, followed.held.until, at),
-      answer: gateHeldAnswer(repo, pr, followed.gate.head, followed.gate.labels, followed.held.until, at),
+      refusal: gateHeldRefusal(name, repo, pr, followed.gate.head, followed.held.until, at, followed.held.failing),
+      answer: gateHeldAnswer(repo, pr, followed.gate.head, followed.gate.labels, followed.held.until, at, followed.held.failing),
     }
   }
   if (followed.line) note($, followed.line)

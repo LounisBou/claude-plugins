@@ -17,6 +17,7 @@ const RECORDS = CFG + '/pr-' + 'records'
 const READING = CFG + '/pr-reconcile/acme/app/7.json'
 const LEASE = CFG + '/pr-reconcile/.lease'
 const LISTED = '/data/github/label-seen/acme/app/.listed'
+const FAILING = '/data/github/label-seen/acme/app/.failing'
 const EDGE = CFG + '/pr-reconcile/.edge'
 
 // mergeable and mergeState: GitHub's listed mergeability against the base, as the listing carries it.
@@ -247,8 +248,10 @@ test('a Ready pull request whose base moves into conflict is gated at the next l
 
 test('a mergeability GitHub computes lazily is read again at the next beat once it settles', async ($, on) => {
   const { clock, state } = await started($, on, {
-    pulls: [{ number: 7, draft: false, head: HEAD, base: 'main', labels: ['Not Ready'], rollup: 'SUCCESS', mergeable: 'UNKNOWN', mergeState: 'UNKNOWN' }],
+    pulls: [{ number: 7, draft: false, head: HEAD, base: 'main', labels: ['Not Ready'], rollup: 'SUCCESS', mergeable: 'UNKNOWN', mergeState: 'UNKNOWN', statuses: [] }],
     files: passingRecords(),
+    // The listing names its account: the forge's statuses are imported, so the listing counts for the Not Ready's wait.
+    viewer: 'operator',
   })
   await beat(clock)
   expect(count(state.runs, 'pr-gate')).toBe(1)
@@ -685,7 +688,7 @@ test('a pass still left to its tool holds no move to Not Ready', async ($, on) =
 })
 
 test('a Not Ready this machine did not set stays until the forge was read FOREIGN_WAIT_MS after it was first seen, then the gate decides as before', async ($, on) => {
-  const { clock, state, files } = await started($, on, { pulls: readyPull(['Not Ready']), files: passingRecords() })
+  const { clock, state, files } = await started($, on, { pulls: readyPull(['Not Ready']), files: passingRecords(), viewer: 'operator' })
   await beat(clock)
   expect(count(state.runs, 'pr-gate')).toBe(1)
   expect(state.labelled).toEqual([])
@@ -769,7 +772,7 @@ test('a forge status that cannot be imported leaves the kept listing as it was: 
 })
 
 test('a listing that cannot be kept is said once, and this machine\'s own gate still goes on it after the wait', async ($, on) => {
-  const { clock, state, files } = await started($, on, { pulls: readyPull(['Not Ready']), files: passingRecords() })
+  const { clock, state, files } = await started($, on, { pulls: readyPull(['Not Ready']), files: passingRecords(), viewer: 'operator' })
   state.writeFails = /\.listed/
   await beat(clock, 3)
   expect(files.has(LISTED)).toBe(false)
@@ -797,4 +800,30 @@ test('a post the forge refuses does not hold back the kept listing: what the for
   await beat(clock)
   expect(state.posted).toHaveLength(1)
   expect(files.get(LISTED)?.text).toBe(String(T0 + TICK_MS) + '\n')
+})
+
+test('a listing that names no account imports nothing: the kept listing is not renewed and the hold stays, past the ceiling', async ($, on) => {
+  const { clock, state, files } = await started($, on, { pulls: readyPull(['Not Ready']), files: passingRecords() })
+  await beat(clock, PUBLISH_WAIT_MS / TICK_MS + 3)
+  expect(files.has(LISTED)).toBe(false)
+  expect(files.get(FAILING)?.text).toMatch(/^\d+\n$/)
+  expect(state.labelled).toEqual([])
+})
+
+test('a Not Ready this machine did not set stays past the ceiling while the import of the forge\'s statuses fails', async ($, on) => {
+  const pulls = readyPull(['Not Ready'])
+  const { clock, state, files } = await started($, on, { pulls, files: passingRecords(), viewer: 'operator' })
+  await beat(clock)
+  const imported = files.get(LISTED)?.text
+  expect(imported).toBe(String(T0 + TICK_MS) + '\n')
+  // The other machine's fail reaches the forge, and this machine cannot copy it from now on.
+  state.copyFails = true
+  const row = pulls[0]
+  if (row) row.statuses = [status('readiness/review', 'failure', 'v1 2026-11-19T10:00:30Z fail orchestrator')]
+  await beat(clock, PUBLISH_WAIT_MS / TICK_MS + 3)
+  expect(state.copied).toEqual([])
+  expect(files.get(LISTED)?.text).toBe(imported)
+  expect(Number(files.get(FAILING)?.text)).toBeGreaterThan(Number(imported))
+  expect(state.labelled).toEqual([])
+  expect(state.pulls[0]?.labels).toEqual(['Not Ready'])
 })

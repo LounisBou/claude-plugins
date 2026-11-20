@@ -146,16 +146,18 @@ test('a sighting is kept in a file of the data directory, per pull request, and 
   for (const text of [undefined, '', '[]', '{"v":2}', '{"v":1,"head":"a","label":"x","own":true,"since":1}', '{"v":1,"head":"a","label":null,"own":"yes","since":1}', '{"v":1,"head":"a","label":null,"own":true,"since":"1"}']) expect(parseSeen(text)).toBeUndefined()
 })
 
-test('a hold no listing has ended is let go at FOREIGN_CEILING_MS, and only then said to be given up', () => {
+test('a hold whose last import is older than the wait is let go at FOREIGN_CEILING_MS and only then said to be given up, a hold with no import known never', () => {
   const foreign = seenLabel(undefined, HEAD, ['Not Ready'], T0)
   const until = T0 + FOREIGN_WAIT_MS
-  expect(foreignHold(foreign, 'ready', undefined, T0 + FOREIGN_CEILING_MS - 1)).toBe(until)
-  expect(foreignHold(foreign, 'ready', undefined, T0 + FOREIGN_CEILING_MS)).toBeUndefined()
-  expect(foreignGivenUp(foreign, 'ready', undefined, T0 + FOREIGN_CEILING_MS - 1)).toBe(false)
+  expect(foreignHold(foreign, 'ready', until - 1, T0 + FOREIGN_CEILING_MS - 1)).toBe(until)
+  expect(foreignHold(foreign, 'ready', until - 1, T0 + FOREIGN_CEILING_MS)).toBeUndefined()
+  expect(foreignHold(foreign, 'ready', undefined, T0 + FOREIGN_CEILING_MS + TICK_MS)).toBe(until)
+  expect(foreignGivenUp(foreign, 'ready', until - 1, T0 + FOREIGN_CEILING_MS - 1)).toBe(false)
   expect(foreignGivenUp(foreign, 'ready', until - 1, T0 + FOREIGN_CEILING_MS)).toBe(true)
+  expect(foreignGivenUp(foreign, 'ready', undefined, T0 + FOREIGN_CEILING_MS)).toBe(false)
   // A listing after the wait ended it before: nothing is given up.
   expect(foreignGivenUp(foreign, 'ready', until, T0 + FOREIGN_CEILING_MS)).toBe(false)
-  expect(foreignGivenUp(seenWrote(HEAD, 'not-ready', T0), 'ready', undefined, T0 + FOREIGN_CEILING_MS)).toBe(false)
+  expect(foreignGivenUp(seenWrote(HEAD, 'not-ready', T0), 'ready', until - 1, T0 + FOREIGN_CEILING_MS)).toBe(false)
 })
 
 test('a Not Ready this machine put with no head read is its own at the head the gate first reads under it', () => {

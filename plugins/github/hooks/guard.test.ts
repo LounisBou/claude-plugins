@@ -2572,6 +2572,7 @@ test('an exemption with a limit rests on the operator\'s quoted, dated words, wi
 
 const SEEN_FILE = '/data/label-seen/acme/thing/12.json'
 const LISTED_FILE = '/data/label-seen/acme/thing/.listed'
+const FAILING_FILE = '/data/label-seen/acme/thing/.failing'
 
 test('a pr-gate read does not put Ready over a Not Ready this machine did not set before the forge was listed after the wait', async ($, on) => {
   const clock = mock.clock(on, { now: RECEIVED })
@@ -2637,22 +2638,64 @@ test('the Not Ready the gate puts back on a Ready pull request through pr-readin
   expect(JSON.parse(seen.files[SEEN_FILE] ?? '{}')).toMatchObject({ head: HEAD, label: 'not-ready', own: true })
 })
 
-for (const [what, listed] of [['known', undefined], ['older than the wait', String(RECEIVED - 3_600_000)]] as const) {
-  test('with no listing of the forge ' + what + ', Ready stays held, and goes at FOREIGN_CEILING_MS with a line saying so', async ($, on) => {
-    const clock = mock.clock(on, { now: RECEIVED })
-    const seen = await world($, on, { ownLabel: false })
-    if (listed !== undefined) seen.files[LISTED_FILE] = listed
-    await $.tool.call(gh('pr-gate', { pr: 12 }))
-    await clock.advance(FOREIGN_WAIT_MS + 1000)
-    await $.tool.call(gh('pr-gate', { pr: 12 }))
-    expect(readinessRuns(seen)).toEqual([])
-    expect(seen.logs.join('\n')).toContain('the forge is not known to be listed since the wait')
-    await clock.advance(FOREIGN_CEILING_MS)
-    await $.tool.call(gh('pr-gate', { pr: 12 }))
-    expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
-    expect(seen.logs.join('\n')).toContain('no listing of the forge followed the wait within 10 minutes')
-  })
-}
+test('with the last listing whose statuses were imported older than the wait, Ready stays held, and goes at FOREIGN_CEILING_MS with a line saying so', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false })
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_WAIT_MS + 1000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+  expect(seen.logs.join('\n')).toContain('the forge is not known to be listed since the wait')
+  await clock.advance(FOREIGN_CEILING_MS)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs.join('\n')).toContain('no listing of the forge followed the wait within 10 minutes')
+})
+
+test('with no listing whose statuses were imported known, Ready stays held past FOREIGN_CEILING_MS', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_CEILING_MS + FOREIGN_WAIT_MS)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('while the import of the other machine\'s statuses fails, Ready stays held past FOREIGN_CEILING_MS, on the label and on the acts, the line saying why', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'] })
+  // The last import that went through is older than the wait, a listing since could not import.
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  seen.files[FAILING_FILE] = String(RECEIVED)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_CEILING_MS + FOREIGN_WAIT_MS)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([])
+  expect(seen.logs.join('\n')).toContain('cannot be imported here')
+  const asked = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(String(asked.result)).toContain('cannot be imported here')
+  expect((await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD }))).deny).toContain('cannot be imported here')
+  expect(readinessRuns(seen)).toEqual([])
+  // An import that went through after the failure ends it: the listing counts again.
+  seen.files[LISTED_FILE] = String(RECEIVED + FOREIGN_CEILING_MS + FOREIGN_WAIT_MS)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('the ceiling never releases pr-readiness ready, pr-ready or pr-merge: a stale listing keeps them held', async ($, on) => {
+  const clock = mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, autoMerge: ['acme/thing'] })
+  seen.files[LISTED_FILE] = String(RECEIVED - 3_600_000)
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await clock.advance(FOREIGN_CEILING_MS + FOREIGN_WAIT_MS)
+  expect(String((await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))).result)).toContain('Ready not put')
+  expect((await $.tool.call(gh('pr-ready', { pr: 12 }))).deny).toContain('not set by this machine')
+  expect((await $.tool.call(gh('pr-merge', { pr: 12, sha: HEAD }))).deny).toContain('not set by this machine')
+  expect(readinessRuns(seen)).toEqual([])
+  expect(commands(seen)).not.toContain('pr-ready')
+  expect(commands(seen)).not.toContain('pr-merge')
+})
 
 test('a clock the module cannot read holds Ready over a Not Ready, with a line', async ($, on) => {
   const seen = await world($, on, { noClock: true })

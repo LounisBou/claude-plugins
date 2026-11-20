@@ -791,26 +791,28 @@ export function gateMovedLine(repo: string, pr: number, read: string, now: strin
 }
 
 // Why Ready is held over a Not Ready this machine did not set, and until when (ms) at the earliest; undefined: the clock cannot be read.
-function heldWhy(until: number | undefined, now: number): string {
+// failing: the other machine's statuses cannot be imported, so no listing of the forge counts.
+function heldWhy(until: number | undefined, now: number, failing = false): string {
   const set = 'the Not Ready it carries was not set by this machine, and '
   if (until === undefined) return set + 'the clock cannot be read, so the wait cannot be told: Ready waits for it'
+  if (failing) return set + 'the statuses the forge holds cannot be imported here (no listing counts until they are): Ready waits for the import'
   if (until <= now) return set + 'the forge is not known to be listed since the wait: it is read again by the reconciler\'s next listing'
   return set + 'the forge is read again first, in ' + String(Math.max(1, Math.ceil((until - now) / 1000))) + ' s at the earliest'
 }
 
 // The gate's line when Ready is held over a Not Ready this machine did not set.
-export function gateHeldLine(repo: string, pr: number, head: string, until: number | undefined, now: number): string {
-  return 'github: the Ready label of ' + repo + '#' + pr + ' is left as it is at ' + head7(head) + ': ' + heldWhy(until, now) + '.'
+export function gateHeldLine(repo: string, pr: number, head: string, until: number | undefined, now: number, failing = false): string {
+  return 'github: the Ready label of ' + repo + '#' + pr + ' is left as it is at ' + head7(head) + ': ' + heldWhy(until, now, failing) + '.'
 }
 
 // The refusal of an act that needs Ready, held the same way.
-export function gateHeldRefusal(act: string, repo: string, pr: number, head: string, until: number | undefined, now: number): string {
-  return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': ' + heldWhy(until, now) + '.'
+export function gateHeldRefusal(act: string, repo: string, pr: number, head: string, until: number | undefined, now: number, failing = false): string {
+  return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': ' + heldWhy(until, now, failing) + '.'
 }
 
 // pr-readiness ready held the same way: the state it carries, an answer and no refusal.
-export function gateHeldAnswer(repo: string, pr: number, head: string, labels: string[], until: number | undefined, now: number): string {
-  return 'github: ' + repo + '#' + pr + ' carries ' + carriedLabel(labels) + ' at ' + head7(head) + ', Ready not put: ' + heldWhy(until, now) + '.'
+export function gateHeldAnswer(repo: string, pr: number, head: string, labels: string[], until: number | undefined, now: number, failing = false): string {
+  return 'github: ' + repo + '#' + pr + ' carries ' + carriedLabel(labels) + ' at ' + head7(head) + ', Ready not put: ' + heldWhy(until, now, failing) + '.'
 }
 
 // Ready goes over a Not Ready this machine did not set, no listing of the forge having followed the wait.

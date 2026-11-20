@@ -102,8 +102,10 @@ it. `/github:doctor` then confirms everything is ready.
   for every copy of the head to reach the forge, a move to `Not Ready` for the failures'. `Ready` does not go
   back over a `Not Ready` this machine did not set (or of unknown origin) before the forge was listed two beats
   after it was first seen and its statuses imported, on the reconciler's beat, on a `pr-gate` or `pr-checks` read and on
-  `pr-readiness ready`, `pr-ready` and `pr-merge` alike; the gate then decides as before. No listing within ten
-  minutes lets it go, with a line. What the machine saw of each label is kept in `label-seen/` of the plugin's data
+  `pr-readiness ready`, `pr-ready` and `pr-merge` alike; the gate then decides as before. A listing counts only once its statuses are imported here: one that
+  names no account, or whose statuses cannot be copied, does not. Ten minutes after the first sighting the label alone goes,
+  with a line, and only on a stale listing whose import succeeded: never while the import of the other machine's statuses
+  fails, never with no import known, and never for `pr-readiness ready`, `pr-ready` or `pr-merge`. What the machine saw of each label is kept in `label-seen/` of the plugin's data
   directory, shared by its sessions; the Not Ready its own tools put is noted there as its own.
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's quoted, dated words, and `auto-merge-list`
