@@ -260,11 +260,11 @@ describe('facts', () => {
     assert.equal(run(f, 'facts'), 2)
     const [src, a1, b1, c1, idle, o1, o2] = [t['src'], t['a1'], t['b1'], t['c1'], t['idle'], t['o1'], t['o2']]
     assert.deepEqual(f.out, [
-      `session 100 | ttys100 | Orch: alpha | Orch: alpha | github.com/o/app | main | ${src}`,
-      `session 101 | ttys101 | Agent: a1 | Orch: alpha [aaa111] | github.com/o/app | feat/x | ${a1}`,
-      `session 102 | ttys102 | Agent: b1 | Orch: beta [bbb222] | github.com/o/app | feat/x | ${b1}`,
-      `session 103 | ttys103 | Agent: c1 | unknown | github.com/o/app | feat/y | ${c1}`,
-      `session 106 | ttys106 | Agent: o1 | Orch: gamma [ccc333] | github.com/o/other | feat/x | ${o1}`,
+      `session 100 | ttys100 | Orch: alpha | Orch: alpha | github.com/o/app | main | ${src} | -`,
+      `session 101 | ttys101 | Agent: a1 | Orch: alpha [aaa111] | github.com/o/app | feat/x | ${a1} | -`,
+      `session 102 | ttys102 | Agent: b1 | Orch: beta [bbb222] | github.com/o/app | feat/x | ${b1} | -`,
+      `session 103 | ttys103 | Agent: c1 | unknown | github.com/o/app | feat/y | ${c1} | -`,
+      `session 106 | ttys106 | Agent: o1 | Orch: gamma [ccc333] | github.com/o/other | feat/x | ${o1} | -`,
       `checkout ${a1} | github.com/o/app | feat/x`,
       `checkout ${b1} | github.com/o/app | feat/x`,
       `checkout ${c1} | github.com/o/app | feat/y`,
@@ -281,6 +281,29 @@ describe('facts', () => {
     ])
   })
 
+  it('says the plan each session runs on, read in its own environment', () => {
+    const table = join(realpathSync(fixture().root), 'ps-env')
+    writeFileSync(table, [
+      '100 1 ttys100 /usr/bin/hostcli --name Orch: alpha TERM=x CLAUDE_CONFIG_DIR=/h/.claude-bis HOME=/h',
+      '101 1 ttys101 /usr/bin/hostcli --name Agent: a1 TERM=x HOME=/h',
+      '102 1 ttys102 /usr/bin/hostcli --name Agent: b1 CLAUDE_CONFIG_DIR=/h/.claude/',
+      '106 1 ttys106 /usr/bin/hostcli --name Agent: o1 CLAUDE_CONFIG_DIR=/elsewhere',
+      '',
+    ].join('\n'))
+    const { f } = bench({ env: { HOME: '/h', COORDINATOR_PS_ENV: table } })
+    run(f, 'facts')
+    const plans = f.out.filter(l => l.startsWith('session ')).map(l => l.split(' | ').slice(0, 1).concat(l.split(' | ').slice(-1)).join(' '))
+    // 103 is not in the environment table: its plan is unread, said « - ».
+    assert.deepEqual(plans, ['session 100 plan2', 'session 101 plan1', 'session 102 plan1', 'session 103 -', 'session 106 /elsewhere'])
+  })
+
+  it('says a plan table it cannot read, and keeps the sessions', () => {
+    const { f } = bench({ env: { HOME: '/h', COORDINATOR_PS_ENV: '/no/such/env' } })
+    assert.equal(run(f, 'facts'), 2)
+    assert.ok(f.out.includes('unread plans: /no/such/env cannot be read'))
+    assert.ok(f.out.some(l => l.startsWith('session 100 | ') && l.endsWith(' | -')))
+  })
+
   it('says each source it could not read, keeps what it read, and exits 2', () => {
     const { f } = bench({ cwds: '', world: { forge: {}, workspace: fail(1, 'workspace: no root\nmore') } })
     assert.equal(run(f, 'facts'), 2)
@@ -295,7 +318,7 @@ describe('facts', () => {
       'unread checkouts: workspace: no root',
     ])
     assert.ok(f.out.includes('heavy 200 | - | bash ./tests/run-tests.sh'))
-    assert.ok(f.out.includes(`session 100 | ttys100 | Orch: alpha | Orch: alpha | - | - | -`))
+    assert.ok(f.out.includes(`session 100 | ttys100 | Orch: alpha | Orch: alpha | - | - | - | -`))
   })
 
   it('checks: reports at first nothing, then only what is new since the last check, and waits for it with --every', () => {
@@ -347,7 +370,7 @@ describe('facts', () => {
     chmodSync(join(bin, 'lsof'), 0o755)
     const withLsof = fixture({ env: { ...f.ctx.env, PATH: `:${bin}` }, run: (c, a, o) => f.ctx.run(c, a, o) })
     assert.equal(run(withLsof, 'facts'), 2)
-    assert.deepEqual(withLsof.out, [`session 7 | ttys7 | Agent: s | unknown | h/o/r | m | ${dir('r')}`, 'unread directories: lsof failed: exit 1', "unread forge h/o/r: not a GitHub repository, which the machine's pull request file holds alone"])
+    assert.deepEqual(withLsof.out, [`session 7 | ttys7 | Agent: s | unknown | h/o/r | m | ${dir('r')} | plan1`, 'unread directories: lsof failed: exit 1', "unread forge h/o/r: not a GitHub repository, which the machine's pull request file holds alone"])
     const noLsof = fixture({ env: { ...f.ctx.env, PATH: dir('empty') }, run: (c, a, o) => f.ctx.run(c, a, o) })
     assert.equal(run(noLsof, 'facts'), 2)
     assert.ok(noLsof.out.includes('unread directories: lsof is missing'))

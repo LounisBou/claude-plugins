@@ -22,7 +22,8 @@ STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
 ROUTING_DIR = os.path.join(STATE_DIR, "routing")
 # Where the host keeps one directory per checkout and one transcript per session, as the
 # launcher reads it.
-PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or os.path.expanduser("~/.claude/projects")
+PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or os.path.join(
+    os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "projects")
 MODELS_MAP = os.environ.get("ORCHESTRATOR_MODELS_MAP") or os.path.join(STATE_DIR, "models.json")
 DEFAULTS_DIR = os.environ.get("ORCHESTRATOR_ROUTING_DEFAULTS") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "defaults")

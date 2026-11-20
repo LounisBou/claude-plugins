@@ -3290,6 +3290,24 @@ for WKFLAG in --successor --auditor '--right-of self' --title-free '--tier deep'
 done
 check "a wake beside --coordinator-successor is refused" "1" "$(crd --wake --coordinator-successor --title 'Orch: x' --model m >/dev/null 2>&1; echo $?)"
 check "rotate refuses --wake" "1" "$(crdrot --old-tty /dev/ttys901 --wake | grep -c -- '--wake is not a rotation')"
+# A woken orchestrator runs on the plan it slept on, whoever wakes it: the sleeping record's
+# `config` is exported in its launch; a record without one is plan 1, and none exported; no record
+# at all leaves the caller's own plan.
+printf '[{"name":"Orch: plan2","config":"/plan/two"},{"name":"Orch: plan1"}]' > "$CRDSTATE/sleeping.json"
+check "a wake exports the plan its sleeping record names, not its caller's" "1|0" \
+  "$(crdl --wake --title 'Orch: plan2' --model m --effort high | grep -cF 'export CLAUDE_CONFIG_DIR=/plan/two &&')|$(crdl --wake --title 'Orch: plan2' --model m --effort high | grep -cF "$CRDCFG")"
+check "a record with no config wakes on plan 1: nothing exported, though the caller runs on another plan" "0" \
+  "$(crdl --wake --title 'Orch: plan1' --model m --effort high | grep -cF 'export CLAUDE_CONFIG_DIR')"
+check "a wake no record names runs on its caller's plan" "1" \
+  "$(crdl --wake --title 'Orch: other' --model m --effort high | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")"
+mkdir -p "$WORK/wake-plan"
+printf '{"projects":{"%s":{"hasTrustDialogAccepted":true}}}' "$WORK" > "$WORK/wake-plan/.claude.json"
+printf '[{"name":"Orch: plan2","config":"%s"}]' "$WORK/wake-plan" > "$CRDSTATE/sleeping.json"
+check "a wake trusts the checkout in its sleeper's own record, not its caller's" "already|unread" \
+  "$(ORCHESTRATOR_TRUST_FILE= crd --wake --title 'Orch: plan2' --model m --effort high | sed -n 's/^trust=//p')|$(ORCHESTRATOR_TRUST_FILE= crd --wake --title 'Orch: other' --model m --effort high | sed -n 's/^trust=//p')"
+rm -f "$CRDSTATE/sleeping.json"
+check "a spawn exports its caller's plan, in a tab or a home window alike" "1|1" \
+  "$(crdl --title 'Agent: plan' | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")|$(crdl --wake --title 'Orch: alpha' --model m --effort high | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")"
 # A new orchestrator opened on the operator's order: by a coordinator or an orchestrator only,
 # read by the caller's name, right of it, in no chain, under remote control, on the deep tier
 # unless told. An agent, an auditor or a session with no name never opens one.
@@ -3679,6 +3697,42 @@ check "and the home's .claude.json when it names none" "$WORK/trust-home/.claude
   "$(trust_probe "$WORK/trust-home")|$(grep -c 'trust-new' "$WORK/trust-home/.claude.json")"
 check "the suite's own trust file wins over both" "$WORK/trust-own.json" \
   "$(trust_probe "$WORK/trust-home" CLAUDE_CONFIG_DIR="$WORK/trust-acct" ORCHESTRATOR_TRUST_FILE="$WORK/trust-own.json")"
+# A spawn under a second plan's configuration directory finds the checkout trusted in that
+# directory's .claude.json, not in the home's: a fresh clone made for a plan 2 session no longer
+# stops on the host's « Quick safety check » dialog.
+mkdir -p "$WORK/trust-fresh" "$WORK/trust-acct2"
+printf '{"projects":{}}' > "$WORK/trust-acct2/.claude.json"
+out=$(env -u ORCHESTRATOR_TRUST_FILE CLAUDE_CONFIG_DIR="$WORK/trust-acct2" HOME="$WORK/trust-home" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$WORK/trust-fresh" --title "Agent: trust" --tier deep --trust --prompt p 2>&1)
+check "a spawn under a plan 2 configuration directory trusts the checkout in that directory's record" "recorded|true|1" \
+  "$(printf '%s\n' "$out" | sed -n 's/^trust=//p')|$("$py" -c "import json,os,sys; print(str(json.load(open(sys.argv[1]))['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$WORK/trust-acct2/.claude.json" "$WORK/trust-fresh")|$(printf '%s\n' "$out" | grep -c "^launch=.*export CLAUDE_CONFIG_DIR=$WORK/trust-acct2 ")"
+# What a plan names, as the launcher reads it: its record, its transcripts' folder and the variable.
+plan_probe() { # <config dir or empty> <HOME>: TRUST_FILE, PROJECTS_DIR and the variable after use_config
+  env -u ORCHESTRATOR_TRUST_FILE -u ORCHESTRATOR_PROJECTS_DIR -u CLAUDE_CONFIG_DIR HOME="$2" CLAUDE_CONFIG_DIR="$WORK/trust-acct" "$py" -c "
+import os, sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+ia.use_config(sys.argv[1])
+print(ia.TRUST_FILE, ia.PROJECTS_DIR, os.environ.get('CLAUDE_CONFIG_DIR', 'none'))" "$1"; }
+check "use_config moves the trust record, the transcripts' folder and the variable to the plan named" \
+  "/p2/.claude.json /p2/projects /p2" "$(plan_probe /p2 "$WORK/trust-home")"
+check "and plan 1 is the home's, the variable gone" "$WORK/trust-home/.claude.json $WORK/trust-home/.claude/projects none" "$(plan_probe '' "$WORK/trust-home")"
+check "the transcripts' folder follows the configuration directory at start, the launcher's and the routing's alike" "$WORK/trust-acct/projects|$WORK/trust-acct/projects" \
+  "$(env -u ORCHESTRATOR_PROJECTS_DIR CLAUDE_CONFIG_DIR="$WORK/trust-acct" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia; print(ia.PROJECTS_DIR)")|$(env -u ORCHESTRATOR_PROJECTS_DIR CLAUDE_CONFIG_DIR="$WORK/trust-acct" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/model-routing/scripts')
+import routing; print(routing.PROJECTS_DIR)")"
+# The plan a session runs on is read on its own process, whoever asks.
+# A platform binary such as sleep hides its environment from ps: the probes are the interpreter's.
+env CLAUDE_CONFIG_DIR=/plan/probe "$py" -c "import time; time.sleep(30)" & PCRUN=$!; disown
+env -u CLAUDE_CONFIG_DIR "$py" -c "import time; time.sleep(30)" & PCNONE=$!; disown
+sleep 1
+check "process_config reads the variable in a running process's environment, and says none for a process without one" "/plan/probe|none" \
+  "$("$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+print('%s|%s' % (ia.process_config(sys.argv[1]), ia.process_config(sys.argv[2]) or 'none'))" "$PCRUN" "$PCNONE")"
+kill "$PCRUN" "$PCNONE" 2>/dev/null
 printf '{not json' > "$WORK/trust-garbage.json"
 out=$(env ORCHESTRATOR_TRUST_FILE="$WORK/trust-garbage.json" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
       CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --prompt p 2>&1); code=$?
@@ -6433,6 +6487,47 @@ out_unread=$(verify_mode_run none '' auto 2>/dev/null)
 msg_unread=$(verify_mode_run none '' auto 2>&1 1>/dev/null)
 check "an unread mode is refused, the made tab closed, the remedy said" "exit=1|True|1" \
   "$(printf '%s' "$out_unread" | sed -n '1p')|$(printf '%s' "$out_unread" | sed -n '2p' | sed 's/closed=//')|$(printf '%s' "$msg_unread" | grep -c 'parked on a dialog or hung at start')"
+# A session stopped on the host's workspace-trust dialog is named as such, with the record
+# that would have answered it, and its tab is closed like any refused spawn's.
+trust_dialog_run() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+closed = []
+m.close_made = lambda made: closed.append(made) or True
+m.find_transcript = lambda d, since: None
+m.tmux_on = lambda socket, args, what: sys.argv[1]
+try:
+    m.verify_mode('/checkout', 0, 'auto', 'a-model', {'home': 'orch-x', 'tty': '/dev/ttys9'}, timeout=1, sleep=lambda s: None)
+except SystemExit as e:
+    print('exit=%s' % e.code)
+print('closed=%s' % bool(closed))" "$1"; }
+msg_trust=$(trust_dialog_run ' Quick safety check: Is this a project you created or one you trust?' 2>&1 1>/dev/null)
+check "a session stopped on the trust dialog is refused by name, with the record and the flag" "1|1|1" \
+  "$(printf '%s' "$msg_trust" | grep -c "workspace-trust dialog")|$(printf '%s' "$msg_trust" | grep -c "$ORCHESTRATOR_TRUST_FILE")|$(printf '%s' "$msg_trust" | grep -c -- '--trust')"
+check "and it is still refused and closed" "/dev/ttys9|exit=1|closed=True" "$(trust_dialog_run 'Quick safety check' 2>/dev/null | tr '\n' '|' | sed 's/|$//')"
+check "a screen without the dialog keeps the former refusal, the dialog not named" "0|1" \
+  "$(trust_dialog_run 'a prompt, waiting' 2>&1 1>/dev/null | grep -c 'workspace-trust dialog')|$(trust_dialog_run 'a prompt, waiting' 2>&1 1>/dev/null | grep -c 'parked on a dialog or hung at start')"
+check "a resumed session stopped on the trust dialog is refused by name too" "1" \
+  "$("$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.close_made = lambda made: True
+m.transcript_of = lambda sid: (None, 0)
+m.tmux_on = lambda socket, args, what: 'Quick safety check'
+m.verify_resumed('s', 0, 'auto', 'a-model', dict(home='x', tty='/dev/ttys9'), timeout=1, sleep=lambda s: None, dir_='/checkout')" 2>&1 | grep -c 'workspace-trust dialog')"
+check "the dialog is read on a tab's screen too, and no screen is no dialog" "True|False|False" \
+  "$("$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+class T:
+    def screen(self, tty, n): return ['', 'Quick safety check: trust this folder?']
+class U:
+    def screen(self, tty, n): return ['\$ ']
+m.terminal_for = lambda tty: T()
+print(m.trust_dialog_on(dict(tty='/dev/ttys9')), end='|')
+m.terminal_for = lambda tty: U()
+print(m.trust_dialog_on(dict(tty='/dev/ttys9')), end='|')
+print(m.trust_dialog_on(dict()))")"
 out_mismatch=$(verify_mode_run /checkout/t.jsonl default auto 2>/dev/null)
 check "a mismatch is still refused, the made tab still closed" "exit=1|True" \
   "$(printf '%s' "$out_mismatch" | sed -n '1p')|$(printf '%s' "$out_mismatch" | sed -n '2p' | sed 's/closed=//')"
@@ -8399,6 +8494,12 @@ check "window 0 waits for the old process, runs the resume on the session's curr
   "cd $WORK && i=0 && while kill -0 $$ 2>/dev/null; do if [ \$i -ge 600 ]; then echo 'the session did not end in its old place: it goes on there'; $ROOT/skills/iterm-agents/scripts/iterm-agent.sh home-release --abandon orch-abcdef12 >> $WORK/homestate/home-release.log 2>&1 || echo 'the home server could not be closed: close this tab by hand'; sleep 10; exit 1; fi; sleep 0.2; i=\$((i+1)); done; pane=\$(tty); $ROOT/skills/iterm-agents/scripts/iterm-agent.sh home-release --tty /dev/ttys900 --session-id '<old-tab-session-id>' --pane-tty \"\$pane\" --resumed $HSID >> $WORK/homestate/home-release.log 2>&1 & watcher=\$!; $HOSTLINE; rc=\$?; [ \$rc -eq 0 ] && exit 0; kill \$watcher 2>/dev/null; printf 'the resume of session %s failed (exit %s); resume it by hand: %s\\n' $HSID \"\$rc\" $BYHAND; exec \"\${SHELL:-/bin/sh}\" -l" \
   "$(sfield "$out" home_launch)"
 check "and the dry run touched no tmux" "" "$(hcalls)"
+# The move resumes on the plan the session runs on, read on its own process, whoever runs it: a
+# stand-in `ps` says the session's environment holds a plan 2 directory, the caller's says another.
+out=$(homecmd env ORCHESTRATOR_HOST_ENV='["HOME=/h","CLAUDE_CONFIG_DIR=/plan/two"]' ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
+check "the move's home server starts on the session's own plan, not its runner's" "/plan/two" "$(sfield "$out" home_config)"
+out=$(homecmd env ORCHESTRATOR_HOST_ENV='["HOME=/h"]' ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
+check "and a session on plan 1 is moved on plan 1, its runner's variable dropped" "none" "$(sfield "$out" home_config)"
 # A successor the launcher named passes no --name: the name is the session's own, read on its tty.
 printf '/dev/ttys900 999991 /opt/x/host --resume x --name Orch: conv\n' > "$WORK/home-ps"
 out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_PS_TABLE="$WORK/home-ps" bash "$AGENT" home --session "$HSID" --prompt "Go on" 2>&1)
@@ -8489,9 +8590,10 @@ e = ia.home_env()
 print(','.join(k for k in ('CLAUDECODE', 'ITERM_SESSION_ID', 'ORCHESTRATOR_HOST_ARGV', 'ORCHESTRATOR_SELF_TTY') if k in e) or 'none')")"
 
 # A second account (CLAUDE_CONFIG_DIR) is the session's own: the server is started with it, so the
-# resume in window 0 and every window an agent is spawned in read the same account.
+# resume in window 0 and every window an agent is spawned in read the same account. The plan is
+# read on the session's own process: the suite's stand-in gives it the account the session runs on.
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
-res=$(hprobe ok)
+res=$(ORCHESTRATOR_HOST_ENV="[\"CLAUDE_CONFIG_DIR=$HCONF\"]" hprobe ok)
 check "the home server is started with the session's CLAUDE_CONFIG_DIR" "$HCONF" "$(sort -u "$HR/configdir")"
 reset_homerec
 res=$(hprobe ok)
@@ -10061,7 +10163,7 @@ FACTS=$(cfacts facts 2>/dev/null)
 OWNERS=$(cfacts owners 2>/dev/null)
 
 check "facts lists each host session on a tty with its title, its orchestrator, its repository and branch" \
-  "session 100 | ttys100 | Orch: alpha | Orch: alpha | github.com/o/app | main | $RSRC|session 101 | ttys101 | Agent: a1 | Orch: alpha [aaa111] | github.com/o/app | feat/x | $RA1|session 102 | ttys102 | Agent: b1 | Orch: beta [bbb222] | github.com/o/app | feat/x | $RB1|session 103 | ttys103 | Agent: c1 | unknown | github.com/o/app | feat/y | $RC1|session 106 | ttys106 | Agent: o1 | Orch: gamma [ccc333] | github.com/o/other | feat/x | $RO1" \
+  "session 100 | ttys100 | Orch: alpha | Orch: alpha | github.com/o/app | main | $RSRC | -|session 101 | ttys101 | Agent: a1 | Orch: alpha [aaa111] | github.com/o/app | feat/x | $RA1 | -|session 102 | ttys102 | Agent: b1 | Orch: beta [bbb222] | github.com/o/app | feat/x | $RB1 | -|session 103 | ttys103 | Agent: c1 | unknown | github.com/o/app | feat/y | $RC1 | -|session 106 | ttys106 | Agent: o1 | Orch: gamma [ccc333] | github.com/o/other | feat/x | $RO1 | -" \
   "$(printf '%s\n' "$FACTS" | grep '^session ' | tr '\n' '|' | sed 's/|$//')"
 check "a job with no tty, a process that is not the host and an evaluation's host are no sessions" "0|0|0" \
   "$(printf '%s\n' "$FACTS" | grep -c '^session 104 ')|$(printf '%s\n' "$FACTS" | grep -c '^session 105 ')|$(printf '%s\n' "$FACTS" | grep -c '^session 301 ')"
@@ -10186,7 +10288,7 @@ mkdir -p "$CF/nogit"
 printf '120 1 ttys120 /usr/bin/hostcli --name Agent: n\n' > "$CF/ps-nogit"
 printf '120 %s\n' "$(real "$CF/nogit")" > "$CF/cwds-nogit"
 check "a session in no git tree says so on its line, and nothing is unread" \
-  "session 120 | ttys120 | Agent: n | unknown | not a git tree | - | $(real "$CF/nogit")|0" \
+  "session 120 | ttys120 | Agent: n | unknown | not a git tree | - | $(real "$CF/nogit") | -|0" \
   "$(COORDINATOR_PS_TABLE="$CF/ps-nogit" COORDINATOR_CWDS="$CF/cwds-nogit" cfacts facts 2>/dev/null | grep '^session ')|$(COORDINATOR_PS_TABLE="$CF/ps-nogit" COORDINATOR_CWDS="$CF/cwds-nogit" cfacts facts 2>/dev/null | grep -c '^unread ')"
 
 # A brief is read where its session reads it: a relative path from the session's directory,
@@ -10204,11 +10306,11 @@ printf '110 %s\n111 %s\n' "$RC1" "$RA1" > "$CF/cwds-brief"
 cbrief() { COORDINATOR_PS_TABLE="$CF/ps-brief" COORDINATOR_CWDS="$CF/cwds-brief" cfacts "$@"; }
 CBRIEF=$(cbrief facts 2>/dev/null)
 check "a relative brief is read from its session's directory" \
-  "session 111 | ttys111 | Agent: r | Orch: gamma [ccc333] | github.com/o/app | feat/x | $RA1" \
+  "session 111 | ttys111 | Agent: r | Orch: gamma [ccc333] | github.com/o/app | feat/x | $RA1 | -" \
   "$(printf '%s\n' "$CBRIEF" | grep '^session 111 ')"
 skip_as_root "a brief that cannot be read is said, its session unknown, and exit 2" ||
 check "a brief that cannot be read is said, its session unknown, and exit 2" \
-  "unread brief $CF/briefs/locked.md: cannot be read|session 110 | ttys110 | Agent: k | unknown | github.com/o/app | feat/y | $RC1|exit 2" \
+  "unread brief $CF/briefs/locked.md: cannot be read|session 110 | ttys110 | Agent: k | unknown | github.com/o/app | feat/y | $RC1 | -|exit 2" \
   "$(printf '%s\n' "$CBRIEF" | grep '^unread brief ')|$(printf '%s\n' "$CBRIEF" | grep '^session 110 ')|$(cbrief facts >/dev/null 2>&1; echo "exit $?")"
 skip_as_root "and owners gives the unread brief as the reason, never « names no orchestrator »" ||
 check "and owners gives the unread brief as the reason, never « names no orchestrator »" \

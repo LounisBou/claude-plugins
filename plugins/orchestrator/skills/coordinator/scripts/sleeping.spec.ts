@@ -42,6 +42,19 @@ describe('sleep', () => {
       'sleeping Orch: beta | since T | /p | prs none | checkouts none | brief /r | model m | effort high | mode investigate')
   })
 
+  it('records the plan the orchestrator ran on, absent for plan 1, and refuses a relative directory', () => {
+    const f = fixture()
+    const { brief, dir } = project(f)
+    const sleep = (name: string, ...more: string[]): number => main(f.ctx, ['sleep', '--name', name, '--brief', brief, '--dir', dir, '--model', 'm', '--effort', 'high', ...more])
+    assert.equal(sleep('Orch: one'), 0)
+    assert.equal(sleep('Orch: two', '--config', '/h/plan-two'), 0)
+    assert.deepEqual((records(f) as Array<Record<string, unknown>>).map(r => r['config']), [undefined, '/h/plan-two'])
+    assert.equal(sleep('Orch: three', '--config', 'plan-two'), 1)
+    assert.deepEqual(f.err, ['coordinator: sleep: refused: the configuration directory must be absolute, got plan-two'])
+    assert.equal(sleepingLine({ name: 'Orch: two', slept: 'T', dir: '/p', brief: '/r', model: 'm', effort: 'high', config: '/h/plan-two' }),
+      'sleeping Orch: two | since T | /p | prs none | checkouts none | brief /r | model m | effort high | config /h/plan-two')
+  })
+
   it('refuses what a wake could not start on, and records nothing', () => {
     const f = fixture()
     const { brief, dir } = project(f)

@@ -13,7 +13,7 @@
 #                            the last). --every reads again at that pace until a line is new: run in
 #                            the background, it wakes its session only on a finding
 #   coordinator.sh sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id>
-#                        --effort <level> [--session <id>] [--mode build|investigate] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+#                        --effort <level> [--session <id>] [--mode build|investigate] [--config <dir>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
 #                            records a paused orchestrator as sleeping, once its tab is closed;
 #                            prints "sleeping <name>"
 #   coordinator.sh sleeping  one line per sleeping orchestrator; nothing when none sleeps
@@ -40,8 +40,10 @@
 #                            "archived <n>"
 #
 # facts prints, one per line:
-#   session <pid> | <tty> | <title> | <orchestrator> | <repository> | <branch> | <directory>
-#     (the repository reads « not a git tree » for a directory in none)
+#   session <pid> | <tty> | <title> | <orchestrator> | <repository> | <branch> | <directory> | <plan>
+#     (the repository reads « not a git tree » for a directory in none; the plan is read in the
+#     session's own environment (`ps eww`): plan1 for the default directory or no CLAUDE_CONFIG_DIR,
+#     plan2 for the second account's, any other directory by its path, « - » when it was not read)
 #   checkout <path> | <repository> | <branch>
 #   heavy <pid> | <directory> | <command>
 #   waiting <orchestrator> | operator since <UTC time> | blocks: <what it blocks>
@@ -166,7 +168,9 @@
 # lock is never broken automatically.
 #
 # The sleeping orchestrators: <state>/sleeping.json, an array of {"name","brief","dir","model",
-# "effort","slept","prs","checkouts"}, written in one rename under the same lock as a
+# "effort","slept","prs","checkouts"[,"session"][,"mode"][,"config"]}, "config" the configuration
+# directory the orchestrator ran on (absent: plan 1) that a wake and a move run it on again,
+# written in one rename under the same lock as a
 # registration — sleep, wake-done and drop each take it — and kept apart from the
 # coordinator's own record, so it outlives a coordinator's succession and its end alike. A
 # sleeping orchestrator is the operator's to wake or drop: nothing here acts on its own.

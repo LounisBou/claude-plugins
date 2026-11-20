@@ -25,8 +25,10 @@ Then, on its `paused-ready`:
 3. **Record it sleeping**, its name without its reference:
 
    ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch: <subject>" --brief <its dispatch record> --dir <its directory> --model <model> --effort <effort> --mode <its mode> [--session <that session>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch: <subject>" --brief <its dispatch record> --dir <its directory> --model <model> --effort <effort> --mode <its mode> [--session <that session>] [--config <its plan's directory>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
    ```
+
+   `--config`: its `CLAUDE_CONFIG_DIR` (`~/.claude-bis` in full for `plan2`), none for `plan1`.
 
 4. Tell the operator in one line: asleep, since when, dispatch record, pull requests left open.
 
@@ -47,10 +49,8 @@ effort was required (`effort none`) passes neither. The wake runs on the pair th
 session's transcript holds, else on the record's, else on the host's default — never one
 you ask the operator for.
 
-`--wake` makes a home session of its own, the orchestrator in its window 0, shown by a tab
-right of yours; it joins no chain, comes up under remote control under its name, and with
-the record's session the same conversation resumes. Its agents will be windows of that
-session.
+`--wake` makes a home session of its own, the orchestrator in its window 0; with the
+record's session the same conversation resumes.
 The spawn's success line is its proof:
 then `coordinator.sh wake-done --name "Orch: <subject>"`, and announce yourself to it as to
 any newcomer. A spawn that fails keeps the record, and the operator is told.
