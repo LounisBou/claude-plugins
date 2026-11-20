@@ -20,8 +20,7 @@ Then, on its `paused-ready`:
    tty> --expect-title "<the title list printed>"`; where the host refuses the close, message
    it « call mcp__orchestrator__end_session » and prove its end on the tty, `verify --tty`
    failing. The close's `closed 1 session` line is otherwise the proof. A tab that shows a home session takes its whole server with it,
-   agents included (which is why an orchestrator stands its agents down before it
-   answers `paused-ready`), and the close's `home:` line names the session window 0 ran.
+   agents included, and the close's `home:` line names the session window 0 ran.
 3. **Record it sleeping**, its name without its reference:
 
    ```
@@ -41,7 +40,7 @@ Its open pull requests stay as they are.
 field):
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch: <subject>" [--model <model> --effort <effort>] [--resume <its session>] --dir <its directory> --permission-mode auto --prompt 'Load the skill orchestrator:orchestrator with the argument "<its mode>", then, from its working directory (no cd), run <the base directory that skill load printed>/scripts/succession.sh takeover <its dispatch record> --mode <its mode> and execute what it prints. You wake from a pause: your predecessor is gone; skip the takeover handshake.'
+${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch: <subject>" [--model <model> --effort <effort>] [--resume <its session>] [--plan 1|2|auto] --dir <its directory> --permission-mode auto --prompt 'Load the skill orchestrator:orchestrator with the argument "<its mode>", then, from its working directory (no cd), run <the base directory that skill load printed>/scripts/succession.sh takeover <its dispatch record> --mode <its mode> and execute what it prints. You wake from a pause: your predecessor is gone; skip the takeover handshake.'
 ```
 
 The record's model and effort go together, or neither: a record a pause wrote before an
@@ -51,6 +50,8 @@ you ask the operator for.
 
 `--wake` makes a home session of its own, the orchestrator in its window 0; with the
 record's session the same conversation resumes.
+`--plan` wakes it on that plan, a fresh conversation when it is not the one it slept on (`auto`: more room, else the sleeper's); `--trust` if that plan never opened its directory.
+Offer him that move, a pause then this wake, when `facts` shows its plan nearly full.
 The spawn's success line is its proof:
 then `coordinator.sh wake-done --name "Orch: <subject>"`, and announce yourself to it as to
 any newcomer. A spawn that fails keeps the record, and the operator is told.
@@ -71,7 +72,7 @@ ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --open --
 ```
 
 Run it alone, never chained to another command and with nothing before it: that bare form,
-by the installed path, is the one every `install.sh` run allows in `settings.json`. Add `--model <id> --effort <level>` when he named them
+by the installed path, is the one every `install.sh` run allows in `settings.json`. `--plan 1|2|auto` routes it (`auto`: more room by the `quota` lines of `facts`, else yours); its agents follow its plan. Add `--model <id> --effort <level>` when he named them
 (a model alone is refused), the host's default for the session applying otherwise — his to
 change, never yours — and `--trust` for a checkout prepared for it. The orchestrator
 opens without the tools no session has called; `--keep-tool <name>` and `--drop-tool <name>`

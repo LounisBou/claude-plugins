@@ -78,7 +78,7 @@ command holds its text — then record it as announced in the notes.
 
 A sleeping orchestrator (`coordinator.sh sleeping`) is not missing: its absence from
 `ListAgents` is its sleep, never a death, and you ask nobody about it. Its pull requests stay
-its own in the notes, marked sleeping. A woken one is a newcomer like any other.
+its own in the notes, marked sleeping.
 
 ## Answering a question
 
@@ -124,9 +124,7 @@ at once. A closing
 proposal, which the pane cannot rule, you present as before. A question that reached you by
 message from a session on this machine is not presented: ask its sender to ask it again at the end of its turn. The module wakes you once for each entry that falls due
 (« [module] … now due in this tab »): run `round` and present the due ones. An entry answered
-in the pane before it is due is never presented. One you presented and he then answered in the
-pane is closed by the module, and one he answered in your tab while the pane still showed it, by
-one `settle`; neither is presented again. When he tells you to
+in the pane before it is due is never presented. When he tells you to
 focus on one subject and present nothing else, present none of the other due questions until
 he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in
 one line, sender and what it blocks, without leaving the subject. When he asks to take them
@@ -177,8 +175,7 @@ and present the next one in full in the same message; a superseded one makes <id
 **You never answer an operator question yourself**: no question reworded, merged, filtered
 or held back, and no verdict, summary or recommendation of your own added to it. A facts
 question — whose pull request is this, who is on this branch — is not one: you answer it
-yourself, as « Answering a question » says, and asking it stays optional. Merges, undrafts
-and the rest of « What is the operator's » below are relayed the same way.
+yourself, as « Answering a question » says, and asking it stays optional.
 
 ## Flagging
 

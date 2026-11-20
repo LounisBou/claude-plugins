@@ -46,15 +46,16 @@
 #   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord: <subject>" (--prompt <text> | --prompt-file <path>)
 #     the coordinator's own successor: first place of the caller's window, its model and effort,
 #     remote control on, no chain
-#   iterm-agent.sh spawn --dir <path> --wake --title "Orch: <subject>" [--model <id> --effort <level>] [--resume <session id>] (--prompt <text> | --prompt-file <path>)
+#   iterm-agent.sh spawn --dir <path> --wake --title "Orch: <subject>" [--model <id> --effort <level>] [--resume <session id>] [--plan 1|2|auto] (--prompt <text> | --prompt-file <path>)
 #     a paused orchestrator relaunched: its recorded name; the pair its resumed transcript
 #     holds, else its recorded model and effort, else the host's default; remote control on,
 #     no chain, in window 0 of a home session of its own shown by a tab immediately right of
-#     the caller; --resume brings back its recorded conversation
+#     the caller; --resume brings back its recorded conversation; --plan wakes it on that plan
+#     (a move across plans: its conversation is not resumed there)
 #     (--open makes its home session the same way, the server named after the id it is given)
 #   iterm-agent.sh spawn --dir <path> --title "Agent: <subject>" --tier <tier> --resume <session id> (--prompt <text> | --prompt-file <path>)
 #     a closed agent resumed in its checkout, refused when its last turn is over an hour old
-#   iterm-agent.sh spawn --open --title "Orch: <subject>" --dir <path> [--model <id> --effort <level>] (--prompt <text> | --prompt-file <path>)
+#   iterm-agent.sh spawn --open --title "Orch: <subject>" --dir <path> [--model <id> --effort <level>] [--plan 1|2|auto] (--prompt <text> | --prompt-file <path>)
 #     a new orchestrator opened on the operator's order, by a coordinator or an orchestrator
 #     only: immediately right of the caller, the pair the order names or the host's default
 #     (a model alone, a tier and --inherit-model are refused), remote control on,
