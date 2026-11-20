@@ -668,8 +668,13 @@ qk_check "no temporary file is left in the quota directory" "" "$(ls -A "$QK_STA
 printf 'sentinel\n' > "$QK_FILE"
 qk_run "$QK_BOTH" "$QK_STATE" "$QK_CONFIG_ONE" >/dev/null
 qk_check "unchanged figures are not written again" "sentinel" "$(cat "$QK_FILE")"
+qk_inode() { ls -i "$1" | awk '{print $1}'; }
+qk_inode_before=$(qk_inode "$QK_FILE")
 qk_run "${QK_BOTH/47.2/48}" "$QK_STATE" "$QK_CONFIG_ONE" >/dev/null
 qk_check "a figure that changed is written" "48" "$(jq -r '.five_hour.used_percentage' "$QK_FILE" 2>&1)"
+# A rename gives the file a new inode; a write over it keeps the one it had, and a reader could catch it half-written.
+qk_check "the file is replaced in one rename, never written over" "changed" \
+  "$([ "$(qk_inode "$QK_FILE")" != "$qk_inode_before" ] && echo changed || echo same)"
 
 # An unchanged reading is still renewed once its marker is a refresh old, so a live account never reads stale.
 printf 'sentinel\n' > "$QK_FILE"
@@ -700,6 +705,18 @@ qk_run "${QK_BOTH/47.2/12}" "$QK_STATE" "$QK_CONFIG_TWO" >/dev/null
 qk_check "another configuration writes its own account's file" "12 $QK_CONFIG_TWO" \
   "$(jq -r '"\(.five_hour.used_percentage) \(.config)"' "$QK_STATE/quota/$QK_TWO.json" 2>&1)"
 qk_check "and leaves the first one's alone" "48" "$(jq -r '.five_hour.used_percentage' "$QK_FILE" 2>&1)"
+
+# The quota is kept whatever the operator shows: with the usage, or the seven-day figures, hidden,
+# the file holds both windows and the line drawn is the one it would be without the file.
+for qk_hidden in SHOW_USAGE=0 SHOW_SEVEN_DAY=0; do
+  qk_off=$(config_with SHOW_DIRECTORY=1 SHOW_USAGE=1 SHOW_SEVEN_DAY=1 "$qk_hidden")
+  qk_dir="$WORK/qk-state-$qk_hidden"; mkdir -p "$qk_dir"
+  qk_with=$(printf '%s' "$QK_BOTH" | ORCHESTRATOR_STATE_DIR="$qk_dir" CLAUDE_CONFIG_DIR="$QK_CONFIG_ONE" STATUSBAR_CONFIG="$qk_off" bash "$SCRIPT"; echo "exit $?")
+  qk_without=$(printf '%s' "$QK_BOTH" | ORCHESTRATOR_STATE_DIR="$WORK/qk-absent" CLAUDE_CONFIG_DIR="$QK_CONFIG_ONE" STATUSBAR_CONFIG="$qk_off" bash "$SCRIPT"; echo "exit $?")
+  qk_check "with $qk_hidden the quota is kept, both windows" "47.2 50" \
+    "$(jq -r '"\(.five_hour.used_percentage) \(.seven_day.used_percentage)"' "$qk_dir/quota/$QK_ONE.json" 2>&1)"
+  qk_check "with $qk_hidden the output is the same with and without the file" "$qk_without" "$qk_with"
+done
 
 # With no CLAUDE_CONFIG_DIR the host keeps the account in ~/.claude.json, and the configuration is ~/.claude.
 QK_HOME="$WORK/qk-home"; mkdir -p "$QK_HOME/.claude" "$WORK/qk-state-h"
