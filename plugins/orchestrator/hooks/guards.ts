@@ -512,12 +512,13 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const read: { tty: string; pr: { state: string; ready?: boolean | undefined } }[] = []
       for (const agent of agents) {
         if (agent.state !== 'idle') continue
-        const pr = await pullRequestRead($, agent.tty, until)
-        if (!pr) continue
+        const got = await pullRequestRead($, agent.tty, until)
+        if (!got) continue
+        const own = got.own
         // Every pull request the dispatch record entrusts to the agent counts, the branch's among them.
         const others = (await ledgerOf()).filter(line => agentsOf(line).includes(agent.label)
-          && !(line.pr === Number(pr.number) && (pr.repo === undefined || pr.repo.toLowerCase() === line.repo.toLowerCase())))
-        const together = pullRequestsRead([pr, ...await Promise.all(others.map(line => otherPullRequestRead($, line.repo, line.pr, until)))])
+          && !(own !== null && line.pr === Number(own.number) && (own.repo === undefined || own.repo.toLowerCase() === line.repo.toLowerCase())))
+        const together = pullRequestsRead([...(own === null ? [] : [own]), ...await Promise.all(others.map(line => otherPullRequestRead($, line.repo, line.pr, until)))])
         if (together) read.push({ tty: agent.tty, pr: together })
       }
       await inTime($, () => showPrStates($, read), until)
@@ -783,7 +784,8 @@ async function mustRun($: Held, argv: readonly string[], what: string, until: nu
 // basename), that process's working directory, that checkout's branch, then one gh read
 // run in that checkout — the only network the turn end pays, for an idle agent alone. Any
 // read that fails, or cannot answer in time, is no pull request: its window is left as it is.
-async function pullRequestRead($: Held, tty: string, until: number): Promise<{ number: string; state: string; ready?: boolean; repo?: string } | null> {
+// The branch's own pull request (null on the default branch) beside the agent's checkout reads; null when none could be read.
+async function pullRequestRead($: Held, tty: string, until: number): Promise<{ own: { number: string; state: string; ready?: boolean; repo?: string } | null } | null> {
   const left = () => Math.max(1, until - Date.now())
   const config = await configDir($)
   const host = await inTime($, () => hostOn(
@@ -804,13 +806,15 @@ async function pullRequestRead($: Held, tty: string, until: number): Promise<{ n
   // (a release, merged long ago) is not the agent's. Read from the checkout's origin/HEAD, no network.
   const base = await inTime($, () => runUntil($, ['git', '-C', cwd, 'symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD'], until), until)
   const defaultBranch = base && base.exitCode === 0 ? String(base.stdout ?? '').trim().replace(/^origin\//, '') : ''
-  if (branch === defaultBranch) return null
+  // Only the branch's own read is skipped: the pull requests the dispatch record entrusts still count.
+  if (branch === defaultBranch) return { own: null }
   // One --json argument, the fields comma-joined: gh reads a second word as a second
   // positional and refuses the call. Run in the agent's checkout, the repository its
   // branch is pushed to.
   const gh = await inTime($, () => runUntil($, ['gh', 'pr', 'view', branch, '--json', 'number,state,labels,url'], until, cwd), until)
   if (!gh || gh.exitCode !== 0) return null
-  return pullRequestOf(branch, String(gh.stdout ?? ''))
+  const own = pullRequestOf(branch, String(gh.stdout ?? ''))
+  return own === null ? null : { own }
 }
 
 // Another pull request entrusted to an agent, read by its repository and number: its state and

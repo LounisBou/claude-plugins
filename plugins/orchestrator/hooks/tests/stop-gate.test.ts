@@ -753,6 +753,24 @@ test('an idle agent on its default branch names no pull request: an old merged o
   const fx = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'main\n', defaultBranch: 'origin/main\n', prByRef: { main: merged }, panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
   await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
   expect(stateWrites(fx.ran)).toEqual([])
+  // Its branch is never read as a pull request.
+  expect(fx.ran.some(c => c.startsWith('gh pr view main'))).toBe(false)
+})
+
+test('on its default branch an agent still counts the pull requests its record entrusts to it', async () => {
+  const { handlers } = mounted()
+  const merged = '{"number":9,"state":"MERGED","labels":[]}'
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'main\n', defaultBranch: 'origin/main\n', prByRef: { '9': merged }, records: [LEDGER(9)], panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  expect(stateWrites(fx.ran)).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state over'])
+})
+
+test('on a feature branch of a known checkout, the branch\'s own merged pull request still shows over', async () => {
+  const { handlers } = mounted()
+  const merged = '{"number":160,"state":"MERGED","labels":[]}'
+  const fx = fakeDollar({ listing: IDLE_ROW, chain: HOME_CHAIN, agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', defaultBranch: 'origin/main\n', prAnswer: merged, panes: '/dev/ttys003 %9 done\n', env: HOME_ENV })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({}))
+  expect(stateWrites(fx.ran)).toEqual(['tmux -S /tmp/home.sock set-option -w -t %9 @state over'])
 })
 
 test('the window of a delivery moves between review and done by the Ready label of its open pull request', async () => {
