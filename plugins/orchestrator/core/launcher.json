@@ -210,6 +210,11 @@
           "kind": "flag"
         },
         {
+          "flag": "--end-agents",
+          "dest": "end_agents",
+          "kind": "flag"
+        },
+        {
           "flag": "--bench",
           "dest": "bench",
           "kind": "value"

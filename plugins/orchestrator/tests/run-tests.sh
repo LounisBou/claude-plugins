@@ -4156,14 +4156,19 @@ check "a closed agent whose last turn is past the hour is refused, a fresh agent
 check "a resume with no transcript is refused, and a resume of no agent or wake is refused" "1|1|1|1" \
   "$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-none >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-none | grep -c 'no transcript for session s-e7-none')|$(e7 "$E7ORCH" --successor --resume s-e7-closed | grep -c "is a wake's or an agent's")|$(e7 "$E7ORCH" --title 'Audit: x' --auditor --resume s-e7-closed >/dev/null 2>&1; echo $?)"
 # An agent's pair is its orchestrator's: a tier, or a model with its effort. The plugin ships
-# the tier efforts the map does not bind (standard high, light medium); deep runs at the
-# calling orchestrator's own effort; an effort the map binds wins over both.
+# the tier efforts the map does not bind (deep xhigh, standard high, light medium), never the
+# calling orchestrator's own effort; an effort the map binds wins over them.
 E7PMAP="$WORK/e7-pair-map.json"
 printf '{"deep":"a-model","standard":"b-model","light":{"model":"c-model"}}' > "$E7PMAP"
-check "a tier bound without an effort types the shipped tier effort; deep, the caller's" "1|1|1|tier standard" \
+check "a tier bound without an effort types the shipped tier effort, deep included" "1|1|1|tier standard" \
   "$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier standard | grep -c -- '--model b-model --effort high')|$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier light | grep -c -- '--model c-model --effort medium')|$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--model a-model --effort xhigh')|$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier standard)" pair_source)"
-check "a deep agent at its orchestrator's effort names the transcript the effort came from" "tier deep, effort from transcript $E7TR|tier light" \
+check "a deep agent's pair source is its tier, never the transcript of its orchestrator" "tier deep|tier light" \
   "$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier deep)" pair_source)|$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier light)" pair_source)"
+# An orchestrator that runs at medium spawned its deep agents at medium (the 2026-11-20 incident):
+# the deep tier's shipped effort is xhigh whatever the caller runs at.
+pair_transcript s-e7-med t-model medium
+check "a deep agent runs at xhigh whatever effort its orchestrator runs at" "1|1|0|tier deep" \
+  "$(E7SID=s-e7-med E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--model a-model --effort xhigh')|$(E7SID=s-e7-med E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier standard | grep -c -- '--model b-model --effort high')|$(E7SID=s-e7-med E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--effort medium')|$(e7f "$(E7SID=s-e7-med E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier deep)" pair_source)"
 check "an effort the map binds wins over the shipped one" "1" \
   "$(E7MAP="$PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--model a-model --effort high')"
 check "an agent's explicit model without an effort is refused" "1|1|0" \
@@ -6355,6 +6360,8 @@ check "a proved close deletes the session's checkout and its host directory; std
   "exit=0|closed 1 session on /dev/ttys901|0|0" \
   "$(printf '%s\n' "$res" | head -1)|$(field "$res" OUT)|$(exists "$CL")|$(exists "$HCL")"
 check "and stderr says it" "1" "$(field "$res" ERR | grep -c "^close: deleted checkout $CL\$")"
+check "and its archive line names the close that made the deletion" "1" \
+  "$(grep -F "\"path\":\"$CL\"" "$WCR/.workspaces.archive.jsonl" | grep -c '"by":"close"')"
 
 CL=$(mkclone "$WCSRC" cl-b feat/cl-b dirty); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
 res=$(cprobe close)
@@ -6373,6 +6380,8 @@ CL=$(mkclone "$WCSRC" cl-d feat/cl-d); printf '/dev/ttys901 %s\n' "$CL" > "$CT_T
 res=$(cprobe close --keep-checkout)
 check "--keep-checkout opts out: nothing deleted, nothing said about a checkout" "1|0" \
   "$(exists "$CL")|$(field "$res" ERR | grep -c 'checkout')"
+check "and marks the checkout kept on its ledger line, which a sweep of its dead maker never ends" "1" \
+  "$(grep -F "\"path\":\"$CL\"" "$WCR/.workspaces.jsonl" | grep -c '"kept":')"
 
 CVT_CLOSE="$WORK/conv-close-transcript.jsonl"
 printf '%s\n' '{"type":"user","timestamp":"2026-11-20T15:00:00.000Z","origin":{"kind":"human"},"message":{"content":"CONV-ASK"}}' \
@@ -7363,6 +7372,13 @@ out=$(home rotate --old-tty /dev/ttys902 --expect-title "Agent: one" --dir "$WOR
 rc=$?
 check "rotate of a window whose name does not hold the expected words is refused before anything is spawned or killed" "1|1|0|0" \
   "$(printf '%s' "$out" | grep -c "rotate: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+# A tty a brief printed may be another agent's by the time the rotation runs: a window's name is
+# fixed at its making, so a rotation of a window must say whose it expects, and is refused without.
+reset_home
+out=$(home rotate --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: rotated" --prompt p 2>&1)
+rc=$?
+check "rotate of a window with no --expect-title is refused before anything is spawned or killed" "1|1|0|0" \
+  "$(printf '%s' "$out" | grep -c "rotate: refused: --expect-title is required for a window of a home session: give the name .list. printed for /dev/ttys901")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
 reset_home
 out=$(home rotate --old-tty /dev/ttys900 --dir "$WORK" --title "Agent: rotated" --prompt p 2>&1)
 rc=$?
@@ -7374,12 +7390,12 @@ check "rotate of window 0 stays refused before anything is spawned, through the 
 # both sessions and the step that finishes by hand, and the rotation exits non-zero; stdout
 # carries the spawn's tty line, and the close's « closed » line only when the old one closed.
 reset_home
-out=$(REC_KEEP_WINDOW=1 REC_KEEP_HOST=1 REC_KILL_ERR="server busy" home rotate --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
+out=$(REC_KEEP_WINDOW=1 REC_KEEP_HOST=1 REC_KILL_ERR="server busy" home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
 check "a close whose kill tmux refused keeps the replacement, and names the close of the old window that still stands, guarded on its name" "1|1|1|[-u][kill-window][-t][@1]|1|1|/dev/ttys903" \
   "$(printf '%s' "$err" | grep -c 'ERROR: close: tmux refused kill-window: server busy')|$(printf '%s' "$err" | grep -cF 'ERROR: rotate: the close of the old session on /dev/ttys901 failed; the replacement runs on /dev/ttys903 and is kept; its window or tab is still there, the same window @1 as before the spawn: close it with close --tty /dev/ttys901 --expect-title '"'"'Agent: one'"'"' --keep-checkout (its chain entry is left for that close)')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -F '[kill-window]' | paste -sd'|' -)|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
 reset_home
-out=$(REC_KEEP_HOST=1 home rotate --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
+out=$(REC_KEEP_HOST=1 home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
 check "a close that took the old window but not its host keeps the replacement, and names neither a kill of a host never identified nor a close of a window that is gone" "1|1|0|1|[-u][kill-window][-t][@1]|1|1|/dev/ttys903" \
   "$(printf '%s' "$err" | grep -c 'ERROR: close: the request was accepted but .* is still running on /dev/ttys901')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the close of the old session on /dev/ttys901 failed; the replacement runs on /dev/ttys903 and is kept; a host runs on /dev/ttys901, but the old one's pid was not read before the spawn, so it cannot be told from another session's: no kill is named; its window or tab is gone, and its chain entry is left")|$(printf '%s' "$err" | grep '^ERROR: rotate:' | grep -c 'close --tty /dev/ttys901')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -F '[kill-window]' | paste -sd'|' -)|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
@@ -7395,7 +7411,7 @@ check "a close refused by its name before any kill keeps the replacement, and na
 # again before the close, so nothing is killed; the replacement is kept, and the one line names
 # it and the host left behind.
 reset_home
-out=$(REC_GONE_ON_NEW=@1 home rotate --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
+out=$(REC_GONE_ON_NEW=@1 home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
 check "an old window gone during the spawn keeps the replacement, and one line names it and the host left" "0|1|1|1|0|1|/dev/ttys903" \
   "$(printf '%s' "$err" | grep -c 'no window of this home session runs on /dev/ttys901')|$(printf '%s' "$err" | grep -c '^ERROR:')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the old session on /dev/ttys901 was not closed: its window or tab is gone since the spawn; the replacement runs on /dev/ttys903 and is kept; a host runs on /dev/ttys901, but the old one's pid was not read before the spawn, so it cannot be told from another session's: no kill is named; its window or tab is gone, and its chain entry is left")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(chainf | grep -c '@4')|$out"
@@ -7403,7 +7419,7 @@ check "an old window gone during the spawn keeps the replacement, and one line n
 # window is read by its id before the spawn, the window on its tty by the close is another's,
 # and that one is neither closed nor named in a close step.
 reset_home
-out=$(REC_GONE_ON_NEW=@1 REC_ADD_ON_NEW='$1\t5\t@7\t%7\t/dev/ttys901\tstranger\t✳ Agent: stranger' home rotate --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
+out=$(REC_GONE_ON_NEW=@1 REC_ADD_ON_NEW='$1\t5\t@7\t%7\t/dev/ttys901\tstranger\t✳ Agent: stranger' home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
 check "a stranger on the old window's tty after the spawn is never closed, and no close of its tty is printed" "1|0|1|0|1|/dev/ttys903" \
   "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the old session on /dev/ttys901 was not closed: /dev/ttys901 now holds another session (window @7, named 'stranger'), not the window @1 read before the spawn; the replacement runs on /dev/ttys903 and is kept; ")|$(printf '%s' "$err" | grep -c 'close --tty /dev/ttys901')|$(chainf | grep -c '@4')|$out"
@@ -8605,6 +8621,8 @@ case "$1" in
   list-clients) [ -f "$d/clients" ] && cat "$d/clients"; exit 0 ;;
   has-session) exit 1 ;;
   kill-server) [ -f "$d/kill-err" ] && { cat "$d/kill-err" >&2; exit 1; }; exit 0 ;;
+  list-windows) [ -f "$d/windows" ] && cat "$d/windows"; exit 0 ;;
+  kill-window) [ -f "$d/kwin-err" ] && { cat "$d/kwin-err" >&2; exit 1; }; exit 0 ;;
   list-panes) [ -f "$d/panes-err" ] && { cat "$d/panes-err" >&2; exit 1; }; [ -f "$d/panes" ] && cat "$d/panes"; exit 0 ;;
 esac
 exit 0
@@ -8622,7 +8640,7 @@ homecmd() { # the launcher's `home`, from a plain tab outside tmux unless HTMUX 
     ORCHESTRATOR_STATE_DIR="$WORK/homestate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host \
     "$@"; }
 hcalls() { sed "s#$WORK#@WORK@#g; s#$ROOT#@ROOT@#g; s#-[0-9]\{13\}\.#-@TIME@.#g" "$HR/calls" 2>/dev/null; }
-reset_homerec() { rm -f "$HR/calls" "$HR/tmpdir" "$HR/configdir" "$HR/mark" "$HR/clients" "$HR/window0" "$HR/kill-err" "$HR/panes-err" "$HR/panes"; rm -rf "$WORK/homestate"; }
+reset_homerec() { rm -f "$HR/calls" "$HR/tmpdir" "$HR/configdir" "$HR/mark" "$HR/clients" "$HR/window0" "$HR/kill-err" "$HR/panes-err" "$HR/panes" "$HR/windows" "$HR/kwin-err"; rm -rf "$WORK/homestate"; }
 
 reset_homerec
 out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
@@ -9098,9 +9116,17 @@ ia.host_registry = lambda pid: {"sessionId": "abcdef12-3456-4789-8abc-def0123456
 # A host on a home tab's window 0 that outlives the end of its server.
 ia.wait_gone = lambda tty, timeout=None: "/opt/x/host" if scenario == "home-lingers" and tty == "/dev/ttys961" else None
 # The checkout a home tab's window 0 works in, and its deletion: recorded, never run.
-ia.host_cli_cwd = lambda tty: os.environ.get("LIFE_CWD") if tty == "/dev/ttys961" else None
+ia.host_cli_cwd = lambda tty: os.environ.get("LIFE_CWD") if tty in ("/dev/ttys961", os.environ.get("LIFE_CWD_TTY")) else None
 ia.checkout_of = lambda cwd: cwd
 ia.delete_checkout = lambda path: calls.append("delete_checkout %s" % path)
+ia.mark_kept = lambda path: calls.append("mark_kept %s" % path)
+# A process table that cannot be read for one tty, by the readers that ask for it strictly.
+real_ps_rows = ia.ps_rows
+def ps_rows(tty, strict=False):
+    if strict and tty == os.environ.get("LIFE_PS_UNREADABLE_TTY"):
+        raise OSError("ps timed out")
+    return real_ps_rows(tty, strict)
+ia.ps_rows = ps_rows
 out, err = io.StringIO(), io.StringIO()
 code = 0
 argv = json.loads(sys.argv[5])
@@ -9323,6 +9349,73 @@ check "closing a home tab deletes the checkout window 0 worked in, after the ser
 reset_homerec; printf '0 /dev/ttys961\n' > "$HR/panes"
 res=$(LIFE_CWD=/co/proj/work LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--keep-checkout"]')
 check "and --keep-checkout keeps it" "0|0" "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c delete_checkout)"
+# A checkout closed with --keep-checkout is marked kept, so a sweep never ends it (a sweep ended the
+# clone of a dead predecessor minutes after such a close); a close that deletes marks nothing; a
+# rotation keeps the checkout for its replacement without marking it, so the sweep ends it later.
+check "--keep-checkout marks the checkout kept, which a sweep never ends" "0|mark_kept /co/proj/work" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep mark_kept)"
+reset_homerec; printf '0 /dev/ttys961\n' > "$HR/panes"
+res=$(LIFE_CWD=/co/proj/work LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "a close that deletes the checkout marks nothing" "0|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c delete_checkout)"
+check "and marks none" "0" "$(sfield "$res" calls | tr ',' '\n' | grep -c mark_kept)"
+reset_homerec
+res=$(LIFE_CWD=/co/proj/work LIFE_CWD_TTY=/dev/ttys998 LIFE_PS="$WORK/life-ps-old" LIFE_TRANSCRIPT=1 life ok "$(rot_args /dev/ttys998 'Orch: w')")
+check "a rotation keeps the checkout for its replacement, neither deleting it nor marking it kept" "0|0|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c delete_checkout)|$(sfield "$res" calls | tr ',' '\n' | grep -c mark_kept)"
+
+# A home server whose window 0 is the orchestrator's and whose window 1 runs an agent: the end of
+# the server would kill that agent with it (the 2026-11-20 incident: two agents killed by the close
+# of their orchestrator's tab). The close, a takeover's included, keeps the server for them with no
+# flag and says where each is; `--end-agents` ends them with the server; a reading it cannot make
+# refuses and kills nothing.
+printf '/dev/ttys970 9001 tmux -u -L orch-abcdef12 attach -t home\n/dev/ttys962 /opt/x/host --name Agent: m1a\n' > "$WORK/life-ps-agent"
+agent_home() { reset_homerec; printf '0 /dev/ttys961\n1 /dev/ttys962\n' > "$HR/panes"; printf '0\tOrch: w\n1\tAgent: m1a\n' > "$HR/windows"; }
+agent_home
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "closing a home tab whose server runs an agent keeps the server with no flag: it is told to stay, window 0 alone is killed, never the server" "0|1|1|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-option][-s][exit-unattached][off]')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -c 'kill-window')"
+check "and says the server is kept, then each agent with its attach line" "closed 1 session on /dev/ttys970|home: kept the server orch-abcdef12 for 1 agent(s), session abcdef12-3456-4789-8abc-def012345678|agent: Agent: m1a on /dev/ttys962: $HR/tmux -L orch-abcdef12 attach -t home:1" \
+  "$(sfield "$res" OUT)"
+check "and the server is told to stay before window 0 is killed" "1" \
+  "$(hcalls | grep -oE 'exit-unattached|kill-window' | paste -sd, - | grep -c '^exit-unattached,kill-window$')"
+agent_home
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--end-agents"]')
+check "--end-agents ends the server and the agent with it" "0|1|closed 1 session on /dev/ttys970" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')"
+agent_home; printf 'no such window\n' > "$HR/kwin-err"
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "a window 0 tmux refuses to kill arms the server again and closes nothing" "1|1|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-option][-s][exit-unattached][on]')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'tmux refused to kill window 0')"
+agent_home; printf '0 /dev/ttys961\n' > "$HR/panes"
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "a server with no agent is ended as before" "0|1|0" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -c 'kill-window')"
+# Fail closed: whether an agent lives is read on the process table and the server's panes, and a
+# reading that cannot be made is no answer of « none ».
+agent_home
+res=$(LIFE_PS_UNREADABLE_TTY=/dev/ttys962 LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "a process table that cannot be read refuses the close of a home tab, killing nothing, and says so" "1|0|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-')|$(hcalls | grep -c 'set-option')|$(sfield "$res" ERR | grep -c 'close: refused: the process table cannot be read for /dev/ttys962')"
+agent_home; printf 'server busy\n' > "$HR/panes-err"
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "panes tmux cannot list refuse it too, the server not ended" "1|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-')|$(sfield "$res" ERR | grep -cE 'close: refused: the panes of the home server orch-abcdef12 cannot be listed|NOT ended')"
+agent_home
+res=$(LIFE_PS="$WORK/life-ps-agent" LIFE_TRANSCRIPT=1 life ok "$(rot_args /dev/ttys970 'Orch: w')")
+check "a rotation of a home tab whose server runs an agent is refused before the replacement is created" "1|0|0|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create ')|$(hcalls | grep -c 'kill-server')|$(sfield "$res" ERR | grep -c 'rotate: refused: the home server orch-abcdef12 still runs 1 agent(s)')"
+
+# An iTerm tab's title is rewritten by a working host: a rotation of a tab goes without
+# --expect-title, and says so; given one, it says nothing.
+reset_homerec
+res=$(LIFE_PS="$WORK/life-ps-old" LIFE_TRANSCRIPT=1 life ok "$(rot_args /dev/ttys998)")
+check "rotate of a tab with no --expect-title goes on, and warns that the session is told by its id alone" "0|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c 'rotate: warning: no --expect-title: the session on /dev/ttys998 is told from another.s by its id alone')"
+reset_homerec
+res=$(LIFE_PS="$WORK/life-ps-old" LIFE_TRANSCRIPT=1 life ok "$(rot_args /dev/ttys998 'Orch: w')")
+check "and given one, it does not" "0|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c 'rotate: warning: no --expect-title')"
 
 # The sleeping record keeps the session the close read, for the wake to resume.
 SLST="$WORK/sleepstate"; mkdir -p "$SLST"; printf 'b\n' > "$SLST/brief.md"

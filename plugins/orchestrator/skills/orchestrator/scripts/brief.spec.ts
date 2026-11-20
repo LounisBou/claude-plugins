@@ -13,7 +13,7 @@ test.afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 const ORCH = 'Orch: belt [a1b2c3]'
 
-function world(gitOut: Record<string, string> = {}) {
+function world(gitOut: Record<string, string> = {}, paneWindow: (tty: string) => number | undefined = () => undefined) {
   const state = join(dir, 'state')
   const briefs = join(dir, 'briefs')
   const worktree = join(dir, 'ws')
@@ -35,7 +35,7 @@ function world(gitOut: Record<string, string> = {}) {
   const out: string[] = []
   const err: string[] = []
   const io = { out: (t: string) => { out.push(t) }, err: (t: string) => { err.push(t) } }
-  const deps: Deps = { env, now: () => new Date('2026-11-15T12:00:00Z'), git: (_dir, args) => gitOut[args.join(' ')] }
+  const deps: Deps = { env, now: () => new Date('2026-11-15T12:00:00Z'), git: (_dir, args) => gitOut[args.join(' ')], paneWindow }
   const run = (...argv: string[]) => main(argv, io, deps)
   const phase = (...extra: string[]) => run('phase', '--record', record, '--row', '2', '--plan', plan, '--worktree', worktree, '--branch', 'feat/routes',
     '--orchestrator', ORCH, '--out', join(briefs, 'routes.md'), '--repo', 'acme/app', ...extra)
@@ -204,6 +204,20 @@ test('rotation for an agent gone: nothing of its own, the brief says what git an
   assert.equal(w.run('rotation', '--record', w.record, '--row', '2', '--phase-brief', w.plan, '--worktree', join(dir, 'none'), '--orchestrator', ORCH, '--tty', 't', '--title', 'x', '--out', join(dir, 'o.md')), 2)
   assert.equal(w.run('rotation', '--record', w.record, '--row', '1', '--phase-brief', w.plan, '--worktree', w.worktree, '--orchestrator', ORCH, '--tty', 't', '--title', 'x', '--out', join(dir, 'o.md')), 2)
   assert.equal(rotateLine({ tty: 't', worktree: "/a b'c", title: 'T', out: '/o', orchestrator: 'O' }).split(' rotate ')[1], "--old-tty t --dir '/a b'\\''c' --title 'T' --brief '/o' --orchestrator 'O' --right-of self")
+})
+
+test('rotation: the rotate line carries --expect-title for a window of a home session, which the launcher requires there, and not for a tab', () => {
+  const fields = { tty: '/dev/ttys012', worktree: '/w', title: 'Agent: api routes', out: '/o.md', orchestrator: ORCH }
+  assert.match(rotateLine(fields, true), / --right-of self --expect-title 'Agent: api routes'$/)
+  assert.doesNotMatch(rotateLine(fields), /--expect-title/)
+  for (const [window, expected] of [[3, true], [undefined, false]] as const) {
+    const w = world({}, () => window)
+    const phaseBrief = join(w.briefs, 'routes.md')
+    writeFileSync(phaseBrief, '# brief\n')
+    w.run('rotation', '--record', w.record, '--row', '2', '--phase-brief', phaseBrief, '--worktree', w.worktree, '--orchestrator', ORCH,
+      '--tty', '/dev/ttys012', '--title', 'Agent: api routes', '--out', join(w.briefs, 'routes-r1.md'), '--repo', 'acme/app')
+    assert.equal(/ --expect-title 'Agent: api routes'\n$/.test(w.text()), expected)
+  }
 })
 
 test('the command line: a flag unknown, a value missing, a relative path, a bad mode or row is refused', () => {
