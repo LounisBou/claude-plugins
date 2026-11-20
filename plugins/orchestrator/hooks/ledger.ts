@@ -25,7 +25,7 @@ import { draftGuardArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
 import { parseReconcile, reconcilePath } from '../core/pr-reconcile.ts'
 import { ciGatePath } from '../core/orchestration.ts'
 import { GATE_CI } from './relay.ts'
-import { archive, boundedReading, readOr, registered, republish } from './unattended.ts'
+import { archive, autoMergeOf, boundedReading, readOr, registered, republish } from './unattended.ts'
 import type { FilePr } from './pr-file-format.ts'
 
 // The nouns a write holds.
@@ -553,6 +553,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // A Ready pull request's agent is done with it: acted on once per Ready head, so an agent resumed for a fix is closed again only at
   // the next head; one not done yet is tried again at the next tick. One the forge reads conflicting is no longer ready to merge.
   // It holds another pull request, or a row naming it in its `agent` field besides the row of its brief: told, not closed.
+  // github's list is read with the pull requests; a Ready pull request told with that list empty (a file refresh that failed leaves
+  // the readings behind its labels, a list that did not answer) asks it once more, here, before its line is said.
+  let again: Promise<ReadonlySet<string>> | undefined
   for (const line of reading.atReady) {
     if (reading.forge.get(prKey(line.repo, line.pr))?.mergeable === 'CONFLICTING') continue
     const pk = prKey(line.repo, line.pr)
@@ -564,8 +567,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     const said = holds.length > 0 ? agentLine({ key: pk, what: 'is Ready', agent, holds }) : (await actOn(agent, pk, 'is Ready', { ready: key })).said
     if (said === null) continue
     told.add(key)
-    // In a repository github's auto-merge list names (read with the pull requests, when one carries Ready), the merge is this orchestrator's own.
-    lines.push(reading.autoMerge.has(line.repo.toLowerCase()) ? `${said} ${mergeNowLine(pk)}` : said)
+    // In a repository github's auto-merge list names, the merge is this orchestrator's own.
+    const autoMerge = reading.autoMerge.size > 0 ? reading.autoMerge : await (again ??= autoMergeOf($))
+    lines.push(autoMerge.has(line.repo.toLowerCase()) ? `${said} ${mergeNowLine(pk)}` : said)
   }
   for (const [key, pr] of conflicts) {
     if (told.has(conflictKey(key, pr))) continue

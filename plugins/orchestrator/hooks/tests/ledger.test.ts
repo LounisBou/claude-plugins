@@ -24,6 +24,7 @@ const ledgerLine = (pr: number, status: string, detail: Record<string, string>, 
   JSON.stringify({ v: 1, ledger: 'pr', repo, pr, status, ...detail, since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:30:00Z' })
 const ROWS = `${JSON.stringify({ id: 1, state: 'open', label: 'a row' })}\n${ledgerLine(7, 'working', { agent: 'Agent: seven' })}\n`
 
+type Answer = { result?: string; isError?: boolean }
 type Over = {
   session?: string
   reportsTo?: string | null
@@ -52,7 +53,8 @@ type Over = {
   // `draft-guard.sh`, run on a draft's failed checks: the names it prints for a pull request (the ones that are no guard); null: it fails.
   guards?: Record<number, string | null>
   // What github's `auto-merge-list` answers (no tool when absent), and the calls it was asked.
-  autoMerge?: { result?: string; isError?: boolean } | undefined
+  // A list of answers is given in turn, the last one again.
+  autoMerge?: Answer | Answer[] | undefined
 }
 
 // The orchestrator s-orch (its record registered, owned), the agent s-agent on /dev/ttys005 launched for it.
@@ -76,6 +78,7 @@ function fake(over: Over = {}) {
   const gateRuns: string[][] = []
   const guardRuns: { argv: string[]; stdin: string }[] = []
   const asked: unknown[] = []
+  const answers = [over.autoMerge].flat()
   const reportsTo = over.reportsTo === undefined ? `${ORCH} [a1b2c3]` : over.reportsTo
   let listed = over.launcher
   const dollar = hostOf({
@@ -83,7 +86,7 @@ function fake(over: Over = {}) {
     env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'ORCHESTRATOR_REPORTS_TO' ? reportsTo ?? undefined : name === 'ITERM_SESSION_ID' ? (over.owner === undefined ? 'w0t0p0:own' : over.owner === null ? undefined : `w0t0p0:${over.owner}`) : undefined) },
     session: { id: async () => over.session ?? 's-agent' },
     clock: { sleep: async () => undefined },
-    tool: over.autoMerge === undefined ? {} : { call: async (input: unknown) => { asked.push(input); return over.autoMerge } },
+    tool: over.autoMerge === undefined ? {} : { call: async (input: unknown) => { asked.push(input); return answers[Math.min(asked.length - 1, answers.length - 1)] } },
     fs: {
       read: async (p: string) => {
         if (over.chainFails && p.includes('/chains/')) throw new Error(`EACCES: ${p}`)
@@ -520,6 +523,13 @@ test('a Ready pull request of a repository github\'s auto-merge list names says 
   for (const autoMerge of [{ result: 'other/lib' }, { result: 'no repository in auto-merge' }, { result: '/data/auto-merge.json: malformed', isError: true }, undefined]) {
     expect((await wake(autoMerge)).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
   }
+})
+
+test('a Ready pull request told with the list empty at the reading asks it once more, then says the merge when it answers', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17'),
+    autoMerge: [{ result: 'unreadable', isError: true }, { result: 'acme/app' }] })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'is Ready') + MERGE_NOW])
+  expect(world.asked).toHaveLength(2)
 })
 
 test('the auto-merge list is asked only when a Ready pull request is told', async () => {
