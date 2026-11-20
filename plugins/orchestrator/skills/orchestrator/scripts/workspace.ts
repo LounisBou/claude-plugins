@@ -6,8 +6,8 @@
 //                                                              first; also removes the host's temporary directory of the
 //                                                              path when no live process uses it; the archive line names
 //                                                              the command or sweep that made the deletion (`by`)
-//   workspace.sh keep <path>                                   the sweep never ends this checkout, whoever made it and whoever lives
-//                                                              (`close --keep-checkout` says so); only a `delete` does
+//   workspace.sh keep <path>                                   the sweep never ends this checkout of a dead orchestrator and agent
+//                                                              (`close --keep-checkout` says so); once its orchestrator and agent are gone only a `delete` does
 //   workspace.sh sweep [--deadline <seconds>] [--dry-run]      the leftovers, decided on facts: one line per item,
 //                                                              "deleted <path>" | "kept <path>: <reason>" (a dry run says "would delete"),
 //                                                              "pushed <branch> of <path>" before a checkout no one lives in goes
@@ -1175,9 +1175,6 @@ async function sweepOne(s: Sweep, d: string): Promise<void> {
     // A line `create` wrote since the ledger was read wins over the adoption.
     if (!s.dry) ledgerWrite(ctx, `the line of ${real}`, () => { entry = adoptEntry(ctx.root, adopted) })
   }
-  // A checkout kept by `close --keep-checkout` stays whoever made it and whoever lives: a sweep once
-  // ended one its dead maker left, minutes after the close that said to keep it.
-  if (entry.kept !== undefined) return keep(ctx, real, `kept since ${entry.kept} by close --keep-checkout: only delete ends it`)
   const agent = agentIn(ctx, real)
   if (agent !== undefined) {
     if (!s.dry && entry.agent !== agent.name) ledgerWrite(ctx, `the agent of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, agent: agent.name })))
@@ -1192,6 +1189,10 @@ async function sweepOne(s: Sweep, d: string): Promise<void> {
     }
     return sweepOwned(s, real)
   }
+  // A checkout kept by `close --keep-checkout` stays whoever made it: a sweep once ended one its dead
+  // maker left, minutes after the close that said to keep it. An orchestrator that lives still lets its
+  // pull request's end take the checkout (the path above), which the hooks module's routine closes rely on.
+  if (entry.kept !== undefined) return keep(ctx, real, `kept since ${entry.kept} by close --keep-checkout: only delete ends it`)
   return sweepEnded(s, real, entry)
 }
 

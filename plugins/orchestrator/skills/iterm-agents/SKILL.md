@@ -84,7 +84,7 @@ An `Agent:` session also comes up without the away recap and the silent-turn rem
 
 1. The old agent must have STOOD DOWN (message it; wait for its acknowledgment) — never close a tab whose session may still be writing. **In a rotation this acknowledgment IS the guard**, not the title.
 2. `list` to confirm the tty is the one you mean.
-3. `rotate`, which spawns the replacement and verifies it is running before the old one is gone. **`--expect-title` is required for a tmux window** (its name is fixed; the tty a brief printed may be another agent's by now), **not given for an iTerm tab**, whose title a working session rewrites during the spawn. A stood-down agent that acknowledged is what makes closing it safe.
+3. `rotate`, which spawns the replacement and verifies it is running before the old one is gone. **`--expect-title` is required for a tmux window** (its name is fixed; the tty a brief printed may be another agent's by now), **only warned of for an iTerm tab**, whose title a working session rewrites during the spawn. A stood-down agent that acknowledged is what makes closing it safe.
 4. Its two lines, the new tty then `closed 1 session on <old tty>`, are the proof; `list` only when it failed, timed out or warned on stderr.
 
 ## Common mistakes

@@ -1157,7 +1157,7 @@ test('sweep: an adoption never overwrites a line written since the ledger was re
   assert.ok((await bare(w, 'ledger')).out.includes(`${a} | ${join(dir, 'proj.git')} | main | orchestrator Orch: Maker (live) | agent Agent: past (gone) |`))
 })
 
-test('keep: a checkout closed with --keep-checkout is never ended by the sweep, whoever made it and whoever lives; only a delete ends it; every deletion names its maker', async () => {
+test('keep: a checkout closed with --keep-checkout is never ended by the sweep once its orchestrator and agent are gone; only a delete ends it; every deletion names its maker', async () => {
   const src = pushed('proj')
   const w = world({ CLAUDE_CODE_SESSION_ID: 's41' })
   registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
@@ -1189,6 +1189,15 @@ test('keep: a checkout closed with --keep-checkout is never ended by the sweep, 
   assert.ok(swept.out.includes(`deleted ${lost}`), swept.out)
   assert.ok(!existsSync(lost))
   assert.equal(lineOf(w, kept)?.reason, undefined, 'a kept checkout is owed no reason')
+  // While its orchestrator lives the mark does not hold the checkout past its pull request: the hooks module
+  // closes every finished agent with `--keep-checkout`, and the sweep still takes those once the pull request is over.
+  const owned = await clone(w, src, 'owned', 'feat/owned')
+  await bare(w, 'keep', owned)
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const alive = await bare(w, 'sweep', '--dry-run')
+  assert.ok(!alive.out.includes(`kept ${owned}: kept since`), alive.out)
+  registry(w, [], new Set())
+  assert.equal((await bare(w, 'delete', owned)).code, 0)
   // A dry run says the same.
   assert.match((await bare(w, 'sweep', '--dry-run')).out, new RegExp(`^kept ${kept}: kept since`, 'm'))
   // Every deletion names what made it: the sweep, the close, a hand.
@@ -1197,7 +1206,7 @@ test('keep: a checkout closed with --keep-checkout is never ended by the sweep, 
   assert.equal((await bare(w, 'delete', hand, '--by', 'close')).code, 0)
   assert.equal((await bare(w, 'delete', closed)).code, 0)
   assert.equal((await bare(w, 'delete', kept)).code, 0, 'a delete by hand ends a kept checkout')
-  assert.deepEqual(archived().map(a => [a['path'], a['by']]), [[lost, 'sweep'], [hand, 'close'], [closed, 'delete'], [kept, 'delete']])
+  assert.deepEqual(archived().map(a => [a['path'], a['by']]), [[lost, 'sweep'], [owned, 'delete'], [hand, 'close'], [closed, 'delete'], [kept, 'delete']])
   // Refused: no such checkout, a path outside the root, no path, a maker the archive has no word for.
   assert.match((await bare(w, 'keep', join(dir, 'nowhere'))).err, /keep: no such checkout/)
   assert.match((await bare(w, 'keep', dir)).err, /keep: refusing a path outside/)

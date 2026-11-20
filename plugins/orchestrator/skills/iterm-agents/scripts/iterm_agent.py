@@ -1397,9 +1397,10 @@ def delete_checkout(path):
 
 def mark_kept(path):
     """Ask `workspace.sh keep` to mark a checkout the operator or an orchestrator closed with
-    `--keep-checkout`: the sweep then never ends it, whoever made it and whoever lives. A sweep
+    `--keep-checkout`: once its orchestrator and agent are gone the sweep never ends it. A sweep
     once ended the clone of a dead predecessor minutes after a close that said to keep it. A mark
-    that is not made is said, for the sweep would take the checkout."""
+    that is not made is said, for the sweep would take the checkout; a mark made is silent, as a
+    `--keep-checkout` close has always been."""
     try:
         done = subprocess.run(["bash", WORKSPACE_SH, "keep", path],
                               capture_output=True, text=True, timeout=120)
@@ -1412,7 +1413,6 @@ def mark_kept(path):
         print("close: the checkout %s is NOT marked kept, a sweep may end it: %s"
               % (path, re.sub(r"^workspace: ", "", reason)), file=sys.stderr)
         return
-    print("close: kept checkout %s: marked, a sweep never ends it" % path, file=sys.stderr)
 
 
 # --- the ladder: the rung that can serve, and it says which one did (§46) -----------
@@ -3843,6 +3843,10 @@ def home_agents(socket, panes):
     """The live agents of the home server `socket`: `[(window index, tty, window name)]` of
     every window but window 0 whose tty runs a host. `panes` is `home_panes`' answer. The names
     are asked of tmux and are only the words of a line: a name it does not give is empty."""
+    live = [(index, tty) for index, tty in panes or []
+            if index != "0" and host_cli_on(tty) is not None]
+    if not live:
+        return []
     names = {}
     try:
         done = tmux_call(["-L", socket, "list-windows", "-F", "#{window_index}\t#{window_name}"])
@@ -3852,8 +3856,7 @@ def home_agents(socket, panes):
                 names[index] = name
     except TmuxError:
         pass
-    return [(index, tty, names.get(index, "")) for index, tty in panes or []
-            if index != "0" and host_cli_on(tty) is not None]
+    return [(index, tty, names.get(index, "")) for index, tty in live]
 
 
 def agent_line(socket, agent):
@@ -3863,18 +3866,21 @@ def agent_line(socket, agent):
             % (name or "(unnamed)", tty, TMUX_BIN, socket, HOME_SESSION, index))
 
 
-def refuse_home_agents(what, socket, panes):
+def refuse_home_agents(what, socket, panes, tty=""):
     """The refusal of a close of a home tab while another window than window 0 runs a host: the
     server's end would kill those agents with it, and nothing says they were done. Each is
     named with the line that attaches to it; `--end-agents` ends them with the server,
     `--keep-agents` keeps the server for them. Read-only, so a refusal changes nothing."""
     agents = home_agents(socket, panes)
     if agents:
+        how = ("pass --end-agents to end them with the server, or --keep-agents to close "
+               "window 0 and the tab and keep the server for them" if what == "close" else
+               "a rotation takes neither flag: close the tab itself first, with close --tty %s "
+               "--end-agents or --keep-agents" % (tty or "<its tty>"))
         die("%s: refused: the home server %s still runs %d agent(s) beside window 0, and its "
-            "end would kill them: pass --end-agents to end them with the server, or "
-            "--keep-agents to close window 0 and the tab and keep the server for them; "
-            "the server was NOT ended. %s"
-            % (what, socket, len(agents), " ".join(agent_line(socket, a) for a in agents)))
+            "end would kill them: %s; the server was NOT ended. %s"
+            % (what, socket, len(agents), how,
+               " ".join(agent_line(socket, a) for a in agents)))
 
 
 def keep_home(tty, socket, listed):
@@ -3897,9 +3903,10 @@ def keep_home(tty, socket, listed):
             "and nothing was closed" % (socket, tmux_refusal(done)))
 
     def rearm(why):
-        arm_home(socket, "close")
-        die("close: %s; the server %s was armed again and nothing else was closed"
-            % (why, socket))
+        armed = arm_home(socket, "close")
+        die("close: %s; the server %s %s and nothing else was closed"
+            % (why, socket, "was armed again" if armed else
+               "could NOT be armed again (exit-unattached stays off, its tab stays attached)"))
     if ttys:
         KILL_SENT.add(ttys[0])
         try:
@@ -3916,11 +3923,15 @@ def keep_home(tty, socket, listed):
             if survivor is not None:
                 rearm("%s still runs on %s" % (survivor, ttys[0]))
     trace_home(socket, "window 0 of", "close --keep-agents", tty)
+    # The client of the tab moves to a surviving agent window and does not exit by itself: the
+    # tab is closed at once, which detaches it, and the server stays for its agents.
+    ITERM.close(tty, "")
     deadline = time.time() + CLOSE_TIMEOUT
     while ITERM.find(tty):
         if time.time() >= deadline:
-            ITERM.close(tty, "")
-            break
+            die("close: window 0 of the home server %s is gone and its host with it, but the "
+                "tab %s did not close: the server stays for its agents; close the tab by hand"
+                % (socket, tty))
         time.sleep(0.3)
     CLOSE_DONE.add(tty)
     print("closed 1 session on %s" % tty)
@@ -5816,6 +5827,9 @@ def cmd_close(args):
         if note:
             print(note, file=sys.stderr)
     else:
+        if args.end_agents or args.keep_agents:
+            print("close: %s is no home tab: --end-agents and --keep-agents were ignored"
+                  % args.tty, file=sys.stderr)
         close_tab(args.tty, args.expect)
         CLOSE_DONE.add(args.tty)
         if note:
@@ -5953,7 +5967,7 @@ def close_refusals(what, tty, expect):
                 name = session_title(tty, what)
                 if name is None:
                     die("%s: no session found on %s" % (what, tty))
-            refuse_home_agents(what, socket, window0_session(what, socket)[0])
+            refuse_home_agents(what, socket, (window0_session(what, socket) or ([], ""))[0], tty)
         return None, name, ""
     term = terminal_for(tty)
     if isinstance(term, TmuxTerminal):
@@ -6020,10 +6034,10 @@ def cmd_rotate(args):
     found_on, title, window = close_refusals("rotate", args.old_tty, args.expect)
     # A tty is not the agent: the one a brief printed may be another agent's by the time the
     # rotation runs. A tmux window's name is fixed at its making, so it tells the agent from
-    # a stranger and is required; an iTerm tab's title is rewritten by a working host, so a
-    # tab goes without and is said.
+    # a stranger and is required, unless its name is glyphs alone, which guards nothing; an
+    # iTerm tab's title is rewritten by a working host, so a tab goes without and is said.
     if not args.expect:
-        if window:
+        if window and stable_title(title or ""):
             die("rotate: refused: --expect-title is required for a window of a home session: "
                 "give the name `list` printed for %s (the window is named '%s'); nothing was "
                 "spawned" % (args.old_tty, title or ""))

@@ -45,8 +45,8 @@ export interface WorkspaceEntry {
   readonly reason?: string
   readonly reason_at?: string
   /**
-   * When `close --keep-checkout` asked for the checkout to stay (`workspace.sh keep`): the sweep never ends it,
-   * whoever made it and whoever lives, and only a `delete` does.
+   * When `close --keep-checkout` asked for the checkout to stay (`workspace.sh keep`): once its orchestrator and
+   * agent are gone the sweep never ends it, whoever made it, and only a `delete` does.
    */
   readonly kept?: string
 }

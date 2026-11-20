@@ -6182,6 +6182,8 @@ check "a proved close deletes the session's checkout and its host directory; std
   "exit=0|closed 1 session on /dev/ttys901|0|0" \
   "$(printf '%s\n' "$res" | head -1)|$(field "$res" OUT)|$(exists "$CL")|$(exists "$HCL")"
 check "and stderr says it" "1" "$(field "$res" ERR | grep -c "^close: deleted checkout $CL\$")"
+check "and its archive line names the close that made the deletion" "1" \
+  "$(grep -F "\"path\":\"$CL\"" "$WCR/.workspaces.archive.jsonl" | grep -c '"by":"close"')"
 
 CL=$(mkclone "$WCSRC" cl-b feat/cl-b dirty); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
 res=$(cprobe close)
@@ -6200,6 +6202,8 @@ CL=$(mkclone "$WCSRC" cl-d feat/cl-d); printf '/dev/ttys901 %s\n' "$CL" > "$CT_T
 res=$(cprobe close --keep-checkout)
 check "--keep-checkout opts out: nothing deleted, nothing said about a checkout" "1|0" \
   "$(exists "$CL")|$(field "$res" ERR | grep -c 'checkout')"
+check "and marks the checkout kept on its ledger line, which a sweep of its dead maker never ends" "1" \
+  "$(grep -F "\"path\":\"$CL\"" "$WCR/.workspaces.jsonl" | grep -c '"kept":')"
 
 res=$(cprobe rotate)
 check "a rotation deletes nothing: its replacement works in the same checkout" "1|0" \
@@ -9131,7 +9135,7 @@ check "--keep-agents tells the server to stay, kills window 0 alone and never th
 check "and says the server is kept, then each agent with its attach line" "closed 1 session on /dev/ttys970|home: kept the server orch-abcdef12 for 1 agent(s), session abcdef12-3456-4789-8abc-def012345678|agent: Agent: m1a on /dev/ttys962: $HR/tmux -L orch-abcdef12 attach -t home:1" \
   "$(sfield "$res" OUT)"
 check "and the server is told to stay before window 0 is killed" "1" \
-  "$(hcalls | grep -nE 'exit-unattached|kill-window' | sed 's/^\([0-9]*\):.*\(exit-unattached\|kill-window\).*/\2/' | paste -sd, - | grep -c '^exit-unattached,kill-window$')"
+  "$(hcalls | grep -oE 'exit-unattached|kill-window' | paste -sd, - | grep -c '^exit-unattached,kill-window$')"
 agent_home; printf 'no such window\n' > "$HR/kwin-err"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--keep-agents"]')
 check "a window 0 tmux refuses to kill arms the server again and closes nothing" "1|1|0|1" \
