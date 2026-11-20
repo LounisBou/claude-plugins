@@ -27,7 +27,8 @@ const row = (role: string, name: string, repo: string | null = 'acme/app', extra
   JSON.stringify({ role, name, repo, context_percent: 1, context_tokens: 1, window: 100, model: 'm', busy: false, updated_at: new Date().toISOString(), ...extra })
 
 // `extra`: lines of the session's own record beside the ones it has (pull requests 7, 8, 5, 6 and 9).
-type Answers = { forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null | undefined; extra?: string[]; session?: string }
+// `autoMerge`: what github's `auto-merge-list` answers (a thrown error when absent).
+type Answers = { autoMerge?: unknown; forge?: Record<string, string | null>; launcher?: string | null; ps?: string | null | undefined; extra?: string[]; session?: string }
 
 // Pull request 11, an agent that does not run on it, last set well before.
 const ELEVEN = line(11, 'working', { agent: 'Agent: eleven' }, '2026-11-11T08:00:00Z')
@@ -54,6 +55,7 @@ function world(answers: Answers = {}) {
   ])
   const logs: string[] = []
   const runs: string[][] = []
+  const asked: unknown[] = []
   const forge = answers.forge ?? { 'acme/app': JSON.stringify([7, 8, 6, 9, 10].map(n => ({ number: n, createdAt: `2026-11-1${n % 10}T08:00:00Z` }))) }
   const dollar = hostOf({
     plugin: { root: '/plugins/orch' },
@@ -91,8 +93,9 @@ function world(answers: Answers = {}) {
       },
     },
     ui: { invalidate: () => undefined },
+    tool: answers.autoMerge === undefined ? {} : { call: async (input: unknown) => { asked.push(input); return answers.autoMerge as Reply } },
   })
-  return { dollar, files, logs, runs }
+  return { dollar, files, logs, runs, asked }
 }
 
 test('an open pull request of the record with no live agent or a stale wait is unattended; a parked one, one whose agent runs, or one no line of the record names is not', async () => {
@@ -126,6 +129,52 @@ test('a pull request no agent holds is told apart: Ready and On Hold wait on the
     'Attend ton geste : acme/app#8 (en pause), acme/app#9 (Ready)',
     'En anomalie : acme/app#11 (sans agent depuis 2026-11-11T08:00Z)',
   ].join('\n'))
+})
+
+test('a Ready pull request leaves the operator\'s line only when github\'s auto-merge list names its repository; absent from it, or the list unreadable, it stays on his line', async () => {
+  const forge = labelled({ 8: ['On Hold'], 9: ['Ready'] })
+  const waiting = [[8, 'hold'], [9, 'ready']]
+  const read = async (autoMerge?: unknown) => {
+    const { dollar, asked } = world({ forge, autoMerge })
+    const reading = await readUnattended(dollar, 's-orch', NOW)
+    return { shown: reading?.list.map(u => [u.pr, u.waits?.why]), line: reading?.line, asked }
+  }
+  // Named (any case): the orchestrator's to merge, off his line; the pull request On Hold stays on it.
+  const named = await read({ result: 'other/thing\nAcme/App' })
+  expect(named.shown).toEqual([[8, 'hold']])
+  expect(named.line).toBe('Attend ton geste : acme/app#8 (en pause)')
+  expect(named.asked).toEqual([{ tool: 'mcp__github__gh', command: 'auto-merge-list' }])
+  // Absent from the list, an empty list, an unreadable list, a refused or failed call, no tool: on his line, as before.
+  for (const answer of [{ result: 'other/thing' }, { result: 'no repository in auto-merge' }, { result: '/data/auto-merge.json: malformed\nacme/app', isError: true }, { deny: 'refused' }, undefined]) {
+    const kept = await read(answer)
+    expect(kept.shown).toEqual(waiting)
+    expect(kept.line).toBe('Attend ton geste : acme/app#8 (en pause), acme/app#9 (Ready)')
+  }
+  // A list that cannot be read says so in the log, once.
+  const broken = world({ forge, autoMerge: { result: '/data/auto-merge.json: malformed', isError: true } })
+  await readUnattended(broken.dollar, 's-orch', NOW)
+  expect(broken.logs.filter(text => text.includes('auto-merge list unread'))).toHaveLength(1)
+  // The list is asked only when a pull request carries Ready.
+  const none = world({ forge: labelled({ 8: ['On Hold'] }), autoMerge: { result: 'acme/app' } })
+  await readUnattended(none.dollar, 's-orch', NOW)
+  expect(none.asked).toEqual([])
+})
+
+test('a Ready pull request the auto-merge list takes off the operator\'s line is still the session\'s to merge: a done is refused on it, an operator wait need not name it', async () => {
+  const declare = declaring(new Declarations())
+  const forge = labelled({ 8: ['On Hold'], 9: ['Ready'] })
+  const listed = world({ forge, autoMerge: { result: 'acme/app' } })
+  closedRows(listed.files)
+  const reading = await readUnattended(listed.dollar, 's-orch', NOW)
+  expect(reading?.line).toBe('Attend ton geste : acme/app#8 (en pause)')
+  expect(reading?.toMerge.map(u => u.pr)).toEqual([9])
+  const refused = await declare(listed.dollar, { kind: 'done' })
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toContain('acme/app#9 (Ready)')
+  expect(refused.result).toContain('in auto-merge')
+  // Outside the list the pull request is his, and nothing is left to merge.
+  const other = world({ forge, autoMerge: { result: 'acme/other' } })
+  expect((await readUnattended(other.dollar, 's-orch', NOW))?.toMerge).toEqual([])
 })
 
 test('a pull request the forge reads in conflict is in anomaly « en conflit », Ready or not; mergeable and unknown are left as they were', async () => {

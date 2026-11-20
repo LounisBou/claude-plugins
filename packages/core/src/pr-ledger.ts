@@ -257,12 +257,15 @@ export function isFreshWait(line: LedgerLine, now: number): boolean {
  * Each is told apart: one that rests on the operator (carrying `Ready` or `On Hold`, or whose line waits on
  * him, even freshly) comes with `waits`; the rest, Not Ready with no agent and no recorded wait, are in anomaly.
  * One the forge reads `CONFLICTING` (`UNKNOWN`, computed late, counts nothing) is in anomaly whatever it waits on: `conflict`.
+ * A pull request carrying `Ready` alone, in a repository `autoMerge` names (lowercased `owner/name`, from github's auto-merge list), is the
+ * orchestrator's to merge, not the operator's: it is left out. A repository the list does not name keeps it.
  */
 export function unattended(input: {
   readonly open: readonly OpenPr[]
   readonly lines: readonly LedgerLine[]
   readonly live: ReadonlySet<string>
   readonly now: number
+  readonly autoMerge?: ReadonlySet<string>
 }): Unattended[] {
   const byKey = new Map(input.open.map(open => [prKey(open.repo, open.pr), open]))
   const left: Unattended[] = []
@@ -279,6 +282,7 @@ export function unattended(input: {
       : hasLabel(open, HOLD_LABEL) ? { why: 'hold' }
         : hasLabel(open, READY_LABEL) ? { why: 'ready' }
           : undefined
+    if (why?.why === 'ready' && input.autoMerge?.has(line.repo.toLowerCase()) === true) continue
     left.push({ repo: line.repo, pr: line.pr, since: onHim ? line.since : line.updated, ...(why === undefined ? {} : { waits: why }), ...(conflict ? { conflict } : {}) })
   }
   return left

@@ -29,7 +29,7 @@ import { archive, boundedReading, readOr, registered, republish } from './unatte
 import type { FilePr } from './pr-file-format.ts'
 
 // The nouns a write holds.
-type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock'>
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'clock' | 'tool'>
 type Call = Events['tool.call']
 
 // The bound of one write: the lookups of the mapping and the record's lock.
