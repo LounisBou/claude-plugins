@@ -18,7 +18,8 @@
 // orchestration, each with its tty and the brief its launch named: the deck's orchestrator on the
 // predecessor's tty (by name when no tty is given or the deck has none there), joined with the
 // launcher's chains of both ttys and its `list`, so an agent spawned since the deck's last write is
-// there too; the round's open questions, verbatim; the to-do items pointing to a
+// there too, and each agent the rows name that runs in a window of a home server (the predecessor's
+// included, read from tmux's socket directory), with `<server>:<window>`; the round's open questions, verbatim; the to-do items pointing to a
 // row closed or missing; the project sheet from `goals.md` (objective, spec, open goals and their plan)
 // and the merged pull requests not installed.
 //
@@ -29,7 +30,9 @@
 // objective is its first sentence. The full words stay in `round/` and the to-do list, named by id.
 //
 // The orchestration's name is the one given, else the record's owner (`<record>.owner`), else, when
-// that file names no orchestration, the name of the session that runs the takeover. A row names its
+// that file names no orchestration, the name of the session that runs the takeover. The owner file then
+// names the successor (the orchestration this session is), whether the predecessor is
+// dead and whether its title differs, so `dispatch-record.sh` accepts the successor. A row names its
 // pull request in its label (`<repo>#<n>`, the repository's short name too) or in the heads its review
 // recorded; the forge says which of them is open, and the ledger who is on it. Before printing,
 // the command moves the round's entries settled over a day ago to its archive (round-archive's
@@ -39,13 +42,13 @@
 // the deck lacks is no miss: the deck holds an agent from the end of its first turn, so one
 // spawned since is in the chain and `list` alone, and is printed from them.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chainPath, parseChain } from '../../../core/chain-entries.ts'
 import { DECK_FILE, parseDeck } from '../../../core/deck.ts'
 import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../core/orchestration.ts'
-import { readText } from '../../../core/store.ts'
+import { readText, update, writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo } from '../../../hooks/pr-file-format.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { setting } from '../../../core/env.ts'
@@ -59,7 +62,7 @@ import { isEntry, processIo, type Io } from './lib/process.ts'
 import { GoalsFault, namedGoals, parseGoals } from './lib/goals-file.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 import { archiveSettled } from './lib/round-archive.ts'
-import { openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
+import { holderOf, openTodos, todoItems, todoPath } from '../../../hooks/todo-format.ts'
 import { askedKey } from '../../../hooks/asked-key.ts'
 import { holdsOf, readyHeadsOf } from '../../../hooks/ready-agent.ts'
 import { bareName, briefOfLaunch, isAgent, newestLaunch, rowOfBrief } from '../../../hooks/row-owner.ts'
@@ -164,6 +167,8 @@ export interface LiveAgent {
   readonly name: string
   readonly tty: string | null
   readonly brief?: string
+  /** The home server and window it runs in, `<server>:<window>`; undefined for a session of an iTerm2 tab. */
+  readonly where?: string
   /** What its Ready pull request says of it, `Ready (<prs>): the module closes it once done` or the pull requests it still holds; undefined when none of its pull requests is Ready. */
   readonly ready?: string
 }
@@ -240,18 +245,91 @@ export function parseList(text: string): ListedRow[] {
  * still in its first turn is in the chain and `list` alone, and that is the usual state of a
  * takeover, not a lost one.
  */
-export function liveAgents(deck: readonly LiveAgent[], chained: readonly string[], listed: readonly ListedRow[] | undefined): { agents: LiveAgent[]; disagree?: number } {
+export function liveAgents(deck: readonly LiveAgent[], chained: readonly string[], listed: readonly ListedRow[] | undefined, homes: readonly HomeAgent[] = []): { agents: LiveAgent[]; disagree?: number } {
   if (listed === undefined) return { agents: [...deck] }
   const byTty = new Map(listed.map(row => [ttyName(row.tty), row]))
   const shown = (agent: LiveAgent): ListedRow | undefined => (agent.tty !== null ? byTty.get(ttyName(agent.tty)) : undefined) ?? listed.find(row => row.name === agent.name)
   const agents = deck.map(agent => ({ ...agent, tty: agent.tty ?? shown(agent)?.tty ?? null }))
-  const disagree = deck.filter(agent => shown(agent) === undefined).length
+  // A deck agent that runs in a home server `list` does not show is not a lost one.
+  const disagree = deck.filter(agent => shown(agent) === undefined && !homes.some(found => isAgent(agent.name, found.agent))).length
   for (const tty of chained) {
     const row = byTty.get(ttyName(tty))
     if (row === undefined || agents.some(agent => agent.name === row.name || (agent.tty !== null && ttyName(agent.tty) === ttyName(row.tty)))) continue
     agents.push({ name: row.name, tty: row.tty })
   }
   return { agents, disagree }
+}
+
+/** One pane of a home server: the server's socket name, its window, the tty and the window's name. */
+export interface HomePane {
+  readonly server: string
+  readonly window: number
+  readonly tty: string
+  readonly name: string
+  /** The pane's title, which the host rewrites: the name when the window's own is no agent's. */
+  readonly title?: string
+}
+
+/** The prefix of a home server's socket (`iterm_agent.py`'s HOME_SOCKET_PREFIX): the process table of tmux's own directory, not the launcher's `list`, shows every one. */
+const HOME_SOCKET_PREFIX = 'orch-'
+
+/**
+ * Every pane of every live home server of the machine, read from tmux's socket directory: the
+ * predecessor's home server holds its agents as windows, and the launcher's `list` shows no window
+ * of a server this session is not in. A server that does not answer is skipped; undefined when the
+ * directory cannot be read at all.
+ */
+export function homePanes(env: Env, uid: number = process.getuid?.() ?? 0, said: (line: string) => void = () => {}): HomePane[] | undefined {
+  let sockets: string[]
+  try {
+    sockets = readdirSync(join(setting(env, 'TMUX_TMPDIR') ?? '/tmp', `tmux-${uid}`)).filter(name => name.startsWith(HOME_SOCKET_PREFIX)).sort()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') said(`succession: the tmux socket directory cannot be read: ${(error as Error).message}`)
+    return undefined
+  }
+  const tmux = setting(env, 'ORCHESTRATOR_TMUX') ?? 'tmux'
+  return sockets.flatMap(server => {
+    try {
+      const out = execFileSync(tmux, ['-u', '-L', server, 'list-panes', '-a', '-F', '#{window_index}\t#{pane_tty}\t#{window_name}\t#{pane_title}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, env: { ...process.env, ...env } })
+      return out.split('\n').flatMap(line => {
+        const [window = '', tty = '', name = '', title = ''] = line.split('\t')
+        return /^[0-9]+$/.test(window) && tty !== '' ? [{ server, window: Number(window), tty, name, title }] : []
+      })
+    } catch (error) {
+      said(`succession: home server ${server} not read, its agents are missing from the list: ${(error as Error).message.split('\n')[0] ?? ''}`)
+      return []
+    }
+  })
+}
+
+/** A pane of a home server that runs an agent the record's rows name, with the name the row gives it. */
+export interface HomeAgent {
+  readonly agent: string
+  readonly pane: HomePane
+}
+
+/** The panes that run an agent a row names (by the window's name, else the pane's title); window 0 is the orchestrator's, never an agent's. */
+export function homeAgentsOf(homes: readonly HomePane[], named: readonly string[]): HomeAgent[] {
+  return homes.flatMap(pane => {
+    if (pane.window === 0) return []
+    const agent = named.find(one => isAgent(one, pane.name) || isAgent(one, pane.title ?? ''))
+    return agent === undefined ? [] : [{ agent, pane }]
+  })
+}
+
+/**
+ * Those agents added to the ones the deck and the launcher's `list` gave, each with where it is; an
+ * agent they already hold, by its name, has its place filled in.
+ */
+export function withHomeAgents(agents: readonly LiveAgent[], found: readonly HomeAgent[]): LiveAgent[] {
+  const result = agents.map(agent => ({ ...agent }))
+  for (const { agent, pane } of found) {
+    const where = `${pane.server}:${pane.window}`
+    const held = result.findIndex(one => isAgent(agent, one.name))
+    if (held === -1) result.push({ name: agent, tty: pane.tty, where })
+    else result[held] = { ...(result[held] as LiveAgent), tty: result[held]?.tty ?? pane.tty, where }
+  }
+  return result
 }
 
 /**
@@ -269,9 +347,9 @@ export function briefOf(state: string, name: string): string | undefined {
   return file === undefined ? undefined : briefOfLaunch(readText(join(dir, file)) ?? '')
 }
 
-/** An agent as the Live state prints it: its name, then its tty and brief where known. */
+/** An agent as the Live state prints it: its name, then its tty, its place in a home server and its brief where known. */
 export function agentLine(agent: LiveAgent): string {
-  const facts = [agent.tty === null ? '' : ttyName(agent.tty), agent.brief === undefined ? '' : `brief ${agent.brief}`].filter(part => part !== '')
+  const facts = [agent.tty === null ? '' : ttyName(agent.tty), agent.where ?? '', agent.brief === undefined ? '' : `brief ${agent.brief}`].filter(part => part !== '')
   const named = facts.length === 0 ? agent.name : `${agent.name} (${facts.join(', ')})`
   return agent.ready === undefined ? named : `${named} — ${agent.ready}`
 }
@@ -603,6 +681,7 @@ function todoHolders(todoText: string): Holder[] {
 export function readOpen(
   request: Request, env: Env, openPrs: OpenPrReader = () => undefined, listed?: readonly ListedRow[],
   prState?: (repo: string, pr: number) => string | undefined, readyHead: (repo: string, pr: number) => string | undefined = () => undefined,
+  homes: readonly HomePane[] = [],
 ): OpenState {
   const state = stateRoot(env)
   const recordText = readText(request.record) ?? ''
@@ -615,10 +694,14 @@ export function readOpen(
   const own = listed?.find(row => row.self)?.tty
   const chained = [request.tty, own].filter((tty): tty is string => tty !== undefined && tty !== 'none')
     .flatMap(tty => parseChain(readText(chainPath(state, tty))).map(entry => entry.tty))
-  const live = liveAgents(deck.agents, chained, listed)
-  const seats = live.agents.map(agent => {
+  const rows = parseRecord(recordText)
+  // The agents the record's rows name run wherever their launch put them: a window of the predecessor's home server is as live as a tab.
+  const named = rows.flatMap(row => (typeof row['agent'] === 'string' && row['agent'] !== '' ? [row['agent']] : []))
+  const inHomes = homeAgentsOf(homes, named)
+  const live = liveAgents(deck.agents, chained, listed, inHomes)
+  const seats = withHomeAgents(live.agents, inHomes).map(agent => {
     // Named only for an agent the launcher's listing shows running, as the module's wake does: one it does not show, or no listing, closes nothing.
-    const shown = listed?.some(one => one.name === agent.name || (agent.tty !== null && ttyName(one.tty) === ttyName(agent.tty))) === true
+    const shown = agent.where !== undefined || listed?.some(one => one.name === agent.name || (agent.tty !== null && ttyName(one.tty) === ttyName(agent.tty))) === true
     const ready = shown ? readyNote(agent.name, ledger, (repo, pr) => ['MERGED', 'CLOSED'].includes(prState?.(repo, pr) ?? ''), readyHead) : undefined
     const said = ready === undefined ? agent : { ...agent, ready }
     const brief = briefOf(state, agent.name)
@@ -629,7 +712,7 @@ export function readOpen(
   const round = join(state, ROUND_DIR)
   const names = existsSync(round) ? readdirSync(round).filter(name => name.endsWith('.json')).sort() : []
   const entries = names.map(name => readText(join(round, name)))
-  const found = linkRows(openRows(parseRecord(recordText), [...roundHolders(entries), ...todoHolders(readText(todoPath(state, request.name)) ?? '')]), ledger, [deck.repo, projectOf(request.worktree, request.record)], openPrs, prState)
+  const found = linkRows(openRows(rows, [...roundHolders(entries), ...todoHolders(readText(todoPath(state, request.name)) ?? '')]), ledger, [deck.repo, projectOf(request.worktree, request.record)], openPrs, prState)
   const lines = ledger.map(line => `${prKey(line.repo, line.pr)} ${statusText(line)}`)
   const prs = [...lines, ...found.prs.filter(line => !lines.includes(line)), ...found.unread]
   const settled = roundSettled(
@@ -846,6 +929,8 @@ export interface Deps {
   readonly paneWindow?: (tty: string) => number | undefined
   /** The launcher's `list` rows; undefined when it cannot be read. */
   readonly list?: () => readonly ListedRow[] | undefined
+  /** The panes of every live home server; read from tmux when absent. */
+  readonly homes?: () => readonly HomePane[] | undefined
   readonly journal?: Journal
   /** Whether this session's tab becomes its home session when the takeover's turn ends; read by `movesHome` when absent. */
   readonly movesHome?: boolean
@@ -899,6 +984,53 @@ export function closeVerb(tty: string, paneWindow: (tty: string) => number | und
   return { verb: 'close', where: 'a tab: first wait for its « handed over »; five minutes without it, read its screen with `screen --tty` and close on a prompt with nothing in flight, never while it may still be writing' }
 }
 
+/**
+ * The record's ownership passes to the successor: the owner file names the orchestration this session
+ * is, the name `dispatch-record.sh` compares, whether the predecessor is dead and whether its title
+ * differs. Written in one rename; undefined when the file already names it or the session names none,
+ * else the owner it replaced (empty when it had none). A write that fails is said and the takeover
+ * goes on.
+ */
+export function takeOwnership(record: string, successor: string, io: Io): string | undefined {
+  if (successor === '') return undefined
+  const file = ownerFileOf(record)
+  try {
+    const before = orchForm((readText(file) ?? '').split('\n')[0] ?? '')
+    if (before === successor) return undefined
+    writeAtomic(file, `${successor}\n`, 0o644)
+    return before
+  } catch (error) {
+    io.err(`succession: ${file} could not pass to ${successor}: ${(error as Error).message}\n`)
+    return undefined
+  }
+}
+
+/**
+ * The operator's open to-do items follow the record to its new owner: a list is keyed by its holder's
+ * title (`todo/<title>.jsonl`), and the next takeover reads the successor's. The previous holder's
+ * list moves when the successor has none, else its open items are appended to the successor's,
+ * numbered after its highest id, and the old file goes. Nothing moves for a previous holder with no
+ * title, the same title once its reference is off, or no open item. Answers the line to say.
+ */
+export function carryTodos(state: string, before: string, successor: string): string | undefined {
+  if (before === '' || successor === '' || holderOf(before) === holderOf(successor)) return undefined
+  const from = todoPath(state, before)
+  const to = todoPath(state, successor)
+  const open = openTodos(todoItems(readText(from) ?? ''))
+  if (open.length === 0) return undefined
+  if (todoItems(readText(to) ?? '').length === 0) {
+    renameSync(from, to)
+    return `takeover: to-do list of ${before} moved to ${successor} (${open.length} open)`
+  }
+  update(to, current => {
+    const kept = current ?? ''
+    const next = todoItems(kept).reduce((highest, item) => Math.max(highest, item.id), 0)
+    return `${kept}${kept === '' || kept.endsWith('\n') ? '' : '\n'}${open.map((item, k) => `${JSON.stringify({ ...item, id: next + 1 + k })}\n`).join('')}`
+  })
+  rmSync(from, { force: true })
+  return `takeover: ${open.length} open to-do of ${before} appended to the list of ${successor}, numbered after its own`
+}
+
 export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { cwd: process.cwd(), now: () => new Date() }): number {
   const parsed = parseArgs(argv, deps.cwd)
   if ('error' in parsed) {
@@ -932,7 +1064,7 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const launcher = join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh')
   const prs = filePrs(env, now.getTime())
   const prState = deps.prState ?? prs.state
-  const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))(), prState, deps.readyHead ?? prs.ready)
+  const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))(), prState, deps.readyHead ?? prs.ready, (deps.homes ?? (() => homePanes(env, undefined, line => io.err(`${line}\n`))))() ?? [])
   if ((open.disagree ?? 0) > 0) {
     const journal = deps.journal ?? scriptJournal(env, deps.now, line => io.err(`${line}\n`))
     writeAudit(journal, auditRun(env, now), 'failure', 'orchestrator.succession.agents', { failure: 'succession-lost-state', count: open.disagree ?? 0, prs: [] })
@@ -971,6 +1103,18 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     LIVE_TODO: list(stray),
     PROJECT_SHEET: projectSheet(readText(goalsFileOf(parsed.record)), installedLine()),
   })
+  // The text is made: only now does the record pass, so a takeover that failed above leaves the owner where it was.
+  const successor = sessionOrchestration(env)
+  const replaced = takeOwnership(parsed.record, successor, io)
+  if (replaced !== undefined) {
+    io.err(`takeover: ${ownerFileOf(parsed.record)} passed from ${replaced === '' ? 'no owner' : replaced} to ${successor}\n`)
+    try {
+      const carried = carryTodos(stateRoot(env), replaced, successor)
+      if (carried !== undefined) io.err(`${carried}\n`)
+    } catch (error) {
+      io.err(`succession: the to-do list of ${replaced} could not follow the record: ${(error as Error).message}\n`)
+    }
+  }
   io.out(text.endsWith('\n') ? text : `${text}\n`)
   io.err(`takeover: chars=${text.length} rows=${open.rows.length} ready=${owners.filter(o => o.endsWith(' READY NOT STARTED')).length} prs=${open.prs.length} agents=${open.agents.length}${open.disagree === undefined ? '' : ` agents_disagree=${open.disagree}`} questions=${open.questions.length} todo_stray=${stray.length} pruned=round:${round}\n`)
   return 0

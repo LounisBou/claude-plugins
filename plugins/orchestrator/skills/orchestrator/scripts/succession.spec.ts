@@ -1,10 +1,11 @@
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, readyNote, roundOpen, roundSettled, rowLines, rowOfBrief, TEMPLATE, todoStray, toApply, type Artifacts, type ListedRow } from './succession.ts'
+import { main as recordMain } from './dispatch-record.ts'
+import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, carryTodos, fill, homePanes, homeAgentsOf, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, readyNote, roundOpen, roundSettled, rowLines, rowOfBrief, takeOwnership, TEMPLATE, todoStray, toApply, withHomeAgents, type Artifacts, type HomePane, type ListedRow, type LiveAgent } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -37,7 +38,7 @@ function deckOf(orchestrators: object[]): object {
 }
 
 /** A machine whose state holds open what an orchestration in flight holds, and no succession brief anywhere. */
-function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string>; windows?: Record<string, number>; listed?: ListedRow[]; movesHome?: boolean; readyHead?: (repo: string, pr: number) => string | undefined } = {}) {
+function world(over: { rows?: string; deck?: object; round?: object[]; todo?: string; goals?: string | null; prs?: Record<string, string>; windows?: Record<string, number>; listed?: ListedRow[]; homes?: HomePane[]; movesHome?: boolean; readyHead?: (repo: string, pr: number) => string | undefined } = {}) {
   const journaled: unknown[] = []
   const state = join(dir, 'state')
   const briefs = join(dir, 'briefs', 'belt')
@@ -72,7 +73,7 @@ function world(over: { rows?: string; deck?: object; round?: object[]; todo?: st
   const err: string[] = []
   const io = { out: (t: string) => { out.push(t) }, err: (t: string) => { err.push(t) } }
   const prs = over.prs ?? { 'acme/app#12': 'MERGED' }
-  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`], paneWindow: tty => over.windows?.[tty], list: () => over.listed, ...(over.readyHead === undefined ? {} : { readyHead: over.readyHead }), journal: event => { journaled.push(event) }, movesHome: over.movesHome ?? false })
+  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`], paneWindow: tty => over.windows?.[tty], list: () => over.listed, homes: () => over.homes ?? [], ...(over.readyHead === undefined ? {} : { readyHead: over.readyHead }), journal: event => { journaled.push(event) }, movesHome: over.movesHome ?? false })
   return { state, briefs, record, out, err, run, journaled, text: () => out.join('') }
 }
 
@@ -253,7 +254,7 @@ test('the name is the record\'s owner unless given; a record without one, or non
   assert.equal(w.run(), 2)
   assert.match(w.err.at(-1) ?? '', /names no orchestration: pass --name/)
   assert.equal(w.run('--name', NAME), 0)
-  assert.equal(main(['takeover', join(dir, 'none.jsonl'), '--mode', 'build'], {}, { out: () => {}, err: t => { w.err.push(t) } }, { cwd: dir, list: () => undefined, now: () => NOW }), 2)
+  assert.equal(main(['takeover', join(dir, 'none.jsonl'), '--mode', 'build'], {}, { out: () => {}, err: t => { w.err.push(t) } }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW }), 2)
   assert.match(w.err.at(-1) ?? '', /no dispatch record at/)
 })
 
@@ -269,7 +270,7 @@ test('the command line: takeover, a record and the mode, flags checked', () => {
   assert.match((parseArgs(['takeover', 'r', '--mode'], '/w') as { error: string }).error, /--mode needs a value/)
   assert.match((parseArgs(['takeover', 'r', '--next', 'x'], '/w') as { error: string }).error, /unknown argument: --next/)
   const w = world()
-  assert.equal(main(['takeover', w.record], {}, { out: () => {}, err: t => { w.err.push(t) } }, { cwd: dir, list: () => undefined, now: () => NOW }), 2)
+  assert.equal(main(['takeover', w.record], {}, { out: () => {}, err: t => { w.err.push(t) } }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW }), 2)
 })
 
 test('a blocker is checked on its artifact: a row closed, a pull request merged, the release installed; what cannot be read says so', () => {
@@ -744,14 +745,14 @@ test('a takeover in a worktree names its project by origin, prints the not-insta
   const w = world({ rows: JSON.stringify({ id: 1, label: 'SHIP: it', state: 'open', blocker: 'release installed' }) + '\n', todo: '' })
   const out: string[] = []
   const env = { ...i.env, ORCHESTRATOR_STATE_DIR: w.state }
-  assert.equal(main(['takeover', w.record, '--mode', 'build', '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => new Date(i.merged.getTime() + 3_600_000), prState: () => undefined }), 0)
+  assert.equal(main(['takeover', w.record, '--mode', 'build', '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => new Date(i.merged.getTime() + 3_600_000), prState: () => undefined }), 0)
   assert.ok(out.join('').startsWith('# Orchestrator succession brief — acme/belt\n'))
   assert.match(out.join(''), /- Row owners: it \(1\): blocked: release installed\n/)
   assert.match(out.join(''), /; installed: 1 merged PRs not installed, oldest 1 h\n/)
   const tip = execFileSync('git', ['-C', i.repo, 'rev-parse', 'origin/main'], { encoding: 'utf8' }).trim()
   writeFileSync(join(i.env['CLAUDE_CONFIG_DIR'] ?? '', 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'orchestrator@acme': [{ gitCommitSha: tip }] } }))
   out.length = 0
-  assert.equal(main(['takeover', w.record, '--mode', 'build', '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: () => undefined }), 0)
+  assert.equal(main(['takeover', w.record, '--mode', 'build', '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined }), 0)
   assert.match(out.join(''), /- Row owners: it \(1\): READY NOT STARTED\n/)
 })
 
@@ -760,7 +761,7 @@ test('a takeover that finds its pull requests missing from the machine\'s file s
   const w = world({ rows, deck: deckOf([orchestrator(NAME, 'acme/flow')]), round: [], todo: '' })
   const out: string[] = []
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW }), 0)
+  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW }), 0)
   assert.match(out.join(''), /acme\/flow open pull requests unread/)
   assert.ok(!existsSync(join(w.state, 'prs.wanted')))
 })
@@ -788,7 +789,7 @@ function flowWorld() {
   const takeover = (openPrs?: (repo: string) => { repo: string; pr: number; head: string }[] | undefined) => {
     w.out.length = 0
     const code = main(['takeover', w.record, '--mode', 'build'], env, { out: t => { w.out.push(t) }, err: t => { w.err.push(t) } }, {
-      cwd: dir, list: () => undefined, now: () => NOW, prState: () => undefined, openPrs: openPrs ?? (repo => { asked.push(repo); return forge[repo] ?? [] }),
+      cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: openPrs ?? (repo => { asked.push(repo); return forge[repo] ?? [] }),
     })
     return { code, text: w.text() }
   }
@@ -813,7 +814,7 @@ test('an owner file that names no orchestration falls back to the session\'s own
   writeFileSync(`${f.record}.owner`, 'a hand-written note\n')
   assert.ok(f.takeover().text.includes('of `Orch: flow`.'))
   f.w.out.length = 0
-  assert.equal(main(['takeover', f.record, '--mode', 'build', '--name', 'Orch: other'], f.env, { out: t => { f.w.out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: () => undefined, openPrs: () => [] }), 0)
+  assert.equal(main(['takeover', f.record, '--mode', 'build', '--name', 'Orch: other'], f.env, { out: t => { f.w.out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: () => [] }), 0)
   assert.ok(f.w.text().includes('of `Orch: other`.') && !f.w.text().includes('of `Orch: flow`.'))
 })
 
@@ -837,7 +838,7 @@ test('a short repository name two known repositories share names no pull request
   }
   const out: string[] = []
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: () => undefined, openPrs: repo => forge[repo] }), 0)
+  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: repo => forge[repo] }), 0)
   assert.match(out.join(''), /- Row owners: AMBIG flow#5 two flows \(1\): NO OWNER; recorded abbreviated \(2\): acme\/flow#7 open, no agent; recorded longer than the forge \(3\): acme\/flow#9 open, no agent; too short to tell \(4\): NO OWNER; named there \(5\): acme\/flow#6 open, no agent; api has it \(6\): agent\n/)
 })
 
@@ -853,7 +854,7 @@ test('a row\'s pull request named in its label by a short or a full repository, 
   const out: string[] = []
   const forge = (repo: string) => (repo === 'acme/flow' ? [{ repo, pr: 30, head: 'a'.repeat(40) }] : undefined)
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: () => undefined, openPrs: forge }), 0)
+  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: forge }), 0)
   const text = out.join('')
   assert.match(text, /- Row owners: FIX flow#30 tokens \(1\): acme\/flow#30 en cours \(agent Agent: tokens\); LATER acme\/site#7 footer \(2\): NO OWNER; NOTE other#9 not a known repository \(3\): NO OWNER\n/)
   assert.match(text, /- Pull requests open \(number, head, where each stands\): acme\/flow#30 en cours \(agent Agent: tokens\); acme\/site open pull requests unread\n/)
@@ -869,11 +870,11 @@ test('a blocker still standing keeps its word over an open pull request the row 
   const w = world({ rows, deck, round: [], todo: '', prs: { 'acme/flow#30': 'OPEN' } })
   const out: string[] = []
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: (_repo, pr) => (pr === 31 ? 'MERGED' : 'OPEN'), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
+  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: (_repo, pr) => (pr === 31 ? 'MERGED' : 'OPEN'), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
   assert.match(out.join(''), /- Row owners: after flow#30 \(1\): blocked: PR acme\/flow#30 merged; FIX acme\/flow#31 merged since \(2\): NO OWNER\n/)
   // Opened since the file's last reading: absent from its open list, its ledger line still owns the row.
   out.length = 0
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, now: () => NOW, prState: (_repo, pr) => (pr === 30 ? 'OPEN' : undefined), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
+  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: (_repo, pr) => (pr === 30 ? 'OPEN' : undefined), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
   assert.match(out.join(''), /- Row owners: after flow#30 \(1\): blocked: PR acme\/flow#30 merged; FIX acme\/flow#31 merged since \(2\): acme\/flow#31 en cours \(agent Agent: gone\)\n/)
 })
 
@@ -1016,3 +1017,185 @@ test('a Ready note names the agent put on the pull request before as well as the
   assert.equal(readyNote('Agent: review 17 r1', [line], () => false, ready), 'Ready (acme/app#17): the module closes it once done')
   assert.equal(readyNote('Agent: other', [line], () => false, ready), undefined)
 })
+
+// ----- the predecessor's agents in its home server, and the record's ownership (orphans, to-do 78) -----
+
+const HOME_ROWS = [
+  JSON.stringify({ id: 1, label: 'M1A: memory', state: 'open', agent: 'Agent: m1a memory', blocker: 'none' }),
+  JSON.stringify({ id: 2, label: 'M1B: secrets', state: 'open', agent: 'Agent: m1b secrets', blocker: 'none' }),
+].join('\n') + '\n'
+
+const homePane = (window: number, name: string, tty: string, server = 'orch-451b538b'): HomePane => ({ server, window, tty, name })
+
+test('an agent that runs in a window of the predecessor\'s home server is listed with where it is, and its row is not without a live agent', () => {
+  const homes = [homePane(0, 'Orch: refonte firmware', '/dev/ttys010'), homePane(0, 'Agent: m1a memory', '/dev/ttys099', 'orch-other'), homePane(1, 'Agent: m1a memory', '/dev/ttys011'), homePane(2, 'Agent: m1b secrets', '/dev/ttys012'), homePane(3, 'Agent: not of this record', '/dev/ttys013'), homePane(1, 'Agent: elsewhere', '/dev/ttys020', 'orch-other')]
+  const w = world({ rows: HOME_ROWS, deck: deckOf([orchestrator(NAME, null)]), round: [], todo: '', listed: [], homes })
+  assert.equal(w.run(), 0)
+  assert.match(w.text(), /- Agents running \(name and reference, brief path\): Agent: m1a memory \(ttys011, orch-451b538b:1\); Agent: m1b secrets \(ttys012, orch-451b538b:2\)\n/)
+  assert.match(w.text(), /- Row owners: memory \(1\): m1a memory; secrets \(2\): m1b secrets\n/)
+  assert.ok(!w.text().includes('not of this record'))
+  assert.match(w.err.join(''), /agents=2 /)
+  // With no home server read, the same record has no live agent: the rows say so.
+  const none = world({ rows: HOME_ROWS, deck: deckOf([orchestrator(NAME, null)]), round: [], todo: '', listed: [] })
+  assert.equal(none.run(), 0)
+  assert.match(none.text(), /- Row owners: memory \(1\): DISPATCHED, NO LIVE AGENT; secrets \(2\): DISPATCHED, NO LIVE AGENT\n/)
+})
+
+test('an agent the deck or the listing already holds gets its place in the home server, matched by its name; a deck agent running there is no lost one', () => {
+  const held: LiveAgent[] = [{ name: 'Agent: m1a memory', tty: null }, { name: 'Agent: tab', tty: '/dev/ttys030' }]
+  const homes = [homePane(1, 'Agent: m1a memory', '/dev/ttys011'), homePane(2, 'Agent: other', '/dev/ttys030')]
+  assert.deepEqual(withHomeAgents(held, homeAgentsOf(homes, ['Agent: m1a memory'])), [{ name: 'Agent: m1a memory', tty: '/dev/ttys011', where: 'orch-451b538b:1' }, { name: 'Agent: tab', tty: '/dev/ttys030' }])
+  // A pane on the tty of another agent is no place of that agent: only the name says whose it is.
+  assert.deepEqual(withHomeAgents(held, homeAgentsOf(homes, ['Agent: other'])), [...held, { name: 'Agent: other', tty: '/dev/ttys030', where: 'orch-451b538b:2' }])
+  // The pane's title names the agent when the window's name is the program's; window 0 is never one.
+  assert.deepEqual(withHomeAgents([], homeAgentsOf([{ ...homePane(4, '2.1.5', '/dev/ttys040'), title: 'Agent: titled' }, homePane(0, 'Agent: titled', '/dev/ttys041')], ['Agent: titled'])), [{ name: 'Agent: titled', tty: '/dev/ttys040', where: 'orch-451b538b:4' }])
+  // `disagree` and the merge read the same agents.
+  assert.equal(liveAgents([{ name: 'Agent: m1a memory', tty: null }], [], [], homeAgentsOf(homes, ['Agent: m1a memory'])).disagree, 0)
+  assert.equal(liveAgents([{ name: 'Agent: m1a memory', tty: null }], [], [], homeAgentsOf(homes, [])).disagree, 1)
+  assert.equal(liveAgents([{ name: 'Agent: m1a memory', tty: null }], [], []).disagree, 1)
+  assert.equal(agentLine({ name: 'Agent: a', tty: '/dev/ttys011', where: 'orch-1:2' }), 'Agent: a (ttys011, orch-1:2)')
+})
+
+test('the home servers are read from tmux\'s socket directory, one list-panes call each; a server that does not answer is skipped', () => {
+  const tmpdir = join(dir, 'tmux-tmp')
+  const sockets = join(tmpdir, 'tmux-501')
+  mkdirSync(sockets, { recursive: true })
+  for (const name of ['orch-aaaa1111', 'orch-dead0000', 'default']) writeFileSync(join(sockets, name), '')
+  const fake = join(dir, 'tmux')
+  writeFileSync(fake, [
+    '#!/bin/bash',
+    'if [ "$1" != "-u" ]; then echo "tmux asked without -u" >&2; exit 2; fi',
+    'if [ "$3" = "orch-dead0000" ]; then echo "no server" >&2; exit 1; fi',
+    'printf \'0\\t/dev/ttys001\\tOrch: x\\tOrch: x\\n1\\t/dev/ttys002\\tAgent: a\\t* Agent: a\\nbroken line\\n\'',
+    '',
+  ].join('\n'))
+  chmodSync(fake, 0o755)
+  const env = { TMUX_TMPDIR: tmpdir, ORCHESTRATOR_TMUX: fake }
+  const said: string[] = []
+  assert.deepEqual(homePanes(env, 501, line => said.push(line)), [
+    { server: 'orch-aaaa1111', window: 0, tty: '/dev/ttys001', name: 'Orch: x', title: 'Orch: x' },
+    { server: 'orch-aaaa1111', window: 1, tty: '/dev/ttys002', name: 'Agent: a', title: '* Agent: a' },
+  ])
+  // The server that did not answer is said, so a missing agent has its reason.
+  assert.equal(said.length, 1)
+  assert.match(said[0] ?? '', /home server orch-dead0000 not read/)
+  // No tmux directory is no home server and nothing to say; one that cannot be read is said.
+  assert.equal(homePanes({ TMUX_TMPDIR: join(dir, 'absent') }, 501, line => said.push(line)), undefined)
+  assert.equal(said.length, 1)
+  mkdirSync(join(dir, 'odd'), { recursive: true })
+  writeFileSync(join(dir, 'odd', 'tmux-501'), '')
+  assert.equal(homePanes({ TMUX_TMPDIR: join(dir, 'odd') }, 501, line => said.push(line)), undefined)
+  assert.match(said[1] ?? '', /socket directory cannot be read/)
+})
+
+test('the record passes to the successor at the takeover, its title being other than the predecessor\'s, whatever `--name` says; dispatch-record then accepts it', async () => {
+  const w = world({ rows: HOME_ROWS, round: [], todo: '' })
+  writeFileSync(`${w.record}.owner`, 'Orch: refonte firmware\n')
+  const config = join(dir, 'config')
+  mkdirSync(join(config, 'sessions'), { recursive: true })
+  writeFileSync(join(config, 'sessions', '9.json'), '{"sessionId":"s-new","name":"Orch: refacto firmware [ab12cd]","updatedAt":5}')
+  const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_SESSION_ID: 's-new' }
+  const answer = async (...argv: string[]): Promise<{ code: number; err: string }> => {
+    const err: string[] = []
+    const code = await recordMain(argv, { io: { out: () => {}, err: t => { err.push(t) } }, env, run: async () => ({ status: 0, stdout: '', stderr: '' }), passThrough: async () => 0, now: () => NOW, goals: ['node', '/p/goals.ts'], routingPy: '/p/routing.py' })
+    return { code, err: err.join('') }
+  }
+  // Before the takeover the successor is refused: the owner file names the predecessor.
+  const before = await answer('agent', w.record, '1', 'Agent: m1a memory')
+  assert.equal(before.code, 1)
+  assert.match(before.err, /belongs to Orch: refonte firmware, and this session is Orch: refacto firmware/)
+  const errs: string[] = []
+  assert.equal(main(['takeover', w.record, '--mode', 'build', '--name', 'Orch: refonte firmware'], env, { out: () => {}, err: t => { errs.push(t) } }, { cwd: dir, list: () => [], homes: () => [], now: () => NOW, prState: () => undefined }), 0)
+  assert.equal(readFileSync(`${w.record}.owner`, 'utf8'), 'Orch: refacto firmware\n')
+  assert.match(errs.join(''), /passed from Orch: refonte firmware to Orch: refacto firmware/)
+  assert.deepEqual(await answer('agent', w.record, '1', 'Agent: m1a memory'), { code: 0, err: '' })
+  // A second takeover by the same session changes nothing and says nothing of it.
+  errs.length = 0
+  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: () => {}, err: t => { errs.push(t) } }, { cwd: dir, list: () => [], homes: () => [], now: () => NOW, prState: () => undefined }), 0)
+  assert.ok(!errs.join('').includes('passed from'))
+})
+
+test('the ownership is written for a name that differs, left alone for the same name or none, and a write that fails is said', () => {
+  const w = world({ rows: HOME_ROWS, round: [], todo: '' })
+  const quiet: { err: string[] } = { err: [] }
+  const io = { out: () => {}, err: (t: string) => { quiet.err.push(t) } }
+  assert.equal(takeOwnership(w.record, '', io), undefined)
+  assert.equal(readFileSync(`${w.record}.owner`, 'utf8'), `${NAME}\n`)
+  assert.equal(takeOwnership(w.record, NAME, io), undefined)
+  assert.equal(takeOwnership(w.record, 'Orch: next', io), NAME)
+  assert.equal(readFileSync(`${w.record}.owner`, 'utf8'), 'Orch: next\n')
+  rmSync(`${w.record}.owner`)
+  assert.equal(takeOwnership(w.record, 'Orch: next', io), '')
+  // A record whose directory cannot be written says so, and the takeover goes on.
+  writeFileSync(join(dir, 'file'), '')
+  assert.equal(takeOwnership(join(dir, 'file', 'r.jsonl'), 'Orch: next', io), undefined)
+  assert.equal(quiet.err.filter(line => line.includes('could not pass to Orch: next')).length, 1)
+})
+
+test('a home-server agent whose pull request is Ready is told as the module does', () => {
+  const rows = [JSON.stringify({ id: 1, label: 'M1A: memory', state: 'open', agent: 'Agent: m1a memory', blocker: 'none' }), ledger('acme/app', 12, 'Agent: m1a memory')].join('\n') + '\n'
+  const w = world({ rows, deck: deckOf([orchestrator(NAME, null)]), round: [], todo: '', listed: [], homes: [homePane(1, 'Agent: m1a memory', '/dev/ttys011')], prs: {}, readyHead: (repo, pr) => (`${repo}#${pr}` === 'acme/app#12' ? 'a'.repeat(40) : undefined) })
+  assert.equal(w.run(), 0)
+  assert.match(w.text(), /- Agents running \(name and reference, brief path\): Agent: m1a memory \(ttys011, orch-451b538b:1\) — Ready \(acme\/app#12\): the module closes it once done\n/)
+})
+
+test('the record is left as it was when the session names no orchestration, whatever name the command gave', () => {
+  const w = world({ rows: HOME_ROWS, round: [], todo: '' })
+  assert.equal(w.run('--name', 'Orch: given'), 0)
+  assert.equal(readFileSync(`${w.record}.owner`, 'utf8'), `${NAME}\n`)
+  assert.ok(!w.err.join('').includes('passed from'))
+})
+
+/** A takeover by a session titled `Orch: refacto firmware` of a record owned by `Orch: belt` (the world's), the successor's own list as given. */
+function successorWorld(own?: string) {
+  const w = world()
+  const config = join(dir, 'config')
+  mkdirSync(join(config, 'sessions'), { recursive: true })
+  writeFileSync(join(config, 'sessions', '9.json'), '{"sessionId":"s-new","name":"Orch: refacto firmware [ab12cd]","updatedAt":5}')
+  const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: config, CLAUDE_CODE_SESSION_ID: 's-new' }
+  if (own !== undefined) writeFileSync(join(w.state, 'todo', 'Orch: refacto firmware.jsonl'), own)
+  const errs: string[] = []
+  const takeover = (): string => {
+    const out: string[] = []
+    assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: t => { errs.push(t) } }, { cwd: dir, list: () => [], homes: () => [], now: () => NOW, prState: () => undefined }), 0)
+    return out.join('')
+  }
+  return { w, takeover, errs, old: join(w.state, 'todo', `${NAME}.jsonl`), own: join(w.state, 'todo', 'Orch: refacto firmware.jsonl') }
+}
+
+test('the open to-do items follow the record to a successor titled differently: its next takeover lists them still', () => {
+  const f = successorWorld()
+  const stray = 'to-do 2 → row 1 closed; to-do 3 → row 9 missing'
+  assert.ok(f.takeover().includes(stray), 'the first takeover lists them from the old list')
+  assert.equal(readFileSync(`${f.w.record}.owner`, 'utf8'), 'Orch: refacto firmware\n')
+  // The list moved whole: the old one is gone, the successor's holds the same items.
+  assert.equal(existsSync(f.old), false)
+  assert.equal(todoLines(f.own).length, 5)
+  assert.match(f.errs.join(''), /to-do list of Orch: belt moved to Orch: refacto firmware \(4 open\)/)
+  // The takeover after it, which reads the successor's list, still names them.
+  assert.ok(f.takeover().includes(stray), 'the second takeover lists the item')
+})
+
+test('a successor with a list of its own has the previous holder\'s open items appended after its highest id, the closed ones left', () => {
+  const own = `${todo(7, undefined)}\n`.replace('from":"Orch: belt"', 'from":"Orch: refacto firmware"')
+  const f = successorWorld(own)
+  f.takeover()
+  assert.equal(existsSync(f.old), false)
+  const ids = todoLines(f.own).map(line => (JSON.parse(line) as { id: number }).id)
+  assert.deepEqual(ids, [7, 8, 9, 10, 11])
+  assert.match(f.errs.join(''), /4 open to-do of Orch: belt appended to the list of Orch: refacto firmware, numbered after its own/)
+  assert.ok(f.takeover().includes('to-do 9 → row 1 closed; to-do 10 → row 9 missing'))
+})
+
+test('no list moves for the same title, no previous owner, or no open item', () => {
+  const w = world()
+  assert.equal(carryTodos(w.state, NAME, `${NAME} [ab12cd]`), undefined)
+  assert.equal(carryTodos(w.state, '', 'Orch: next'), undefined)
+  assert.equal(existsSync(join(w.state, 'todo', `${NAME}.jsonl`)), true)
+  writeFileSync(join(w.state, 'todo', 'Orch: closed.jsonl'), `${todo(1, undefined, 'closed')}\n`)
+  assert.equal(carryTodos(w.state, 'Orch: closed', 'Orch: next'), undefined)
+  assert.equal(existsSync(join(w.state, 'todo', 'Orch: next.jsonl')), false)
+  assert.equal(carryTodos(w.state, 'Orch: absent', 'Orch: next'), undefined)
+})
+
+const todoLines = (path: string): string[] => readFileSync(path, 'utf8').split('\n').filter(line => line !== '')
