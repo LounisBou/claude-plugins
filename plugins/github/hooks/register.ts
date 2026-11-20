@@ -1285,7 +1285,7 @@ type Reconciler = {
   saidNow: boolean
   // The reasons said of each failing step (a listing, a copy, a post), by step: said once each until the step goes through.
   told: Map<string, Set<string>>
-  // The repositories GitHub refused as archived (read-only): neither listed nor posted to until the module reloads.
+  // The repositories GitHub says are archived (read-only), by its listing's flag or a refused post: neither listed nor posted to until the module reloads.
   archived: Set<string>
   // The host's session id, and the counts the journal last received.
   session: string
@@ -1299,6 +1299,14 @@ type Reconciler = {
 // What GitHub says of a repository that was archived: « Repository was archived so is read-only. ». A text naming
 // only « archived » is no such refusal.
 const ARCHIVED = /\barchived\b.*\bread-only\b/i
+
+// A repository that is archived is read-only for good: what the reconciler held of it (rows, posts waiting, held moves, readings) is dropped.
+function dropArchived(rec: Reconciler, repo: string): void {
+  const prefix = repo.toLowerCase() + '#'
+  rec.archived.add(repo)
+  rec.repos.delete(repo)
+  for (const map of [rec.unpublished, rec.held, rec.flaps, rec.kept, rec.failed, rec.synced]) for (const key of [...map.keys()]) if (key.toLowerCase().startsWith(prefix)) map.delete(key)
+}
 
 // kept: the listing the tools of the sessions were told of, and whether its statuses were imported.
 type Listed = { schedule: Schedule; rows: ListedPr[]; viewer?: string; listedAt?: number; kept?: string }
@@ -1371,7 +1379,7 @@ function shortReason(why: string): string {
 }
 
 // Lists a repository: its rows and its next listing, the rows kept on a failure. Whether it was listed, failed, or found GitHub unreachable.
-async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Promise<'listed' | 'failed' | 'unreachable'> {
+async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Promise<'listed' | 'failed' | 'unreachable' | 'archived'> {
   const before = rec.repos.get(repo)
   let listing: Listing
   try {
@@ -1392,6 +1400,12 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
   }
   rec.told.delete('list ' + repo)
   rec.told.delete('unreachable')
+  if (listing.archived) {
+    // The forge's own flag, read with the listing: no row is kept, no post made, no listing made again.
+    dropArchived(rec, repo)
+    sayOnce($, rec, 'github: the reconciler leaves ' + repo + ' alone: it is archived (read-only), its pull requests are neither read nor posted to', 'archived ' + repo)
+    return 'archived'
+  }
   const changed = JSON.stringify(before?.rows ?? null) !== JSON.stringify(listing.rows)
   const schedule = nextListing(before?.schedule, now, changed, listing.rows, listing.rate)
   // The quota is the account's: once low, no repository is listed and no gate read before its reset.
@@ -1673,8 +1687,8 @@ async function syncForge(
     const failed = await postForge($, repo, row.head, post)
     if (failed && ARCHIVED.test(failed)) {
       // A refusal that will not change: this repository is read-only, nothing more is listed or posted to it.
-      rec.archived.add(repo)
-      sayOnce($, rec, 'github: the reconciler stops on ' + repo + ', which is archived (read-only): ' + failed)
+      dropArchived(rec, repo)
+      sayOnce($, rec, 'github: the reconciler stops on ' + repo + ', which is archived (read-only): ' + failed, 'archived ' + repo)
       return { wrote: sync.records.length > 0 || sync.plan !== undefined || sync.exemption !== undefined, ok: false, imported: false }
     }
     if (failed) {
@@ -1794,7 +1808,7 @@ async function startReconciler($: Mod): Promise<void> {
     // The same session started again (resume, clear, compact) keeps its name, and with it the lease it holds.
     me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(), synced: new Map(), flaps: reconciler?.flaps ?? new Map(),
     unpublished: new Map(), held: new Map(),
-    edgeSeen: 0, said: new Set(), saidNow: false, told: new Map(), archived: reconciler?.archived ?? new Set(), quotaUntil: 0, session,
+    edgeSeen: 0, said: reconciler?.said ?? new Set(), saidNow: false, told: reconciler?.told ?? new Map(), archived: reconciler?.archived ?? new Set(), quotaUntil: 0, session,
     journaled: { since: '', ticks: 0, listings: 0, gates: 0, moves: 0 }, journaledAt: 0,
     counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0, posts: 0 },
   }

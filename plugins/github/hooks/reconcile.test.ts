@@ -21,6 +21,12 @@ test('the listing keeps each open pull request with a head, and the quota left w
   expect(() => parseListing('[]')).toThrow('no rows')
 })
 
+test('the listing says the repository is archived only when the forge says so', () => {
+  expect(parseListing(JSON.stringify({ rows: [], archived: true }))).toEqual({ rows: [], archived: true, rate: {} })
+  expect(parseListing(JSON.stringify({ rows: [], archived: false }))).toEqual({ rows: [], rate: {} })
+  expect(parseListing(JSON.stringify({ rows: [], archived: 'true' }))).toEqual({ rows: [], rate: {} })
+})
+
 test('the listing keeps each pull request\'s mergeability and merge state, when it lists them', () => {
   const listing = parseListing(JSON.stringify({
     rows: [{ number: 7, draft: false, head: HEAD, base: 'main', labels: [], rollup: null, mergeable: 'CONFLICTING', mergeState: 'DIRTY' }, { number: 8, draft: false, head: HEAD, base: 'main', labels: [], rollup: null }],

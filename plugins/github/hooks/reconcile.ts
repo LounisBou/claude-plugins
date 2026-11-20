@@ -53,8 +53,8 @@ export type ListedPr = {
 }
 /** What the quota had left after the listing, and when it resets (ms), when GitHub said. */
 export type Rate = { remaining?: number; resetAt?: number }
-/** The rows, the account that listed them (whose statuses the reconciler trusts) when it said, and the quota. */
-export type Listing = { rows: ListedPr[]; viewer?: string; rate: Rate }
+/** The rows, the account that listed them (whose statuses the reconciler trusts) when it said, whether the forge says the repository is archived (read-only), and the quota. */
+export type Listing = { rows: ListedPr[]; viewer?: string; archived?: true; rate: Rate }
 
 // A status as the listing gives it, or undefined.
 function statusOf(raw: unknown): ForgeStatus | undefined {
@@ -92,7 +92,7 @@ export function parseListing(text: string): Listing {
   const remaining = rate['remaining']
   const resetAt = isText(rate['resetAt']) ? Date.parse(rate['resetAt']) : NaN
   const viewer = isText(raw['viewer']) ? { viewer: raw['viewer'] } : {}
-  return { rows, ...viewer, rate: { ...(typeof remaining === 'number' ? { remaining } : {}), ...(Number.isFinite(resetAt) ? { resetAt } : {}) } }
+  return { rows, ...viewer, ...(raw['archived'] === true ? { archived: true as const } : {}), rate: { ...(typeof remaining === 'number' ? { remaining } : {}), ...(Number.isFinite(resetAt) ? { resetAt } : {}) } }
 }
 
 /**

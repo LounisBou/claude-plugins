@@ -3272,6 +3272,24 @@ import json, sys
 a = json.load(sys.stdin)
 print("|".join([a["viewer"]] + ["%d %s" % (r["number"], json.dumps([[s["context"], s["state"], s["description"], s["creator"]] for s in r["statuses"]])) for r in a["rows"]]))')"
 
+# The listing says whether the forge holds the repository archived (read-only), in the same request: the reconciler
+# reads and posts nothing there.
+FA="$WORK/fixreconcilearchived"; mkdir -p "$FA"
+python3 - "$FA/graphql.json" <<'PY'
+import json, sys
+json.dump({"rateLimit": {"remaining": 4321, "resetAt": "2026-11-19T11:00:00Z", "cost": 1}, "viewer": {"login": "operator"},
+           "repository": {"isArchived": True, "pullRequests": {"nodes": []}}}, open(sys.argv[1], "w"))
+PY
+check "pr-panel --reconcile asks whether the repository is archived, in its one request, and answers it" \
+  "True|True|1" \
+  "$(env GH_FIXTURES="$FA" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-panel --reconcile | python3 -c '
+import json, sys
+a = json.load(sys.stdin)
+sent = [json.loads(l) for l in open(sys.argv[1])]
+print("|".join([str(a["archived"]), str("isArchived" in sent[-1]["query"]), str(len(sent))]))' "$FA/sent.jsonl")"
+check "pr-panel --reconcile answers a repository GitHub does not say archived as not archived" "False" \
+  "$(env GH_FIXTURES="$FR" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-panel --reconcile | python3 -c 'import json, sys; print(json.load(sys.stdin)["archived"])')"
+
 # --json takes the place of --format raw, and loses to a format named beside it.
 check "--json after the subcommand is read as before it" "7" \
   "$(gh9 --json pr-list | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["number"])')"
