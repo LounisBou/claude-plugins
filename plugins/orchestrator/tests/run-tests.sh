@@ -5866,7 +5866,7 @@ check "the launcher's startup prompt is no message of his, a later one of the sa
 check "a name of any length that holds a secret word has its value masked" "0|1" "$(ct_of longname)"
 check "a name with no secret word before an assignment does not hide it: Error:, note:, run:, a colon, an equals sign" "0|5" "$(ct_of prefixed)"
 check "the names are read in linear time" "1" "$(ct_of fast_names)"
-check "his messages totalling over 11,000 characters stay whole under a long reply, within the cap" "1|1" "$(ct_of near)"
+check "his messages totalling over 11,000 characters stay whole under a long reply, within the cap" "1|1|1|1" "$(ct_of near)"
 check "one message of his of 10,500 characters stays whole beside a long reply" "1|1|10516|1" "$(ct_of bigask)"
 check "a cut text is never longer than its room" "998|38|12" "$(ct_of shorten)"
 check "a transcript that cannot be read is said, not raised" "1" "$(ct_of missing)"
