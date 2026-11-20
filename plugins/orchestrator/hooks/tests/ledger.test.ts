@@ -1061,6 +1061,7 @@ test('a failing head whose line waits on a recorded wait with no agent names tha
 test('a failing head with no line to name a wait, or a wait no agent holds, still says to put an agent on it', () => {
   const failed = { repo: 'acme/app', pr: 17, head: AT_A, failed: ['tests (8.4)'] }
   expect(ciFailingLine(failed)).toEqual("[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4) ; personne n'y travaille, mets-y un agent.")
+  expect(ciFailingLine({ ...failed, waits: 'a\nb' })).toEqual('[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4) ; attend a b.')
   expect(ciFailingLine({ ...failed, waits: ' \n' })).toEqual("[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4) ; personne n'y travaille, mets-y un agent.")
 })
 
