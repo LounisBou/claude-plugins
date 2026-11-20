@@ -1,7 +1,7 @@
 // The reconciler's pure decisions: its listing, its fingerprint, its schedule and its lease.
 import { expect, test } from 'claude-code/testing'
 import {
-  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, foreignHold, FOREIGN_WAIT_MS, IDLE_MAX_MS, LEASE_MS, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, RECENT_MS, reconciledRepos, parseSeen, seenLabel, seenPath, seenText, seenWrote, listedPath, takenLease, TICK_MS,
+  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, FOREIGN_CEILING_MS, foreignGivenUp, foreignHold, FOREIGN_WAIT_MS, IDLE_MAX_MS, LEASE_MS, leaseDue, leaseOf, nextListing, parseLease, parseListing, QUOTA_LOW, QUOTA_WAIT_MS, RECENT_MS, reconciledRepos, parseSeen, seenLabel, seenPath, seenText, seenWrote, listedPath, takenLease, TICK_MS,
   type Flap, type ListedPr, type Local,
 } from './reconcile.ts'
 
@@ -144,4 +144,24 @@ test('a sighting is kept in a file of the data directory, per pull request, and 
   expect(listedPath('/data', 'Acme/App')).toBe('/data/label-seen/acme/app/.listed')
   for (const seen of [seenWrote('a'.repeat(40), 'ready', T0), seenLabel(undefined, 'b'.repeat(40), [], T0)]) expect(parseSeen(seenText(seen))).toEqual(seen)
   for (const text of [undefined, '', '[]', '{"v":2}', '{"v":1,"head":"a","label":"x","own":true,"since":1}', '{"v":1,"head":"a","label":null,"own":"yes","since":1}', '{"v":1,"head":"a","label":null,"own":true,"since":"1"}']) expect(parseSeen(text)).toBeUndefined()
+})
+
+test('a hold no listing has ended is let go at FOREIGN_CEILING_MS, and only then said to be given up', () => {
+  const foreign = seenLabel(undefined, HEAD, ['Not Ready'], T0)
+  const until = T0 + FOREIGN_WAIT_MS
+  expect(foreignHold(foreign, 'ready', undefined, T0 + FOREIGN_CEILING_MS - 1)).toBe(until)
+  expect(foreignHold(foreign, 'ready', undefined, T0 + FOREIGN_CEILING_MS)).toBeUndefined()
+  expect(foreignGivenUp(foreign, 'ready', undefined, T0 + FOREIGN_CEILING_MS - 1)).toBe(false)
+  expect(foreignGivenUp(foreign, 'ready', until - 1, T0 + FOREIGN_CEILING_MS)).toBe(true)
+  // A listing after the wait ended it before: nothing is given up.
+  expect(foreignGivenUp(foreign, 'ready', until, T0 + FOREIGN_CEILING_MS)).toBe(false)
+  expect(foreignGivenUp(seenWrote(HEAD, 'not-ready', T0), 'ready', undefined, T0 + FOREIGN_CEILING_MS)).toBe(false)
+})
+
+test('a Not Ready this machine put with no head read is its own at the head the gate first reads under it', () => {
+  const wrote = seenWrote('', 'not-ready', T0)
+  expect(seenLabel(wrote, HEAD, ['Not Ready'], T0 + TICK_MS)).toEqual({ head: HEAD, label: 'not-ready', own: true, since: T0 })
+  // Another label under it, or a Not Ready of another machine's kind (not own), is a new sighting.
+  expect(seenLabel(wrote, HEAD, ['Ready'], T0 + TICK_MS).own).toBe(false)
+  expect(seenLabel({ ...wrote, own: false }, HEAD, ['Not Ready'], T0 + TICK_MS).since).toBe(T0 + TICK_MS)
 })

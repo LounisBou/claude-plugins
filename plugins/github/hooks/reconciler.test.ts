@@ -16,6 +16,7 @@ const CFG = '/cfg'
 const RECORDS = CFG + '/pr-' + 'records'
 const READING = CFG + '/pr-reconcile/acme/app/7.json'
 const LEASE = CFG + '/pr-reconcile/.lease'
+const LISTED = '/data/github/label-seen/acme/app/.listed'
 const EDGE = CFG + '/pr-reconcile/.edge'
 
 // mergeable and mergeState: GitHub's listed mergeability against the base, as the listing carries it.
@@ -61,6 +62,12 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     order: [] as string[],
     postFails: false,
     copied: [] as string[],
+    // Every copy of a record from the forge fails; a write to a path matching this is refused; this directory cannot be listed, once.
+    copyFails: false,
+    writeFails: undefined as RegExp | undefined,
+    listFails: undefined as string | undefined,
+    // Whether the forge listing's file was there when a record was copied.
+    listedWhenCopied: undefined as boolean | undefined,
   }
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'session-r' }))
@@ -74,6 +81,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
   on('fs.read', (_$, e) => (files.has(e.path) ? { value: files.get(e.path)?.text } : { deny: 'ENOENT ' + e.path }))
   on('fs.exists', (_$, e) => ({ value: files.has(e.path) || dirs.has(e.path) }))
   on('fs.write', (_$, e) => {
+    if (state.writeFails?.test(e.path)) return { deny: 'EACCES ' + e.path }
     put(e.path, e.text)
     return { value: undefined }
   })
@@ -82,6 +90,11 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     return dirs.has(e.path) ? { value: { kind: 'dir', size: 1, mtimeMs: dirs.get(e.path) } } : { deny: 'ENOENT ' + e.path }
   })
   on('fs.list', (_$, e) => {
+    if (e.path === state.listFails) {
+      // Once: the gate reads the same directory by another path, which then goes through.
+      state.listFails = undefined
+      return { deny: 'EACCES ' + e.path }
+    }
     if (!dirs.has(e.path)) return { deny: 'ENOENT ' + e.path }
     const names = new Map<string, 'file' | 'dir'>()
     for (const path of [...files.keys(), ...dirs.keys()]) {
@@ -121,6 +134,8 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     if (String(argv[1] ?? '').endsWith('/engine/record.py')) {
       const at = flag('--at')
       state.runs.push('record.py')
+      state.listedWhenCopied = files.has(LISTED)
+      if (state.copyFails) return done('', 1, 'record.py: cannot write')
       state.copied.push(flag('--kind') + ' ' + flag('--result') + ' ' + flag('--producer') + ' ' + at + ' ' + flag('--session'))
       const record = { v: 1, repo: flag('--repo'), pr: Number(flag('--pr')), head: flag('--head'), kind: flag('--kind'), result: flag('--result'), producer: flag('--producer'), detail: flag('--detail'), session: flag('--session'), at }
       put(RECORDS + '/' + record.repo + '/' + record.head + '/' + record.kind + '.' + at.replace(/[-:]/g, '') + '.' + record.producer + '.json', JSON.stringify(record), T0 + 10 * TICK_MS)
@@ -730,4 +745,48 @@ test('a post the forge refuses for good holds the label no longer than PUBLISH_W
   await beat(clock, 2)
   expect(state.labelled).toEqual(['7 not-ready'])
   expect(state.said.filter((line) => line.includes('no longer waits for readiness/review'))).toHaveLength(1)
+})
+
+test('the listing is kept for the tools of the sessions once the forge\'s statuses are imported, not before', async ($, on) => {
+  const pulls = pullWith([status('readiness/review', 'success', 'v1 2026-11-19T09:00:00Z pass orchestrator')])
+  const { clock, state, files } = await started($, on, { pulls, viewer: 'operator' })
+  await beat(clock)
+  expect(state.copied).toHaveLength(1)
+  expect(state.listedWhenCopied).toBe(false)
+  expect(files.get(LISTED)?.text).toBe(String(T0 + TICK_MS) + '\n')
+})
+
+test('a forge status that cannot be imported leaves the kept listing as it was: the tools go on waiting for a listing', async ($, on) => {
+  const pulls = pullWith([status('readiness/review', 'success', 'v1 2026-11-19T09:00:00Z pass orchestrator')])
+  const { clock, state, files } = await started($, on, { pulls, viewer: 'operator' })
+  state.copyFails = true
+  await beat(clock, 2)
+  expect(files.has(LISTED)).toBe(false)
+  state.copyFails = false
+  await beat(clock, RETRY_MS / TICK_MS)
+  expect(state.copied).toHaveLength(1)
+  expect(Number(files.get(LISTED)?.text)).toBeGreaterThan(T0 + 2 * TICK_MS)
+})
+
+test('a listing that cannot be kept is said once, and this machine\'s own gate still goes on it after the wait', async ($, on) => {
+  const { clock, state, files } = await started($, on, { pulls: readyPull(['Not Ready']), files: passingRecords() })
+  state.writeFails = /\.listed/
+  await beat(clock, 3)
+  expect(files.has(LISTED)).toBe(false)
+  expect(state.said.filter((line) => line.includes('the listing of acme/app could not be kept'))).toHaveLength(1)
+  expect(state.labelled).toEqual(['7 ready'])
+})
+
+test('records that cannot be read keep what the head waited to post: the move still waits for it', async ($, on) => {
+  const { clock, state, put } = await started($, on, { pulls: readyPull(['Ready']), files: freshRecord('review', 'fail'), viewer: 'operator' })
+  state.postFails = true
+  await beat(clock)
+  expect(state.posted).toHaveLength(1)
+  // The records directory cannot be listed at the next sync, and a record changed: the head is read again, the gate reads it fine.
+  state.listFails = RECORDS + '/acme/app/' + HEAD
+  put(RECORDS + '/acme/app/' + HEAD + '/review.a.json', freshRecord('review', 'fail')[RECORDS + '/acme/app/' + HEAD + '/review.a.json'] ?? '', T0 + 5 * TICK_MS)
+  await beat(clock)
+  expect(state.said.filter((line) => line.includes('could not read the records of acme/app#7'))).toHaveLength(1)
+  expect(count(state.runs, 'pr-gate')).toBeGreaterThan(1)
+  expect(state.labelled).toEqual([])
 })

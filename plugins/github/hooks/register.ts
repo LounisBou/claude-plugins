@@ -19,7 +19,7 @@ import {
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { normalise } from './guards.ts'
 import {
-  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, foreignHold, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS,
+  fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, FOREIGN_CEILING_MS, foreignGivenUp, foreignHold, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS,
   listedPath, parseSeen, seenLabel, seenPath, seenText, seenWrote, sortedStatuses, takenLease, TICK_MS,
   type Counts, type Flap, type LabelMove, type ListedPr, type Listing, type Local, type Schedule, type Seen,
 } from './reconcile.ts'
@@ -32,7 +32,7 @@ import { auditEvent, journalDir } from '../core/learning.ts'
 import { isCatchable, observe, OBSERVED, REFUSED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
-  carriesReady, ciUndraft, ciUndraftLine, createdPr, durableWaiver, gateHeldLine, gateLeftLine, gateMissingLine, gateMovedLine,
+  carriesReady, ciUndraft, ciUndraftLine, createdPr, durableWaiver, gateHeldAnswer, gateHeldGivenUpLine, gateHeldLine, gateHeldRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
@@ -1107,7 +1107,8 @@ async function readiness($: Mod, repo: string, pr: number, sha?: string): Promis
  * names what is missing too. It never fails the call it follows.
  */
 // `unwritten`: the gate read at the head, its label not written (the reconciler keeps the reading all the same).
-type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] }; heldUntil?: number }
+// `held`: Ready held over a Not Ready this machine did not set, until when (ms) at the earliest; none when the clock cannot be read.
+type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] }; held?: { until: number | undefined } }
 
 const flapKey = (repo: string, pr: number) => repo.toLowerCase() + '#' + pr
 
@@ -1152,16 +1153,35 @@ async function changeSeen($: Mod, repo: string, pr: number, change: (current: Se
   return next ?? change(undefined)
 }
 
-// When this machine's reconciler last listed a repository (ms): the forge was read then. Undefined before the first listing.
+// When the forge was last listed here and its statuses imported (ms), kept by the reconciler where the tools of every session read it:
+// the file, or what this instance holds when it cannot be written. Undefined when it is not known.
+const listedInMemory = new Map<string, number>()
+
 async function listedAtOf($: Mod, repo: string): Promise<number | undefined> {
   const data = await dataDir($)
   const read = data ? Number(await textOf($, listedPath(data, repo))) : NaN
-  return Number.isFinite(read) && read > 0 ? read : undefined
+  const kept = listedInMemory.get(repo.toLowerCase())
+  const known = [read, kept].filter((at): at is number => at !== undefined && Number.isFinite(at) && at > 0)
+  return known.length > 0 ? Math.max(...known) : undefined
+}
+
+// Keeps that the forge was listed at `at` and its statuses imported. A file that cannot be written is said once; this instance then holds it.
+async function noteListed($: Mod, rec: Reconciler, repo: string, at: number): Promise<void> {
+  const data = await dataDir($)
+  try {
+    if (!data) throw new Error('no data directory')
+    await writeAtomicOver(journalIoOf($), listedPath(data, repo), String(at) + '\n')
+    listedInMemory.delete(repo.toLowerCase())
+  } catch {
+    listedInMemory.set(repo.toLowerCase(), at)
+    const where = data ? listedPath(data, repo) : 'the data directory'
+    sayOnce($, rec, 'github: the listing of ' + repo + ' could not be kept in ' + where + ' for the tools of the machine\'s other sessions: a Ready they hold over another machine\'s Not Ready waits for the forge to be read')
+  }
 }
 
 // unlabelled: Not Ready goes on a pull request carrying neither label too (the reconciler's, labelMove).
 // watch: the reconciler's, which holds a label that another machine keeps undoing and one that waits for a record's copy to
-// reach the forge. Whoever follows, Ready is held over a Not Ready this machine did not set (`heldUntil`: when it may go).
+// reach the forge. Whoever follows, Ready is held over a Not Ready this machine did not set (`held`: when it may go).
 async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false, unlabelled = false, watch?: Watch): Promise<Followed> {
   let gate: Gate
   let missing: string[]
@@ -1189,8 +1209,15 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
     return { missing, gate }
   }
   if (watch?.copies(gate, move)) return { missing, gate }
-  const until = Number.isFinite(readAt) ? foreignHold(seen, move, (await listedAtOf($, repo)) ?? readAt) : undefined
-  if (until !== undefined) return { line: gateHeldLine(repo, pr, gate.head, until, readAt), missing, gate, heldUntil: until }
+  if (!Number.isFinite(readAt)) {
+    // The sighting cannot be dated, so a Not Ready cannot be told this machine's from another's: Ready waits for a clock.
+    if (move === 'ready' && gate.labels.some((label) => label.toLowerCase() === NOT_READY)) return { line: gateHeldLine(repo, pr, gate.head, undefined, readAt), missing, gate, held: { until: undefined } }
+  } else {
+    const listedAt = await listedAtOf($, repo)
+    const until = foreignHold(seen, move, listedAt, readAt)
+    if (until !== undefined) return { line: gateHeldLine(repo, pr, gate.head, until, readAt), missing, gate, held: { until } }
+    if (foreignGivenUp(seen, move, listedAt, readAt)) note($, gateHeldGivenUpLine(repo, pr, gate.head, FOREIGN_CEILING_MS / 60_000))
+  }
   if (watch?.flap(gate, move)) return { missing, gate }
   let now: HeadRead
   try {
@@ -1256,7 +1283,8 @@ type Reconciler = {
   quotaUntil: number
 }
 
-type Listed = { schedule: Schedule; rows: ListedPr[]; viewer?: string; listedAt?: number }
+// kept: the listing (ms) the tools of the sessions were told of.
+type Listed = { schedule: Schedule; rows: ListedPr[]; viewer?: string; listedAt?: number; kept?: number }
 
 let reconciler: Reconciler | undefined
 
@@ -1328,9 +1356,6 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
   // The quota is the account's: once low, no repository is listed and no gate read before its reset.
   if (listing.rate.remaining !== undefined && listing.rate.remaining < QUOTA_LOW) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
   rec.repos.set(repo, { rows: listing.rows, schedule, ...(listing.viewer !== undefined ? { viewer: listing.viewer } : {}), listedAt: now })
-  // The tools of the machine's sessions read there that the forge was listed.
-  const data = await dataDir($)
-  if (data) await writeAtomicOver(journalIoOf($), listedPath(data, repo), String(now) + '\n').catch(() => undefined)
   return true
 }
 
@@ -1452,7 +1477,7 @@ async function reconcilePr(
   }
   const followed = await followGate($, repo, row.number, undefined, false, true, watch)
   // Ready held over a Not Ready this machine did not set: the gate is read again once the forge was listed after the wait.
-  if (followed.heldUntil !== undefined) waiting.until = followed.heldUntil
+  if (followed.held) waiting.until = followed.held.until ?? at.now + TICK_MS
   const gate = followed.gate
   if (!gate || followed.missing === undefined) {
     rec.failed.set(key, { fingerprint, at: at.now })
@@ -1536,22 +1561,22 @@ async function recordsAt($: Mod, root: string, repo: string, head: string): Prom
 async function syncForge(
   $: Mod, rec: Reconciler, at: { root: string; data: string; now: number }, repo: string, listed: Listed, row: ListedPr,
   exemption: Exemption | undefined, budget: { posts: number },
-): Promise<boolean> {
+): Promise<{ wrote: boolean; ok: boolean }> {
   const viewer = listed.viewer
   const id = repo + '#' + row.number
   if (row.statuses === undefined || !viewer || listed.listedAt === undefined) {
     rec.unpublished.delete(flapKey(repo, row.number))
-    return false
+    return { wrote: false, ok: true }
   }
   const local = await localOf($, at.root, at.data, repo, row, exemption)
   const key = JSON.stringify([row.head, row.statuses, local.records, local.plan, local.exemption])
   const last = rec.synced.get(id)
-  if (last?.key === key && (last.ok || at.now - last.at < RETRY_MS)) return false
+  if (last?.key === key && (last.ok || at.now - last.at < RETRY_MS)) return { wrote: false, ok: last.ok }
   const records = await recordsAt($, at.root, repo, row.head)
   if (records === undefined) {
+    // What it waited for stays: an unread set is not an empty one.
     sayOnce($, rec, 'github: the reconciler could not read the records of ' + id + ' at ' + row.head.slice(0, 7) + ': its forge copies wait')
-    rec.unpublished.delete(flapKey(repo, row.number))
-    return false
+    return { wrote: false, ok: false }
   }
   const plan = at.data ? await readPlan($, repo, row.number) : undefined
   const sync = forgeSync({ repo, statuses: row.statuses, viewer, records, plan, exemption: at.data ? exemption : undefined, listedAt: listed.listedAt })
@@ -1607,7 +1632,7 @@ async function syncForge(
   if (sync.waiting && ok) rec.synced.delete(id)
   else if (ok || budget.posts < POSTS_PER_TICK) rec.synced.set(id, { key, at: at.now, ok })
   else rec.synced.delete(id)
-  return sync.records.length > 0 || sync.plan !== undefined || sync.exemption !== undefined
+  return { wrote: sync.records.length > 0 || sync.plan !== undefined || sync.exemption !== undefined, ok }
 }
 
 async function reconcileTick($: Mod): Promise<void> {
@@ -1650,7 +1675,17 @@ async function reconcileTick($: Mod): Promise<void> {
       if (listed.has(repo)) await dropClosed($, rec, config, repo, rows)
       // The forge's copies first, so the gate reads the same truth on both machines.
       let copied = data ? await readExemption($, repo) : undefined
-      for (const row of rows) if (await syncForge($, rec, at, repo, entry, row, copied, budget)) copied = data ? await readExemption($, repo) : undefined
+      let imported = true
+      for (const row of rows) {
+        const synced = await syncForge($, rec, at, repo, entry, row, copied, budget)
+        if (!synced.ok) imported = false
+        if (synced.wrote) copied = data ? await readExemption($, repo) : undefined
+      }
+      // The tools of the machine's sessions read there that the forge was listed and its statuses imported, not before.
+      if (imported && entry.listedAt !== undefined && entry.kept !== entry.listedAt) {
+        entry.kept = entry.listedAt
+        await noteListed($, rec, repo, entry.listedAt)
+      }
       const exemption = data ? await readExemption($, repo) : undefined
       for (const row of rows) {
         const key = repo + '#' + row.number
@@ -1683,6 +1718,7 @@ async function reconcileTick($: Mod): Promise<void> {
 // The reconciler's timer, started again at each start of the session (a reload of the module cancels it with the old copy).
 async function startReconciler($: Mod): Promise<void> {
   reconciler?.timer?.cancel()
+  listedInMemory.clear()
   const session = String(await Promise.resolve().then(() => $.session.id()).catch(() => ''))
   const now = await nowMs($)
   const rec: Reconciler = {
@@ -1727,8 +1763,18 @@ async function afterRead($: Mod, e: GhCall, output: string): Promise<string> {
   return JSON.stringify({ ...known, labels: followed.labels, draft: followed.draft }, null, 2)
 }
 
-async function labelNotReady($: Mod, repo: string, pr: number): Promise<void> {
+// Puts Not Ready, which this machine then keeps as its own (at the head the gate read; with none, at the next head the gate reads):
+// Ready goes back over it as soon as the gate allows, with no wait for another machine's records.
+async function labelNotReady($: Mod, repo: string, pr: number, head?: string): Promise<void> {
   await runGh($, 'pr-readiness', { pr, state: 'not-ready' }, repo)
+  const now = await nowMs($)
+  // A write the clock cannot date is not noted, as followGate's.
+  if (!Number.isFinite(now)) return
+  try {
+    await noteWrote($, repo, pr, head ?? '', 'not-ready', now)
+  } catch (err: unknown) {
+    note($, 'github: the Not Ready put on ' + repo + '#' + pr + ' is not kept as this machine\'s, Ready waits for the forge to be read: ' + reasonOf(err).trim())
+  }
 }
 
 // The number of the open pull request of a branch, the current one when none
@@ -1766,7 +1812,7 @@ async function heldNotReady($: Mod, name: string, repo: string, pr: number, r: R
   let labels = gate.labels
   if (carriesReady(gate)) {
     try {
-      await labelNotReady($, repo, pr)
+      await labelNotReady($, repo, pr, gate.head)
       labels = [...labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), 'Not Ready']
     } catch (err: unknown) {
       note($, 'github: ' + repo + '#' + pr + ' keeps Ready, the label could not be changed: ' + reasonOf(err))
@@ -1797,6 +1843,14 @@ async function gateHeld($: Mod, name: string, repo: string, pr: number, r: Readi
   const followed = await followGate($, repo, pr, r.gate)
   if (followed.missing === undefined) return heldUnverified(repo, pr, followed.line ?? 'the Ready label could not be put', r.gate)
   if (!passes(followed.missing)) return heldNotReady($, name, repo, pr, { ...r, missing: followed.missing })
+  // Ready held over a Not Ready this machine did not set: the act waits as the gate does.
+  if (followed.held && followed.gate) {
+    const at = await nowMs($)
+    return {
+      refusal: gateHeldRefusal(name, repo, pr, followed.gate.head, followed.held.until, at),
+      answer: gateHeldAnswer(repo, pr, followed.gate.head, followed.gate.labels, followed.held.until, at),
+    }
+  }
   if (followed.line) note($, followed.line)
   return undefined
 }

@@ -28,6 +28,11 @@ export const FOREIGN_WAIT_MS = 2 * TICK_MS
  * a forge that refuses them for good (a token without the right, a status refused) must not freeze the labels.
  */
 export const PUBLISH_WAIT_MS = 2 * RETRY_MS
+/**
+ * Ready is held over a foreign Not Ready no longer than this when no listing of the forge follows the wait (a repository the
+ * reconciler does not follow, a listing that keeps failing): no forge read is coming, the gate then decides, with a line.
+ */
+export const FOREIGN_CEILING_MS = PUBLISH_WAIT_MS
 /** A repository whose records directory changed within this is reconciled. */
 export const RECENT_MS = 30 * 24 * 3600 * 1000
 /** A lease runs this long; its holder renews it when less than LEASE_RENEW_MS is left. */
@@ -215,23 +220,38 @@ function labelOf(labels: readonly string[]): LabelMove | undefined {
 export function seenLabel(prev: Seen | undefined, head: string, labels: readonly string[], now: number): Seen {
   const label = labelOf(labels)
   if (prev && prev.head === head && prev.label === label) return prev
+  // A label this machine put with no head read (`head` empty) is its own at the head the gate first reads under it.
+  if (prev && prev.head === '' && prev.own && prev.label === label) return { ...prev, head }
   return { head, label, own: false, since: now }
 }
 
-/** What is kept once this machine wrote `move` at `head` at `now`. */
+/** What is kept once this machine wrote `move` at `head` (empty: not read) at `now`. */
 export function seenWrote(head: string, move: LabelMove, now: number): Seen {
   return { head, label: move, own: true, since: now }
 }
 
+/** The sighting a Ready move is held over: a Not Ready this machine did not set. */
+function foreignOf(seen: Seen | undefined, move: LabelMove): Seen | undefined {
+  return move === 'ready' && seen && seen.label === 'not-ready' && !seen.own ? seen : undefined
+}
+
 /**
  * Until when Ready is held back, or undefined when it may go: it does not go over a Not Ready this machine did not set
- * until the forge was read at least FOREIGN_WAIT_MS after that Not Ready was first seen (`listedAt`: the last listing, ms),
- * whose statuses the gate then judges. Any other move goes at once.
+ * until the forge was read at least FOREIGN_WAIT_MS after that Not Ready was first seen (`listedAt`: when the forge was last
+ * listed and its statuses imported, ms; undefined when it is not known), whose statuses the gate then judges. With `now`, a
+ * hold no listing has ended is let go FOREIGN_CEILING_MS after the sighting. Any other move goes at once.
  */
-export function foreignHold(seen: Seen | undefined, move: LabelMove, listedAt: number | undefined): number | undefined {
-  if (move !== 'ready' || !seen || seen.label !== 'not-ready' || seen.own) return undefined
-  const until = seen.since + FOREIGN_WAIT_MS
-  return listedAt !== undefined && listedAt >= until ? undefined : until
+export function foreignHold(seen: Seen | undefined, move: LabelMove, listedAt: number | undefined, now?: number): number | undefined {
+  const foreign = foreignOf(seen, move)
+  if (!foreign) return undefined
+  const until = foreign.since + FOREIGN_WAIT_MS
+  if (listedAt !== undefined && listedAt >= until) return undefined
+  return now !== undefined && now >= foreign.since + FOREIGN_CEILING_MS ? undefined : until
+}
+
+/** Whether a Ready move goes over a foreign Not Ready by the ceiling alone, no listing of the forge having followed the wait. */
+export function foreignGivenUp(seen: Seen | undefined, move: LabelMove, listedAt: number | undefined, now: number): boolean {
+  return foreignHold(seen, move, listedAt) !== undefined && foreignHold(seen, move, listedAt, now) === undefined
 }
 
 /** The file that keeps what this machine saw of a pull request's label, in the plugin's data directory: one for the reconciler and the tools of every session. */
