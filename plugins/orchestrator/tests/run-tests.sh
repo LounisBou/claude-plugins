@@ -8877,6 +8877,13 @@ ia.host_cli_cwd = lambda tty: os.environ.get("LIFE_CWD") if tty in ("/dev/ttys96
 ia.checkout_of = lambda cwd: cwd
 ia.delete_checkout = lambda path: calls.append("delete_checkout %s" % path)
 ia.mark_kept = lambda path: calls.append("mark_kept %s" % path)
+# A process table that cannot be read for one tty, by the readers that ask for it strictly.
+real_ps_rows = ia.ps_rows
+def ps_rows(tty, strict=False):
+    if strict and tty == os.environ.get("LIFE_PS_UNREADABLE_TTY"):
+        raise OSError("ps timed out")
+    return real_ps_rows(tty, strict)
+ia.ps_rows = ps_rows
 out, err = io.StringIO(), io.StringIO()
 code = 0
 argv = json.loads(sys.argv[5])
@@ -9116,38 +9123,41 @@ check "a rotation keeps the checkout for its replacement, neither deleting it no
 
 # A home server whose window 0 is the orchestrator's and whose window 1 runs an agent: the end of
 # the server would kill that agent with it (the 2026-11-20 incident: two agents killed by the close
-# of their orchestrator's tab). The close refuses, `--end-agents` ends them, `--keep-agents` keeps
-# the server for them.
+# of their orchestrator's tab). The close, a takeover's included, keeps the server for them with no
+# flag and says where each is; `--end-agents` ends them with the server; a reading it cannot make
+# refuses and kills nothing.
 printf '/dev/ttys970 9001 tmux -u -L orch-abcdef12 attach -t home\n/dev/ttys962 /opt/x/host --name Agent: m1a\n' > "$WORK/life-ps-agent"
 agent_home() { reset_homerec; printf '0 /dev/ttys961\n1 /dev/ttys962\n' > "$HR/panes"; printf '0\tOrch: w\n1\tAgent: m1a\n' > "$HR/windows"; }
 agent_home
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
-check "closing a home tab whose server runs an agent is refused, the agent named with its attach line, nothing killed" "1|0|0|1|1|1" \
-  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -c 'kill-window')|$(sfield "$res" ERR | grep -c 'close: refused: the home server orch-abcdef12 still runs 1 agent(s) beside window 0')|$(sfield "$res" ERR | grep -cF "agent: Agent: m1a on /dev/ttys962: $HR/tmux -L orch-abcdef12 attach -t home:1")|$(sfield "$res" ERR | grep -c 'the server was NOT ended')"
-agent_home
-res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--end-agents"]')
-check "--end-agents ends the server and the agent with it" "0|1|closed 1 session on /dev/ttys970" \
-  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')"
-agent_home
-res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--keep-agents"]')
-check "--keep-agents tells the server to stay, kills window 0 alone and never the server" "0|1|1|0|1" \
+check "closing a home tab whose server runs an agent keeps the server with no flag: it is told to stay, window 0 alone is killed, never the server" "0|1|1|0|1" \
   "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-option][-s][exit-unattached][off]')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -c 'kill-window')"
 check "and says the server is kept, then each agent with its attach line" "closed 1 session on /dev/ttys970|home: kept the server orch-abcdef12 for 1 agent(s), session abcdef12-3456-4789-8abc-def012345678|agent: Agent: m1a on /dev/ttys962: $HR/tmux -L orch-abcdef12 attach -t home:1" \
   "$(sfield "$res" OUT)"
 check "and the server is told to stay before window 0 is killed" "1" \
   "$(hcalls | grep -oE 'exit-unattached|kill-window' | paste -sd, - | grep -c '^exit-unattached,kill-window$')"
+agent_home
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--end-agents"]')
+check "--end-agents ends the server and the agent with it" "0|1|closed 1 session on /dev/ttys970" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')"
 agent_home; printf 'no such window\n' > "$HR/kwin-err"
-res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--keep-agents"]')
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a window 0 tmux refuses to kill arms the server again and closes nothing" "1|1|0|1" \
   "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-option][-s][exit-unattached][on]')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'tmux refused to kill window 0')"
-agent_home
-res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--keep-agents","--end-agents"]')
-check "--end-agents with --keep-agents is refused before the server is touched" "1|0|0" \
-  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-')|$(hcalls | grep -c 'set-option')"
 agent_home; printf '0 /dev/ttys961\n' > "$HR/panes"
-res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--keep-agents"]')
-check "--keep-agents on a server with no agent ends it as a plain close does" "0|1|0" \
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "a server with no agent is ended as before" "0|1|0" \
   "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -c 'kill-window')"
+# Fail closed: whether an agent lives is read on the process table and the server's panes, and a
+# reading that cannot be made is no answer of « none ».
+agent_home
+res=$(LIFE_PS_UNREADABLE_TTY=/dev/ttys962 LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "a process table that cannot be read refuses the close of a home tab, killing nothing, and says so" "1|0|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-')|$(hcalls | grep -c 'set-option')|$(sfield "$res" ERR | grep -c 'close: refused: the process table cannot be read for /dev/ttys962')"
+agent_home; printf 'server busy\n' > "$HR/panes-err"
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "panes tmux cannot list refuse it too, the server not ended" "1|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-')|$(sfield "$res" ERR | grep -cE 'close: refused: the panes of the home server orch-abcdef12 cannot be listed|NOT ended')"
 agent_home
 res=$(LIFE_PS="$WORK/life-ps-agent" LIFE_TRANSCRIPT=1 life ok "$(rot_args /dev/ttys970 'Orch: w')")
 check "a rotation of a home tab whose server runs an agent is refused before the replacement is created" "1|0|0|1" \

@@ -215,11 +215,6 @@
           "kind": "flag"
         },
         {
-          "flag": "--keep-agents",
-          "dest": "keep_agents",
-          "kind": "flag"
-        },
-        {
           "flag": "--bench",
           "dest": "bench",
           "kind": "value"

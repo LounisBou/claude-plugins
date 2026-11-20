@@ -3839,12 +3839,28 @@ def refuse_home_title(what, tty, expect):
     return name
 
 
-def home_agents(socket, panes):
+def home_agents(what, socket, panes):
     """The live agents of the home server `socket`: `[(window index, tty, window name)]` of
-    every window but window 0 whose tty runs a host. `panes` is `home_panes`' answer. The names
-    are asked of tmux and are only the words of a line: a name it does not give is empty."""
-    live = [(index, tty) for index, tty in panes or []
-            if index != "0" and host_cli_on(tty) is not None]
+    every window but window 0 whose tty runs a host. `panes` is `home_panes`' answer. Fails
+    closed: panes tmux could not list, or a process table that cannot be read, say nothing of
+    whether an agent lives, so they die saying the server was NOT ended and nothing was killed.
+    The names are asked of tmux and are only the words of a line: one it does not give is empty."""
+    if panes is None:
+        die("%s: refused: the panes of the home server %s cannot be listed, so whether an agent "
+            "runs beside window 0 is not known: the server was NOT ended and nothing was killed"
+            % (what, socket))
+    live = []
+    for index, tty in panes:
+        if index == "0":
+            continue
+        try:
+            running = host_clis_on(tty, strict=True)
+        except Exception as exc:
+            die("%s: refused: the process table cannot be read for %s (%s), so whether an agent "
+                "runs there is not known: the server %s was NOT ended and nothing was killed"
+                % (what, tty, str(exc) or type(exc).__name__, socket))
+        if running:
+            live.append((index, tty))
     if not live:
         return []
     names = {}
@@ -3867,30 +3883,28 @@ def agent_line(socket, agent):
 
 
 def refuse_home_agents(what, socket, panes, tty=""):
-    """The refusal of a close of a home tab while another window than window 0 runs a host: the
-    server's end would kill those agents with it, and nothing says they were done. Each is
-    named with the line that attaches to it; `--end-agents` ends them with the server,
-    `--keep-agents` keeps the server for them. Read-only, so a refusal changes nothing."""
-    agents = home_agents(socket, panes)
+    """The refusal of a rotation of a home tab while another window than window 0 runs a host:
+    the close that ends the old session would keep the server for them, and the replacement
+    would stand beside agents it does not own. Each is named with the line that attaches to it.
+    Read-only, so a refusal changes nothing."""
+    agents = home_agents(what, socket, panes)
     if agents:
-        how = ("pass --end-agents to end them with the server, or --keep-agents to close "
-               "window 0 and the tab and keep the server for them" if what == "close" else
-               "a rotation takes neither flag: close the tab itself first, with close --tty %s "
-               "--end-agents or --keep-agents" % (tty or "<its tty>"))
-        die("%s: refused: the home server %s still runs %d agent(s) beside window 0, and its "
-            "end would kill them: %s; the server was NOT ended. %s"
-            % (what, socket, len(agents), how,
+        die("%s: refused: the home server %s still runs %d agent(s) beside window 0: close the "
+            "tab itself first with close --tty %s, which keeps the server for them (or "
+            "--end-agents to end them); nothing was spawned. %s"
+            % (what, socket, len(agents), tty or "<its tty>",
                " ".join(agent_line(socket, a) for a in agents)))
 
 
 def keep_home(tty, socket, listed):
-    """Close a home tab and window 0 and keep the server for its agents: the server told to stay
+    """Close a home tab and window 0 and keep the server for its agents (what every close of a
+    home tab does while an agent runs, a takeover's included): the server told to stay
     when no client is attached (`exit-unattached off`), window 0 killed and its host proved gone,
     then the tab closed, whose client detaches and leaves the server running. A failure after
     the server was told to stay arms it again, so the server is never left unarmed with its
     tab. Prints the close's contract line and one line per agent, with its attach command."""
     panes, session_id = window0_session("close", socket, listed)
-    agents = home_agents(socket, panes)
+    agents = home_agents("close", socket, panes)
     ttys = [t for i, t in panes or [] if i == "0"]
     host = host_identity(ttys[0]) if ttys else None
     try:
@@ -3922,7 +3936,7 @@ def keep_home(tty, socket, listed):
             survivor = wait_gone(ttys[0])
             if survivor is not None:
                 rearm("%s still runs on %s" % (survivor, ttys[0]))
-    trace_home(socket, "window 0 of", "close --keep-agents", tty)
+    trace_home(socket, "window 0 of", "close", tty)
     # The client of the tab moves to a surviving agent window and does not exit by itself: the
     # tab is closed at once, which detaches it, and the server stays for its agents.
     ITERM.close(tty, "")
@@ -3942,23 +3956,21 @@ def keep_home(tty, socket, listed):
     sys.stdout.flush()
 
 
-def close_home_tab(tty, socket, expect, listed=None, end_agents=False, keep_agents=False):
+def close_home_tab(tty, socket, expect, listed=None, end_agents=False):
     """Close a tab that shows a home session: its title checked first, then, while another
-    window than window 0 runs a host, a refusal (`--end-agents` ends them with the server,
-    `--keep-agents` keeps the server for them), then the server ended, every window of it proved
-    gone, then the tab if it outlived its client. Prints the close's contract line, then the
-    server and the session window 0 ran, which a pause records for the wake."""
+    window than window 0 runs a host, the server kept for them (`keep_home`, which prints each
+    agent with its attach line), never ended with them unless `--end-agents` says so; else the
+    server ended, every window of it proved gone, then the tab if it outlived its client. A pane
+    list or a process table that cannot be read refuses. Prints the close's contract line, then
+    the server and the session window 0 ran, which a pause records for the wake."""
     refuse_home_title("close", tty, expect)
-    if end_agents and keep_agents:
-        die("close: refused: --end-agents and --keep-agents are exclusive: the agents of the "
-            "home server %s are ended with it, or kept with it" % socket)
     if not end_agents:
-        panes = (listed if listed is not None else home_panes(socket))[0]
-        if keep_agents:
-            if home_agents(socket, panes):
-                return keep_home(tty, socket, listed)
-        else:
-            refuse_home_agents("close", socket, panes)
+        # Listed once and handed on, so what is read for the agents is what the end or the keep
+        # works on; a server that cannot be listed refuses, saying it was NOT ended.
+        listed = listed if listed is not None else home_panes(socket)
+        window0_session("close", socket, listed)
+        if home_agents("close", socket, listed[0]):
+            return keep_home(tty, socket, listed)
     session_id, ttys = end_home(socket, "close", listed, tty)
     trace_home(socket, "server", "close", tty)
     deadline = time.time() + CLOSE_TIMEOUT
@@ -5823,13 +5835,13 @@ def cmd_close(args):
         # orchestrator and agents with it. The server is ended, every window it holds, and
         # proved gone; then the tab, if it outlived its client. It prints the close's
         # contract line itself.
-        close_home_tab(args.tty, socket, args.expect, listed, args.end_agents, args.keep_agents)
+        close_home_tab(args.tty, socket, args.expect, listed, args.end_agents)
         if note:
             print(note, file=sys.stderr)
     else:
-        if args.end_agents or args.keep_agents:
-            print("close: %s is no home tab: --end-agents and --keep-agents were ignored"
-                  % args.tty, file=sys.stderr)
+        if args.end_agents:
+            print("close: %s is no home tab: --end-agents was ignored" % args.tty,
+                  file=sys.stderr)
         close_tab(args.tty, args.expect)
         CLOSE_DONE.add(args.tty)
         if note:
