@@ -12,11 +12,11 @@ Every script below is in `{{SCRIPTS}}`, the copy this takeover ran from. It must
 
 **Woken from a pause**: step 1 is void — no « takeover confirmed », nothing to close.
 
-1. You ALWAYS close your predecessor, one the launcher did not open included, and ask the operator nothing. Message it "takeover confirmed", the phrase alone on the first line, then close it with this one command, chosen by the takeover from where that tty is ({{CLOSE_WHERE}}); its success line is the proof, and you say « handed over » only where you read it:
+1. You ALWAYS close your predecessor, one the launcher did not open included, and ask the operator nothing. Message it "takeover confirmed" alone on the first line, then close it with this one command, chosen by the takeover from where that tty is ({{CLOSE_WHERE}}); its success line is the proof, and you say « handed over » only where you read it:
    ```
    {{LAUNCHER}} {{CLOSE_VERB}} --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
    ```
-   Where the host refuses it, message the predecessor « call mcp__orchestrator__end_session », prove its end with `verify --tty` failing, and tell the operator in one line its tab holds only a shell.
+   Where the host refuses it, message the predecessor « call mcp__orchestrator__end_session », prove its end with `verify --tty` failing, and tell the operator in one line its tab holds only a shell. Show him verbatim what its `conversation:` section leaves pending: questions, commands, explanations.
 2. The questions below, each by its entry, `<id>.json` under the state directory's `round/`: leave the open ones, apply each answer, and ask again, verbatim, each withdrawn one whose reason names no answer and whose premise still stands: one `ask` per turn, so the first at the end of this turn, the others each after his answer.
 3. Announce in one message: state inherited, predecessor closed, the open rows with no agent, the questions kept or asked again, the Project line's `goals met=m/n open: …`. {{TURN_END}}{{HOME_STEP}}
 4. {{DISPATCH_WHEN}} every open row with no agent that the phase rules allow, dependent ones stacked: each READY NOT STARTED, each NO OWNER once its blocker is set; DISPATCHED, NO LIVE AGENT after reading its pull request. A `blocked:` row waits on its blocker; a « next step » naming several rows is a stack to open, not a queue. The open rows below are the work, each at level 1.
@@ -40,7 +40,6 @@ Printed by `succession.sh takeover` from the dispatch record, the to-do list, th
 ## Standing context
 
 - State directory: `{{STATE_DIR}}`. His answers are its `round/`, his requests the to-do list (`todo list`), read by the item at hand: `grep -rl '<keyword>' {{STATE_DIR}}/round`.
-- A reference of the rulebook is read at the moment its table names, by section, never at takeover.
 - Dispatch record: `{{DISPATCH_RECORD}}`, read before routing (`orchestrator:model-routing`).
 
 # Expected result
