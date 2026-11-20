@@ -16,7 +16,7 @@ times; no derived value), each tool call (tool, MCP server, outcome, who refused
 duration, a redacted Bash line), subagents (each of their runs, with its type, task, models, effort, calls and token sums, read from the child's transcript; a review reader's lens, pull request, range and findings by severity with their ids) and launched sessions spawned and closed, questions put
 to the operator and the letters chosen (the orchestrator's round questions with their id and asker, read once settled), the dispatch record's writes (read from the events its script publishes in the orchestrator's journal), and each finding of an implementer's self-review, fixed or answered with its reason, recorded by the module's tool `mcp__telemetry__self_review`. Each fix opened or committed whose text names pull requests is an `escape` candidate, the names kept as written. Every line names the session that acted (`title` and `role`, once the
 module has learned them; `parent` and `launch_tier` in a session the orchestrator's launcher spawned for an orchestrator, on a tier) and each GitHub act the repository, pull request and head it names
-(`target`). No prompt, answer, message or tool output is kept in the events; the
+(`target`). A call that failed or was refused keeps the first paragraph of its message, redacted and cut to 800 characters (`error_message`); no prompt, answer or other tool output is kept in the events; the
 session's transcript, which holds them, is exported beside them, redacted (see Commands).
 
 ## Commands
@@ -51,6 +51,12 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   `question` event per settled question of the orchestrator's round, and one `dispatch` event per
   `dispatch` entry of the orchestrator's journal (`source: journal`, once per entry). A session's end starts it,
   detached, at most once a UTC day (`--auto`).
+- `/telemetry:errors [--since <ISO>]` (`telemetry.ts errors`): the failed and refused calls since its last reading
+  (a byte offset per day file, in `errors.json` of the state directory; the first reading looks back a day;
+  `--since` reads from a time and moves no cursor), one line per group: the decider or tool, the command
+  and the message with its repository and pull request, shas, paths and numbers normalised, with its count,
+  first and last time, sessions and one example verbatim. The plugins' own (`plugin:*` refusals, errors of
+  a plugin's tools and scripts) come first, then the rest.
 - `telemetry.ts report --config <dir> [--week <first day>] [--tool <owner/name>]...`: the weekly
   report, read-only, on the seven Paris days from `--week` (the seven ending today by default). It
   prints the spend of the tool against the products' and the unattributed (by repository, from the

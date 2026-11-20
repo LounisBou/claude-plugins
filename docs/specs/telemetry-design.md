@@ -26,6 +26,8 @@ fact happened in a subagent's loop.
 successful `rename_session` call, or one read of the first 8 KB of the transcript at the first main
 turn's end, and are absent until one gives it; `tool_call.target` (`repo`, `pr`, `head` cut to 12
 characters) names what a GitHub act (the `github` tool, a review or a record call, a Bash `gh` or `git push` line) names.
+`tool_call.error_message` is the first paragraph of the text an `error` or `refused` call gave the model
+(`<tool_use_error>` dropped), redacted then cut to 800 characters; `/telemetry:errors` groups it.
 
 The kinds, each one's fields with their units and the hook or command line that writes it, are
 declared once in `plugins/telemetry/hooks/schema.ts`. The writer accepts exactly the declared
@@ -98,11 +100,12 @@ published facts hold what the command line gives.
 
 ## What is not recorded (secrets win over « toutes les données »)
 
-No prompt, answer, message, tool output, file content, question text or option label in the
-events: the least revealing default, until the operator rules otherwise. The raw transcripts, redacted, go in the logs repository beside
+No prompt, answer, tool output, file content, question text or option label in the
+events, but for the first paragraph of what a failed or refused call told the model (`tool_call.error_message`,
+800 characters): the least revealing default, until the operator rules otherwise. The raw transcripts, redacted, go in the logs repository beside
 the events (below).
 A Bash command line is kept redacted and cut to 400 characters; other tools keep their name and the enumerated arguments
-named above; free text kept (a spawn's description, a verdict) is redacted and cut to 80. The
+named above; free text kept (a spawn's description, a verdict) is redacted and cut to 80, a failed call's message to 800. The
 events carry these fields whole: the writer redacts each whole value, then cuts it (never inside
 a mark), so a secret straddling a limit leaves nothing of itself.
 

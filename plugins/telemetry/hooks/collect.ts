@@ -3,7 +3,7 @@
 // so the hooks module imports it and the script's tests drive it with fixtures. Every input is
 // `unknown` and read through the small readers below; a field the host did not give is left out.
 import { currentSessionName, parseSessionName } from '../core/names.ts'
-import { WAIT_TOOL } from '../core/orchestration.ts'
+import { WAIT_KINDS, WAIT_TOOL } from '../core/orchestration.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { EVENTS, type EventName } from './schema.ts'
 
@@ -21,12 +21,17 @@ export const TEXT_MAX = 80
 /** A question's header is cut to this, once redacted. */
 export const HEADER_MAX = 12
 
+/** A failed call's message is cut to this, once redacted: its first paragraph, with room for a deny sentence and its hint. */
+export const MESSAGE_MAX = 800
+/** The message is bounded to this before the writer redacts it, so a huge result never reaches the redaction whole; the cut above falls well inside it. */
+export const MESSAGE_RAW_MAX = 4000
+
 /**
  * The fields cut to a length, by key at any depth. The events carry them whole: the writer
  * redacts each whole value first and cuts after (`cutFields`), so a secret straddling a limit is
  * never left half-matched and half-kept.
  */
-export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX, reason: TEXT_MAX }
+export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX, reason: TEXT_MAX, error_message: MESSAGE_MAX }
 /** Past this many buffered events the module writes without waiting for the turn's end. */
 export const FLUSH_AT = 100
 
@@ -268,6 +273,18 @@ export function outcomeOf(result: unknown, check: Check | undefined): { outcome:
     return decided === undefined ? { outcome: 'error' } : { outcome: 'refused', decided_by: decided }
   }
   return { outcome: 'ok' }
+}
+
+/**
+ * What a failed call told the model: the deny text, or the error's text, its first paragraph (up to
+ * the first blank line), the host's `<tool_use_error>` wrapper dropped. Redacted and cut by the writer.
+ */
+export function messageOf(result: unknown): string | undefined {
+  const r = record(result)
+  const whole = text(r['deny']) ?? (r['isError'] === true ? text(r['text']) ?? text(r['result']) : undefined)
+  if (whole === undefined) return undefined
+  const paragraph = whole.replace(/<\/?tool_use_error>/g, '').trim().split(/\r?\n[ \t]*\r?\n/)[0]?.trim() ?? ''
+  return paragraph === '' ? undefined : paragraph.slice(0, MESSAGE_RAW_MAX)
 }
 
 const BASENAME = (word: string): string => word.replace(/^.*\//, '')
@@ -541,6 +558,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
   const { outcome, decided_by } = outcomeOf(result, check)
   const bash = tool === 'Bash' && typeof e['command'] === 'string' ? bashOf(e['command']) : undefined
   const mcpCommand = text(e['command'])
+  const waited = mcp?.server === 'orchestrator' && mcp.name === WAIT_TOOL
   const acts = (mcp?.server === 'github' && mcp.name === 'record') || (mcp?.server === 'orchestrator' && mcp.name === 'review')
   const target = mcp?.server === 'github' && mcp.name === 'gh'
     ? githubTarget(e, result)
@@ -553,6 +571,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
     tool_use_id: text(e['tool_use_id']),
     outcome,
     decided_by,
+    error_message: messageOf(result),
     check,
     duration_ms: durationMs,
     bash,
@@ -560,9 +579,10 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
     subagent_type: tool === 'Agent' ? text(e['subagent_type']) : undefined,
     command: mcp !== undefined && mcpCommand !== undefined && /^[a-z][a-z0-9-]{0,40}$/.test(mcpCommand) ? mcpCommand : undefined,
     target: target !== undefined && Object.keys(target).length > 0 ? target : undefined,
+    wait_kind: waited ? WAIT_KINDS.find(kind => kind === text(e['kind'])) : undefined,
   })]
   if (tool === 'AskUserQuestion') events.push(makeEvent('question', at, session, { agent, ...questionOf(e, result), wait_ms: durationMs }))
-  if (mcp?.server === 'orchestrator' && mcp.name === WAIT_TOOL && text(e['kind']) === 'operator') {
+  if (waited && text(e['kind']) === 'operator') {
     events.push(makeEvent('question', at, session, { agent, source: 'round', kind: text(e['kind']), urgent: bool(e['urgent']) }))
   }
   if (bash !== undefined && outcome === 'ok') {
