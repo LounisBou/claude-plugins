@@ -451,16 +451,19 @@ test('a merge closes nothing while the launcher cannot be read: told merged once
 // An agent whose last turn ended on `asks` (« waiting for the verdict »), the pull request delivered: its wait file says `asks`.
 const P17_ASKS = { ...P17_DONE, [`${STATE}/store/waits/s-p17`]: JSON.stringify({ waiting: 'asks', blocks: 'acme/app#17', waiting_since: AT, name: 'Agent: p17', pid: '417' }) }
 
-test('a merge closes its idle agent whatever its last turn ended on: asks, or no status at all, then archives the line', async () => {
-  for (const agent of [P17_ASKS, P17_WORKING]) {
-    const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n`, ...agent }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
-    const woke = await prWake(world.dollar, new Set())
-    expect(woke.lines).toEqual([closedLine('acme/app#17', 'merged')])
-    await woke.settle()
-    expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
-    expect(world.files.get(RECORD)).not.toContain('"pr":17')
+// A pull request that ended, its agent idle in a clean checkout, its last turn on asks or with no status: closed all the same.
+for (const [label, agent] of [['asks', P17_ASKS], ['no status', P17_WORKING]] as const) {
+  for (const [ending, over, what] of [['merged', {}, 'merged'], ['closed unmerged', { closed: { 'acme/app': { 17: 'CLOSED' } } }, 'closed unmerged']] as const) {
+    test(`a pull request ${ending} closes its idle agent whose last turn ended on ${label}, then archives the line`, async () => {
+      const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n`, ...agent }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17'), ...over })
+      const woke = await prWake(world.dollar, new Set())
+      expect(woke.lines).toEqual([closedLine('acme/app#17', what)])
+      await woke.settle()
+      expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
+      expect(world.files.get(RECORD)).not.toContain('"pr":17')
+    })
   }
-})
+}
 
 test('a merge whose agent is busy closes nothing, its line kept; the first tick after it goes idle closes it', async () => {
   const told = new Set<string>()
@@ -479,14 +482,17 @@ test('a merge whose agent is busy closes nothing, its line kept; the first tick 
   expect(idle.files.get(RECORD)).not.toContain('"pr":17')
 })
 
-test('a merge whose idle agent has a dirty or unpushed checkout, its last turn on asks, is left open and told once', async () => {
-  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n`, ...P17_ASKS }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17'), dirty: ' M a.ts\n' })
-  const told = new Set<string>()
-  const woke = await prWake(world.dollar, told)
-  expect(woke.lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 left open: tree not clean in /work/s-p17 (1 paths changed, 0 commits unpushed).'])
-  await woke.settle()
-  expect(closes(world.runs)).toEqual([])
-  expect((await prWake(world.dollar, told)).lines).toEqual([])
+test('a merge whose idle agent has a dirty or unpushed checkout, its last turn on asks, is left open and told once, its line archived', async () => {
+  for (const [state, fact] of [[{ dirty: ' M a.ts\n' }, '1 paths changed, 0 commits unpushed'], [{ unpushed: 2 }, '0 paths changed, 2 commits unpushed']] as const) {
+    const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p17' })}\n`, ...P17_ASKS }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17'), ...state })
+    const told = new Set<string>()
+    const woke = await prWake(world.dollar, told)
+    expect(woke.lines).toEqual([`[module] acme/app#17 merged: its agent Agent: p17 left open: tree not clean in /work/s-p17 (${fact}).`])
+    await woke.settle()
+    expect(closes(world.runs)).toEqual([])
+    expect(world.files.get(RECORD)).not.toContain('"pr":17')
+    expect((await prWake(world.dollar, told)).lines).toEqual([])
+  }
 })
 
 // A pull request of the orchestration that carries Ready, its agent running in the session s-p17.
@@ -517,9 +523,13 @@ test('a Ready pull request whose agent is not done, or is busy, closes nothing a
 
 test('a Ready pull request whose agent last turn ended on asks is not closed: only a merged or closed one drops the done condition', async () => {
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_ASKS }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
-  const woke = await prWake(world.dollar, new Set())
+  const told = new Set<string>()
+  const woke = await prWake(world.dollar, told)
   await woke.settle()
   expect([woke.lines, closes(world.runs)]).toEqual([[], []])
+  // Its last turn ends on done: the Ready head closes it, as it always did.
+  const done = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  expect((await prWake(done.dollar, told)).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
 })
 
 test('an agent done whose checkout has changes or unpushed commits is left open and told once with the fact', async () => {
