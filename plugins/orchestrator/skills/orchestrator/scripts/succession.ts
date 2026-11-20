@@ -31,7 +31,7 @@
 //
 // The orchestration's name is the one given, else the record's owner (`<record>.owner`), else, when
 // that file names no orchestration, the name of the session that runs the takeover. The owner file then
-// names the successor (the orchestration this session is, else `--name`), whether the predecessor is
+// names the successor (the orchestration this session is), whether the predecessor is
 // dead and whether its title differs, so `dispatch-record.sh` accepts the successor. A row names its
 // pull request in its label (`<repo>#<n>`, the repository's short name too) or in the heads its review
 // recorded; the forge says which of them is open, and the ledger who is on it. Before printing,
@@ -48,7 +48,7 @@ import { fileURLToPath } from 'node:url'
 import { chainPath, parseChain } from '../../../core/chain-entries.ts'
 import { DECK_FILE, parseDeck } from '../../../core/deck.ts'
 import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../core/orchestration.ts'
-import { readText, withLock, writeAtomic } from '../../../core/store.ts'
+import { readText, writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo } from '../../../hooks/pr-file-format.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
 import { setting } from '../../../core/env.ts'
@@ -245,13 +245,13 @@ export function parseList(text: string): ListedRow[] {
  * still in its first turn is in the chain and `list` alone, and that is the usual state of a
  * takeover, not a lost one.
  */
-export function liveAgents(deck: readonly LiveAgent[], chained: readonly string[], listed: readonly ListedRow[] | undefined, homes: readonly HomePane[] = []): { agents: LiveAgent[]; disagree?: number } {
+export function liveAgents(deck: readonly LiveAgent[], chained: readonly string[], listed: readonly ListedRow[] | undefined, homes: readonly HomeAgent[] = []): { agents: LiveAgent[]; disagree?: number } {
   if (listed === undefined) return { agents: [...deck] }
   const byTty = new Map(listed.map(row => [ttyName(row.tty), row]))
   const shown = (agent: LiveAgent): ListedRow | undefined => (agent.tty !== null ? byTty.get(ttyName(agent.tty)) : undefined) ?? listed.find(row => row.name === agent.name)
   const agents = deck.map(agent => ({ ...agent, tty: agent.tty ?? shown(agent)?.tty ?? null }))
   // A deck agent that runs in a home server `list` does not show is not a lost one.
-  const disagree = deck.filter(agent => shown(agent) === undefined && !homes.some(pane => isAgent(agent.name, pane.name))).length
+  const disagree = deck.filter(agent => shown(agent) === undefined && !homes.some(found => isAgent(agent.name, found.agent))).length
   for (const tty of chained) {
     const row = byTty.get(ttyName(tty))
     if (row === undefined || agents.some(agent => agent.name === row.name || (agent.tty !== null && ttyName(agent.tty) === ttyName(row.tty)))) continue
@@ -279,40 +279,53 @@ const HOME_SOCKET_PREFIX = 'orch-'
  * of a server this session is not in. A server that does not answer is skipped; undefined when the
  * directory cannot be read at all.
  */
-export function homePanes(env: Env, uid: number = process.getuid?.() ?? 0): HomePane[] | undefined {
+export function homePanes(env: Env, uid: number = process.getuid?.() ?? 0, said: (line: string) => void = () => {}): HomePane[] | undefined {
   let sockets: string[]
   try {
     sockets = readdirSync(join(setting(env, 'TMUX_TMPDIR') ?? '/tmp', `tmux-${uid}`)).filter(name => name.startsWith(HOME_SOCKET_PREFIX)).sort()
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') said(`succession: the tmux socket directory cannot be read: ${(error as Error).message}`)
     return undefined
   }
   const tmux = setting(env, 'ORCHESTRATOR_TMUX') ?? 'tmux'
   return sockets.flatMap(server => {
     try {
-      const out = execFileSync(tmux, ['-L', server, 'list-panes', '-a', '-F', '#{window_index}\t#{pane_tty}\t#{window_name}\t#{pane_title}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, env: { ...process.env, ...env } })
+      const out = execFileSync(tmux, ['-u', '-L', server, 'list-panes', '-a', '-F', '#{window_index}\t#{pane_tty}\t#{window_name}\t#{pane_title}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, env: { ...process.env, ...env } })
       return out.split('\n').flatMap(line => {
         const [window = '', tty = '', name = '', title = ''] = line.split('\t')
         return /^[0-9]+$/.test(window) && tty !== '' ? [{ server, window: Number(window), tty, name, title }] : []
       })
-    } catch {
+    } catch (error) {
+      said(`succession: home server ${server} not read, its agents are missing from the list: ${(error as Error).message.split('\n')[0] ?? ''}`)
       return []
     }
   })
 }
 
-/**
- * The agents the record's rows name that run in a home server, each with where it is: added to the
- * agents the deck and the launcher's `list` gave, or, for one they already hold (by its name or its
- * tty), its place filled in. Window 0 is the orchestrator's, never an agent's.
- */
-export function withHomeAgents(agents: readonly LiveAgent[], homes: readonly HomePane[], named: readonly string[]): LiveAgent[] {
-  const result = agents.map(agent => ({ ...agent }))
-  for (const pane of homes) {
-    if (pane.window === 0) continue
+/** A pane of a home server that runs an agent the record's rows name, with the name the row gives it. */
+export interface HomeAgent {
+  readonly agent: string
+  readonly pane: HomePane
+}
+
+/** The panes that run an agent a row names (by the window's name, else the pane's title); window 0 is the orchestrator's, never an agent's. */
+export function homeAgentsOf(homes: readonly HomePane[], named: readonly string[]): HomeAgent[] {
+  return homes.flatMap(pane => {
+    if (pane.window === 0) return []
     const agent = named.find(one => isAgent(one, pane.name) || isAgent(one, pane.title ?? ''))
-    if (agent === undefined) continue
+    return agent === undefined ? [] : [{ agent, pane }]
+  })
+}
+
+/**
+ * Those agents added to the ones the deck and the launcher's `list` gave, each with where it is; an
+ * agent they already hold, by its name, has its place filled in.
+ */
+export function withHomeAgents(agents: readonly LiveAgent[], found: readonly HomeAgent[]): LiveAgent[] {
+  const result = agents.map(agent => ({ ...agent }))
+  for (const { agent, pane } of found) {
     const where = `${pane.server}:${pane.window}`
-    const held = result.findIndex(one => isAgent(agent, one.name) || (one.tty !== null && ttyName(one.tty) === ttyName(pane.tty)))
+    const held = result.findIndex(one => isAgent(agent, one.name))
     if (held === -1) result.push({ name: agent, tty: pane.tty, where })
     else result[held] = { ...(result[held] as LiveAgent), tty: result[held]?.tty ?? pane.tty, where }
   }
@@ -682,10 +695,11 @@ export function readOpen(
   const chained = [request.tty, own].filter((tty): tty is string => tty !== undefined && tty !== 'none')
     .flatMap(tty => parseChain(readText(chainPath(state, tty))).map(entry => entry.tty))
   const rows = parseRecord(recordText)
-  const live = liveAgents(deck.agents, chained, listed, homes)
   // The agents the record's rows name run wherever their launch put them: a window of the predecessor's home server is as live as a tab.
   const named = rows.flatMap(row => (typeof row['agent'] === 'string' && row['agent'] !== '' ? [row['agent']] : []))
-  const seats = withHomeAgents(live.agents, homes, named).map(agent => {
+  const inHomes = homeAgentsOf(homes, named)
+  const live = liveAgents(deck.agents, chained, listed, inHomes)
+  const seats = withHomeAgents(live.agents, inHomes).map(agent => {
     // Named only for an agent the launcher's listing shows running, as the module's wake does: one it does not show, or no listing, closes nothing.
     const shown = agent.where !== undefined || listed?.some(one => one.name === agent.name || (agent.tty !== null && ttyName(one.tty) === ttyName(agent.tty))) === true
     const ready = shown ? readyNote(agent.name, ledger, (repo, pr) => ['MERGED', 'CLOSED'].includes(prState?.(repo, pr) ?? ''), readyHead) : undefined
@@ -972,21 +986,19 @@ export function closeVerb(tty: string, paneWindow: (tty: string) => number | und
 
 /**
  * The record's ownership passes to the successor: the owner file names the orchestration this session
- * is (the name `dispatch-record.sh` compares), else the one `--name` gave, whether the predecessor is
- * dead and whether its title differs. Written under the lock, in one rename; undefined when the file
- * already names it or the session names none, else the owner it replaced (empty when it had none).
- * A write that fails is said and the takeover goes on.
+ * is, the name `dispatch-record.sh` compares, whether the predecessor is dead and whether its title
+ * differs. Written in one rename; undefined when the file already names it or the session names none,
+ * else the owner it replaced (empty when it had none). A write that fails is said and the takeover
+ * goes on.
  */
 export function takeOwnership(record: string, successor: string, io: Io): string | undefined {
   if (successor === '') return undefined
   const file = ownerFileOf(record)
   try {
-    return withLock(file, () => {
-      const before = orchForm((readText(file) ?? '').split('\n')[0] ?? '')
-      if (before === successor) return undefined
-      writeAtomic(file, `${successor}\n`, 0o644)
-      return before
-    })
+    const before = orchForm((readText(file) ?? '').split('\n')[0] ?? '')
+    if (before === successor) return undefined
+    writeAtomic(file, `${successor}\n`, 0o644)
+    return before
   } catch (error) {
     io.err(`succession: ${file} could not pass to ${successor}: ${(error as Error).message}\n`)
     return undefined
@@ -1023,13 +1035,10 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const all = parseRecord(recordText)
   const round = archiveRound(stateRoot(env), now, io)
   const request: Request = { ...parsed, name }
-  const successor = sessionOrchestration(env) || (parsed.name !== '' ? orchForm(parsed.name) : '')
-  const replaced = takeOwnership(parsed.record, successor, io)
-  if (replaced !== undefined) io.err(`takeover: ${ownerFileOf(parsed.record)} passed from ${replaced === '' ? 'no owner' : replaced} to ${successor}\n`)
   const launcher = join(here, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh')
   const prs = filePrs(env, now.getTime())
   const prState = deps.prState ?? prs.state
-  const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))(), prState, deps.readyHead ?? prs.ready, (deps.homes ?? (() => homePanes(env)))() ?? [])
+  const open = readOpen(request, env, deps.openPrs ?? prs.open, (deps.list ?? (() => launcherList(launcher, env)))(), prState, deps.readyHead ?? prs.ready, (deps.homes ?? (() => homePanes(env, undefined, line => io.err(`${line}\n`))))() ?? [])
   if ((open.disagree ?? 0) > 0) {
     const journal = deps.journal ?? scriptJournal(env, deps.now, line => io.err(`${line}\n`))
     writeAudit(journal, auditRun(env, now), 'failure', 'orchestrator.succession.agents', { failure: 'succession-lost-state', count: open.disagree ?? 0, prs: [] })
@@ -1068,6 +1077,10 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     LIVE_TODO: list(stray),
     PROJECT_SHEET: projectSheet(readText(goalsFileOf(parsed.record)), installedLine()),
   })
+  // The text is made: only now does the record pass, so a takeover that failed above leaves the owner where it was.
+  const successor = sessionOrchestration(env)
+  const replaced = takeOwnership(parsed.record, successor, io)
+  if (replaced !== undefined) io.err(`takeover: ${ownerFileOf(parsed.record)} passed from ${replaced === '' ? 'no owner' : replaced} to ${successor}\n`)
   io.out(text.endsWith('\n') ? text : `${text}\n`)
   io.err(`takeover: chars=${text.length} rows=${open.rows.length} ready=${owners.filter(o => o.endsWith(' READY NOT STARTED')).length} prs=${open.prs.length} agents=${open.agents.length}${open.disagree === undefined ? '' : ` agents_disagree=${open.disagree}`} questions=${open.questions.length} todo_stray=${stray.length} pruned=round:${round}\n`)
   return 0

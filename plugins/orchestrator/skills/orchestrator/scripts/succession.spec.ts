@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { main as recordMain } from './dispatch-record.ts'
-import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, homePanes, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, readyNote, roundOpen, roundSettled, rowLines, rowOfBrief, takeOwnership, TEMPLATE, todoStray, toApply, withHomeAgents, type Artifacts, type HomePane, type ListedRow, type LiveAgent } from './succession.ts'
+import { agentLine, answerMeaning, briefOf, closeVerb, filePrs, HOME_STEP, STAY_TURN, movesHome, deckOpen, fallOf, fill, homePanes, homeAgentsOf, liveAgents, main, notInstalled, objectiveOf, oneLine, openRows, ownersOf, parseArgs, parseList, projectOf, projectSheet, readyNote, roundOpen, roundSettled, rowLines, rowOfBrief, takeOwnership, TEMPLATE, todoStray, toApply, withHomeAgents, type Artifacts, type HomePane, type ListedRow, type LiveAgent } from './succession.ts'
 
 let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
@@ -1041,14 +1041,17 @@ test('an agent that runs in a window of the predecessor\'s home server is listed
   assert.match(none.text(), /- Row owners: memory \(1\): DISPATCHED, NO LIVE AGENT; secrets \(2\): DISPATCHED, NO LIVE AGENT\n/)
 })
 
-test('an agent the deck or the listing already holds gets its place in the home server; a deck agent running there is no lost one', () => {
+test('an agent the deck or the listing already holds gets its place in the home server, matched by its name; a deck agent running there is no lost one', () => {
   const held: LiveAgent[] = [{ name: 'Agent: m1a memory', tty: null }, { name: 'Agent: tab', tty: '/dev/ttys030' }]
   const homes = [homePane(1, 'Agent: m1a memory', '/dev/ttys011'), homePane(2, 'Agent: other', '/dev/ttys030')]
-  assert.deepEqual(withHomeAgents(held, homes, ['Agent: m1a memory']), [{ name: 'Agent: m1a memory', tty: '/dev/ttys011', where: 'orch-451b538b:1' }, { name: 'Agent: tab', tty: '/dev/ttys030' }])
-  assert.deepEqual(withHomeAgents(held, homes, ['Agent: other']), [{ name: 'Agent: m1a memory', tty: null }, { name: 'Agent: tab', tty: '/dev/ttys030', where: 'orch-451b538b:2' }])
-  // The pane's title names the agent when the window's name is the program's.
-  assert.deepEqual(withHomeAgents([], [{ ...homePane(4, '2.1.5', '/dev/ttys040'), title: 'Agent: titled' }], ['Agent: titled']), [{ name: 'Agent: titled', tty: '/dev/ttys040', where: 'orch-451b538b:4' }])
-  assert.equal(liveAgents([{ name: 'Agent: m1a memory', tty: null }], [], [], homes).disagree, 0)
+  assert.deepEqual(withHomeAgents(held, homeAgentsOf(homes, ['Agent: m1a memory'])), [{ name: 'Agent: m1a memory', tty: '/dev/ttys011', where: 'orch-451b538b:1' }, { name: 'Agent: tab', tty: '/dev/ttys030' }])
+  // A pane on the tty of another agent is no place of that agent: only the name says whose it is.
+  assert.deepEqual(withHomeAgents(held, homeAgentsOf(homes, ['Agent: other'])), [...held, { name: 'Agent: other', tty: '/dev/ttys030', where: 'orch-451b538b:2' }])
+  // The pane's title names the agent when the window's name is the program's; window 0 is never one.
+  assert.deepEqual(withHomeAgents([], homeAgentsOf([{ ...homePane(4, '2.1.5', '/dev/ttys040'), title: 'Agent: titled' }, homePane(0, 'Agent: titled', '/dev/ttys041')], ['Agent: titled'])), [{ name: 'Agent: titled', tty: '/dev/ttys040', where: 'orch-451b538b:4' }])
+  // `disagree` and the merge read the same agents.
+  assert.equal(liveAgents([{ name: 'Agent: m1a memory', tty: null }], [], [], homeAgentsOf(homes, ['Agent: m1a memory'])).disagree, 0)
+  assert.equal(liveAgents([{ name: 'Agent: m1a memory', tty: null }], [], [], homeAgentsOf(homes, [])).disagree, 1)
   assert.equal(liveAgents([{ name: 'Agent: m1a memory', tty: null }], [], []).disagree, 1)
   assert.equal(agentLine({ name: 'Agent: a', tty: '/dev/ttys011', where: 'orch-1:2' }), 'Agent: a (ttys011, orch-1:2)')
 })
@@ -1061,20 +1064,31 @@ test('the home servers are read from tmux\'s socket directory, one list-panes ca
   const fake = join(dir, 'tmux')
   writeFileSync(fake, [
     '#!/bin/bash',
-    'if [ "$2" = "orch-dead0000" ]; then exit 1; fi',
+    'if [ "$1" != "-u" ]; then echo "tmux asked without -u" >&2; exit 2; fi',
+    'if [ "$3" = "orch-dead0000" ]; then echo "no server" >&2; exit 1; fi',
     'printf \'0\\t/dev/ttys001\\tOrch: x\\tOrch: x\\n1\\t/dev/ttys002\\tAgent: a\\t* Agent: a\\nbroken line\\n\'',
     '',
   ].join('\n'))
   chmodSync(fake, 0o755)
   const env = { TMUX_TMPDIR: tmpdir, ORCHESTRATOR_TMUX: fake }
-  assert.deepEqual(homePanes(env, 501), [
+  const said: string[] = []
+  assert.deepEqual(homePanes(env, 501, line => said.push(line)), [
     { server: 'orch-aaaa1111', window: 0, tty: '/dev/ttys001', name: 'Orch: x', title: 'Orch: x' },
     { server: 'orch-aaaa1111', window: 1, tty: '/dev/ttys002', name: 'Agent: a', title: '* Agent: a' },
   ])
-  assert.equal(homePanes({ TMUX_TMPDIR: join(dir, 'absent') }, 501), undefined)
+  // The server that did not answer is said, so a missing agent has its reason.
+  assert.equal(said.length, 1)
+  assert.match(said[0] ?? '', /home server orch-dead0000 not read/)
+  // No tmux directory is no home server and nothing to say; one that cannot be read is said.
+  assert.equal(homePanes({ TMUX_TMPDIR: join(dir, 'absent') }, 501, line => said.push(line)), undefined)
+  assert.equal(said.length, 1)
+  mkdirSync(join(dir, 'odd'), { recursive: true })
+  writeFileSync(join(dir, 'odd', 'tmux-501'), '')
+  assert.equal(homePanes({ TMUX_TMPDIR: join(dir, 'odd') }, 501, line => said.push(line)), undefined)
+  assert.match(said[1] ?? '', /socket directory cannot be read/)
 })
 
-test('the record passes to the successor at the takeover, its title being other than the predecessor\'s; dispatch-record then accepts it', async () => {
+test('the record passes to the successor at the takeover, its title being other than the predecessor\'s, whatever `--name` says; dispatch-record then accepts it', async () => {
   const w = world({ rows: HOME_ROWS, round: [], todo: '' })
   writeFileSync(`${w.record}.owner`, 'Orch: refonte firmware\n')
   const config = join(dir, 'config')
@@ -1101,7 +1115,7 @@ test('the record passes to the successor at the takeover, its title being other 
   assert.ok(!errs.join('').includes('passed from'))
 })
 
-test('the ownership passes with the name the command gave when the session names no orchestration, and stays when neither says one', () => {
+test('the ownership is written for a name that differs, left alone for the same name or none, and a write that fails is said', () => {
   const w = world({ rows: HOME_ROWS, round: [], todo: '' })
   const quiet: { err: string[] } = { err: [] }
   const io = { out: () => {}, err: (t: string) => { quiet.err.push(t) } }
@@ -1118,14 +1132,16 @@ test('the ownership passes with the name the command gave when the session names
   assert.equal(quiet.err.filter(line => line.includes('could not pass to Orch: next')).length, 1)
 })
 
-test('a home-server agent whose pull request is Ready is told as the module does; the command line\'s name stands in when the session names none', () => {
+test('a home-server agent whose pull request is Ready is told as the module does', () => {
   const rows = [JSON.stringify({ id: 1, label: 'M1A: memory', state: 'open', agent: 'Agent: m1a memory', blocker: 'none' }), ledger('acme/app', 12, 'Agent: m1a memory')].join('\n') + '\n'
   const w = world({ rows, deck: deckOf([orchestrator(NAME, null)]), round: [], todo: '', listed: [], homes: [homePane(1, 'Agent: m1a memory', '/dev/ttys011')], prs: {}, readyHead: (repo, pr) => (`${repo}#${pr}` === 'acme/app#12' ? 'a'.repeat(40) : undefined) })
   assert.equal(w.run(), 0)
   assert.match(w.text(), /- Agents running \(name and reference, brief path\): Agent: m1a memory \(ttys011, orch-451b538b:1\) — Ready \(acme\/app#12\): the module closes it once done\n/)
-  // No session of an orchestration: the name the command gave takes the record, from no owner at all.
-  rmSync(`${w.record}.owner`)
+})
+
+test('the record is left as it was when the session names no orchestration, whatever name the command gave', () => {
+  const w = world({ rows: HOME_ROWS, round: [], todo: '' })
   assert.equal(w.run('--name', 'Orch: given'), 0)
-  assert.equal(readFileSync(`${w.record}.owner`, 'utf8'), 'Orch: given\n')
-  assert.match(w.err.join(''), /passed from no owner to Orch: given/)
+  assert.equal(readFileSync(`${w.record}.owner`, 'utf8'), `${NAME}\n`)
+  assert.ok(!w.err.join('').includes('passed from'))
 })
