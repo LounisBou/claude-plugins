@@ -1280,9 +1280,13 @@ type Reconciler = {
   held: Map<string, { fingerprint: string; until: number; unpublished: string; since: number; copies: boolean }>
   edgeSeen: number
   counts: Counts
-  // The last line said, and whether this beat said one: a beat that said none lets the same failure be said again.
-  said: string | undefined
+  // The lines said and not yet forgotten, and whether this beat said one: a beat that said none lets the same failures be said again.
+  said: Set<string>
   saidNow: boolean
+  // The reasons said of each failing step (a listing, a copy, a post), by step: said once each until the step goes through.
+  told: Map<string, Set<string>>
+  // The repositories GitHub refused as archived (read-only): neither listed nor posted to until the module reloads.
+  archived: Set<string>
   // The host's session id, and the counts the journal last received.
   session: string
   journaled: Counts
@@ -1291,6 +1295,10 @@ type Reconciler = {
   // No listing and no gate before this (ms): the quota ran low, or a listing was refused for the rate limit.
   quotaUntil: number
 }
+
+// What GitHub says of a repository that was archived: « Repository was archived so is read-only. ». A text naming
+// only « archived » is no such refusal.
+const ARCHIVED = /\barchived\b.*\bread-only\b/i
 
 // kept: the listing the tools of the sessions were told of, and whether its statuses were imported.
 type Listed = { schedule: Schedule; rows: ListedPr[]; viewer?: string; listedAt?: number; kept?: string }
@@ -1329,11 +1337,19 @@ async function localOf($: Mod, root: string, data: string, repo: string, row: Li
   }
 }
 
-// A line the reconciler says once until it says another: a failure that repeats at every beat is not repeated.
-function sayOnce($: Mod, rec: Reconciler, line: string): void {
+// A line the reconciler says once, however many other lines are said between: a failure that repeats at every beat is not repeated.
+function sayOnce($: Mod, rec: Reconciler, line: string, step?: string): void {
+  if (step !== undefined) {
+    // A step that fails keeps its line said until it goes through (told): other failures speaking at every beat change nothing.
+    const reasons = rec.told.get(step) ?? new Set<string>()
+    if (reasons.has(line)) return
+    rec.told.set(step, reasons.add(line))
+    note($, line)
+    return
+  }
   rec.saidNow = true
-  if (rec.said === line) return
-  rec.said = line
+  if (rec.said.has(line)) return
+  rec.said.add(line)
   note($, line)
 }
 
@@ -1357,9 +1373,10 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
     const schedule = limited ? { nextAt: now + QUOTA_WAIT_MS, idle: before?.schedule.idle ?? 0 } : nextListing(before?.schedule, now, false, [], {})
     if (limited) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
     rec.repos.set(repo, { ...before, rows: before?.rows ?? [], schedule })
-    sayOnce($, rec, 'github: the reconciler could not list ' + repo + ': ' + why)
+    sayOnce($, rec, 'github: the reconciler could not list ' + repo + ': ' + why, 'list ' + repo)
     return false
   }
+  rec.told.delete('list ' + repo)
   const changed = JSON.stringify(before?.rows ?? null) !== JSON.stringify(listing.rows)
   const schedule = nextListing(before?.schedule, now, changed, listing.rows, listing.rate)
   // The quota is the account's: once low, no repository is listed and no gate read before its reset.
@@ -1531,7 +1548,14 @@ async function postForge($: Mod, repo: string, head: string, post: ForgePost): P
 async function postWritten($: Mod, path: string): Promise<void> {
   const record = parsePrRecord(await Promise.resolve().then(() => $.fs.read(path)).then((text) => JSON.parse(String(text)) as unknown, () => undefined))
   const post = record ? recordPost(record) : undefined
+  // A repository the reconciler found archived takes no post: the record stays here.
+  if (record && reconciler?.archived.has(record.repo)) return
   const failed = record && post ? await postForge($, record.repo, record.head, post) : 'the record at ' + path + ' cannot be read back'
+  if (record && failed && ARCHIVED.test(failed)) {
+    reconciler?.archived.add(record.repo)
+    note($, 'github: ' + record.repo + ' is archived (read-only): its records are not copied to the forge: ' + failed)
+    return
+  }
   if (failed) note($, 'github: the record is not copied to the forge yet (' + failed + '): the reconciler copies it at a later beat.')
 }
 
@@ -1573,7 +1597,7 @@ async function syncForge(
 ): Promise<{ wrote: boolean; ok: boolean; imported: boolean }> {
   const viewer = listed.viewer
   const id = repo + '#' + row.number
-  if (row.statuses === undefined || !viewer || listed.listedAt === undefined) {
+  if (rec.archived.has(repo) || row.statuses === undefined || !viewer || listed.listedAt === undefined) {
     rec.unpublished.delete(flapKey(repo, row.number))
     // Nothing is imported: the listing carries no statuses, or no account says whose they are, so no listing counts.
     return { wrote: false, ok: true, imported: false }
@@ -1602,8 +1626,8 @@ async function syncForge(
     if (run.exitCode !== 0) {
       ok = false
       imported = false
-      sayOnce($, rec, 'github: the reconciler could not copy ' + forgeContext(copy.kind) + ' of ' + id + ' from the forge: ' + (String(run.stderr ?? '').trim() || 'exit ' + run.exitCode))
-    }
+      sayOnce($, rec, 'github: the reconciler could not copy ' + forgeContext(copy.kind) + ' of ' + id + ' from the forge: ' + (String(run.stderr ?? '').trim() || 'exit ' + run.exitCode), 'copy ' + id + ' ' + copy.kind)
+    } else rec.told.delete('copy ' + id + ' ' + copy.kind)
   }
   // The plan and the exemption are written as their tools write them, under the list's lock.
   const copies: Array<{ what: string; path: string; body: object }> = []
@@ -1615,8 +1639,10 @@ async function syncForge(
     } catch (err: unknown) {
       ok = false
       imported = false
-      sayOnce($, rec, 'github: the reconciler could not copy ' + copy.what + ' of ' + id + ' from the forge: ' + reasonOf(err).trim())
+      sayOnce($, rec, 'github: the reconciler could not copy ' + copy.what + ' of ' + id + ' from the forge: ' + reasonOf(err).trim(), 'copy ' + id + ' ' + copy.what)
+      continue
     }
+    rec.told.delete('copy ' + id + ' ' + copy.what)
   }
   for (const line of sync.unposted) sayOnce($, rec, line)
   // What this head holds that is not on the forge when the beat ends: a label move that rests on it waits (reconcilePr).
@@ -1630,12 +1656,19 @@ async function syncForge(
     budget.posts += 1
     rec.counts.posts = (rec.counts.posts ?? 0) + 1
     const failed = await postForge($, repo, row.head, post)
+    if (failed && ARCHIVED.test(failed)) {
+      // A refusal that will not change: this repository is read-only, nothing more is listed or posted to it.
+      rec.archived.add(repo)
+      sayOnce($, rec, 'github: the reconciler stops on ' + repo + ', which is archived (read-only): ' + failed)
+      return { wrote: sync.records.length > 0 || sync.plan !== undefined || sync.exemption !== undefined, ok: false, imported: false }
+    }
     if (failed) {
       ok = false
       pending.push(post)
-      sayOnce($, rec, 'github: the reconciler could not post ' + forgeContext(post.name) + ' of ' + id + ': ' + failed)
+      sayOnce($, rec, 'github: the reconciler could not post ' + forgeContext(post.name) + ' of ' + id + ': ' + failed, 'post ' + id + ' ' + post.name)
       continue
     }
+    rec.told.delete('post ' + id + ' ' + post.name)
     // What the next listing reads: the status as posted, so the same post is not made twice.
     const context = forgeContext(post.name)
     row.statuses = sortedStatuses([...row.statuses.filter((s) => s.context !== context), { context, state: post.state, description: post.description, creator: viewer }])
@@ -1661,7 +1694,7 @@ async function reconcileTick($: Mod): Promise<void> {
     if (!Number.isFinite(now) || !config || !root) return
     const leasePath = reconcileRoot(config) + '/' + LEASE_FILE
     if (leaseOf(parseLease(await textOf($, leasePath)), rec.me, now) === 'other') return
-    const repos = await followedRepos($, config, root, now)
+    const repos = (await followedRepos($, config, root, now)).filter((repo) => !rec.archived.has(repo))
     if (repos.length === 0) return
     const io = journalIoOf($)
     if (!(await holdLease($, rec, io, config, now))) return
@@ -1685,6 +1718,7 @@ async function reconcileTick($: Mod): Promise<void> {
     let gates = 0
     const budget = { posts: 0 }
     for (const [repo, entry] of rec.repos) {
+      if (rec.archived.has(repo)) continue
       const { rows } = entry
       if (listed.has(repo)) await dropClosed($, rec, config, repo, rows)
       // The forge's copies first, so the gate reads the same truth on both machines.
@@ -1701,6 +1735,7 @@ async function reconcileTick($: Mod): Promise<void> {
         entry.kept = told
         await noteMarker($, rec, imported ? 'listed' : 'failing', repo, entry.listedAt)
       }
+      if (rec.archived.has(repo)) continue
       const exemption = data ? await readExemption($, repo) : undefined
       for (const row of rows) {
         const key = repo + '#' + row.number
@@ -1725,7 +1760,7 @@ async function reconcileTick($: Mod): Promise<void> {
   } catch (err: unknown) {
     sayOnce($, rec, 'github: the reconciler\'s beat failed: ' + reasonOf(err).trim())
   } finally {
-    if (!rec.saidNow) rec.said = undefined
+    if (!rec.saidNow) rec.said.clear()
     rec.running = false
   }
 }
@@ -1740,7 +1775,7 @@ async function startReconciler($: Mod): Promise<void> {
     // The same session started again (resume, clear, compact) keeps its name, and with it the lease it holds.
     me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(), synced: new Map(), flaps: reconciler?.flaps ?? new Map(),
     unpublished: new Map(), held: new Map(),
-    edgeSeen: 0, said: undefined, saidNow: false, quotaUntil: 0, session,
+    edgeSeen: 0, said: new Set(), saidNow: false, told: new Map(), archived: reconciler?.archived ?? new Set(), quotaUntil: 0, session,
     journaled: { since: '', ticks: 0, listings: 0, gates: 0, moves: 0 }, journaledAt: 0,
     counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0, posts: 0 },
   }
