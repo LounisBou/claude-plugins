@@ -688,7 +688,7 @@ test('a pull request\'s line in the ledger: set, kept beside the rows, archived 
   assert.equal(await cli(['pr', r, 'acme/app#7', '--waiting', ' ']), '1||ERROR: pr: --waiting needs its text\n')
   assert.equal(await cli(['pr', r, 'acme/app#7', '--working', 'Agent: a']), '0|acme/app#7 en cours (agent Agent: a)\n|')
   assert.equal(await cli(['pr', r, 'acme/app#8', '--waiting', 'la CI']), '0|acme/app#8 attend la CI depuis 2026-11-08T10:11Z\n|')
-  assert.equal(await cli(['pr', r, 'acme/app#7', '--parked', 'plus tard, 2026-11-08']), "0|acme/app#7 en attente par l'opérateur\n|")
+  assert.equal(await cli(['pr', r, 'acme/app#7', '--parked', 'plus tard, 2026-11-08']), "0|acme/app#7 mise en attente par l'opérateur\n|")
   const text = readFileSync(r, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>)
   assert.deepEqual(text.map(line => line['id'] ?? `${line['repo']}#${line['pr']} ${line['status']}`), [1, 'acme/app#8 waiting', 'acme/app#7 parked'])
   // The rows' readings never take a ledger line for a row.

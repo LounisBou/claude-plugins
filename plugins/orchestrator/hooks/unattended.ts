@@ -29,6 +29,7 @@ export const UNATTENDED_BOUND_MS = 20_000
 // The bound of the one look at github's auto-merge list, inside it: a list that does not answer leaves the pull requests as they were.
 export const AUTO_MERGE_BOUND_MS = 5_000
 
+// `autoMerge`: github's auto-merge list as read for this reading (empty when no pull request carries Ready, or when it could not be read).
 // `ready`: the open rows whose blocker has fallen (`none`, or an `until` past) that no live agent and no open pull request holds; `readyLine` says them.
 // `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `kept`: its lines still open; `records`: its records, each with its path and its text.
 // `live`: the names of the agents the launcher lists running, among those a line names (every one when its listing could not be read);
@@ -38,7 +39,7 @@ export const AUTO_MERGE_BOUND_MS = 5_000
 // `atReady`: the lines still open whose pull request carries Ready and whose agent, put on it last or before, the launcher lists running: the module closes that agent once it is done (close-agent.ts). `readyHeads`: the head each open pull request carries Ready at.
 // `forge`: the file's current reading of each of the session's lines still open, by `owner/name#n`: its head, its base and its `mergeable`.
 export type Reading = {
-  list: Unattended[]; toMerge: Unattended[]; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
+  list: Unattended[]; toMerge: Unattended[]; autoMerge: ReadonlySet<string>; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
   ended: Ended[]; kept: LedgerLine[]; atReady: LedgerLine[]; readyHeads: ReadonlyMap<string, string>; records: RecordText[]; live: ReadonlySet<string>; tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]>; wanted: boolean
   openKeys: string[]; forge: ReadonlyMap<string, FilePr>
 }
@@ -201,7 +202,7 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   const keptKeys = new Set(kept.map(line => prKey(line.repo, line.pr)))
   const forge = new Map(repos.filter(repo => !unread.includes(repo)).flatMap(repo => prsOfRepo(file, repo, now) ?? [])
     .filter(pr => pr.state === 'OPEN' && keptKeys.has(prKey(pr.repo, pr.pr))).map(pr => [prKey(pr.repo, pr.pr), pr] as const))
-  return { list, toMerge, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, tabs, wanted, openKeys, forge }
+  return { list, toMerge, autoMerge, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, tabs, wanted, openKeys, forge }
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.

@@ -51,6 +51,8 @@ type Over = {
   gate?: Record<number, string | null>
   // `draft-guard.sh`, run on a draft's failed checks: the names it prints for a pull request (the ones that are no guard); null: it fails.
   guards?: Record<number, string | null>
+  // What github's `auto-merge-list` answers (no tool when absent), and the calls it was asked.
+  autoMerge?: { result?: string; isError?: boolean } | undefined
 }
 
 // The orchestrator s-orch (its record registered, owned), the agent s-agent on /dev/ttys005 launched for it.
@@ -73,6 +75,7 @@ function fake(over: Over = {}) {
   const runs: string[][] = []
   const gateRuns: string[][] = []
   const guardRuns: { argv: string[]; stdin: string }[] = []
+  const asked: unknown[] = []
   const reportsTo = over.reportsTo === undefined ? `${ORCH} [a1b2c3]` : over.reportsTo
   let listed = over.launcher
   const dollar = hostOf({
@@ -80,6 +83,7 @@ function fake(over: Over = {}) {
     env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'ORCHESTRATOR_REPORTS_TO' ? reportsTo ?? undefined : name === 'ITERM_SESSION_ID' ? (over.owner === undefined ? 'w0t0p0:own' : over.owner === null ? undefined : `w0t0p0:${over.owner}`) : undefined) },
     session: { id: async () => over.session ?? 's-agent' },
     clock: { sleep: async () => undefined },
+    tool: over.autoMerge === undefined ? {} : { call: async (input: unknown) => { asked.push(input); return over.autoMerge } },
     fs: {
       read: async (p: string) => {
         if (over.chainFails && p.includes('/chains/')) throw new Error(`EACCES: ${p}`)
@@ -124,7 +128,7 @@ function fake(over: Over = {}) {
       },
     },
   })
-  return { dollar, files, logged, runs, gateRuns, guardRuns }
+  return { dollar, files, logged, runs, gateRuns, guardRuns, asked }
 }
 
 type World = Host<Noun>
@@ -499,6 +503,30 @@ test('a merge whose idle agent has a dirty or unpushed checkout, its last turn o
 const READY_PR = JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Ready' }] }])
 const P17_LINE = ledgerLine(17, 'working', { agent: 'Agent: p17' })
 const P17_SESSION = { [`${STATE}/store/sessions/s-p17`]: row('agent', 'Agent: p17 [a1b2c3]', '/dev/ttys006') }
+
+const MERGE_NOW = ' acme/app#17 is in an auto-merge repository: merge it now yourself (pr-ready if it is a draft, then pr-merge), without asking the operator.'
+
+test('a Ready pull request of a repository github\'s auto-merge list names says the merge is the orchestrator\'s own, a draft carrying Ready too; any other list leaves its line as it was', async () => {
+  const wake = async (autoMerge: Over['autoMerge'], forge = READY_PR) => {
+    const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': forge }, launcher: running('Agent: p17'), autoMerge })
+    return { lines: (await prWake(world.dollar, new Set())).lines, asked: world.asked }
+  }
+  const listed = await wake({ result: 'other/lib\nAcme/App' })
+  expect(listed.lines).toEqual([closedLine('acme/app#17', 'is Ready') + MERGE_NOW])
+  expect(listed.asked).toEqual([{ tool: 'mcp__github__gh', command: 'auto-merge-list' }])
+  const draft = JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', isDraft: true, labels: [{ name: 'Ready' }] }])
+  expect((await wake({ result: 'acme/app' }, draft)).lines).toEqual([closedLine('acme/app#17', 'is Ready') + MERGE_NOW])
+  // Unlisted, an empty list, an unreadable list, no tool: today's line.
+  for (const autoMerge of [{ result: 'other/lib' }, { result: 'no repository in auto-merge' }, { result: '/data/auto-merge.json: malformed', isError: true }, undefined]) {
+    expect((await wake(autoMerge)).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  }
+})
+
+test('the auto-merge list is asked only when a Ready pull request is told', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17'), autoMerge: { result: 'acme/app' } })
+  await prWake(world.dollar, new Set())
+  expect(world.asked).toEqual([])
+})
 
 test('a pull request that becomes Ready closes its agent done with it, its checkout kept, and tells the act with its session id, once', async () => {
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })

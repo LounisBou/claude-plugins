@@ -18,7 +18,7 @@ import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from
 import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
 import { configDir, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
-import { agentLine, closeFailedLine, holdsOf } from './ready-agent.ts'
+import { agentLine, closeFailedLine, holdsOf, mergeNowLine } from './ready-agent.ts'
 import { closeAgent, closeFacts, type CloseFacts as CloseNow, type ToClose } from './close-agent.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { draftGuardArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
@@ -564,7 +564,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     const said = holds.length > 0 ? agentLine({ key: pk, what: 'is Ready', agent, holds }) : (await actOn(agent, pk, 'is Ready', { ready: key })).said
     if (said === null) continue
     told.add(key)
-    lines.push(said)
+    // In a repository github's auto-merge list names (read with the pull requests, when one carries Ready), the merge is this orchestrator's own.
+    lines.push(reading.autoMerge.has(line.repo.toLowerCase()) ? `${said} ${mergeNowLine(pk)}` : said)
   }
   for (const [key, pr] of conflicts) {
     if (told.has(conflictKey(key, pr))) continue
