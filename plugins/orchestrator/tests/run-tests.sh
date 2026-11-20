@@ -8278,8 +8278,9 @@ print('ok' if not bad else '; '.join(bad))
 PY
 )"
   # Every icon keeps one colour on every tab, the current one drawing it in a #303030 block of its
-  # own, and each pair holds 7:1 (WCAG AAA): the colours read from the conf, ratios computed.
-  check "each icon has one colour on both kinds of tab, over a background that holds it at 7:1" "ok" \
+  # own, and each pair holds 7:1 (WCAG AAA), over 4.5:1 (WCAG AA): the colours read from the conf,
+  # ratios computed.
+  check "each icon has one colour on both kinds of tab, over a background that holds it at 7:1 (4.5:1 for over)" "ok" \
     "$(python3 -I - "$HOMECONF" <<'PY'
 import re, sys
 conf = open(sys.argv[1], encoding='utf-8').read()
