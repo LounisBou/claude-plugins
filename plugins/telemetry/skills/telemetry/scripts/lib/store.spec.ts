@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { agentSpawned, LINE_MAX, TEXT_MAX, toolEvents } from '../../../../hooks/collect.ts'
+import { agentSpawned, LINE_MAX, MESSAGE_MAX, TEXT_MAX, toolEvents } from '../../../../hooks/collect.ts'
 import { append, check, dayFiles, parseEvent, scan } from './store.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
@@ -139,4 +139,24 @@ test('scan: an invalid line holding a secret names the secret\'s pattern; an ide
   assert.deepEqual(scan('f', `oops ${SECRET}`, new Map()), [{ file: 'f', line: 1, pattern: 'github-token' }])
   assert.deepEqual(scan('f', event('2026-11-13T10:00:00Z', { tool_use_id: 'has spaces' }), new Map()), [{ file: 'f', line: 1, pattern: 'identifier' }])
   assert.deepEqual(dayFiles('/nonexistent/telemetry'), [])
+})
+
+test('append: a failed call\'s message is redacted, then cut to its bound; an ok call has none', () => {
+  withDir(dir => {
+    const at = Date.parse('2026-11-13T20:00:00.000Z')
+    const input = { tool: 'mcp__github__gh', tool_use_id: 'toolu_01', command: 'pr-merge' }
+    const failed = (text: string, error = true) => toolEvents(at, S, input, { isError: error, text }, undefined, 1)[0]
+    const lines = [
+      failed(`github: cannot merge, token ${SECRET} was refused`),
+      failed(`${'long words go on '.repeat(80)}and on`),
+      failed('fine', false),
+    ].map(e => JSON.stringify(e)).join('\n')
+    assert.deepEqual(append(dir, lines, new Map()), { written: 3, refused: [] })
+    const [secret, long, ok] = readFileSync(join(dir, '2026-11-13.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    assert.equal(secret?.['error_message'], 'github: cannot merge, token [REDACTED:github-token] was refused')
+    assert.equal((long?.['error_message'] as string).length, MESSAGE_MAX + 1)
+    assert.match(long?.['error_message'] as string, /…$/)
+    assert.equal('error_message' in (ok ?? {}), false)
+    assert.deepEqual(check(dir, new Map()), [])
+  })
 })

@@ -103,6 +103,8 @@ export const EVENT_SCHEMA = {
       field('tool_use_id', 'string', 'The host\'s id of the call.'),
       field('outcome', 'string', '`ok`, `error` or `refused`.'),
       field('decided_by', 'string', 'Who refused: `user`, `auto_mode`, `safety`, `rule`, `hook`, `plugin`, `plugin:<name>`.'),
+      field('error_message', 'string', 'The text the model was given for an `error` or `refused` call: its first paragraph, the `<tool_use_error>` wrapper dropped, redacted then cut to 800 characters. Absent on an `ok` call, and on a refusal that gave no text.'),
+      field('wait_kind', 'string', 'A `declare_wait` call: the wait\'s kind, `operator`, `done` or `deferred`; the `operator` ones also write a `question` event.'),
       field('check', 'object', 'The permission check when it did not allow: `decision`, `rule`, `hook`, `plugin`, `setting`.'),
       field('duration_ms', 'number', 'The call\'s duration, the permission wait included; absent on a call read back from the transcript.', 'ms'),
       field('bash', 'object', 'A Bash call: `head` (first command), `heads` (every command), `line` (redacted, cut to 400 characters).'),

@@ -76,6 +76,25 @@ test('backfill: one session_summary per transcript, a file of another name skipp
   })
 })
 
+test('errors: the failed calls of the store, grouped, read without the env file; a bad --since is refused', () => {
+  harness((config, deps) => {
+    mkdirSync(join(config, 'telemetry', 'events'), { recursive: true })
+    const refused = (ts: string, pr: number) => JSON.stringify({ v: 1, ts, event: 'tool_call', session: S, tool: 'mcp__github__gh', mcp_server: 'github', outcome: 'refused', decided_by: 'plugin:github', command: 'pr-merge', error_message: `github: a/b#${pr} is not ready` })
+    writeFileSync(join(config, 'telemetry', 'events', '2026-11-13.jsonl'), `${refused('2026-11-13T20:00:00.000Z', 3)}\n${refused('2026-11-13T20:30:00.000Z', 4)}\n`)
+    mkdirSync(join(config, 'env-dir'))
+    const unreadable: Deps = { ...deps, env: { ...deps.env, TELEMETRY_ENV_FILE: join(config, 'env-dir') } }
+    assert.equal(run(['errors', '--config', config, '--since', '2026-11-13T00:00:00Z'], unreadable), 0)
+    assert.deepEqual(deps.outs.map(l => l.slice(0, 60)), [
+      'errors since 2026-11-13T00:00Z: 2 failed call(s)', 'plugin (2 call(s), 1 group(s)):', '2× refused plugin:github pr-merge: github: <repo>#<n> is not ready'.slice(0, 60),
+    ])
+    assert.equal(existsSync(join(config, 'telemetry', 'errors.json')), false)
+    assert.equal(run(['errors', '--config', config], unreadable), 0)
+    assert.equal(existsSync(join(config, 'telemetry', 'errors.json')), true)
+    assert.equal(run(['errors', '--config', config, '--since', 'yesterday'], unreadable), 2)
+    assert.deepEqual(deps.errs, ['errors: --since takes an ISO time (2026-11-20T00:00:00Z)'])
+  })
+})
+
 test('usage: no subcommand, no config, an unknown subcommand', () => {
   harness((config, deps) => {
     assert.equal(run([], deps), 2)

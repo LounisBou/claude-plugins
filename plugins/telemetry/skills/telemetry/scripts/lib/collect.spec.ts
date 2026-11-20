@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  agentClosed, agentSpawned, bashOf, checkOf, Collector, CUTS, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, mcpOf, orchestrationOf, originOf, projectOf, renamedTo, repositoryOf, roleOf,
+  agentClosed, agentSpawned, bashOf, checkOf, Collector, CUTS, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, MESSAGE_MAX, MESSAGE_RAW_MAX, mcpOf, orchestrationOf, originOf, projectOf, renamedTo, repositoryOf, roleOf,
   sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, transcriptToolEvents, turnEnd, usageFacts,
 } from '../../../../hooks/collect.ts'
 import { redactValue } from './redact.ts'
@@ -108,8 +108,31 @@ test('tool_call: an MCP call names its server, tool and command; refused by a pl
   const [event] = toolEvents(AT, S, F('tool.call.mcp'), F('result.plugin-deny'), undefined, 30)
   assert.deepEqual(event, {
     ...HEAD, event: 'tool_call', tool: 'mcp__github__gh', mcp_server: 'github', mcp_tool: 'gh', tool_use_id: 'toolu_01Mcp',
-    outcome: 'refused', decided_by: 'plugin:github', duration_ms: 30, command: 'pr-merge', target: { pr: 12 },
+    outcome: 'refused', decided_by: 'plugin:github', error_message: 'github: records are written by their producers\' tools', duration_ms: 30, command: 'pr-merge', target: { pr: 12 },
   })
+})
+
+test('tool_call: an error and a refusal keep their message, the first paragraph, the host\'s wrapper dropped; an ok call keeps none', () => {
+  const message = (result: unknown): unknown => toolEvents(AT, S, F('tool.call.bash'), result, undefined, 1)[0]?.['error_message']
+  assert.equal(message(F('result.deny')), 'refused by a plugin above')
+  assert.equal(message({ isError: true, text: '<tool_use_error>Blocked: sleep 5\n\nuse Monitor instead</tool_use_error>' }), 'Blocked: sleep 5')
+  assert.equal(message({ isError: true, result: 'Exit code 1\nboom' }), 'Exit code 1\nboom')
+  assert.equal(message({ isError: true, text: 'a'.repeat(MESSAGE_RAW_MAX + 50) }), 'a'.repeat(MESSAGE_RAW_MAX))
+  const long = `${'word '.repeat(MESSAGE_RAW_MAX / 5 - 1)}tokenthatstraddles`
+  assert.equal(message({ isError: true, text: long }), 'word '.repeat(MESSAGE_RAW_MAX / 5 - 1).trimEnd())
+  assert.equal(message({ isError: true, text: '  \n\n' }), undefined)
+  assert.equal(message({ isError: true }), undefined)
+  assert.equal(message(F('result.ok')), undefined)
+  assert.equal(message({ text: 'looks like a failure but is not flagged' }), undefined)
+  assert.equal('error_message' in (toolEvents(AT, S, F('tool.call.bash'), F('result.ok'), undefined, 1)[0] ?? {}), false)
+})
+
+test('tool_call: a declared wait names its kind, only a kind of the contract; another call names none', () => {
+  const wait = (kind: unknown) => toolEvents(AT, S, { ...(F('tool.call.round') as object), kind }, F('result.ok'), undefined, 2)[0]?.['wait_kind']
+  assert.deepEqual(['operator', 'done', 'deferred'].map(wait), ['operator', 'done', 'deferred'])
+  assert.equal(wait('other'), undefined)
+  assert.equal(wait(7), undefined)
+  assert.equal(toolEvents(AT, S, { ...(F('tool.call.mcp') as object), kind: 'done' }, F('result.ok'), undefined, 2)[0]?.['wait_kind'], undefined)
 })
 
 test('tool_call: the plugin and MCP calls read back from the transcript, each once, none still running, no built-in tool', () => {
