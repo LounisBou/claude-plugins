@@ -3495,6 +3495,14 @@ COORDMOVE=$(grep -m1 -o 'iterm-agent.sh move --tty <your tty> --leftmost' "$COOR
 check "the command's move line puts the coordinator's own tab leftmost" "1" \
   "$(if [ -n "$COORDMOVE" ]; then eval "set -- $COORDMOVE"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys950 ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSCRD" bash "$AGENT" move "$@" 2>&1 | grep -c '^move=/dev/ttys950 left_of=leftmost$'; else echo 0; fi)"
 
+# The operator's ruling of 2026-11-20: a coordinator opened fresh opens its supervision pane at its
+# start, after it registered; a succession keeps the pane its predecessor had (the module puts it
+# back as it was), so neither its brief nor its steps open one. The opening is a step of the
+# command, not code: the module cannot tell a fresh start from a successor.
+COORDOPEN='Then call `mcp__orchestrator__supervision` with `open`'
+check "a fresh start opens the supervision pane after it registered, a succession's brief and steps open none" "1|no|no" \
+  "$([ "$(COORDLINE "$COORDCMD" 'coordinator.sh register --name')" -lt "$(COORDLINE "$COORDCMD" "$COORDOPEN")" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDTPL" 'mcp__orchestrator__supervision')|$(spells "$ROOT/skills/coordination/references/succession.md" 'mcp__orchestrator__supervision')"
+
 # The end clears only the recorded coordinator's record: run from the wrong tab it would end
 # a coordinator nobody asked to end.
 check "the end checks this session is the recorded coordinator before it clears" "1" \
