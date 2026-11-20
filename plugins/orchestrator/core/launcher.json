@@ -361,6 +361,11 @@
           "flag": "--resumed",
           "dest": "resumed",
           "kind": "value"
+        },
+        {
+          "flag": "--abandon",
+          "dest": "abandon",
+          "kind": "value"
         }
       ],
       "unknown": "ignore"

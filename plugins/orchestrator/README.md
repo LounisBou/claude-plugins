@@ -190,8 +190,11 @@ An orchestrator's tab is a real terminal holding a tmux session of its own, its
 home session: the orchestrator runs in window 0 and every agent it spawns is a
 window after it, shown in a tab bar with one block per window and a state icon
 after its name (the legend below). There is nothing to
-type for it: the orchestrator command moves its own tab into the home session
-by itself. Click a block, or press `C-b n` / `C-b p`, to switch; `C-b C-b`
+type for it: the module moves the orchestrator's own tab into the home session
+by itself, at the end of the turn that names it or of the first turn of one resumed
+outside a home session. A prompt typed in the old tab after the move is refused,
+naming the new tab; an old session that does not end is said in its tab and the
+module log, and its server and new tab are closed. Click a block, or press `C-b n` / `C-b p`, to switch; `C-b C-b`
 sends a Ctrl-B to the program in the pane. Closing the tab ends the server,
 the orchestrator and every agent, once the tab's client is attached; a successor a
 takeover moved into window 0 ends the same way. The

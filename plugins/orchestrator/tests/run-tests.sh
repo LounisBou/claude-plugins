@@ -3652,6 +3652,25 @@ check "--trust on an unrecorded directory says it recorded it" "1" \
      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --trust --prompt p 2>&1 | grep -c '^trust=recorded$')"
 # A record the launcher cannot read is a gate that cannot measure: it lets the launch
 # through AND says so, instead of launching past a question nobody will see.
+# The trust is the account's: a session run on a second account (CLAUDE_CONFIG_DIR) has its own
+# .claude.json, and a spawn in a new checkout is trusted there; with no such variable it is the
+# home's. The suite's own override (ORCHESTRATOR_TRUST_FILE) comes first.
+trust_probe() { # <HOME> <extra env...>: where --trust writes the record of a directory
+  local home="$1"; shift
+  env -u ORCHESTRATOR_TRUST_FILE -u CLAUDE_CONFIG_DIR HOME="$home" "$@" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+ia.grant_directory_trust('$WORK/trust-new')
+print(ia.TRUST_FILE)"
+}
+mkdir -p "$WORK/trust-home" "$WORK/trust-acct"
+check "--trust writes the account's own .claude.json when CLAUDE_CONFIG_DIR names one" \
+  "$WORK/trust-acct/.claude.json|1|0" \
+  "$(trust_probe "$WORK/trust-home" CLAUDE_CONFIG_DIR="$WORK/trust-acct")|$(grep -c 'trust-new' "$WORK/trust-acct/.claude.json")|$([ -e "$WORK/trust-home/.claude.json" ] && echo 1 || echo 0)"
+check "and the home's .claude.json when it names none" "$WORK/trust-home/.claude.json|1" \
+  "$(trust_probe "$WORK/trust-home")|$(grep -c 'trust-new' "$WORK/trust-home/.claude.json")"
+check "the suite's own trust file wins over both" "$WORK/trust-own.json" \
+  "$(trust_probe "$WORK/trust-home" CLAUDE_CONFIG_DIR="$WORK/trust-acct" ORCHESTRATOR_TRUST_FILE="$WORK/trust-own.json")"
 printf '{not json' > "$WORK/trust-garbage.json"
 out=$(env ORCHESTRATOR_TRUST_FILE="$WORK/trust-garbage.json" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
       CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --prompt p 2>&1); code=$?
@@ -8318,7 +8337,7 @@ printf '%s\n' "${TMUX_TMPDIR-unset}" >> "$d/tmpdir"
 [ "$1" = -f ] && shift 2
 case "$1" in
   show) [ -f "$d/mark" ] && cat "$d/mark"; exit 0 ;;
-  new-session) [ -f "$d/new-err" ] && { cat "$d/new-err" >&2; exit 1; }; printf '%s\n' "${@: -1}" > "$d/window0"
+  new-session) printf '%s\n' "${CLAUDE_CONFIG_DIR-unset}" >> "$d/configdir"; [ -f "$d/new-err" ] && { cat "$d/new-err" >&2; exit 1; }; printf '%s\n' "${@: -1}" > "$d/window0"
     # The host a session starts writes its transcript: one the case staged is put in place now,
     # after the launcher took the launch's time.
     [ -f "$d/transcript" ] && cp "$d/transcript" "$(cat "$d/transcript-to")"; exit 0 ;;
@@ -8343,7 +8362,7 @@ homecmd() { # the launcher's `home`, from a plain tab outside tmux unless HTMUX 
     ORCHESTRATOR_STATE_DIR="$WORK/homestate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host \
     "$@"; }
 hcalls() { sed "s#$WORK#@WORK@#g; s#$ROOT#@ROOT@#g; s#-[0-9]\{13\}\.#-@TIME@.#g" "$HR/calls" 2>/dev/null; }
-reset_homerec() { rm -f "$HR/calls" "$HR/tmpdir" "$HR/mark" "$HR/clients" "$HR/window0" "$HR/kill-err" "$HR/panes-err" "$HR/panes"; rm -rf "$WORK/homestate"; }
+reset_homerec() { rm -f "$HR/calls" "$HR/tmpdir" "$HR/configdir" "$HR/mark" "$HR/clients" "$HR/window0" "$HR/kill-err" "$HR/panes-err" "$HR/panes"; rm -rf "$WORK/homestate"; }
 
 reset_homerec
 out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
@@ -8353,7 +8372,7 @@ check "the dry run names the server after the session, its conf, and window 0 af
 HOSTLINE="/opt/x/host --model t-model --effort xhigh --permission-mode auto --settings '{\"k\":1}' --strict-mcp-config --mcp-config /m/a.json --resume $HSID 'Go on' --name 'Orch: conv'"
 BYHAND=$("$py" -c 'import shlex,sys; print(shlex.quote(sys.argv[1]))' "cd $WORK && $HOSTLINE")
 check "window 0 waits for the old process, runs the resume on the session's current model and effort, read on its transcript, and the launch's mode, settings and servers under its name, releases the old tab through a watcher once the resumed host is proved, and names the failure of a resume that fails" \
-  "cd $WORK && i=0 && while kill -0 $$ 2>/dev/null; do if [ \$i -ge 600 ]; then echo 'the session did not end in its old place: it goes on there'; sleep 10; exit 1; fi; sleep 0.2; i=\$((i+1)); done; pane=\$(tty); $ROOT/skills/iterm-agents/scripts/iterm-agent.sh home-release --tty /dev/ttys900 --session-id '<old-tab-session-id>' --pane-tty \"\$pane\" --resumed $HSID >> $WORK/homestate/home-release.log 2>&1 & watcher=\$!; $HOSTLINE; rc=\$?; [ \$rc -eq 0 ] && exit 0; kill \$watcher 2>/dev/null; printf 'the resume of session %s failed (exit %s); resume it by hand: %s\\n' $HSID \"\$rc\" $BYHAND; exec \"\${SHELL:-/bin/sh}\" -l" \
+  "cd $WORK && i=0 && while kill -0 $$ 2>/dev/null; do if [ \$i -ge 600 ]; then echo 'the session did not end in its old place: it goes on there'; $ROOT/skills/iterm-agents/scripts/iterm-agent.sh home-release --abandon orch-abcdef12 >> $WORK/homestate/home-release.log 2>&1 || echo 'the home server could not be closed: close this tab by hand'; sleep 10; exit 1; fi; sleep 0.2; i=\$((i+1)); done; pane=\$(tty); $ROOT/skills/iterm-agents/scripts/iterm-agent.sh home-release --tty /dev/ttys900 --session-id '<old-tab-session-id>' --pane-tty \"\$pane\" --resumed $HSID >> $WORK/homestate/home-release.log 2>&1 & watcher=\$!; $HOSTLINE; rc=\$?; [ \$rc -eq 0 ] && exit 0; kill \$watcher 2>/dev/null; printf 'the resume of session %s failed (exit %s); resume it by hand: %s\\n' $HSID \"\$rc\" $BYHAND; exec \"\${SHELL:-/bin/sh}\" -l" \
   "$(sfield "$out" home_launch)"
 check "and the dry run touched no tmux" "" "$(hcalls)"
 # A successor the launcher named passes no --name: the name is the session's own, read on its tty.
@@ -8433,7 +8452,7 @@ check "the move starts the home server with its conf, window 0 named after the o
   "0|$NEWS|[-u][-L][orch-abcdef12][display-message][-p][-t][home:0][#{pane_tty}]|[-u][-L][orch-abcdef12][list-clients][-F][#{client_tty}]|[-u][-L][orch-abcdef12][set-option][-s][exit-unattached][on]" \
   "$(sfield "$res" exit)|$(hcalls | paste -sd'|' -)"
 check "the old tab is read first, the new one is made right of it under the orchestrator's name, and the move says where" \
-  "identity /dev/ttys900,create beside /dev/ttys900 right Orch: conv|moved: orch-abcdef12, shown on /dev/ttys970" \
+  "identity /dev/ttys900,create beside /dev/ttys900 right Orch: conv|moved: orch-abcdef12, shown on /dev/ttys970 wait: 120" \
   "$(sfield "$res" calls)|$(sfield "$res" OUT)"
 check "window 0 closes the old tab by the id read before the move, and the new tab runs the client of the home server alone" \
   "1|1" \
@@ -8445,6 +8464,11 @@ import iterm_agent as ia
 e = ia.home_env()
 print(','.join(k for k in ('CLAUDECODE', 'ITERM_SESSION_ID', 'ORCHESTRATOR_HOST_ARGV', 'ORCHESTRATOR_SELF_TTY') if k in e) or 'none')")"
 
+# A second account (CLAUDE_CONFIG_DIR) is the session's own: the server is started with it, so the
+# resume in window 0 and every window an agent is spawned in read the same account.
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(hprobe ok)
+check "the home server is started with the session's CLAUDE_CONFIG_DIR" "$HCONF" "$(sort -u "$HR/configdir")"
 reset_homerec
 res=$(hprobe ok)
 check "a tab that shows no client of the server is closed, the server ended, and the session stays" \
@@ -8484,11 +8508,11 @@ check "a printing session is never moved" "1|0" "$(sfield "$res" exit)|$(hcalls 
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(ORCHESTRATOR_HOME_NO_TAB=1 hprobe ok)
 check "the no-tab variable without the test marker is ignored: a tab is made and shows the server, one line says so" \
-  "0|create beside /dev/ttys900 right Orch: conv|moved: orch-abcdef12, shown on /dev/ttys970|1" \
+  "0|create beside /dev/ttys900 right Orch: conv|moved: orch-abcdef12, shown on /dev/ttys970 wait: 120|1" \
   "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep create)|$(sfield "$res" OUT)|$(sfield "$res" ERR | grep -o 'ORCHESTRATOR_HOME_NO_TAB is ignored' | wc -l | tr -d ' ')"
 reset_homerec
 res=$(ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 hprobe ok)
-check "and with the marker the move makes the server and no tab" "0|0|moved: orch-abcdef12 (no tab: attach with $HR/tmux -L orch-abcdef12 attach)" \
+check "and with the marker the move makes the server and no tab" "0|0|moved: orch-abcdef12 (no tab: attach with $HR/tmux -L orch-abcdef12 attach) wait: 120" \
   "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c create)|$(sfield "$res" OUT)"
 
 # Window 0 runs the resume and does not exec it: the old tab is released by a watcher once the
@@ -8500,7 +8524,7 @@ printf '#!/bin/sh\ni=0\nwhile [ ! -f "%s/host-ran" ] && [ $i -lt 20 ]; do sleep 
 chmod +x "$RUNL/host" "$RUNL/launcher"
 reset_homerec
 out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_HOST_CLI="$RUNL/host" bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
-sfield "$out" home_launch | sed "s#kill -0 $$ #kill -0 999999999 #; s#$ROOT/skills/iterm-agents/scripts/iterm-agent.sh#$RUNL/launcher#" > "$RUNL/launch.sh"
+sfield "$out" home_launch | sed "s#kill -0 $$ #kill -0 999999999 #; s#$ROOT/skills/iterm-agents/scripts/iterm-agent.sh#$RUNL/launcher#g" > "$RUNL/launch.sh"
 mkdir -p "$WORK/homestate"
 (cd "$RUNL" && STUB_RC=1 SHELL=/bin/echo sh "$RUNL/launch.sh" > "$RUNL/failed.out" 2>&1); sleep 1
 check "a resume that fails leaves the old tab: the release is not run, the pane says what failed and how to resume by hand, and stays open" \
@@ -8510,6 +8534,57 @@ rm -f "$RUNL/released" "$RUNL/host-ran"
 (cd "$RUNL" && STUB_RC=0 sh "$RUNL/launch.sh" > "$RUNL/ran.out" 2>&1); sleep 1
 check "a resume that runs triggers the release, with the old tab's id, the pane's tty and the resumed session" "1" \
   "$(grep -c -- "^home-release --tty /dev/ttys900 --session-id <old-tab-session-id> --pane-tty .* --resumed $HSID\$" "$RUNL/released" 2>/dev/null)"
+
+# A session that does not end in its old place within the wait: window 0 asks the launcher to close
+# its server and tab (with the wait shortened to a second and the pause after it to none), then
+# its pane ends; nothing is resumed and no old tab is released.
+out=$(homecmd env ORCHESTRATOR_HOME_WAIT=1 ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_HOST_CLI="$RUNL/host" bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
+printf '#!/bin/sh\necho "$@" >> "%s/abandoned"\nexit 0\n' "$RUNL" > "$RUNL/launcher-abandon"; chmod +x "$RUNL/launcher-abandon"
+sfield "$out" home_launch | sed "s#$ROOT/skills/iterm-agents/scripts/iterm-agent.sh#$RUNL/launcher-abandon#g; s#sleep 10;#sleep 0;#" > "$RUNL/launch-wait.sh"
+rm -f "$RUNL/abandoned" "$RUNL/released" "$RUNL/host-args"
+(cd "$RUNL" && sh "$RUNL/launch-wait.sh" > "$RUNL/waited.out" 2>&1); wait_exit=$?
+check "an old session that does not end in the wait: window 0 says so, has the launcher close its server, resumes nothing and releases no tab" \
+  "1|1|home-release --abandon orch-abcdef12|0|0" \
+  "$wait_exit|$(grep -c 'the session did not end in its old place' "$RUNL/waited.out")|$(cat "$RUNL/abandoned" 2>/dev/null)|$([ -f "$RUNL/released" ] && echo 1 || echo 0)|$([ -f "$RUNL/host-args" ] && echo 1 || echo 0)"
+
+# The abandon itself, over the recorder and a terminal of the probe's own: the clients of the
+# server are read before it ends, the server is ended, and the tab that showed it is closed.
+cat > "$WORK/abandon_probe.py" <<'PYEOF'
+import contextlib, io, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+socket = sys.argv[2]
+calls = []
+class FakeIterm(ia.Terminal):
+    def find(self, tty): calls.append("find %s" % tty); return True
+    def close(self, tty, expect): calls.append("close %s" % tty); return "NEW-SESSION"
+ia.ITERM = FakeIterm()
+ia.time.sleep = lambda s: None
+out, err = io.StringIO(), io.StringIO()
+code = 0
+try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        ia.cmd_home_release(ia.args_from_line('home-release', ["--abandon", socket]))
+except SystemExit as e:
+    code = e.code
+print("exit=%s" % code)
+print("calls=%s" % ",".join(calls))
+print("OUT:" + " ".join(out.getvalue().split()))
+print("ERR:" + " ".join(err.getvalue().split()))
+PYEOF
+aprobe() { homecmd "$py" "$WORK/abandon_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" 2>&1; }
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(aprobe orch-abcdef12)
+check "an abandoned move ends the home server and closes the tab that showed it" "0|find /dev/ttys970,close /dev/ttys970|1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(hcalls | grep -c '\[kill-server\]')|$(sfield "$res" OUT | grep -c 'the server orch-abcdef12 was ended and 1 tab(s) closed')"
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"; printf 'server busy\n' > "$HR/kill-err"
+res=$(aprobe orch-abcdef12)
+check "a server that is not ended is said, with the command that ends it, and the tab is still closed" "1|close /dev/ttys970|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep close)|$(sfield "$res" ERR | grep -c "the home server orch-abcdef12 was NOT ended: end it with $HR/tmux -L orch-abcdef12 kill-server")"
+reset_homerec
+res=$(aprobe not-a-home)
+check "a socket that is no home server's is refused, and nothing is ended" "1|0" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c '\[kill-server\]')"
 
 # The release's own guards, over a terminal of the probe's own: the proof first, then the tab.
 cat > "$WORK/release_probe.py" <<'PYEOF'

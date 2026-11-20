@@ -87,7 +87,8 @@ export const LAUNCHER_COMMANDS = {
   'tools': { options: [value('--transcript', 'transcript')], unknown: 'refuse' },
   'home': { options: [value('--session', 'session'), value('--name', 'name'), value('--prompt', 'prompt')], unknown: 'refuse' },
   'home-release': {
-    options: [value('--tty', 'tty'), value('--session-id', 'session_id'), value('--pane-tty', 'pane_tty'), value('--resumed', 'resumed')],
+    options: [value('--tty', 'tty'), value('--session-id', 'session_id'), value('--pane-tty', 'pane_tty'), value('--resumed', 'resumed'),
+      value('--abandon', 'abandon')],
     unknown: 'ignore',
   },
   'home-watch': { options: [value('--socket', 'socket'), value('--tty', 'tty')], unknown: 'ignore' },
