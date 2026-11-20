@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CURSOR_FILE, errors, failureOf, group, normalise, pluginScript, render } from './errors.ts'
+import { CURSOR_FILE, errors, failureOf, group, normalise, pluginScript, readDay, render } from './errors.ts'
 import { eventsDir } from './store.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
@@ -81,6 +81,10 @@ test('failureOf: only error and refused tool calls; a plugin\'s own failure is t
   assert.equal(plain({ tool: 'Bash', outcome: 'error', bash: { line: 'node /x/plugins/telemetry/skills/telemetry/scripts/telemetry.ts check' } })?.plugin, true)
   assert.equal(plain({ tool: 'Bash', outcome: 'error', bash: { line: 'node --test /x/plugins/unknown/a.ts' } })?.plugin, false)
   assert.equal(pluginScript('python3 ${CLAUDE_PLUGIN_ROOT}/scripts/x.py'), true)
+  for (const path of ['/Users/me/.claude/plugins/cache/lounisbou/telemetry/0.5.0/skills/a.ts', '/Users/me/.claude/plugins/marketplaces/lounisbou/plugins/github/hooks/a.ts', '/Users/me/.claude/deploys/lounisbou/6a69939a/plugins/orchestrator/a.sh']) assert.equal(pluginScript(`node ${path}`), true, path)
+  assert.equal(pluginScript('node /Users/me/.claude/plugins/cache/other/unknown/1.0/a.ts'), false)
+  assert.equal(plain({ tool: 'mcp__github__gh', mcp_server: 'github', outcome: 'refused', decided_by: 'user' })?.plugin, false)
+  assert.equal(plain({ tool: 'mcp__github__gh', mcp_server: 'github', outcome: 'refused', decided_by: 'plugin' })?.plugin, true)
   assert.equal(plain({ tool: 'mcp__github__gh', mcp_server: 'github', outcome: 'error' })?.by, 'github')
 })
 
@@ -98,7 +102,7 @@ test('render: the plugins\' groups first, then the others, counted; a quiet stor
   assert.deepEqual(render([], NOW), ['errors since 2026-11-20T12:00Z: 0 failed call(s)'])
   const many = render(parsed(...Array.from({ length: 20 }, (_, i) => refusal('2026-11-20T10:00:00Z', `distinct message ${'x'.repeat(i + 1)}`))), NOW)
   assert.equal(many.length, 1 + 1 + 15 + 1)
-  assert.equal(many.at(-1), '… 5 more group(s), 5 call(s)')
+  assert.equal(many.at(-1), '… 5 more group(s), 5 call(s) (the cursor passed them: --since 2026-11-20T12:00:00Z lists them)')
 })
 
 test('errors: a group with no message (an older event) still prints, as (no message)', () => {
@@ -149,5 +153,12 @@ test('errors: a cursor that is no JSON, or a file shorter than its offset, reads
     assert.equal(errors({ stateDir, now: NOW })[0], 'errors since 2026-11-19T12:00Z: 1 failed call(s)')
     writeFileSync(join(stateDir, CURSOR_FILE), JSON.stringify({ v: 1, offsets: { '2026-11-20.jsonl': 999_999 } }))
     assert.equal(errors({ stateDir, now: NOW })[0], 'errors since 2026-11-19T12:00Z: 1 failed call(s)')
+  })
+})
+
+test('readDay: a day file removed since it was listed is skipped, the offset kept', () => {
+  scratch(({ stateDir }) => {
+    assert.equal(readDay(eventsDir(stateDir), '2026-11-19.jsonl', 42, () => assert.fail('nothing to read')), 42)
+    assert.throws(() => readDay(eventsDir(stateDir), '.', 0, () => undefined))
   })
 })

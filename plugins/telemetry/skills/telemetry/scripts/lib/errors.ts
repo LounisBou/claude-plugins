@@ -67,8 +67,9 @@ export function failureOf(line: string): Failure | undefined {
 /** Whether a Bash line runs a script of a plugin: by its install path, or by the plugin root variable. */
 export function pluginScript(line: string): boolean {
   if (/\$\{?CLAUDE_PLUGIN_ROOT\}?/.test(line)) return true
-  const named = /\/plugins\/([a-z0-9-]+)\//.exec(line)
-  return named?.[1] !== undefined && PLUGIN_NAMES.includes(named[1])
+  // A path names its plugin after `/plugins/` (a checkout, a deploy, a marketplace) or after `/cache/<marketplace>/` (an install).
+  for (const shape of [/\/plugins\/([a-z0-9-]+)(?=\/)/g, /\/cache\/[^/\s]+\/([a-z0-9-]+)(?=\/)/g]) for (const named of line.matchAll(shape)) if (PLUGIN_NAMES.includes(named[1] ?? '')) return true
+  return false
 }
 
 const PARTS: readonly [RegExp, string][] = [
@@ -137,11 +138,11 @@ export function lineOf(g: Group): string {
   return `${g.count}× ${g.outcome} ${name}: ${g.normalised} [${span}, ${g.sessions.size} session(s)]${example}`
 }
 
-function section(title: string, groups: readonly Group[]): string[] {
+function section(title: string, groups: readonly Group[], since: number): string[] {
   if (groups.length === 0) return []
   const shown = groups.slice(0, GROUPS_SHOWN)
   const rest = groups.slice(GROUPS_SHOWN)
-  const more = rest.length === 0 ? [] : [`… ${rest.length} more group(s), ${rest.reduce((n, g) => n + g.count, 0)} call(s)`]
+  const more = rest.length === 0 ? [] : [`… ${rest.length} more group(s), ${rest.reduce((n, g) => n + g.count, 0)} call(s) (the cursor passed them: --since ${new Date(since).toISOString().slice(0, 19)}Z lists them)`]
   return [`${title} (${groups.reduce((n, g) => n + g.count, 0)} call(s), ${groups.length} group(s)):`, ...shown.map(lineOf), ...more]
 }
 
@@ -150,7 +151,7 @@ export function render(failures: readonly Failure[], since: number): string[] {
   const groups = group(failures)
   const header = `errors since ${new Date(since).toISOString().slice(0, 16)}Z: ${failures.length} failed call(s)`
   if (groups.length === 0) return [`${header}`]
-  return [header, ...section('plugin', groups.filter(g => g.plugin)), ...section('other', groups.filter(g => !g.plugin))]
+  return [header, ...section('plugin', groups.filter(g => g.plugin), since), ...section('other', groups.filter(g => !g.plugin), since)]
 }
 
 /** The cursor: for each day file, the bytes already read. */
@@ -191,8 +192,16 @@ export interface ErrorsInput {
 }
 
 /** The failures a day file holds from `from` on, and where its last complete line ends. */
-function readDay(dir: string, name: string, from: number, collect: (f: Failure) => void): number {
-  const { lines, end } = completeLines(readFileSync(join(dir, name)), from)
+export function readDay(dir: string, name: string, from: number, collect: (f: Failure) => void): number {
+  let buffer: Buffer
+  try {
+    buffer = readFileSync(join(dir, name))
+  } catch (error) {
+    // A day file the export removed since it was listed has nothing more to read.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return from
+    throw error
+  }
+  const { lines, end } = completeLines(buffer, from)
   for (const line of lines) {
     const f = failureOf(line)
     if (f !== undefined) collect(f)

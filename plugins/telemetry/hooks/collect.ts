@@ -23,8 +23,13 @@ export const HEADER_MAX = 12
 
 /** A failed call's message is cut to this, once redacted: its first paragraph, with room for a deny sentence and its hint. */
 export const MESSAGE_MAX = 800
-/** The message is bounded to this before the writer redacts it, so a huge result never reaches the redaction whole; the cut above falls well inside it. */
-export const MESSAGE_RAW_MAX = 4000
+/**
+ * The message is bounded to this before the writer redacts it, so a pathological result never reaches
+ * the redaction whole. It is far above any redaction's shrink (a secret is a mark of a few characters, a
+ * private key's block runs to the text's end), so the writer's cut never lands on a tail the bound left
+ * half-matched; the bound itself falls on a blank, never inside a token.
+ */
+export const MESSAGE_RAW_MAX = 100_000
 
 /**
  * The fields cut to a length, by key at any depth. The events carry them whole: the writer
@@ -284,7 +289,9 @@ export function messageOf(result: unknown): string | undefined {
   const whole = text(r['deny']) ?? (r['isError'] === true ? text(r['text']) ?? text(r['result']) : undefined)
   if (whole === undefined) return undefined
   const paragraph = whole.replace(/<\/?tool_use_error>/g, '').trim().split(/\r?\n[ \t]*\r?\n/)[0]?.trim() ?? ''
-  return paragraph === '' ? undefined : paragraph.slice(0, MESSAGE_RAW_MAX)
+  if (paragraph.length <= MESSAGE_RAW_MAX) return paragraph === '' ? undefined : paragraph
+  const bounded = paragraph.slice(0, MESSAGE_RAW_MAX)
+  return bounded.slice(0, Math.max(bounded.search(/\s\S*$/), 0) || MESSAGE_RAW_MAX)
 }
 
 const BASENAME = (word: string): string => word.replace(/^.*\//, '')

@@ -118,6 +118,8 @@ test('tool_call: an error and a refusal keep their message, the first paragraph,
   assert.equal(message({ isError: true, text: '<tool_use_error>Blocked: sleep 5\n\nuse Monitor instead</tool_use_error>' }), 'Blocked: sleep 5')
   assert.equal(message({ isError: true, result: 'Exit code 1\nboom' }), 'Exit code 1\nboom')
   assert.equal(message({ isError: true, text: 'a'.repeat(MESSAGE_RAW_MAX + 50) }), 'a'.repeat(MESSAGE_RAW_MAX))
+  const long = `${'word '.repeat(MESSAGE_RAW_MAX / 5 - 1)}tokenthatstraddles`
+  assert.equal(message({ isError: true, text: long }), 'word '.repeat(MESSAGE_RAW_MAX / 5 - 1).trimEnd())
   assert.equal(message({ isError: true, text: '  \n\n' }), undefined)
   assert.equal(message({ isError: true }), undefined)
   assert.equal(message(F('result.ok')), undefined)
