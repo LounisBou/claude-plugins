@@ -1400,16 +1400,16 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
   }
   rec.told.delete('list ' + repo)
   rec.told.delete('unreachable')
+  const changed = JSON.stringify(before?.rows ?? null) !== JSON.stringify(listing.rows)
+  const schedule = nextListing(before?.schedule, now, changed, listing.rows, listing.rate)
+  // The quota is the account's: once low, no repository is listed and no gate read before its reset.
+  if (listing.rate.remaining !== undefined && listing.rate.remaining < QUOTA_LOW) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
   if (listing.archived) {
     // The forge's own flag, read with the listing: no row is kept, no post made, no listing made again.
     dropArchived(rec, repo)
     sayOnce($, rec, 'github: the reconciler leaves ' + repo + ' alone: it is archived (read-only), its pull requests are neither read nor posted to', 'archived ' + repo)
     return 'archived'
   }
-  const changed = JSON.stringify(before?.rows ?? null) !== JSON.stringify(listing.rows)
-  const schedule = nextListing(before?.schedule, now, changed, listing.rows, listing.rate)
-  // The quota is the account's: once low, no repository is listed and no gate read before its reset.
-  if (listing.rate.remaining !== undefined && listing.rate.remaining < QUOTA_LOW) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
   rec.repos.set(repo, { rows: listing.rows, schedule, ...(listing.viewer !== undefined ? { viewer: listing.viewer } : {}), listedAt: now })
   return 'listed'
 }
@@ -1735,6 +1735,11 @@ async function reconcileTick($: Mod): Promise<void> {
       if (repos.includes(repo)) continue
       rec.repos.delete(repo)
       for (const map of [rec.unpublished, rec.held]) for (const key of [...map.keys()]) if (key.startsWith(repo + '#')) map.delete(key)
+      // What was said of its failing steps goes too: said again if it is followed again and fails the same way.
+      for (const key of [...rec.told.keys()]) {
+        const at = key.split(' ')[1] ?? ''
+        if (at === repo || at.startsWith(repo + '#')) rec.told.delete(key)
+      }
     }
     const listed = new Set<string>()
     for (const repo of repos) {
@@ -1762,13 +1767,14 @@ async function reconcileTick($: Mod): Promise<void> {
         if (!synced.imported) imported = false
         if (synced.wrote) copied = data ? await readExemption($, repo) : undefined
       }
+      // A repository found archived by a refused post leaves no marker: it is no longer followed.
+      if (rec.archived.has(repo)) continue
       // The tools of the machine's sessions read there that the forge was listed and its statuses imported, not before.
       const told = String(entry.listedAt) + (imported ? ' listed' : ' failing')
       if (entry.listedAt !== undefined && entry.kept !== told) {
         entry.kept = told
         await noteMarker($, rec, imported ? 'listed' : 'failing', repo, entry.listedAt)
       }
-      if (rec.archived.has(repo)) continue
       const exemption = data ? await readExemption($, repo) : undefined
       for (const row of rows) {
         const key = repo + '#' + row.number
