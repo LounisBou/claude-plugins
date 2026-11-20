@@ -5824,6 +5824,75 @@ print(ia.await_handover('/dev/ttys966'))" 2>&1)
 check "a takeover waits for the predecessor's handed over, or an idle transcript, and says which" \
   "False|True|1|1|True|1" \
   "$(printf '%s\n' "$res" | sed -n 1p)|$(printf '%s\n' "$res" | sed -n 2p)|$(printf '%s\n' "$res" | grep -c '^takeover: « handed over » read on ')|$(printf '%s\n' "$res" | grep -c '^takeover: no « handed over » on .*; its transcript was idle 30[0-9]s$')|$(printf '%s\n' "$res" | sed -n 5p)|$(printf '%s\n' "$res" | grep -c '^takeover: no transcript of the session on /dev/ttys966 was found: no « handed over » read$')"
+# The end of the operator's conversation is read from the predecessor's transcript, before the
+# kill, and printed under one heading: his own messages only, the replies' text, a window of his
+# last 3 messages or 10 minutes, capped, masked.
+CT_PROBE=$(mkdir -p "$WORK/ct" && "$py" -I "$ROOT/tests/conversation-tail-probe.py" "$ROOT/skills/iterm-agents/scripts" "$WORK/ct" 2>&1)
+ct_of() { printf '%s\n' "$CT_PROBE" | sed -n "s/^$1=//p"; }
+check "the operator's messages are the human origin's: a peer, a plugin, a task notification, a system prompt, a meta entry, a sidechain and a tool result are left out" \
+  "0|0|0|0|0|0|0|0" "$(ct_of origins)"
+check "his typed and queued messages stay, a slash command is its name" "1|1|1|0" "$(ct_of mine)"
+check "a reply is the text parts of the main thread: no sidechain, synthetic message, API error, thinking or tool call" \
+  "1|1|0|0|0|0|0" "$(ct_of replies)"
+check "fewer than 3 messages in 10 minutes: the 3 last, with the replies after the first" "0|0|1|1|1|1|1|1" "$(ct_of few)"
+check "3 messages inside 10 minutes: the 10 minutes, the older of the two limits" "0|0|1|1|1|1|1|1" "$(ct_of many)"
+check "fewer than 3 messages in all: every one" "1|1|1" "$(ct_of two)"
+check "no message of his in the transcript: the heading says so, no reply is shown" "0|1" "$(ct_of none)"
+check "times are in Paris time, winter and summer" "16:39|12:00" "$(ct_of paris)"
+check "a line carries its Paris time and who spoke" "1" "$(ct_of time)"
+check "a long reply keeps its head and its tail within its cap" "1|1|1" "$(ct_of long)"
+check "a fenced command stays whole beside capped prose" "1|1|1" "$(ct_of fenced)"
+check "the section is capped, the oldest exchange dropped first" "1|1|1|0" "$(ct_of capped)"
+check "what stays of a capped section is a whole recent run of exchanges" "1" "$(ct_of capped_run)"
+check "every secret shape is gone from what is printed, in a line of its own" \
+  "0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0" "$(ct_of secret_gone)"
+check "each is masked by its own pattern; a short value is not" \
+  "1|1|1|1|1|1|1|1|1|1|1|1|1|1|1|1|1" "$(ct_of secret_marks)"
+check "his own message is masked as well" "0|1" "$(ct_of secret_operator)"
+check "a secret across the reply's cap is masked before it is cut, never left in half" "0|1" "$(ct_of straddle)"
+check "one exchange over the section's cap keeps its newest lines, the last reply whole, within the cap" "0|0|0|1|1|1" "$(ct_of fat)"
+check "a single block over the section's cap keeps its tail, under its line's prefix, within the cap" "1|1|1" "$(ct_of fatter)"
+check "a long text of the words a pattern looks for is masked in linear time" "1" "$(ct_of fast)"
+check "the operator's own words are never cut" "1|1|0" "$(ct_of operator_long)"
+check "only the last 4 MiB of the transcript are read, the line cut by the read dropped" "1|1|1" "$(printf '%s|%s' "$(ct_of huge)" "$(ct_of cut)")"
+check "a transcript that cannot be read is said, not raised" "1" "$(ct_of missing)"
+CVT="$WORK/conv-transcript.jsonl"
+printf '%s\n' '{"type":"user","timestamp":"2026-11-20T15:00:00.000Z","origin":{"kind":"human"},"message":{"content":"CONV-ASK"}}' \
+  '{"type":"assistant","timestamp":"2026-11-20T15:00:05.000Z","message":{"model":"m","content":[{"type":"text","text":"CONV-ANSWER"}]}}' > "$CVT"
+res=$(ipy "
+ia.rotated_session = lambda tty: 's-pred'
+ia.transcript_of_session = lambda sid: '$CVT'
+print(ia.conversation_of('/dev/ttys966'))
+ia.transcript_of_session = lambda sid: None
+print(ia.conversation_of('/dev/ttys966'))
+def boom(tty): raise RuntimeError('no table')
+ia.rotated_session = boom
+print(ia.conversation_of('/dev/ttys966'))" 2>&1)
+check "the launcher reads a session's conversation on its tty, and says why when it cannot" \
+  "1|1|1|2|1" \
+  "$(printf '%s\n' "$res" | grep -c '^conversation: the end of the conversation')|$(printf '%s\n' "$res" | grep -c 'operator: CONV-ASK')|$(printf '%s\n' "$res" | grep -c 'CONV-ANSWER')|$(printf '%s\n' "$res" | grep -c '^conversation:')|$(printf '%s\n' "$res" | grep -c '^conversation: not read (no table)$')"
+res=$(ORCHESTRATOR_STATE_DIR="$ESTATE" ipy "
+P = ia.Pane
+class Home:
+    def window_of(self, tty, what):
+        return P('home', '0', '@1', '%1', tty, 'Orch: x', '') if tty == '/dev/ttys966' \
+            else P('home', '2', '@3', '%3', tty, 'Orch: x', '')
+    def kill(self, window, what): pass
+    def survives(self, stable_id): return False
+    def stable_id(self, window): return 'tmux:s:' + window
+    def session(self): return 'home'
+ia.TmuxTerminal = Home
+ia.in_home_session = lambda: True
+ia.self_tty = lambda: '/dev/ttys967'
+ia.tmux_out = lambda args, what: '0'
+ia.host_identity = lambda tty: None
+ia.wait_gone = lambda *a, **k: None
+ia.await_handover = lambda tty: 'takeover: « handed over » read'
+ia.rotated_session = lambda tty: 's-pred'
+ia.transcript_of_session = lambda sid: '$CVT'
+ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" 2>&1)
+check "a takeover prints the predecessor's conversation after its handed over line and before it kills" "1|2|5" \
+  "$(printf '%s\n' "$res" | grep -c 'CONV-ANSWER')|$(printf '%s\n' "$res" | grep -n '^conversation: ' | cut -d: -f1)|$(printf '%s\n' "$res" | grep -n '^took window 0' | cut -d: -f1)"
 kill -9 "$sh0" "$sh1" "$st" "$sp" "$pp" 2>/dev/null
 export ORCHESTRATOR_HOST_CLI="$host_cli_kept"
 
@@ -6155,6 +6224,9 @@ ia.cmd_spawn = lambda argv, pair_from='', old_tty='', made=None: None
 ia.session_title = lambda tty, what='close': 'T'
 # No host identity: the close's proof is wait_gone's, stubbed above, and no real pid is read.
 ia.host_identity = lambda t: None
+if os.environ.get('CONV_TRANSCRIPT'):
+    ia.rotated_session = lambda t: 's-pred'
+    ia.transcript_of_session = lambda sid: os.environ['CONV_TRANSCRIPT']
 out, err = io.StringIO(), io.StringIO()
 code = 0
 try:
@@ -6196,6 +6268,16 @@ res=$(cprobe close --keep-checkout)
 check "--keep-checkout opts out: nothing deleted, nothing said about a checkout" "1|0" \
   "$(exists "$CL")|$(field "$res" ERR | grep -c 'checkout')"
 
+CVT_CLOSE="$WORK/conv-close-transcript.jsonl"
+printf '%s\n' '{"type":"user","timestamp":"2026-11-20T15:00:00.000Z","origin":{"kind":"human"},"message":{"content":"CONV-ASK"}}' \
+  '{"type":"assistant","timestamp":"2026-11-20T15:00:05.000Z","message":{"model":"m","content":[{"type":"text","text":"CONV-ANSWER"}]}}' > "$CVT_CLOSE"
+for who in 'Orch: x' 'Agent: x'; do
+  res=$(CONV_TRANSCRIPT="$CVT_CLOSE" cprobe close --keep-checkout --expect-title "$who")
+  eval "res_${who%%:*}=\$res"
+done
+check "closing an orchestrator prints its conversation after the contract line; an agent's close prints none" \
+  "closed 1 session on /dev/ttys901|1|1|0" \
+  "$(printf '%s\n' "$res_Orch" | sed -n 2p | sed 's/^OUT://')|$(printf '%s\n' "$res_Orch" | grep -c '^conversation: ')|$(printf '%s\n' "$res_Orch" | grep -c 'CONV-ANSWER')|$(printf '%s\n' "$res_Agent" | grep -c '^conversation: ')"
 res=$(cprobe rotate)
 check "a rotation deletes nothing: its replacement works in the same checkout" "1|0" \
   "$(exists "$CL")|$(field "$res" ERR | grep -c 'deleted')"
