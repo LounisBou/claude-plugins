@@ -9,6 +9,11 @@
 
 set -u
 
+# An inherited CLAUDE_CONFIG_DIR makes a case that sets HOME write the operator's real settings:
+# every case runs without it. The probe mode reports what the suite sees, for its own test.
+unset CLAUDE_CONFIG_DIR
+if [ "${1:-}" = "--probe-config-dir" ]; then printf '%s' "${CLAUDE_CONFIG_DIR-unset}"; exit 0; fi
+
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPT="$HERE/../statusline/statusline.sh"
 WORK=$(mktemp -d)
@@ -918,6 +923,17 @@ else
   fail=$((fail + 1))
 fi
 
+CFG=$(fresh_config "")
+mkdir -p "$CFG/real"
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/x/usage-key.sh"}]}]},"kept":1}' > "$CFG/real/settings.json"
+ln -s real/settings.json "$CFG/settings.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$INSTALL" >/dev/null
+if [ -L "$CFG/settings.json" ] && [ "$(jq -r 'has("hooks")' "$CFG/real/settings.json")" = "false" ] && [ "$(jq -r .kept "$CFG/real/settings.json")" = "1" ]; then
+  printf '  ok   install removing a legacy hook keeps a symlinked settings.json a link, its target rewritten\n'; pass=$((pass + 1))
+else
+  printf '  FAIL install removing a legacy hook keeps a symlinked settings.json a link, its target rewritten\n'; fail=$((fail + 1))
+fi
+
 echo "-- uninstall --"
 
 CFG=$(fresh_config "")
@@ -925,6 +941,30 @@ DEST=$(dest_for "$CFG")
 printf '{"statusLine":{"type":"command","command":"%s","padding":0}}' "$DEST" > "$CFG/settings.json"
 CLAUDE_CONFIG_DIR="$CFG" bash "$UNINSTALL" >/dev/null
 check_json "uninstall of our own command deletes statusLine" "$CFG" 'has("statusLine")' "false"
+
+CFG=$(fresh_config "")
+DEST=$(dest_for "$CFG")
+mkdir -p "$CFG/real"
+printf '{"statusLine":{"type":"command","command":"%s","padding":0},"kept":1}' "$DEST" > "$CFG/real/settings.json"
+ln -s real/settings.json "$CFG/settings.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$UNINSTALL" >/dev/null
+if [ -L "$CFG/settings.json" ] && [ "$(jq -r 'has("statusLine")' "$CFG/real/settings.json")" = "false" ] && [ "$(jq -r .kept "$CFG/real/settings.json")" = "1" ]; then
+  printf '  ok   uninstall of our own command keeps a symlinked settings.json a link, its target rewritten\n'; pass=$((pass + 1))
+else
+  printf '  FAIL uninstall of our own command keeps a symlinked settings.json a link, its target rewritten\n'; fail=$((fail + 1))
+fi
+
+CFG=$(fresh_config "")
+DEST=$(dest_for "$CFG")
+mkdir -p "$CFG/real"
+printf '{"statusLine":{"type":"command","command":"/opt/tap.sh %s","padding":0},"kept":1}' "$DEST" > "$CFG/real/settings.json"
+ln -s real/settings.json "$CFG/settings.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$UNINSTALL" >/dev/null
+if [ -L "$CFG/settings.json" ] && [ "$(jq -r .statusLine.command "$CFG/real/settings.json")" = "/opt/tap.sh" ] && [ "$(jq -r .kept "$CFG/real/settings.json")" = "1" ]; then
+  printf '  ok   uninstall of a wrapped command keeps a symlinked settings.json a link, its target rewritten\n'; pass=$((pass + 1))
+else
+  printf '  FAIL uninstall of a wrapped command keeps a symlinked settings.json a link, its target rewritten\n'; fail=$((fail + 1))
+fi
 
 CFG=$(fresh_config "")
 DEST=$(dest_for "$CFG")
@@ -1048,6 +1088,19 @@ if command -v claude >/dev/null 2>&1 && claude plugin test "$HERE/.." >/dev/null
   printf '  ok   %s\n' "the module's tests pass in the host's kit"; pass=$((pass + 1))
 else
   printf '  FAIL %s\n' "the module's tests pass in the host's kit (claude plugin test)"; fail=$((fail + 1))
+fi
+
+echo "-- isolation --"
+
+# The suite runs without the operator's CLAUDE_CONFIG_DIR, even when one is inherited: a case that
+# sets HOME would otherwise write the real settings. The probe runs the suite's own first lines
+# with a scratch CLAUDE_CONFIG_DIR inherited; it reports « unset » only if the unset is in place.
+PROBE_DIR=$(mktemp -d "$WORK/probe.XXXXXX")
+probed=$(env CLAUDE_CONFIG_DIR="$PROBE_DIR" bash "$HERE/run-tests.sh" --probe-config-dir)
+if [ "$probed" = "unset" ]; then
+  printf '  ok   %s\n' "the suite runs without an inherited CLAUDE_CONFIG_DIR"; pass=$((pass + 1))
+else
+  printf '  FAIL %s (got: %s)\n' "the suite runs without an inherited CLAUDE_CONFIG_DIR" "$probed"; fail=$((fail + 1))
 fi
 
 echo

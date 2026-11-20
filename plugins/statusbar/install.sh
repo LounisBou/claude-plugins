@@ -25,6 +25,16 @@ say()  { printf '  %s\n' "$*"; }
 step() { printf '\n%s\n' "$*"; }
 run()  { if [ "$DRY" = "1" ]; then printf '  [dry-run] %s\n' "$*"; else eval "$@"; fi; }
 
+# A symlinked settings.json stays a link: the file it points at is the one rewritten.
+settings_target() {
+  local target="$SETTINGS" link
+  while [ -L "$target" ]; do
+    link=$(readlink "$target")
+    case "$link" in /*) target="$link" ;; *) target="$(dirname "$target")/$link" ;; esac
+  done
+  printf '%s' "$target"
+}
+
 # settings.json is free text: a hand-written or templated statusLine.command
 # can spell our script's path expanded, or as $HOME/…, ${HOME}/…, ~/… when
 # CONFIG_DIR sits under $HOME (the default). List every spelling that
@@ -130,7 +140,8 @@ if [ -f "$SETTINGS" ]; then
     if [ "$DRY" = "0" ]; then
       mkdir -p "$BACKUP_DIR"
       cp "$SETTINGS" "$BACKUP_DIR/settings.json.before"
-      tmp=$(mktemp)
+      target=$(settings_target)
+      tmp=$(mktemp "$(dirname "$target")/.settings.json.XXXXXX")
       jq --arg pat "$LEGACY_HOOK_PATTERN" '.hooks |= (
             with_entries(
               .value |= ( map(.hooks |= map(select((.command // "") | test($pat) | not)))
@@ -140,7 +151,7 @@ if [ -f "$SETTINGS" ]; then
           )
           | if (.hooks | length) == 0 then del(.hooks) else . end' \
         "$SETTINGS" > "$tmp"
-      chmod 600 "$tmp"; mv "$tmp" "$SETTINGS"
+      chmod 600 "$tmp"; mv "$tmp" "$target"
     fi
   fi
 fi
@@ -205,12 +216,7 @@ else
   else
     mkdir -p "$BACKUP_DIR"
     [ -f "$BACKUP_DIR/settings.json.before" ] || cp "$SETTINGS" "$BACKUP_DIR/settings.json.before"
-    # A symlinked settings.json stays a link: the file it points at is the one rewritten.
-    target="$SETTINGS"
-    while [ -L "$target" ]; do
-      link=$(readlink "$target")
-      case "$link" in /*) target="$link" ;; *) target="$(dirname "$target")/$link" ;; esac
-    done
+    target=$(settings_target)
     # One rename in the file's own directory: a reader never sees half a file.
     tmp=$(mktemp "$(dirname "$target")/.settings.json.XXXXXX")
     if jq --arg cmd "$DEST" '.statusLine = {type: "command", command: $cmd, padding: 0}' "$target" > "$tmp"; then

@@ -11,6 +11,16 @@ SETTINGS="$CONFIG_DIR/settings.json"
 
 say() { printf '  %s\n' "$*"; }
 
+# A symlinked settings.json stays a link: the file it points at is the one rewritten.
+settings_target() {
+  local target="$SETTINGS" link
+  while [ -L "$target" ]; do
+    link=$(readlink "$target")
+    case "$link" in /*) target="$link" ;; *) target="$(dirname "$target")/$link" ;; esac
+  done
+  printf '%s' "$target"
+}
+
 # settings.json is free text: a hand-written or templated statusLine.command
 # can spell our script's path expanded, or as $HOME/…, ${HOME}/…, ~/… when
 # CONFIG_DIR sits under $HOME (the default). List every spelling that
@@ -61,9 +71,10 @@ if [ -z "$current" ] || ! wraps_ours "$current"; then
   say "settings.json does not point at this status line, left untouched"
 elif is_exactly_ours "$current"; then
   # Only ours: the whole key is ours to remove.
-  tmp=$(mktemp)
+  target=$(settings_target)
+  tmp=$(mktemp "$(dirname "$target")/.settings.json.XXXXXX")
   jq 'del(.statusLine)' "$SETTINGS" > "$tmp"
-  chmod 600 "$tmp"; mv "$tmp" "$SETTINGS"
+  chmod 600 "$tmp"; mv "$tmp" "$target"
   say "statusLine removed from settings.json"
 else
   # Another tool wraps us ("<its command> <our path>"): drop only our
@@ -75,9 +86,10 @@ else
   if [ -z "$stripped" ]; then
     say "statusLine wraps only this status bar, with nothing left to run afterwards: left untouched"
   else
-    tmp=$(mktemp)
+    target=$(settings_target)
+    tmp=$(mktemp "$(dirname "$target")/.settings.json.XXXXXX")
     jq --arg cmd "$stripped" '.statusLine.command = $cmd' "$SETTINGS" > "$tmp"
-    chmod 600 "$tmp"; mv "$tmp" "$SETTINGS"
+    chmod 600 "$tmp"; mv "$tmp" "$target"
     say "our path removed from statusLine, wrapper kept: $stripped"
   fi
 fi
