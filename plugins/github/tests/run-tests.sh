@@ -1217,6 +1217,52 @@ with patch.object(http, 'rest', fake_rest), \\
 ")
 check "a status read that fails with a 422 does not end the wait" "abc" "$status_err"
 
+# Without --method, pr-merge takes the first method the repository allows (merge,
+# squash, rebase). Each line: the method sent, then the method reported in the output.
+method_out=$(GHDIR="$GHDIR" python3 - <<'PY'
+import os, sys, types
+sys.path.insert(0, os.environ['GHDIR'])
+from unittest.mock import patch
+from ghlib import errors, http, pr
+
+def run(info, method):
+    sent = []
+    def fake_rest(verb, path, body=None, **kw):
+        if verb == 'GET' and path == '/repos/acme/thing':
+            if isinstance(info, Exception):
+                raise info
+            return info
+        if verb == 'PUT':
+            sent.append(body['merge_method'])
+            return {'merged': True, 'sha': 'abc'}
+        raise AssertionError(path)
+    args = types.SimpleNamespace(pr=7, method=method, sha=None)
+    with patch.object(http, 'rest', fake_rest), \
+            patch.object(pr.repo, 'owner_repo', lambda: ('acme', 'thing')):
+        result = pr.pr_merge(args)
+    return '%s %s' % (sent[0], result['merge_method'])
+
+squash_only = {'allow_merge_commit': False, 'allow_squash_merge': True, 'allow_rebase_merge': False}
+rebase_only = {'allow_merge_commit': False, 'allow_squash_merge': False, 'allow_rebase_merge': True}
+all_allowed = {'allow_merge_commit': True, 'allow_squash_merge': True, 'allow_rebase_merge': True}
+print(run(squash_only, None))
+print(run(all_allowed, None))
+print(run(rebase_only, None))
+print(run(squash_only, 'merge'))
+print(run(errors.ApiError('Not Found'), None))
+PY
+)
+check "pr-merge without --method on a squash-only repository sends squash" "squash squash" \
+  "$(printf '%s\n' "$method_out" | sed -n 1p)"
+check "pr-merge without --method on a repository allowing merge sends merge" "merge merge" \
+  "$(printf '%s\n' "$method_out" | sed -n 2p)"
+check "pr-merge without --method on a rebase-only repository sends rebase" "rebase rebase" \
+  "$(printf '%s\n' "$method_out" | sed -n 3p)"
+check "pr-merge --method merge on a squash-only repository sends merge" "merge merge" \
+  "$(printf '%s\n' "$method_out" | sed -n 4p)"
+check "pr-merge keeps merge when the repository read fails" "merge merge" \
+  "$(printf '%s\n' "$method_out" | sed -n 5p)"
+
 
 echo "== skill documents =="
 
