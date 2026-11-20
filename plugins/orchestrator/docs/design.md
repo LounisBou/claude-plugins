@@ -75,6 +75,7 @@ skills/iterm-agents/scripts/spawn-prep.ts, skills/iterm-agents/scripts/spawn-pre
 skills/iterm-agents/scripts/tier.ts, skills/iterm-agents/scripts/tier.spec.ts  a tier's binding in the operator's map, and resolve-tier
 skills/iterm-agents/scripts/chains.ts, skills/iterm-agents/scripts/chains.spec.ts  the adapter's chain changes, made through core's store (core/chains.ts)
 skills/iterm-agents/scripts/iterm_agent.py   the adapter: the request performed, over the app API
+skills/iterm-agents/scripts/conversation_tail.py   the end of a session's conversation with the operator, read from its transcript for a succession
 skills/iterm-agents/tmux/home.conf          a home server's tmux configuration, read through -f
 skills/orchestrator/scripts/brief-lint.sh   lints a brief before it is dispatched, warning on its findings
 skills/orchestrator/scripts/review-brief.sh, skills/orchestrator/scripts/review-brief.ts, skills/orchestrator/scripts/review-brief.spec.ts  a review round's brief filled from its fields: the template's text is never retyped, a field it gained and the command does not fill is refused
@@ -225,6 +226,7 @@ hooks/tests/screen.ts                a tree laid out as the rows a terminal show
 install.sh, uninstall.sh
 tests/run-tests.sh
 tests/e2e.sh                         one real round: a tab, a session, a close
+tests/conversation-tail-probe.py     the fixture transcripts of the conversation tail's cases, read by tests/run-tests.sh
 tests/e2e-host.sh                    the live host the pane's test starts: its module's dependencies and its banner read
 tests/deck-e2e.ts                    the deck built once from this machine's real state, read-only, into a temporary file: one write timed cold and warm, each listed session's own read played in turn, every usage field's type, the totals' sum, the periods' Paris starts and one session's week against routing.py cost checked
 tests/usage-rule.ts                  the deck's usage rule run under node, through the module's own reader in two reads, for the suite to hold it to routing.py cost, and the reader's own answer for one window
