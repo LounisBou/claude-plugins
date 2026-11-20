@@ -22,7 +22,7 @@
 // jobs; the night's macOS run does not hold an install back. `installed.json` (version 1) is what
 // another machine reads. Reads GitHub through `gh`, the host through `claude plugin`.
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { configDir } from '../packages/core/src/paths.ts'
 import { readText, withLock, writeAtomic } from '../packages/core/src/store.ts'
@@ -278,6 +278,36 @@ function repointAll(host: Host, dir: string, config: string): void {
   if (failures.length > 0) throw new Error(`${failures.join('; ')}: run npm run deploy again`)
 }
 
+/** The status bar's launcher in a tree, and where the bar's installer puts its copy in a configuration directory. */
+const LAUNCHER_IN_TREE = join('plugins', 'statusbar', 'statusline', 'launcher.sh')
+const LAUNCHER_IN_CONFIG = join('statusbar', 'statusline.sh')
+
+/**
+ * Writes the launcher of the tree at `dir` over the copy the status bar's installer left in each configuration
+ * directory sharing the plugins, where that copy exists and differs: `settings.json` runs the copy, which no
+ * plugin update reaches. Written through a link to its target, atomically, mode 755; a file already equal is
+ * not rewritten. One failing configuration is told on stderr and does not hold back the others.
+ */
+function refreshLaunchers(paths: Paths, dir: string, io: Io): void {
+  try {
+    const wanted = readText(join(dir, LAUNCHER_IN_TREE))
+    if (wanted === undefined) return
+    for (const config of sharingConfigs(paths.config)) {
+      try {
+        const copy = realOf(join(config, LAUNCHER_IN_CONFIG))
+        if (copy === undefined || readText(copy) === wanted) continue
+        writeAtomic(copy, wanted, 0o755)
+        chmodSync(copy, 0o755)
+        io.out(`deploy: refreshed the status line launcher ${copy}`)
+      } catch (error) {
+        io.err(`deploy: the status line launcher of ${config} was not refreshed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  } catch (error) {
+    io.err(`deploy: the status line launcher was not refreshed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 /** Points the marketplace and the `current` link at `commit`'s directory, then updates every plugin of it. */
 function install(paths: Paths, host: Host, state: State, io: Io): State {
   const commit = state.history[0]?.commit ?? ''
@@ -293,6 +323,8 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
   symlinkSync(dir, link)
   renameSync(link, join(paths.root, 'current'))
   writeState(paths, { ...state, pending: true })
+  // Before the plugin updates: the launcher does not wait on them, and a plugin that cannot update must not freeze it.
+  refreshLaunchers(paths, dir, io)
   const nameOf = (id: string): string => id.slice(0, -`@${MARKETPLACE}`.length)
   const ours = (): { id: string; version: string }[] => host.installed().filter(plugin => plugin.id.endsWith(`@${MARKETPLACE}`))
   const failures: string[] = []
@@ -332,7 +364,11 @@ function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): numb
   const installed = state?.history[0]?.commit === green
   if (installed || (only === undefined && !isNew(state, green))) {
     if (state?.pending === true) install(paths, host, state, io)
-    else io.out(`deploy: ${green.slice(0, 7)}, the newest green commit, is ${installed ? 'installed' : 'not deployed again (rolled back from)'}`)
+    else {
+      io.out(`deploy: ${green.slice(0, 7)}, the newest green commit, is ${installed ? 'installed' : 'not deployed again (rolled back from)'}`)
+      const current = state?.history[0]?.commit
+      if (current !== undefined) refreshLaunchers(paths, join(paths.root, current), io)
+    }
     return 0
   }
   const dir = join(paths.root, green)

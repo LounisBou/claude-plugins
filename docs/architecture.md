@@ -159,8 +159,12 @@ later run installs one).
 
 `deploy.ts` runs no plugin's `install.sh`, which sets up what the host's plugin update does not
 (the orchestrator's state directory and short commands, the status bar's copy of its script in the
-config directory). A machine that has run one keeps it current by running it again after each
-deploy: the `install.sh` of the installed tree, `bash ~/.claude/deploys/lounisbou/current/plugins/<name>/install.sh`
+config directory). One copy it does keep current itself: at each run, no-op runs included, it
+writes the installed tree's status line launcher (`plugins/statusbar/statusline/launcher.sh`) over
+`<config>/statusbar/statusline.sh` in every configuration directory sharing the plugins, where that
+file exists and differs (atomically, mode 755, through a link to its target, `settings.json`
+untouched), since `settings.json` runs that copy and no plugin update reaches it. A machine that
+has run the rest keeps them current by running it again after each deploy: the `install.sh` of the installed tree, `bash ~/.claude/deploys/lounisbou/current/plugins/<name>/install.sh`
 for `orchestrator` and `statusbar`, idempotent, as its own job on the same period (a second
 LaunchAgent or cron line) or by hand. The agent below is `deploy.ts` alone:
 
