@@ -3330,6 +3330,70 @@ check "an orchestrator opens one too, and a model it names wins over the tier" "
   "$(opn 'Orch: gateway' --open --title 'Orch: x' | grep -c '^open=yes$')|$(opn 'Orch: gateway' --open --title 'Orch: x' --model a-model --effort high | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
 check "an agent, an auditor or a session with no name never opens one" "1|1|1|1" \
   "$(opn 'Agent: x' --open --title 'Orch: x' >/dev/null 2>&1; echo $?)|$(opn 'Agent: x' --open --title 'Orch: x' | grep -c 'an agent never opens an orchestrator')|$(opn 'Audit: x' --open --title 'Orch: x' | grep -c 'an agent never opens an orchestrator')|$(opn - --open --title 'Orch: x' | grep -c "this session reads 'no name'")"
+# A new orchestrator is born on the plan asked with --plan: 1, 2, or auto by the quota files of
+# the state directory; the caller's own plan when auto has no fresh reading of both. Only a
+# birth is routed: an agent, a successor and an auditor take no --plan.
+PLHOME="$WORK/plhome"; PLST="$WORK/plstate"; mkdir -p "$PLHOME" "$PLST/quota"
+plq() { printf '{"version":1,"account":"%s","config":"%s","five_hour":{"used_percentage":%s,"resets_at":1},"seven_day":{"used_percentage":%s,"resets_at":2},"at":"%s"}' "$1" "$2" "$3" "$4" "$5" > "$PLST/quota/$1.json"; }
+plopn() { HOME="$PLHOME" OPST="$PLST" opn 'Coord: ops' --open --title 'Orch: routed' "$@"; }
+plexp() { plopn "$@" | sed -n 's/^launch=//p' | grep -oF "export CLAUDE_CONFIG_DIR=$PLHOME/.claude-bis &&" | head -1; }
+check "--plan 2 opens the orchestrator on the second plan's directory, whatever its caller runs on" "export CLAUDE_CONFIG_DIR=$PLHOME/.claude-bis &&" "$(plexp --plan 2)"
+check "--plan 1 opens it on plan 1: nothing exported, though its caller runs on another plan" "0|default" \
+  "$(plopn --plan 1 | sed -n 's/^launch=//p' | grep -cF 'export CLAUDE_CONFIG_DIR')|$(plopn --plan 1 | sed -n 's/^plan=//p')"
+check "with no --plan the opening keeps its caller's plan" "1|0" \
+  "$(plopn | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")|$(plopn | grep -c '^plan=')"
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ); OLD=$(date -u -r $(( $(date +%s) - 3600 )) +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '-1 hour' +%Y-%m-%dT%H:%M:%SZ)
+plq acc1 "$PLHOME/.claude" 80 10 "$NOW"; plq acc2 "$PLHOME/.claude-bis" 20 30 "$NOW"
+check "--plan auto takes the plan with the most room, a plan's room being what its fuller window leaves" "export CLAUDE_CONFIG_DIR=$PLHOME/.claude-bis &&" "$(plexp --plan auto)"
+plq acc1 "$PLHOME/.claude" 10 5 "$NOW"; plq acc2 "$PLHOME/.claude-bis" 20 90 "$NOW"
+check "and the other way round, the plan whose fuller window is the emptier" "0|default" \
+  "$(plopn --plan auto | sed -n 's/^launch=//p' | grep -cF 'export CLAUDE_CONFIG_DIR')|$(plopn --plan auto | sed -n 's/^plan=//p')"
+plq acc1 "$PLHOME/.claude" 10 5 "$OLD"
+check "--plan auto with a stale reading keeps the caller's plan" "1" \
+  "$(plopn --plan auto | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")"
+rm -f "$PLST/quota/acc1.json"
+check "--plan auto with a plan unread keeps the caller's plan" "1" \
+  "$(plopn --plan auto | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")"
+check "--plan 3 is refused, and so is --plan on an agent, a successor and an auditor" "1|1|1|1|1" \
+  "$(plopn --plan 3 | grep -c -- '--plan is 1, 2 or auto')|$(opn 'Orch: gateway' --title 'Agent: a' --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --successor --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --auditor --title 'Audit: a' --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --title 'Agent: a' --plan 2 >/dev/null 2>&1; echo $?)"
+# A move across plans is a wake with --plan: the sleeper's record names the plan it slept on, --plan
+# the one it wakes on, and the conversation of the former, which lives in that plan's directory, is
+# not resumed on the latter.
+printf '[{"name":"Orch: routed","config":"%s"}]' "$PLHOME/.claude-bis" > "$PLST/sleeping.json"
+plwk() { HOME="$PLHOME" OPST="$PLST" opn 'Coord: ops' --wake --title 'Orch: routed' --model m --effort high "$@"; }
+check "a wake on the plan the sleeper slept on keeps its conversation" "1|0" \
+  "$(plwk --resume abc-1 | sed -n 's/^launch=//p' | grep -cE "'--resume' abc-1 ")|$(plwk --resume abc-1 2>&1 | grep -c 'starts a fresh conversation')"
+check "--plan 1 moves it to plan 1: nothing exported, the conversation not resumed, the move said" "0|0|1" \
+  "$(plwk --plan 1 --resume abc-1 | sed -n 's/^launch=//p' | grep -cF 'export CLAUDE_CONFIG_DIR')|$(plwk --plan 1 --resume abc-1 | sed -n 's/^launch=//p' | grep -c -- '--resume')|$(plwk --plan 1 --resume abc-1 2>&1 | grep -c 'the move to the other plan starts a fresh conversation')"
+printf '[{"name":"Orch: routed"}]' > "$PLST/sleeping.json"
+check "--plan 2 moves a plan 1 sleeper to the second plan's directory" "1" \
+  "$(plwk --plan 2 | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$PLHOME/.claude-bis &&")"
+check "--plan 2 on a sleeper already on plan 2 keeps its conversation" "1" \
+  "$(printf '[{"name":"Orch: routed","config":"%s"}]' "$PLHOME/.claude-bis" > "$PLST/sleeping.json"; plwk --plan 2 --resume abc-1 | sed -n 's/^launch=//p' | grep -cE "'--resume' abc-1 ")"
+printf '[{"name":"Orch: routed"}]' > "$PLST/sleeping.json"
+check "a move to plan 2 drops the conversation of a plan 1 sleeper, the move said" "0|1" \
+  "$(plwk --plan 2 --resume abc-1 | sed -n 's/^launch=//p' | grep -c -- '--resume')|$(plwk --plan 2 --resume abc-1 2>&1 | grep -c 'the move to the other plan starts a fresh conversation')"
+check "a wake with --plan and no record for it keeps the --resume it was given" "1" \
+  "$(rm -f "$PLST/sleeping.json"; plwk --plan 2 --resume abc-1 | sed -n 's/^launch=//p' | grep -cE "'--resume' abc-1 ")"
+plq acc1 "$PLHOME/.claude" 90 10 "$NOW"; plq acc2 "$PLHOME/.claude-bis" 20 30 "$NOW"
+printf '[{"name":"Orch: routed"}]' > "$PLST/sleeping.json"
+check "--plan auto on a wake moves it to the plan with more room, and says so in the dry run" "1|1" \
+  "$(plwk --plan auto | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$PLHOME/.claude-bis &&")|$(plwk --plan auto | grep -c "^plan=$PLHOME/.claude-bis$")"
+rm -f "$PLST/quota/acc1.json"
+check "--plan auto on a wake with no fresh reading of both stays on the sleeper's plan, and says so" "0|1" \
+  "$(plwk --plan auto | sed -n 's/^launch=//p' | grep -cF 'export CLAUDE_CONFIG_DIR')|$(plwk --plan auto 2>&1 | grep -c -- '--plan auto has no fresh quota reading')"
+check "so does an opening, on its caller's plan" "1|1" \
+  "$(plopn --plan auto | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")|$(plopn --plan auto 2>&1 | grep -c -- '--plan auto has no fresh quota reading')"
+printf '{"version":true,"account":"acc1","config":"%s","five_hour":{"used_percentage":1,"resets_at":1},"at":"%s"}' "$PLHOME/.claude" "$NOW" > "$PLST/quota/acc1.json"
+check "a quota file core's parseQuota would refuse (a boolean version) steers nothing" "1" \
+  "$(plopn --plan auto | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")"
+printf '{"version":1,"account":"acc1","config":"%s","five_hour":{"used_percentage":1,"resets_at":1},"seven_day":"x","at":"%s"}' "$PLHOME/.claude" "$NOW" > "$PLST/quota/acc1.json"
+check "and so does a window that is no window beside a good one" "1" \
+  "$(plopn --plan auto | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")"
+# The staleness the launcher reads is core's.
+check "the staleness the launcher reads is the quota contract's, 30 minutes" "QUOTA_STALE_AFTER_MS = 30 * 60 * 1000|QUOTA_STALE_AFTER = 30 * 60" \
+  "$(grep -o 'QUOTA_STALE_AFTER_MS = 30 \* 60 \* 1000' "$ROOT/core/quota.ts")|$(grep -o 'QUOTA_STALE_AFTER = 30 \* 60' "$ROOT/skills/iterm-agents/scripts/iterm_agent.py")"
+rm -f "$PLST/sleeping.json"
 OPREC="$WORK/opstate-rec"; mkdir -p "$OPREC/chains"
 printf '{"name":"Coord: hand","tty":"/dev/ttys900"}\n' > "$OPREC/coordinator.json"
 check "a coordinator opened by hand, named only by its own record, opens one" "1" \

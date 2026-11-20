@@ -136,6 +136,11 @@
           "kind": "value"
         },
         {
+          "flag": "--plan",
+          "dest": "plan",
+          "kind": "value"
+        },
+        {
           "flag": "--mcp",
           "dest": "mcp",
           "kind": "list"

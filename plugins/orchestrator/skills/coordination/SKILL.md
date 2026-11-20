@@ -78,7 +78,7 @@ command holds its text — then record it as announced in the notes.
 
 A sleeping orchestrator (`coordinator.sh sleeping`) is not missing: its absence from
 `ListAgents` is its sleep, never a death, and you ask nobody about it. Its pull requests stay
-its own in the notes, marked sleeping. A woken one is a newcomer like any other.
+its own in the notes, marked sleeping.
 
 ## Answering a question
 
@@ -177,8 +177,7 @@ and present the next one in full in the same message; a superseded one makes <id
 **You never answer an operator question yourself**: no question reworded, merged, filtered
 or held back, and no verdict, summary or recommendation of your own added to it. A facts
 question — whose pull request is this, who is on this branch — is not one: you answer it
-yourself, as « Answering a question » says, and asking it stays optional. Merges, undrafts
-and the rest of « What is the operator's » below are relayed the same way.
+yourself, as « Answering a question » says, and asking it stays optional.
 
 ## Flagging
 
@@ -197,9 +196,7 @@ A merge, an undraft, an approval, a scope, a method, ending another's process or
 asked of you, it is relayed to him verbatim in the round above, under its sender's address,
 and his answer goes back verbatim and dated (`date -u +%FT%TZ`) to the session that asked.
 Merging and undrafting are his by default; where a project's own method decides otherwise, that
-project's orchestrator does not ask you. You never decide it and never offer to. You add no verdict, no summary and no
-recommendation of your own: a fact you read yourself is your own reading, and stays out of a
-relay.
+project's orchestrator does not ask you. You never decide it and never offer to.
 
 **An order of his meant for the orchestrations** is a `todo add … to` each `Orch:` session it
 concerns, from a fresh `ListAgents`, his words verbatim, unacknowledged unless it asks for one;

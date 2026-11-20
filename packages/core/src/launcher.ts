@@ -56,7 +56,7 @@ const SPAWN: readonly LauncherOption[] = [
   value('--left-of', 'left_of'), value('--right-of', 'right_of'), off('--no-verify', 'verify'), flag('--trust', 'trust'),
   flag('--successor', 'successor'), flag('--auditor', 'auditor'), value('--of', 'of'),
   flag('--coordinator-successor', 'coordinator_successor'), flag('--resident', 'resident'), flag('--wake', 'wake'),
-  flag('--open', 'open_'), value('--resume', 'resume'), list('--mcp', 'mcp'),
+  flag('--open', 'open_'), value('--resume', 'resume'), value('--plan', 'plan'), list('--mcp', 'mcp'),
   flag('--account-connectors', 'account_connectors'), value('--gate-tokens', 'gate_tokens', null),
   list('--keep-tool', 'keep_tool'), list('--drop-tool', 'drop_tool'), flag('--keep-synced-skills', 'keep_synced_skills'),
 ]

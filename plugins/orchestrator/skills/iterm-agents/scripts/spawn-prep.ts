@@ -137,6 +137,11 @@ export async function prepareSpawn(given: Options, deps: PrepDeps): Promise<Opti
       refuse('spawn: refused: --wake takes the recorded model with its recorded effort, --model <id> --effort <level>, or neither: a wake never guesses the effort, nor the model, its orchestrator ran on')
     }
   }
+  const plan = text(o, 'plan')
+  if (plan) {
+    if (!['1', '2', 'auto'].includes(plan)) refuse(`spawn: refused: --plan is 1, 2 or auto, got '${plan}'`)
+    if (!(open || wake)) refuse("spawn: refused: --plan routes an orchestrator at its birth, with --open or --wake: an orchestrator's agents, its successor and an auditor run on the plan of the session that spawns them")
+  }
   if (resume && !wake && (!title.startsWith('Agent:') || successor || auditor || coordinator || open)) refuse("spawn: refused: --resume is a wake's or an agent's: it names the session a paused orchestrator or a closed agent of the same checkout resumes")
   if (resume && !/^[0-9A-Za-z-]+$/.test(resume)) refuse(`spawn: refused: --resume needs a session id, letters, digits and hyphens, got '${resume}'`)
   if ((open || wake) && !deps.env['ORCHESTRATOR_DRY_RUN'] && (deps.env['ORCHESTRATOR_SELF_TTY'] || deps.env['ORCHESTRATOR_PS_TABLE'])) {

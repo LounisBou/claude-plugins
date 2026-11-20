@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import collections
 import contextlib
+import datetime
 import glob
 import io
 import json
@@ -4709,6 +4710,98 @@ def sleeper_config(title):
     return None
 
 
+# The plans: plan 1 is the host's default configuration directory, plan 2 the second account's.
+PLAN1_DIRNAME = ".claude"  # the CLAUDE_CONFIG_DIR the host defaults to, under the home
+PLAN2_DIRNAME = ".claude-bis"  # the CLAUDE_CONFIG_DIR of plan 2, under the home
+# A quota reading older than this is no reading (core's QUOTA_STALE_AFTER_MS).
+QUOTA_STALE_AFTER = 30 * 60
+
+
+def plan_of_config(config):
+    """`1` for plan 1 (a CLAUDE_CONFIG_DIR unset or the default's), `2` for plan 2's, else None."""
+    path = (config or "").rstrip("/")
+    home = os.path.expanduser("~")
+    if path in ("", os.path.join(home, PLAN1_DIRNAME)):
+        return "1"
+    return "2" if path == os.path.join(home, PLAN2_DIRNAME) else None
+
+
+def same_plan(first, second):
+    """Whether two configuration directories are one plan: the same plan number, else the same path."""
+    plans = plan_of_config(first), plan_of_config(second)
+    return plans[0] == plans[1] if None not in plans else first.rstrip("/") == second.rstrip("/")
+
+
+def config_of_plan(plan):
+    """The configuration directory of plan 1 ("") or plan 2."""
+    return "" if plan == "1" else os.path.join(os.path.expanduser("~"), PLAN2_DIRNAME)
+
+
+def quota_window(value):
+    """The used percentage of a window of a quota file, or None when it is no window: core's
+    parseQuota asks both figures, finite numbers."""
+    if not isinstance(value, dict):
+        return None
+    used, resets = value.get("used_percentage"), value.get("resets_at")
+    for figure in (used, resets):
+        if isinstance(figure, bool) or not isinstance(figure, (int, float)) \
+                or figure != figure or figure in (float("inf"), float("-inf")):
+            return None
+    return float(used)
+
+
+def quota_room(now=None):
+    """`{plan: percent left}` of each plan whose quota file under `<state>/quota/` is a fresh
+    reading: the room of a plan is what its fuller window leaves. A file core's parseQuota
+    refuses (another version, a missing field, a window that is no window, no window at all), a
+    stale one and an account of no known plan are skipped; the newest reading of a plan counts."""
+    now = time.time() if now is None else now
+    newest = {}
+    directory = os.path.join(STATE_DIR, "quota")
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return {}
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(directory, name)) as fh:
+                record = json.load(fh)
+            at = datetime.datetime.strptime(record["at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=datetime.timezone.utc).timestamp()
+            version, account, config = record["version"], record["account"], record["config"]
+            windows = [record[w] for w in ("five_hour", "seven_day") if w in record]
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue
+        used = [quota_window(value) for value in windows]
+        if isinstance(version, bool) or version != 1 or not windows or None in used \
+                or not isinstance(account, str) or not re.match(r"^[A-Za-z0-9-]{1,64}\Z", account) \
+                or not isinstance(config, str) or not config or now - at > QUOTA_STALE_AFTER:
+            continue
+        plan = plan_of_config(config)
+        if plan is None:
+            continue
+        if plan not in newest or at > newest[plan][0]:
+            newest[plan] = (at, 100 - max(used))
+    return {plan: left for plan, (_, left) in newest.items()}
+
+
+def route_plan(choice):
+    """The configuration directory a new orchestrator is born on, or None: `1` or `2` name it,
+    `auto` takes the plan with the most room by the quota files, and gives None, said on stderr,
+    when it has no fresh reading of both plans or they leave equal room: the session then stays
+    on the plan it would run on anyway (its caller's, a wake's sleeper's)."""
+    if choice in ("1", "2"):
+        return config_of_plan(choice)
+    room = quota_room()
+    if "1" in room and "2" in room and room["1"] != room["2"]:
+        return config_of_plan("1" if room["1"] > room["2"] else "2")
+    print("spawn: --plan auto has no fresh quota reading of both plans, or they leave equal "
+          "room: it stays on the plan it would run on without --plan", file=sys.stderr)
+    return None
+
+
 def process_config(pid):
     """The CLAUDE_CONFIG_DIR in the environment of process `pid`, "" when it has none (plan 1),
     None when it cannot be read: the plan a session runs on is a fact of its own process, whoever
@@ -5085,15 +5178,27 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
             if given:
                 die("spawn: refused: %s is not a successor's: a successor runs on your live "
                     "model and effort, read on your transcript" % flag)
+    routed = route_plan(args.plan) if args.plan else None
     if args.wake:
         # A woken orchestrator runs on the plan it slept on, whoever wakes it: its transcripts
         # (the pair is read there), its trust record and every window of its home server follow.
+        # A plan asked with --plan replaces it: a move across plans.
         slept_on = sleeper_config(title)
-        if slept_on is None:
+        if slept_on is None and not args.plan:
             print("spawn: no sleeping record names %s: it wakes on its caller's plan" % title,
                   file=sys.stderr)
-        else:
+        if routed is not None:
+            if args.resume and slept_on is not None and not same_plan(slept_on, routed):
+                # The conversation's transcript is in the configuration directory it ran on.
+                print("spawn: the move to the other plan starts a fresh conversation: the "
+                      "transcript of session %s is in the plan it slept on" % args.resume,
+                      file=sys.stderr)
+                args.resume = ""
+            use_config(routed)
+        elif slept_on is not None:
             use_config(slept_on)
+    elif routed is not None:
+        use_config(routed)
     model, effort, pair_source = pair_of_launch(args, auditor_successor, pair_from)
     if anchor == "self" and defaulted and not own and not DRY_RUN:
         # The default must not turn a spawn that worked into a refusal: a caller with no
@@ -5204,6 +5309,8 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
         print("coordinator_successor=%s" % ("yes" if args.coordinator_successor else "no"))
         print("wake=%s" % ("yes" if args.wake else "no"))
         print("open=%s" % ("yes" if args.open_ else "no"))
+        if args.plan:
+            print("plan=%s" % (os.environ.get("CLAUDE_CONFIG_DIR") or "default"))
         print("chain=%s" % effect)
         if effect != "none" and tmux_owner():
             print("chain_owner=%s" % tmux_owner())
