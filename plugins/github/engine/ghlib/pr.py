@@ -524,6 +524,9 @@ def diff_fingerprint(files):
         patch = entry.get("patch")
         body = _HUNK_HEADER.sub("@@", patch) if isinstance(patch, str) else "blob " + str(entry.get("sha") or "")
         head = "%s %s %s" % (entry.get("status") or "", entry.get("previous_filename") or "", entry.get("filename") or "")
+        # The mode of a file, where the listing holds it: a chmod leaves the patch and the blob as they are.
+        if entry.get("mode"):
+            head += " " + str(entry["mode"])
         parts.append(hashlib.sha256((head + "\n" + body).encode("utf-8")).hexdigest())
     if not parts:
         return None
@@ -536,8 +539,8 @@ _COMPARE_FILES_MAX = 300
 
 def _pull_diff_fingerprint(owner, name, pr, head):
     """The fingerprint of the pull request's own diff at a head: the files of base...head, the
-    changes since the merge base, fingerprinted as `diff_fingerprint` does. Unlike the commits'
-    fingerprint it holds across a merge of the base into the branch, and changes with any change
+    changes since the merge base, with the mode each file holds at the head, fingerprinted as
+    `diff_fingerprint` does. Unlike the commits' fingerprint it holds across a merge of the base into the branch, and changes with any change
     of what the pull request alters."""
     pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, pr))
     base = (pull.get("base") or {}).get("ref") if isinstance(pull, dict) else None
@@ -550,7 +553,19 @@ def _pull_diff_fingerprint(owner, name, pr, head):
         raise errors.ApiError("the comparison of %s with %s lists no files" % (base, head[:7]))
     if len(files) >= _COMPARE_FILES_MAX:
         raise errors.ApiError("the comparison of %s with %s reaches %d files, more may be left out" % (base, head[:7], len(files)))
-    return hashlib.sha256((diff_fingerprint(files) or "empty").encode("utf-8")).hexdigest()
+    # The comparison holds no file mode: a chmod leaves its patches and blobs as they are. The tree at the head does.
+    tree = http.rest("GET", "/repos/%s/%s/git/trees/%s?recursive=1" % (owner, name, head))
+    entries = tree.get("tree") if isinstance(tree, dict) else None
+    if not isinstance(entries, list) or tree.get("truncated"):
+        raise errors.ApiError("the tree of %s lists no complete files, the modes cannot be read" % head[:7])
+    modes = {entry.get("path"): entry.get("mode") for entry in entries if isinstance(entry, dict)}
+    listed = []
+    for entry in files:
+        mode = modes.get(entry.get("filename"))
+        if entry.get("status") != "removed" and not mode:
+            raise errors.ApiError("%s has no mode in the tree of %s" % (entry.get("filename"), head[:7]))
+        listed.append(dict(entry, mode=mode) if mode else entry)
+    return hashlib.sha256((diff_fingerprint(listed) or "empty").encode("utf-8")).hexdigest()
 
 
 def pr_fingerprint(args):

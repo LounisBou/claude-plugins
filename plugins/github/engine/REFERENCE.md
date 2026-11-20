@@ -28,7 +28,7 @@ below, and the `args` object holds the subcommand's arguments.
 | `pr-status` | `<pr>` | Five lines (`pr-summary`): state, mergeable, head, labels, checks. `--json` or a `--format`: the full pull request |
 | `pr-checks` | `<pr>` | Verdict, counts, failed and skipped names (`checks-summary`); `--json`: commit status and check runs |
 | `pr-gate` | `<pr> [--head-only]` | `{"repo", "pr", "state", "draft", "head", "labels", "commits", "mergeable", "mergeable_state" (`null` while computed), "ci": {"result", "failed", "running", "skipped", "total", "checks"}}`, the reads the ready guard decides on (below). `--head-only`: the first six fields from the pull request alone, one read |
-| `pr-fingerprint` | `<pr> <head> [--count K] [--merges]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge; `--merges` adds `diff` (the PR's diff), alone at a merge |
+| `pr-fingerprint` | `<pr> <head> [--count K] [--merges]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge; `--merges` adds `diff` (the PR's diff and its file modes), alone at a merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
 | `pr-files` | `<pr>` | Totals, a line per changed path (`files-summary`); `--json`: with the patches, paginated |
 | `pr-commits` | `<pr>` | A line per commit (`commits-summary`); `--json`: the commits, paginated |
