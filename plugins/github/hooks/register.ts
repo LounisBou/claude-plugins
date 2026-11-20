@@ -1716,7 +1716,6 @@ async function reconcileTick($: Mod): Promise<void> {
     rec.counts.ticks += 1
     const edge = await mtimeOf($, reconcileEdgePath(config))
     const woken = edge > rec.edgeSeen
-    const edgeBefore = rec.edgeSeen
     rec.edgeSeen = Math.max(rec.edgeSeen, edge)
     for (const repo of [...rec.repos.keys()]) {
       if (repos.includes(repo)) continue
@@ -1729,11 +1728,8 @@ async function reconcileTick($: Mod): Promise<void> {
       if (!(woken || now >= (rec.repos.get(repo)?.schedule.nextAt ?? 0) || forgeAwaited(rec, repo, now))) continue
       const result = await listRepo($, rec, repo, now)
       if (result === 'listed') listed.add(repo)
-      // GitHub does not answer: the other repositories keep their rows and are listed at the next beat, the marker's wake with them, not one call each in this one.
-      if (result === 'unreachable') {
-        rec.edgeSeen = edgeBefore
-        break
-      }
+      // GitHub does not answer: the failing repository takes its back-off, the others keep their rows and are listed on their own schedule, not one call each in this beat.
+      if (result === 'unreachable') break
     }
     if (now < rec.quotaUntil) return
     const data = await dataDir($)

@@ -448,7 +448,7 @@ test('an unreachable forge said once is said again when a listing went through b
   expect(outage()).toBe(2)
 })
 
-test('the repositories an outage left unlisted keep the marker\'s wake: they are listed at the next beat once GitHub answers', async ($, on) => {
+test('an outage under a touched marker retries the failing repository on its back-off, and lists the next one once its schedule comes', async ($, on) => {
   const other = { number: 9, draft: false, head: 'e'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
   const { clock, state, put } = await started($, on, { other: [other] })
   // Both repositories listed at idle intervals that have doubled: neither is due on its own schedule at the beats that follow.
@@ -458,11 +458,12 @@ test('the repositories an outage left unlisted keep the marker\'s wake: they are
   // A producer touches the marker while GitHub does not answer: the first repository fails, the second is not tried.
   put(EDGE, '', T0 + 5 * TICK_MS - 1)
   state.panelFails = TRACEBACK('socket.gaierror: [Errno 8] nodename nor servname provided, or not known')
-  await beat(clock)
+  await beat(clock, 3)
+  // The marker is still newer than at the first beat, yet the failing repository is not retried at every beat.
   expect(state.listedRepos.slice(before)).toEqual(['acme/app'])
   state.panelFails = undefined
   await beat(clock)
-  expect(state.listedRepos.slice(before + 1)).toContain('acme/other')
+  expect(state.listedRepos.slice(before + 1)).toEqual(['acme/other'])
 })
 
 for (const reason of [
