@@ -821,16 +821,21 @@ async function headRecords($: Mod, gate: Gate, head = gate.head): Promise<Record
  * CI is always read at it. An earlier head carries only when it held as many commits of the pull
  * request as the head: the count each gate read finds at its head is kept in the data directory, with
  * the fingerprint once computed over that count (version 3: the files of version 1 and 2, whose count
- * may be another head's, are never read).
+ * may be another head's, are never read). A merge of the base into the branch changes the commits and their
+ * count, so a head holding one, or compared with one, is told by the pull request's own diff against its base
+ * (the engine's `diff`) instead, whatever the counts: a merge that touches none of the pull request's files
+ * leaves it as it is, a conflict resolved inside them changes it and carries nothing.
  */
 const SHA = /^[0-9a-f]{40}$/
 const FINGERPRINT = /^[0-9a-f]{64}$/
 const FINGERPRINT_VERSION = 3
 export const FINGERPRINT_PREFIX = 'fingerprint.'
 
-type Fingerprint = { fingerprint: string; commits: number }
-// What the data directory keeps of a head: its commit count, and the fingerprint over it once computed.
-type Kept = { commits: number; fingerprint?: string }
+// A head's commits' fingerprint, and the diff of the pull request at it (the engine's `diff`, asked of a head
+// holding a merge of the base, which has no commits' fingerprint, and of the heads it is compared with).
+type Fingerprint = { commits: number; fingerprint?: string; diff?: string }
+// What the data directory keeps of a head: its commit count, and what was computed over it.
+type Kept = { commits: number; fingerprint?: string; diff?: string }
 
 async function fingerprintPath($: Mod, repo: string, pr: number, head: string): Promise<string | undefined> {
   const dir = await dataDir($)
@@ -844,9 +849,13 @@ async function keptOf($: Mod, path: string | undefined): Promise<Kept | undefine
     if (!path || !(await $.fs.exists(path))) return undefined
     const kept: unknown = JSON.parse(String(await $.fs.read(path)))
     if (!isRecord(kept) || kept['v'] !== FINGERPRINT_VERSION) return undefined
-    const { commits, fingerprint } = kept
+    const { commits, fingerprint, diff } = kept
     if (!countOf(commits)) return undefined
-    return { commits, ...(typeof fingerprint === 'string' && FINGERPRINT.test(fingerprint) ? { fingerprint } : {}) }
+    return {
+      commits,
+      ...(typeof fingerprint === 'string' && FINGERPRINT.test(fingerprint) ? { fingerprint } : {}),
+      ...(typeof diff === 'string' && FINGERPRINT.test(diff) ? { diff } : {}),
+    }
   } catch {
     return undefined
   }
@@ -865,16 +874,21 @@ async function keepCount($: Mod, gate: Gate): Promise<void> {
 }
 
 // The fingerprint of the pull request's own commits at a head, over `count` commits (by default the
-// pull request's), or a throw naming why there is none.
-async function headFingerprint($: Mod, repo: string, pr: number, head: string, count?: number): Promise<Fingerprint> {
+// pull request's), and with `needDiff` the diff of the pull request at it too, or a throw naming why
+// there is none. A head holding a merge of the base has the diff only.
+async function headFingerprint($: Mod, repo: string, pr: number, head: string, count?: number, needDiff = false): Promise<Fingerprint> {
   const path = await fingerprintPath($, repo, pr, head)
   const kept = await keptOf($, path)
-  if (kept?.fingerprint && (count === undefined || kept.commits === count)) return { fingerprint: kept.fingerprint, commits: kept.commits }
-  const computed: unknown = JSON.parse(await runGh($, 'pr-fingerprint', { pr, head, ...(count === undefined ? {} : { count }) }, repo))
-  const { fingerprint, commits } = isRecord(computed) ? computed : {}
-  if (typeof fingerprint !== 'string' || !FINGERPRINT.test(fingerprint) || !countOf(commits)) throw new Error('pr-fingerprint answered no fingerprint')
-  if (path) await writeKept($, path, repo, pr, head, { commits, fingerprint })
-  return { fingerprint, commits }
+  if (kept && (kept.fingerprint || kept.diff) && (count === undefined || kept.commits === count) && (!needDiff || kept.diff)) {
+    return { commits: kept.commits, ...(kept.fingerprint ? { fingerprint: kept.fingerprint } : {}), ...(kept.diff ? { diff: kept.diff } : {}) }
+  }
+  const computed: unknown = JSON.parse(await runGh($, 'pr-fingerprint', { pr, head, merges: true, ...(count === undefined ? {} : { count }) }, repo))
+  const { fingerprint, diff, commits } = isRecord(computed) ? computed : {}
+  const answered = (value: unknown): value is string => typeof value === 'string' && FINGERPRINT.test(value)
+  if (!countOf(commits) || (!answered(fingerprint) && !answered(diff)) || (needDiff && !answered(diff))) throw new Error('pr-fingerprint answered no fingerprint')
+  const got: Fingerprint = { commits, ...(answered(fingerprint) ? { fingerprint } : {}), ...(answered(diff) ? { diff } : {}) }
+  if (path) await writeKept($, path, repo, pr, head, got)
+  return got
 }
 
 // The pull requests each head directory's records name, by path, as of the directory's mtime: a
@@ -969,23 +983,30 @@ async function carriedRecords($: Mod, gate: Gate, files: RecordFile[]): Promise<
     uncarried(gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + reasonOf(err).trim())
     return withWaiver([])
   }
+  // A head with no merge of the base is told by its commits (then of the same count); one with a merge, or
+  // compared with one, by the pull request's diff, which a merge that changes none of its files leaves as it is.
+  const sameDiff = async (earlier: Fingerprint): Promise<boolean> => {
+    current = current.diff ? current : await headFingerprint($, gate.repo, gate.pr, gate.head, current.commits, true)
+    return earlier.diff !== undefined && earlier.diff === current.diff
+  }
   const newest = new Map<PrRecord['kind'], { record: PrRecord; from: string }>()
   const blocked = new Set<PrRecord['kind']>()
   for (const { head, latest, unreadable } of candidates) {
     const unreadKinds = wanted.filter((kind) => unreadable.some((file) => file.kinds.includes(kind)))
-    let earlier: Fingerprint
+    let same: boolean
     try {
       const kept = await keptOf($, await fingerprintPath($, gate.repo, gate.pr, head))
       if (!kept) throw new Error('the pull request was never read at that head, its commit count is not known')
-      if (kept.commits !== current.commits) continue
-      earlier = await headFingerprint($, gate.repo, gate.pr, head, kept.commits)
+      if (current.fingerprint && kept.commits !== current.commits) continue
+      const earlier = await headFingerprint($, gate.repo, gate.pr, head, kept.commits, !current.fingerprint)
+      same = current.fingerprint && earlier.fingerprint ? earlier.fingerprint === current.fingerprint : await sameDiff(earlier)
     } catch (err: unknown) {
       const kinds = wanted.filter((kind) => unreadKinds.includes(kind) || latest.some((record) => record.kind === kind))
       for (const kind of kinds) blocked.add(kind)
       uncarried(head.slice(0, 7) + "'s commits cannot be fingerprinted: " + reasonOf(err).trim(), kinds)
       continue
     }
-    if (earlier.fingerprint !== current.fingerprint) continue
+    if (!same) continue
     if (unreadKinds.length > 0) {
       for (const kind of unreadKinds) blocked.add(kind)
       const files = unreadable.map((file) => head.slice(0, 7) + "'s record " + file.name + ' does not parse').join(', ')

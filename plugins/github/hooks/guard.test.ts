@@ -91,6 +91,9 @@ type World = {
   // What pr-fingerprint answers, by head, over two commits; a head absent fails with this error, or a merge's.
   fingerprints?: Record<string, string>
   fingerprintFails?: string
+  // The heads holding a merge of the base, and the diff of the pull request by head, answered to `merges`.
+  merged?: string[]
+  diffs?: Record<string, string>
   // The pull request's commit count pr-gate answers; omitted, none.
   commits?: number
   // A head directory that is there but cannot be listed.
@@ -329,9 +332,12 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
     if (stdin.command === 'pr-files' && w.filesFails) return { value: { exitCode: 3, stdout: '', stderr: w.filesFails } }
     if (stdin.command === 'pr-files' && w.files) return { value: { exitCode: 0, stdout: JSON.stringify(w.files), stderr: '' } }
     if (stdin.command === 'pr-fingerprint') {
-      const fingerprint = w.fingerprints?.[String(stdin.args?.['head'])]
-      if (!fingerprint) return { value: { exitCode: 1, stdout: '', stderr: w.fingerprintFails ?? 'error: commit 1234567 is a merge' } }
-      return { value: { exitCode: 0, stdout: JSON.stringify({ head: stdin.args?.['head'], commits: stdin.args?.['count'] ?? 2, fingerprint }), stderr: '' } }
+      const head = String(stdin.args?.['head'])
+      const fingerprint = w.fingerprints?.[head]
+      const merged = w.merged?.includes(head) === true
+      const diff = stdin.args?.['merges'] === true ? w.diffs?.[head] : undefined
+      if (merged ? !diff : !fingerprint) return { value: { exitCode: 1, stdout: '', stderr: w.fingerprintFails ?? 'error: commit 1234567 is a merge' } }
+      return { value: { exitCode: 0, stdout: JSON.stringify({ head, commits: stdin.args?.['count'] ?? 2, ...(merged ? {} : { fingerprint }), ...(diff ? { diff } : {}) }), stderr: '' } }
     }
     if (stdin.command === 'pr-checks' && w.readStderr) return { value: { exitCode: 0, stdout: 'ok', stderr: w.readStderr } }
     if (stdin.command === 'pr-readiness' && w.readinessFails) return { value: { exitCode: 3, stdout: '', stderr: w.readinessFails } }
@@ -3026,6 +3032,65 @@ test('a head whose commits cannot be fingerprinted (a merge in the pull request)
     'github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456;'
       + ' e2e carried from abcdef0',
   ])
+})
+
+// A head that merged the base: its commits cannot be told apart from the base's, its diff against the base can.
+test('a head that merged the base carries the records of the head before the merge when the pull request\'s diff is unchanged', async ($, on) => {
+  const seen = await world($, on, {
+    records: {}, commits: 3, tree: earlier(CLEAN_OLD), merged: [HEAD], fingerprints: { [OLD]: SAME }, diffs: { [HEAD]: SAME, [OLD]: SAME },
+  })
+  const out = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(String(out.result)).labels).toEqual(['Ready'])
+  expect(seen.logs).toEqual([READY_LINE.slice(0, -1)
+    + ' (review carried from abcdef0, norms carried from abcdef0, e2e carried from abcdef0).'])
+  // The earlier head is read over its own commit count, not the head's.
+  expect(fingerprintRuns(seen)).toEqual([HEAD + ' x3', OLD + ' x2'])
+})
+
+test('a head that merged the base carries nothing when the merge changed the pull request\'s diff (a conflict resolved in its files)', async ($, on) => {
+  const seen = await world($, on, {
+    records: {}, labels: ['Ready'], commits: 3, tree: earlier(CLEAN_OLD), merged: [HEAD], fingerprints: { [OLD]: SAME }, diffs: { [HEAD]: OTHER, [OLD]: SAME },
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456;'
+    + ' e2e carried from abcdef0'])
+})
+
+test('a head that merged the base carries from an earlier head that merged it too, whatever their commit counts', async ($, on) => {
+  const seen = await world($, on, {
+    records: {}, commits: 4, tree: earlier(CLEAN_OLD, OLD_DIR, 3), merged: [HEAD, OLD], diffs: { [HEAD]: SAME, [OLD]: SAME },
+  })
+  const out = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(String(out.result)).labels).toEqual(['Ready'])
+  expect(fingerprintRuns(seen)).toEqual([HEAD + ' x4', OLD + ' x3'])
+})
+
+test('a head with no merge carries from an earlier head that merged the base when the diffs are the same', async ($, on) => {
+  const seen = await world($, on, {
+    records: {}, tree: earlier(CLEAN_OLD), merged: [OLD], fingerprints: { [HEAD]: SAME }, diffs: { [HEAD]: SAME, [OLD]: SAME },
+  })
+  const out = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(String(out.result)).labels).toEqual(['Ready'])
+  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
+})
+
+test('an earlier head whose kept fingerprint holds no diff is asked again for it when the head merged the base', async ($, on) => {
+  const tree = earlier(CLEAN_OLD)
+  tree[fingerprintFile(OLD)] = { kind: 'file', mtimeMs: 0, text: JSON.stringify({ v: 3, repo: 'acme/thing', pr: 12, head: OLD, commits: 2, fingerprint: SAME }) }
+  const seen = await world($, on, { records: {}, commits: 3, tree, merged: [HEAD], fingerprints: { [OLD]: SAME }, diffs: { [HEAD]: SAME, [OLD]: SAME } })
+  const out = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(String(out.result)).labels).toEqual(['Ready'])
+  expect(fingerprintRuns(seen)).toEqual([HEAD + ' x3', OLD + ' x2'])
+  expect(JSON.parse(String(seen.files[fingerprintFile(OLD)]))).toEqual({ v: 3, repo: 'acme/thing', pr: 12, head: OLD, commits: 2, fingerprint: SAME, diff: SAME })
+})
+
+test('a head that merged the base carries nothing from an earlier head with another diff', async ($, on) => {
+  await world($, on, {
+    records: {}, labels: ['Ready'], commits: 3, tree: earlier(CLEAN_OLD), merged: [HEAD], fingerprints: { [OLD]: SAME }, diffs: { [HEAD]: SAME, [OLD]: OTHER },
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  const out = await missingProbe($)
+  expect(out.result).toContain('Missing: review: no record at 0123456; e2e carried from abcdef0')
 })
 
 test('the records of another pull request with the same diff are never carried, nothing is fingerprinted', async ($, on) => {

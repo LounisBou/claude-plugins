@@ -530,10 +530,41 @@ def diff_fingerprint(files):
     return hashlib.sha256("\n".join(sorted(parts)).encode("utf-8")).hexdigest()
 
 
+# The most pages of a comparison read: a diff that reaches it may hold more files.
+_COMPARE_PAGES_MAX = 30
+_COMPARE_PAGE = 100
+
+
+def _pull_diff_fingerprint(owner, name, pr, head):
+    """The fingerprint of the pull request's own diff at a head: the files of base...head, the
+    changes since the merge base, fingerprinted as `diff_fingerprint` does. Unlike the commits'
+    fingerprint it holds across a merge of the base into the branch, and changes with any change
+    of what the pull request alters."""
+    pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, pr))
+    base = (pull.get("base") or {}).get("ref") if isinstance(pull, dict) else None
+    if not isinstance(base, str) or not base:
+        raise errors.ApiError("pull request %s has no base branch" % pr)
+    files = []
+    for page in range(1, _COMPARE_PAGES_MAX + 1):
+        path = "/repos/%s/%s/compare/%s...%s?per_page=%d&page=%d" % (owner, name, quote(base, safe="/"), head, _COMPARE_PAGE, page)
+        comparison = http.rest("GET", path)
+        listed = comparison.get("files") if isinstance(comparison, dict) else None
+        if not isinstance(listed, list):
+            raise errors.ApiError("the comparison of %s with %s lists no files" % (base, head[:7]))
+        files.extend(listed)
+        if len(listed) < _COMPARE_PAGE:
+            return hashlib.sha256((diff_fingerprint(files) or "empty").encode("utf-8")).hexdigest()
+    raise errors.ApiError("the comparison of %s with %s reaches %d files, more may be left out" % (base, head[:7], len(files)))
+
+
 def pr_fingerprint(args):
     """The fingerprint of the pull request's own commits at a head: the k commits ending at that
     head along first parents, k the pull request's commit count (or --count), each by its diff,
-    in order. A rewrite below them (a rebase, a parent branch rewritten) leaves it as it is."""
+    in order. A rewrite below them (a rebase, a parent branch rewritten) leaves it as it is.
+    A merge met refuses, unless --merges: then the head is told by the pull request's diff, which
+    a merge of the base into the branch leaves as it is when it changes nothing of the pull
+    request's files (`diff`, answered with --merges for every head, `fingerprint` left out
+    when a merge was met)."""
     if not _FULL_SHA.fullmatch(args.head):
         raise errors.UsageError("the head must be the full 40-character sha, got: %s" % args.head)
     owner, name = repo.owner_repo()
@@ -556,13 +587,18 @@ def pr_fingerprint(args):
         if not isinstance(files, list):
             raise errors.ApiError("commit %s lists no files" % sha[:7])
         if len(parents) > 1:
-            raise errors.ApiError("commit %s is a merge" % sha[:7])
+            if not args.merges:
+                raise errors.ApiError("commit %s is a merge" % sha[:7])
+            return {"head": args.head.lower(), "commits": count, "diff": _pull_diff_fingerprint(owner, name, args.pr, args.head.lower())}
         if len(files) >= _COMMIT_FILES_MAX:
             raise errors.ApiError("commit %s reaches %d files, more may be left out" % (sha[:7], len(files)))
         prints.append(diff_fingerprint(files) or "empty")
         sha = parents[0].lower() if parents else ""
     fingerprint = hashlib.sha256("\n".join(reversed(prints)).encode("utf-8")).hexdigest()
-    return {"head": args.head.lower(), "commits": count, "fingerprint": fingerprint}
+    answer = {"head": args.head.lower(), "commits": count, "fingerprint": fingerprint}
+    if args.merges:
+        answer["diff"] = _pull_diff_fingerprint(owner, name, args.pr, args.head.lower())
+    return answer
 
 
 def pr_diff(args):
@@ -761,6 +797,7 @@ def register(subparsers):
     parser.add_argument("pr", type=int)
     parser.add_argument("head")
     parser.add_argument("--count", type=int, default=None, help="the commits to take, by default the pull request's")
+    parser.add_argument("--merges", action="store_true", help="a merge met answers the pull request's diff in place of a refusal, and every head answers it too")
     parser.set_defaults(handler=pr_fingerprint)
 
     parser = subparsers.add_parser("pr-checks", help="combined status and check runs")
