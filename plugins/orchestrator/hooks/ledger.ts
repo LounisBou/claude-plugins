@@ -9,7 +9,7 @@
 // file, pr-file.ts), one that became Ready (the module closes its agent once done, close-agent.ts), one entering the anomaly, one its agent still holds turned conflicting with its base (its agent rebases), and one whose check failed at its head (its agent fixes it), wake the orchestrator once each: the module's tick
 // (guards.ts) submits the lines prWake gives, the ended lines then archived.
 import { prRefsOf } from '../core/learning.ts'
-import { agentsOf, isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
+import { agentsOf, HOLD_LABEL, isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
 import { simpleCommands, unwrapPath } from '../core/shell.ts'
 import { updateOver } from '../core/store-io.ts'
 import { answerText, PULL_URL } from './audit-events.ts'
@@ -567,8 +567,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     const said = holds.length > 0 ? agentLine({ key: pk, what: 'is Ready', agent, holds }) : (await actOn(agent, pk, 'is Ready', { ready: key })).said
     if (said === null) continue
     told.add(key)
-    // In a repository github's auto-merge list names, the merge is this orchestrator's own.
-    const autoMerge = reading.autoMerge.size > 0 ? reading.autoMerge : await (again ??= autoMergeOf($))
+    // In a repository github's auto-merge list names, the merge is this orchestrator's own: unless the operator holds it (On Hold is his pause).
+    const held = (reading.forge.get(pk)?.labels ?? []).some(name => name.trim().toLowerCase() === HOLD_LABEL.toLowerCase())
+    const autoMerge = held ? new Set<string>() : reading.autoMerge.size > 0 ? reading.autoMerge : await (again ??= autoMergeOf($))
     lines.push(autoMerge.has(line.repo.toLowerCase()) ? `${said} ${mergeNowLine(pk)}` : said)
   }
   for (const [key, pr] of conflicts) {

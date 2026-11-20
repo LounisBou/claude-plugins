@@ -525,6 +525,12 @@ test('a Ready pull request of a repository github\'s auto-merge list names says 
   }
 })
 
+test('a Ready pull request the operator holds (On Hold) is not told to merge, its repository listed', async () => {
+  const forge = JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Ready' }, { name: 'On Hold' }] }])
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': forge }, launcher: running('Agent: p17'), autoMerge: { result: 'acme/app' } })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+})
+
 test('a Ready pull request told with the list empty at the reading asks it once more, then says the merge when it answers', async () => {
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17'),
     autoMerge: [{ result: 'unreadable', isError: true }, { result: 'acme/app' }] })
