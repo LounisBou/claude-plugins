@@ -50,7 +50,7 @@ you ask the operator for.
 
 `--wake` makes a home session of its own, the orchestrator in its window 0; with the
 record's session the same conversation resumes.
-`--plan` wakes it on that plan, a fresh conversation when it is not the one it slept on (`auto`: more room, else the sleeper's).
+`--plan` wakes it on that plan, a fresh conversation when it is not the one it slept on (`auto`: more room, else the sleeper's); `--trust` if that plan never opened its directory.
 Offer him that move, a pause then this wake, when `facts` shows its plan nearly full.
 The spawn's success line is its proof:
 then `coordinator.sh wake-done --name "Orch: <subject>"`, and announce yourself to it as to

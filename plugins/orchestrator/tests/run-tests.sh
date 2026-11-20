@@ -3394,6 +3394,13 @@ check "and so does a window that is no window beside a good one" "1" \
 check "the staleness the launcher reads is the quota contract's, 30 minutes" "QUOTA_STALE_AFTER_MS = 30 * 60 * 1000|QUOTA_STALE_AFTER = 30 * 60" \
   "$(grep -o 'QUOTA_STALE_AFTER_MS = 30 \* 60 \* 1000' "$ROOT/core/quota.ts")|$(grep -o 'QUOTA_STALE_AFTER = 30 \* 60' "$ROOT/skills/iterm-agents/scripts/iterm_agent.py")"
 rm -f "$PLST/sleeping.json"
+# A move across plans lands in a directory the target plan may never have opened: the wake is
+# refused as any launch is, and --trust records it in the target plan's own record.
+mkdir -p "$PLHOME/.claude-bis"; printf '{"projects":{}}' > "$PLHOME/.claude-bis/.claude.json"
+PLST2="$WORK/plstate2"; mkdir -p "$PLST2"; printf '[{"name":"Orch: routed"}]' > "$PLST2/sleeping.json"
+plmove() { HOME="$PLHOME" OPST="$PLST2" ORCHESTRATOR_TRUST_FILE= opn 'Coord: ops' --wake --title 'Orch: routed' --model m --effort high --plan 2 "$@"; }
+check "a move to a plan that never opened the directory is refused without --trust, and recorded with it" "1|recorded" \
+  "$(plmove | grep -c 'the host has not been told to trust')|$(plmove --trust | sed -n 's/^trust=//p')"
 OPREC="$WORK/opstate-rec"; mkdir -p "$OPREC/chains"
 printf '{"name":"Coord: hand","tty":"/dev/ttys900"}\n' > "$OPREC/coordinator.json"
 check "a coordinator opened by hand, named only by its own record, opens one" "1" \
@@ -8596,6 +8603,13 @@ check "a caller without a plugin directory gets the launch it always got" "0|0" 
 out2=$(plugspawn '[]' 2>/dev/null; echo "exit=$?")
 check "a caller whose launch cannot be read gets the launch it always got, said once on stderr, and is never refused" "1|1|0" \
   "$(printf '%s' "$out2" | grep -c '^exit=0$')|$(plugspawn '[]' 2>&1 >/dev/null | grep -c 'cannot be read')|$(printf '%s' "$out2" | grep -c -- '--plugin-dir')"
+
+# A new orchestrator routed to the other plan keeps its caller's plugin directories: the caller's
+# launch is read in the caller's own plan, which the routing then replaces.
+RTHOME="$WORK/rthome"; mkdir -p "$RTHOME"; printf '/dev/ttys900 /opt/x/claude --name Coord: ops\n' > "$WORK/rt-ps"
+out=$(HOME="$RTHOME" ORCHESTRATOR_PS_TABLE="$WORK/rt-ps" plugspawn "$PLUGARGV" --open --title 'Orch: routed' --plan 2 2>&1)
+check "an opening routed to the other plan keeps the caller's plugin directories and enabledPlugins" "1|1|1" \
+  "$(printf '%s' "$out" | grep -c -- "--plugin-dir /p/pin --plugin-dir /p/two ")|$(printf '%s' "$out" | grep -c '"enabledPlugins":{"orchestrator@lounisbou":false}')|$(printf '%s' "$out" | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$RTHOME/.claude-bis &&")"
 
 # The move itself, over the recorder and a terminal standing in for iTerm2.
 cat > "$WORK/home_probe.py" <<'PYEOF'

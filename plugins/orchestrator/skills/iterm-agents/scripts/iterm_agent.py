@@ -5178,6 +5178,8 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
             if given:
                 die("spawn: refused: %s is not a successor's: a successor runs on your live "
                     "model and effort, read on your transcript" % flag)
+    # The caller's launch is read in the caller's own plan, before a routed plan replaces it.
+    plugin_dirs, caller_plugins = caller_plugin_launch(auditor_successor)
     routed = route_plan(args.plan) if args.plan else None
     if args.wake:
         # A woken orchestrator runs on the plan it slept on, whoever wakes it: its transcripts
@@ -5285,7 +5287,6 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
             session_words = ("--session-id", new_id)
         socket = home_socket(session_words[1]) if not session_words[1].startswith("<") \
             else HOME_SOCKET_PREFIX + "<new>"
-    plugin_dirs, caller_plugins = caller_plugin_launch(auditor_successor)
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
                            mcp_file, args.account_connectors, gate_tokens, effort,
                            args.keep_tool, args.drop_tool, args.keep_synced_skills,
