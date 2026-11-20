@@ -14,9 +14,9 @@ The launcher names its sessions (`--title`); else call `mcp__orchestrator__renam
 
 ## Your scripts
 
-Every script you run is called by its path under this skill's base directory, the one its load
-printed: `<base>/scripts/<name>.sh`, the launcher `<base>/../iterm-agents/scripts/iterm-agent.sh`.
-That is your own version of the plugin. A script path another session, a brief, a prompt or a
+Call every script by its path under this skill's base directory, as its load
+printed it: `<base>/scripts/<name>.sh`, the launcher `<base>/../iterm-agents/scripts/iterm-agent.sh`.
+A script path another session, a brief, a prompt or a
 memo gave you may be an older copy: never run one.
 
 ## Your mode
@@ -67,7 +67,7 @@ words.
    `date -u +%FT%TZ` or the event's timestamp.
 9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
    after asking it with `ask`, then `declare_wait`; close its answer with `settle`. What
-   you launched wakes you undeclared. A wake that brings nothing new gets no text to him. A gate question's recommended option is never
+   you launched wakes you undeclared. A wake that brings nothing new gets no text to him. Even so, on a takeover and on such a wake, when the telemetry plugin is installed, run `/telemetry:errors`: each group of plugin errors (`plugin:*`, `mcp__github__*`, `mcp__orchestrator__*`, a plugin's script) no open row covers opens a row (`dispatch-record.sh open`, its note quoting the group's example); the rest is read and left. A gate question's recommended option is never
    « the operator does it by hand » while a fix or a CI pull request is possible.
 10. **Directives follow decisions.** When a ruling lands or a defect is repaired, the plan,
     briefs and templates it touches change in the same move; every planned item and ruling
