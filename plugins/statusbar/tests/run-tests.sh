@@ -918,6 +918,17 @@ else
   fail=$((fail + 1))
 fi
 
+CFG=$(fresh_config "")
+mkdir -p "$CFG/real"
+printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/x/usage-key.sh"}]}]},"kept":1}' > "$CFG/real/settings.json"
+ln -s real/settings.json "$CFG/settings.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$INSTALL" >/dev/null
+if [ -L "$CFG/settings.json" ] && [ "$(jq -r 'has("hooks")' "$CFG/real/settings.json")" = "false" ] && [ "$(jq -r .kept "$CFG/real/settings.json")" = "1" ]; then
+  printf '  ok   install removing a legacy hook keeps a symlinked settings.json a link, its target rewritten\n'; pass=$((pass + 1))
+else
+  printf '  FAIL install removing a legacy hook keeps a symlinked settings.json a link, its target rewritten\n'; fail=$((fail + 1))
+fi
+
 echo "-- uninstall --"
 
 CFG=$(fresh_config "")
@@ -925,6 +936,30 @@ DEST=$(dest_for "$CFG")
 printf '{"statusLine":{"type":"command","command":"%s","padding":0}}' "$DEST" > "$CFG/settings.json"
 CLAUDE_CONFIG_DIR="$CFG" bash "$UNINSTALL" >/dev/null
 check_json "uninstall of our own command deletes statusLine" "$CFG" 'has("statusLine")' "false"
+
+CFG=$(fresh_config "")
+DEST=$(dest_for "$CFG")
+mkdir -p "$CFG/real"
+printf '{"statusLine":{"type":"command","command":"%s","padding":0},"kept":1}' "$DEST" > "$CFG/real/settings.json"
+ln -s real/settings.json "$CFG/settings.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$UNINSTALL" >/dev/null
+if [ -L "$CFG/settings.json" ] && [ "$(jq -r 'has("statusLine")' "$CFG/real/settings.json")" = "false" ] && [ "$(jq -r .kept "$CFG/real/settings.json")" = "1" ]; then
+  printf '  ok   uninstall of our own command keeps a symlinked settings.json a link, its target rewritten\n'; pass=$((pass + 1))
+else
+  printf '  FAIL uninstall of our own command keeps a symlinked settings.json a link, its target rewritten\n'; fail=$((fail + 1))
+fi
+
+CFG=$(fresh_config "")
+DEST=$(dest_for "$CFG")
+mkdir -p "$CFG/real"
+printf '{"statusLine":{"type":"command","command":"/opt/tap.sh %s","padding":0},"kept":1}' "$DEST" > "$CFG/real/settings.json"
+ln -s real/settings.json "$CFG/settings.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$UNINSTALL" >/dev/null
+if [ -L "$CFG/settings.json" ] && [ "$(jq -r .statusLine.command "$CFG/real/settings.json")" = "/opt/tap.sh" ] && [ "$(jq -r .kept "$CFG/real/settings.json")" = "1" ]; then
+  printf '  ok   uninstall of a wrapped command keeps a symlinked settings.json a link, its target rewritten\n'; pass=$((pass + 1))
+else
+  printf '  FAIL uninstall of a wrapped command keeps a symlinked settings.json a link, its target rewritten\n'; fail=$((fail + 1))
+fi
 
 CFG=$(fresh_config "")
 DEST=$(dest_for "$CFG")
