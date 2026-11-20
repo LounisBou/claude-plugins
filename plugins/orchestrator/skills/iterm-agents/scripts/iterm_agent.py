@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import collections
 import contextlib
+import datetime
 import glob
 import io
 import json
@@ -32,6 +33,8 @@ import subprocess
 import sys
 import uuid
 import time
+
+import conversation_tail
 
 
 class _AsyncioSocketNoise(logging.Filter):
@@ -3915,6 +3918,21 @@ def await_handover(tty, idle=None, sleep=time.sleep, clock=time.time):
         sleep(min(5, max(1, idle - quiet)))
 
 
+def conversation_of(tty):
+    """The end of the conversation of the session on `tty`, as its transcript holds it now
+    (conversation_tail.section), or "" when it has none (the takeover line already says so) or
+    cannot be read (said on stderr): read before a kill, printed by the caller, and never a
+    reason to refuse one."""
+    try:
+        sid = rotated_session(tty)
+        path = transcript_of_session(sid) if sid else None
+        if path:
+            return conversation_tail.section(path, datetime.datetime.now(datetime.timezone.utc))
+    except Exception as exc:
+        print("conversation: not read (%s)" % (str(exc) or type(exc).__name__), file=sys.stderr)
+    return ""
+
+
 def cmd_takeover(args):
     """A successor's close of its predecessor inside their home session: the predecessor's
     « handed over » waited for on its transcript (or an idle transcript), then its window 0
@@ -3944,6 +3962,9 @@ def cmd_takeover(args):
     # The predecessor may still be writing its last turn: its « handed over », or a transcript
     # left idle, comes before the kill, and the line says which was seen.
     print(await_handover(args.tty))
+    tail = conversation_of(args.tty)
+    if tail:
+        print(tail)
     sys.stdout.flush()
     viewed = tmux_out(["display-message", "-p", "-t", pred.window, "#{window_active}"],
                       "takeover").strip() == "1"
@@ -5812,6 +5833,8 @@ def cmd_close(args):
     # And the host pids the hooks module's store records on it: the close's proof reads the
     # tty, and these are named afterwards when the process table still lists them.
     recorded = recorded_pids({host_tty, args.tty})
+    # An orchestrator's conversation is read before the kill and printed after the contract line.
+    tail = conversation_of(host_tty) if args.expect.startswith(ORCH_ROLE) else ""
 
     note = close_note(host_tty, was_running)
     if socket:
@@ -5831,6 +5854,8 @@ def cmd_close(args):
         # that qualifies it goes to stderr rather than changing it.
         print("closed 1 session on %s" % args.tty)
         sys.stdout.flush()
+    if tail:
+        print(tail)
     name_lingering(recorded)
     # The session's purpose is over and its process is proved gone: its checkout goes with
     # it, unless it holds work (`workspace.sh delete` refuses that, and says why).

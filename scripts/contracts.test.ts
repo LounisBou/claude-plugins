@@ -265,6 +265,7 @@ describe('session names: core owns the shape, the launcher reads it', () => {
     mkdirSync(scripts, { recursive: true })
     mkdirSync(join(plugin, 'core'))
     copyFileSync(LAUNCHER, join(scripts, 'iterm_agent.py'))
+    copyFileSync(LAUNCHER.replace('iterm_agent.py', 'conversation_tail.py'), join(scripts, 'conversation_tail.py'))
     copyFileSync('plugins/orchestrator/core/store.json', join(plugin, 'core', 'store.json'))
     copyFileSync('plugins/orchestrator/core/launcher.json', join(plugin, 'core', 'launcher.json'))
     const roles = { Lead: 'orchestrator', Desk: 'coordinator', Check: 'auditor', Hand: 'agent' }
