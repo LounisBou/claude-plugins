@@ -4,7 +4,7 @@
 // orchestration the creating session belongs to — an agent's, its orchestrator's — once; a session of
 // no orchestration writes nothing, and a write that fails changes nothing of the tool's answer.
 import { expect, test } from 'claude-code/testing'
-import { createdPr, prWake, register } from '../ledger.ts'
+import { ciFailingLine, createdPr, prWake, register } from '../ledger.ts'
 import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
 import { prWantedPath } from '../pr-file-format.ts'
 import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
@@ -1048,6 +1048,20 @@ test('a pending or green check, or a head with no check, tells nothing', async (
 test('a failing head with no agent on its pull request says so', async () => {
   const alone = checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)']) }, AT_A, { launcher: '' })
   expect((await prWake(alone.dollar, new Set(), T0)).lines[0]).toEqual("[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4) ; personne n'y travaille, mets-y un agent.")
+})
+
+test('a failing head whose line waits on a recorded wait with no agent names that wait, not an agent', async () => {
+  const waiting = checked({ 17: gateJson('FAILURE', AT_A, ['tests (8.4)']) }, AT_A, { launcher: '', rows: { [RECORD]: `${ledgerLine(17, 'waiting', { on: 'GeoSecureBeltFirmware#25 merged into main' })}\n` } })
+  const lines = (await prWake(waiting.dollar, new Set(), T0)).lines
+  // The anomaly line the same unattended waiting line raises is the existing one, told beside the red.
+  expect(lines[0]).toEqual('[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4) ; attend GeoSecureBeltFirmware#25 merged into main.')
+  expect(lines.some(line => line.includes('mets-y un agent'))).toBe(false)
+})
+
+test('a failing head with no line to name a wait, or a wait no agent holds, still says to put an agent on it', () => {
+  const failed = { repo: 'acme/app', pr: 17, head: AT_A, failed: ['tests (8.4)'] }
+  expect(ciFailingLine(failed)).toEqual("[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4) ; personne n'y travaille, mets-y un agent.")
+  expect(ciFailingLine({ ...failed, waits: ' \n' })).toEqual("[module] acme/app#17 CI en échec à aaaaaaa : tests (8.4) ; personne n'y travaille, mets-y un agent.")
 })
 
 test('a draft is read and told like any pull request, its failed checks without its draft guards, classified once per head', async () => {
