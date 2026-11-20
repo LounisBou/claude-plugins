@@ -118,7 +118,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # Every launched session carries its model and its effort (decision 3 of
     # docs/agent-dispatches.md). The dry run prints what it types and where it came from:
     # `effort=<level>` (`none` for the host's default) and `pair_source=` — `transcript <path>`,
-    # `tier <t>` (`tier deep, effort from transcript <path>` when the effort is yours),
+    # `tier <t>`,
     # `flag`, `record` or `host default`; a real spawn says the same on stderr.
     # --inherit-model types the calling session's current model AND effort, read on its
     # transcript (its last main-thread request); --tier, --model and --effort are exclusive
@@ -187,15 +187,14 @@ $SCRIPT screen --tty /dev/ttysNNN [--lines 40]
     # the last N lines, trailing blanks dropped: a tall terminal is blank at the top and
     # the prompt an agent is stopped on sits at the bottom.
 
-$SCRIPT close --tty /dev/ttysNNN --expect-title <substring> [--keep-checkout]
+$SCRIPT close --tty /dev/ttysNNN --expect-title <substring> [--keep-checkout] [--end-agents | --keep-agents]
     # tty-exact; refuses if the session's current title does not contain the substring;
     # waits for the host CLI to leave the tty, and fails loudly naming what survived.
-    # Once the close is proved, the checkout the session worked in is deleted when it is
-    # a checkout or a pin under the workspaces root: `workspace.sh delete`, never
-    # --discard, its host temporary directory with it, the directory read BEFORE the close.
-    # The outcome is on stderr (`close: deleted checkout <path>` or `close: kept checkout
-    # <path>: <reason>`); the stdout line `closed 1 session on <tty>` is unchanged and a
-    # refused delete never fails the close. --keep-checkout opts out. `rotate` always keeps it.
+    # Once the close is proved, the checkout (or pin) it worked in under the workspaces root
+    # is deleted: `workspace.sh delete`, never --discard, its host temporary directory
+    # with it. The outcome is on stderr (`close: deleted checkout <path>` or `close: kept
+    # checkout <path>: <reason>`); the stdout line `closed 1 session on <tty>` is unchanged
+    # and a refused delete never fails the close. --keep-checkout opts out and marks it kept: a sweep never ends it, only a `delete`. `rotate` keeps it unmarked.
     # A host pid the hooks module's store records on the tty and the table still lists after
     # the close is named on stderr, `close: pid <n> lingers (<state>)`, the exit unchanged.
 
@@ -214,20 +213,19 @@ $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier> | --mode
     # `close` would refuse, the tab of the caller's own home server and a session no id nor
     # title word tells from another.
     # Once the spawn has returned the replacement is never closed: a later failure ends on one
-    # `rotate:` line naming the shell-quoted step that ends the old session.
-    # A rotation is a succession: with no pair given, the replacement runs on the ROTATED
-    # agent's live model and effort, read on its transcript (pair_source=transcript <path>); a
-    # tier, or --model with --effort, is the orchestrator naming the pair (an escalation),
-    # typed as given (pair_source=tier <t> or flag). An unreadable pair refuses the rotation.
+    # `rotate:` line naming the step that ends the old session.
+    # With no pair given, the replacement runs on the ROTATED agent's live model and effort,
+    # read on its transcript (pair_source=transcript <path>); a tier, or --model with --effort,
+    # names the pair (an escalation), typed as given (pair_source=tier <t> or flag). An
+    # unreadable pair refuses the rotation.
     # Every argument it does not consume reaches the spawn, `--trust` and `--mcp <name>`
-    # included: an agent that needed a server is replaced by one that still has it.
-    # One of --prompt, --prompt-file or --brief is required, as for a spawn. A refusal comes
-    # before the replacement's tab exists, the old session untouched.
-    # --no-verify is refused: the old tab is closed only on a replacement verified running.
+    # included. One of --prompt, --prompt-file or --brief is required, as for a spawn.
+    # --expect-title is required for a tmux window (refused before the spawn without it), warned
+    # for an iTerm tab. --no-verify is refused: the old tab closes only on a verified replacement.
     # What the old agent's launch line (its host's argv) kept or dropped beyond its role's
     # default set is carried to the replacement, said on stderr (`rotate: tools carried …`).
-    # --keep-tool, --drop-tool and --keep-synced-skills are forwarded like --mcp; the synced
-    # skills are given again only when `rotate` is given --keep-synced-skills.
+    # --keep-tool, --drop-tool and --keep-synced-skills are forwarded like --mcp; synced
+    # skills are given again only with --keep-synced-skills.
 
 $SCRIPT pair
     # read-only: the calling session's model and effort now, `model=<model> effort=<level>`,
@@ -266,7 +264,7 @@ An orchestrator's tab holds a tmux session of its own, its **home session**, on 
 
 - **`spawn`** makes the window with `new-window -d` (the operator's view stays put), named by `-n` with the title, a window not named taking its program's name. It takes the next free index; `--right-of self` is read as « after my last agent », and a first place or `--left-of` is said to be unsupported there. Its chain entry is `tmux:<socket>:@N`, owned by `tmux:<socket>:%N`.
 - **`list`** prints the home session's windows, one row each, the caller's own marked `self`, then the app's tabs it did not make as windows (an auditor's, for one). **`screen`** reads a window with `capture-pane`.
-- **`close`** kills the window, guarded by `--expect-title` against the window's name, proved gone on the process table (a host still there is sent SIGTERM, then SIGKILL) and the checkout deleted, as for a tab. A tty of another tmux session is refused. On a tab that shows a home session it ends the whole server first and prints a `home:` line. A home session's window 0 is closed only by `takeover`: `close` refuses it, before anything is killed.
+- **`close`** kills the window, guarded by `--expect-title` against the window's name, proved gone on the process table (a host still there is sent SIGTERM, then SIGKILL) and the checkout deleted, as for a tab. A tty of another tmux session is refused. On a tab that shows a home session it refuses while another window runs a host, naming each agent with its attach line; `--end-agents` ends the server and them, `--keep-agents` keeps the server for them (window 0 killed, `exit-unattached off`, one `agent:` line each). A home session's window 0 is closed only by `takeover`: `close` refuses it, before anything is killed.
 - **`move`** is `move-window`, with the operator's view kept; window 0 is refused as a subject, as an anchor to place something before, and as `--leftmost`. **`rotate`** spawns, verifies, then closes, as for tabs, after refusing before any spawn what `close` would refuse (window 0 included).
 - **`home --session <id> --name "Orch: <subject>"`** is run by the hooks module, never by hand, at the end of the turn that names an orchestrator or of the first uninterrupted turn of one resumed outside a home session: it makes the server, resumes the same conversation in window 0 and opens a tab showing it, printing `moved: …` and `wait: <seconds>` (window 0's wait for the old session to end) or `stay: <why>` (a session that is not an orchestrator, or already in a home session, stays). A prompt typed in the old tab after the move is refused, naming the new tab; an old session still there after the wait is said in its tab and the module log, and `home-release --abandon <server>` ends the server and closes its tab. **`home-release`** is window 0's watcher, closing the tab the orchestrator left once the resumed host is proved running. **`takeover --tty <predecessor> --expect-title <words>`** is a successor's close of its predecessor: it first waits for the predecessor's « handed over » on its transcript, or five minutes of an idle transcript, and prints which (`takeover: « handed over » read on …` or `takeover: no « handed over » …`); then window 0 killed (the title being required) and its host proved gone, sent SIGTERM then SIGKILL when it stays, then the successor's window moved to index 0.
 - **`home-reload`** is run by the hooks module when it tells a session of a newer install, never by hand: every live home server sources that commit's `home.conf`, with no restart.

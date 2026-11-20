@@ -70,7 +70,7 @@ export const LAUNCHER_COMMANDS = {
   },
   'close': {
     options: [value('--tty', 'tty'), value('--expect-title', 'expect', null), flag('--keep-checkout', 'keep_checkout'),
-      value('--bench', 'bench'), value('--socket', 'socket')],
+      flag('--end-agents', 'end_agents'), flag('--keep-agents', 'keep_agents'), value('--bench', 'bench'), value('--socket', 'socket')],
     unknown: 'ignore',
   },
   'move': {

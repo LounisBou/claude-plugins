@@ -78,16 +78,14 @@ An `Agent:` session also comes up without the away recap and the silent-turn rem
 
 **A finished agent's window or tab is closed by the module** at the Ready or merge of its pull request. The only places open at any time are the orchestrator's and its running implementers' (and the auditor's tab). `close --tty` on a hidden agent closes its session alone — its tab and its review pane stay open (`references/commands.md`, « How the launcher builds a tab », the hidden-pane entry).
 
-**A window or a tab is closed by its tty with `--expect-title`, never by title alone or by position** — the title its spawn was given, `list`'s for a session you did not spawn (a rotation takes none, below). Match on words, never on the first character, an activity glyph that flips on its own.
+**A window or a tab is closed by its tty with `--expect-title`, never by title alone or by position** — the title its spawn was given, `list`'s for a session you did not spawn (a rotation: below). Match on words, never on the first character, an activity glyph that flips on its own.
 
 ## Safety order for a live rotation
 
 1. The old agent must have STOOD DOWN (message it; wait for its acknowledgment) — never close a tab whose session may still be writing. **In a rotation this acknowledgment IS the guard**, not the title.
 2. `list` to confirm the tty is the one you mean.
-3. `rotate`, which spawns the replacement and verifies it is running before the old one is gone. **Do not pass `--expect-title` to a rotation**: a working session rewrites its title during the ten seconds of the spawn. The tty is the identity; a stood-down agent that acknowledged is what makes closing it safe.
+3. `rotate`, which spawns the replacement and verifies it is running before the old one is gone. **`--expect-title` is required for a tmux window** (its name is fixed; the tty a brief printed may be another agent's by now), **not given for an iTerm tab**, whose title a working session rewrites during the spawn. A stood-down agent that acknowledged is what makes closing it safe.
 4. Its two lines, the new tty then `closed 1 session on <old tty>`, are the proof; `list` only when it failed, timed out or warned on stderr.
-
-`--expect-title` remains right for a STANDALONE `close`.
 
 ## Common mistakes
 

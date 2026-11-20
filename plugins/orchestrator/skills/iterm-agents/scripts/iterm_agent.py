@@ -101,10 +101,10 @@ DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
 # as much as the model family does.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # The effort an agent's tier runs at when the operator's map binds the tier a model alone
-# (decision 3 of docs/agent-dispatches.md, dated there). The deep tier has none of its own:
-# it runs at the effort its calling orchestrator runs at now, read on that orchestrator's
-# transcript. An effort the map binds wins over both.
-SHIPPED_TIER_EFFORTS = {"standard": "high", "light": "medium"}
+# (decision 3 of docs/agent-dispatches.md, dated there). Every tier has one, the deep tier
+# included: an agent never takes its calling orchestrator's effort, which was medium on a deep
+# agent. An effort the map binds wins over it.
+SHIPPED_TIER_EFFORTS = {"deep": "xhigh", "standard": "high", "light": "medium"}
 EFFORT_LIST = "low, medium, high, xhigh or max"
 # The session-name shape is core's (names.ts), read here as the data `npm run core` writes beside
 # the plugin's copy of core: the role words, in the order a listing shows them, and the subject's
@@ -1373,7 +1373,7 @@ def delete_checkout(path):
     """Ask `workspace.sh delete` (never --discard) to remove a checkout and report it on
     stderr. A refusal is not an error of the close: it says why the checkout stays."""
     try:
-        done = subprocess.run(["bash", WORKSPACE_SH, "delete", path],
+        done = subprocess.run(["bash", WORKSPACE_SH, "delete", path, "--by", "close"],
                               capture_output=True, text=True, timeout=120)
     except Exception as exc:
         print("close: kept checkout %s: workspace.sh did not run: %s" % (path, exc),
@@ -1393,6 +1393,26 @@ def delete_checkout(path):
             first = False
     for line in done.stderr.splitlines():
         print("close: " + re.sub(r"^workspace: ", "", line), file=sys.stderr)
+
+
+def mark_kept(path):
+    """Ask `workspace.sh keep` to mark a checkout the operator or an orchestrator closed with
+    `--keep-checkout`: the sweep then never ends it, whoever made it and whoever lives. A sweep
+    once ended the clone of a dead predecessor minutes after a close that said to keep it. A mark
+    that is not made is said, for the sweep would take the checkout."""
+    try:
+        done = subprocess.run(["bash", WORKSPACE_SH, "keep", path],
+                              capture_output=True, text=True, timeout=120)
+    except Exception as exc:
+        print("close: the checkout %s is NOT marked kept, a sweep may end it: workspace.sh did "
+              "not run: %s" % (path, exc), file=sys.stderr)
+        return
+    if done.returncode != 0:
+        reason = (done.stderr.strip().splitlines() or ["unknown"])[-1]
+        print("close: the checkout %s is NOT marked kept, a sweep may end it: %s"
+              % (path, re.sub(r"^workspace: ", "", reason)), file=sys.stderr)
+        return
+    print("close: kept checkout %s: marked, a sweep never ends it" % path, file=sys.stderr)
 
 
 # --- the ladder: the rung that can serve, and it says which one did (§46) -----------
@@ -3819,12 +3839,115 @@ def refuse_home_title(what, tty, expect):
     return name
 
 
-def close_home_tab(tty, socket, expect, listed=None):
-    """Close a tab that shows a home session: its title checked first, then the server
-    ended, every window of it proved gone, then the tab if it outlived its client. Prints
-    the close's contract line, then the server and the session window 0 ran, which a pause
-    records for the wake."""
+def home_agents(socket, panes):
+    """The live agents of the home server `socket`: `[(window index, tty, window name)]` of
+    every window but window 0 whose tty runs a host. `panes` is `home_panes`' answer. The names
+    are asked of tmux and are only the words of a line: a name it does not give is empty."""
+    names = {}
+    try:
+        done = tmux_call(["-L", socket, "list-windows", "-F", "#{window_index}\t#{window_name}"])
+        if done.returncode == 0:
+            for line in done.stdout.splitlines():
+                index, _, name = line.partition("\t")
+                names[index] = name
+    except TmuxError:
+        pass
+    return [(index, tty, names.get(index, "")) for index, tty in panes or []
+            if index != "0" and host_cli_on(tty) is not None]
+
+
+def agent_line(socket, agent):
+    """One live agent of a home server, with the command that attaches to its window."""
+    index, tty, name = agent
+    return ("agent: %s on %s: %s -L %s attach -t %s:%s"
+            % (name or "(unnamed)", tty, TMUX_BIN, socket, HOME_SESSION, index))
+
+
+def refuse_home_agents(what, socket, panes):
+    """The refusal of a close of a home tab while another window than window 0 runs a host: the
+    server's end would kill those agents with it, and nothing says they were done. Each is
+    named with the line that attaches to it; `--end-agents` ends them with the server,
+    `--keep-agents` keeps the server for them. Read-only, so a refusal changes nothing."""
+    agents = home_agents(socket, panes)
+    if agents:
+        die("%s: refused: the home server %s still runs %d agent(s) beside window 0, and its "
+            "end would kill them: pass --end-agents to end them with the server, or "
+            "--keep-agents to close window 0 and the tab and keep the server for them; "
+            "the server was NOT ended. %s"
+            % (what, socket, len(agents), " ".join(agent_line(socket, a) for a in agents)))
+
+
+def keep_home(tty, socket, listed):
+    """Close a home tab and window 0 and keep the server for its agents: the server told to stay
+    when no client is attached (`exit-unattached off`), window 0 killed and its host proved gone,
+    then the tab closed, whose client detaches and leaves the server running. A failure after
+    the server was told to stay arms it again, so the server is never left unarmed with its
+    tab. Prints the close's contract line and one line per agent, with its attach command."""
+    panes, session_id = window0_session("close", socket, listed)
+    agents = home_agents(socket, panes)
+    ttys = [t for i, t in panes or [] if i == "0"]
+    host = host_identity(ttys[0]) if ttys else None
+    try:
+        done = tmux_call(["-L", socket, "set-option", "-s", "exit-unattached", "off"])
+    except TmuxError as exc:
+        die("close: refused: tmux could not be told to keep the home server %s (%s); it was "
+            "NOT ended and nothing was closed" % (socket, exc))
+    if done.returncode != 0:
+        die("close: refused: tmux refused to keep the home server %s (%s); it was NOT ended "
+            "and nothing was closed" % (socket, tmux_refusal(done)))
+
+    def rearm(why):
+        arm_home(socket, "close")
+        die("close: %s; the server %s was armed again and nothing else was closed"
+            % (why, socket))
+    if ttys:
+        KILL_SENT.add(ttys[0])
+        try:
+            done = tmux_call(["-L", socket, "kill-window", "-t", "%s:0" % HOME_SESSION])
+        except TmuxError as exc:
+            rearm("tmux could not kill window 0 (%s)" % exc)
+        if done.returncode != 0:
+            rearm("tmux refused to kill window 0 (%s)" % tmux_refusal(done))
+        if host:
+            if not end_host(host[0], host[1], ttys[0], "close"):
+                rearm("%s still runs on %s" % (host[0], ttys[0]))
+        else:
+            survivor = wait_gone(ttys[0])
+            if survivor is not None:
+                rearm("%s still runs on %s" % (survivor, ttys[0]))
+    trace_home(socket, "window 0 of", "close --keep-agents", tty)
+    deadline = time.time() + CLOSE_TIMEOUT
+    while ITERM.find(tty):
+        if time.time() >= deadline:
+            ITERM.close(tty, "")
+            break
+        time.sleep(0.3)
+    CLOSE_DONE.add(tty)
+    print("closed 1 session on %s" % tty)
+    print("home: kept the server %s for %d agent(s)%s"
+          % (socket, len(agents), ", session %s" % session_id if session_id else ""))
+    for agent in agents:
+        print(agent_line(socket, agent))
+    sys.stdout.flush()
+
+
+def close_home_tab(tty, socket, expect, listed=None, end_agents=False, keep_agents=False):
+    """Close a tab that shows a home session: its title checked first, then, while another
+    window than window 0 runs a host, a refusal (`--end-agents` ends them with the server,
+    `--keep-agents` keeps the server for them), then the server ended, every window of it proved
+    gone, then the tab if it outlived its client. Prints the close's contract line, then the
+    server and the session window 0 ran, which a pause records for the wake."""
     refuse_home_title("close", tty, expect)
+    if end_agents and keep_agents:
+        die("close: refused: --end-agents and --keep-agents are exclusive: the agents of the "
+            "home server %s are ended with it, or kept with it" % socket)
+    if not end_agents:
+        panes = (listed if listed is not None else home_panes(socket))[0]
+        if keep_agents:
+            if home_agents(socket, panes):
+                return keep_home(tty, socket, listed)
+        else:
+            refuse_home_agents("close", socket, panes)
     session_id, ttys = end_home(socket, "close", listed, tty)
     trace_home(socket, "server", "close", tty)
     deadline = time.time() + CLOSE_TIMEOUT
@@ -4749,17 +4872,12 @@ def anchor_after_probe(found, anchor, own):
 def tier_pair(tier, effort_flag, bound):
     """`(model, effort, source)` of an agent's tier: the model of the map's binding `bound`
     (what the entry's tier.ts answered for it), with the effort of the flag, else the
-    binding's, else the plugin's shipped effort for the tier, else, for the deep tier, the
-    calling orchestrator's own live effort, whose transcript the source then names."""
+    binding's, else the plugin's shipped effort for the tier. Never the calling orchestrator's
+    own effort: an orchestrator at medium spawned its deep agents at medium."""
     model, effort = bound
     if effort_flag:
         return model, effort_flag, "flag"
-    if not effort:
-        effort = SHIPPED_TIER_EFFORTS.get(tier, "")
-    if not effort:
-        _, effort, path = own_pair("the deep tier's agent")
-        return model, effort, "tier %s, effort from transcript %s" % (tier, path)
-    return model, effort, "tier %s" % tier
+    return model, effort or SHIPPED_TIER_EFFORTS.get(tier, ""), "tier %s" % tier
 
 
 def pair_of_launch(args, auditor_successor, pair_from=""):
@@ -5677,8 +5795,11 @@ def cmd_close(args):
     # Read BEFORE the close: what the proof below is a proof ABOUT.
     was_running = host_cli_on(host_tty)
     # And the same for the checkout the session works in: once it is gone nothing says where.
+    # A rotation keeps it without marking it: its replacement works there, and the sweep ends
+    # the checkout once the replacement's pull request is over.
     checkout = None
-    if not args.keep_checkout:
+    marking = bool(args.keep_checkout) and not getattr(args, "rotating", False)
+    if not args.keep_checkout or marking:
         cwd = host_cli_cwd(host_tty)
         checkout = checkout_of(cwd) if cwd else None
     # And the host pids the hooks module's store records on it: the close's proof reads the
@@ -5691,7 +5812,7 @@ def cmd_close(args):
         # orchestrator and agents with it. The server is ended, every window it holds, and
         # proved gone; then the tab, if it outlived its client. It prints the close's
         # contract line itself.
-        close_home_tab(args.tty, socket, args.expect, listed)
+        close_home_tab(args.tty, socket, args.expect, listed, args.end_agents, args.keep_agents)
         if note:
             print(note, file=sys.stderr)
     else:
@@ -5707,7 +5828,10 @@ def cmd_close(args):
     # The session's purpose is over and its process is proved gone: its checkout goes with
     # it, unless it holds work (`workspace.sh delete` refuses that, and says why).
     if checkout:
-        delete_checkout(checkout)
+        if marking:
+            mark_kept(checkout)
+        else:
+            delete_checkout(checkout)
 
 
 def cmd_move(args):
@@ -5829,7 +5953,7 @@ def close_refusals(what, tty, expect):
                 name = session_title(tty, what)
                 if name is None:
                     die("%s: no session found on %s" % (what, tty))
-            window0_session(what, socket)
+            refuse_home_agents(what, socket, window0_session(what, socket)[0])
         return None, name, ""
     term = terminal_for(tty)
     if isinstance(term, TmuxTerminal):
@@ -5894,6 +6018,18 @@ def cmd_rotate(args):
     # spawned, which would leave that replacement running with nothing to close the old
     # session: every refusal the close can give is read here, before the spawn.
     found_on, title, window = close_refusals("rotate", args.old_tty, args.expect)
+    # A tty is not the agent: the one a brief printed may be another agent's by the time the
+    # rotation runs. A tmux window's name is fixed at its making, so it tells the agent from
+    # a stranger and is required; an iTerm tab's title is rewritten by a working host, so a
+    # tab goes without and is said.
+    if not args.expect:
+        if window:
+            die("rotate: refused: --expect-title is required for a window of a home session: "
+                "give the name `list` printed for %s (the window is named '%s'); nothing was "
+                "spawned" % (args.old_tty, title or ""))
+        if not DRY_RUN:
+            print("rotate: warning: no --expect-title: the session on %s is told from "
+                  "another's by its id alone" % args.old_tty, file=sys.stderr)
     # And who the old session is, read before the spawn too: after it, the tty may hold another.
     old = old_session(args.old_tty, found_on, title, window, args.expect)
     # The tools the old agent's launch kept or dropped beyond its role's default set follow it to
@@ -6370,7 +6506,7 @@ def finish_rotation(made, old, after):
             "host read before the spawn has ended" % tty))
     # The replacement works in the same checkout: a rotation deletes nothing. A session whose
     # identity was never read is closed only while its title holds the one it had.
-    close_args = args_of("close", tty=tty, keep_checkout=True)
+    close_args = args_of("close", tty=tty, keep_checkout=True, rotating=True)
     if old["expect"]:
         close_args.expect = old["expect"]
     elif old["title"] and not (old["window"] or old["session"]) and not DRY_RUN:
