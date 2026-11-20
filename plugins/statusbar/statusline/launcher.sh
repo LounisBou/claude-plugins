@@ -7,12 +7,16 @@
 config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
+# The host's payload is on stdin. The loop below reads the install list from its own stdin, so the
+# payload is kept on fd 3 and handed to the status line that runs.
+exec 3<&0
+
 # Every recorded install, this catalogue's first: the first one still on disk runs.
 while IFS= read -r active; do
-  [ -n "$active" ] && [ -f "$active/statusline/statusline.sh" ] && exec bash "$active/statusline/statusline.sh"
+  [ -n "$active" ] && [ -f "$active/statusline/statusline.sh" ] && exec bash "$active/statusline/statusline.sh" <&3
 done < <(jq -r '.plugins // {} | to_entries
                 | sort_by(if .key == "statusbar@lounisbou" then 0 elif (.key | startswith("statusbar@")) then 1 else 2 end)[]
                 | select(.key | startswith("statusbar@") or startswith("claude-statusbar@"))
                 | .value[]? | .installPath? // empty' \
          "$config_dir/plugins/installed_plugins.json" 2>/dev/null)
-exec bash "$here/statusline-core.sh"
+exec bash "$here/statusline-core.sh" <&3
