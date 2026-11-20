@@ -131,17 +131,51 @@ out("capped", "%d|%s" % (1 if len(text) <= ct.SECTION_CAP + 200 else 0, has(text
 kept = [i for i in range(40) if "ASK-%02d" % i in text]
 out("capped_run", 1 if kept and kept == list(range(kept[0], 40)) and len(kept) > 1 else 0)
 
-# Secrets are masked before they are printed.
-secret = ("token ghp_abcdefghijklmnopqrstuvwxyz0123456789 and SHORT=abc\n"
-          "Authorization: Bearer abcdef0123456789xyz\n"
-          "curl -H 'X: Bearer zzzzzzzz9999yyyy'\n"
-          "with DEPLOY_KEY=whatever and s3cr3t-v4lue-0123 and --password hunter2hunter2\n"
-          "and https://user:pw123@host.example/x and password: plain-text-pass")
+# Secrets are masked before they are printed, each pattern on a line of its own.
+lines = [
+    "token ghp_abcdefghijklmnopqrstuvwxyz0123456789 and SHORT=abc",
+    "ant sk-ant-abcdefghijklmnopqrstuvwx",
+    "Authorization: Token abcdefgh12345678",
+    "curl -H 'X: Bearer zzzzzzzz9999yyyy'",
+    "jwt eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2Q",
+    "-----BEGIN RSA PRIVATE KEY-----\nPRIVATEBODY\n-----END RSA PRIVATE KEY-----",
+    "aws AKIAIOSFODNN7EXAMPLE",
+    "slack xoxb-1234567890-abcdefghij",
+    "GET https://example.org/x?api_key=tttt1111&b=1",
+    "with DEPLOY_KEY=whatever and s3cr3t-v4lue-0123 and --password hunter2hunter2",
+    "and https://user:pw123@host.example/x",
+    "curl -u admin:hunter22 x",
+    "mysql -pSuperSecret1 db",
+    'password="a b c secret"',
+    "password: plain-text-pass",
+    "random AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+]
+secret = "\n".join(lines)
 text = section([user(2, "Q"), reply(1, secret)], "secret")
-out("secret", has(text, "ghp_abcdef", "abcdef0123456789xyz", "zzzzzzzz9999yyyy", "whatever", "s3cr3t-v4lue-0123", "hunter2hunter2",
-                  "pw123", "plain-text-pass", "SHORT=abc", "[REDACTED:github-token]", "[REDACTED:env]"))
+out("secret_gone", has(text, "ghp_abcdef", "abcdefghijklmnopqrstuvwx", "abcdefgh12345678", "zzzzzzzz9999yyyy",
+                       "SflKxwRJSMeKKF2Q", "PRIVATEBODY", "AKIAIOSFODNN7EXAMPLE", "abcdefghij", "tttt1111", "whatever",
+                       "s3cr3t-v4lue-0123", "hunter2hunter2", "pw123", "hunter22", "SuperSecret1", "a b c secret",
+                       "c secret", "plain-text-pass", "AbCdEfGhIjKlMnOpQrStUvWxYz012345"))
+out("secret_marks", has(text, "[REDACTED:github-token]", "[REDACTED:anthropic-key]", "[REDACTED:authorization]",
+                        "[REDACTED:bearer]", "[REDACTED:jwt]", "[REDACTED:private-key]", "[REDACTED:aws-key]",
+                        "[REDACTED:slack-token]", "[REDACTED:url-secret]", "[REDACTED:env]", "[REDACTED:secret-flag]",
+                        "[REDACTED:url-credentials]", "[REDACTED:user-password]", "[REDACTED:password-flag]",
+                        "[REDACTED:secret-assignment]", "[REDACTED:entropy]", "SHORT=abc"))
 text = section([user(2, "my key is s3cr3t-v4lue-0123")], "secret-operator")
 out("secret_operator", has(text, "s3cr3t-v4lue-0123", "[REDACTED:env]"))
+# A secret that straddles the cap is masked whole, never cut in half.
+straddle = "a " * 445 + "ghp_abcdefghijklmnopqrstuvwxyz0123456789 " + "b " * 800
+text = section([user(2, "Q"), reply(1, straddle)], "straddle")
+out("straddle", has(text, "ghp_", "[REDACTED"))
+
+# One exchange alone over the section's cap: the newest lines stay, the last reply whole.
+fat = [user(3, "FAT-ASK"), reply(2.5, "FAT-ONE\n```\n" + "x" * 6000 + "\n```"),
+       reply(2, "FAT-TWO\n```\n" + "y" * 6000 + "\n```"), reply(1, "FAT-THREE\n```\n" + "z" * 6000 + "\nFAT-END\n```")]
+text = section(fat, "fat")
+out("fat", "%s|%d" % (has(text, "FAT-ASK", "FAT-ONE", "FAT-TWO", "FAT-THREE", "FAT-END"),
+                      1 if len(text) <= ct.SECTION_CAP + 200 else 0))
+text = section([user(2, "Q"), reply(1, "```\n" + "w" * 20000 + "\nLAST-WORD\n```")], "fatter")
+out("fatter", "%s|%d" % (has(text, "LAST-WORD", "orchestrator: "), 1 if len(text) <= ct.SECTION_CAP + 200 else 0))
 
 # Only the last MiB of a huge transcript are read, and the line cut where the read began is dropped.
 pad = b"x" * (ct.TAIL_BYTES + 1000) + b"\n"
@@ -159,3 +193,14 @@ out("cut", len(ct.read_tail(cut)))
 
 # A transcript that cannot be read is said, never raised.
 out("missing", has(ct.section(os.path.join(WORK, "absent.jsonl"), NOW, ENV), "cannot be read"))
+
+# A long text of the words a pattern looks for is read in linear time, never a hang before the kill.
+import time
+began = time.time()
+ct.redact("pass." * 20000 + "mysql " * 20000 + "secret-" * 20000 + "a:b " * 20000, ENV)
+out("fast", 1 if time.time() - began < 10 else 0)
+
+# The operator's own words are never cut, whatever their length; a reply's are.
+words = "OP-START " + "word " * 1000 + "OP-END"
+text = section([user(2, words)], "operator-long")
+out("operator_long", has(text, "OP-START", "OP-END", "[…]"))

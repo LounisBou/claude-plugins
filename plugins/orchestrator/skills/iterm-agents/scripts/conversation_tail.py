@@ -8,8 +8,10 @@ the predecessor and nothing is written to a file. `section` returns the text the
 The window is the operator's last 3 messages or the last 10 minutes, whichever reaches further
 back; every reply of the session after the first of those messages is kept, its text parts only.
 """
+import collections
 import datetime
 import json
+import math
 import os
 import re
 
@@ -165,14 +167,18 @@ def env_secrets(path):
     return keys, values
 
 
+UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+RUN = re.compile(r"[A-Za-z0-9+=_-]{20,}")
+
+
 def mask(name):
     return "[REDACTED:%s]" % name
 
 
 # The patterns of telemetry's `redact.ts`, small: the secrets that keep one shape, then the
 # headers, the URLs and the assignments that name one. Each is `(name, regex, kept groups)`.
-SECRET_KEY = (r"[A-Za-z0-9_.-]*(?:token|secret|pass|pwd|api[_-]?key|apikey|private[_-]?key"
-              r"|access[_-]?key|client[_-]?secret|credential)s?[A-Za-z0-9_.-]*")
+SECRET_KEY = (r"[A-Za-z0-9_.-]{0,30}(?:token|secret|pass|pwd|api[_-]?key|apikey|private[_-]?key"
+              r"|access[_-]?key|client[_-]?secret|credential)s?[A-Za-z0-9_.-]{0,30}")
 PATTERNS = [
     ("private-key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"), 0),
     ("github-token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"), 0),
@@ -187,11 +193,30 @@ PATTERNS = [
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), 0),
     ("authorization", re.compile(r"\b((?:proxy-)?authorization[\"']?\s*[:=]\s*[\"']?)(?!\[REDACTED)[^\s\"'][^\"'\r\n]*", re.I), 1),
     ("bearer", re.compile(r"\b((?:bearer|basic)\s+)[A-Za-z0-9._~+/=-]{8,}", re.I), 1),
-    ("url-credentials", re.compile(r"\b([a-z][a-z0-9+.-]*://)[^\s/@:]+(?::[^\s/@]*)?@", re.I), 1),
+    ("url-credentials", re.compile(r"\b([a-z][a-z0-9+.-]{0,30}://)[^\s/@:]+(?::[^\s/@]*)?@", re.I), 1),
     ("url-secret", re.compile(r"([?&](?:access_token|token|key|api_key|apikey|secret|password|sig|signature|auth)=)[^&#\s\"']+", re.I), 1),
     ("secret-flag", re.compile(r"(--(?:[A-Za-z0-9]+-)*(?:token|secret|passw(?:or)?d|passwd|pass|api-?key|apikey|private-key|access-key|credentials?)(?:\s+|=))(?!\[REDACTED)(?:\"[^\"]*\"|'[^']*'|[^\s\"'-][^\s\"']*)", re.I), 1),
+    ("user-password", re.compile(r"((?:^|[\s;&|(])(?:-u\s*|--user(?:\s+|=)))(?!\[REDACTED)(?:\"[^\"]*:[^\"]*\"|'[^']*:[^']*'|[^\s\"'-][^\s\"']*:[^\s\"']*)"), 1),
+    ("password-flag", re.compile(r"\b((?:mysql\w*|mariadb[\w-]*)\b[^\n;&|]{0,200}?\s-p|\bsshpass\s+-p\s*|\b(?:docker|podman)\s+login\b[^\n;&|]{0,200}?\s-p\s*)(?!\[REDACTED)(?:\"[^\"]*\"|'[^']*'|[^\s\"']+)"), 1),
+    ("secret-assignment", re.compile(r"\b(%s[\"']?\s*[:=]\s*)(?:\"(?:[^\"\\]|\\.)+\"|'[^']+')" % SECRET_KEY, re.I), 1),
     ("secret-assignment", re.compile(r"\b(%s[\"']?\s*[:=]\s*[\"']?)(?!\[REDACTED)[^\s\"',;&|)}]+" % SECRET_KEY, re.I), 1),
 ]
+
+
+def random_run(run):
+    """Whether a run of token characters looks random enough to be a secret: a segment of 20
+    characters or more with letters and digits, or both cases, and the entropy of a key. A UUID
+    and a hash (hex only) are names, not secrets."""
+    if UUID.match(run) or re.fullmatch(r"[0-9a-f]+", run):
+        return False
+    longest = max(re.split(r"[-_.]", run), key=len)
+    if len(longest) < 20:
+        return False
+    counts = collections.Counter(longest)
+    bits = -sum(n / len(longest) * math.log2(n / len(longest)) for n in counts.values())
+    mixed = re.search(r"[a-z]", longest) and re.search(r"[A-Z]", longest)
+    return bool((re.search(r"[A-Za-z]", longest) and re.search(r"[0-9]", longest) and bits >= 3.5)
+                or (mixed and bits >= 4.1))
 
 
 def redact(text, env_path=None):
@@ -206,7 +231,7 @@ def redact(text, env_path=None):
                       mask("env"), text)
     for name, regex, keep in PATTERNS:
         text = regex.sub(lambda m, keep=keep, name=name: (m.group(1) if keep else "") + mask(name), text)
-    return text
+    return RUN.sub(lambda m: mask("entropy") if random_run(m.group(0)) else m.group(0), text)
 
 
 def messages(path):
@@ -248,8 +273,9 @@ def exchanges(items, env_path=None):
     replies that follow it, every line capped and masked."""
     groups = []
     for moment, who, text in items:
+        text = redact(text, env_path)
         line = "[%s] %s: %s" % (paris(moment), "operator" if who == "operator" else "orchestrator",
-                                redact(cap_reply(text), env_path))
+                                text if who == "operator" else cap_reply(text))
         if who == "operator" or not groups:
             groups.append([])
         groups[-1].append(line)
@@ -265,10 +291,12 @@ def fit(groups, cap=SECTION_CAP):
     while len(groups) > 1 and size(groups) > cap:
         groups.pop(0)
     while size(groups) > cap and len(groups[0]) > 1:
-        # The operator's own message heads the group and goes last.
-        groups[0].pop(1)
+        # The last reply is what is pending: the oldest line goes first, his message included.
+        groups[0].pop(0)
     if size(groups) > cap:
-        groups[0][0] = groups[0][0][-cap:]
+        line = groups[0][0]
+        head = line[:line.index(": ") + 2] + CUT.lstrip()
+        groups[0][0] = head + line[len(line) - (cap - len(head) - 1):]
     return groups
 
 

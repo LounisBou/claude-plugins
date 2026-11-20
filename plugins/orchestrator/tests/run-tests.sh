@@ -5844,10 +5844,17 @@ check "a long reply keeps its head and its tail within its cap" "1|1|1" "$(ct_of
 check "a fenced command stays whole beside capped prose" "1|1|1" "$(ct_of fenced)"
 check "the section is capped, the oldest exchange dropped first" "1|1|1|0" "$(ct_of capped)"
 check "what stays of a capped section is a whole recent run of exchanges" "1" "$(ct_of capped_run)"
-check "a token, a header, a flag, a URL's password and the values of ~/.env are masked, in his messages too; a short value is not" \
-  "0|0|0|0|0|0|0|0|1|1|1" "$(ct_of secret)"
+check "every secret shape is gone from what is printed, in a line of its own" \
+  "0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0|0" "$(ct_of secret_gone)"
+check "each is masked by its own pattern; a short value is not" \
+  "1|1|1|1|1|1|1|1|1|1|1|1|1|1|1|1|1" "$(ct_of secret_marks)"
 check "his own message is masked as well" "0|1" "$(ct_of secret_operator)"
-check "only the last MiB of the transcript are read, the line cut by the read dropped" "1|1|1" "$(printf '%s|%s' "$(ct_of huge)" "$(ct_of cut)")"
+check "a secret across the reply's cap is masked before it is cut, never left in half" "0|1" "$(ct_of straddle)"
+check "one exchange over the section's cap keeps its newest lines, the last reply whole, within the cap" "0|0|0|1|1|1" "$(ct_of fat)"
+check "a single block over the section's cap keeps its tail, under its line's prefix, within the cap" "1|1|1" "$(ct_of fatter)"
+check "a long text of the words a pattern looks for is masked in linear time" "1" "$(ct_of fast)"
+check "the operator's own words are never cut" "1|1|0" "$(ct_of operator_long)"
+check "only the last 4 MiB of the transcript are read, the line cut by the read dropped" "1|1|1" "$(printf '%s|%s' "$(ct_of huge)" "$(ct_of cut)")"
 check "a transcript that cannot be read is said, not raised" "1" "$(ct_of missing)"
 CVT="$WORK/conv-transcript.jsonl"
 printf '%s\n' '{"type":"user","timestamp":"2026-11-20T15:00:00.000Z","origin":{"kind":"human"},"message":{"content":"CONV-ASK"}}' \
