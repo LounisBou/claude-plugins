@@ -2507,7 +2507,8 @@ test('the gate takes a Ready pull request back to Not Ready on an expired exempt
 
 test('an exemption whose expiry cannot be read exempts nothing', async ($, on) => {
   mock.clock(on, { now: RECEIVED })
-  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: 'tomorrow' }, autoMerge: ['acme/thing'] })
+  // The Not Ready is this machine's: the gate alone says no.
+  const seen = await world($, on, { records: TWO, exemption: { ...EXEMPT, until: 'tomorrow' }, autoMerge: ['acme/thing'], ownLabel: true })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(readinessRuns(seen)).toEqual([])
 })
@@ -2615,6 +2616,25 @@ test('pr-readiness ready, pr-ready and pr-merge are held over a Not Ready this m
   seen.files[LISTED_FILE] = String(RECEIVED + FOREIGN_WAIT_MS + 500)
   await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
   expect(readinessRuns(seen)).toContainEqual(['acme/thing', { pr: 12, state: 'ready' }])
+  // The act goes too, no longer refused.
+  expect((await $.tool.call(gh('pr-ready', { pr: 12 }))).deny).toBeUndefined()
+  expect(commands(seen)).toContain('pr-ready')
+})
+
+test('a clock the module cannot read holds the explicit acts too, naming it', async ($, on) => {
+  const seen = await world($, on, { noClock: true })
+  const asked = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(String(asked.result)).toContain('the clock cannot be read')
+  expect((await $.tool.call(gh('pr-ready', { pr: 12 }))).deny).toContain('pr-ready refused on acme/thing#12')
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('the Not Ready the gate puts back on a Ready pull request through pr-readiness is this machine\'s own, at the head it read', async ($, on) => {
+  mock.clock(on, { now: RECEIVED })
+  const seen = await world($, on, { ownLabel: false, labels: ['Ready'], records: TWO })
+  await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(seen.pull?.labels).toEqual(['Not Ready'])
+  expect(JSON.parse(seen.files[SEEN_FILE] ?? '{}')).toMatchObject({ head: HEAD, label: 'not-ready', own: true })
 })
 
 for (const [what, listed] of [['known', undefined], ['older than the wait', String(RECEIVED - 3_600_000)]] as const) {

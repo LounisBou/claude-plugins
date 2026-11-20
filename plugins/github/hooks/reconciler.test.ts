@@ -790,3 +790,11 @@ test('records that cannot be read keep what the head waited to post: the move st
   expect(count(state.runs, 'pr-gate')).toBeGreaterThan(1)
   expect(state.labelled).toEqual([])
 })
+
+test('a post the forge refuses does not hold back the kept listing: what the forge holds was imported', async ($, on) => {
+  const { clock, state, files } = await started($, on, { pulls: readyPull(['Ready']), files: freshRecord('review', 'fail'), viewer: 'operator' })
+  state.postFails = true
+  await beat(clock)
+  expect(state.posted).toHaveLength(1)
+  expect(files.get(LISTED)?.text).toBe(String(T0 + TICK_MS) + '\n')
+})

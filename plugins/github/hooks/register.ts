@@ -1210,7 +1210,8 @@ async function followGate($: Mod, repo: string, pr: number, known?: Gate, always
   }
   if (watch?.copies(gate, move)) return { missing, gate }
   if (!Number.isFinite(readAt)) {
-    // The sighting cannot be dated, so a Not Ready cannot be told this machine's from another's: Ready waits for a clock.
+    // The sighting cannot be dated, so a Not Ready cannot be told this machine's from another's: Ready waits for a clock (no
+    // ceiling: it needs the time too, and a host that cannot tell it is broken, not slow).
     if (move === 'ready' && gate.labels.some((label) => label.toLowerCase() === NOT_READY)) return { line: gateHeldLine(repo, pr, gate.head, undefined, readAt), missing, gate, held: { until: undefined } }
   } else {
     const listedAt = await listedAtOf($, repo)
@@ -1261,7 +1262,7 @@ type Reconciler = {
   kept: Map<string, string>
   failed: Map<string, { fingerprint: string; at: number }>
   // What each head was last copied with to and from the forge (forge-sync.ts), by repo#pr: what it read, when, and whether all went through.
-  synced: Map<string, { key: string; at: number; ok: boolean }>
+  synced: Map<string, { key: string; at: number; ok: boolean; imported: boolean }>
   // The label last written to each pull request, by repo#pr, and how often another machine took it away (reconcile.ts flapCheck).
   flaps: Map<string, Flap>
   // What each head holds that is not on the forge yet, by repo#pr: the copies waiting for their tool, refused or over the beat's budget.
@@ -1561,26 +1562,29 @@ async function recordsAt($: Mod, root: string, repo: string, head: string): Prom
 async function syncForge(
   $: Mod, rec: Reconciler, at: { root: string; data: string; now: number }, repo: string, listed: Listed, row: ListedPr,
   exemption: Exemption | undefined, budget: { posts: number },
-): Promise<{ wrote: boolean; ok: boolean }> {
+): Promise<{ wrote: boolean; ok: boolean; imported: boolean }> {
   const viewer = listed.viewer
   const id = repo + '#' + row.number
   if (row.statuses === undefined || !viewer || listed.listedAt === undefined) {
     rec.unpublished.delete(flapKey(repo, row.number))
-    return { wrote: false, ok: true }
+    // Nothing to import: the listing carries no statuses, or no account says whose they are.
+    return { wrote: false, ok: true, imported: true }
   }
   const local = await localOf($, at.root, at.data, repo, row, exemption)
   const key = JSON.stringify([row.head, row.statuses, local.records, local.plan, local.exemption])
   const last = rec.synced.get(id)
-  if (last?.key === key && (last.ok || at.now - last.at < RETRY_MS)) return { wrote: false, ok: last.ok }
+  if (last?.key === key && (last.ok || at.now - last.at < RETRY_MS)) return { wrote: false, ok: last.ok, imported: last.imported }
   const records = await recordsAt($, at.root, repo, row.head)
   if (records === undefined) {
     // What it waited for stays: an unread set is not an empty one.
     sayOnce($, rec, 'github: the reconciler could not read the records of ' + id + ' at ' + row.head.slice(0, 7) + ': its forge copies wait')
-    return { wrote: false, ok: false }
+    return { wrote: false, ok: false, imported: false }
   }
   const plan = at.data ? await readPlan($, repo, row.number) : undefined
   const sync = forgeSync({ repo, statuses: row.statuses, viewer, records, plan, exemption: at.data ? exemption : undefined, listedAt: listed.listedAt })
+  // ok: nothing failed; imported: what the forge holds was copied here (a refused post or a spent budget leaves it so).
   let ok = true
+  let imported = true
   for (const copy of sync.records) {
     const run = await $.process.run([
       'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(row.number), '--head', row.head, '--kind', copy.kind,
@@ -1589,6 +1593,7 @@ async function syncForge(
     ], { timeoutMs: 30_000 })
     if (run.exitCode !== 0) {
       ok = false
+      imported = false
       sayOnce($, rec, 'github: the reconciler could not copy ' + forgeContext(copy.kind) + ' of ' + id + ' from the forge: ' + (String(run.stderr ?? '').trim() || 'exit ' + run.exitCode))
     }
   }
@@ -1601,6 +1606,7 @@ async function syncForge(
       await withListLock($, copy.path, () => writeAutoMerge($, copy.path, JSON.stringify(copy.body, null, 2) + '\n'))
     } catch (err: unknown) {
       ok = false
+      imported = false
       sayOnce($, rec, 'github: the reconciler could not copy ' + copy.what + ' of ' + id + ' from the forge: ' + reasonOf(err).trim())
     }
   }
@@ -1630,9 +1636,9 @@ async function syncForge(
   else rec.unpublished.delete(flapKey(repo, row.number))
   // A copy left to its tool, or a budget spent, leaves the rest to the next beat at once; a failure, to RETRY_MS later.
   if (sync.waiting && ok) rec.synced.delete(id)
-  else if (ok || budget.posts < POSTS_PER_TICK) rec.synced.set(id, { key, at: at.now, ok })
+  else if (ok || budget.posts < POSTS_PER_TICK) rec.synced.set(id, { key, at: at.now, ok, imported })
   else rec.synced.delete(id)
-  return { wrote: sync.records.length > 0 || sync.plan !== undefined || sync.exemption !== undefined, ok }
+  return { wrote: sync.records.length > 0 || sync.plan !== undefined || sync.exemption !== undefined, ok, imported }
 }
 
 async function reconcileTick($: Mod): Promise<void> {
@@ -1678,7 +1684,7 @@ async function reconcileTick($: Mod): Promise<void> {
       let imported = true
       for (const row of rows) {
         const synced = await syncForge($, rec, at, repo, entry, row, copied, budget)
-        if (!synced.ok) imported = false
+        if (!synced.imported) imported = false
         if (synced.wrote) copied = data ? await readExemption($, repo) : undefined
       }
       // The tools of the machine's sessions read there that the forge was listed and its statuses imported, not before.
