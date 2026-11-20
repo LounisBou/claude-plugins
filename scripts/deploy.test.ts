@@ -491,6 +491,16 @@ describe('the deploy', () => {
     assert.equal(stateIn(box).pending, false)
   })
 
+  it('names the entry at the project scope whose update fails', () => {
+    const box = sandbox()
+    const f = fake()
+    f.projectVersions.set(ALPHA, '1.2.3')
+    const host: Host = { ...f.host, update: (id, scope, projectPath) => { if (scope === 'project') throw new Error('refused'); f.host.update(id, scope, projectPath) } }
+    assert.equal(deploy(box, host), 1)
+    assert.match(box.err.join('\n'), /alpha@lounisbou at project \/home\/me: refused/)
+    assert.equal(f.versions.get(ALPHA), '1.2.3+aaaaaaa')
+  })
+
   it('names the entry the host left behind at its scope', () => {
     const box = sandbox()
     const f = fake()

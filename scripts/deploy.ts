@@ -203,15 +203,17 @@ export function processHost(): Host {
     installed: () => {
       const list: unknown = JSON.parse(String(commandOf('claude', ['plugin', 'list', '--json'], { encoding: 'utf8' })))
       if (!Array.isArray(list)) throw new Error('claude plugin list --json is not a list')
-      return list.map(entry => {
+      const entries = list.map(entry => {
         if (!isRecord(entry) || typeof entry['id'] !== 'string' || typeof entry['version'] !== 'string') throw new Error('claude plugin list --json: an entry has no id or version')
-        const scope = typeof entry['scope'] === 'string' ? entry['scope'] : 'user'
+        if (typeof entry['scope'] !== 'string') throw new Error('claude plugin list --json: an entry has no scope')
         const projectPath = typeof entry['projectPath'] === 'string' ? entry['projectPath'] : undefined
-        return { id: entry['id'], version: entry['version'], scope, ...(projectPath === undefined ? {} : { projectPath }) }
+        return { id: entry['id'], version: entry['version'], scope: entry['scope'], ...(projectPath === undefined ? {} : { projectPath }) }
       })
+      // The host updates a project's entry from that project's directory: an entry whose directory is gone cannot be, and must not fail every run.
+      return entries.filter(plugin => plugin.projectPath === undefined || existsSync(plugin.projectPath))
     },
     // Without `--scope` the host updates the one entry its working directory selects (the project's when the scheduler runs from the project's directory), and the other stays behind.
-    update: (id, scope, projectPath) => void commandOf('claude', ['plugin', 'update', id, '--scope', scope], projectPath !== undefined && existsSync(projectPath) ? { cwd: projectPath } : {}),
+    update: (id, scope, projectPath) => void commandOf('claude', ['plugin', 'update', id, '--scope', scope], projectPath === undefined ? {} : { cwd: projectPath }),
     alive: pid => {
       try {
         process.kill(pid, 0)
