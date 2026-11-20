@@ -794,6 +794,24 @@ got=$(printf '{}' | CLAUDE_CONFIG_DIR="$LCFG" bash "$HERE/../statusline/launcher
 if [ "$got" = "good" ]; then printf '  ok   the launcher runs this catalogue'"'"'s install that still exists\n'; pass=$((pass + 1))
 else printf '  FAIL the launcher runs this catalogue'"'"'s install that still exists\n       actual:   %s\n' "$got"; fail=$((fail + 1)); fi
 
+# The launcher hands the host's payload to the status line it runs. Its own reading of the install
+# list must not take that stdin: the install's script reads the payload, not the paths.
+PAYLOAD='{"model":{"display_name":"fixture-model"}}'
+PLCFG="$WORK/launch-stdin"; mkdir -p "$PLCFG/plugins" "$PLCFG/install/statusline"
+printf '#!/bin/bash\ncat\n' > "$PLCFG/install/statusline/statusline.sh"
+printf '{"plugins":{"statusbar@lounisbou":[{"installPath":"%s"}]}}' "$PLCFG/install" > "$PLCFG/plugins/installed_plugins.json"
+got=$(printf '%s' "$PAYLOAD" | CLAUDE_CONFIG_DIR="$PLCFG" bash "$HERE/../statusline/launcher.sh")
+if [ "$got" = "$PAYLOAD" ]; then printf '  ok   the launcher hands the payload to the install'"'"'s status line\n'; pass=$((pass + 1))
+else printf '  FAIL the launcher hands the payload to the install'"'"'s status line\n       actual:   %s\n' "$got"; fail=$((fail + 1)); fi
+
+# With no install on disk, the launcher falls back to the status line copied beside it at install time.
+FBDIR="$WORK/launch-fallback"; mkdir -p "$FBDIR/empty"
+cp "$HERE/../statusline/launcher.sh" "$FBDIR/launcher.sh"
+printf '#!/bin/bash\ncat\n' > "$FBDIR/statusline-core.sh"
+got=$(printf '%s' "$PAYLOAD" | CLAUDE_CONFIG_DIR="$FBDIR/empty" bash "$FBDIR/launcher.sh")
+if [ "$got" = "$PAYLOAD" ]; then printf '  ok   the launcher hands the payload to the fallback status line\n'; pass=$((pass + 1))
+else printf '  FAIL the launcher hands the payload to the fallback status line\n       actual:   %s\n' "$got"; fail=$((fail + 1)); fi
+
 echo "== independence: no credentials, no network =="
 
 # The core of the fix: not a trace of the old session-cookie mechanism.
