@@ -132,7 +132,9 @@ installs the newest commit whose `ci` run for a push to `main` succeeded; the us
 under `<config dir>/deploys/` and what is kept are the header of `scripts/deploy.ts`. The host
 reads a plugin of a directory marketplace in place, so each commit is extracted once into a
 directory of its own, never changed after, its manifests' versions stamped with the commit, and
-the marketplace is pointed at it: a new session reads the new directory, a running one keeps the
+the marketplace is pointed at it, in the configuration directory and in every `<config dir>-*`
+sibling whose `plugins` is a link to the same directory (a config that cannot be pointed fails the
+run, named): a new session reads the new directory, a running one keeps the
 one it loaded, and a running orchestrator or coordinator is told at its next prompt, once per
 commit, to hand over to a successor. `--rollback` points back at the commit installed before; `--status` prints the
 installed commit in one line, and `installed.json` is what another machine reads (`contracts.md`).
