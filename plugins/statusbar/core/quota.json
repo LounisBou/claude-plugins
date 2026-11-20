@@ -1,0 +1,7 @@
+{
+  "$comment": "Generated from packages/core/src by `npm run core`: edit the source, never this copy.",
+  "version": 1,
+  "dir": "quota",
+  "file_version": 1,
+  "refresh_seconds": 300
+}

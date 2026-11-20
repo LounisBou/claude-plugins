@@ -12,6 +12,7 @@ import { parseJournalEvent } from '../packages/core/src/learning.ts'
 import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '../packages/core/src/names.ts'
 import { gateTokensOf, measureFilePath, MEASURE_VERSION, ROUND_DIR, type MeasureReading } from '../packages/core/src/orchestration.ts'
 import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
+import { parseQuota, quotaFilePath, QUOTA_CONTRACT, quotaLine } from '../packages/core/src/quota.ts'
 import { CI_CHECK } from '../packages/core/src/readiness.ts'
 import { parseRoundQuestion, ROUND_READER_CONTRACT } from '../packages/core/src/round-question.ts'
 import { planAsked, planClaimed, planPane, planRelayed, planWithdrawal, type Fields, type Plan } from '../plugins/orchestrator/hooks/settle.ts'
@@ -125,6 +126,38 @@ describe('deck.json: the orchestrator writes, statusbar reads the open questions
   it('reads the file name, the version and the bound from the data core writes', () => {
     const data: unknown = JSON.parse(readFileSync('plugins/statusbar/core/deck-reader.json', 'utf8'))
     assert.deepEqual(data, { $comment: (data as { $comment: string }).$comment, ...DECK_READER_CONTRACT })
+  })
+})
+
+describe('quota files: statusbar writes, core reads', () => {
+  const ACCOUNT = '97b96c6c-03c9-4e84-bd43-34a597fa667c'
+
+  it('reads the file the status line keeps from the payload\'s rate limits, and says its line', () => {
+    const root = mkdtempSync(join(tmpdir(), 'quota-'))
+    const config = join(root, '.claude-bis')
+    const state = join(root, 'state')
+    mkdirSync(config)
+    mkdirSync(state)
+    writeFileSync(join(config, '.claude.json'), JSON.stringify({ oauthAccount: { accountUuid: ACCOUNT } }))
+    const reset = Math.floor(Date.now() / 1000) + 3600
+    try {
+      const run = spawnSync('bash', ['plugins/statusbar/statusline/statusline.sh'], {
+        input: JSON.stringify({ rate_limits: { five_hour: { used_percentage: 41.6, resets_at: reset }, seven_day: { used_percentage: 7, resets_at: reset + 86400 } } }),
+        encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: config, ORCHESTRATOR_STATE_DIR: state },
+      })
+      assert.equal(run.status, 0)
+      const quota = parseQuota(JSON.parse(readFileSync(quotaFilePath(state, ACCOUNT), 'utf8')))
+      assert.ok(quota)
+      assert.deepEqual([quota.account, quota.config, quota.five_hour, quota.seven_day], [ACCOUNT, config, { used_percentage: 41.6, resets_at: reset }, { used_percentage: 7, resets_at: reset + 86400 }])
+      assert.match(quotaLine(quota, root, Date.now()), /^quota plan2 \| 5h 42% \| 7d 7% \| read \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reads the directory, the version and the refresh from the data core writes', () => {
+    const data: unknown = JSON.parse(readFileSync('plugins/statusbar/core/quota.json', 'utf8'))
+    assert.deepEqual(data, { $comment: (data as { $comment: string }).$comment, ...QUOTA_CONTRACT })
   })
 })
 

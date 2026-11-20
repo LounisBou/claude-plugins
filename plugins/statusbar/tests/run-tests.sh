@@ -634,6 +634,82 @@ for exit_case in "no pace line:{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"}}"
   fi
 done
 
+echo "== the account's quota is kept =="
+
+# A payload with `rate_limits` writes `<state>/quota/<account>.json` (core's quota.ts); the output is
+# the one it would be without, and the exit status is 0.
+QK_STATE="$WORK/qk-state"; mkdir -p "$QK_STATE"
+QK_CONFIG_ONE="$WORK/qk-config-one"; mkdir -p "$QK_CONFIG_ONE"
+QK_CONFIG_TWO="$WORK/qk-config-two"; mkdir -p "$QK_CONFIG_TWO"
+QK_ONE=11111111-2222-3333-4444-555555555555
+QK_TWO=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+printf '{"numStartups":1,"oauthAccount":{"accountUuid":"%s","emailAddress":"a@b.c"}}' "$QK_ONE" > "$QK_CONFIG_ONE/.claude.json"
+printf '{"oauthAccount":{"accountUuid":"%s"}}' "$QK_TWO" > "$QK_CONFIG_TWO/.claude.json"
+QK_BOTH="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":47.2,\"resets_at\":$IN_2H},\"seven_day\":{\"used_percentage\":50,\"resets_at\":$IN_3D}}}"
+qk_run() { # <payload> <state> <config dir>: the status line's output and exit status
+  printf '%s' "$1" | ORCHESTRATOR_STATE_DIR="$2" CLAUDE_CONFIG_DIR="$3" STATUSBAR_CONFIG="$ALL_ON" bash "$SCRIPT"
+}
+qk_check() { # <name> <expected> <actual>
+  if [ "$2" = "$3" ]; then printf '  ok   %s\n' "$1"; pass=$((pass + 1))
+  else printf '  FAIL %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail + 1)); fi
+}
+
+with_state=$(qk_run "$QK_BOTH" "$QK_STATE" "$QK_CONFIG_ONE"; echo "exit $?")
+without_state=$(qk_run "$QK_BOTH" "$WORK/qk-absent" "$QK_CONFIG_ONE"; echo "exit $?")
+qk_check "keeping the quota changes neither the output nor the exit status" "$without_state" "$with_state"
+QK_FILE="$QK_STATE/quota/$QK_ONE.json"
+qk_check "the quota file holds the account, the configuration and both windows" \
+  "1 $QK_ONE $QK_CONFIG_ONE 47.2 $IN_2H 50 $IN_3D" \
+  "$(jq -r '"\(.version) \(.account) \(.config) \(.five_hour.used_percentage) \(.five_hour.resets_at) \(.seven_day.used_percentage) \(.seven_day.resets_at)"' "$QK_FILE" 2>&1)"
+qk_check "its time is ISO UTC" "yes" "$(jq -r 'if (.at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$")) then "yes" else "no" end' "$QK_FILE" 2>&1)"
+qk_check "no temporary file is left in the quota directory" "" "$(ls -A "$QK_STATE/quota" | grep '\.tmp-')"
+
+# Unchanged figures write nothing: the file is told apart by a sentinel the second run must leave.
+printf 'sentinel\n' > "$QK_FILE"
+qk_run "$QK_BOTH" "$QK_STATE" "$QK_CONFIG_ONE" >/dev/null
+qk_check "unchanged figures are not written again" "sentinel" "$(cat "$QK_FILE")"
+qk_run "${QK_BOTH/47.2/48}" "$QK_STATE" "$QK_CONFIG_ONE" >/dev/null
+qk_check "a figure that changed is written" "48" "$(jq -r '.five_hour.used_percentage' "$QK_FILE" 2>&1)"
+
+# An unchanged reading is still renewed once its marker is a refresh old, so a live account never reads stale.
+printf 'sentinel\n' > "$QK_FILE"
+QK_MARKER="$QK_STATE/quota/.config-${QK_CONFIG_ONE//[!A-Za-z0-9._-]/_}"
+read -r qk_account qk_at qk_fig < "$QK_MARKER"
+printf '%s %s %s\n' "$qk_account" "$((qk_at - 400))" "$qk_fig" > "$QK_MARKER"
+qk_run "${QK_BOTH/47.2/48}" "$QK_STATE" "$QK_CONFIG_ONE" >/dev/null
+qk_check "an unchanged reading is renewed once the marker is 5 minutes old" "$QK_ONE" "$(jq -r '.account' "$QK_FILE" 2>&1)"
+
+# Each configuration keeps its own account's file.
+qk_run "${QK_BOTH/47.2/12}" "$QK_STATE" "$QK_CONFIG_TWO" >/dev/null
+qk_check "another configuration writes its own account's file" "12 $QK_CONFIG_TWO" \
+  "$(jq -r '"\(.five_hour.used_percentage) \(.config)"' "$QK_STATE/quota/$QK_TWO.json" 2>&1)"
+qk_check "and leaves the first one's alone" "48" "$(jq -r '.five_hour.used_percentage' "$QK_FILE" 2>&1)"
+
+# A window with a figure missing is left out; with none, nothing is written.
+QK_STATE_B="$WORK/qk-state-b"; mkdir -p "$QK_STATE_B"
+qk_run "{\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":$IN_2H},\"seven_day\":{\"used_percentage\":9}}}" "$QK_STATE_B" "$QK_CONFIG_ONE" >/dev/null
+qk_check "a window without its reset is not kept" "30 false" \
+  "$(jq -r '"\(.five_hour.used_percentage) \(has("seven_day"))"' "$QK_STATE_B/quota/$QK_ONE.json" 2>&1)"
+QK_STATE_C="$WORK/qk-state-c"; mkdir -p "$QK_STATE_C"
+qk_run "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"}}" "$QK_STATE_C" "$QK_CONFIG_ONE" >/dev/null
+qk_run '{"rate_limits":{"five_hour":{"used_percentage":"high","resets_at":1}}}' "$QK_STATE_C" "$QK_CONFIG_ONE" >/dev/null
+qk_check "a payload with no quota, or no usable one, writes nothing" "" "$(ls -A "$QK_STATE_C")"
+
+# Nothing is written without the orchestrator's state directory, nor without an account to name the file.
+qk_check "no state directory is created" "no" "$([ -e "$WORK/qk-absent" ] && echo yes || echo no)"
+QK_STATE_D="$WORK/qk-state-d"; mkdir -p "$QK_STATE_D" "$WORK/qk-config-none"
+qk_check "an unreadable account is no file, and the line still draws" "plain|" \
+  "$(qk_run "$QK_BOTH" "$QK_STATE_D" "$WORK/qk-config-none" | strip_ansi | sed -n 1p)|$(ls -A "$QK_STATE_D")"
+printf '{"oauthAccount":{"accountUuid":"../../x"}}' > "$WORK/qk-config-none/.claude.json"
+qk_run "$QK_BOTH" "$QK_STATE_D" "$WORK/qk-config-none" >/dev/null
+qk_check "an account that is no file name is never written" "" "$(ls -A "$QK_STATE_D")"
+
+# With no ORCHESTRATOR_STATE_DIR the state is the configuration directory's claude-orchestrator.
+mkdir -p "$QK_CONFIG_TWO/claude-orchestrator"
+printf '%s' "${QK_BOTH/47.2/21}" | env -u ORCHESTRATOR_STATE_DIR CLAUDE_CONFIG_DIR="$QK_CONFIG_TWO" STATUSBAR_CONFIG="$ALL_ON" bash "$SCRIPT" >/dev/null
+qk_check "without ORCHESTRATOR_STATE_DIR the quota lies in the configuration directory's state" "21" \
+  "$(jq -r '.five_hour.used_percentage' "$QK_CONFIG_TWO/claude-orchestrator/quota/$QK_TWO.json" 2>&1)"
+
 echo "== settings are data, dates are portable, git takes no lock =="
 
 # A line of the settings file that is code runs nothing: only KEY=0|1 lines are read.

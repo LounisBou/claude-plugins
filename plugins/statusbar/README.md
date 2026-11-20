@@ -1,7 +1,7 @@
 # claude-statusbar
 
-A two-line status bar for your terminal coding agent. No network, no state, no
-credentials.
+A two-line status bar for your terminal coding agent. No network, no credentials; the one thing it
+keeps is the account's quota (below).
 
 ```
 geonative-api │ ⎇ main* ↑1↓2 {3} │ a-model │ Fix the status bar…
@@ -172,6 +172,13 @@ total, the `round` of the machine's `deck.json`; when its stamp is older than th
 with `(U urgent)` while one is urgent. Any other session, a brand-new one included, shows nothing.
 Nothing shows when none is open, when the round is empty or absent, or, for a coordinator, when the deck
 is absent or torn, of another version, or stamped ahead past the bound. The files are only read.
+
+When the orchestrator's state directory exists, each payload carrying `rate_limits` also writes the
+account's quota to `<state>/quota/<accountUuid>.json` (`docs/contracts.md`, « Quota file »): the
+quota is the account's, and the payloads are the only place the host shows it. The account is the
+`oauthAccount.accountUuid` of the session's `.claude.json`, read once every five minutes (a marker
+beside the quota files answers the renders between). The file is rewritten when a figure changes,
+or when it is five minutes old; the line drawn and the exit status are the same with or without it.
 
 Reset times are formatted with BSD `date -r`, else GNU `date -d @…`, so they show on macOS and
 Linux alike.
