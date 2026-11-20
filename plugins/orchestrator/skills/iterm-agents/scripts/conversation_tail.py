@@ -60,16 +60,18 @@ def stamp(entry):
 
 
 def read_tail(path):
-    """The complete lines of the last TAIL_BYTES of `path`."""
+    """`(lines, whole)`: the complete lines of the last TAIL_BYTES of `path`, and whether that
+    is the whole file."""
     with open(path, "rb") as fh:
         size = fh.seek(0, os.SEEK_END)
         fh.seek(max(0, size - TAIL_BYTES))
         data = fh.read()
     lines = data.split(b"\n")
-    if size > TAIL_BYTES:
+    whole = size <= TAIL_BYTES
+    if not whole:
         # The first line is cut where the read began.
         lines = lines[1:]
-    return [line.decode("utf-8", "replace") for line in lines if line.strip()]
+    return [line.decode("utf-8", "replace") for line in lines if line.strip()], whole
 
 
 def parts_text(content):
@@ -177,8 +179,19 @@ def mask(name):
 
 # The patterns of telemetry's `redact.ts`, small: the secrets that keep one shape, then the
 # headers, the URLs and the assignments that name one. Each is `(name, regex, kept groups)`.
-SECRET_KEY = (r"[A-Za-z0-9_.-]{0,30}(?:token|secret|pass|pwd|api[_-]?key|apikey|private[_-]?key"
-              r"|access[_-]?key|client[_-]?secret|credential)s?[A-Za-z0-9_.-]{0,30}")
+SECRET_WORD = re.compile(r"token|secret|pass|pwd|api[_-]?key|apikey|private[_-]?key|access[_-]?key"
+                         r"|client[_-]?secret|credential", re.I)
+# A name is read whole from its first character, so its length is no bound and the scan stays linear.
+NAME = r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)"
+
+
+def assignment(m):
+    """`NAME=value` where the name holds a secret word: the value masked, the name kept."""
+    if not SECRET_WORD.search(m.group(1)):
+        return m.group(0)
+    return m.group(1) + m.group(2) + mask("secret-assignment")
+
+
 PATTERNS = [
     ("private-key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"), 0),
     ("github-token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"), 0),
@@ -198,16 +211,37 @@ PATTERNS = [
     ("secret-flag", re.compile(r"(--(?:[A-Za-z0-9]+-)*(?:token|secret|passw(?:or)?d|passwd|pass|api-?key|apikey|private-key|access-key|credentials?)(?:\s+|=))(?!\[REDACTED)(?:\"[^\"]*\"|'[^']*'|[^\s\"'-][^\s\"']*)", re.I), 1),
     ("user-password", re.compile(r"((?:^|[\s;&|(])(?:-u\s*|--user(?:\s+|=)))(?!\[REDACTED)(?:\"[^\"]*:[^\"]*\"|'[^']*:[^']*'|[^\s\"'-][^\s\"']*:[^\s\"']*)"), 1),
     ("password-flag", re.compile(r"\b((?:mysql\w*|mariadb[\w-]*)\b[^\n;&|]{0,200}?\s-p|\bsshpass\s+-p\s*|\b(?:docker|podman)\s+login\b[^\n;&|]{0,200}?\s-p\s*)(?!\[REDACTED)(?:\"[^\"]*\"|'[^']*'|[^\s\"']+)"), 1),
-    ("secret-assignment", re.compile(r"\b(%s[\"']?\s*[:=]\s*)(?:\"(?:[^\"\\]|\\.)+\"|'[^']+')" % SECRET_KEY, re.I), 1),
-    ("secret-assignment", re.compile(r"\b(%s[\"']?\s*[:=]\s*[\"']?)(?!\[REDACTED)[^\s\"',;&|)}]+" % SECRET_KEY, re.I), 1),
+    ("secret-assignment", re.compile(NAME + r"([\"']?\s*[:=]\s*)(?:\"(?:[^\"\\]|\\.)+\"|'[^']+')"), assignment),
+    ("secret-assignment", re.compile(NAME + r"([\"']?\s*[:=]\s*[\"']?)(?!\[REDACTED)[^\s\"',;&|)}]+"), assignment),
 ]
 
 
-def random_run(run):
-    """Whether a run of token characters looks random enough to be a secret: a segment of 20
-    characters or more with letters and digits, or both cases, and the entropy of a key. A UUID
-    and a hash (hex only) are names, not secrets."""
-    if UUID.match(run) or re.fullmatch(r"[0-9a-f]+", run):
+GIT_WORD = r"(?:sha|commit|head|rev|oid|hash|ref)s?"
+AFTER_GIT_WORD = re.compile(r"[^A-Za-z0-9_-]%s[\"'`]?[^\S\n]*(?:[:=][^\S\n]*)?[\"'`]?$" % GIT_WORD, re.I)
+GIT_WORD_RUN = re.compile(r"^(?:--?(?:match-head-)?)?%s[=_-]+[0-9a-f]{40}$" % GIT_WORD, re.I)
+CONTEXT = 80
+
+
+def git_object(text, at, run):
+    """Whether `run` is the id of a git object: 40 hex after a git word (`commit `, `sha: `), in
+    `/commit/<id>`, in `a..b` or before `:path`, or a git word and its id in one run. Any other
+    hex run is judged by its entropy, a token or a key can be one."""
+    if re.fullmatch(r"[0-9a-f]{40}", run):
+        before = ("\n" if at <= CONTEXT else "x") + text[max(0, at - CONTEXT):at]
+        after = text[at + 40:at + 40 + CONTEXT]
+        return bool(AFTER_GIT_WORD.search(before)
+                    or re.search(r"/(?:commits?|tree|blob)/$", before)
+                    or re.search(r"[\w)]\.{2,3}$", before) or re.match(r"\.{2,3}[\w(]", after)
+                    or re.match(r":[^\s:]*[/.][^\s:]*(?:\s|$)", after))
+    return bool(GIT_WORD_RUN.match(run))
+
+
+def random_run(text, m):
+    """Whether the run of token characters `m` matched in `text` looks random enough to be a
+    secret: a segment of 20 characters or more with letters and digits, or both cases, and the
+    entropy of a key. A UUID and a git object's id are names."""
+    run = m.group(0)
+    if UUID.match(run) or git_object(text, m.start(), run):
         return False
     longest = max(re.split(r"[-_.]", run), key=len)
     if len(longest) < 20:
@@ -230,15 +264,26 @@ def redact(text, env_path=None):
         text = re.sub(r"\b(?:%s)=(?:\"[^\"]*\"|'[^']*'|[^\s;&|]*)" % "|".join(map(re.escape, keys)),
                       mask("env"), text)
     for name, regex, keep in PATTERNS:
-        text = regex.sub(lambda m, keep=keep, name=name: (m.group(1) if keep else "") + mask(name), text)
-    return RUN.sub(lambda m: mask("entropy") if random_run(m.group(0)) else m.group(0), text)
+        if callable(keep):
+            text = regex.sub(keep, text)
+        else:
+            text = regex.sub(lambda m, keep=keep, name=name: (m.group(1) if keep else "") + mask(name), text)
+    return RUN.sub(lambda m: mask("entropy") if random_run(text, m) else m.group(0), text)
+
+
+# The two prompts the launcher starts a session with: the first message of a transcript, typed by
+# no one.
+STARTUP = re.compile(r"^(?:Load the skill |Read and execute )")
 
 
 def messages(path):
     """`[(moment, who, text)]` of the transcript's tail in order, `who` being `operator` or
-    `reply`. A line that is not JSON is skipped."""
+    `reply`. A line that is not JSON is skipped, and so is the launcher's startup prompt, the
+    first message of the transcript."""
     found = []
-    for line in read_tail(path):
+    lines, whole = read_tail(path)
+    first = whole
+    for line in lines:
         try:
             entry = json.loads(line)
         except ValueError:
@@ -248,6 +293,10 @@ def messages(path):
             continue
         said = operator_text(entry)
         if said is not None:
+            if first and STARTUP.match(said):
+                first = False
+                continue
+            first = False
             found.append((moment, "operator", said))
             continue
         said = reply_text(entry)
@@ -274,8 +323,10 @@ def exchanges(items, env_path=None):
     groups = []
     for moment, who, text in items:
         text = redact(text, env_path)
-        line = "[%s] %s: %s" % (paris(moment), "operator" if who == "operator" else "orchestrator",
-                                text if who == "operator" else cap_reply(text))
+        # A continuation line is indented: only the module's own lines begin with `[`, so a reply
+        # that echoes one cannot pass for the operator's.
+        text = (text if who == "operator" else cap_reply(text)).replace("\n", "\n    ")
+        line = "[%s] %s: %s" % (paris(moment), "operator" if who == "operator" else "orchestrator", text)
         if who == "operator" or not groups:
             groups.append([])
         groups[-1].append(line)
@@ -283,16 +334,30 @@ def exchanges(items, env_path=None):
 
 
 def fit(groups, cap=SECTION_CAP):
-    """The groups' lines within `cap` characters, the oldest exchange dropped first; the last
-    line alone is cut to its tail where it still exceeds it."""
+    """The groups' lines within `cap` characters, every message of the operator kept: the oldest
+    replies are dropped first, then the newest reply is cut to what room is left. Only where his
+    own messages exceed the cap are the oldest of them dropped, the last line cut to its tail."""
     def size(rows):
         return sum(len(line) + 1 for group in rows for line in group)
     groups = [list(group) for group in groups]
+    newest = max((n for n, group in enumerate(groups) if len(group) > 1), default=None)
+    while size(groups) > cap:
+        # The oldest reply that is not the newest of all.
+        old = next((group for n, group in enumerate(groups)
+                    if len(group) > 1 and (n != newest or len(group) > 2)), None)
+        if old is None:
+            break
+        old.pop(1)
+    if size(groups) > cap and newest is not None:
+        last = groups[newest][-1]
+        head = last[:last.index(": ") + 2]
+        room = cap - (size(groups) - len(last) - 1) - 1 - len(head)
+        if room >= 40:
+            groups[newest][-1] = head + shorten(last[len(head):], room)
+        else:
+            groups[newest].pop()
     while len(groups) > 1 and size(groups) > cap:
         groups.pop(0)
-    while size(groups) > cap and len(groups[0]) > 1:
-        # The last reply is what is pending: the oldest line goes first, his message included.
-        groups[0].pop(0)
     if size(groups) > cap:
         line = groups[0][0]
         head = line[:line.index(": ") + 2] + CUT.lstrip()
@@ -311,5 +376,7 @@ def section(path, now, env_path=None):
         return "%s no message of the operator in the transcript's last %d MiB" % (
             HEADING, TAIL_BYTES >> 20)
     groups = fit(exchanges(items, env_path))
-    return "%s the end of the conversation with the operator, Paris time\n%s" % (
+    text = "%s the end of the conversation with the operator, Paris time\n%s" % (
         HEADING, "\n".join(line for group in groups for line in group))
+    # A lone surrogate of the transcript is a valid str and an error on print.
+    return text.encode("utf-8", "replace").decode("utf-8")
