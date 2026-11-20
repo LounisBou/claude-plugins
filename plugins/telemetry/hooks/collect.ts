@@ -24,12 +24,12 @@ export const HEADER_MAX = 12
 /** A failed call's message is cut to this, once redacted: its first paragraph, with room for a deny sentence and its hint. */
 export const MESSAGE_MAX = 800
 /**
- * The message is bounded to this before the writer redacts it, so a pathological result never reaches
- * the redaction whole. It is far above any redaction's shrink (a secret is a mark of a few characters, a
- * private key's block runs to the text's end), so the writer's cut never lands on a tail the bound left
- * half-matched; the bound itself falls on a blank, never inside a token.
+ * The message is bounded to this before the writer redacts it, and only 800 characters are kept: the
+ * secret-assignment patterns are quadratic on a long unspaced run (about 13 s at 100000 characters, past
+ * the writer's 10 s, which would lose the whole batch), about 25 ms here. The bound falls on a blank,
+ * never inside a token, and a secret spanning blanks (a private key's block) is masked to the text's end.
  */
-export const MESSAGE_RAW_MAX = 100_000
+export const MESSAGE_RAW_MAX = 4000
 
 /**
  * The fields cut to a length, by key at any depth. The events carry them whole: the writer

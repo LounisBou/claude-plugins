@@ -7,6 +7,7 @@
 // leaves the cursor where it is.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { simpleCommands } from '../../../../core/shell.ts'
 import { update } from '../../../../core/store.ts'
 import { dayFiles, eventsDir } from './store.ts'
 
@@ -64,12 +65,36 @@ export function failureOf(line: string): Failure | undefined {
   }
 }
 
-/** Whether a Bash line runs a script of a plugin: by its install path, or by the plugin root variable. */
-export function pluginScript(line: string): boolean {
-  if (/\$\{?CLAUDE_PLUGIN_ROOT\}?/.test(line)) return true
+/** Whether a word is a path into a plugin: its install path, a checkout's or deploy's, or the plugin root variable. */
+function pluginPath(word: string): boolean {
+  if (/\$\{?CLAUDE_PLUGIN_ROOT\}?/.test(word)) return true
   // A path names its plugin after `/plugins/` (a checkout, a deploy, a marketplace) or after `/cache/<marketplace>/` (an install).
-  for (const shape of [/\/plugins\/([a-z0-9-]+)(?=\/)/g, /\/cache\/[^/\s]+\/([a-z0-9-]+)(?=\/)/g]) for (const named of line.matchAll(shape)) if (PLUGIN_NAMES.includes(named[1] ?? '')) return true
+  for (const shape of [/\/plugins\/([a-z0-9-]+)(?=\/)/g, /\/cache\/[^/\s]+\/([a-z0-9-]+)(?=\/)/g]) for (const named of word.matchAll(shape)) if (PLUGIN_NAMES.includes(named[1] ?? '')) return true
   return false
+}
+
+/** The words that run the file they are given: `node <script>`, `bash <script>`. */
+const INTERPRETERS = /^(?:.*\/)?(?:node|bash|sh|zsh|python3?|tsx|npx)$/
+
+/**
+ * Whether a Bash line runs a script of a plugin: some command of it has a plugin's path for its command
+ * word, or for the file its interpreter runs (the first argument that is no option). A line that only
+ * names such a path (`grep`, `cat`, `cd`) runs none.
+ */
+export function pluginScript(line: string): boolean {
+  let commands: string[][]
+  try {
+    commands = simpleCommands(line)
+  } catch {
+    return false
+  }
+  return commands.some(argv => {
+    const [command, ...args] = argv
+    if (command === undefined) return false
+    if (pluginPath(command)) return true
+    const file = args.find(arg => !arg.startsWith('-'))
+    return INTERPRETERS.test(command) && file !== undefined && pluginPath(file)
+  })
 }
 
 const PARTS: readonly [RegExp, string][] = [

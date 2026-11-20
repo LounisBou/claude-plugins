@@ -6,7 +6,8 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFile
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CURSOR_FILE, errors, failureOf, group, normalise, pluginScript, readDay, render } from './errors.ts'
-import { eventsDir } from './store.ts'
+import { toolEvents } from '../../../../hooks/collect.ts'
+import { append, eventsDir } from './store.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 const T = '11111111-2222-4333-8444-555555555555'
@@ -83,6 +84,9 @@ test('failureOf: only error and refused tool calls; a plugin\'s own failure is t
   assert.equal(pluginScript('python3 ${CLAUDE_PLUGIN_ROOT}/scripts/x.py'), true)
   for (const path of ['/Users/me/.claude/plugins/cache/lounisbou/telemetry/0.5.0/skills/a.ts', '/Users/me/.claude/plugins/marketplaces/lounisbou/plugins/github/hooks/a.ts', '/Users/me/.claude/deploys/lounisbou/6a69939a/plugins/orchestrator/a.sh']) assert.equal(pluginScript(`node ${path}`), true, path)
   assert.equal(pluginScript('node /Users/me/.claude/plugins/cache/other/unknown/1.0/a.ts'), false)
+  const P = '/Users/me/dev/claude-plugins/plugins/github'
+  for (const line of [`grep foo ${P}/a.ts`, `cat ${P}/README.md`, `cd ${P} && ls`, `git -C ${P} diff`, `ls ${P}/hooks | head`, `node --test /tmp/x.spec.ts ${P}/a.ts`]) assert.equal(pluginScript(line), false, line)
+  for (const line of [`node --experimental-strip-types --no-warnings ${P}/a.ts check`, `cd /tmp && bash ${P}/run.sh`, `FOO=1 ${P}/run.sh x`, `echo ok; python3 -u ${P}/x.py`, `npm test && node ${P}/b.ts`]) assert.equal(pluginScript(line), true, line)
   assert.equal(plain({ tool: 'mcp__github__gh', mcp_server: 'github', outcome: 'refused', decided_by: 'user' })?.plugin, false)
   assert.equal(plain({ tool: 'mcp__github__gh', mcp_server: 'github', outcome: 'refused', decided_by: 'plugin' })?.plugin, true)
   assert.equal(plain({ tool: 'mcp__github__gh', mcp_server: 'github', outcome: 'error' })?.by, 'github')
@@ -154,6 +158,23 @@ test('errors: a cursor that is no JSON, or a file shorter than its offset, reads
     writeFileSync(join(stateDir, CURSOR_FILE), JSON.stringify({ v: 1, offsets: { '2026-11-20.jsonl': 999_999 } }))
     assert.equal(errors({ stateDir, now: NOW })[0], 'errors since 2026-11-19T12:00Z: 1 failed call(s)')
   })
+})
+
+test('append: a long unspaced error finishes inside the writer\'s timeout and lets no secret through', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'telemetry-long-'))
+  try {
+    const secret = ['gh', 'p_', 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gjabcd'].join('')
+    const text = `${secret}${'-a'.repeat(50_000)}`
+    const events = toolEvents(Date.parse('2026-11-20T10:00:00Z'), S, { tool: 'Bash', tool_use_id: 'toolu_01', command: 'x' }, { isError: true, text }, undefined, 1)
+    const started = Date.now()
+    append(join(dir, 'events'), events.map(e => JSON.stringify(e)).join('\n'), new Map())
+    assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`)
+    const stored = readFileSync(join(dir, 'events', '2026-11-20.jsonl'), 'utf8')
+    assert.equal(stored.includes(secret), false)
+    assert.match(stored, /\[REDACTED:github-token\]/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test('readDay: a day file removed since it was listed is skipped, the offset kept', () => {
