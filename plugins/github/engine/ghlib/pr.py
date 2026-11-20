@@ -653,24 +653,53 @@ _FULL_SHA = re.compile(r"[0-9a-fA-F]{40}")
 _MERGE_SHA = re.compile(r"[0-9a-fA-F]{40}")
 
 
+_METHOD_FLAGS = (
+    ("merge", "allow_merge_commit"),
+    ("squash", "allow_squash_merge"),
+    ("rebase", "allow_rebase_merge"),
+)
+
+
+def _repo_method(owner, name):
+    # Without --method, the first method the repository allows, in merge, squash,
+    # rebase order. A read that fails, or allows none, keeps merge: GitHub then
+    # answers for it as it always did.
+    try:
+        info = http.rest("GET", "/repos/%s/%s" % (owner, name))
+    except errors.GhError:
+        return "merge"
+    if not isinstance(info, dict):
+        return "merge"
+    for method, key in _METHOD_FLAGS:
+        if info.get(key) is True:
+            return method
+    return "merge"
+
+
 def pr_merge(args):
     owner, name = repo.owner_repo()
-    payload = {"merge_method": args.method}
     if args.sha:
         # A short or malformed sha would come back from GitHub as a moved head,
         # which reads as a race rather than as a typo.
         if not _MERGE_SHA.fullmatch(args.sha):
             raise errors.UsageError("--sha must be the full 40-character head sha")
+    method = args.method or _repo_method(owner, name)
+    payload = {"merge_method": method}
+    if args.sha:
         payload["sha"] = args.sha
     try:
-        return http.rest("PUT", "/repos/%s/%s/pulls/%s/merge" % (owner, name, args.pr), payload)
+        result = http.rest("PUT", "/repos/%s/%s/pulls/%s/merge" % (owner, name, args.pr), payload)
     except errors.AuthError as exc:
         # GitHub answers 403 for a PR that is part of a stack and names the
         # asynchronous endpoint. That refusal is the only one followed: any
         # other 403 is a real refusal and surfaces as it is.
         if not _is_stacked_refusal(exc):
             raise
-    return _merge_async(owner, name, args.pr, payload)
+        result = _merge_async(owner, name, args.pr, payload)
+    # The method used travels in the output, whether the caller chose it or the repository did.
+    if isinstance(result, dict):
+        result["merge_method"] = method
+    return result
 
 
 def _is_stacked_refusal(exc):
@@ -787,7 +816,12 @@ def register(subparsers):
 
     parser = subparsers.add_parser("pr-merge", help="merge a PR")
     parser.add_argument("pr", type=int)
-    parser.add_argument("--method", default="merge", choices=("merge", "squash", "rebase"))
+    parser.add_argument(
+        "--method",
+        default=None,
+        choices=("merge", "squash", "rebase"),
+        help="defaults to the first method the repository allows, merge first",
+    )
     parser.add_argument(
         "--sha", default=None, help="full head sha that was verified; the merge is refused if the head moved"
     )
