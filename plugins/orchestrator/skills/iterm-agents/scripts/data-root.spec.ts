@@ -78,7 +78,7 @@ describe('the launcher on a data root placed apart', () => {
       'm.chain_store("append", "/dev/ttys900", "t-9", "/dev/ttys909", "S-ME")',
       'm.close_log("probe", "a line", echo=False)',
       'm.auditor_record_write("/dev/ttys901", "s-a", "L")',
-      // The quota readings choose a spawn's configuration: listed on the protected root.
+      // The usage readings a spawn's configuration is read from: listed on the protected root.
       'listed, listdir = [], m.os.listdir',
       'm.os.listdir = lambda d: (listed.append(d), listdir(d))[1]',
       'm.quota_room()',
@@ -141,10 +141,12 @@ describe('the launcher with files planted in the data root', () => {
       seven_day: { used_percentage: used, resets_at: Math.floor(Date.now() / 1000) + 86400 },
     })
     const home = b.env['HOME'] ?? ''
+    // Plan 2's directory under the home, as the launcher names it.
+    const plan2 = String(python(b, 'import iterm_agent as m\nprint(m.PLAN2_DIRNAME)').stdout).trim()
     mkdirSync(join(b.protectedRoot, 'quota'))
     mkdirSync(join(b.data, 'quota'))
     writeFileSync(join(b.protectedRoot, 'quota', 'a.json'), quota('a', join(home, '.claude'), 90))
-    writeFileSync(join(b.protectedRoot, 'quota', 'b.json'), quota('b', join(home, '.claude-bis'), 10))
+    writeFileSync(join(b.protectedRoot, 'quota', 'b.json'), quota('b', join(home, plan2), 10))
     // Planted: plan 1 full of room, newer than the real reading.
     writeFileSync(join(b.data, 'quota', 'c.json'), quota('c', join(home, '.claude'), 0))
     const run = python(b, 'import json, iterm_agent as m\nprint(json.dumps(m.quota_room()))')
