@@ -197,6 +197,16 @@ test('the cache, in the data root, writes through no link planted at a slot or a
   for (const slot of slots) assert.equal(lstatSync(join(cache, slot)).isSymbolicLink(), false, `${slot} is the cache's own file`)
 })
 
+test('a cache directory planted as a link is no cache: nothing in its target is pruned or written', () => {
+  const target = join(dir, 'protected')
+  mkdirSync(target)
+  writeFileSync(join(target, 'models.json'), '{}')
+  utimesSync(join(target, 'models.json'), new Date('2020-01-01'), new Date('2020-01-01'))
+  symlinkSync(target, join(dir, 'cache'))
+  guards('acme/thing', [check('tests', 'fail', 555)], join(dir, 'cache'), api(FILES, RUNS).gh)
+  assert.deepEqual(readdirSync(target), ['models.json'])
+})
+
 test('a run or a file that answers something else is unread', () => {
   const odd = (answer: string) => (): string => answer
   assert.deepEqual([...guards('a/b', [check('t', 'fail', 1)], join(dir, 'c1'), odd('not json'))], [])

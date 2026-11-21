@@ -49,15 +49,18 @@ Python launcher.
 | `sweep.stamp` | data | every session's stop gate | one rename, before the sweep runs |
 | `draft-guard/<kind>-<hash>.json` | data | `draft-guard.ts` | a unique temporary name, one rename (core's `writeAtomic`); a cache that cannot be written is no cache |
 
-A link a session plants in the data root at a name a writer uses is never written through. A file
-replaced whole is renamed into place: the rename replaces the link and its target keeps its bytes (a
+A link a session plants in the data root at the last name of a file a writer uses is never written
+through. A file replaced whole is renamed into place: the rename replaces the link and its target keeps its bytes (a
 hooks module's `mv -f` onto a link to a directory moves the file into that directory under its unique
 temporary name, never an executable's, and the name keeps no fact until the link is gone). An append
 or a truncation opens its file refusing a link (`O_NOFOLLOW`, `[ -L ]` in `log-append.sh`) in a
 directory that is none. What remains is a race, not a link planted beforehand: one planted between
 `log-append.sh`'s `[ -L ]` test and its `>>`, between the launcher's walk of the home-end marker's
 directories (`open_data_file`) and its open, or between `openLog`'s `lstat` of the log's directory and
-its open, is followed once.
+its open, is followed once. A link at a directory between the data root and the file is refused by
+the appends and by the `draft-guard/` cache (which is then no cache); the store's writers, their
+`rm -f` and the prunes of `store/` and `measure/` follow it. A hooks module's temporary name is
+unpredictable (the time and six random characters), not refused when it exists.
 
 A writer in another language reads the convention as data, `core/store.json` (the launcher,
 `iterm_agent.py`, `path_lock`).

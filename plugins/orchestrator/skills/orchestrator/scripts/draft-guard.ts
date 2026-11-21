@@ -43,7 +43,7 @@
 // removed whenever one is written. A verdict that could not be read is never kept.
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
+import { lstatSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { setting, type Env } from '../../../core/paths.ts'
 import { orchestratorRoots } from '../../../core/roots.ts'
@@ -217,6 +217,8 @@ function prune(cacheDir: string, now: number): void {
 function store(cacheDir: string, path: string, data: Readonly<Record<string, unknown>>): void {
   try {
     mkdirSync(cacheDir, { recursive: true })
+    // A link planted at the cache directory would turn the prune and the write on its target.
+    if (lstatSync(cacheDir).isSymbolicLink()) return
     prune(cacheDir, Date.now())
     writeAtomic(path, JSON.stringify(data))
   } catch {
