@@ -470,7 +470,7 @@ test('pin: a detached worktree with the global excludes only, its pull request r
     assert.ok(!existsSync(join(p, 'LOCAL.md')), "the source's own exclude file's material stays")
     assert.equal(readFileSync(join(g(p, 'rev-parse', '--absolute-git-dir'), 'workspace-pr'), 'utf8'), '7\n')
     assert.equal((await ws(w, 'list')).out, `${join(dir, 'root')}/proj/round-1 | HEAD | ${g(p, 'rev-parse', '--short', 'HEAD')} | clean | pinned\n`)
-    assert.equal((await ws(w, 'pin', src, 'round-9', 'nope')).err, 'workspace: pin: the source does not know nope\n')
+    assert.equal((await ws(w, 'pin', src, 'round-9', 'nope')).err, "workspace: pin: the source does not know nope (--pr <n> makes pin fetch that pull request's head)\n")
     assert.equal((await ws(w, 'pin', src, 'round-1', 'main')).err, `workspace: pin: already exists, delete it first: ${p}\n`)
     assert.equal((await ws(w, 'pin', src, 'bad/name', 'main')).code, 1)
     const d = await ws(w, 'delete', p)
@@ -479,6 +479,29 @@ test('pin: a detached worktree with the global excludes only, its pull request r
   } finally {
     delete process.env['XDG_CONFIG_HOME']
   }
+})
+
+test("pin: --pr fetches the pull request's head the source lacks; without it, or for a sha it does not hold, pin refuses", async () => {
+  const src = pushed('fetchpr')
+  const bare = join(dir, 'fetchpr.git')
+  const other = repo(join(dir, 'other'))
+  g(other, 'remote', 'add', 'origin', bare)
+  writeFileSync(join(other, 'pr.txt'), 'pr\n')
+  g(other, 'add', '-A')
+  g(other, 'commit', '-q', '-m', 'Pr')
+  const head = g(other, 'rev-parse', 'HEAD')
+  g(other, 'push', '-q', '--force', 'origin', `HEAD:refs/pull/5/head`)
+  const w = world()
+  assert.throws(() => g(src, 'cat-file', '-e', head), /Command failed/)
+  const no = await ws(w, 'pin', src, 'r0', head)
+  assert.match(no.err, /the source does not know [0-9a-f]+ \(--pr <n> makes pin fetch/)
+  const miss = await ws(w, 'pin', src, 'r1', 'f'.repeat(40), '--pr', '5')
+  assert.match(miss.err, /does not know f+; the head of pull request 5 does not contain it/)
+  const r = await ws(w, 'pin', src, 'r2', head, '--pr', '5')
+  assert.equal(r.code, 0, r.err)
+  assert.equal(g(join(dir, 'root', 'fetchpr', 'r2'), 'rev-parse', 'HEAD'), head)
+  const bad = await ws(w, 'pin', src, 'r3', 'f'.repeat(40), '--pr', '404')
+  assert.match(bad.err, /fetch of pull request 404 failed: /)
 })
 
 test('delete: every guard refuses, says why, and --discard overrides the checkout\'s own', async () => {
