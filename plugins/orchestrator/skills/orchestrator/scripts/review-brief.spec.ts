@@ -96,11 +96,20 @@ test('a flag whose value is missing never swallows the next flag; a blank lens, 
   assert.match(run([...FIELDS(), '--lens', '  ']).err, /--lens needs a name/)
   const blank = FIELDS(); blank[blank.indexOf('--title') + 1] = '  '
   assert.match(run(blank).err, /--title is required/)
-  assert.equal(run([...FIELDS(), '--plan', '', '--norms', '', '--base', '']).code, 0)
+  writeFileSync(join(dir, 'CONTRIBUTING.md'), '# norms\n')
+  assert.equal(run([...FIELDS(), '--worktree', dir, '--plan', '', '--norms', '', '--base', '']).code, 0)
   const text = readFileSync(join(dir, 'review-12.md'), 'utf8')
   assert.match(text, /2\. Plan: `\/b\/thing-brief\.md`/)
   assert.match(text, /3\. Project norms: `CONTRIBUTING\.md`/)
   assert.match(text, /base `origin\/main`/)
+})
+
+test('norms default to none when the checkout holds no CONTRIBUTING.md, and to CONTRIBUTING.md when it does', () => {
+  assert.equal(run([...FIELDS(), '--worktree', dir]).code, 0)
+  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /3\. Project norms: `none`/)
+  writeFileSync(join(dir, 'CONTRIBUTING.md'), '# norms\n')
+  assert.equal(run([...FIELDS(), '--worktree', dir]).code, 0)
+  assert.match(readFileSync(join(dir, 'review-12.md'), 'utf8'), /3\. Project norms: `CONTRIBUTING\.md`/)
 })
 
 test('a brief that cannot be written is said in one line, never a stack', () => {
@@ -116,7 +125,8 @@ test('the optional fields and their defaults: plan is the spec, norms CONTRIBUTI
   assert.match(text, /3\. Project norms: `docs\/conventions\.md`/)
   assert.match(text, /base `origin\/dev`/)
   assert.match(text, /\n- No port is opened\.\n?$/)
-  assert.equal(run(FIELDS()).code, 0)
+  writeFileSync(join(dir, 'CONTRIBUTING.md'), '# norms\n')
+  assert.equal(run([...FIELDS(), '--worktree', dir]).code, 0)
   const bare = readFileSync(join(dir, 'review-12.md'), 'utf8')
   assert.match(bare, /2\. Plan: `\/b\/thing-brief\.md`/)
   assert.match(bare, /3\. Project norms: `CONTRIBUTING\.md`/)

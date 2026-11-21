@@ -104,7 +104,7 @@ export function parseArgs(argv: readonly string[]): Fields | { readonly error: s
   return {
     out: get('out'), repo: get('repo'), pr: get('pr'), title: get('title'), spec: get('spec'), index: get('index'), deliveryReport: get('delivery-report'), branch: get('branch'),
     head: get('head'), worktree: get('worktree'), orchestrator: get('orchestrator'), reason: get('reason'), size: get('size'), lenses, tier,
-    scope: get('scope'), plan: get('plan', get('spec')), norms: get('norms', 'CONTRIBUTING.md'), base: get('base', 'origin/main'), envelope: get('envelope', 'none'),
+    scope: get('scope'), plan: get('plan', get('spec')), norms: get('norms', existsSync(join(get('worktree'), 'CONTRIBUTING.md')) ? 'CONTRIBUTING.md' : 'none'), base: get('base', 'origin/main'), envelope: get('envelope', 'none'),
   }
 }
 
