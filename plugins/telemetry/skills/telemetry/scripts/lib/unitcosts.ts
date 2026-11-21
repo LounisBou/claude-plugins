@@ -27,7 +27,8 @@ export function readPrices(path: string): { prices: Prices } | { why: string } {
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'))
   } catch (error) {
-    return { why: `${path} is not readable (${(error as NodeJS.ErrnoException).code ?? 'no JSON'})` }
+    const code = (error as NodeJS.ErrnoException).code
+    return { why: `${path} is not readable (${code ?? (error instanceof Error ? error.message : String(error))})` }
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { why: `${path} holds no JSON object` }
   return { prices: Object.fromEntries(Object.entries(parsed).filter(([, price]) => typeof price === 'object' && price !== null)) as Prices }
@@ -36,7 +37,8 @@ export function readPrices(path: string): { prices: Prices } | { why: string } {
 /** The closed dispatch rows the report read: when each closed (ms) and how many review rounds it had. */
 export interface ClosedRow {
   readonly closed: number
-  readonly rounds: number
+  /** Undefined when the row records none: it is neither reviewed nor not reviewed. */
+  readonly rounds: number | undefined
 }
 
 /** What the report knows of the pull requests merged: their count per Paris day, or why it does not. */
@@ -92,6 +94,8 @@ export class UnitCosts {
   private readonly facts = new Map<string, Facts>()
   /** A session's cost per day: `<day>|<session>` → the sum of its turns' own costs. */
   private readonly spent = new Map<string, number>()
+  /** The session days with a turn that carried no cost of its own: their sum is partial. */
+  private readonly partial = new Set<string>()
   private readonly readers = new Map<string, Reader>()
   private readonly escapes = new Map<string, Escape>()
   /** Costs of the calls of a reader seen before the run end that names it. */
@@ -120,7 +124,10 @@ export class UnitCosts {
     if (e['agent'] === undefined) facts.effort = text(e['effort']) ?? facts.effort
     if (kind === 'turn_end') {
       const cost = num(e['turn_cost_usd'])
-      if (cost !== undefined && day >= this.from && day <= this.to) this.spent.set(`${day}|${session}`, (this.spent.get(`${day}|${session}`) ?? 0) + cost)
+      if (day >= this.from && day <= this.to) {
+        if (cost === undefined) this.partial.add(`${day}|${session}`)
+        else this.spent.set(`${day}|${session}`, (this.spent.get(`${day}|${session}`) ?? 0) + cost)
+      }
     } else if (kind === 'api_call') {
       const child = text(e['agent'])
       if (child !== undefined && day >= this.from && day <= this.to) this.call(session, child, e)
@@ -139,10 +146,17 @@ export class UnitCosts {
     const entry = this.readers.get(key) ?? this.early.get(key) ?? { cost: 0, unpriced: false, calls: new Set<string>() }
     if (!this.readers.has(key)) this.early.set(key, entry)
     // A call read by the live writer and again by a backfill is one, keyed by its message.
-    if (message === undefined || entry.calls.has(message)) return
+    if (message === undefined) {
+      entry.unpriced = true
+      return
+    }
+    if (entry.calls.has(message)) return
     entry.calls.add(message)
     const usage = recordOfEntry({ type: 'assistant', timestamp: text(e['ts']), message: { id: message, model: text(e['model']), usage: e['usage'] } })
-    if (usage === null) return
+    if (usage === null) {
+      entry.unpriced = true
+      return
+    }
     const price: Price | undefined = this.prices?.[usage.record.model]
     const cost = price === undefined ? null : messageCost(usage.record, price)
     if (cost === null) entry.unpriced = true
@@ -178,19 +192,24 @@ export class UnitCosts {
   }
 
   /** Sessions of the role `agent`, by day then `tier/effort`. */
-  private sessionCells(): Map<string, Map<string, Cell>> {
+  private sessionCells(): { cells: Map<string, Map<string, Cell>>; partial: Map<string, number> } {
     const days = new Map<string, Map<string, Cell>>()
+    const partial = new Map<string, number>()
+    for (const key of this.partial) {
+      const [day = '', session = ''] = key.split('|')
+      if (this.facts.get(session)?.role === 'agent') partial.set(day, (partial.get(day) ?? 0) + 1)
+    }
     for (const [key, cost] of this.spent) {
       const [day = '', session = ''] = key.split('|')
       const facts = this.facts.get(session)
-      if (facts?.role !== 'agent') continue
+      if (facts?.role !== 'agent' || this.partial.has(key)) continue
       const cells = days.get(day) ?? new Map<string, Cell>()
       days.set(day, cells)
       const cell = `${facts.tier ?? UNKNOWN}/${facts.effort ?? UNKNOWN}`
       const was = cells.get(cell) ?? { cost: 0, n: 0 }
       cells.set(cell, { cost: was.cost + cost, n: was.n + 1 })
     }
-    return days
+    return { cells: days, partial }
   }
 
   /** The priced readers, by day then `model/effort`; the readers with a call no price covers, or no call, counted apart. */
@@ -249,16 +268,17 @@ export class UnitCosts {
       const details = new Map<string, { joined: boolean; text: string }>()
       for (const escape of today) {
         for (const name of escape.names) {
-          const readers = byPr.get(resolve(name, escape.repo) ?? '')
-          if (readers === undefined) {
-            details.set(name, { joined: false, text: `      ${name}: no review reader of it in the store` })
+          const resolved = resolve(name, escape.repo)
+          const readers = resolved === undefined ? undefined : byPr.get(resolved)
+          if (resolved === undefined || readers === undefined) {
+            details.set(resolved ?? `${escape.repo ?? ''}|${name}`, details.get(resolved ?? `${escape.repo ?? ''}|${name}`) ?? { joined: false, text: `      ${name}: ${resolved === undefined ? 'names no repository the readers read, so it is not joined' : 'no review reader of it in the store'}` })
             continue
           }
           // The review that read it last: its head and what its readers ran on.
           const last = readers.reduce((a, b) => (b.at >= a.at ? b : a))
           const same = readers.filter(r => r.head === last.head)
           const ran = [...new Set(same.map(r => `${r.models.join('+') || UNKNOWN}/${r.effort ?? UNKNOWN}`))].join(', ')
-          details.set(name, { joined: true, text: `      ${name}: read at ${last.head?.slice(0, 12) ?? UNKNOWN} by ${same.length} reader(s) on ${ran}` })
+          if (!details.has(resolved)) details.set(resolved, { joined: true, text: `      ${name}: read at ${last.head?.slice(0, 12) ?? UNKNOWN} by ${same.length} reader(s) on ${ran}` })
         }
       }
       const joined = [...details.values()].filter(d => d.joined).length
@@ -276,8 +296,11 @@ export class UnitCosts {
 
     out.push('', 'unit costs per day (API list prices, an equivalent and never a bill; Paris days)')
     out.push('  agent sessions: USD per session by tier/effort, the sessions that spent that day (a session spanning days counts on each)')
-    const sessions = this.sessionCells()
-    for (const day of days) out.push(`  ${day}  ${joinCells(sessions.get(day), 'sessions')}`)
+    const { cells: sessions, partial } = this.sessionCells()
+    for (const day of days) {
+      const left = partial.get(day) ?? 0
+      out.push(`  ${day}  ${joinCells(sessions.get(day), 'sessions')}${left > 0 ? `; ${left} session(s) with a turn of no recorded cost, left out` : ''}`)
+    }
 
     const readers = this.readerCells()
     if (input.prices === undefined) {
@@ -289,13 +312,14 @@ export class UnitCosts {
         out.push(`  ${day}  ${joinCells(readers.cells.get(day), 'readers')}${skipped > 0 ? `; ${skipped} reader(s) with no price or no recorded call, left out` : ''}`)
       }
     }
-    out.push('  readers per merged pull request')
+    out.push('  readers per merged pull request: the readers that ended that day (any repository) over the pull requests merged that day (the repositories listed)')
     for (const day of days) {
       const count = readers.count.get(day) ?? 0
       if ('why' in input.merged) out.push(`  ${day}  ${count} readers, merged pull requests: ${NA(input.merged.why)}`)
+      else if (input.merged.unlisted > 0) out.push(`  ${day}  ${count} readers, merged pull requests: ${NA(`${input.merged.unlisted} repository listing(s) failed, the merges are partial`)}`)
       else {
         const merged = input.merged.byDay.get(day) ?? 0
-        out.push(`  ${day}  ${count} readers, ${merged} merged${merged > 0 ? ` = ${(count / merged).toFixed(1)} per pull request` : ''}${input.merged.unlisted > 0 ? ` (${input.merged.unlisted} repository listing(s) n/a)` : ''}`)
+        out.push(`  ${day}  ${count} readers, ${merged} merged${merged > 0 ? ` = ${(count / merged).toFixed(1)} per pull request` : ''}`)
       }
     }
 
@@ -303,9 +327,11 @@ export class UnitCosts {
     if (input.rows === undefined) out.push('  ' + NA('no closed row in any readable dispatch record (no record registry, or none of its paths exists)'))
     else {
       for (const day of days) {
-        const reviewed = input.rows.filter(r => input.dayOf(r.closed) === day && r.rounds >= 1)
-        const twice = reviewed.filter(r => r.rounds >= 2).length
-        out.push(`  ${day}  ${reviewed.length === 0 ? 'no reviewed row closed' : `${twice} of ${reviewed.length} (${Math.round((100 * twice) / reviewed.length)} %)`}`)
+        const closed = input.rows.filter(r => input.dayOf(r.closed) === day)
+        const reviewed = closed.filter(r => (r.rounds ?? 0) >= 1)
+        const twice = reviewed.filter(r => (r.rounds ?? 0) >= 2).length
+        const unrecorded = closed.filter(r => r.rounds === undefined).length
+        out.push(`  ${day}  ${reviewed.length === 0 ? 'no reviewed row closed' : `${twice} of ${reviewed.length} (${Math.round((100 * twice) / reviewed.length)} %)`}${unrecorded > 0 ? `; ${unrecorded} row(s) with no recorded rounds, left out` : ''}`)
       }
     }
 

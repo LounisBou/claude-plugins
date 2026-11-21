@@ -104,9 +104,13 @@ test('without a price file the readers\' cost is n/a and says why, their count s
 })
 
 test('readers per merged pull request, by day', () => {
-  const out = lines([...reader(D1, 1), ...reader(D1, 2), ...reader(D1, 3)], { merged: { byDay: new Map([[D1, 2]]), unlisted: 1 } })
-  assert.ok(out.includes('  2026-11-20  3 readers, 2 merged = 1.5 per pull request (1 repository listing(s) n/a)'), out.join('\n'))
-  assert.ok(out.includes('  2026-11-21  0 readers, 0 merged (1 repository listing(s) n/a)'), out.join('\n'))
+  const events = [...reader(D1, 1), ...reader(D1, 2), ...reader(D1, 3)]
+  const out = lines(events, { merged: { byDay: new Map([[D1, 2]]), unlisted: 0 } })
+  assert.ok(out.includes('  2026-11-20  3 readers, 2 merged = 1.5 per pull request'), out.join('\n'))
+  assert.ok(out.includes('  2026-11-21  0 readers, 0 merged'), out.join('\n'))
+  // A listing that failed makes the merges partial: no ratio.
+  const partial = lines(events, { merged: { byDay: new Map([[D1, 2]]), unlisted: 1 } })
+  assert.ok(partial.includes('  2026-11-20  3 readers, merged pull requests: n/a — 1 repository listing(s) failed, the merges are partial'), partial.join('\n'))
 })
 
 test('the share of closed rows reviewed in two rounds or more, among those reviewed at all', () => {
@@ -131,11 +135,10 @@ test('an escape is joined to the review that read the pull request it names: its
     ev(D2, 'escape', S(5), { source: 'pull_request', names: ['o/r#7', '#7', 'r#7', 'o/r#99'], target: { repo: 'o/r', pr: 12 } }),
   ])
   const day = out.slice(out.findIndex(l => l.startsWith('  2026-11-21  1 escape(s)')))
-  assert.deepEqual(day.slice(0, 5), [
-    '  2026-11-21  1 escape(s) naming 4 pull request(s), 3 joined to a review',
+  assert.deepEqual(day.slice(0, 3), [
+    // The three spellings of o/r#7 are one pull request, named as first written.
+    '  2026-11-21  1 escape(s) naming 2 pull request(s), 1 joined to a review',
     '      o/r#7: read at bbbbbbbbbbbb by 1 reader(s) on claude-sonnet-5-5/xhigh',
-    '      #7: read at bbbbbbbbbbbb by 1 reader(s) on claude-sonnet-5-5/xhigh',
-    '      r#7: read at bbbbbbbbbbbb by 1 reader(s) on claude-sonnet-5-5/xhigh',
     '      o/r#99: no review reader of it in the store',
   ])
   assert.ok(out.includes('  2026-11-20  0 escape(s) naming 0 pull request(s), 0 joined to a review'), out.join('\n'))
@@ -144,6 +147,7 @@ test('an escape is joined to the review that read the pull request it names: its
 test('a name that is no pull request, or a bare number with no repository, joins nothing', () => {
   const out = lines([...reader(D1, 1), ev(D2, 'escape', S(5), { source: 'commit', names: ['#7', 'nonsense'] })])
   assert.ok(out.includes('  2026-11-21  1 escape(s) naming 2 pull request(s), 0 joined to a review'), out.join('\n'))
+  assert.ok(out.includes('      #7: names no repository the readers read, so it is not joined'), out.join('\n'))
 })
 
 test('readPrices: the file\'s models, or why there are none', () => {
@@ -155,6 +159,62 @@ test('readPrices: the file\'s models, or why there are none', () => {
     assert.deepEqual(readPrices(file), { why: `${file} holds no JSON object` })
     writeFileSync(file, '{"a": {"input": 1}, "b": 3}')
     assert.deepEqual(readPrices(file), { prices: { a: { input: 1 } } })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a reader call with no usable usage, or no message id, makes the reader unpriced, never a $0 one', () => {
+  const noUsage = [reader(D1, 1)[0] as Record<string, unknown>, ev(D1, 'api_call', S(1), { agent: 'c1', message: 'm', model: 'claude-sonnet-5-5' })]
+  const noId = [reader(D1, 2)[0] as Record<string, unknown>, ev(D1, 'api_call', S(1), { agent: 'c2', model: 'claude-sonnet-5-5', usage: { input_tokens: 1 } })]
+  const out = lines([...noUsage, ...noId])
+  assert.ok(out.includes('  2026-11-20  none; 2 reader(s) with no price or no recorded call, left out'), out.join('\n'))
+})
+
+test('a session with a turn of no recorded cost is left out and counted, its day not averaged down', () => {
+  const out = lines([turn(D1, S(2), 4), ev(D1, 'turn_end', S(3), { role: 'agent', launch_tier: 'deep', effort: 'xhigh', turn_cost_usd: 1 }), ev(D1, 'turn_end', S(3), { role: 'agent' })])
+  assert.ok(out.includes('  2026-11-20  deep/xhigh $4.00 (1 sessions); 1 session(s) with a turn of no recorded cost, left out'), out.join('\n'))
+})
+
+test('readers\' unit costs are flagged too, and not when there is no price file', () => {
+  const day = (d: string, calls: number): Record<string, unknown>[] => Array.from({ length: 5 }, (_, i) => reader(d, i + (d === D1 ? 0 : 10), { calls })).flat()
+  const events = [...day(D1, 1), ...day(D2, 3)]
+  assert.ok(lines(events).includes('  readers claude-sonnet-5-5/high on 2026-11-21: 2.00 → 6.00 USD (5 readers)'), lines(events).join('\n'))
+  assert.ok(!lines(events, { prices: undefined, noPrices: 'x' }).some(l => l.includes('USD (')))
+})
+
+test('a cell present on one day only, or a previous day at 0, is never flagged', () => {
+  const day = (d: string, tier: string, cost: number): Record<string, unknown>[] => Array.from({ length: 5 }, (_, i) => turn(d, `${tier}-${i}`, cost, { launch_tier: tier }))
+  const out = lines([...day(D1, 'light', 1), ...day(D2, 'deep', 9), ...day(D1, 'zero', 0), ...day(D2, 'zero', 5)])
+  assert.ok(!out.some(l => l.includes('USD (')), out.join('\n'))
+})
+
+test('a subagent\'s effort is not the session\'s, and a session whose role comes on a later event is read whole', () => {
+  const out = lines([
+    ev(D1, 'turn_end', S(2), { turn_cost_usd: 1 }),
+    ev(D1, 'session_end', S(2), { role: 'agent', launch_tier: 'light', effort: 'medium' }),
+    ev(D1, 'api_call', S(2), { agent: 'x', effort: 'xhigh' }),
+  ])
+  assert.ok(out.includes('  2026-11-20  light/medium $1.00 (1 sessions)'), out.join('\n'))
+})
+
+test('a short repository name that two repositories answer to joins nothing; names match whatever the case', () => {
+  const out = lines([...reader(D1, 1, { repo: 'a/r' }), ...reader(D1, 2, { repo: 'b/r', pr: 8 }), ...reader(D1, 3, { repo: 'O/Mine', pr: 9 }), ev(D2, 'escape', S(5), { source: 'pull_request', names: ['r#7', 'o/mine#9'] })])
+  assert.ok(out.includes('  2026-11-21  1 escape(s) naming 2 pull request(s), 1 joined to a review'), out.join('\n'))
+  assert.ok(out.includes('      r#7: names no repository the readers read, so it is not joined'), out.join('\n'))
+})
+
+test('a closed row with no recorded rounds is left out of the share and counted', () => {
+  const at = Date.parse(`${D1}T12:00:00Z`)
+  const out = lines([], { rows: [{ closed: at, rounds: 2 }, { closed: at, rounds: undefined }] })
+  assert.ok(out.includes('  2026-11-20  1 of 1 (100 %); 1 row(s) with no recorded rounds, left out'), out.join('\n'))
+})
+
+test('readPrices names the failure of a file that is no JSON', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'unitcosts-'))
+  try {
+    writeFileSync(join(dir, 'p.json'), '{oops')
+    assert.match(String((readPrices(join(dir, 'p.json')) as { why: string }).why), /p\.json is not readable \(.*JSON/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

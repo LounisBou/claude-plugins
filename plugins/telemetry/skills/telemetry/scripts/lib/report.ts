@@ -331,7 +331,7 @@ function dispatchLines(module: string, skipped: { n: number }): (ClosedRow & { o
       try {
         const row = record(JSON.parse(line))
         const [opened, closed] = [Date.parse(text(row['opened']) ?? ''), Date.parse(text(row['closed']) ?? '')]
-        if (row['state'] === 'closed' && Number.isFinite(opened) && Number.isFinite(closed)) rows.push({ opened, closed, rounds: num(row['rounds']) ?? 0 })
+        if (row['state'] === 'closed' && Number.isFinite(opened) && Number.isFinite(closed)) rows.push({ opened, closed, rounds: num(row['rounds']) })
       } catch { /* a line that is no row */ }
     }
   }

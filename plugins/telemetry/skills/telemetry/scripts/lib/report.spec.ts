@@ -779,3 +779,21 @@ test('unit costs per day: the price file is read where ORCHESTRATOR_STATE_DIR na
     assert.ok(lines(config, { env: { ORCHESTRATOR_STATE_DIR: join(dir, 'state') } }).includes('  2026-11-09  claude-sonnet-5-5/high $2.00 (1 readers)'))
   })
 })
+
+test('unit costs per day: a Paris day is not a UTC day, the day before the window is read for the flag, and a closed row with no rounds is left out', () => {
+  const turnAt = (ts: string, session: string, cost: number): Record<string, unknown> => ev(ts, 'turn_end', session, { role: 'agent', launch_tier: 'deep', effort: 'high', turn_cost_usd: cost })
+  const events = [
+    // 2026-11-07 23:30 UTC is the Paris day 2026-11-08, the window's first; 2026-11-08 23:30 UTC is the 9th.
+    ...Array.from({ length: 5 }, (_, i) => turnAt('2026-11-07T23:30:00Z', S(10 + i), 1)),
+    ...Array.from({ length: 5 }, (_, i) => turnAt('2026-11-08T23:30:00Z', S(20 + i), 2)),
+    // Two Paris days before the window: read for nothing.
+    turnAt('2026-11-06T10:00:00Z', S(30), 50),
+  ]
+  scratch({ events, record: [JSON.stringify({ id: 1, state: 'closed', opened: '2026-11-09T08:00:00Z', closed: '2026-11-09T12:00:00Z' })] }, config => {
+    const out = lines(config)
+    assert.ok(out.includes('  2026-11-08  deep/high $1.00 (5 sessions)'), out.join('\n'))
+    assert.ok(out.includes('  2026-11-09  deep/high $2.00 (5 sessions)'), out.join('\n'))
+    assert.ok(out.includes('  agent sessions deep/high on 2026-11-09: 1.00 → 2.00 USD (5 sessions)'), out.join('\n'))
+    assert.ok(!out.some(l => l.includes('$50')))
+  })
+})
