@@ -22,7 +22,8 @@ const rootFile = (dir: string): string => JSON.stringify({ version: 1, dir })
 /*
  * `links`: links planted in the data root, each name toward its target. The host's plain write and
  * read follow a link; a rename onto one replaces it and `rm -f` removes it, as rename(2) and
- * unlink(2) do. `refuse`: the first words of the runs that exit 1.
+ * unlink(2) do. `refuse`: the first words of the runs that exit 1. A send is delivered when the
+ * launch names an orchestrator (ORCHESTRATOR_REPORTS_TO).
  */
 function hostOver(files: Map<string, string>, vars: Record<string, string> = {}, links = new Map<string, string>(), refuse: string[] = []) {
   const d = disk(files)
@@ -46,7 +47,7 @@ function hostOver(files: Map<string, string>, vars: Record<string, string> = {},
         ]
       },
     },
-    session: { id: async () => 's1', send: async () => ({ isDelivered: false, reason: 'nobody' }) },
+    session: { id: async () => 's1', send: async () => (vars['ORCHESTRATOR_REPORTS_TO'] ? { isDelivered: true } : { isDelivered: false, reason: 'nobody' }) },
     prompt: { submit: async () => undefined },
     process: {
       run: async (argv: readonly string[]) => {
@@ -195,6 +196,17 @@ test('the gate mark is put in place by a rename: a link planted at it leaves its
   await settled()
   expect(files.get(empty)).toBe('')
   expect(files.get(gate)).toBe('told\n')
+})
+
+test('the gate mark of a report delivered to the orchestrator is put in place by a rename: a link planted at it leaves its target untouched', async () => {
+  const gate = `${DATA}/store/gates/s1`
+  const empty = `${PROTECTED}/prompts/launch-Agent--a-1700000000000.sh`
+  const files = new Map([[`${PROTECTED}/${DATA_ROOT_FILE}`, rootFile(DATA)], [empty, ''], [`${HOME}/.claude/sessions/1.json`, JSON.stringify({ sessionId: 's-orch', name: 'Orch: o', startedAt: 1 })]])
+  const { $ } = hostOver(files, { ORCHESTRATOR_CONTEXT_GATE_TOKENS: '200000', ORCHESTRATOR_REPORTS_TO: 'Orch: o [a1b2c3]' }, new Map([[gate, empty]]))
+  await reportGate($, 's1', 'Agent: a', '/dev/ttys005', { context_tokens: 210000, context_percent: 21, context_window: 1000000 })
+  await settled()
+  expect(files.get(empty)).toBe('')
+  expect(files.get(gate)).toBe('reported\n')
 })
 
 test('a session end whose remove fails empties its row by a rename: a link planted at the row leaves its target untouched', async () => {
