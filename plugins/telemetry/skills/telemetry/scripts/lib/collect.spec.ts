@@ -544,35 +544,44 @@ test('askOf: only an ask verdict is an ask', () => {
   assert.equal(writeAsk()?.reason?.startsWith('Claude requested'), true)
 })
 
-test('takeAsk: the dialogs of a burst take the asks of the same tool and arguments in their order, once; the only ask of its tool stands in when arguments differ; another tool or loop never matches', () => {
+test('takeAsk: a dialog takes the one ask of its tool, loop and arguments, once; several equal asks, other arguments, another tool or another loop leave it unmatched', () => {
   const c = new Collector()
   const ask = (id: string, input: unknown, tool = 'Write', agent?: string) => askOf({ tool, input, tool_use_id: id, agentId: agent }, { decision: 'ask', reason: id })
   c.noteAsk(ask('one', { a: 1, b: 2 }))
-  c.noteAsk(ask('two', { a: 1, b: 2 }))
-  assert.equal(c.takeAsk('Write', { b: 2, a: 1 }, undefined, AT)?.id, 'one')
-  assert.equal(c.takeAsk('Write', { a: 1, b: 2 }, undefined, AT + 1)?.id, 'two')
-  assert.equal(c.takeAsk('Write', { a: 1, b: 2 }, undefined, AT + 2), undefined)
-  c.noteAsk(ask('three', { path: 'x' }))
+  c.noteAsk(ask('other', { a: 9 }))
+  assert.equal(c.takeAsk('Write', { b: 2, a: 1 }, undefined)?.id, 'one')
+  assert.equal(c.takeAsk('Write', { a: 1, b: 2 }, undefined), undefined)
+  // Two concurrent asks of one tool: each dialog finds its own by its arguments; a rewrite of the arguments finds none.
+  assert.equal(c.takeAsk('Write', { a: 5 }, undefined), undefined)
+  assert.equal(c.takeAsk('Write', { a: 9 }, undefined)?.id, 'other')
+  // The same call run twice: the dialog could be either, so it is bound to neither (and the stale ask stays out of reach of a guess).
+  c.noteAsk(ask('first', { path: 'x' }))
+  c.noteAsk(ask('second', { path: 'x' }))
+  assert.equal(c.takeAsk('Write', { path: 'x' }, undefined), undefined)
+  // The payload's own call id settles it.
+  assert.equal(c.takeAsk('Write', { path: 'x' }, undefined, 'second')?.id, 'second')
+  assert.equal(c.takeAsk('Write', { path: 'x' }, undefined)?.id, 'first')
   c.noteAsk(ask('bash', { command: 'ls' }, 'Bash'))
   c.noteAsk(ask('sub', { path: 'x' }, 'Write', 'a1'))
-  assert.equal(c.takeAsk('Write', { path: 'rewritten' }, undefined, AT)?.id, 'three')
-  assert.equal(c.takeAsk('Edit', {}, undefined, AT), undefined)
-  assert.equal(c.takeAsk('Write', { path: 'x' }, 'a1', AT)?.id, 'sub')
+  assert.equal(c.takeAsk('Edit', { command: 'ls' }, undefined), undefined)
+  assert.equal(c.takeAsk('Write', { path: 'x' }, undefined), undefined)
+  assert.equal(c.takeAsk('Write', { path: 'x' }, 'a1')?.id, 'sub')
 })
 
 test('settleAsk: gives when the dialog was shown, once; an ask never shown is forgotten with its call; the memory is bounded', () => {
   const c = new Collector()
   c.noteAsk(askOf({ tool: 'Write', input: {}, tool_use_id: 'a' }, { decision: 'ask' }))
   c.noteAsk(askOf({ tool: 'Edit', input: {}, tool_use_id: 'b' }, { decision: 'ask' }))
-  assert.equal(c.takeAsk('Write', {}, undefined, AT)?.id, 'a')
+  assert.equal(c.takeAsk('Write', {}, undefined)?.id, 'a')
+  c.markShown('a', AT)
   assert.equal(c.settleAsk('a'), AT)
   assert.equal(c.settleAsk('a'), undefined)
   assert.equal(c.settleAsk('b'), undefined)
-  assert.equal(c.takeAsk('Edit', {}, undefined, AT), undefined)
+  assert.equal(c.takeAsk('Edit', {}, undefined), undefined)
   assert.equal(c.settleAsk(undefined), undefined)
   for (let i = 0; i < 250; i++) c.noteAsk(askOf({ tool: 'Write', input: { i }, tool_use_id: `t${i}` }, { decision: 'ask' }))
-  assert.equal(c.takeAsk('Write', { i: 0 }, undefined, AT)?.id, undefined)
-  assert.equal(c.takeAsk('Write', { i: 249 }, undefined, AT)?.id, 't249')
+  assert.equal(c.takeAsk('Write', { i: 0 }, undefined)?.id, undefined)
+  assert.equal(c.takeAsk('Write', { i: 249 }, undefined)?.id, 't249')
 })
 
 test('tool_call: a call whose dialog was shown carries the time from the dialog to its end; any other carries none', () => {
@@ -591,15 +600,9 @@ test('permission_ask: a secret in the path or the URL is redacted like the line\
   assert.equal(String((cutFields(redactValue(fetched, new Map()).value) as Record<string, unknown>)['url']).length <= LINE_MAX + 1, true)
 })
 
-test('takeAsk: several asks of a tool with other arguments than the dialog\'s match none; the shown dialogs are bounded too', () => {
+test('markShown: the shown dialogs are bounded', () => {
   const c = new Collector()
-  c.noteAsk(askOf({ tool: 'Write', input: { n: 1 }, tool_use_id: 'one' }, { decision: 'ask' }))
-  c.noteAsk(askOf({ tool: 'Write', input: { n: 2 }, tool_use_id: 'two' }, { decision: 'ask' }))
-  assert.equal(c.takeAsk('Write', { n: 3 }, undefined, AT), undefined)
-  for (let i = 0; i < 150; i++) {
-    c.noteAsk(askOf({ tool: 'Edit', input: { i }, tool_use_id: `e${i}` }, { decision: 'ask' }))
-    c.takeAsk('Edit', { i }, undefined, AT)
-  }
+  for (let i = 0; i < 150; i++) c.markShown(`e${i}`, AT)
   assert.equal(c.settleAsk('e0'), undefined)
   assert.equal(c.settleAsk('e149'), AT)
 })

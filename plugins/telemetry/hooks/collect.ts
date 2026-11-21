@@ -864,19 +864,24 @@ export class Collector {
   }
 
   /**
-   * The announced ask a dialog is for: the oldest of the same tool and loop with the same arguments (the
-   * dialogs of a burst are raised in the order of its asks), else the only one of that tool and loop.
-   * Taken once, and marked shown at `at`.
+   * The announced ask a dialog is for, taken at once (no clock): the one the payload's own call id names
+   * when it carries one, else the only ask of the same tool and loop with the same arguments. Several
+   * such asks, or none, leave the dialog unmatched: it is never bound to an ask by a guess.
    */
-  takeAsk(tool: string, input: unknown, agent: string | undefined, at: number): Ask | undefined {
+  takeAsk(tool: string, input: unknown, agent: string | undefined, toolUseId?: string): Ask | undefined {
     const same = this.asks.filter(ask => ask.tool === tool && ask.agent === agent)
     const wanted = stableJson(input)
-    const found = same.find(ask => ask.input === wanted) ?? (same.length === 1 ? same[0] : undefined)
+    const exact = same.filter(ask => ask.input === wanted)
+    const found = toolUseId === undefined ? (exact.length === 1 ? exact[0] : undefined) : same.find(ask => ask.id === toolUseId)
     if (found === undefined) return undefined
     this.asks = this.asks.filter(ask => ask !== found)
-    this.shown.set(found.id, at)
-    if (this.shown.size > ASKS_KEPT) this.shown.delete([...this.shown.keys()][0] ?? '')
     return found
+  }
+
+  /** The dialog of the call `toolUseId` was shown at `at`. */
+  markShown(toolUseId: string, at: number): void {
+    this.shown.set(toolUseId, at)
+    if (this.shown.size > ASKS_KEPT) this.shown.delete([...this.shown.keys()][0] ?? '')
   }
 
   /** The call ended: when its prompt was shown, if it was; its announced ask, shown or not, is forgotten. */

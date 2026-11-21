@@ -391,3 +391,35 @@ test('a prompt no announced ask matches is still written, without the call\'s id
   const asked = JSON.parse((runs[0]?.stdin ?? '').trim()) as Record<string, unknown>
   assert.deepEqual([asked['event'], asked['tool_use_id'], asked['ask_reason']], ['permission_ask', undefined, undefined])
 })
+
+test('the permission hook returns without awaiting the clock, the session id or the writer: a host call that never answers holds nothing', async () => {
+  const { $, runs } = host()
+  const never = new Promise<never>(() => undefined)
+  const stuck: Host = { ...$, clock: { now: () => never }, session: { ...$.session, id: () => never }, process: { run: () => never } }
+  const { hook } = hooks()
+  await hook('tool.check')(stuck, { tool: 'Write', input: F('permission.request.write')['tool_input'], tool_use_id: 'toolu_01Write' }, through(F('tool.check.ask.write')))
+  const returned = await Promise.race([
+    hook('classic.PermissionRequest')(stuck, F('permission.request.write'), through({ passed: true })),
+    new Promise(resolve => setTimeout(() => resolve('held'), 200)),
+  ])
+  assert.deepEqual(returned, { passed: true })
+  assert.equal(runs.length, 0)
+})
+
+test('two concurrent prompts of one tool each take their own ask: the lines carry their own ids, and each call its own wait', async () => {
+  const { $, runs } = host()
+  const { hook } = hooks()
+  const inputs = [{ file_path: '/w/a.json' }, { file_path: '/w/b.json' }]
+  await hook('tool.check')($, { tool: 'Write', input: inputs[0], tool_use_id: 'toolu_01A' }, through({ decision: 'ask', reason: 'why a' }))
+  await hook('tool.check')($, { tool: 'Write', input: inputs[1], tool_use_id: 'toolu_01B' }, through({ decision: 'ask', reason: 'why b' }))
+  await hook('classic.PermissionRequest')($, { tool_name: 'Write', tool_input: inputs[1] }, through(undefined))
+  await hook('classic.PermissionRequest')($, { tool_name: 'Write', tool_input: inputs[0] }, through(undefined))
+  await written()
+  const lines = runs.flatMap(run => (run.stdin ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>))
+  assert.deepEqual(lines.map(l => [l['tool_use_id'], l['ask_reason']]), [['toolu_01B', 'why b'], ['toolu_01A', 'why a']])
+  await hook('tool.call')($, { tool: 'Write', tool_use_id: 'toolu_01A', file_path: '/w/a.json' }, through(F('result.ok')))
+  await hook('tool.call')($, { tool: 'Write', tool_use_id: 'toolu_01B', file_path: '/w/b.json' }, through(F('result.ok')))
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  const calls = (runs.at(-1)?.stdin ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>).filter(e => e['event'] === 'tool_call')
+  assert.deepEqual(calls.map(c => [c['tool_use_id'], typeof c['ask_ms']]), [['toolu_01A', 'number'], ['toolu_01B', 'number']])
+})

@@ -204,24 +204,26 @@ export function mount(on: On, collector: Collector): void {
   })
 
   // The classic event the host raises as it is about to show a permission dialog. A settings hook that
-  // answers the request (a decision on `next`'s result) shows none: nothing is written then. Written at
-  // once, not at the turn's end (a call still waiting on the operator has this line alone), but never
-  // awaited: the dialog is not held back by the writer's process.
+  // answers the request (a decision on `next`'s result) shows none: nothing is written then. The hook
+  // returns at once: the ask is taken without a host call, and the clock, the session id and the writer
+  // run after it, never awaited, so the dialog waits on none of them. The line is written as the dialog
+  // appears, not at the turn's end: a call still waiting on the operator has this line alone.
   on('classic.PermissionRequest', async ($, e, next) => {
     const result = await next(e)
-    await quietly($, 'permission request', async () => {
-      if (typeof result === 'object' && result !== null && 'decision' in result) return
-      const at = await $.clock.now()
-      const tool = typeof e['tool_name'] === 'string' ? e['tool_name'] : ''
-      const agent = typeof e['agent_id'] === 'string' ? e['agent_id'] : undefined
-      const ask = collector.takeAsk(tool, e['tool_input'], agent, at)
-      collector.push(permissionAsk(at, await $.session.id(), e, ask))
-      flush($, collector).catch(error => {
+    try {
+      if (typeof result === 'object' && result !== null && 'decision' in result) return result
+      const ask = collector.takeAsk(typeof e['tool_name'] === 'string' ? e['tool_name'] : '', e['tool_input'], typeof e['agent_id'] === 'string' ? e['agent_id'] : undefined, typeof e['tool_use_id'] === 'string' ? e['tool_use_id'] : undefined)
+      void (async () => {
+        const at = await $.clock.now()
+        if (ask !== undefined) collector.markShown(ask.id, at)
+        collector.push(permissionAsk(at, await $.session.id(), e, ask))
+        await flush($, collector)
+      })().catch(error => {
         try {
           $.ui.log(`telemetry: permission request skipped: ${error instanceof Error ? error.message : String(error)}`, { to: 'debug' })
         } catch { /* the log itself never fails a hook */ }
       })
-    })
+    } catch { /* an observer: the dialog goes on */ }
     return result
   })
 
