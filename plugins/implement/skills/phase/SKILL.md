@@ -187,10 +187,10 @@ NEVER report an exit code that was not read, or skip the gate because the change
 NEVER mark a phase done while its check is red or its gate is untested
 ```
 
-Read-only subagents (search, the self-review's lens readers) are the exceptions: they only read.
+Read-only search subagents are the exception: they only read.
 
 This skill's own steps end at the branch; the self-review before the pull request, consent, ready
-and merge are `method:lifecycle`'s. Its lens readers run when the self-review asks.
+and merge are `method:lifecycle`'s.
 
 ---
 

@@ -81,6 +81,8 @@ test('phase: the brief is printed from the row, the plan and the spec goals.md n
     assert.ok(brief.includes(part), `the brief holds ${part}`)
   assert.ok(!brief.includes('Scope from the orchestrator'))
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(brief))
+  assert.ok(brief.includes('No writing or reviewing delegates: read-only search subagents only.'), 'the implementer launches no lens reader')
+  assert.ok(!brief.includes('orchestrator:lens'), 'no lens reader in the brief')
   assert.deepEqual(lintOf(brief), [])
   assert.ok(brief.length < 5000, `a short brief: ${brief.length} characters`)
 })

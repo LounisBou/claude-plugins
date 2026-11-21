@@ -30,6 +30,17 @@ test('parseEvent: refuses what is no version 1 event', () => {
   assert.equal(typeof parseEvent(event('2026-11-13T00:00:00Z')), 'object')
 })
 
+test('a legacy self_review line, no longer written, is still a valid event for parseEvent, check and scan', () => {
+  const legacy = event('2026-11-13T10:00:00Z', { event: 'self_review', lens: 'correctness', file: 'a.ts', line: 3, severity: 'important', outcome: 'fixed' })
+  assert.equal(typeof parseEvent(legacy), 'object')
+  withDir(dir => {
+    append(dir, event('2026-11-13T09:00:00Z'), new Map())
+    appendFileSync(join(dir, '2026-11-13.jsonl'), `${legacy}\n`)
+    assert.deepEqual(check(dir, new Map()), [])
+  })
+  assert.deepEqual(scan('f', legacy, new Map()), [])
+})
+
 test('append: one file per UTC day, redacted before it is written, invalid lines refused', () => {
   withDir(dir => {
     const lines = [
