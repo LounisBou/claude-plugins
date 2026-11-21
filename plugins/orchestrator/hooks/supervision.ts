@@ -226,6 +226,10 @@ const GATE_URGENCY_FLOOR = 1000
 // again by each reading.
 const ROUND_WAKE_MS = 30000
 
+// What a start or a turn end that could not tell whether this session is the coordinator logs:
+// its reading then asks again (wakeTick).
+const UNTOLD_LINE = 'round wake: not told yet whether this session is the coordinator; its reading asks again'
+
 // The answer to a question asked with `ask` sent to another machine and not acknowledged is sent
 // again by that same reading once its last send is this old, ANSWER_SENDS sends at most, then
 // failed, both ways (remote-asked.ts).
@@ -1426,21 +1430,23 @@ function stopWake(wake: WakeMemory): void {
 
 // One reading: the questions just due, then the answers to send again to another machine. A
 // failure of either is one log line, and the next reading still comes. A timer no longer the one
-// armed reads nothing. A session not told yet is asked first: one told no coordinator ends the
-// chain, one still untold reads nothing and is asked again at the next reading.
+// armed reads nothing. A session not told yet is asked first, bounded as a start asks it: one told
+// no coordinator ends the chain, one still untold reads nothing and is asked again at the next
+// reading, and one that ended while it was asked reads nothing.
 async function wakeTick($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session' | 'ui'>, wake: WakeMemory, timer: unknown, generation: number): Promise<void> {
   if (wake.timer !== timer) return
   wake.timer = null
   if (!wake.told) {
     let self: CoordinatorSelf = 'untold'
     try {
-      self = await recordedCoordinator($)
+      const asked = await withDeadline(recordedCoordinator($), RELAY_BOUND_MS)
+      if (!isDegradedPass(asked)) self = asked
     } catch (err) {
       await logLine($, 'supervision', `round wake: ${messageOf(err)}`)
     }
-    if (self === 'none') return
+    if (wake.generation !== generation || self === 'none') return
     if (self === 'untold') {
-      if (wake.generation === generation) armWake($, wake)
+      armWake($, wake)
       return
     }
     wake.told = true
@@ -1705,6 +1711,7 @@ export function registerWake(on: On<Held>): void {
       const self = await withDeadline(recordedCoordinator($), RELAY_BOUND_MS)
       if (isDegradedPass(self)) await logLine($, 'supervision', `round wake: did not finish within ${RELAY_BOUND_MS} ms`)
       else if (typeof self === 'object') await reconcilePaneRecord($)
+      else if (self === 'untold') await logLine($, 'supervision', UNTOLD_LINE)
       armFor($, wake, isDegradedPass(self) ? 'untold' : self)
     } catch (err) {
       await logLine($, 'supervision', `round wake: ${messageOf(err)}`)
@@ -1977,6 +1984,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       if (!e.agentId) {
         const done = await withDeadline(atTurnEnd($), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `pane: did not finish within ${RELAY_BOUND_MS} ms`)
+        else if (done === 'untold') await logLine($, 'supervision', UNTOLD_LINE)
         armFor($, wake, isDegradedPass(done) ? 'untold' : done)
       }
     } catch (err) {

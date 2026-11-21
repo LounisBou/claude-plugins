@@ -1922,6 +1922,7 @@ test('a coordinator whose start and first turn end are told nothing in time is w
   fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: null, name: null })) + '\n')
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   expect(wakes().length).toBe(1)
+  expect(fx.written.filter(l => l.includes('not told yet whether this session is the coordinator')).length).toBe(2)
   // Still untold: the reading reads no round and asks again.
   await wakes()[0]!.fn()
   expect([fx.submitted.length, wakes().length]).toEqual([0, 2])
@@ -1974,6 +1975,54 @@ test('a session told nothing at its start arms one reading, which reads no round
   await wakes()[0]!.fn()
   expect([wakes().length, fx.submitted.length]).toEqual([1, 0])
   expect(fx.files.has(WOKEN_FILE)).toBe(false)
+})
+
+test('a coordinator a turn end told is not asked again: its reading reads the round though its row then names no one', async () => {
+  const asked = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, over, wakes } = untoldSession('Coord: main', asked)
+  const { handlers } = mounted(registerSupervision)
+  await mounted(registerWake).handlers['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+  over.hangWalk = false
+  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  // Asked now, this session would be untold, and its reading would read nothing.
+  over.hangWalk = true
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: null, name: null })) + '\n')
+  await wakes()[0]!.fn()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.submitted[0]).toContain('now due in this tab')
+})
+
+test('a session end forgets that the session was told: a start after it, not told, is asked again and reads no round', async () => {
+  const asked = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, over, wakes } = untoldSession('Coord: main', asked)
+  const { handlers } = mounted(registerSupervision)
+  const start = mounted(registerWake).handlers['session.start']
+  over.hangWalk = false
+  await start(fx.dollar, startEvent, (x: unknown) => x)
+  await handlers['session.end'](fx.dollar, endEvent, (x: unknown) => x)
+  // The next session of this module, an agent whose start is not told in time.
+  over.launchName = 'Agent: x'
+  over.hangWalk = true
+  await start(fx.dollar, startEvent, (x: unknown) => x)
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'agent', name: 'Agent: x' })) + '\n')
+  const live = wakes().filter(t => !t.cancelled)
+  expect(live.length).toBe(1)
+  await live[0]!.fn()
+  expect(fx.submitted).toEqual([])
+})
+
+test('a session that ends while its reading asks what it is reads no round and arms no next reading', async () => {
+  const asked = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, wakes } = untoldSession('Coord: main', asked)
+  const { handlers } = mounted(registerSupervision)
+  await mounted(registerWake).handlers['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+  // Its row now names it the coordinator; the walk for its pid hangs, so the ask is still running
+  // when the session ends.
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'coordinator', name: 'Coord: main' })) + '\n')
+  const reading = wakes()[0]!.fn()
+  await handlers['session.end'](fx.dollar, endEvent, (x: unknown) => x)
+  await reading
+  expect([fx.submitted.length, wakes().length]).toEqual([0, 1])
 })
 
 test('a pane record whose pid is not running, or that names none, is no pane; another session\'s live one is', async () => {
