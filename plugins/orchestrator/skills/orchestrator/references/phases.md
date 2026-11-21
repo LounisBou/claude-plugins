@@ -10,11 +10,11 @@ A spec settled with the operator and a plan in the method's shapes (`method:life
 
 - One agent = one phase = one draft PR, stacked on the previous phase's **branch head**. Merges are never awaited.
 - **Dispatch every row that can run, now.** An open row whose files collide with no running agent's is dispatched this turn; dependent work is stacked (« Stacks »), never queued « after » another pull request. The only waits: a file collision with a running writer, the operator's consent, a release a removal requires.
-- **One kind of change per phase.** A conversion (move, rename, extract) is proved by « nothing observable changed »; a behaviour change is proved by « the behaviour changed, and a test drives it ». A phase that mixes them cannot be proved either way. Split when the diff mixes natures; never over-split: each PR stays coherent and green alone.
-- **One writer per checkout, and a checkout per phase.** A phase runs in a clone `workspace.sh create` makes for it, so the orchestrator's own checkout is never lent out. Reviews are read-only and may overlap with anything.
+- **One kind of change per phase.** A conversion (move, rename, extract) is proved by « nothing observable changed »; a behaviour change is proved by « the behaviour changed, and a test drives it ». A phase that mixes them cannot be proved. Split when the diff mixes natures; never over-split: each PR stays coherent and green alone.
+- **One writer per checkout, and a checkout per phase.** A phase runs in a clone `workspace.sh create` makes for it, so the orchestrator's own checkout is never lent out. Reviews are read-only and may overlap.
 - **Corrective phases**: after any review, fixups on that phase's branch with a narrow prompt naming the kept index entries. Never widen scope; new scope is the user's decision.
 - Last phase = final verification: spec-conformity pass section by section, the proofs the check plan requires over the whole diff (github's `check-plan.ts`), and every row of `goals.md` ticked on its artifact.
 
 ### Stacks
 
-- **Stack the dependent pull requests**, 2 to 4 per stack, each on the previous branch head; an independent phase takes the main branch. Merge top-down with merge commits, the bottom last. Re-merge the base into a stacked branch only on a conflict or when the files overlap (CI runs on the merge ref). Ready: the bottom one on full green CI; a stacked one as the github ready gate reads it (README « Stacked pull requests »).
+- **Stack the dependent pull requests**, 2 to 4 per stack, each on the previous branch head; an independent phase, main. Merge bottom-up with merge commits: the bottom on its full green CI, then each next one retargeted to main and merged on its green checks, no re-run, no re-merge of main (unless main requires an up-to-date branch). Ready: the bottom one on full green CI; a stacked one as github's README « Stacked pull requests » reads it.
