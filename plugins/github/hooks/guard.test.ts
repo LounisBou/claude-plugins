@@ -1504,15 +1504,16 @@ test('an E2E "ran" rests on a Bash run this session observed in the checkout sin
   expect(background.deny).toContain('a background run is not observed')
 })
 
-test('an E2E "ran" observes a `set -o pipefail; <cmd> 2>&1 | tail -n <N>` line as <cmd>, and only that form of pipe', async ($, on) => {
+test('an E2E "ran" observes a whole `set -o pipefail; <cmd> 2>&1 | tail -n <N>` line as <cmd>, and only that form of pipe', async ($, on) => {
   const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
   const seen = await world($, on, { git: { ...CLEAN, ...moved } })
   await $.tool.call({ tool: 'Bash', command: 'set -o pipefail; npm run e2e 2>&1 | tail -n 20' })
   const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e' })
   expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)![9]).toBe('pass')
   expect(recordRun(seen)![13]).toContain('observed `npm run e2e` at 0123456, run by this session')
-  // The session may name the whole line, with or without its leading cd.
-  const whole = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'cd /work && set -o pipefail; npm run e2e 2>&1 | tail -n 20' })
+  // The session may name the whole line.
+  const whole = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'set -o pipefail; npm run e2e 2>&1 | tail -n 20' })
   expect(whole.deny).toBeUndefined()
   // Without pipefail, or with another pipe, the exit code is not the command's.
   await $.tool.call({ tool: 'Bash', command: 'npm run lint 2>&1 | tail -n 20' })
@@ -1521,6 +1522,29 @@ test('an E2E "ran" observes a `set -o pipefail; <cmd> 2>&1 | tail -n <N>` line a
     const refused = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran })
     expect(refused.deny).toContain('this session ran no `' + ran + '` in /work')
   }
+})
+
+test('an E2E "ran" of a failed pipefail line is computed as a fail', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved }, bashResult: { result: 'rejected', isError: true } })
+  await $.tool.call({ tool: 'Bash', command: 'set -o pipefail; npm run e2e 2>&1 | tail -n 20' })
+  await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', result: 'pass' })
+  expect(recordRun(seen)![9]).toBe('fail')
+  expect(recordRun(seen)![13]).toContain('observed `npm run e2e`')
+  expect(recordRun(seen)![13]).toContain('failed')
+})
+
+// `cd <dir> && set -o pipefail; <cmd> | tail` is `(cd <dir> && set -o pipefail); <cmd> | tail`: a cd that fails leaves
+// pipefail off, and the line's exit code is the tail's.
+test('an E2E "ran" of `cd <dir> && set -o pipefail; <cmd> 2>&1 | tail` is never observed as <cmd>', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved } })
+  await $.tool.call({ tool: 'Bash', command: 'cd /work && set -o pipefail; npm run e2e 2>&1 | tail -n 20' })
+  for (const ran of ['npm run e2e', 'cd /work && npm run e2e', 'cd /work && set -o pipefail; npm run e2e 2>&1 | tail -n 20']) {
+    const refused = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran })
+    expect(refused.deny).toContain('this session ran no `')
+  }
+  expect(recordRun(seen)).toBeUndefined()
 })
 
 test('an E2E "ran" not seen is written as stated under the result given, and observed, not refused', async ($, on) => {
@@ -1546,7 +1570,7 @@ test('an E2E "ran" not seen is written as a stated pass when the session says it
 test('an E2E "ran" whose checkout reflog cannot be read is refused, not stated', async ($, on) => {
   const seen = await world($, on, { git: { ...CLEAN, 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 128, stdout: '' } } })
   const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', result: 'pass' })
-  expect(out.deny).toContain('cannot be read from its reflog')
+  expect(out.deny).toContain('cannot be read from its reflog: leave "ran" out and give "result"')
   expect(recordRun(seen)).toBeUndefined()
 })
 
@@ -4240,7 +4264,6 @@ test('a record whose status the forge refuses is not written, and the answer nam
   const seen = await world($, on, { git: CLEAN, forgeFails: 'error: cannot post readiness/e2e at 0123456: HTTP 403: Resource not accessible by integration' })
   const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' })
   expect(out.isError).toBe(true)
-  // The run's outcome stays in the answer: it is not run again only to learn it.
   expect(out.result).toMatch(new RegExp('^github: the e2e record of acme/thing#12 \\(pass: stated, not computed: \\) is not written: '
     + 'the forge refused its status \\(error: cannot post readiness/e2e at 0123456: HTTP 403: Resource not accessible by integration\\)\\. Record it again once the forge takes it\\.$'))
   expect(seen.runs.filter((r) => String(r.argv[1]).endsWith('/engine/record.py')).map((r) => r.argv.includes('--status'))).toEqual([true])

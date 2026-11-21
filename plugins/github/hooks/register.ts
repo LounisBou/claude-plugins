@@ -2574,7 +2574,9 @@ async function noteRun($: Mod, line: string, started: number, result: unknown): 
   try {
     const cd = CD_FIRST.exec(line)
     const cwd = cd ? String(cd[1]) : String(await $.session.cwd())
-    const command = commandOf(cd ? line.slice(cd[0].length) : line)
+    // The pipefail form is read only as the whole line: after a `cd … &&` the `;` splits it, so a cd that fails leaves
+    // pipefail off and the command in the wrong directory, and the exit code is the tail's.
+    const command = cd ? line.slice(cd[0].length) : commandOf(line)
     // A backslash, or a quote left unbalanced once its pairs are removed, may hide a separator from this reading: not alone.
     const bare = command.replace(/'[^']*'|"[^"]*"/g, '')
     // Only a plain command word first: `!`, `coproc`, `time`, `exec` and the like change what the exit code is, and a
@@ -2611,7 +2613,7 @@ function e2eRunOf(e: ToolInput): E2eRun | string | undefined {
   // The `ran` text may carry the same leading `cd <checkout> &&` the observed line does: the run is matched by its
   // command, and that directory must be the record's own (checked in e2eOutcome).
   const cd = CD_FIRST.exec(ran.trim())
-  return cd ? { ran: commandOf(ran.trim().slice(cd[0].length)).trim(), cd: String(cd[1]).replace(/\/+$/, '') } : { ran: commandOf(ran.trim()).trim() }
+  return cd ? { ran: ran.trim().slice(cd[0].length), cd: String(cd[1]).replace(/\/+$/, '') } : { ran: commandOf(ran.trim()).trim() }
 }
 
 /*
@@ -2627,7 +2629,7 @@ async function e2eOutcome($: Mod, run: E2eRun, dir: string | undefined, head: st
     return { deny: 'github: `ran` names the directory ' + run.cd + ' but the record is for ' + cwd + ': record with "ran": "' + run.ran + '" from ' + cwd + ', or name the checkout ' + run.cd + ' with "dir".' }
   }
   const moved = await headMovedAt($, inDir)
-  if (moved === undefined) return { deny: 'github: when the checkout ' + cwd + ' last moved cannot be read from its reflog: give "result" to record it as stated.' }
+  if (moved === undefined) return { deny: 'github: when the checkout ' + cwd + ' last moved cannot be read from its reflog: leave "ran" out and give "result" to record it as stated.' }
   const seen = observedRuns.filter((r) => r.alone && r.line === run.ran && r.cwd === cwd && r.at >= moved).pop()
   if (!seen) {
     if (given !== 'pass' && given !== 'fail') {
