@@ -132,7 +132,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # host chooses the model. `resolve-tier <tier>` prints the binding: `<model>` or
     # `<model>/<effort>`; a tier may be bound to {"model": "<alias>", "effort": "<level>"}.
     # The effort typed with a tier: --effort, else the map's, else the plugin's shipped one
-    # (standard high, light medium, deep xhigh), never the calling orchestrator's own.
+    # (standard high, light medium, deep medium), never the calling orchestrator's own.
     # --successor: the new session takes yours — immediately right of you, chain ignored, your chain handed to it (§34).
     #   With no --title it takes YOUR OWN name, read from the process table, so every brief
     #   that cites you still cites it; and it comes up under remote control under that name
