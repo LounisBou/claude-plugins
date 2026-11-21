@@ -218,14 +218,12 @@ Core's `pr-record.ts` declares each kind's producer, the only plugin github writ
 | norms `/norms:check` (`hooks/record.ts`, `mcp__norms__check_done`) | norms | `{open, fixed, passed}`: `pass` when `open` is 0, else `fail`, at the head. None on a dirty tree or with no PR |
 | orchestrator `mcp__orchestrator__review` | review | `verdict: pass\|fail\|accepted` from an orchestrator, `pass\|fail` from `Agent: review`, at a clean checkout's head: `accepted` sets each point aside with its reason; no `pass` over a failed review there |
 | github `mcp__github__light_ci` | tests | « Light CI » below |
-| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, run\|ran, detail?, dir?}` or `{pr, repo?, result: waived\|not-applicable, detail, dir?}`, producer `session-e2e` (below, and « Guards ») |
+| any session that runs the E2E (`mcp__github__record`, module-only) | e2e | `{pr, repo?, ran, detail?, dir?}` or `{pr, repo?, result: waived\|not-applicable, detail, dir?}`, producer `session-e2e` (below, and « Guards ») |
 
 A review record is refused from a session that pushed the head it reviews
 (`${CLAUDE_CONFIG_DIR:-~/.claude}/pushed-heads/<sha>`, read machine-wide, pruned with the records).
 
-**E2E computed from its run.** `run` (an argv, no shell) is run by the tool in the checkout at the
-head, after the head and clean checks, only when Bash would run it without asking, within 570 s,
-the head unmoved after. `ran` names a command run to its end as a foreground Bash line in that checkout (its directory, or a leading `cd <absolute path> &&`) since its `HEAD` last moved; a pipe, `;`, `&`, a newline, an unclosed quote, a `\` or a non-plain first word: kept, quoted, never matched (its exit code is the line's). Exit 0 is `pass`, else `fail`. A
+**E2E computed from its run.** `ran` names a command run to its end as a foreground Bash line in that checkout (its directory, or a leading `cd <absolute path> &&`) since its `HEAD` last moved; a pipe, `;`, `&`, a newline (but a whole line `set -o pipefail; <cmd> 2>&1 | tail -n <N>`, with no `cd` before it, observes `<cmd>`), an unclosed quote, a `\` or a non-plain first word: kept, quoted, never matched (its exit code is the line's). Exit 0 is `pass`, else `fail`. A
 `result: pass|fail` with neither, or with a `ran` not seen, is written, its detail opening `stated, not
 computed: `, and observed. `waived` and `not-applicable` take no run.
 
@@ -311,7 +309,7 @@ MultiEdit, NotebookEdit, or a shell command naming the root, `pr-records/` or `e
 goes through; a write to the exemptions or the plans is observed (`github.exemption.write`), a write to the
 records is not. Deleting in them (`rm`, `unlink`, `find -delete`, a `mv` out), or a shell status post (`…/statuses/<sha>`, `forge_status.py`), is refused: README « Observed guards ».
 
-`mcp__github__record {pr, repo?, result?, run?, ran?, detail, kind?, dir?}` writes one record
+`mcp__github__record {pr, repo?, result?, ran?, detail, kind?, dir?}` writes one record
 through `record.py` when the `HEAD` of `dir` (default: the session's directory) is the head `pr-gate`
 reads, its tracked files clean. A session writes `e2e` only. `waived` (E2E or
 norms) and `exempt` rest on his words quoted in `detail` with their date (`YYYY-MM-DD`, a time

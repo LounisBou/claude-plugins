@@ -21,7 +21,6 @@ const MOVED = 'fedcba9876543210fedcba9876543210fedcba98'
 const RECORDS = '/cfg/pr-records'
 const HEAD_DIR = RECORDS + '/acme/thing/' + HEAD
 // The E2E command a pass or a fail rests on: the world runs it with exit 0.
-const E2E_RUN = ['npm', 'run', 'e2e']
 const AUTO_MERGE = '/data/auto-merge.json'
 const AUTO_DEPLOY = '/data/auto-deploy.json'
 const EXEMPTION = '/data/e2e-exempt/acme/thing.json'
@@ -114,8 +113,6 @@ type World = {
   stacked?: boolean
   // What light_ci.py answers; with a result, it writes a tests record of that result at the head, by light-ci.
   lightCi?: { exitCode: number; stdout: string; stderr: string; result?: string }
-  // The exit code of the E2E command (E2E_RUN): 0 when not given.
-  e2eExit?: number
   // What engine/forge_status.py answers on stderr when it fails; omitted, it posts.
   forgeFails?: string
 }
@@ -332,9 +329,6 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
     }
     if (String(e.argv[1] ?? '').endsWith('/engine/forge_status.py') && w.forgeFails) {
       return { value: { exitCode: 1, stdout: '', stderr: w.forgeFails } }
-    }
-    if (e.argv.join(' ') === E2E_RUN.join(' ')) {
-      return { value: { exitCode: w.e2eExit ?? 0, stdout: '', stderr: w.e2eExit ? '2 scenarios failed\n' : '' } }
     }
     if (String(e.argv[1] ?? '').endsWith('/engine/light_ci.py')) {
       const answer = w.lightCi ?? { exitCode: 0, stdout: '', stderr: '' }
@@ -1464,11 +1458,11 @@ const recordRun = (seen: Seen) => seen.runs.find((r) => String(r.argv[1]).endsWi
 test('the model records its E2E at the pull request\'s head from a clean checkout', async ($, on) => {
   // Already Ready: the record's answer is its path alone (the gate's line has its own tests).
   const seen = await world($, on, { git: CLEAN, labels: ['Ready'] })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN, detail: 'ran the smoke suite' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', detail: 'ran the smoke suite' })
   expect(out.result).toBe(HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json')
   const argv = recordRun(seen)!
   expect(argv.slice(0, 14)).toEqual(['--repo', 'acme/thing', '--pr', '12', '--head', HEAD, '--kind', 'e2e', '--result', 'pass',
-    '--producer', 'session-e2e', '--detail', 'ran `npm run e2e` at 0123456: exit 0 in 0 s; ran the smoke suite'])
+    '--producer', 'session-e2e', '--detail', 'stated, not computed: ran the smoke suite'])
   expect(argv[15]).toContain('guard-session-')
 })
 
@@ -1483,24 +1477,16 @@ test('an E2E pass or fail with no run is written as stated and observed, never r
   expect(argv[13]).toBe('stated, not computed: campaign on the test box')
   expect(seen.journal).toEqual(['github.record.e2e-stated'])
   const none = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', detail: 'x' })
-  expect(none.deny).toContain('gives "run"')
+  expect(none.deny).toContain('gives "ran"')
 })
 
-test('a run decides the E2E result whatever the session states', async ($, on) => {
-  const seen = await world($, on, { git: CLEAN, e2eExit: 1 })
-  await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
-  const argv = recordRun(seen)!
-  expect(argv.slice(6, 12)).toEqual(['--kind', 'e2e', '--result', 'fail', '--producer', 'session-e2e'])
-  expect(argv[13]).toBe('ran `npm run e2e` at 0123456: exit 1 in 0 s (2 scenarios failed)')
-  expect(seen.journal).toEqual([])
-})
-
-test('a run Bash would ask for is not run by the record tool', async ($, on) => {
-  const seen = await world($, on, { git: CLEAN, verdict: { decision: 'ask' } })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', run: E2E_RUN })
-  expect(out.deny ?? out.result).toBeDefined()
+test('a "run" is refused: the command is run in Bash and recorded with "ran"', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: ['npm', 'run', 'e2e'] })
+  expect(out.deny).toContain('"run" no longer exists')
+  expect(out.deny).toContain('record with "ran"')
   expect(recordRun(seen)).toBeUndefined()
-  expect(seen.runs.some((r) => r.argv.join(' ') === E2E_RUN.join(' '))).toBe(false)
+  expect(seen.runs.some((r) => r.argv.join(' ') === 'npm run e2e')).toBe(false)
 })
 
 test('an E2E "ran" rests on a Bash run this session observed in the checkout since its head moved', async ($, on) => {
@@ -1516,6 +1502,49 @@ test('an E2E "ran" rests on a Bash run this session observed in the checkout sin
   expect(argv[13]).toContain('observed `npm run e2e` at 0123456, run by this session')
   const background = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e:slow' })
   expect(background.deny).toContain('a background run is not observed')
+})
+
+test('an E2E "ran" observes a whole `set -o pipefail; <cmd> 2>&1 | tail -n <N>` line as <cmd>, and only that form of pipe', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved } })
+  await $.tool.call({ tool: 'Bash', command: 'set -o pipefail; npm run e2e 2>&1 | tail -n 20' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e' })
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)![9]).toBe('pass')
+  expect(recordRun(seen)![13]).toContain('observed `npm run e2e` at 0123456, run by this session')
+  // The session may name the whole line.
+  const whole = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'set -o pipefail; npm run e2e 2>&1 | tail -n 20' })
+  expect(whole.deny).toBeUndefined()
+  // Without pipefail, or with another pipe, the exit code is not the command's.
+  await $.tool.call({ tool: 'Bash', command: 'npm run lint 2>&1 | tail -n 20' })
+  await $.tool.call({ tool: 'Bash', command: 'set -o pipefail; npm run a | grep x 2>&1 | tail -n 20' })
+  for (const ran of ['npm run lint', 'npm run a | grep x']) {
+    const refused = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran })
+    expect(refused.deny).toContain('this session ran no `' + ran + '` in /work')
+  }
+})
+
+test('an E2E "ran" of a failed pipefail line is computed as a fail', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved }, bashResult: { result: 'rejected', isError: true } })
+  await $.tool.call({ tool: 'Bash', command: 'set -o pipefail; npm run e2e 2>&1 | tail -n 20' })
+  await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', result: 'pass' })
+  expect(recordRun(seen)![9]).toBe('fail')
+  expect(recordRun(seen)![13]).toContain('observed `npm run e2e`')
+  expect(recordRun(seen)![13]).toContain('failed')
+})
+
+// `cd <dir> && set -o pipefail; <cmd> | tail` is `(cd <dir> && set -o pipefail); <cmd> | tail`: a cd that fails leaves
+// pipefail off, and the line's exit code is the tail's.
+test('an E2E "ran" of `cd <dir> && set -o pipefail; <cmd> 2>&1 | tail` is never observed as <cmd>', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved } })
+  await $.tool.call({ tool: 'Bash', command: 'cd /work && set -o pipefail; npm run e2e 2>&1 | tail -n 20' })
+  for (const ran of ['npm run e2e', 'cd /work && npm run e2e', 'cd /work && set -o pipefail; npm run e2e 2>&1 | tail -n 20']) {
+    const refused = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran })
+    expect(refused.deny).toContain('this session ran no `')
+  }
+  expect(recordRun(seen)).toBeUndefined()
 })
 
 test('an E2E "ran" not seen is written as stated under the result given, and observed, not refused', async ($, on) => {
@@ -1541,7 +1570,7 @@ test('an E2E "ran" not seen is written as a stated pass when the session says it
 test('an E2E "ran" whose checkout reflog cannot be read is refused, not stated', async ($, on) => {
   const seen = await world($, on, { git: { ...CLEAN, 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 128, stdout: '' } } })
   const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', result: 'pass' })
-  expect(out.deny).toContain('cannot be read from its reflog')
+  expect(out.deny).toContain('cannot be read from its reflog: leave "ran" out and give "result"')
   expect(recordRun(seen)).toBeUndefined()
 })
 
@@ -1740,7 +1769,7 @@ test('a push keeps its head on disk with the session that pushed it, for any lat
 
 test('a record.py that fails is an error to the caller, with its message', async ($, on) => {
   await world($, on, { git: CLEAN, recordFails: { exitCode: 2, stderr: 'error: --detail is past 500 characters\n' } })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN, detail: 'x' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', detail: 'x' })
   expect(out).toEqual({ result: 'error: --detail is past 500 characters', isError: true })
 })
 
@@ -1756,7 +1785,7 @@ test('the model may not record a review or a norms check', async ($, on) => {
 
 test('a record is refused away from the head, or on a checkout with changes', async ($, on) => {
   const seen = await world($, on, { git: { ...CLEAN, 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' } } })
-  const moved = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  const moved = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' })
   expect(moved.deny).toContain('the checkout is at fedcba9, the pull request\'s head is 0123456')
   expect(recordRun(seen)).toBeUndefined()
 })
@@ -1774,7 +1803,7 @@ const REVIEW_ORIGIN = { 'remote get-url origin': { exitCode: 0, stdout: 'git@git
 
 test('a record names the checkout the tests ran in, and is written at its head there', async ($, on) => {
   const seen = await world($, on, { git: AWAY, gitIn: { [REVIEW_DIR]: { ...CLEAN, ...REVIEW_ORIGIN } }, tree: CHECKOUTS, labels: ['Ready'] })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, result: 'pass', run: E2E_RUN, detail: 'ran', dir: REVIEW_DIR })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, result: 'pass', detail: 'ran', dir: REVIEW_DIR })
   expect(out.deny).toBeUndefined()
   expect(out.result).toBe(HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json')
   expect(recordRun(seen)!.slice(0, 6)).toEqual(['--repo', 'acme/thing', '--pr', '12', '--head', HEAD])
@@ -1782,7 +1811,7 @@ test('a record names the checkout the tests ran in, and is written at its head t
 
 test('a checkout named away from the pull request\'s head is refused, naming both shas and the checkout', async ($, on) => {
   const seen = await world($, on, { git: CLEAN, gitIn: { [REVIEW_DIR]: { ...CLEAN, 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' } } }, tree: CHECKOUTS })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN, dir: REVIEW_DIR })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: REVIEW_DIR })
   expect(out.deny).toContain('the checkout is at fedcba9, the pull request\'s head is 0123456')
   expect(out.deny).toContain(REVIEW_DIR)
   expect(recordRun(seen)).toBeUndefined()
@@ -1790,23 +1819,23 @@ test('a checkout named away from the pull request\'s head is refused, naming bot
 
 test('a checkout named with changes in its tracked files is refused, whatever the session\'s directory holds', async ($, on) => {
   const seen = await world($, on, { git: CLEAN, gitIn: { [REVIEW_DIR]: { ...CLEAN, 'status --porcelain -uno': { exitCode: 0, stdout: ' M a.ts\n' } } }, tree: CHECKOUTS })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN, dir: REVIEW_DIR })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: REVIEW_DIR })
   expect(out.deny).toContain('the tracked files have changes')
   expect(recordRun(seen)).toBeUndefined()
 })
 
 test('a checkout named by a relative path, or that is no git checkout, is refused', async ($, on) => {
   const seen = await world($, on, { git: CLEAN, gitIn: { '/nowhere': {} }, tree: CHECKOUTS })
-  const relative = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN, dir: 'review/thing' })
+  const relative = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: 'review/thing' })
   expect(relative.deny).toContain('dir is the absolute path of the checkout the tests ran in')
-  const none = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN, dir: '/nowhere' })
+  const none = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/nowhere' })
   expect(none.deny).toContain('/nowhere has no commit to read')
   expect(recordRun(seen)).toBeUndefined()
 })
 
 test('a checkout named that is no directory is refused, naming it, before any git runs there', async ($, on) => {
   const seen = await world($, on, { git: CLEAN })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN, dir: '/gone/away' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/gone/away' })
   expect(out.deny).toContain('/gone/away is not a directory')
   expect(seen.runs.filter((r) => r.argv[0] === 'git')).toEqual([])
   expect(recordRun(seen)).toBeUndefined()
@@ -1814,14 +1843,14 @@ test('a checkout named that is no directory is refused, naming it, before any gi
 
 test('a checkout named that is a file, or whose stat fails for another reason, is refused with its own cause', async ($, on) => {
   const seen = await world($, on, { git: CLEAN, tree: { '/work/file.txt': { kind: 'file', mtimeMs: 1 } } })
-  const file = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN, dir: '/work/file.txt' })
+  const file = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/work/file.txt' })
   expect(file.deny).toContain('/work/file.txt is not a directory')
   expect(seen.runs.filter((r) => r.argv[0] === 'git')).toEqual([])
 })
 
 test('a stat that fails but for a missing path is reported as it failed', async ($, on) => {
   const seen = await world($, on, { git: CLEAN, statFails: 'EACCES: permission denied' })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN, dir: '/locked' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', dir: '/locked' })
   expect(out.deny).toContain('cannot stat dir /locked: ')
   expect(out.deny).toContain('EACCES')
   expect(out.deny).not.toContain('is not a directory')
@@ -1830,7 +1859,7 @@ test('a stat that fails but for a missing path is reported as it failed', async 
 
 test('a checkout named with no GitHub origin, and no repository given, is refused with that cause', async ($, on) => {
   const seen = await world($, on, { git: CLEAN, gitIn: { [REVIEW_DIR]: { ...CLEAN, 'remote get-url origin': { exitCode: 0, stdout: '/srv/local/thing.git\n' } } }, tree: CHECKOUTS })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, result: 'pass', run: E2E_RUN, dir: REVIEW_DIR })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, result: 'pass', dir: REVIEW_DIR })
   expect(out.deny).toContain(REVIEW_DIR + ' has no GitHub origin remote')
   expect(out.deny).toContain('{"repo": "owner/name"}')
   expect(recordRun(seen)).toBeUndefined()
@@ -1838,13 +1867,13 @@ test('a checkout named with no GitHub origin, and no repository given, is refuse
 
 test('a head refusal names the repository and the pull request it compared', async ($, on) => {
   await world($, on, { git: { ...CLEAN, 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' } } })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' })
   expect(out.deny).toContain('the pull request\'s head is 0123456 (acme/thing#12)')
 })
 
 test('a git status that fails is reported with its error, not as changed files', async ($, on) => {
   const seen = await world($, on, { git: { ...CLEAN, 'status --porcelain -uno': { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository\n' } } })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' })
   expect(out.deny).toContain('git status failed: fatal: not a git repository')
   expect(out.deny).not.toContain('have changes')
   expect(recordRun(seen)).toBeUndefined()
@@ -1852,13 +1881,13 @@ test('a git status that fails is reported with its error, not as changed files',
 
 test('the permission check receives the checkout the record names', async ($, on) => {
   const seen = await world($, on, { git: AWAY, gitIn: { [REVIEW_DIR]: { ...CLEAN, ...REVIEW_ORIGIN } }, tree: CHECKOUTS, labels: ['Ready'] })
-  await $.tool.call({ tool: 'mcp__github__record', pr: 12, result: 'pass', run: E2E_RUN, detail: 'ran', dir: REVIEW_DIR })
+  await $.tool.call({ tool: 'mcp__github__record', pr: 12, result: 'pass', detail: 'ran', dir: REVIEW_DIR })
   expect(seen.checks.map((c) => fieldsOf(c)?.['dir'])).toContain(REVIEW_DIR)
 })
 
 test('a record is refused on a checkout whose tracked files changed', async ($, on) => {
   const seen = await world($, on, { git: { ...CLEAN, 'status --porcelain -uno': { exitCode: 0, stdout: ' M a.ts\n' } } })
-  const dirty = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  const dirty = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' })
   expect(dirty.deny).toContain('the tracked files have changes')
   expect(recordRun(seen)).toBeUndefined()
 })
@@ -2278,7 +2307,7 @@ test('a merge outside auto-merge is still asked', async ($, on) => {
 // ---- the gate puts Ready ----
 
 const readinessRuns = (seen: Seen) => seen.runs.filter((r) => r.command === 'pr-readiness').map((r) => [r.repo, r.args])
-const e2eCall = { tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN, detail: 'ran the smoke suite' }
+const e2eCall = { tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', detail: 'ran the smoke suite' }
 const WRITTEN = HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json'
 
 test('a record that completes the four puts Ready, with one line', async ($, on) => {
@@ -2298,7 +2327,7 @@ test('a record written where CI is red puts no Ready, and says what is missing',
 
 test('a record that leaves a Ready pull request short of the four puts Not Ready back', async ($, on) => {
   const records = Object.fromEntries([record('review', 'pass'), record('norms', 'pass'), record('e2e', 'fail')])
-  const seen = await world($, on, { git: CLEAN, labels: ['Ready'], records, e2eExit: 1 })
+  const seen = await world($, on, { git: CLEAN, labels: ['Ready'], records })
   const out = await $.tool.call({ ...e2eCall, result: 'fail' })
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'not-ready' }]])
   expect(out.result).toContain('github: acme/thing#12 back to Not Ready at 0123456. Missing: e2e: fail at 0123456 by session-e2e')
@@ -4223,7 +4252,7 @@ test('a record the tool writes is posted to the forge at its head at once', asyn
   const written = HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json'
   const [, text] = record('e2e', 'pass', '2026-11-02T10:00:00Z', { producer: 'session-e2e' })
   const seen = await world($, on, { git: CLEAN, labels: ['Ready'], tree: { [written]: { kind: 'file', mtimeMs: 1, text } } })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' })
   expect(out.result).toBe(written)
   const posts = forgeRun(seen)
   expect(posts).toHaveLength(1)
@@ -4233,10 +4262,9 @@ test('a record the tool writes is posted to the forge at its head at once', asyn
 
 test('a record whose status the forge refuses is not written, and the answer names the refusal', async ($, on) => {
   const seen = await world($, on, { git: CLEAN, forgeFails: 'error: cannot post readiness/e2e at 0123456: HTTP 403: Resource not accessible by integration' })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' })
   expect(out.isError).toBe(true)
-  // The run's outcome stays in the answer: it is not run again only to learn it.
-  expect(out.result).toMatch(new RegExp('^github: the e2e record of acme/thing#12 \\(pass: ran `npm run e2e` at 0123456: exit 0 in \\d+ s\\) is not written: '
+  expect(out.result).toMatch(new RegExp('^github: the e2e record of acme/thing#12 \\(pass: stated, not computed: \\) is not written: '
     + 'the forge refused its status \\(error: cannot post readiness/e2e at 0123456: HTTP 403: Resource not accessible by integration\\)\\. Record it again once the forge takes it\\.$'))
   expect(seen.runs.filter((r) => String(r.argv[1]).endsWith('/engine/record.py')).map((r) => r.argv.includes('--status'))).toEqual([true])
   expect(readinessRuns(seen)).toEqual([])
@@ -4244,7 +4272,7 @@ test('a record whose status the forge refuses is not written, and the answer nam
 
 test('a record\'s status reaches the forge before the record is written, at the instant the status gives', async ($, on) => {
   const seen = await world($, on, { git: CLEAN })
-  await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' })
   const steps = seen.runs.filter((r) => /\/engine\/(record|forge_status)\.py$/.test(String(r.argv[1]))).map((r) => {
     const argv = r.argv.map(String)
     if (argv[1]?.endsWith('/forge_status.py')) return 'post ' + flagOf(argv, '--what')
@@ -4255,7 +4283,7 @@ test('a record\'s status reaches the forge before the record is written, at the 
 
 test('a record whose status record.py does not give is not posted nor written, and the answer says what it gave', async ($, on) => {
   const seen = await world($, on, { git: CLEAN, recordStatus: '{"what": "e2e", "state": "success"}\n' })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' })
   expect(out).toEqual({ result: 'github: record.py --status gave no status to post: {"what": "e2e", "state": "success"}', isError: true })
   expect(forgeRun(seen)).toEqual([])
   expect(seen.runs.filter((r) => String(r.argv[1]).endsWith('/engine/record.py')).map((r) => r.argv.includes('--status'))).toEqual([true])
@@ -4263,7 +4291,7 @@ test('a record whose status record.py does not give is not posted nor written, a
 
 test('a record whose write fails once its status is posted is an error that says the status is on the forge', async ($, on) => {
   const seen = await world($, on, { git: CLEAN, recordWriteFails: { exitCode: 1, stderr: 'error: cannot write the record: disk full\n' } })
-  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass' })
   expect(out).toEqual({ result: 'error: cannot write the record: disk full (its status is on the forge: the reconciler copies it here)', isError: true })
   expect(forgeRun(seen)).toHaveLength(1)
   expect(readinessRuns(seen)).toEqual([])
