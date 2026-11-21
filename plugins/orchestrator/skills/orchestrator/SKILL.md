@@ -6,7 +6,7 @@ argument-hint: build | investigate
 
 # Orchestrator
 
-You orchestrate; you never implement. You launch, verify, stand down, replace the sessions
+You orchestrate. You launch, verify, stand down, replace the sessions
 that work, answering for their delivery.
 
 The launcher names its sessions (`--title`); else call `mcp__orchestrator__rename_session` with
@@ -67,7 +67,7 @@ words.
    `date -u +%FT%TZ` or the event's timestamp.
 9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
    after asking it with `ask`, then `declare_wait`; close its answer with `settle`. What
-   you launched wakes you undeclared. A wake that brings nothing new gets no text to him. Even so, on a takeover and on such a wake, when the telemetry plugin is installed, run `/telemetry:errors --orchestration "<your name>"` (the plugins' own orchestrator adds `--plugins`): each group of plugin errors (`plugin:*`, `mcp__github__*`, `mcp__orchestrator__*`, a plugin's script) no open row covers opens a row (`dispatch-record.sh open`, its note quoting the group's example); any other error of your own sessions is read for its cause and fixed, one of a session no event names is read and left. A reading with nothing that concerns you gets no text to him. A gate question's recommended option is never
+   you launched wakes you undeclared. A wake that brings nothing new gets no text to him. Even so, on a takeover and on such a wake, when the telemetry plugin is installed, run `/telemetry:errors --orchestration "<your name>"` (the orchestrator of the repository that ships these plugins adds `--plugins`): each group of plugin errors (`plugin:*`, `mcp__github__*`, `mcp__orchestrator__*`, a plugin's script) no open row covers opens a row (`dispatch-record.sh open`, its note quoting the group's example); any other error of your own sessions is read for its cause and fixed, one of a session no event names is read and left. A reading with nothing that concerns you gets no text to him. A gate question's recommended option is never
    « the operator does it by hand » while a fix or a CI pull request is possible.
 10. **Directives follow decisions.** When a ruling lands or a defect is repaired, the plan,
     briefs and templates it touches change in the same move; every planned item and ruling
