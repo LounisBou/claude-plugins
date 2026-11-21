@@ -179,7 +179,7 @@ const buildRulesOf = (mode: string): string => mode === 'investigate' ? '' : [
 /** The delivery lines of a build brief: the push, the draft pull request and the turn's last line. An investigate brief carries none. */
 const deliveryOf = (mode: string, branch: string, base: string, report: string): string => mode === 'investigate' ? '' : [
   `- Push with one bare command, \`git push -u origin ${branch}\`.`,
-  `- Draft pull request on \`${base}\`, opened with the github tool's \`pr-create --draft\`, never \`Ready\`: that is the github ready gate's; its title and description follow the rules that tool shows; Figures once, on the final head. You never watch its checks.`,
+  `- Draft pull request on \`${base}\`, opened with the github tool's \`pr-create --draft\`, never \`Ready\`: that is the github ready gate's; its title and description follow the rules that tool shows. Figures once, on the final head. You never watch its checks.`,
   `- Your turn ends on \`<repo>#<pr> <head7> — <verdict> — blocking: <file:line, …|none> — report: ${report}\`, then the status line. You may be closed when your pull request is Ready: the orchestrator resumes you or starts a fresh agent for later work.`,
 ].join('\n')
 

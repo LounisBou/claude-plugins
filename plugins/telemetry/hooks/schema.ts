@@ -176,6 +176,20 @@ export const EVENT_SCHEMA = {
       field('title', 'string', 'Session: the closed session\'s title.'),
     ],
   },
+  self_review: {
+    summary: 'No longer written; kept so stored events stay valid. The outcome of one finding of an implementer\'s self-review: fixed, or answered with its reason.',
+    writers: ['none: the tool that wrote it is removed'],
+    fields: [
+      field('lens', 'string', 'The reader\'s lens that reported it.'),
+      field('file', 'string', 'The file it names.'),
+      field('line', 'number', 'The line it names.'),
+      field('finding_id', 'string', 'The finding\'s id, `<lens>:<hash>`.'),
+      field('severity', 'string', '`critical`, `important` or `minor`.'),
+      field('outcome', 'string', '`fixed` or `answered`.'),
+      field('reason', 'string', 'Answered: why it stays, redacted and cut to 80 characters.'),
+      field('target', 'object', 'The pull request: `repo`, `pr`, each present when the call names it.'),
+    ],
+  },
   escape: {
     summary: 'A candidate escaped defect: a fix whose subject or text names pull requests; whether a name was merged is its reader\'s join. The orchestrator\'s own record of one is the `dispatch` event of `sub` `escaped`.',
     writers: ['tool `mcp__github__gh` `pr-create` with a `fix` title (source `pull_request`)', 'a Bash `gh pr create --title fix…` (source `pull_request`) or `git commit -m fix…` (source `commit`) that succeeded'],
