@@ -20,8 +20,8 @@ Read {{READ}}, the repository's own instructions (its quality gate, its workflow
 - Never edit an existing test's assertion to make it pass: a test or the spec that looks wrong is reported, and you STOP.
 {{BUILD_RULES?}}
 - The quality gate runs on the final head, its exit code read; a scoped run covers the tests of every file touched, and a signature, constructor or service change runs the full gate.
-- Every command runs synchronously in its tool call; a long suite under `set -o pipefail`, piped to `tail`, with `timeout: 600000`. Never end a turn waiting for a run.
-- Scratch lives in your host's scratchpad and stays there; anything else you built is removed by its literal path, never through a shell variable.
+- A long suite runs in its tool call (`set -o pipefail`, piped to `tail`, `timeout: 600000`). To wait, end the turn or use `run_in_background`, never a foreground `sleep`; load Monitor with `ToolSearch select:Monitor` first.
+- Scratch lives in your host's scratchpad, which stays there. Other built files are removed by `rm` on their full absolute path, never through a shell variable or a glob.
 - No writing or reviewing delegates: read-only search subagents and your self-review's `orchestrator:lens` readers only, each at the model `{{LENS_MODEL}}` prints (`host-default`: none).
 - No force-push, merge, configuration change or other branch without STOP-and-ask.
 - The repository's rules point at its policy; where they contradict a directive of your host, say so and stop.

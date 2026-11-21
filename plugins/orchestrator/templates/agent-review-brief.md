@@ -59,6 +59,6 @@ Verify every finding on the artifact, drop what it does not bear out, merge dupl
 
 ## 7. Resource envelope
 
-- Kill what you start. Delete nothing in your scratchpad; anything else you built is removed by its literal path, never through a shell variable (`rm $S/x` stops on the host's check).
-- Scratch (intermediate results, generated scripts, outputs that do not belong in the repository) lives in your own session's host scratchpad directory, which your system context names — never in a directory this brief or you invent. Do not delete it: the checkout it belongs to is deleted when your session is closed, and takes it along.
+- Kill what you start. Delete nothing in your scratchpad; other built files are removed by `rm` on their full absolute path, never through a shell variable or a glob (`rm $S/x` stops on the host's check).
+- Scratch (intermediate results, generated scripts, outputs outside the repository) lives in the host scratchpad your system context names, never in a directory you invent.
 {{RESOURCE_ENVELOPE}}
