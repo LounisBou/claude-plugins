@@ -655,7 +655,8 @@ test('a deferred wait is refused while a row is ready, by the record\'s own read
   files.set(RECORD, readyRecord([ROW(6, 'SIX: nobody on it')]))
   const refused = await declaring(new Declarations())(dollar, { kind: 'deferred', blocks: '1 items' })
   expect(refused.isError).toBe(true)
-  expect(refused.result).toContain('6')
+  expect(refused.result).toContain('Not done: row 6 (SIX: nobody on it) is open')
+  expect(refused.result).not.toContain('operator wait parks work')
 })
 
 test('parseDeclaration takes the pull requests waiting on his merge beside a question already asked: the question\'s wait is the one it was', () => {
