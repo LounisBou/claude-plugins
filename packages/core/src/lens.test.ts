@@ -71,6 +71,44 @@ describe('lens readers', () => {
     assert.deepEqual(parseLensFindings('[important] src/a.ts:12 — a | b — c').map(f => f.claim), ['a | b'])
   })
 
+  it('a line whose severity comes last is a finding of that severity, its claim the fields between the location and the severity', () => {
+    // The hand-backs of the claude-plugins#589 review's readers, asked for `<file>:<line> — <title> — <evidence> — <severity>`.
+    const real = [
+      'register.test.ts:1773 — "No re-run" and "retarget before gate" are not asserted — `walked` keeps only merges and `pr-update`, so the order is never read. Assert the `pr-gate` runs in the sequence too. — important',
+      '',
+      'register.test.ts:1742 — Existing assertions: none changed. The `stubMod` signature changes only add optional parameters with defaults equal to the old behaviour. No finding under review-verdict check 13. — minor',
+      'plugins/github/engine/ghlib/stack.py:285 (order/_workflow_texts) — the workflow files are read at the bottom\'s base ref — A pull_request workflow runs from the merge ref of the PR. It is a heuristic and the fallback is bottom-up. — minor',
+      'plugins/github/engine/ghlib/stack.py:93-111 (members, up traversal) — traversal starts only at the named PR — nothing warns the caller. — minor',
+      'plugins/github/hooks/register.ts:2202 — The retarget (`runGh pr-update base`) ignores an `ask` rule on pr-update — The pre-pass at lines 2187-2190 only stops on `deny`. — important',
+    ].join('\n')
+    assert.deepEqual(parseLensFindings(real).map(f => [f.severity, f.file, f.line]), [
+      ['important', 'register.test.ts', 1773],
+      ['minor', 'register.test.ts', 1742],
+      ['minor', 'plugins/github/engine/ghlib/stack.py', 285],
+      ['minor', 'plugins/github/engine/ghlib/stack.py', 93],
+      ['important', 'plugins/github/hooks/register.ts', 2202],
+    ])
+    assert.equal(parseLensFindings(real)[3]?.claim, 'traversal starts only at the named PR — nothing warns the caller.')
+    assert.equal(parseLensFindings(real)[0]?.claim.endsWith('Assert the `pr-gate` runs in the sequence too.'), true)
+    assert.deepEqual(findingCounts(parseLensFindings(real)), { critical: 0, important: 2, minor: 3 })
+    // The severity is the last field alone, in any case, with brackets, backticks or bold; a bullet and a file in backticks as elsewhere.
+    assert.deepEqual(parseLensFindings('- `src/a.ts:12` — the claim — the evidence — [Critical]\nsrc/b.ts:3 — c — e — **IMPORTANT**\nsrc/c.ts:4 — c — e — `minor`').map(f => [f.severity, f.file, f.line, f.claim]), [
+      ['critical', 'src/a.ts', 12, 'the claim — the evidence'],
+      ['important', 'src/b.ts', 3, 'c — e'],
+      ['minor', 'src/c.ts', 4, 'c — e'],
+    ])
+    // A line that ends in one of the words without a location at its start is no finding, nor is one whose last field says more than the word.
+    assert.deepEqual(parseLensFindings('The review is done, nothing — minor\nSee the notes — important\nThe risk is critical\nsrc/a.ts:12 — the claim — a minor one\nsrc/a.ts:12 — the claim — minor issue\nsrc/a.ts:12 — minor').length, 0)
+    // The leading shape keeps its reading, its claim and so its id, even when its evidence ends in a severity.
+    const lead = parseLensFindings('[important] src/a.ts:12 — the lock is released — the impact is minor')
+    assert.deepEqual(lead.map(f => [f.severity, f.claim]), [['important', 'the lock is released']])
+    // A trailing line gets its id once, and the ids read back from the marked answer are the same.
+    const marked = withFindingIds(real, 'tests')
+    assert.equal(withFindingIds(marked, 'tests'), marked)
+    assert.deepEqual(parseLensFindings(marked), parseLensFindings(real))
+    assert.equal(marked.split('\n')[0]?.endsWith(` — id ${findingId('tests', 'register.test.ts', 1773, parseLensFindings(real)[0]?.claim ?? '')}`), true)
+  })
+
   it('a finding id is stable over lens, file, line and claim (case and spacing of the claim aside), and names its lens', () => {
     const id = findingId('correctness', 'src/a.ts', 12, 'the lock is released before the write')
     assert.match(id, /^correctness:[0-9a-f]{10}$/)
