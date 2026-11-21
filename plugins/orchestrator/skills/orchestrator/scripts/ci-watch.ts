@@ -3,7 +3,7 @@
 // launcher every caller runs.
 //
 // No temporary file: what a failed `gh` said is read from its stderr in memory.
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setting, type Env } from '../../../core/paths.ts'
@@ -14,7 +14,7 @@ import { gateArgv, parseGate, type GateCheck, type GateCi } from '../../../core/
 import { FORGE } from '../../../core/forge-status.ts'
 import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
 import { CI_GATE_DIR, ciGatePath, CI_WATCH_DIR, ciWatchLogPath } from '../../../core/orchestration.ts'
-import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
+import { isEntry, openLog, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import { auditRun, fullHead, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 
 export { parseGate, type GateCheck, type GateCi }
@@ -275,7 +275,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     }
     if (!append) {
       try {
-        writeFileSync(log, '')
+        closeSync(openLog(log, false))
       } catch {
         // As the watch's own log: a write that fails stops no watch.
       }
@@ -317,7 +317,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     ensureLogDir()
     log = logPath(options, true)
     try {
-      writeFileSync(log, '')
+      closeSync(openLog(log, false))
     } catch {
       // As `: > "$log"`: the watches below append, or fail, on their own.
     }

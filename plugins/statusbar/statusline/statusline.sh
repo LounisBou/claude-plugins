@@ -463,9 +463,10 @@ fi
 
 # The quota is the account's, not the session's: any session of it shows the same figures, and only
 # the payloads carry them. So each payload with `rate_limits` writes them to
-# `<orchestrator data root>/quota/<account>.json` (core's quota.ts, quota.json here), where the
-# coordinator reads each plan's room. Nothing is written without the orchestrator's state directory
-# and its data root: a machine with the status line alone keeps nothing. A window already reset is no reading. The
+# `<orchestrator state>/quota/<account>.json` (core's quota.ts, quota.json here), where the
+# coordinator reads each plan's room, and the launcher the configuration directory a spawn runs on:
+# the protected root, which no session writes, never the data root. Nothing is written without the
+# orchestrator's state directory: a machine with the status line alone keeps nothing. A window already reset is no reading. The
 # account is `oauthAccount.accountUuid` of the host's `.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json`,
 # else `~/.claude.json`), a file of megabytes: it is read once per refresh, and a marker beside the
 # quota files (`.config-<directory>`: account, when it was read, when the file was written, figures)
@@ -485,8 +486,6 @@ keep_quota() {
     '"\(.dir) \(.file_version) \(.refresh_seconds) \($o[0].measure.module_dir)"' "$here/../core/quota.json" 2>/dev/null)"
   is_number "$refresh" && is_number "$version" || return 0
   state=${ORCHESTRATOR_STATE_DIR:-$config/$state}
-  [ -d "$state" ] || return 0
-  state=$(data_root "$state")
   [ -d "$state" ] || return 0
   qdir="$state/$dir"
   marker="$qdir/.config-${config//[!A-Za-z0-9._-]/_}"

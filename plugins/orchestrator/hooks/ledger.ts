@@ -192,7 +192,7 @@ export function register(on: On<Held>, now: () => Date = () => new Date(), bound
 }
 
 // The row an agent's launch brief was printed for and that brief's directory; undefined when it names none.
-async function briefRowOf($: Held, agent: string): Promise<{ row: number; dir: string } | undefined> {
+export async function briefRowOf($: Held, agent: string): Promise<{ row: number; dir: string } | undefined> {
   const dir = `${await stateDir($)}/prompts`
   const launch = newestLaunch((await $.fs.list(dir).catch((): FsEntry[] => [])).map(entry => entry.name), agent)
   const brief = launch === undefined ? undefined : briefOfLaunch(await readOr($, `${dir}/${launch}`))

@@ -1,10 +1,10 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { fdWriter, isEntry, resolvedPath, run } from './process.ts'
+import { fdWriter, isEntry, openLog, resolvedPath, run } from './process.ts'
 
 const node = process.execPath
 
@@ -111,4 +111,27 @@ test('resolvedPath keeps a path that does not exist, and such a path is no entry
   const missing = join(tmpdir(), 'entry-missing', 'script.ts')
   assert.equal(resolvedPath(missing), missing)
   assert.equal(isEntry(pathToFileURL(join(tmpdir(), 'entry-missing', 'other.ts')).href, missing), false)
+})
+
+test('openLog refuses a link at the log\'s name or for its directory, and leaves what the link points at as it was', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'process-'))
+  try {
+    const target = join(dir, 'target')
+    writeFileSync(target, 'protected\n')
+    mkdirSync(join(dir, 'logs'))
+    symlinkSync(target, join(dir, 'logs', 'a.log'))
+    assert.throws(() => openLog(join(dir, 'logs', 'a.log'), true), { code: 'ELOOP' })
+    assert.throws(() => openLog(join(dir, 'logs', 'a.log'), false), { code: 'ELOOP' })
+    mkdirSync(join(dir, 'real'))
+    symlinkSync(join(dir, 'real'), join(dir, 'linked'))
+    assert.throws(() => openLog(join(dir, 'linked', 'b.log'), true), /is a link/)
+    assert.equal(readFileSync(target, 'utf8'), 'protected\n')
+    // A plain name opens, appends and truncates.
+    closeSync(openLog(join(dir, 'logs', 'c.log'), true))
+    writeFileSync(join(dir, 'logs', 'c.log'), 'old\n')
+    closeSync(openLog(join(dir, 'logs', 'c.log'), false))
+    assert.equal(readFileSync(join(dir, 'logs', 'c.log'), 'utf8'), '')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

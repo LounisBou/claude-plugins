@@ -339,7 +339,7 @@ check "the warning keeps its mark with the tokens" "$CTX_ONLY" \
 if [ -n "$saved_config_dir" ]; then export CLAUDE_CONFIG_DIR="$saved_config_dir"; else unset CLAUDE_CONFIG_DIR; fi
 
 # The orchestrator's data root: its state directory's data-root file (core's roots.json names it)
-# places the data elsewhere, and the bar reads the measure, the deck and the quota there.
+# places the data elsewhere, and the bar reads the measure and the deck there, and keeps the quota on the state directory.
 DR_CONFIG="$WORK/dr-config"; DR_DATA="$WORK/dr-data"
 mkdir -p "$DR_CONFIG/claude-orchestrator/measure" "$DR_DATA/measure"
 printf '{"version":1,"dir":"%s/"}\n' "$DR_DATA" > "$DR_CONFIG/claude-orchestrator/data-root.json"
@@ -731,8 +731,8 @@ qk_check "no temporary file is left in the quota directory" "" "$(ls -A "$QK_STA
 QK_SPLIT="$WORK/qk-split"; mkdir -p "$QK_SPLIT" "$WORK/qk-split-data"
 printf '{"version":1,"dir":"%s"}\n' "$WORK/qk-split-data" > "$QK_SPLIT/data-root.json"
 qk_run "$QK_BOTH" "$QK_SPLIT" "$QK_CONFIG_ONE" >/dev/null
-qk_check "the quota file is written under the data root, nothing under the state directory" "$QK_ONE ok" \
-  "$(jq -r '.account' "$WORK/qk-split-data/quota/$QK_ONE.json" 2>&1) $([ -e "$QK_SPLIT/quota" ] && echo kept || echo ok)"
+qk_check "the quota file stays under the state directory, nothing under the data root: it picks a spawn's configuration" "$QK_ONE ok" \
+  "$(jq -r '.account' "$QK_SPLIT/quota/$QK_ONE.json" 2>&1) $([ -e "$WORK/qk-split-data/quota" ] && echo planted || echo ok)"
 
 # Unchanged figures write nothing: the file is told apart by a sentinel the second run must leave.
 printf 'sentinel\n' > "$QK_FILE"

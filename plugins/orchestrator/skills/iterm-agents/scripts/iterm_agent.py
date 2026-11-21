@@ -21,6 +21,7 @@ import asyncio
 import collections
 import contextlib
 import datetime
+import errno
 import glob
 import io
 import json
@@ -65,7 +66,7 @@ STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
 # The data root (core's orchestration.ts, read here as the generated `roots.json`). What runs or
 # is trusted stays on STATE_DIR, the protected root: the venv, the launch files under prompts/,
 # the server catalogue, the tier map, the coordinator's and the sleepers' records. What any
-# session writes (the chains, the auditors' records, the logs, the quota readings) is under
+# session writes (the chains, the auditors' records, the logs) is under
 # DATA_DIR, the directory the protected root's data-root file names. Nothing read from DATA_DIR
 # decides what runs.
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "core", "roots.json"),
@@ -96,6 +97,23 @@ def data_root_of(root):
 
 
 DATA_DIR = data_root_of(STATE_DIR)
+
+
+def open_data_file(path, flags, mode=0o600):
+    """A file of the data root opened by `os.open`, refusing a link. A session may plant a
+    symlink in a directory any session writes; a write through it would truncate or append to
+    the file it points at, a protected one included. The last component is opened with
+    O_NOFOLLOW, and no directory between the data root and the file may be a link (the data
+    root itself may be one: the operator names it). Raises OSError (ELOOP) on a link."""
+    below = os.path.relpath(os.path.dirname(path), DATA_DIR)
+    walked = DATA_DIR
+    for part in [] if below == "." else below.split(os.sep):
+        walked = os.path.join(walked, part)
+        if os.path.islink(walked):
+            raise OSError(errno.ELOOP, "a link in the data root, refused", walked)
+    return os.open(path, flags | os.O_NOFOLLOW | os.O_CLOEXEC, mode)
+
+
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
 CHAINS_DIR = os.path.join(DATA_DIR, "chains")
 AUDITORS_DIR = os.path.join(DATA_DIR, "auditors")
@@ -1302,7 +1320,8 @@ def close_log(what, line, echo=True):
         print("%s: %s" % (what, line), file=sys.stderr)
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
-        with open(os.path.join(DATA_DIR, "close.log"), "a") as fh:
+        fd = open_data_file(os.path.join(DATA_DIR, "close.log"), os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+        with os.fdopen(fd, "a") as fh:
             fh.write("%s %s: %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                       what, line))
     except OSError:
@@ -3643,7 +3662,7 @@ def kill_watched_home(socket):
     next real end is not silent. True when tmux ended it."""
     try:
         os.makedirs(os.path.dirname(home_end_marker(socket)), exist_ok=True)
-        open(home_end_marker(socket), "w").close()
+        os.close(open_data_file(home_end_marker(socket), os.O_WRONLY | os.O_CREAT))
     except OSError:
         pass
     ended = kill_home(socket)
@@ -4271,12 +4290,12 @@ def cmd_home(args):
     release = ("pane=$(tty); %s home-release --tty %s --session-id %s --pane-tty \"$pane\" "
                "--resumed %s >> %s 2>&1 & watcher=$!; "
                % (shq(LAUNCHER_SH), shq(own), shq(old_id), shq(args.session),
-                  shq(os.path.join(DATA_DIR, "home-release.log")))) if old_id else ""
+                  shq(os.path.join(STATE_DIR, "home-release.log")))) if old_id else ""
     # The old session did not end in its wait: the launcher closes this server and its tab, so
     # no empty tab is left, and the hooks module of the old session says so there.
     abandon = ("%s home-release --abandon %s >> %s 2>&1 || echo 'the home server could not be "
                "closed: close this tab by hand'; "
-               % (shq(LAUNCHER_SH), shq(socket), shq(os.path.join(DATA_DIR, "home-release.log"))))
+               % (shq(LAUNCHER_SH), shq(socket), shq(os.path.join(STATE_DIR, "home-release.log"))))
     launch = ("cd %s && i=0 && while kill -0 %s 2>/dev/null; do "
               "if [ $i -ge %d ]; then echo 'the session did not end in its old place: it "
               "goes on there'; %ssleep 10; exit 1; fi; sleep 0.2; i=$((i+1)); done; "
@@ -4965,13 +4984,13 @@ def quota_window(value):
 
 
 def quota_room(now=None):
-    """`{plan: percent left}` of each plan whose quota file under `<data>/quota/` is a fresh
+    """`{plan: percent left}` of each plan whose quota file under `<state>/quota/` is a fresh
     reading: the room of a plan is what its fuller window leaves. A file core's parseQuota
     refuses (another version, a missing field, a window that is no window, no window at all), a
     stale one and an account of no known plan are skipped; the newest reading of a plan counts."""
     now = time.time() if now is None else now
     newest = {}
-    directory = os.path.join(DATA_DIR, "quota")
+    directory = os.path.join(STATE_DIR, "quota")
     try:
         names = sorted(os.listdir(directory))
     except OSError:

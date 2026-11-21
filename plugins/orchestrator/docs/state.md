@@ -5,15 +5,15 @@ roots (core's `orchestration.ts` and `roots.ts`):
 
 - **protected**: `<config dir>/claude-orchestrator/`, or `ORCHESTRATOR_STATE_DIR`. What runs or is
   trusted: `venv/`, the launch files under `prompts/`, `mcp.json`, `models.json`, `routing/`,
-  `config.json`, the status line tap's files, `sleeping.json`, `coordinator.json` and its lock, and
+  `config.json`, `quota/` (a reading picks the configuration directory a `--plan auto` spawn runs on), `home-release.log` (the launch script's shell appends to it), the status line tap's files, `sleeping.json`, `coordinator.json` and its lock, and
   `data-root.json`;
 - **data**: the directory the protected root's `data-root.json` names (`{"version": 1, "dir":
   "<absolute path>"}`), else the protected root. What any session writes. Nothing read there decides
   what runs. Every item not named protected above is data, the table's and these: the briefs and
   dispatch records, `records/`, `todo/`, `coordinator/` and `coordinator-check.json`, `round/`,
-  `round-woken.json`, `round-listed.json`, `chains/`, `auditors/`, `quota/`, `ci-watch/`, `ci-gate/`,
+  `round-woken.json`, `round-listed.json`, `chains/`, `auditors/`, `ci-watch/`, `ci-gate/`,
   `draft-guard/`, `stop-gate/`, `prs.json`, `prs.log`, `prs.wanted`, `sweep.stamp`, `deck.json`,
-  `pane.json`, `pane-open-*`, `close.log`, `home-ended/`, `home-release.log`, `audits/`, `builds/`,
+  `pane.json`, `pane-open-*`, `close.log`, `home-ended/`, `audits/`, `builds/`,
   `records-build/`, `methods/`;
 - **module**: the hooks module's own files, `ORCHESTRATOR_MODULE_DIR`, else the data root of
   `<config dir>/claude-orchestrator/`.
@@ -43,8 +43,9 @@ Python launcher.
 | `sleeping.json`, `coordinator.json` | protected | the coordinator's scripts | under the coordinator's lock |
 | dispatch records, `records/<session>` | data | `dispatch-record.ts` | under core's lock |
 | `measure/<id>.json` | module | the session's own gauge | one writer, replaced whole in one rename, removed (never emptied) at compaction, kept at session end and pruned by `install.sh` past 90 days; read as unmeasured when empty or partial |
-| module log | module | every process | appends |
-| `close.log`, `home-release.log` | data | the launcher | appends |
+| module log | module | every process | appends, refusing a link |
+| `close.log` | data | the launcher | appends, refusing a link |
+| `home-release.log` | protected | the launch script of a home move | appends |
 
 A writer in another language reads the convention as data, `core/store.json` (the launcher,
 `iterm_agent.py`, `path_lock`).

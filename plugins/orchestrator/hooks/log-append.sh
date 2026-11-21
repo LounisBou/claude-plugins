@@ -11,6 +11,10 @@ log=$1
 line=$2
 cap=${3:-2097152}
 mkdir -p "${log%/*}" 2>/dev/null
+# The log lies in a directory any session may write: a link planted at its name, at its
+# previous generation's or at its lock's, would have this process truncate or append to what it
+# points at. Nothing is written through one.
+[ -L "$log" ] || [ -L "$log.1" ] || [ -L "$log.lock" ] && exit 0
 size() { if [ -f "$log" ]; then echo $(( $(wc -c < "$log") )); else echo 0; fi; }
 if [ "$(size)" -gt "$cap" ]; then
     # A lock its holder died with is older than a minute: it is taken back.

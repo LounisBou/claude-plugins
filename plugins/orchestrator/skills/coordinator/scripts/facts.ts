@@ -717,11 +717,11 @@ export function collisions(facts: Facts): string[] {
   return [...lines, ...prCollisions(facts)]
 }
 
-/** Each plan's quota, as the status lines keep it under `<state>/quota/`: a file that is no reading is skipped, the plans in order. */
+/** Each plan's quota, as the status lines keep it under `<state>/quota/`, the protected root: a file that is no reading is skipped, the plans in order. */
 export function quotaLines(ctx: Context): string[] {
   const home = ctx.env['HOME'] ?? ''
   const readings: Quota[] = []
-  for (const file of filesOf(join(dataOf(ctx.env), QUOTA_DIR))) {
+  for (const file of filesOf(join(stateOf(ctx.env), QUOTA_DIR))) {
     if (isTemporary(file) || !file.endsWith('.json')) continue
     const quota = parseQuota(parseJson(readFile(file) ?? ''))
     if (quota !== null) readings.push(quota)
@@ -755,6 +755,18 @@ export function factsCommand(ctx: Context, args: readonly string[]): number {
   const found = collisions(facts)
   for (const line of found) ctx.out(line)
   return finish(ctx, facts, found.length > 0 ? 1 : 0)
+}
+
+/**
+ * `roots`: the roots a prompt reads, resolved by core's rule (the protected root's data-root file,
+ * matched whole, else the protected root), one `name=<directory>` line each. A prompt never reads the file itself.
+ */
+export function rootsCommand(ctx: Context, args: readonly string[]): number {
+  if (args.length > 0) die(`roots: unexpected argument ${args[0]}`)
+  ctx.out(`protected=${stateOf(ctx.env)}`)
+  ctx.out(`data=${dataOf(ctx.env)}`)
+  ctx.out(`module=${moduleOf(ctx.env)}`)
+  return 0
 }
 
 /** What a check reports: each orchestrator's name (a successor under it is no newcomer), each collision and each source not read, one line each. */

@@ -60,7 +60,7 @@ export function stateOf(env: Env): string {
   return orchestratorRoots(env).protectedRoot
 }
 
-/** The orchestrator's data root (the round, the pane's record, the quota files, the pull request file): the one the protected root names, else that root. */
+/** The orchestrator's data root (the round, the pane's record, the pull request file): the one the protected root names, else that root. */
 export function dataOf(env: Env): string {
   return orchestratorRoots(env).dataRoot
 }
