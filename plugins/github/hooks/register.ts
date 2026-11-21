@@ -2559,15 +2559,20 @@ const E2E_TIMEOUT_MS = LIGHT_CI_BUDGET_S * 1000
 // The Bash runs this module observed, newest last: what a record « ran » may name.
 const OBSERVED_RUNS_MAX = 50
 const observedRuns: Array<{ line: string; cwd: string; ok: boolean; at: number }> = []
-// A command line that starts in another directory: `cd <absolute path> && …`.
+// A command line that starts in another directory: `cd <absolute path> && …`. The `;` form is not read: when its `cd`
+// fails, the command runs in the old directory and its exit code still reads as a pass.
 const CD_FIRST = /^\s*cd\s+(\/[^\s;&|]+)\s*&&\s*/
 
-// A Bash call run to its end, kept with the directory it ran in, whether it succeeded and when it started.
+// A Bash call run to its end, kept with the directory it ran in, whether it succeeded and when it started. A line
+// that starts with a `cd` is kept as the command after it, in that directory, when the directory is one.
 async function noteRun($: Mod, line: string, started: number, result: unknown): Promise<void> {
   try {
     const cd = CD_FIRST.exec(line)
     const cwd = cd ? String(cd[1]) : String(await $.session.cwd())
-    observedRuns.push({ line: line.trim(), cwd: cwd.replace(/\/+$/, ''), ok: !failed(result), at: started })
+    // A `cd` into a path that is no directory leaves the command to run elsewhere: it is not observed here.
+    if (cd && (await $.fs.stat(cwd)).kind !== 'dir') return
+    const command = cd ? line.slice(cd[0].length) : line
+    observedRuns.push({ line: command.trim(), cwd: cwd.replace(/\/+$/, ''), ok: !failed(result), at: started })
     if (observedRuns.length > OBSERVED_RUNS_MAX) observedRuns.splice(0, observedRuns.length - OBSERVED_RUNS_MAX)
   } catch {
     // An unread directory leaves the run unobserved: the record asks for it again.
@@ -2605,7 +2610,8 @@ function e2eRunOf(e: ToolInput): E2eRun | string | undefined {
   }
   if (ran !== undefined) {
     if (typeof ran !== 'string' || ran.trim() === '') return 'github: "ran" is the command line this session ran in Bash, as it ran it.'
-    return { ran: ran.trim() }
+    // The `ran` text may carry the same leading `cd <checkout> &&` the observed line does: the run is matched by its command.
+    return { ran: ran.trim().replace(CD_FIRST, '') }
   }
   return undefined
 }
@@ -2643,7 +2649,13 @@ async function e2eOutcome($: Mod, run: E2eRun, dir: string | undefined, head: st
   const seen = observedRuns.filter((r) => r.line === run.ran && r.cwd === cwd && r.at >= moved).pop()
   if (!seen) {
     if (given !== 'pass' && given !== 'fail') {
-      return { deny: 'github: this session ran no `' + run.ran + '` in ' + cwd + ' since its head ' + head.slice(0, 7) + ' was checked out (a background run is not observed): give "result": "pass" or "fail" to record it as stated, or run it there in Bash.' }
+      // The closest run this session made that contains the command: a compound line, most often.
+      const near = observedRuns.filter((r) => r.at >= moved && r.line.includes(run.ran)).pop()
+      return {
+        deny: 'github: this session ran no `' + run.ran + '` in ' + cwd + ' since its head ' + head.slice(0, 7) + ' was checked out (a background run is not observed). '
+          + 'Run `' + run.ran + '` alone as one foreground Bash line from ' + cwd + ' (a leading `cd ' + cwd + ' &&` is allowed; no pipe, no other chain, no trailing echo: such a line\'s exit code is not the command\'s), then record with "ran": "' + run.ran + '"'
+          + (near ? '; the closest run seen was `' + near.line + '`' : '') + '. Or give "result": "pass" or "fail" to record it as stated.',
+      }
     }
     return { result: given, detail: cut('`' + run.ran + '` at ' + head.slice(0, 7) + ' not observed in ' + cwd + tail), stated: true }
   }
