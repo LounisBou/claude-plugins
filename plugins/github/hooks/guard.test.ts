@@ -1651,6 +1651,47 @@ test('an E2E "ran" of "cd /other &&" is kept in /other though /other is absent f
   expect(recordRun(seen)).toBeUndefined()
 })
 
+for (const line of ['! npm run e2e', 'cd /work && ! npm run e2e', 'coproc npm run e2e', 'cd /work && coproc npm run e2e']) {
+  test('an E2E "ran" of "' + line + '" is not observed: its first word is no plain command', async ($, on) => {
+    const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+    const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })
+    await $.tool.call({ tool: 'Bash', command: line })
+    const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: line })
+    expect(out.deny).toContain('this session ran no `')
+    expect(recordRun(seen)).toBeUndefined()
+  })
+}
+
+test('an E2E "ran" whose cd names another directory than the record\'s is refused, naming the directory', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })
+  await $.tool.call({ tool: 'Bash', command: 'npm run e2e' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'cd /other && npm run e2e' })
+  expect(out.deny).toContain('names the directory /other but the record is for /work')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+for (const [name, line] of [['an unclosed quote', 'npm run e2e "x'], ['a newline', 'npm run e2e\ntrue']] as const) {
+  test('an E2E "ran" with ' + name + ' in the line is refused: it is not a lone command', async ($, on) => {
+    const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+    const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })
+    await $.tool.call({ tool: 'Bash', command: line })
+    const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: line })
+    expect(out.deny).toContain('this session ran no `')
+    expect(recordRun(seen)).toBeUndefined()
+  })
+}
+
+test('an E2E "ran" quotes no compound line run before the checkout\'s HEAD last moved', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{' + (Math.floor(Date.now() / 1000) + 3600) + '}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })
+  await $.tool.call({ tool: 'Bash', command: 'git status -sb | head -2 && npm run e2e' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e' })
+  expect(out.deny).toContain('this session ran no `npm run e2e` in /work')
+  expect(out.deny).not.toContain('closest run seen')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
 for (const line of [
   'cd /work && cd /elsewhere && npm run e2e',
   'cd sub && npm run e2e',

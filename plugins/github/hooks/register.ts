@@ -2558,6 +2558,8 @@ async function notDirectory($: Mod, path: string): Promise<string | undefined> {
 const E2E_TIMEOUT_MS = LIGHT_CI_BUDGET_S * 1000
 // The Bash runs this module observed, newest last: what a record « ran » may name.
 const OBSERVED_RUNS_MAX = 50
+// The words a line may start with and still not be one plain command: their exit code is not the command's.
+const SHELL_WORDS = new Set(['coproc', 'time', 'exec', 'eval', 'command', 'builtin', 'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', 'for', 'case', 'esac', 'function', 'select', 'in'])
 // `alone`: the line is one command, not a pipe, a chain or a second line; only such a run can be the one a `ran` names.
 const observedRuns: Array<{ line: string; cwd: string; ok: boolean; at: number; alone: boolean }> = []
 // A command line that starts in another directory: `cd <absolute path> && …`. The `;` form is not read: when its `cd`
@@ -2575,7 +2577,11 @@ async function noteRun($: Mod, line: string, started: number, result: unknown): 
     const command = cd ? line.slice(cd[0].length) : line
     // A backslash, or a quote left unbalanced once its pairs are removed, may hide a separator from this reading: not alone.
     const bare = command.replace(/'[^']*'|"[^"]*"/g, '')
-    const alone = !command.includes('\\') && !/['"|;&\n]/.test(bare)
+    // Only a plain command word first: `!`, `coproc`, `time`, `exec` and the like change what the exit code is, and a
+    // leading assignment is no command word.
+    const first = command.trim().split(/\s+/)[0] ?? ''
+    const plain = /^[A-Za-z0-9_./~+-]+$/.test(first) && !SHELL_WORDS.has(first)
+    const alone = plain && !command.includes('\\') && !/['"|;&\n]/.test(bare)
     observedRuns.push({ line: command.trim(), cwd: cwd.replace(/\/+$/, ''), ok: !failed(result), at: started, alone })
     if (observedRuns.length > OBSERVED_RUNS_MAX) observedRuns.splice(0, observedRuns.length - OBSERVED_RUNS_MAX)
   } catch {
@@ -2595,7 +2601,7 @@ async function headMovedAt($: Mod, inDir: { cwd?: string }): Promise<number | un
   return out.exitCode === 0 && at ? Number(at[1]) * 1000 : undefined
 }
 
-type E2eRun = { argv: string[] } | { ran: string }
+type E2eRun = { argv: string[] } | { ran: string; cd?: string }
 
 // The mark of an E2E pass or fail written on the session's word, with no run the tool performed or observed.
 const STATED = 'stated, not computed: '
@@ -2614,8 +2620,10 @@ function e2eRunOf(e: ToolInput): E2eRun | string | undefined {
   }
   if (ran !== undefined) {
     if (typeof ran !== 'string' || ran.trim() === '') return 'github: "ran" is the command line this session ran in Bash, as it ran it.'
-    // The `ran` text may carry the same leading `cd <checkout> &&` the observed line does: the run is matched by its command.
-    return { ran: ran.trim().replace(CD_FIRST, '') }
+    // The `ran` text may carry the same leading `cd <checkout> &&` the observed line does: the run is matched by its
+    // command, and that directory must be the record's own (checked in e2eOutcome).
+    const cd = CD_FIRST.exec(ran.trim())
+    return cd ? { ran: ran.trim().slice(cd[0].length), cd: String(cd[1]).replace(/\/+$/, '') } : { ran: ran.trim() }
   }
   return undefined
 }
@@ -2648,6 +2656,9 @@ async function e2eOutcome($: Mod, run: E2eRun, dir: string | undefined, head: st
     return { result, detail: cut('ran `' + line + '` at ' + head.slice(0, 7) + ': exit ' + out.exitCode + ' in ' + secs + ' s' + (result === 'fail' && last ? ' (' + last.slice(0, 120) + ')' : '') + tail) }
   }
   const cwd = (dir ?? String(await $.session.cwd())).replace(/\/+$/, '')
+  if ('cd' in run && run.cd !== undefined && run.cd !== cwd) {
+    return { deny: 'github: `ran` names the directory ' + run.cd + ' but the record is for ' + cwd + ': record with "ran": "' + run.ran + '" from ' + cwd + ', or name the checkout ' + run.cd + ' with "dir".' }
+  }
   const moved = await headMovedAt($, inDir)
   if (moved === undefined) return { deny: 'github: when the checkout ' + cwd + ' last moved cannot be read from its reflog: record with "run" instead.' }
   const seen = observedRuns.filter((r) => r.alone && r.line === run.ran && r.cwd === cwd && r.at >= moved).pop()
