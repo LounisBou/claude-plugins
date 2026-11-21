@@ -2486,7 +2486,11 @@ code=$?
 check "dry-run spawn under LC_ALL=C exits 0" "0" "$code"
 cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
 file=${out#*prompt_file=}; file=${file%%$'\n'*}
-check "the launch stays short whatever the prompt" "short" "$([ "${#cmd}" -lt 1000 ] && echo short || echo "${#cmd} chars typed")"
+# The bound measures the typed command without the two temporary paths it names, the working
+# directory (`cd <dir> && `) and the state directory of the prompt file: both live under
+# mktemp's directory, whose length depends on TMPDIR (about 40 characters longer on macOS).
+typed=${cmd#cd $WORK && }; typed=${typed//$ISTATE/}
+check "the launch stays short whatever the prompt" "short" "$([ "${#typed}" -lt 1000 ] && echo short || echo "${#typed} chars typed")"
 check "the launch reads the prompt from its file" "1" "$(printf '%s' "$cmd" | grep -c '"\$(cat ')"
 # The dry run names the file and writes none; the writer is driven directly for the bytes.
 check "the prompt file holds the prompt byte for byte" "$prompt" \
@@ -2508,9 +2512,9 @@ check "the launch marks the session launcher-spawned" "1" "$(printf '%s' "$out" 
 # that session's id and nesting marks, and a coordinator's successor launched there wrote no
 # transcript. The launch file, run as the tab runs it, leaves none of them and keeps the account's
 # and the operator's own configuration under the same prefix.
-check "the launch file leaves the tab without the caller's session identity and nesting marks, and keeps the account and the operator's configuration" \
-  "CLAUDEX=1|CLAUDE_CODE_USE_BEDROCK=1|CLAUDE_CONFIG_DIR=/acct" \
-  "$(ORCHESTRATOR_STATE_DIR="$ISTATE" "$(command -v python3)" -c "
+# The probe's Python is set apart from the command substitution: bash 3.2 (the system bash on
+# macOS) mis-parses the dict literal and the escaped quotes inside `$(...)` within double quotes.
+NEST_PY="
 import subprocess, sys
 sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as ia
@@ -2518,7 +2522,10 @@ script = ia.write_launch_script(\"env | grep '^CLAUDE' | sort | paste -sd'|' -\"
 env = {'PATH': '$PATH', 'CLAUDEX': '1', 'CLAUDE_CONFIG_DIR': '/acct', 'CLAUDE_CODE_USE_BEDROCK': '1'}
 for name in 'CLAUDECODE CLAUDE_PID CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_CHILD_NOTES_DIR CLAUDE_CODE_BRIDGE_SESSION_ID CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CODE_SESSION_ATTENDED'.split():
     env[name] = '1'
-print(subprocess.run(['/bin/sh', script], env=env, capture_output=True, text=True).stdout.strip())")"
+print(subprocess.run(['/bin/sh', script], env=env, capture_output=True, text=True).stdout.strip())"
+check "the launch file leaves the tab without the caller's session identity and nesting marks, and keeps the account and the operator's configuration" \
+  "CLAUDEX=1|CLAUDE_CODE_USE_BEDROCK=1|CLAUDE_CONFIG_DIR=/acct" \
+  "$(ORCHESTRATOR_STATE_DIR="$ISTATE" "$(command -v python3)" -c "$NEST_PY")"
 # Named absolutely even though the tab now runs a login shell: a dotfile that breaks PATH
 # must not be able to kill the launch, and the session dies before its tty can be read
 # when the name does not resolve.
