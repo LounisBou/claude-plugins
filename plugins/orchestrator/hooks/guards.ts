@@ -36,7 +36,7 @@ import { refreshRowAndDeck, showPrStates } from './supervision.ts'
 import { pullRequestsRead } from './tab-state.ts'
 import { fieldsOf, messageOf, reasonOf, type Host, type On, type ProcessRunResult } from './host.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, bashWritesTheMap } from './models-guard.ts'
-import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
+import { configDir, dataDir, gateEnv, logLine, moduleDir, stateDir } from './module-io.ts'
 import { prWake } from './ledger.ts'
 import { projectRecords } from './unattended.ts'
 import { PR_FILE_INTERVAL_MS } from './pr-file-format.ts'
@@ -318,7 +318,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // only), so the root is the engine's own $.plugin.root.
       const root = role === 'auditor' || role === 'coordinator' ? $.plugin.root : ''
       let raw: string | null = null
-      try { raw = await $.fs.read(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))) } catch { /* no file yet: unmeasured */ }
+      try { raw = await $.fs.read(measureFilePath(await configDir($), sessionId, await moduleDir($))) } catch { /* no file yet: unmeasured */ }
       const reading = parseMeasure(String(raw ?? ''))
       // A newer installed commit that changes a file the session runs has the home servers read its
       // conf, once per commit; an orchestrator only once its generation has lived. Only a coordinator
@@ -447,7 +447,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         return next(e)
       }
       if (roleOf(name) !== 'orchestrator') return next(e)
-      const state = await stateDir($)
+      const state = await dataDir($)
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
       let swept = false
       sweepAtStop = async () => {

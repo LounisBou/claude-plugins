@@ -12,7 +12,7 @@ import {
 } from './stop-gate.ts'
 import { recordsRegistryPath, WAIT_KINDS, WAIT_TOOL, type WaitKind } from '../core/orchestration.ts'
 import { fieldsOf, messageOf, type Host, type On } from './host.ts'
-import { configDir, logLine, stateDir } from './module-io.ts'
+import { configDir, dataDir, logLine } from './module-io.ts'
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { RETROSPECTIVE_CONTRACT, retrospectiveStartArgv } from '../core/learning.ts'
 import { holdsDone, mergeWaits, projectRecords } from './unattended.ts'
@@ -144,7 +144,7 @@ export async function holdsRecord($: Held, wait: DeclaredWait): Promise<string |
       return fallback
     }
   }
-  const state = await stateDir($)
+  const state = await dataDir($)
   const own = orchestrationOf(me.name)
   // The orchestration's records, not the session's registry alone: a successor that never read or wrote its record
   // registered none, and declared done with 5 rows open in its predecessors' record (the operator's report of 2026-11-18).

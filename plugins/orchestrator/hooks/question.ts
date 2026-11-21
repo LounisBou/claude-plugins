@@ -28,7 +28,7 @@ import { askedKey } from './asked-key.ts'
 import { callTodo, whoAmI } from './todo.ts'
 import { setSessionWindow, closesItself, coordinatorRuns, forgetRelayed, isRoundAnswer, parseRoundEntry, readSessions, sessionKey, sessionRole, tellSettled } from './supervision.ts'
 import { OUTCOMES, SETTLE_TOOL, parseSettle, planAsked, planClaimed, planPane, planRelayed, planWithdrawal, settledMessage, type Fields, type Me, type Plan, type SettleRequest } from './settle.ts'
-import { configDir, logLine, stateDir, storeIo } from './module-io.ts'
+import { configDir, dataDir, logLine, storeIo } from './module-io.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { replicate, resendReplicas, sendReply } from './remote-asked.ts'
 
@@ -267,7 +267,7 @@ export function askedAsEntry(entry: Asked): RoundEntry {
 
 /** Every object `ask` stored in this machine's round, open or not; a file that is no such object is skipped. */
 export async function readAsked($: Host<'env' | 'fs'>): Promise<Asked[]> {
-  const dir = `${await stateDir($)}/${ROUND_DIR}`
+  const dir = `${await dataDir($)}/${ROUND_DIR}`
   const found: Asked[] = []
   for (const file of await $.fs.list(dir).catch(() => [])) {
     if (file.kind !== 'file' || !file.name.endsWith('.json') || file.name.includes('.tmp-')) continue
@@ -288,7 +288,7 @@ async function changeOpenAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proc
 // The open questions `takes` selects, each read again and rewritten under its lock by `change`,
 // then pushed to the coordinator on another machine. A replica is its owner's to change: never here.
 async function changeAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, takes: (entry: Asked) => boolean, change: (entry: Asked) => Asked | null): Promise<Asked[]> {
-  const dir = `${await stateDir($)}/${ROUND_DIR}`
+  const dir = `${await dataDir($)}/${ROUND_DIR}`
   const changed: Asked[] = []
   for (const entry of await readAsked($)) {
     if (entry.status !== 'open' || entry.origin !== undefined || !takes(entry)) continue
@@ -412,7 +412,7 @@ async function closeOwnAsked($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
   try {
     // Its asker closes it: nothing is sent, so the closer's name is never read.
     const me: Me = { session: await $.session.id(), name: '', role: '' }
-    const closed = await closeRound($, roundEntryPath(await stateDir($), id), current => {
+    const closed = await closeRound($, roundEntryPath(await dataDir($), id), current => {
       const fresh = current === undefined ? null : parseAsked(current)
       return fresh === null || fresh.status !== 'open' || fresh.origin !== undefined || !takes(fresh) ? null : plan(fresh)
     }, me, at)
@@ -511,7 +511,7 @@ const OWN_ANSWERS: readonly string[] = ['tab', 'pane', 'coordinator']
 export async function recordedAsked($: Host<'env' | 'fs'>, entry: Asked): Promise<Asked | null> {
   const key = askedKey(entry)
   const archived: Asked[] = []
-  const dir = `${await stateDir($)}/${ROUND_DIR}/${ROUND_ARCHIVE_DIR}`
+  const dir = `${await dataDir($)}/${ROUND_DIR}/${ROUND_ARCHIVE_DIR}`
   for (const file of await $.fs.list(dir).catch(() => [])) {
     if (file.kind !== 'file' || !file.name.endsWith('.json') || file.name.includes('.tmp-')) continue
     const read = parseAsked(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
@@ -577,7 +577,7 @@ async function askOne($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 's
     return { result: `Not stored: this question is already open as ${twin.id}, asked ${twin.at}, and the operator has it; do not write it again in the chat, refer to it by its subject. For reference:\n\n${questionBlock(twin, { i: 1, n: 1 })}` }
   }
   if (!record?.answer && thisTurn.length > 0) return refuse(turnFull(thisTurn[0]))
-  const path = roundEntryPath(await stateDir($), entry.id)
+  const path = roundEntryPath(await dataDir($), entry.id)
   let taken = false
   try {
     await updateOver(storeIo($), path, current => {
@@ -610,7 +610,7 @@ export async function settle($: Held, request: SettleRequest, now: Date = new Da
   const who = await whoAmI($)
   if (who === null) return refuse('Only an orchestrator, a coordinator or an auditor settles a question, once the host names it.')
   const me: Me = { ...who, session: await $.session.id() }
-  const path = roundEntryPath(await stateDir($), request.id)
+  const path = roundEntryPath(await dataDir($), request.id)
   const at = now.toISOString()
   // Read before the lock, the one fact the lock cannot read: whether the coordinator here was shown it.
   const shown = await closesItself($, request.id)
@@ -655,7 +655,7 @@ export async function answerAskedFromPane($: Held & Host<'prompt'>, id: string, 
   if (said === '') return null
   const who = await whoAmI($)
   const me: Me = { session: await $.session.id(), name: who?.name ?? "the coordinator's pane", role: who?.role ?? 'coordinator' }
-  const path = roundEntryPath(await stateDir($), id)
+  const path = roundEntryPath(await dataDir($), id)
   const at = now.toISOString()
   try {
     const closed = await closeRound($, path, current => {

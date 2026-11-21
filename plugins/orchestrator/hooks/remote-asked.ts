@@ -10,7 +10,7 @@
 // in the pane. The handlers' `$` is the supervision's.
 import { roundEntryPath } from '../core/orchestration.ts'
 import { updateOver } from '../core/store-io.ts'
-import { logLine, stateDir, storeIo } from './module-io.ts'
+import { dataDir, logLine, storeIo } from './module-io.ts'
 import { messageOf, type Host } from './host.ts'
 import { askedAsEntry, parseAsked, readAsked, type Asked } from './question.ts'
 import { ALREADY_ANSWERED, ANSWER_RESEND_MS, ANSWER_SENDS, closesItself, coordinatorAddress, readSessions, sendToCoordinator, sessionKey, tellSettled } from './supervision.ts'
@@ -25,7 +25,7 @@ type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session' | 'ui
 type Pushing = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session'>
 
 async function pathOf($: Pushing, id: string): Promise<string> {
-  return roundEntryPath(await stateDir($), id)
+  return roundEntryPath(await dataDir($), id)
 }
 
 // The answers a replica sends its owner: those given on its own machine.

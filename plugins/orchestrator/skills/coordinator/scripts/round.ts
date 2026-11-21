@@ -11,14 +11,14 @@ import { setting } from '../../../core/paths.ts'
 import { isTemporary } from '../../../core/store-io.ts'
 import { update } from '../../../core/store.ts'
 import { ArchiveError, archiveSettled, DAY_MS } from '../../orchestrator/scripts/lib/round-archive.ts'
-import { die, moduleOf, say, stateOf, type Context } from './context.ts'
+import { dataOf, die, moduleOf, say, type Context } from './context.ts'
 import { recordedCoordinator } from './record.ts'
 
 export { parseEntry } from '../../orchestrator/scripts/lib/round-archive.ts'
 
 export function roundArchive(ctx: Context, args: readonly string[]): number {
   if (args.length > 0) die(`round-archive: unexpected argument ${args[0]}`)
-  const round = join(stateOf(ctx.env), ROUND_DIR)
+  const round = join(dataOf(ctx.env), ROUND_DIR)
   let moved: number
   try {
     moved = archiveSettled(round, ctx.now())
@@ -321,7 +321,7 @@ export function round(ctx: Context, args: readonly string[]): number {
   if (decide && all) die('round: --decide takes no --all')
   if (decide && (me === undefined || me === '')) die('round: --decide needs --as "<your exact name and reference>"')
   if (decide) return decideRound(ctx, me ?? '')
-  const state = stateOf(ctx.env)
+  const state = dataOf(ctx.env)
   const module = moduleOf(ctx.env)
   const dir = join(state, ROUND_DIR)
   // One read of the round for the print and its record: an entry opened between two reads would
@@ -374,7 +374,7 @@ function decideRound(ctx: Context, me: string): number {
     ctx.out(`decide: coordinator — ${ROUND_LINE}; a closing proposal (done) presented apart, outside the count`)
     return round(ctx, ['--by-urgency'])
   }
-  const state = stateOf(ctx.env)
+  const state = dataOf(ctx.env)
   const open = ordered(roundEntries(join(state, ROUND_DIR)).filter(e => e['status'] === 'open' && e['kind'] === 'operator'))
   if (open.length === 0) {
     ctx.out('decide: empty | no open question — say so in one line and stop')

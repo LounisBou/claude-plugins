@@ -16,7 +16,7 @@ import { answerText, PULL_URL } from './audit-events.ts'
 import { chainOwner, isDegradedPass, orchestrationOf, ownerOf, withDeadline } from './stop-gate.ts'
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
 import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
-import { configDir, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { configDir, dataDir, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
 import { agentLine, closeFailedLine, holdsOf, mergeNowLine } from './ready-agent.ts'
 import { closeAgent, closeFacts, type CloseFacts as CloseNow, type ToClose } from './close-agent.ts'
@@ -118,7 +118,7 @@ export async function writeLine($: Held, pr: { repo: string; pr: number }, now: 
   if (row === null) return
   const belongs = await orchestrationOfSession($, sessionId, row)
   if (belongs === null) return
-  const records = await ownRecords($, await stateDir($), belongs.id, belongs.name)
+  const records = await ownRecords($, await dataDir($), belongs.id, belongs.name)
   const held = (text: string) => ledgerLines(text).some(line => line.repo === pr.repo && line.pr === pr.pr)
   const first = records[0]
   if (first === undefined) return
@@ -266,7 +266,7 @@ async function chainTtys($: Held): Promise<Chain> {
   }
   let text: string
   try {
-    text = String(await $.fs.read(chainPath(await stateDir($), tty)))
+    text = String(await $.fs.read(chainPath(await dataDir($), tty)))
   } catch (err) {
     if (/ENOENT/.test(messageOf(err))) text = ''
     else {
@@ -364,7 +364,7 @@ function isVerdict(gate: GateCi | null, pr: FilePr): boolean {
  * at the pull request's head and base and the kept one is missing, of another head or base, or not yet a verdict. No forge call here.
  */
 async function refreshGates($: Held, open: readonly FilePr[]): Promise<void> {
-  const state = await stateDir($)
+  const state = await dataDir($)
   const config = await configDir($)
   for (const pr of open) {
     const kept = await keptGateOf($, state, pr)
@@ -477,7 +477,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // told once per head, whatever the pull request's mergeability, and kept told while the head stands.
   const open = [...reading.forge.values()].filter(pr => pr.state === 'OPEN' && pr.sha !== '')
   await refreshGates($, open)
-  const state = await stateDir($)
+  const state = await dataDir($)
   const failing: { pr: FilePr; gate: GateCi; names: readonly string[] }[] = []
   for (const pr of open) {
     const gate = await keptGateOf($, state, pr)

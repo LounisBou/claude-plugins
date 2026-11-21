@@ -9,7 +9,7 @@ import { setting } from '../../../core/paths.ts'
 import { parseQuota, planOfConfig, QUOTA_DIR, quotaLine, type Quota } from '../../../core/quota.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, repoOfOrigin } from '../../../hooks/pr-file-format.ts'
-import { die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
+import { dataOf, die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
 import { fieldsOf, readSleeping } from './sleeping.ts'
 
 /** A remote row is kept for a day after its updated_at (REMOTE_STALE_AFTER_MS in hooks/remote-row.ts). */
@@ -503,7 +503,7 @@ export function readFacts(ctx: Context): Facts {
   // The open pull requests, as the machine's pull request file holds them (the hooks module
   // refreshes it, one forge call a minute for the whole machine): a repository it holds no current
   // reading of is unread. The file reads the repositories the records and the sweep name.
-  const state = stateOf(ctx.env)
+  const state = dataOf(ctx.env)
   const file = parsePrFile(readFile(prFilePath(state)) ?? '')
   for (const repo of new Set(facts.places.map(p => p.repo))) {
     const named = repoOfOrigin(repo)
@@ -721,7 +721,7 @@ export function collisions(facts: Facts): string[] {
 export function quotaLines(ctx: Context): string[] {
   const home = ctx.env['HOME'] ?? ''
   const readings: Quota[] = []
-  for (const file of filesOf(join(stateOf(ctx.env), QUOTA_DIR))) {
+  for (const file of filesOf(join(dataOf(ctx.env), QUOTA_DIR))) {
     if (isTemporary(file) || !file.endsWith('.json')) continue
     const quota = parseQuota(parseJson(readFile(file) ?? ''))
     if (quota !== null) readings.push(quota)
@@ -774,7 +774,7 @@ export function findings(facts: Facts): string[] {
 export function checkCommand(ctx: Context, args: readonly string[]): number {
   const every = args[0] === '--every' && args.length === 2 ? Number(args[1]) : args.length === 0 ? 0 : NaN
   if (!Number.isInteger(every) || every < 0) die(`check: usage: check [--every <seconds>]`)
-  const path = join(stateOf(ctx.env), 'coordinator-check.json')
+  const path = join(dataOf(ctx.env), 'coordinator-check.json')
   for (;;) {
     const was = parseJson(readFile(path) ?? '')
     const now = findings(readFacts(ctx))

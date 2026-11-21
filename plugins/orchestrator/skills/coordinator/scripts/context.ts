@@ -2,8 +2,8 @@
 // it: the environment, the clock, the script's own directory, the commands it runs and the
 // streams it writes. A refusal is thrown as a Refusal and said once, by the entry point.
 import { join } from 'node:path'
-import { MODULE_DIR } from '../../../core/orchestration.ts'
-import { setting, stateDir, type Env } from '../../../core/paths.ts'
+import { type Env } from '../../../core/paths.ts'
+import { orchestratorRoots } from '../../../core/roots.ts'
 
 export interface RunResult {
   /** The exit status; 128 + the signal's number when a signal ended the command. */
@@ -50,14 +50,24 @@ export function say(ctx: Context, message: string): void {
   ctx.err(`coordinator: ${message}`)
 }
 
-/** The orchestrator's state directory: ORCHESTRATOR_STATE_DIR, else the plugin's under the configuration directory. */
+/**
+ * The orchestrator's protected root: ORCHESTRATOR_STATE_DIR, else the plugin's under the
+ * configuration directory. The coordinator's record, its lock and the sleepers' record live there:
+ * a wake runs on the configuration directory a sleeper names, and the launcher lets the session
+ * the record names open an orchestrator.
+ */
 export function stateOf(env: Env): string {
-  return setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir(MODULE_DIR, env)
+  return orchestratorRoots(env).protectedRoot
 }
 
-/** The hooks module's own directory (its store): ORCHESTRATOR_MODULE_DIR, as the module reads it. */
+/** The orchestrator's data root (the round, the pane's record, the quota files, the pull request file): the one the protected root names, else that root. */
+export function dataOf(env: Env): string {
+  return orchestratorRoots(env).dataRoot
+}
+
+/** The hooks module's own directory (its store): ORCHESTRATOR_MODULE_DIR, else the data root, as the module reads it. */
 export function moduleOf(env: Env): string {
-  return setting(env, 'ORCHESTRATOR_MODULE_DIR') ?? stateDir(MODULE_DIR, env)
+  return orchestratorRoots(env).moduleDir
 }
 
 /** A UTC time to the second, as every record of the coordinator stamps it. */

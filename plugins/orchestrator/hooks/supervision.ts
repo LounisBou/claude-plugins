@@ -25,7 +25,6 @@ import {
   type ReadRecord, type HostNames,
 } from './session-name.ts'
 import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, hostTasks } from './stop-gate.ts'
-import { moduleDirOf } from './module-log.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
@@ -46,7 +45,7 @@ import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLi
 import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
-import { configDir, gateEnv, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { configDir, dataDir, gateEnv, logLine, moduleDir, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { unattendedPaneLines, type Unattended, type UnattendedPaneLine } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ciGatePath, ROUND_DIR } from '../core/orchestration.ts'
@@ -352,9 +351,9 @@ export function wrapWords(text: string, width: number): string[] {
   return rows
 }
 
-// The store's root under the module's own directory (module-log.ts, moduleDirOf): one file per key.
+// The store's root under the module's own directory (module-io.ts, moduleDir): one file per key.
 export async function storeOf($: Host<'env'>): Promise<string> {
-  return `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store`
+  return `${await moduleDir($)}/store`
 }
 
 // The key is the session's own: one file per session id, so two sessions
@@ -857,7 +856,7 @@ async function agentViews($: Host<'env' | 'fs' | 'process'>, tty: string): Promi
 // each by the host's record of the session on its tty.
 async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner: string | null): Promise<(AgentView & { sessionId: string; startedAt: number | null })[]> {
   const config = await configDir($)
-  const state = await stateDir($)
+  const state = await dataDir($)
   const chain = String(await $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`).catch(() => ''))
   const views: (AgentView & { sessionId: string; startedAt: number | null })[] = []
   for (const entry of chainEntries(chain)) {
@@ -1094,7 +1093,7 @@ function paneTick($: Host<'env' | 'fs' | 'ui'>, pane: PaneMemory): void {
 // The round directory's mtime, or null when it cannot be read (never written, or gone).
 async function roundMtime($: Host<'env' | 'fs'>): Promise<number | null> {
   try {
-    const stat = await $.fs.stat(`${await stateDir($)}/${ROUND_DIR}`)
+    const stat = await $.fs.stat(`${await dataDir($)}/${ROUND_DIR}`)
     return typeof stat?.mtimeMs === 'number' ? stat.mtimeMs : null
   } catch {
     return null
@@ -1126,7 +1125,7 @@ function paneStatePath(state: string, name: string): string {
 }
 
 async function keepPaneState($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, name: string, open: boolean): Promise<void> {
-  const path = paneStatePath(await stateDir($), name)
+  const path = paneStatePath(await dataDir($), name)
   try {
     if (open) await writeAtomic($, path, 'open\n')
     else {
@@ -1149,7 +1148,7 @@ async function restorePane($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'
   pane.restored = true
   const role = roleOf(name)
   if (role !== 'coordinator' && role !== 'orchestrator') return
-  if (!(await $.fs.exists(paneStatePath(await stateDir($), name))) || await paneShown($)) return
+  if (!(await $.fs.exists(paneStatePath(await dataDir($), name))) || await paneShown($)) return
   await openPane($, pane, role, tty, pid, name)
 }
 
@@ -1160,7 +1159,7 @@ async function restorePane($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'
 export type PaneRecord = { session: string; pid: string; tty?: string | null; at: string }
 
 async function panePath($: Host<'env'>): Promise<string> {
-  return `${await stateDir($)}/pane.json`
+  return `${await dataDir($)}/pane.json`
 }
 
 // A pane whose pid is unknown is not recorded: a record naming none is no pane to the script.
@@ -1275,7 +1274,7 @@ async function reconcilePaneRecord($: Host<'env' | 'fs' | 'plugin' | 'process' |
 // module nor a successor coordinator wakes twice for one entry. A file absent or unreadable is
 // none woken for.
 async function wokenPath($: Host<'env'>): Promise<string> {
-  return `${await stateDir($)}/round-woken.json`
+  return `${await dataDir($)}/round-woken.json`
 }
 
 async function readWoken($: Host<'env' | 'fs'>): Promise<string[]> {
@@ -1310,7 +1309,7 @@ async function addIds($: Host<'clock' | 'fs' | 'process'>, path: string, ids: re
 // An entry entered again under the id of one that was settled, forgotten as shown: the marks of the
 // coordinator's lists were the earlier entry's, and would close the new one as told when withdrawn.
 async function forgetShown($: Host<'clock' | 'env' | 'fs' | 'process'>, id: string): Promise<void> {
-  const state = await stateDir($)
+  const state = await dataDir($)
   for (const path of [await wokenPath($), `${state}/round-listed.json`]) {
     if ((await readIds($, path)).includes(id)) await addIds($, path, [], kept => kept !== id)
   }
@@ -1321,7 +1320,7 @@ async function forgetShown($: Host<'clock' | 'env' | 'fs' | 'process'>, id: stri
 // the files, never by its model's memory: a question it presented and then saw settled
 // elsewhere was asked a second time (the operator's report of 2026-10-25).
 async function shownToCoordinator($: Host<'env' | 'fs'>, id: string): Promise<boolean> {
-  return (await readWoken($)).includes(id) || (await readIds($, `${await stateDir($)}/round-listed.json`)).includes(id)
+  return (await readWoken($)).includes(id) || (await readIds($, `${await dataDir($)}/round-listed.json`)).includes(id)
 }
 
 // The reason an entry withdrawn by the operator's prompt in its sender's own tab records.
@@ -1643,10 +1642,11 @@ let wake: WakeMemory = { timer: null, generation: 0 }
 export const WRITTEN_DIRS = ['sessions', 'waits', 'gates', 'rows', 'answered', 'successors', 'remote']
 export async function sweepTemporaries($: Host<'env' | 'fs' | 'process'>): Promise<string[]> {
   const store = await storeOf($)
-  const state = await stateDir($)
+  const state = await dataDir($)
   const now = Date.now()
   const stale: string[] = []
-  for (const dir of [...WRITTEN_DIRS.map(name => `${store}/${name}`), store, state, `${state}/${ROUND_DIR}`]) {
+  // The protected root too, where the coordinator's scripts replace their records.
+  for (const dir of new Set([...WRITTEN_DIRS.map(name => `${store}/${name}`), store, await stateDir($), state, `${state}/${ROUND_DIR}`])) {
     stale.push(...staleTemporaries(dir, await $.fs.list(dir).catch(() => []), now))
   }
   if (stale.length > 0) await $.process.run(removeArgv(...stale), { timeoutMs: 5000 })
@@ -2527,7 +2527,7 @@ const FACTS_BOUND_MS = 3000
 // scripts: a file it has not written is no reading.
 function keptGate($: Host<'env' | 'fs'>): KeptGate {
   return async (repo, pr) => {
-    const path = ciGatePath(await stateDir($), repo, String(pr))
+    const path = ciGatePath(await dataDir($), repo, String(pr))
     return await $.fs.exists(path) ? String(await $.fs.read(path)) : null
   }
 }
@@ -2619,7 +2619,7 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
     const entry = roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString())
     // A closing proposal entered again after its withdrawal reuses its id: the coordinator was not shown this one.
     await forgetShown($, entry.id)
-    await changeEntry($, roundPath(await stateDir($), entry.id), () => entry)
+    await changeEntry($, roundPath(await dataDir($), entry.id), () => entry)
     await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
     return
   }
@@ -2752,7 +2752,7 @@ function forgetDraft(pane: PaneMemory, key: string): void {
 
 // Whether the round holds the entry of that id, open: a file absent, or in any other status, is not.
 async function entryIsOpen($: Host<'env' | 'fs'>, id: string): Promise<boolean> {
-  return parseRoundEntry(String(await $.fs.read(roundPath(await stateDir($), id)).catch(() => '')))?.status === 'open'
+  return parseRoundEntry(String(await $.fs.read(roundPath(await dataDir($), id)).catch(() => '')))?.status === 'open'
 }
 
 // A settled entry's fingerprint forgotten in its sender's wait file, so the same question asked
@@ -2834,7 +2834,7 @@ async function withdrawStale($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proces
 // directory that exists and cannot be listed is said in the log and read as empty; one never
 // written is no failure — nothing was ever asked.
 export async function readRound($: Host<'env' | 'fs' | 'plugin' | 'process'>): Promise<{ path: string; entry: RoundEntry }[]> {
-  const dir = `${await stateDir($)}/${ROUND_DIR}`
+  const dir = `${await dataDir($)}/${ROUND_DIR}`
   let listed: readonly { name: string; kind: string; mtimeMs?: number }[]
   try {
     listed = await $.fs.list(dir)
@@ -3104,7 +3104,7 @@ async function machineOf($: Host<'process'>): Promise<string> {
 const CI_WATCH_LIST_CAP = 4096
 const CI_WATCH_READ_CAP = 256
 async function prsOf($: Host<'env' | 'fs'>, sessionId: string, repo: string | null): Promise<string[]> {
-  const dir = `${await stateDir($)}/ci-watch`
+  const dir = `${await dataDir($)}/ci-watch`
   const entries: { name: string; kind: string; mtimeMs?: number }[] = await $.fs.list(dir).catch(() => [])
   const files = entries.slice(0, CI_WATCH_LIST_CAP).filter(entry => entry?.kind === 'file')
   const names = files.map(entry => entry.name)
@@ -3214,7 +3214,7 @@ async function receiveAsk($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' 
       return { consumed: 'orchestrator: a remote operator question of an older release, refused' }
     }
     step = 'the entry read'
-    const path = roundPath(await stateDir($), asked.entry.id)
+    const path = roundPath(await dataDir($), asked.entry.id)
     const known = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
     if (known?.since !== asked.entry.since) {
       const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from } }
@@ -3321,7 +3321,7 @@ async function receiveAnswerAck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pro
       await logLine($, 'supervision', "receive: an answer's acknowledgment was refused")
       return { consumed: "orchestrator: an answer's acknowledgment, refused" }
     }
-    const path = roundPath(await stateDir($), ack.id)
+    const path = roundPath(await dataDir($), ack.id)
     const entry = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
     const state = entry?.delivery?.state
     if (!entry?.origin || !entry.delivery || seqOf(entry.since) !== ack.seq || (state !== 'pending' && state !== 'sent' && state !== 'failed')) {
@@ -3443,7 +3443,7 @@ export async function readRemoteRows($: Host<'clock' | 'env' | 'fs' | 'process'>
 }
 
 // The machine's deck (deck.ts): the store, the remote rows, the round (its entries and its questions
-// asked with `ask`), the chains and the sleepers read once and written to the state directory's
+// asked with `ask`), the chains and the sleepers read once and written to the data root's
 // deck.json, only when it is news against
 // the file as it stands, whichever session wrote it last: every session of the machine computes
 // the same view of the same store, so a view another one already wrote is not written again, and
@@ -3451,7 +3451,7 @@ export async function readRemoteRows($: Host<'clock' | 'env' | 'fs' | 'process'>
 // callers and never a failure of theirs: a deck that cannot be written is one log line, and the
 // next change writes it.
 export async function writeDeck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>): Promise<void> {
-  const state = await stateDir($)
+  const state = await dataDir($)
   const local = await readSessions($)
   const chainDir = `${state}/chains`
   const listed: readonly { name: string; kind: string; mtimeMs?: number }[] = await $.fs.list(chainDir).catch(() => [])
@@ -3471,7 +3471,7 @@ export async function writeDeck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pro
     // The relay's entries and the questions asked with `ask`, each its own object in the round; one
     // his prompt claimed in its asker's tab is gone from the round, as the pane and the wake read it.
     round: [...(await readRound($)).map(read => read.entry), ...(await readAsked($)).filter(entry => !entry.claimed).map(askedAsEntry)],
-    sleepingText: String(await $.fs.read(`${state}/sleeping.json`).catch(() => '')),
+    sleepingText: String(await $.fs.read(`${await stateDir($)}/sleeping.json`).catch(() => '')),
     gate: await gateEnv($),
   })
   const path = `${state}/${DECK_FILE}`
@@ -3648,7 +3648,7 @@ export async function refreshRowAndDeck($: Host<'clock' | 'env' | 'fs' | 'plugin
 // leaves the entry orphaned, one log line. A pid the process table cannot be read for is never
 // judged dead. Null when neither path finds one.
 export async function orchestratorOn($: Host<'env' | 'fs' | 'plugin' | 'process'>, tty: string | null, agent: string, what: string): Promise<CoordinatorTo | null> {
-  const dir = `${await stateDir($)}/chains`
+  const dir = `${await dataDir($)}/chains`
   const listed: readonly { name: string; kind: string; mtimeMs?: number }[] = tty ? await $.fs.list(dir).catch(() => []) : []
   const chains = []
   for (const entry of listed) {

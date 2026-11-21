@@ -7,6 +7,51 @@
 
 /** The orchestrator module's directory under the host's configuration directory. */
 export const MODULE_DIR = 'claude-orchestrator'
+
+/*
+ * The orchestrator's state has two roots. The protected one, `<config>/claude-orchestrator` (or
+ * ORCHESTRATOR_STATE_DIR), holds what runs or is trusted: the venv, the launch files under
+ * `prompts/`, the server catalogue, the tier map, the routing tables, the coordinator's and the
+ * sleepers' records, and this file. The data root holds the rest, written by any session: it is
+ * the directory this file names, else the protected root itself. Nothing read from the data root
+ * decides what runs.
+ */
+/** Under the protected root, the operator's file that places the data root: `{"version": 1, "dir": "<absolute path>"}`. */
+export const DATA_ROOT_FILE = 'data-root.json'
+export const DATA_ROOT_VERSION = 1
+
+/** The data-root file of the protected root `root`. */
+export function dataRootFileOf(root: string): string {
+  return `${root.replace(/\/+$/, '')}/${DATA_ROOT_FILE}`
+}
+
+/*
+ * The directory a data-root file's text names, or null for none: no text, no JSON object, another
+ * version, or a `dir` that is not an absolute path of printable characters below the filesystem's
+ * root (a control character would split the line a shell reader reads it as). Its trailing slashes
+ * are dropped.
+ */
+export function parseDataRoot(text: string | null | undefined): string | null {
+  if (text === null || text === undefined) return null
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const { version, dir } = value as Record<string, unknown>
+  if (version !== DATA_ROOT_VERSION || typeof dir !== 'string') return null
+  const trimmed = dir.replace(/\/+$/, '')
+  if (!dir.startsWith('/') || trimmed === '' || /[\u0000-\u001f\u007f]/.test(dir)) return null
+  return trimmed
+}
+
+/** The data root of the protected root `root`, from its data-root file's text as the caller read it (undefined when absent): the one it names, else `root`. */
+export function dataRootOf(root: string, text: string | null | undefined): string {
+  return parseDataRoot(text) ?? root
+}
+
 /** The measure files' directory under the module's, one `<session id>.json` each. */
 export const MEASURE_DIR = 'measure'
 export const MEASURE_VERSION = 1
