@@ -5,7 +5,7 @@
 // it calls nothing.
 import { expect, test } from 'claude-code/testing'
 import { register } from '../register.ts'
-import { NOT_ORCHESTRATOR, answerLines, findingsOf, register as registerReview, rowWords, wordsOf } from '../review.ts'
+import { NOT_ORCHESTRATOR, answerLines, findingsOf, register as registerReview, rowWords, withIndexIds, wordsOf } from '../review.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../../core/readiness.ts'
 import { logLineOf } from './fakes.ts'
 import { answerText } from '../audit-events.ts'
@@ -501,6 +501,34 @@ test('an acceptance over an index with important findings sets each aside on its
   const out = await handler()(each.fx.dollar, each.input)
   expect(out.isError).toBe(undefined)
   expect(each.fx.calls.length).toBe(1)
+})
+
+// Lines of real review indexes (rev455b, review-508, review-558, review-506), one for each shape of location; the
+// ids of the first and the third are added where those two lines carry none.
+const REAL_INDEX = [
+  '1. [important] hooks/unattended.ts:67-83 — `REGISTRY_READ_CAP = 256` silently cuts the registries read — correctness:aaaaaaaaaa — rev455b-index/1.md',
+  '2. [critical] plugins/orchestrator/hooks/ledger.ts:371,468 — a draft PR is neither read nor told — correctness:40b95d95c2 — review-508-r1-index/1.md',
+  '3. [critical] plugins/orchestrator/hooks/pattern-kills.ts:~200-211 — `pkill -f <root>/<anything>` passes — security:bbbbbbbbbb — review-558-index/1.md',
+  '4. [important] plugins/implement/hooks/register.ts:169 — headless reviewer\'s name and record path unproven — correctness:573f70eaad, tests:b26da34b8e — review-506-index/2.md',
+  '5. [minor] b.ts:9 — no id here — review-1.md',
+].join('\n')
+
+test('a decision finds its index line by file and first line whatever the location\'s shape: a range, a list, a marked line, a plain one; a line with no id is none', () => {
+  const decided = (file: string, line: number, severity: 'critical' | 'important' | 'minor') => ({ decision: 'kept' as const, severity, file, line })
+  const out = withIndexIds([
+    decided('hooks/unattended.ts', 67, 'important'),
+    decided('plugins/orchestrator/hooks/ledger.ts', 371, 'critical'),
+    decided('plugins/orchestrator/hooks/pattern-kills.ts', 200, 'critical'),
+    decided('plugins/implement/hooks/register.ts', 169, 'important'),
+    decided('b.ts', 9, 'minor'),
+  ], REAL_INDEX)
+  expect(out.map(f => [f.finding_id, f.lens])).toEqual([
+    ['correctness:aaaaaaaaaa', 'correctness'],
+    ['correctness:40b95d95c2', 'correctness'],
+    ['security:bbbbbbbbbb', 'security'],
+    ['correctness:573f70eaad', 'correctness'],
+    [null, null],
+  ])
 })
 
 test('an acceptance over an index with no important finding, or an index that cannot be read, is written as before', async () => {
