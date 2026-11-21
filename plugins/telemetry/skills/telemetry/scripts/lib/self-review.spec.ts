@@ -67,6 +67,24 @@ test('self_review: one event per finding, fixed or answered with its reason, nam
   assert.deepEqual([answered?.['severity'], answered?.['outcome'], answered?.['reason'], answered?.['file']], [undefined, 'answered', 'covered by the suite end to end', undefined])
 })
 
+test('self_review: a finding\'s id, the one its lens\'s line carries, is kept on its event; a call that gives none records none, and one that gives a malformed id records nothing', async () => {
+  const { $, runs } = host()
+  const hook = hooks()
+  const id = 'correctness:0123456789'
+  await hook('tool.call')($, call({ findings: [{ lens: 'correctness', file: 'a.ts', line: 3, outcome: 'fixed', finding_id: ` ${id} ` }, { lens: 'tests', outcome: 'fixed' }] }), unreached)
+  const [first, second] = written(runs[0]?.stdin)
+  assert.deepEqual([first?.['finding_id'], 'finding_id' in (second ?? {})], [id, false])
+  // An id that merely contains one is not an id.
+  for (const bad of ['x:zz', 'see x:0123456789', 'x:0123456789 and more']) {
+    const refused = host()
+    assert.deepEqual(await hooks()('tool.call')(refused.$, call({ findings: [{ lens: 'x', outcome: 'fixed', finding_id: bad }] }), unreached), { result: 'self-review: not recorded — finding 1: its finding_id is not a `<lens>:<hash>` id', isError: true })
+    assert.equal(refused.runs.length, 0)
+  }
+  const refused = host()
+  assert.deepEqual(await hooks()('tool.call')(refused.$, call({ findings: [{ lens: 'x', outcome: 'fixed', finding_id: 'x:zz' }] }), unreached), { result: 'self-review: not recorded — finding 1: its finding_id is not a `<lens>:<hash>` id', isError: true })
+  assert.equal(refused.runs.length, 0)
+})
+
 test('self_review: no finding, a finding with no lens or outcome, an answered one with no reason, or a writer that fails record nothing and say why', async () => {
   for (const [input, why] of [
     [{}, 'no finding given'],

@@ -105,7 +105,7 @@ export function enrich(line: string, config: string): string {
 /** The session's title, role and origin, as the event that names the session carries them: what an `api_call` line takes from the `turn_end` it follows. */
 const STAMPS = ['title', 'role', 'parent', 'launch_tier'] as const
 
-/** A turn_end followed by the api_call lines of the transcript's last turn, when that turn ended where the event says; as it came when the transcript cannot say. */
+/** A turn_end, with the reasoning effort of the transcript's last turn, followed by that turn's api_call lines, when it ended where the event says; as it came when the transcript cannot say. */
 function enrichTurn(line: string, event: Event, config: string): string {
   const path = transcriptOf(config, event.session)
   if (path === undefined) return line
@@ -114,7 +114,9 @@ function enrichTurn(line: string, event: Event, config: string): string {
     const duration = event['duration_ms']
     const calls = lastTurn(path, ended, { startedAt: typeof duration === 'number' ? ended - duration : undefined }) ?? []
     const stamps = Object.fromEntries(STAMPS.filter(key => event[key] !== undefined).map(key => [key, event[key]]))
-    return [line, ...calls.map(call => JSON.stringify(makeEvent('api_call', call.start, event.session, { ...stamps, ...callFields(call) })))].join('\n')
+    // The reasoning effort of the turn's last call, as `session_end` reads it from the same transcript: known while the session runs.
+    const effort = calls.map(call => call.effort).filter(known => known !== undefined).at(-1)
+    return [effort === undefined ? line : JSON.stringify({ ...event, effort }), ...calls.map(call => JSON.stringify(makeEvent('api_call', call.start, event.session, { ...stamps, ...callFields(call) })))].join('\n')
   } catch {
     return line
   }
@@ -166,9 +168,17 @@ function enrichSubagent(line: string, event: Event, child: string, config: strin
   }
 }
 
-/** The text of the last answer a subagent's transcript holds between `from` and `to`; empty when none. */
-function lastAnswer(body: string, from: number, to: number): string {
+/** The tool a subagent hands its report back with: the host delivers its `message` to the caller, and the reader's final text block holds a line at most. */
+const HANDBACK_TOOL = 'SubagentHandback'
+
+/**
+ * The answer a subagent's transcript holds between `from` and `to`: the message of its last hand-back
+ * when it handed one back (where a reader's finding lines are), else the text of its last answer;
+ * empty when none.
+ */
+export function lastAnswer(body: string, from: number, to: number): string {
   let last = ''
+  let handback = ''
   for (const line of body.split('\n')) {
     if (!line.includes('"assistant"')) continue
     try {
@@ -176,11 +186,16 @@ function lastAnswer(body: string, from: number, to: number): string {
       const at = Date.parse(String(entry['timestamp'] ?? ''))
       const content = (entry['message'] as Record<string, unknown> | undefined)?.['content']
       if (entry['type'] !== 'assistant' || !(at >= from && at <= to) || !Array.isArray(content)) continue
-      const text = content.flatMap(block => (typeof block === 'object' && block !== null && (block as Record<string, unknown>)['type'] === 'text' ? [String((block as Record<string, unknown>)['text'] ?? '')] : [])).join('\n')
+      const blocks = content.filter((block): block is Record<string, unknown> => typeof block === 'object' && block !== null)
+      const text = blocks.flatMap(block => (block['type'] === 'text' ? [String(block['text'] ?? '')] : [])).join('\n')
       if (text !== '') last = text
+      for (const block of blocks) {
+        const message = block['type'] === 'tool_use' && block['name'] === HANDBACK_TOOL ? (block['input'] as Record<string, unknown> | undefined)?.['message'] : undefined
+        if (typeof message === 'string' && message !== '') handback = message
+      }
     } catch { /* a line that is no JSON is no answer */ }
   }
-  return last
+  return handback !== '' ? handback : last
 }
 
 /** What a review reader's run end names: its lens, pull request and range, and its findings by severity with their ids. */
