@@ -99,6 +99,14 @@ describe('lens readers', () => {
     ])
     // A line that ends in one of the words without a location at its start is no finding, nor is one whose last field says more than the word.
     assert.deepEqual(parseLensFindings('The review is done, nothing — minor\nSee the notes — important\nThe risk is critical\nsrc/a.ts:12 — the claim — a minor one\nsrc/a.ts:12 — the claim — minor issue\nsrc/a.ts:12 — minor').length, 0)
+    // The location is a file with a dot or a slash at the start of the line: a time or a word before a colon, or text before the location, is none.
+    assert.deepEqual(parseLensFindings('foo:12 — a claim — minor\nNote: 5 — x — minor\nNote: see src/a.ts:12 — x — minor\nImportant 10:30 — standup moved — minor'), [])
+    // A `*` bullet, a location marked `~`, a range or a list, words after the location and a pipe in the claim.
+    assert.deepEqual(parseLensFindings('* src/a.ts:~12 — a | b — e — minor\nsrc/b.ts:1,3 — c — e — minor\nsrc/c.ts:1/3 and 5 — d — e — minor').map(f => [f.file, f.line, f.claim]), [
+      ['src/a.ts', 12, 'a | b — e'],
+      ['src/b.ts', 1, 'c — e'],
+      ['src/c.ts', 1, 'd — e'],
+    ])
     // The leading shape keeps its reading, its claim and so its id, even when its evidence ends in a severity.
     const lead = parseLensFindings('[important] src/a.ts:12 — the lock is released — the impact is minor')
     assert.deepEqual(lead.map(f => [f.severity, f.claim]), [['important', 'the lock is released']])
