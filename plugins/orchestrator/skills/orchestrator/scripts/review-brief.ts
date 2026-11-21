@@ -101,7 +101,6 @@ export function parseArgs(argv: readonly string[]): Fields | { readonly error: s
   if (!/^[0-9a-f]{7,40}$/i.test(get('head'))) return { error: `--head is a commit sha, 7 to 40 hexadecimal characters, got: ${get('head')}` }
   const tier = get('tier')
   if (tier !== '' && !TIERS.includes(tier)) return { error: `--tier is deep, standard or light, got: ${tier}` }
-  if (lenses.length === 0 && tier !== '') return { error: '--tier goes with --lens: with no lens the tier reads none' }
   return {
     out: get('out'), repo: get('repo'), pr: get('pr'), title: get('title'), spec: get('spec'), index: get('index'), deliveryReport: get('delivery-report'), branch: get('branch'),
     head: get('head'), worktree: get('worktree'), orchestrator: get('orchestrator'), reason: get('reason'), size: get('size'), lenses, tier,
