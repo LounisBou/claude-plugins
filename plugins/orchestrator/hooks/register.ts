@@ -41,6 +41,8 @@ export function register(on: On<Mod>): void {
     })
   // First: the audit trail reads what every later handler answered, after it decided.
   registerAudit(on)
+  // Ahead of every hook that answers a call without its tool (the guards, the module's own tools): a dialog's call ends here whatever answers it.
+  registerPermissionWait(on)
   registerGauge(on)
   // Before the guards and the supervision: the turn's end reads the declared wait it hands on.
   registerWait(on)
@@ -49,7 +51,6 @@ export function register(on: On<Mod>): void {
   // Ahead of the supervision: its turn end sends the row and writes the deck, which carry the pull requests this turn end publishes.
   registerUnattended(on)
   registerSupervision(on)
-  registerPermissionWait(on)
   registerWake(on)
   registerPaneTool(on)
   registerStartState(on)

@@ -428,3 +428,11 @@ test('the module mounts the dialog hooks, and takes no event twice without a mat
   const bare = hooks.filter(h => h.matcher === undefined).map(h => h.event)
   expect(bare.filter((event, i) => bare.indexOf(event) !== i)).toEqual([])
 })
+
+test("the dialog's call end is taken outside every tool hook of the module but the audit's, which always calls its tool", () => {
+  // A chain answers in registration order: a guard that refuses a call without calling its tool runs inside this hook.
+  const hooks = capture<World>(registerModule)
+  const request = hooks.findIndex(h => h.event === 'classic.PermissionRequest')
+  const own = hooks.findIndex((h, i) => i > request && h.event === 'tool.call')
+  expect(hooks.slice(0, own).filter(h => h.event === 'tool.call').length).toBe(1)
+})
