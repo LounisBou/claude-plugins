@@ -5246,6 +5246,23 @@ check "the module's log keeps every line forty sessions append at once" "40|40" 
 sh "$ROOT/hooks/log-append.sh" "$LOGD/hooks-module.log" "past the cap" 100
 check "a log past its cap is rotated to one .1 generation, the new line alone in the fresh file" "40|past the cap|no" \
   "$(grep -c '^line' "$LOGD/hooks-module.log.1")|$(cat "$LOGD/hooks-module.log")|$([ -e "$LOGD/hooks-module.log.lock" ] && echo yes || echo no)"
+# The log lies in a directory any session writes: a link planted at its name, at its previous
+# generation's or at its lock's is never written through, and what it points at stays as it was.
+LOGL="$WORK/module-log-links"; mkdir -p "$LOGL"
+printf 'protected\n' > "$LOGL/target"
+ln -s "$LOGL/target" "$LOGL/hooks-module.log"
+sh "$ROOT/hooks/log-append.sh" "$LOGL/hooks-module.log" "through the link" 1000000
+check "a log that is a link is not appended to, and its target is left as it was" "protected|link" \
+  "$(cat "$LOGL/target")|$([ -L "$LOGL/hooks-module.log" ] && echo link || echo replaced)"
+rm "$LOGL/hooks-module.log"; printf 'x%.0s' $(seq 1 200) > "$LOGL/hooks-module.log"; ln -s "$LOGL/target" "$LOGL/hooks-module.log.1"
+sh "$ROOT/hooks/log-append.sh" "$LOGL/hooks-module.log" "past the cap" 100
+check "a previous generation that is a link stops the rotation and the append, the target left as it was" "protected|200" \
+  "$(cat "$LOGL/target")|$(wc -c < "$LOGL/hooks-module.log" | tr -d ' ')"
+# The two roots end to end, over the real scripts under scratch directories (tests/e2e-data-root.sh).
+E2ERD="$WORK/e2e-data-root"
+e2e_out=$(bash "$ROOT/tests/e2e-data-root.sh" "$E2ERD" 2>&1); e2e_rc=$?
+check "the two roots end to end: dispatch, brief, spawn, launch script, round and log, with files planted in the data root" "0|0" \
+  "$e2e_rc|$(printf '%s\n' "$e2e_out" | grep -c '  FAIL')"
 
 echo "== the app, stubbed =="
 # A pane behind a maximized sibling is in the tab's all_sessions and not in its sessions.
