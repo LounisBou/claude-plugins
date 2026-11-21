@@ -8,7 +8,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { journalDir, JOURNAL_FOLD_FILE, LEARNING_CONTRACT, parseJournalEvent } from '../../../../core/learning.ts'
 import { ROLES } from '../../../../core/names.ts'
-import { MEASURE_DIR, moduleDirOf, parseMeasure, RECORDS_DIR, ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
+import { MEASURE_DIR, parseMeasure, RECORDS_DIR, ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
+import { moduleDirUnder } from '../../../../core/roots.ts'
 import { num, record, text } from './manifest.ts'
 import { dayFiles, eventsDir } from './store.ts'
 
@@ -393,7 +394,7 @@ export function report(input: ReportInput): string[] {
   const end = addDays(start, 6)
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i))
   const inWindow = (day: string | undefined): boolean => day !== undefined && day >= start && day <= end
-  const module = moduleDirOf(input.config, input.env['ORCHESTRATOR_MODULE_DIR'])
+  const module = moduleDirUnder(input.config, input.env['ORCHESTRATOR_MODULE_DIR'])
   const tools = input.tools.length > 0 ? input.tools : [input.repositoryAt(input.cwd)].filter((r): r is string => r !== undefined)
   const skipped = { n: 0 }
   const { sessions, questions, turns, calls } = gather(input, start, end, skipped)

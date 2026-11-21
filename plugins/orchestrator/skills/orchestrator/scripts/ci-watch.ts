@@ -6,13 +6,14 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { setting, stateDir, type Env } from '../../../core/paths.ts'
+import { setting, type Env } from '../../../core/paths.ts'
+import { orchestratorRoots } from '../../../core/roots.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { ENV } from '../../../core/env.ts'
 import { gateArgv, parseGate, type GateCheck, type GateCi } from '../../../core/ci-gate.ts'
 import { FORGE } from '../../../core/forge-status.ts'
 import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
-import { CI_GATE_DIR, ciGatePath, CI_WATCH_DIR, ciWatchLogPath, MODULE_DIR } from '../../../core/orchestration.ts'
+import { CI_GATE_DIR, ciGatePath, CI_WATCH_DIR, ciWatchLogPath } from '../../../core/orchestration.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import { auditRun, fullHead, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 
@@ -104,7 +105,7 @@ export function parseArgs(argv: readonly string[], env: Env): Options {
   }
   return {
     pr, repo, interval, base, workflows, registerWait, baseWait, mergeWait,
-    stateDir: setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir(MODULE_DIR, env, setting(env, 'HOME')),
+    stateDir: orchestratorRoots(env, setting(env, 'HOME')).dataRoot,
     session: setting(env, 'CLAUDE_CODE_SESSION_ID'),
   }
 }

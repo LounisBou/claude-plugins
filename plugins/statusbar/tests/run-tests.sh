@@ -338,6 +338,21 @@ check "the warning keeps its mark with the tokens" "$CTX_ONLY" \
 
 if [ -n "$saved_config_dir" ]; then export CLAUDE_CONFIG_DIR="$saved_config_dir"; else unset CLAUDE_CONFIG_DIR; fi
 
+# The orchestrator's data root: its state directory's data-root file (core's roots.json names it)
+# places the data elsewhere, and the bar reads the measure, the deck and the quota there.
+DR_CONFIG="$WORK/dr-config"; DR_DATA="$WORK/dr-data"
+mkdir -p "$DR_CONFIG/claude-orchestrator/measure" "$DR_DATA/measure"
+printf '{"version":1,"dir":"%s/"}\n' "$DR_DATA" > "$DR_CONFIG/claude-orchestrator/data-root.json"
+printf '{"version":1,"context_tokens":1,"context_window":1,"context_percent":1,"model":"m","updated_at":"t","gate_tokens":%s}\n' 300000 > "$DR_DATA/measure/w1000000.json"
+printf '{"version":1,"context_tokens":1,"context_window":1,"context_percent":1,"model":"m","updated_at":"t","gate_tokens":%s}\n' 500000 > "$DR_CONFIG/claude-orchestrator/measure/w1000000.json"
+CLAUDE_CONFIG_DIR="$DR_CONFIG" check "the gate is read from the measure file under the data root" "$CTX_ONLY" \
+  "$(ctx_payload 'Orch: build' 1000000 4000 2603 290000 30)" \
+"ctx: 30% · 296k/300k"
+printf '{"version":2,"dir":"%s"}\n' "$DR_DATA" > "$DR_CONFIG/claude-orchestrator/data-root.json"
+CLAUDE_CONFIG_DIR="$DR_CONFIG" check "a data-root file of another version leaves the measure under the config dir" "$CTX_ONLY" \
+  "$(ctx_payload 'Orch: build' 1000000 4000 2603 290000 30)" \
+"ctx: 30% · 296k/500k"
+
 echo "== regression: consecutive empty fields =="
 
 # The separator is 0x1F rather than a tab precisely so two empty fields in a
@@ -451,6 +466,11 @@ if [ "$actual" = "plain │ ✋ 2" ]; then
 else
   printf '  FAIL %s (got: %s)\n' "without ORCHESTRATOR_STATE_DIR the deck is the config directory's" "$actual"; fail=$((fail + 1))
 fi
+DR_STATE="$WORK/dr-state"; mkdir -p "$DR_STATE" "$WORK/dr-deck"
+printf '{"version":1,"dir":"%s"}\n' "$WORK/dr-deck" > "$DR_STATE/data-root.json"
+deck_text 4 0 5 > "$WORK/dr-deck/deck.json"
+deck_text 1 0 5 > "$DR_STATE/deck.json"
+check_deck "the deck is read under the data root the state directory places" "$DR_STATE" "plain │ ✋ 4"
 
 # An orchestrator or an auditor counts the questions it asked itself: the round's entries, one file
 # each under the state directory's round/. An open question that asks the operator, whose asker is the
@@ -668,6 +688,11 @@ qk_check "the quota file holds the account, the configuration and both windows" 
   "$(jq -r '"\(.version) \(.account) \(.config) \(.five_hour.used_percentage) \(.five_hour.resets_at) \(.seven_day.used_percentage) \(.seven_day.resets_at)"' "$QK_FILE" 2>&1)"
 qk_check "its time is ISO UTC" "yes" "$(jq -r 'if (.at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]{8}Z$")) then "yes" else "no" end' "$QK_FILE" 2>&1)"
 qk_check "no temporary file is left in the quota directory" "" "$(ls -A "$QK_STATE/quota" | grep '\.tmp-')"
+QK_SPLIT="$WORK/qk-split"; mkdir -p "$QK_SPLIT" "$WORK/qk-split-data"
+printf '{"version":1,"dir":"%s"}\n' "$WORK/qk-split-data" > "$QK_SPLIT/data-root.json"
+qk_run "$QK_BOTH" "$QK_SPLIT" "$QK_CONFIG_ONE" >/dev/null
+qk_check "the quota file is written under the data root, nothing under the state directory" "$QK_ONE ok" \
+  "$(jq -r '.account' "$WORK/qk-split-data/quota/$QK_ONE.json" 2>&1) $([ -e "$QK_SPLIT/quota" ] && echo kept || echo ok)"
 
 # Unchanged figures write nothing: the file is told apart by a sentinel the second run must leave.
 printf 'sentinel\n' > "$QK_FILE"

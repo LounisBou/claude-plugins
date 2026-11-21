@@ -45,7 +45,8 @@ import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { setting, stateDir, type Env } from '../../../core/paths.ts'
+import { setting, type Env } from '../../../core/paths.ts'
+import { orchestratorRoots } from '../../../core/roots.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 
 export const CACHE_MAX_AGE_MS = 7 * 24 * 3600 * 1000
@@ -397,9 +398,9 @@ export function main(argv: readonly string[], deps: Deps): number {
   return 0
 }
 
-/** The cache directory under the orchestrator's state directory. */
+/** The cache directory under the orchestrator's data root. */
 export function cacheDirOf(env: Env): string {
-  return join(setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir('claude-orchestrator', env, setting(env, 'HOME')), 'draft-guard')
+  return join(orchestratorRoots(env, setting(env, 'HOME')).dataRoot, 'draft-guard')
 }
 
 /* node:coverage ignore next 3 */

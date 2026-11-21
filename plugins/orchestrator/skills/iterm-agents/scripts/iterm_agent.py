@@ -62,9 +62,41 @@ STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
     os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude"),
     "claude-orchestrator",
 )
+# The data root (core's orchestration.ts, read here as the generated `roots.json`). What runs or
+# is trusted stays on STATE_DIR, the protected root: the venv, the launch files under prompts/,
+# the server catalogue, the tier map, the coordinator's and the sleepers' records. What any
+# session writes (the chains, the auditors' records, the logs, the quota readings) is under
+# DATA_DIR, the directory the protected root's data-root file names. Nothing read from DATA_DIR
+# decides what runs.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "core", "roots.json"),
+          encoding="utf-8") as _fh:
+    ROOTS = json.load(_fh)
+
+
+def data_root_of(root):
+    """The data root the protected root `root` places, as core's parseDataRoot reads its file:
+    an absolute directory of printable characters, its trailing slashes dropped; else `root`,
+    for a file absent, unreadable, torn, of another version, or naming no such directory."""
+    try:
+        with open(os.path.join(root, ROOTS["file"]), encoding="utf-8") as fh:
+            value = json.load(fh)
+    except (OSError, ValueError):
+        return root
+    if not isinstance(value, dict):
+        return root
+    version, directory = value.get("version"), value.get("dir")
+    if isinstance(version, bool) or version != ROOTS["file_version"] or not isinstance(directory, str):
+        return root
+    trimmed = directory.rstrip("/")
+    if not directory.startswith("/") or not trimmed or any(ord(c) < 0x20 or ord(c) == 0x7F for c in directory):
+        return root
+    return trimmed
+
+
+DATA_DIR = data_root_of(STATE_DIR)
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
-CHAINS_DIR = os.path.join(STATE_DIR, "chains")
-AUDITORS_DIR = os.path.join(STATE_DIR, "auditors")
+CHAINS_DIR = os.path.join(DATA_DIR, "chains")
+AUDITORS_DIR = os.path.join(DATA_DIR, "auditors")
 SELF_TTY = os.environ.get("ORCHESTRATOR_SELF_TTY", "")
 
 
@@ -1035,10 +1067,10 @@ def process_gone(pid, start, state=_READ):
 
 
 def module_dir():
-    """The hooks module's own directory, where its store lives: ORCHESTRATOR_MODULE_DIR when
-    set, as the module reads it."""
+    """The hooks module's own directory, where its store lives, as the module reads it:
+    ORCHESTRATOR_MODULE_DIR when set, else the data root of the config dir's claude-orchestrator."""
     return (os.environ.get("ORCHESTRATOR_MODULE_DIR")
-            or os.path.join(host_config_dir(), "claude-orchestrator"))
+            or data_root_of(os.path.join(host_config_dir(), "claude-orchestrator")))
 
 
 # --- the session's row in the hooks module's store -----------------------------------
@@ -1251,13 +1283,13 @@ def name_lingering(pids):
 
 def close_log(what, line, echo=True):
     """Say one step of a host's end on stderr (unless `echo` is off) and append it,
-    timestamped, to close.log in the state directory, where a close that went wrong is read
+    timestamped, to close.log in the data root, where a close that went wrong is read
     afterwards."""
     if echo:
         print("%s: %s" % (what, line), file=sys.stderr)
     try:
-        os.makedirs(STATE_DIR, exist_ok=True)
-        with open(os.path.join(STATE_DIR, "close.log"), "a") as fh:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(os.path.join(DATA_DIR, "close.log"), "a") as fh:
             fh.write("%s %s: %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                       what, line))
     except OSError:
@@ -1987,7 +2019,7 @@ def chain_store(*argv):
     pruned (chain_prune), the ones just written and the caller's own kept."""
     node = os.environ.get("ORCHESTRATOR_ADAPTER_NODE") or "node"
     done = subprocess.run([node, "--experimental-strip-types", "--no-warnings", CHAINS_WRITER,
-                           argv[0], STATE_DIR] + [str(a) for a in argv[1:]],
+                           argv[0], DATA_DIR] + [str(a) for a in argv[1:]],
                           capture_output=True, text=True, timeout=30)
     if done.returncode != 0:
         raise RuntimeError((done.stderr or "").strip() or "chains: exit %d" % done.returncode)
@@ -3519,7 +3551,7 @@ HOME_WATCH_UP = 3
 def home_end_marker(socket):
     """The file a launcher command leaves before it ends the home server `socket`: the
     server's watcher then knows the end was traced by that command and says nothing."""
-    return os.path.join(STATE_DIR, "home-ended", socket)
+    return os.path.join(DATA_DIR, "home-ended", socket)
 
 
 def trace_home(socket, ended, cause, tty):
@@ -4226,12 +4258,12 @@ def cmd_home(args):
     release = ("pane=$(tty); %s home-release --tty %s --session-id %s --pane-tty \"$pane\" "
                "--resumed %s >> %s 2>&1 & watcher=$!; "
                % (shq(LAUNCHER_SH), shq(own), shq(old_id), shq(args.session),
-                  shq(os.path.join(STATE_DIR, "home-release.log")))) if old_id else ""
+                  shq(os.path.join(DATA_DIR, "home-release.log")))) if old_id else ""
     # The old session did not end in its wait: the launcher closes this server and its tab, so
     # no empty tab is left, and the hooks module of the old session says so there.
     abandon = ("%s home-release --abandon %s >> %s 2>&1 || echo 'the home server could not be "
                "closed: close this tab by hand'; "
-               % (shq(LAUNCHER_SH), shq(socket), shq(os.path.join(STATE_DIR, "home-release.log"))))
+               % (shq(LAUNCHER_SH), shq(socket), shq(os.path.join(DATA_DIR, "home-release.log"))))
     launch = ("cd %s && i=0 && while kill -0 %s 2>/dev/null; do "
               "if [ $i -ge %d ]; then echo 'the session did not end in its old place: it "
               "goes on there'; %ssleep 10; exit 1; fi; sleep 0.2; i=$((i+1)); done; "
@@ -4917,13 +4949,13 @@ def quota_window(value):
 
 
 def quota_room(now=None):
-    """`{plan: percent left}` of each plan whose quota file under `<state>/quota/` is a fresh
+    """`{plan: percent left}` of each plan whose quota file under `<data>/quota/` is a fresh
     reading: the room of a plan is what its fuller window leaves. A file core's parseQuota
     refuses (another version, a missing field, a window that is no window, no window at all), a
     stale one and an account of no known plan are skipped; the newest reading of a plan counts."""
     now = time.time() if now is None else now
     newest = {}
-    directory = os.path.join(STATE_DIR, "quota")
+    directory = os.path.join(DATA_DIR, "quota")
     try:
         names = sorted(os.listdir(directory))
     except OSError:
@@ -5609,9 +5641,9 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
 # A harness (the outcome evals') opens an orchestrator it drives with no operator, on a bench
 # of its own: a directory the caller names. The home server and its socket, in the bench's own
 # tmux directory, and the orchestrator's working directory sit inside the bench, so no server
-# of the machine is touched and a tab is never asked for. The launch script, the prompt, the
-# servers' file and `close.log` go to the launcher's state directory, as for any launch. The
-# orchestrator runs in window 0 of a home session marked like any other, so the agents it
+# of the machine is touched and a tab is never asked for. The launch script, the prompt and the
+# servers' file go to the launcher's state directory, `close.log` to its data root, as for any
+# launch. The orchestrator runs in window 0 of a home session marked like any other, so the agents it
 # spawns are windows of that session. The caller gives the plugin directories and the settings
 # the orchestrator runs on, since it is no host session whose launch they could be read from.
 # No remote control. `close --bench --socket` ends the home, every window of it. This is not an

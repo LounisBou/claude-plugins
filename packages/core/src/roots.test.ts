@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { DATA_ROOT_FILE, DATA_ROOT_VERSION, dataRootFileOf, dataRootOf, parseDataRoot } from './orchestration.ts'
-import { orchestratorRoots } from './roots.ts'
+import { DATA_FILES } from './data.ts'
+import { DATA_ROOT_FILE, DATA_ROOT_VERSION, dataRootFileOf, dataRootOf, parseDataRoot, ROOTS_CONTRACT } from './orchestration.ts'
+import { moduleDirUnder, orchestratorRoots } from './roots.ts'
 
 const file = (dir: string): string => JSON.stringify({ version: DATA_ROOT_VERSION, dir })
 
@@ -27,6 +28,11 @@ describe('the data-root file', () => {
       JSON.stringify({ version: 1, dir: 3 }), file('relative/x'), file(''), file('/'), file('//'),
       file('/x\ny'), file('/x\ty'), file('/x\u007f'),
     ]) assert.equal(parseDataRoot(text), null, String(text))
+  })
+
+  it('is read by the other languages from roots.json: its name and its version', () => {
+    assert.deepEqual(DATA_FILES['roots.json'], { version: 1, file: DATA_ROOT_FILE, file_version: DATA_ROOT_VERSION })
+    assert.equal(DATA_FILES['roots.json'], ROOTS_CONTRACT)
   })
 
   it('leaves the data on the protected root when it names none', () => {
@@ -70,6 +76,17 @@ describe('the roots a script resolves', () => {
     })
     assert.equal(orchestratorRoots({ ORCHESTRATOR_STATE_DIR: state, ORCHESTRATOR_MODULE_DIR: '/m' }, home).moduleDir, '/m')
     assert.deepEqual(orchestratorRoots({ ORCHESTRATOR_STATE_DIR: '', ORCHESTRATOR_MODULE_DIR: '' }, home).protectedRoot, join(home, '.claude', 'claude-orchestrator'))
+  })
+
+  it('place the module\'s directory of a given configuration directory the same way', () => {
+    const config = mkdtempSync(join(tmpdir(), 'roots-'))
+    const own = join(config, 'claude-orchestrator')
+    assert.equal(moduleDirUnder(config), own)
+    mkdirSync(own)
+    writeFileSync(join(own, DATA_ROOT_FILE), file('/shared/o'))
+    assert.equal(moduleDirUnder(config), '/shared/o')
+    assert.equal(moduleDirUnder(config, '/m'), '/m')
+    assert.equal(moduleDirUnder(config, ''), '/shared/o')
   })
 
   it('keep the data on the protected root when its file cannot be read', () => {

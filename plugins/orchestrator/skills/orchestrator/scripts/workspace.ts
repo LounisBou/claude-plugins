@@ -64,7 +64,8 @@ import {
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { ENV } from '../../../core/env.ts'
-import { configDir, setting, stateDir, type Env } from '../../../core/paths.ts'
+import { configDir, setting, type Env } from '../../../core/paths.ts'
+import { orchestratorRoots } from '../../../core/roots.ts'
 import { readText, update } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted, type FilePr, type PrFile } from '../../../hooks/pr-file-format.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
@@ -1348,7 +1349,7 @@ export async function sweep(ctx: Context, argv: readonly string[]): Promise<void
   const signal = deadline === undefined ? undefined : AbortSignal.timeout(Math.max(1, deadline * 1000))
   const sctx: Context = { ...ctx, ...(signal === undefined ? {} : { signal }) }
   const env = ctx.deps.env
-  const state = setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir('claude-orchestrator', env, setting(env, 'HOME'))
+  const state = orchestratorRoots(env, setting(env, 'HOME')).dataRoot
   const s: Sweep = { ctx: sctx, dry, deadline, t0, file: parsePrFile(readText(prFilePath(state)) ?? ''), wanted: new Set(), prs: new Map(), ledger: new Map(readLedger(ctx.root).map(e => [e.path, e])) }
   try {
     // The trashes, then the orphans — local and cheap — then the checkouts, which read the pull

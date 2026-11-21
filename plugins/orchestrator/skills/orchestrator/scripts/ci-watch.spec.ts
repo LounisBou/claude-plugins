@@ -338,6 +338,14 @@ test('green: one passed check at least, the watch output in the log', async () =
   assert.equal(existsSync(`${log}.session`), false)
 })
 
+test('the watch\'s log lands under the data root the protected root places', async () => {
+  const data = join(state, 'shared')
+  writeFileSync(join(state, 'data-root.json'), JSON.stringify({ version: 1, dir: data }))
+  assert.equal(await main(['7'], { ORCHESTRATOR_STATE_DIR: state, CLAUDE_CODE_SESSION_ID: 'sess-42' }, fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' })), 0)
+  assert.equal(readFileSync(join(data, 'ci-watch', 'here-pr7.log.session'), 'utf8'), 'sess-42\n')
+  assert.equal(existsSync(join(state, 'ci-watch')), false)
+})
+
 test('the repository is passed to every gh call', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', headRuns: ['201:in_progress', '201:completed'] })
   await watch(options(['7', '--repo', 'o/r', '--interval', '1']), deps)

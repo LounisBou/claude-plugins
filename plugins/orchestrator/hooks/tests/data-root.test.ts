@@ -8,6 +8,8 @@ import { DATA_ROOT_FILE } from '../../core/orchestration.ts'
 import { writeMeasure } from '../gauge.ts'
 import { dataDir, logLine, moduleDir, stateDir } from '../module-io.ts'
 import { coordinatorRuns, writeSession } from '../supervision.ts'
+import { readTodos } from '../todo.ts'
+import { todoPath } from '../todo-format.ts'
 import { disk, logLineOf } from './fakes.ts'
 
 const HOME = '/tmp/h'
@@ -80,4 +82,10 @@ test('the coordinator\'s record is read on the protected root: one planted in th
   const kept = new Map([[`${PROTECTED}/${DATA_ROOT_FILE}`, rootFile(DATA)], [`${PROTECTED}/coordinator.json`, record]])
   // A record naming no pid cannot be told gone: it counts as live, read where it belongs.
   expect(await coordinatorRuns(hostOver(kept).$)).toBe(true)
+})
+
+test('a holder\'s to-do list is read under the data root, never one left on the protected root', async () => {
+  const item = (label: string): string => `${JSON.stringify({ v: 1, id: 1, opened: '2026-11-21T09:00:00Z', label, state: 'open', verdict: '', words: 'w', said_at: '2026-11-21T09:00:00Z', from: 'Orch: o', agent: 'Agent: a' })}\n`
+  const files = new Map([[`${PROTECTED}/${DATA_ROOT_FILE}`, rootFile(DATA)], [todoPath(DATA, 'Orch: o'), item('shared')], [todoPath(PROTECTED, 'Orch: o'), item('stale')]])
+  expect((await readTodos(hostOver(files).$, 'Orch: o')).map(one => one.label)).toEqual(['shared'])
 })

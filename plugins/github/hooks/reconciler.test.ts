@@ -345,6 +345,19 @@ test('the repositories the orchestrator\'s pull request file read are followed t
   expect(count(state.runs, 'pr-panel')).toBe(1)
 })
 
+test('the orchestrator\'s pull request file is read under the data root its state directory places', async ($, on) => {
+  const clock = mock.clock(on, { now: T0 + 31 * 24 * 3600 * 1000 })
+  const { state } = world(on, { files: {
+    [CFG + '/claude-orchestrator/data-root.json']: JSON.stringify({ version: 1, dir: '/shared/claude-orchestrator' }),
+    [CFG + '/claude-orchestrator/prs.json']: JSON.stringify({ v: 1, repos: ['acme/stale'], prs: [] }),
+    ['/shared/claude-orchestrator/prs.json']: JSON.stringify({ v: 1, repos: ['acme/app'], prs: [] }),
+  } })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.advance(TICK_MS)
+  await clock.settle()
+  expect(state.listedRepos).toEqual(['acme/app'])
+})
+
 test('a pull request no longer listed open loses its reading', async ($, on) => {
   const { clock, state, files } = await started($, on)
   await beat(clock)

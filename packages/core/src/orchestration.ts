@@ -51,6 +51,9 @@ export function dataRootOf(root: string, text: string | null | undefined): strin
   return parseDataRoot(text) ?? root
 }
 
+/** The data-root file for the readers in another language (the launcher, `statusline.sh`, `gate.py`): its name under the protected root and its version. */
+export const ROOTS_CONTRACT = { version: 1, file: DATA_ROOT_FILE, file_version: DATA_ROOT_VERSION } as const
+
 /** The measure files' directory under the module's, one `<session id>.json` each. */
 export const MEASURE_DIR = 'measure'
 export const MEASURE_VERSION = 1

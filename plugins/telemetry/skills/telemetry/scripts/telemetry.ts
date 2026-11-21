@@ -28,7 +28,7 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findingCounts, findingId, parseLensDescription, parseLensFindings } from '../../../core/lens.ts'
 import { parseSessionName } from '../../../core/names.ts'
-import { moduleDirOf } from '../../../core/orchestration.ts'
+import { moduleDirUnder } from '../../../core/roots.ts'
 import { firstRepository, makeEvent, remoteUrlsArgv, type Event } from '../../../hooks/collect.ts'
 import { planArchive } from './lib/archive.ts'
 import { apiCalls, callFields, callTotals, END_SLACK_AFTER_MS, lastTurn } from './lib/cache.ts'
@@ -274,7 +274,7 @@ export function run(args: readonly string[], deps: Deps): number {
     machine: machineName(deps.env['TELEMETRY_MACHINE'] || hostname()),
     git: deps.git,
     transcript: (session: string) => transcriptOf(config, session),
-    archive: (machine: string, now: number) => planArchive({ moduleDir: moduleDirOf(config, deps.env['ORCHESTRATOR_MODULE_DIR']), machine, now }),
+    archive: (machine: string, now: number) => planArchive({ moduleDir: moduleDirUnder(config, deps.env['ORCHESTRATOR_MODULE_DIR']), machine, now }),
   })
   switch (sub) {
     case 'append': {

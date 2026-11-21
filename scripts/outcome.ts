@@ -18,8 +18,8 @@ import { byArm, deckMeter, dependencyNames, hostAgent, hostJudge, withoutOrchest
 import { benchLauncher, benchPathError, orchestrationAgent, realBench, type Launcher } from './lib/outcome/orchestration.ts'
 import { findTranscript } from './lib/outcome/transcript.ts'
 import { DECK_FILE } from '../packages/core/src/deck.ts'
-import { moduleDirOf } from '../packages/core/src/orchestration.ts'
 import { configDir, setting } from '../packages/core/src/paths.ts'
+import { orchestratorRoots } from '../packages/core/src/roots.ts'
 import { runEvals, type Ports, type Report } from './lib/outcome/harness.ts'
 import { markdown } from './lib/outcome/report.ts'
 import { filesJudge, oracleAgent, silentMeter } from './lib/outcome/stub.ts'
@@ -85,9 +85,9 @@ export interface Inject {
   readonly pollMs?: number
 }
 
-/** The deck's path: the orchestrator's state directory, under its override or the host's configuration. */
+/** The deck's path: the orchestrator's data root, under its state directory's override or the host's configuration. */
 export function deckPath(env: Io['env']): string {
-  return join(setting(env, 'ORCHESTRATOR_STATE_DIR') ?? moduleDirOf(configDir(env)), DECK_FILE)
+  return join(orchestratorRoots(env).dataRoot, DECK_FILE)
 }
 
 /** The host's arms, meter and judge, with every installed orchestrator turned off but this checkout's. */

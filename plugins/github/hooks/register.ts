@@ -24,7 +24,7 @@ import {
   type Counts, type Flap, type LabelMove, type ListedPr, type Listing, type Local, type Schedule, type Seen,
 } from './reconcile.ts'
 import { parseReconcile, reconcileEdgePath, reconcilePath, reconcileRoot, RECONCILE_VERSION } from '../core/pr-reconcile.ts'
-import { moduleDirOf } from '../core/orchestration.ts'
+import { dataRootFileOf, dataRootOf, moduleDirOf } from '../core/orchestration.ts'
 import { prFilePath, prFileRepos } from '../core/pr-file.ts'
 import { updateOver, writeAtomicOver } from '../core/store-io.ts'
 import { appendEventOver, journalIoOf, randomPart } from '../core/journal.ts'
@@ -1390,8 +1390,10 @@ async function followedRepos($: Mod, config: string, root: string, now: number):
       if (isRepoName(repo)) records.push({ repo, mtimeMs: await mtimeOf($, root + '/' + repo) })
     }
   }
-  // The orchestrator's state directory where it stands by default: its override is a variable of its own.
-  return reconciledRepos(records, prFileRepos((await textOf($, prFilePath(moduleDirOf(config)))) ?? ''), now)
+  // The orchestrator's state directory where it stands by default (its override is a variable of its own), and the data root its data-root file places.
+  const state = moduleDirOf(config)
+  const data = dataRootOf(state, await textOf($, dataRootFileOf(state)))
+  return reconciledRepos(records, prFileRepos((await textOf($, prFilePath(data))) ?? ''), now)
 }
 
 // What the gate reads on this machine for a pull request: its head's records directory, its plan, its repository's exemption.

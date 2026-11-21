@@ -238,3 +238,9 @@ test('the command: usage, no gate answer, the gate\'s failing names that are no 
   assert.equal(cacheDirOf({ ORCHESTRATOR_STATE_DIR: '/s' }), '/s/draft-guard')
   assert.equal(cacheDirOf({ CLAUDE_CONFIG_DIR: '/c' }), '/c/claude-orchestrator/draft-guard')
 })
+
+test('the cache follows the data root the protected root places', () => {
+  const state = mkdtempSync(join(tmpdir(), 'draft-guard-'))
+  writeFileSync(join(state, 'data-root.json'), JSON.stringify({ version: 1, dir: '/shared/o' }))
+  assert.equal(cacheDirOf({ ORCHESTRATOR_STATE_DIR: state }), '/shared/o/draft-guard')
+})

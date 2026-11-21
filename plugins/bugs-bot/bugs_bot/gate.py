@@ -13,15 +13,39 @@ from bugs_bot.project import PROJECT_FILE, Project, dump_project
 
 # The orchestration's contract, core's orchestration.ts, as the JSON `npm run core` writes it:
 # where the orchestrator module's measure file lies, and the gate's percentage of the window.
-# The measure file lies under the config dir, never ORCHESTRATOR_STATE_DIR: that override
-# governs only the roots the module shares with surviving shell writers.
+# The measure file lies under the module's directory, the data root of the config dir's, never
+# ORCHESTRATOR_STATE_DIR: that override governs only the roots the module shares with surviving
+# shell writers. The data-root file's name and version are core's too (roots.json).
 with open(Path(__file__).resolve().parent.parent / "core" / "orchestration.json", encoding="utf-8") as _fh:
     CONTRACT = json.load(_fh)
+with open(Path(__file__).resolve().parent.parent / "core" / "roots.json", encoding="utf-8") as _fh:
+    ROOTS = json.load(_fh)
 
 
 def _config_dir(env: Mapping[str, str]) -> Path:
     """Return the host's config dir: the tool's override, else the host's, else ``~/.claude``."""
     return Path(env.get("BUGS_BOT_CLAUDE_DIR") or env.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
+def _data_root(root: Path) -> Path:
+    """Return the data root ``root``'s data-root file names, as core's ``parseDataRoot`` reads it.
+
+    An absolute directory of printable characters, its trailing slashes dropped; else ``root``,
+    for a file absent, unreadable, torn, of another version, or naming no such directory.
+    """
+    try:
+        value = json.loads((root / ROOTS["file"]).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return root
+    if not isinstance(value, dict):
+        return root
+    version, directory = value.get("version"), value.get("dir")
+    if isinstance(version, bool) or version != ROOTS["file_version"] or not isinstance(directory, str):
+        return root
+    trimmed = directory.rstrip("/")
+    if not directory.startswith("/") or not trimmed or any(ord(c) < 0x20 or ord(c) == 0x7F for c in directory):
+        return root
+    return Path(trimmed)
 
 
 def measure_path(env: Mapping[str, str]) -> Path | None:
@@ -35,7 +59,7 @@ def measure_path(env: Mapping[str, str]) -> Path | None:
     if not session:
         return None
     measure_dir = CONTRACT["measure"]
-    return _config_dir(env) / measure_dir["module_dir"] / measure_dir["dir"] / f"{session}.json"
+    return _data_root(_config_dir(env) / measure_dir["module_dir"]) / measure_dir["dir"] / f"{session}.json"
 
 
 def read_measure(path: Path) -> dict | None:

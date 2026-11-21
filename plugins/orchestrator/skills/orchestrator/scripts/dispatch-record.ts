@@ -10,8 +10,9 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { orchForm, parseSessionName } from '../../../core/names.ts'
 import { sessionOrchestration } from '../../../core/session-orchestration.ts'
-import { MODULE_DIR, recordsRegistryPath } from '../../../core/orchestration.ts'
-import { setting, stateDir, type Env } from '../../../core/paths.ts'
+import { recordsRegistryPath } from '../../../core/orchestration.ts'
+import { setting, type Env } from '../../../core/paths.ts'
+import { orchestratorRoots } from '../../../core/roots.ts'
 import { claimOwner, createOnly, firstLineOf, readText, releaseOwner, update } from '../../../core/store.ts'
 import { isEntry, processIo, run, type Io, type Run } from './lib/process.ts'
 import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
@@ -456,11 +457,12 @@ function finish(ctx: Context, code: number): void {
 }
 
 /**
- * The stop gate's state root, the one the module's gate resolves too: the override first, else the
- * config dir's claude-orchestrator, so the registry the gate reads and this script writes agree.
+ * The scripts' data root (the records registry, the round, the to-do lists, the chains, the pull
+ * request file), the one the module's dataDir resolves too, so the registry the gate reads and this
+ * script writes agree: the directory the protected root's data-root file names, else that root.
  */
 export function stateRoot(env: Env): string {
-  return setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir(MODULE_DIR, env, setting(env, 'HOME'))
+  return orchestratorRoots(env, setting(env, 'HOME')).dataRoot
 }
 
 async function open(ctx: Context, args: readonly string[]): Promise<void> {

@@ -51,6 +51,7 @@ import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../core/orchestration.ts'
 import { readText, update, writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo } from '../../../hooks/pr-file-format.ts'
 import { configDir, type Env } from '../../../core/paths.ts'
+import { orchestratorRoots } from '../../../core/roots.ts'
 import { setting } from '../../../core/env.ts'
 import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts'
 import { orchForm } from '../../../core/names.ts'
@@ -704,7 +705,8 @@ export function readOpen(
     const shown = agent.where !== undefined || listed?.some(one => one.name === agent.name || (agent.tty !== null && ttyName(one.tty) === ttyName(agent.tty))) === true
     const ready = shown ? readyNote(agent.name, ledger, (repo, pr) => ['MERGED', 'CLOSED'].includes(prState?.(repo, pr) ?? ''), readyHead) : undefined
     const said = ready === undefined ? agent : { ...agent, ready }
-    const brief = briefOf(state, agent.name)
+    // The launch scripts are the protected root's, never a file planted among the data.
+    const brief = briefOf(orchestratorRoots(env, setting(env, 'HOME')).protectedRoot, agent.name)
     return brief === undefined ? said : { ...said, brief }
   })
   // A row of a record older than the ledger names no pull request the ledger holds: the forge's open

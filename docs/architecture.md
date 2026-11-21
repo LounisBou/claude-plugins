@@ -79,6 +79,11 @@ only through `core`'s store, which locks and writes atomically. A file another p
 outside program reads (`deck.json`, the measure file) is a contract: typed in `core`,
 versioned, written in one rename by its owner alone.
 
+The orchestrator's state has two roots (core's `orchestration.ts`): the protected one under the
+configuration directory, for what runs or is trusted, and a data root the protected root's
+`data-root.json` places, for what any session writes. Nothing read from the data root decides what
+runs; `plugins/orchestrator/docs/state.md` gives each file its root.
+
 ## Tools installed once per machine
 
 A heavy tool several plugins may drive (a browser and its test runner) is never a dependency of

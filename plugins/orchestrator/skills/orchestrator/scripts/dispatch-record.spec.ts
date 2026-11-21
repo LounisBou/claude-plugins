@@ -506,6 +506,18 @@ test('the owner: claimed by the first write, refused to another orchestration, g
   assert.equal(await cli(['round', r, '1'], deps({ CLAUDE_CODE_SESSION_ID: 's1', ORCHESTRATOR_STATE_DIR: join(dir, 'blocked') })), '0||')
 })
 
+test('the records registry is written under the data root the protected root places, never on the protected root', async () => {
+  mkdirSync(join(dir, 'cfg', 'sessions'), { recursive: true })
+  writeFileSync(join(dir, 'cfg', 'sessions', '1.json'), '{"sessionId":"s1","name":"Orch: build","updatedAt":1}')
+  mkdirSync(join(dir, 'state'), { recursive: true })
+  writeFileSync(join(dir, 'state', 'data-root.json'), JSON.stringify({ version: 1, dir: join(dir, 'shared') }))
+  const r = rec()
+  assert.equal(stateRoot({ ORCHESTRATOR_STATE_DIR: join(dir, 'state') }), join(dir, 'shared'))
+  assert.equal(await cli(['goals', r, 'init', '--spec', 'none'], deps({ CLAUDE_CODE_SESSION_ID: 's1' }, { goals: 0 })), '0||')
+  assert.equal(readFileSync(join(dir, 'shared', 'records', 's1'), 'utf8'), `${r}\n`)
+  assert.equal(existsSync(join(dir, 'state', 'records')), false)
+})
+
 // ----- the audit trail: each write leaves its fact in the journal, never its words -----
 
 /** The journal a test reads: the dispatch events (one per write) apart from the steps, links and escapes. */
