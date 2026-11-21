@@ -3292,32 +3292,23 @@ HOME_WAIT = int(os.environ.get("ORCHESTRATOR_HOME_WAIT", "120"))
 # window of the server.
 HOME_ENV_KEPT = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
                  "TMPDIR", "TMUX_TMPDIR", "CLAUDE_CONFIG_DIR")
-# What marks a variable as the host's own, the identity of the session that set it and its
-# nesting (its id, its messaging socket and token, its bridge, its children's notes): the
-# one place the two kinds of launch read it from. A home server is started without any
-# (`home_env`); a plain tab opens in an app that may have been started from a session and
-# so carries all of them, and a session launched there took itself for that session's child
-# (row 451): its launch line unsets them (`nesting_unset`). The account's CLAUDE_CONFIG_DIR
-# is kept, by the list above.
-NESTING_ENV_PREFIXES = ("CLAUDE_CODE_",)
-NESTING_ENV_NAMES = ("CLAUDECODE", "CLAUDE_PID")
-
-
-def nesting_var(name):
-    """True for a variable of the host's session identity or nesting that no launch passes on."""
-    return name not in HOME_ENV_KEPT and (
-        name in NESTING_ENV_NAMES or name.startswith(NESTING_ENV_PREFIXES))
+# The host's variables of a session's identity and nesting (its id, its messaging socket and
+# token, its bridge, its children's notes), named one by one: the operator's own configuration
+# under the same prefix (a provider switch, a token) is never in it. The one list the two kinds
+# of launch read: a home server is started without them (`home_env`), and a plain tab, opened in
+# an app that may have been started from a session and so carries them, has them unset by its
+# launch line (`nesting_unset`): a session launched there took itself for that session's child
+# and wrote no transcript (row 451). The account's CLAUDE_CONFIG_DIR is kept, by the list above.
+NESTING_ENV = ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
+               "CLAUDE_CODE_CHILD_NOTES_DIR", "CLAUDE_CODE_BRIDGE_SESSION_ID",
+               "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
+               "CLAUDE_CODE_SESSION_ATTENDED")
 
 
 def nesting_unset():
-    """The shell words that unset, in the tab's own environment, every variable `nesting_var`
-    names: the tab's names are not the caller's (the app's environment is read, not ours), so
-    they are read there, by `env`, when the launch runs. awk, not sed: the system's sed has no
-    alternation."""
-    tests = ['$1=="%s"' % name for name in NESTING_ENV_NAMES]
-    tests += ["$1~/^%s[A-Za-z0-9_]*$/" % prefix for prefix in NESTING_ENV_PREFIXES]
-    return ("for v in $(env | awk -F= '%s {print $1}'); do unset \"$v\"; done"
-            % " || ".join(tests))
+    """The shell words that unset the variables of `NESTING_ENV` in the tab's own environment,
+    which is the app's and not the caller's."""
+    return "unset " + " ".join(NESTING_ENV)
 
 
 # The suite's stand-ins: a test's, never a home server's.
@@ -3393,7 +3384,7 @@ def home_env():
     """The environment a home server starts with, and so every window it makes: the
     operator's own variables and this plugin's settings, the suite's stand-ins left out."""
     env = {k: v for k, v in os.environ.items()
-           if not nesting_var(k)
+           if k not in NESTING_ENV
            and (k in HOME_ENV_KEPT or (k.startswith("ORCHESTRATOR_") and k not in HOME_ENV_DROPPED))}
     env["TERM"] = "xterm-256color"
     return env
@@ -4737,11 +4728,6 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     config = os.environ.get("CLAUDE_CONFIG_DIR", "")
     if config:
         parts.insert(2, "export CLAUDE_CONFIG_DIR=%s" % shq(config))
-    # The caller's session identity and nesting marks stay out of the tab: its environment is the
-    # app's, which may have been started from a session, and the one launched there took itself
-    # for that session's child (no transcript of its own: row 451). Right after the `cd`, so what
-    # the launch exports below is not touched.
-    parts.insert(1, nesting_unset())
     if title_role(title) == AUDIT:
         # A marker the session carries in its own environment. The auditor's name is read
         # from the process table, which cannot give it back for a session launched without
@@ -4862,7 +4848,11 @@ def write_launch_script(command, title, kind="launch"):
     os.makedirs(PROMPTS_DIR, exist_ok=True)
     path = state_file_path(kind, title, "sh")
     with open(path, "w") as fh:
-        fh.write("#!/bin/sh\n" + command + "\n")
+        # The caller's session identity and nesting marks stay out of the tab, in the file and not
+        # in the command, which a launch prints and a test bounds: the app's environment may be
+        # a session's, and a session launched there took itself for that session's child (no
+        # transcript of its own: row 451).
+        fh.write("#!/bin/sh\n" + nesting_unset() + "\n" + command + "\n")
     return path
 
 
