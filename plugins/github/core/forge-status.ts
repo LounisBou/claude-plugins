@@ -5,7 +5,7 @@
 // instant of what it copies, then a record's `<result> <producer>`, a plan's needs or an exemption's rules. Only a
 // status the operator's own account created is read. Pure, with no import but the contract: a hooks module imports it.
 
-import { KINDS, PR_RECORD_CONTRACT, type Kind, type PrRecord, type Result } from './pr-record.ts'
+import { KINDS, PR_RECORD_CONTRACT, type Kind, type Result } from './pr-record.ts'
 
 export const FORGE_CONTRACT = {
   version: 1,
@@ -85,12 +85,6 @@ export function parseForgeDescription(text: string): ForgeDescription | undefine
   const [v, at, ...rest] = text.split(' ')
   if (v !== 'v' + FORGE_VERSION || at === undefined || !isForgeInstant(at) || rest.length === 0) return undefined
   return { v: FORGE_VERSION, at, body: rest.join(' ') }
-}
-
-/** The status that copies a record. */
-export function recordPost(record: PrRecord): ForgePost | undefined {
-  const description = forgeDescription(record.at, record.result + ' ' + record.producer)
-  return description === undefined ? undefined : { name: record.kind, state: FORGE.states[record.result], description }
 }
 
 /** The record a status copies, or undefined when it copies none or its state says another result than its description. */

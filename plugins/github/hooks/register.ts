@@ -10,7 +10,7 @@ import {
   AUTO_DEPLOY_FILE, bashDeploys, DEPLOY_ENVS, type DeployEnv, firstRefusal, parseDeclared, parseDeployList, skillDeploys, type Declared, type DeployList,
 } from './deploy.ts'
 import { ACCEPTANCE, DETAIL_MAX, KINDS, parsePrRecord, SCRIPTED, type PrRecord } from '../core/pr-record.ts'
-import { FORGE, forgeContext, recordPost, type ForgePost } from '../core/forge-status.ts'
+import { FORGE, forgeContext, parseRecordStatus, type ForgePost } from '../core/forge-status.ts'
 import { FORGE_SESSION, forgeSync, POSTS_PER_TICK } from './forge-sync.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import {
@@ -1145,7 +1145,7 @@ type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: s
 
 const flapKey = (repo: string, pr: number) => repo.toLowerCase() + '#' + pr
 
-// The reconciler's say on a label about to be written: `copies` whether to hold it for the forge copy of the head's records,
+// The reconciler's say on a label about to be written: `copies` whether to hold it for the forge copy of the head's plan and exemption,
 // `flap` whether to hold it as another machine keeps undoing it (it says so itself, once).
 type Watch = { copies: (gate: Gate, move: LabelMove) => boolean; flap: (gate: Gate, move: LabelMove) => boolean }
 
@@ -1239,8 +1239,8 @@ async function forgeBringsNothing($: Mod, repo: string, pr: number, head: string
 }
 
 // unlabelled: Not Ready goes on a pull request carrying neither label too (the reconciler's, labelMove).
-// watch: the reconciler's, which holds a label that another machine keeps undoing and one that waits for a record's copy to
-// reach the forge. Whoever follows, Ready is held over a Not Ready this machine did not set (`held`: when it may go). act: an explicit
+// watch: the reconciler's, which holds a label that another machine keeps undoing and one that waits for the copy of a plan or an
+// exemption to reach the forge. Whoever follows, Ready is held over a Not Ready this machine did not set (`held`: when it may go). act: an explicit
 // act (pr-ready, pr-merge, pr-readiness ready) follows: its hold has no ceiling.
 async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false, unlabelled = false, watch?: Watch, act = false): Promise<Followed> {
   let gate: Gate
@@ -1332,11 +1332,11 @@ type Reconciler = {
   synced: Map<string, { key: string; at: number; ok: boolean; imported: boolean }>
   // The label last written to each pull request, by repo#pr, and how often another machine took it away (reconcile.ts flapCheck).
   flaps: Map<string, Flap>
-  // What each head holds that is not on the forge yet, by repo#pr: the copies waiting for their tool, refused or over the beat's budget.
+  // The plan and the exemption each head holds that are not on the forge yet, by repo#pr: refused, or over the beat's budget.
   unpublished: Map<string, ForgePost[]>
   // A move held back, by repo#pr, for the fingerprint it was read at: the gate is not read again before `until` (ms), nor while the
-  // same copies are missing. `since`: when this fingerprint was first held; `copies`: held for copies to post, `until` then the ceiling.
-  held: Map<string, { fingerprint: string; until: number; unpublished: string; since: number; copies: boolean }>
+  // same copies are missing. `since`: when this fingerprint was first held.
+  held: Map<string, { fingerprint: string; until: number; unpublished: string; since: number }>
   edgeSeen: number
   counts: Counts
   // The lines said and not yet forgotten, and whether this beat said one: a beat that said none lets the same failures be said again.
@@ -1422,11 +1422,10 @@ function sayOnce($: Mod, rec: Reconciler, line: string, step?: string): void {
   note($, line)
 }
 
-// Whether a held move calls for a listing now: a Ready held over another machine's Not Ready that has waited long enough with no listing since, or copies still to post.
+// Whether a held move calls for a listing now: a Ready held over another machine's Not Ready that has waited long enough with no listing since.
 function forgeAwaited(rec: Reconciler, repo: string, now: number): boolean {
   const listedAt = rec.repos.get(repo)?.listedAt ?? 0
-  // A move held for copies still to post lists at each beat until its ceiling: the copies left to their tool are posted by a listing taken after their settling.
-  return [...rec.held].some(([key, held]) => key.startsWith(repo.toLowerCase() + '#') && (held.copies ? now < held.until && listedAt < now : held.until <= now && listedAt < held.until))
+  return [...rec.held].some(([key, held]) => key.startsWith(repo.toLowerCase() + '#') && held.until <= now && listedAt < held.until)
 }
 
 // A failure of the forge's call that shows GitHub cannot be reached at all: name resolution, a connection refused or reset, no route, a handshake or connection timeout, the call's own timeout.
@@ -1549,8 +1548,8 @@ async function holdLease($: Mod, rec: Reconciler, io: ReturnType<typeof journalI
 // What a head holds that is not on the forge yet, as the text a held move compares (the same copies missing, the same hold).
 const unpublishedKey = (posts: readonly ForgePost[] | undefined): string => (posts ?? []).map((post) => post.name + ' ' + post.state).join(',')
 
-// The copies a move waits for: Ready, every one of the head's (the other machine judges on the forge's); Not Ready, the failures.
-const awaited = (posts: readonly ForgePost[], move: LabelMove): ForgePost[] => (move === 'ready' ? [...posts] : posts.filter((post) => post.state === FORGE.states.fail))
+// The copies a move waits for: Ready, the head's plan and exemption (the other machine judges on the forge's); Not Ready, none.
+const awaited = (posts: readonly ForgePost[], move: LabelMove): ForgePost[] => (move === 'ready' ? [...posts] : [])
 
 // The gate on one pull request whose fingerprint changed, its reading kept.
 async function reconcilePr(
@@ -1560,21 +1559,20 @@ async function reconcilePr(
   const key = repo + '#' + row.number
   const id = flapKey(repo, row.number)
   rec.counts.gates += 1
-  // Set when the guard holds a move that is to be tried again: until when (ms), and whether it waits for copies to post.
-  const waiting: { until?: number; copies?: boolean } = {}
+  // Set when the guard holds a move that is to be tried again: until when (ms).
+  const waiting: { until?: number } = {}
   const before = rec.held.get(id)?.fingerprint === fingerprint ? rec.held.get(id) : undefined
   const since = before?.since ?? at.now
   const watch: Watch = {
     copies: (gate, move) => {
-      // The copies of the head's records the move rests on reach the forge first: the other machine reads them there, not the label.
+      // The plan and the exemption the move rests on reach the forge first: the other machine reads them there, not the label.
       const missingCopies = awaited(rec.unpublished.get(id) ?? [], move)
       if (missingCopies.length > 0 && at.now < since + PUBLISH_WAIT_MS) {
         waiting.until = since + PUBLISH_WAIT_MS
-        waiting.copies = true
         return true
       }
       if (missingCopies.length > 0) {
-        sayOnce($, rec, 'github: the ' + (move === 'ready' ? 'Ready' : 'Not Ready') + ' label of ' + key + ' at ' + gate.head.slice(0, 7) + ' no longer waits for '
+        sayOnce($, rec, 'github: the Ready label of ' + key + ' at ' + gate.head.slice(0, 7) + ' no longer waits for '
           + missingCopies.map((post) => forgeContext(post.name)).join(', ') + ' to reach the forge: it was not posted within ' + String(PUBLISH_WAIT_MS / 60_000) + ' minutes')
       }
       return false
@@ -1607,7 +1605,7 @@ async function reconcilePr(
   if (followed.labels) rec.counts.moves += 1
   // A held move: the reading is kept for the orchestrator, the gate read again when what holds it has passed (its fingerprint is none).
   if (waiting.until !== undefined) {
-    rec.held.set(id, { fingerprint, until: waiting.until, unpublished: unpublishedKey(rec.unpublished.get(id)), since, copies: waiting.copies === true })
+    rec.held.set(id, { fingerprint, until: waiting.until, unpublished: unpublishedKey(rec.unpublished.get(id)), since })
     // The fingerprint a clean gate kept is no longer the label's: the gate is read again if the pull request returns to it.
     rec.kept.delete(key)
     await writeAtomicOver(io, reconcilePath(at.config, repo, row.number), JSON.stringify(readingOf(repo, row, gate, followed.missing, gate.labels, gate.draft, at.now, '')) + '\n')
@@ -1633,20 +1631,20 @@ async function postForge($: Mod, repo: string, head: string, post: ForgePost): P
   return run.exitCode === 0 ? undefined : String(run.stderr || 'forge_status.py exited ' + run.exitCode).trim()
 }
 
-// Copies to the forge the record a tool just wrote at `path`. A copy that fails is one line in the log, the tool's
-// answer unchanged: the reconciler posts it at a later beat.
-async function postWritten($: Mod, path: string): Promise<void> {
-  const record = parsePrRecord(await Promise.resolve().then(() => $.fs.read(path)).then((text) => JSON.parse(String(text)) as unknown, () => undefined))
-  const post = record ? recordPost(record) : undefined
-  // A repository the reconciler found archived takes no post: the record stays here.
-  if (record && reconciler?.archived.has(record.repo)) return
-  const failed = record && post ? await postForge($, record.repo, record.head, post) : 'the record at ' + path + ' cannot be read back'
-  if (record && failed && ARCHIVED.test(failed)) {
-    reconciler?.archived.add(record.repo)
-    note($, 'github: ' + record.repo + ' is archived (read-only): its records are not copied to the forge: ' + failed)
-    return
+// The status `record.py --status` gives of a record not yet written: the post that copies it and the record's instant, which
+// its description carries; undefined when the answer is no status of a record.
+function recordStatusOf(text: string): { post: ForgePost; at: string } | undefined {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    return undefined
   }
-  if (failed) note($, 'github: the record is not copied to the forge yet (' + failed + '): the reconciler copies it at a later beat.')
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined
+  const { what, state, description } = raw as Record<string, unknown>
+  if (typeof what !== 'string' || typeof state !== 'string' || typeof description !== 'string') return undefined
+  const read = parseRecordStatus({ context: FORGE.prefix + what, state, description, creator: '' })
+  return read ? { post: { name: read.kind, state, description }, at: read.at } : undefined
 }
 
 // The records a head holds on this machine, or undefined when its directory is there but cannot be listed.
@@ -1677,8 +1675,8 @@ async function recordsAt($: Mod, root: string, repo: string, head: string): Prom
 
 /*
  * Copies one head between this machine and the forge (forge-sync.ts): the newer copies the forge holds of its records,
- * its plan and its repository's exemption are written here, and those this machine holds newer are posted, the beat's
- * `budget` of posts at most. Nothing is done again while what it read is unchanged, nor before RETRY_MS after a
+ * its plan and its repository's exemption are written here, and the plan and the exemption this machine holds newer are
+ * posted, the beat's `budget` of posts at most (a record's status is posted by its tool, before the record is written). Nothing is done again while what it read is unchanged, nor before RETRY_MS after a
  * failure. Whether it wrote something here.
  */
 async function syncForge(
@@ -1711,7 +1709,7 @@ async function syncForge(
     const run = await $.process.run([
       'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(row.number), '--head', row.head, '--kind', copy.kind,
       '--result', copy.result, '--producer', copy.producer, '--detail', 'copied from the forge, ' + forgeContext(copy.kind) + ' posted by ' + viewer,
-      '--session', FORGE_SESSION, '--at', copy.at,
+      '--session', FORGE_SESSION, '--at', copy.at, '--copy',
     ], { timeoutMs: 30_000 })
     if (run.exitCode !== 0) {
       ok = false
@@ -1735,8 +1733,8 @@ async function syncForge(
     rec.told.delete('copy ' + id + ' ' + copy.what)
   }
   for (const line of sync.unposted) sayOnce($, rec, line)
-  // What this head holds that is not on the forge when the beat ends: a label move that rests on it waits (reconcilePr).
-  const pending: ForgePost[] = [...(sync.deferred ?? [])]
+  // The plan or the exemption this head holds that is not on the forge when the beat ends: a Ready that rests on it waits (reconcilePr).
+  const pending: ForgePost[] = []
   for (const [done, post] of sync.posts.entries()) {
     if (budget.posts >= POSTS_PER_TICK) {
       ok = false
@@ -1765,9 +1763,8 @@ async function syncForge(
   }
   if (pending.length > 0) rec.unpublished.set(flapKey(repo, row.number), pending)
   else rec.unpublished.delete(flapKey(repo, row.number))
-  // A copy left to its tool, or a budget spent, leaves the rest to the next beat at once; a failure, to RETRY_MS later.
-  if (sync.waiting && ok) rec.synced.delete(id)
-  else if (ok || budget.posts < POSTS_PER_TICK) rec.synced.set(id, { key, at: at.now, ok, imported })
+  // A budget spent leaves the rest to the next beat at once; a failure, to RETRY_MS later.
+  if (ok || budget.posts < POSTS_PER_TICK) rec.synced.set(id, { key, at: at.now, ok, imported })
   else rec.synced.delete(id)
   return { wrote: sync.records.length > 0 || sync.plan !== undefined || sync.exemption !== undefined, ok, imported }
 }
@@ -2791,10 +2788,25 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
     'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(pr), '--head', gate.head,
     '--kind', kind, '--result', result, '--producer', producerSlug(origin), '--detail', written, '--session', session,
   ]
-  const run = await $.process.run(argv, { timeoutMs: 30_000 })
-  if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
-  // Its copy on the forge, for the other machine's gate.
-  await postWritten($, String(run.stdout).trim())
+  // The record is checked and its status read first: the status reaches the forge, where the other machine's gate reads it,
+  // before the record is written here at the status's instant, and a status the forge refuses writes nothing.
+  const checked = await $.process.run([...argv, '--status'], { timeoutMs: 30_000 })
+  if (checked.exitCode !== 0) return { result: String(checked.stderr || 'record.py exited ' + checked.exitCode).trim(), isError: true }
+  const copy = recordStatusOf(String(checked.stdout))
+  if (!copy) return { result: 'github: record.py --status gave no status to post: ' + String(checked.stdout).trim(), isError: true }
+  const refused = await postForge($, repo, gate.head, copy.post)
+  if (refused) {
+    // The result and its detail stay in the answer: an E2E run is not run again only to learn them.
+    return {
+      result: 'github: the ' + kind + ' record of ' + repo + '#' + pr + ' (' + result + (written ? ': ' + written : '') + ') is not written: the forge refused its status ('
+        + refused + '). Record it again once the forge takes it.',
+      isError: true,
+    }
+  }
+  const run = await $.process.run([...argv, '--at', copy.at], { timeoutMs: 30_000 })
+  if (run.exitCode !== 0) {
+    return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim() + ' (its status is on the forge: the reconciler copies it here)', isError: true }
+  }
   // The record may complete readiness: the gate reads it at the head it just checked.
   const { line } = await followGate($, repo, pr, gate, true)
   return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
@@ -2802,8 +2814,8 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
 
 /*
  * The light CI of a stacked pull request (engine/light_ci.py): `run` checks the checkout is the pull request's
- * head and clean, runs the project's command and writes the tests record of its exit code, then the gate follows
- * it; `status` says what the repository's project file holds and the facts of the invitation. The script does
+ * head and clean, runs the project's command and writes the tests record of its exit code once its status is on the
+ * forge, then the gate follows it; `status` says what the repository's project file holds and the facts of the invitation. The script does
  * every check and every write: this hook names the checkout, the session and the gate's line.
  */
 async function lightCi($: Mod, e: ToolInput): Promise<Answer> {
@@ -2838,9 +2850,6 @@ async function lightCi($: Mod, e: ToolInput): Promise<Answer> {
   const run = await $.process.run([...script, 'run', '--pr', String(pr), '--session', session, '--budget', String(LIGHT_CI_BUDGET_S), ...repoArgs],
     { timeoutMs: LIGHT_CI_TIMEOUT_MS, ...inDir })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'light_ci.py exited ' + run.exitCode).trim(), isError: true }
-  // Its copy on the forge: the line names the record it wrote last.
-  const written = / record (\S+\.json)$/.exec(String(run.stdout).trim())?.[1]
-  if (written) await postWritten($, written)
   const repo = await targetRepo($, { repo: named, args: {} }, dir).catch(() => undefined)
   // The record may complete readiness, or break it: the gate reads the pull request again.
   const { line } = repo ? await followGate($, repo, pr, undefined, true) : { line: undefined }

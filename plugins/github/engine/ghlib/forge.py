@@ -1,12 +1,12 @@
 """The forge's copy of what the ready gate reads on a machine: one commit status a record kind, the check plan and
 the exemption, under one context prefix (core's forge-status contract). CI is not theirs to judge:
-the gate's CI reading leaves them out. The hooks module writes their description (core's forge-status.ts);
-post() checks its shape and posts it."""
+the gate's CI reading leaves them out. A record's description is record.py's (status_of), the plan's and the
+exemption's the hooks module's (core's forge-status.ts); problem() checks its shape, post() posts it."""
 
 import json
 import os
 
-from . import http
+from . import errors, http
 
 _CORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "core")
 with open(os.path.join(_CORE, "forge-status.json"), encoding="utf-8") as _fh:
@@ -45,9 +45,22 @@ def problem(name, state, description):
     return None
 
 
+def refusal(exc):
+    """Why GitHub refused a post: its HTTP status, when it answered one, and its message."""
+    if exc.status is None or "(HTTP %s)" % exc.status in exc.message:
+        return exc.message
+    return "HTTP %s: %s" % (exc.status, exc.message)
+
+
 def post(owner, name, sha, what, state, description):
-    """Post the status that copies `what` at the commit `sha`; GitHub's answer."""
-    return http.rest(
+    """Post the status that copies `what` at the commit `sha`; GitHub's answer, once it is the status
+    created (GitHub's 201 body, which carries its id). A 2xx that is no such status (a redirect followed as a GET, an empty or non-JSON body) is
+    refused: the caller writes nothing for a copy the forge does not hold."""
+    context = PREFIX + what
+    answer = http.rest(
         "POST", "/repos/%s/%s/statuses/%s" % (owner, name, sha),
-        {"state": state, "context": PREFIX + what, "description": description},
+        {"state": state, "context": context, "description": description},
     )
+    if not (isinstance(answer, dict) and answer.get("id")):
+        raise errors.ApiError("GitHub answered no created status for %s: %s" % (context, str(answer)[:120]))
+    return answer

@@ -3,6 +3,8 @@
 
 class GhError(Exception):
     code = 3
+    # The HTTP status GitHub refused the call with, when it answered one.
+    status = None
 
     def __init__(self, message):
         super().__init__(message)

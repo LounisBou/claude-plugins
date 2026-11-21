@@ -241,6 +241,14 @@ export function launcherOf(root: string): string {
   return `${root.replace(/\/+$/, '')}/${LAUNCHER}`
 }
 
+/**
+ * How long a caller lets one `spawn` run before it kills it. The launcher's worst case is a refused
+ * spawn: the host's start (30 s), the transcript's wait (90 s), the screen read (8 s) and the close
+ * of the tab (up to 20 s), about 150 s. A caller killing it sooner loses the refusal and leaves the
+ * tab open; `scripts/contracts.test.ts` holds this figure above the launcher's own defaults.
+ */
+export const SPAWN_TIMEOUT_MS = 180_000
+
 /** A spawn: the new session's directory, title and prompt, given as text or as a file, and the tools it keeps from its role's default removal. */
 export type Spawn = { dir: string; title: string; rightOf?: string; resident?: boolean; keepTools?: readonly string[] } & ({ prompt: string } | { promptFile: string })
 

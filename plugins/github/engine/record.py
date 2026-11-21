@@ -6,6 +6,10 @@ The one writer of ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/pr-records/. Each record
 is one JSON file under <owner>/<name>/<head>/, written under a temporary name
 in that directory and then renamed, so a reader never sees half a file. It
 prints the file's path, and exits 2 on a usage error with one error: line.
+With --status it writes nothing and prints the status that copies the record on
+the forge: its writer posts that status first, then writes the record at the
+instant the status gives (--at). A copy from the forge (--copy) keeps the record
+of that name and result already there, its tool's detail with it.
 """
 
 import argparse
@@ -16,9 +20,12 @@ import re
 import sys
 import tempfile
 
-# The record contract is core's: the same data file every TypeScript reader loads.
-with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core", "pr-record.json"), encoding="utf-8") as _fh:
+# The record contract is core's: the same data file every TypeScript reader loads; and its status's, core's forge-status.
+_CORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core")
+with open(os.path.join(_CORE, "pr-record.json"), encoding="utf-8") as _fh:
     _CONTRACT = json.load(_fh)
+with open(os.path.join(_CORE, "forge-status.json"), encoding="utf-8") as _fh:
+    _FORGE = json.load(_fh)
 
 VERSION = _CONTRACT["version"]
 KINDS = tuple(_CONTRACT["kinds"])
@@ -61,7 +68,12 @@ def build_parser():
     parser.add_argument("--producer", required=True, help="the producer's slug, [a-z0-9-]")
     parser.add_argument("--detail", default="")
     parser.add_argument("--session", default=None, help="defaults to CLAUDE_CODE_SESSION_ID")
-    parser.add_argument("--at", default=None, help="the instant of a record copied from the forge, UTC to the second; defaults to now")
+    parser.add_argument("--at", default=None,
+                        help="the instant of a record copied from the forge, or of one whose status was posted first, UTC to the second; defaults to now")
+    parser.add_argument("--status", action="store_true",
+                        help="write nothing: print the status that copies the record on the forge, as one JSON object")
+    parser.add_argument("--copy", action="store_true",
+                        help="a copy from the forge: a record of that name and result already there is kept")
     return parser
 
 
@@ -122,12 +134,37 @@ def validate(args):
     }
 
 
+def status_of(record):
+    """The commit status that copies a record at its head (core's forge-status contract), posted before the record
+    is written: what it copies, its state and its description."""
+    description = "v%d %s %s %s" % (_FORGE["version"], record["at"], record["result"], record["producer"])
+    return {"what": record["kind"], "state": _FORGE["states"][record["result"]], "description": description}
+
+
 def records_root():
     config = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
     return os.path.join(config, "pr-records")
 
 
-def write(record):
+def _in_place(tmp, path, result):
+    """Whether a copy from the forge written at `tmp` needs no rename to `path`: linked there when no file is (the record
+    its tool writes after replaces it), or a record of the same result there already, written by its tool between its
+    status's post and the listing that brought the copy."""
+    try:
+        os.link(tmp, path)
+        return True
+    except FileExistsError:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                there = json.load(fh)
+        except (OSError, ValueError):
+            return False
+        return isinstance(there, dict) and there.get("result") == result
+    except OSError:
+        return False
+
+
+def write(record, copy=False):
     """Write the record under its head's directory and return its path."""
     directory = os.path.join(records_root(), record["repo"], record["head"])
     os.makedirs(directory, exist_ok=True)
@@ -139,7 +176,10 @@ def write(record):
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(record, fh, sort_keys=True)
             fh.write("\n")
-        os.replace(tmp, path)
+        if copy and _in_place(tmp, path, record["result"]):
+            os.unlink(tmp)
+        else:
+            os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -149,12 +189,16 @@ def write(record):
 
 def main(argv):
     try:
-        record = validate(build_parser().parse_args(argv))
+        args = build_parser().parse_args(argv)
+        record = validate(args)
     except UsageError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return USAGE_EXIT
+    if args.status:
+        print(json.dumps(status_of(record), sort_keys=True))
+        return 0
     try:
-        print(write(record))
+        print(write(record, copy=args.copy))
     except OSError as exc:
         print("error: cannot write the record: %s" % exc, file=sys.stderr)
         return 1
