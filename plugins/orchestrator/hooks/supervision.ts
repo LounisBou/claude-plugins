@@ -427,8 +427,8 @@ export function waitKey(id: string): string {
   return `waits/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
 }
 
-// An agent's gate crossing reported (`gates/<id>`, « reported » or empty): the measure
-// handler is its one writer, so it never races the relay's wait file.
+// An agent's gate crossing reported (`gates/<id>`, « reported » or empty): the measure's gate
+// reports are its one writer, one at a time (reportGate), so it never races the relay's wait file.
 export function gateKey(id: string): string {
   return `gates/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
 }
@@ -3702,31 +3702,76 @@ export async function orchestratorOn($: Host<'env' | 'fs' | 'plugin' | 'process'
   return null
 }
 
-// An agent's measure against the gate its session runs under (the gauge's thresholds,
-// read from this session's environment): past it, the agent is told in its own session once
-// (mark `told`) and its orchestrator is sent the figures once (mark `sent`), both done marked
-// `reported`; what was not delivered is tried again at the next measure. Back under it, the mark
-// is cleared for the next crossing.
+type GateReading = { context_tokens: number; context_percent: number; context_window: number }
+
+// Each session's gate reports, one at a time, each within its bound: a measure's report and the
+// agent's own line taken later read and write the same mark, and two of them never both find it
+// unsent. A report past its bound gives its place to the next one and writes nothing after it: a
+// line it delivers late is sent again, one line twice rather than a crossing left unsaid.
+const gateRuns = new Map<string, Promise<void>>()
+// The agent's own gate line the host holds, by session, with the crossing it was put for: the host
+// takes it at the end of the agent's turn, long past the measure's bound, and no measure puts a
+// second one meanwhile. A fall back under the gate forgets it: taken after that, it marks nothing.
+const gateTelling = new Map<string, symbol>()
+
+const gateMark = async ($: Host<'fs'>, path: string): Promise<string> => String(await $.fs.read(path).catch(() => '')).trim()
+
+function gateRun($: Host<'env' | 'plugin' | 'process'>, sessionId: string, name: string, bound: number, work: (signal: AbortSignal) => Promise<void>): Promise<void> {
+  const run = (gateRuns.get(sessionId) ?? Promise.resolve()).then(() => withDeadline(work, bound))
+  gateRuns.set(sessionId, run.then(() => undefined, () => undefined))
+  return run.then(async done => {
+    if (isDegradedPass(done)) await logLine($, 'supervision', `gate: a report of ${name} did not finish within ${bound} ms: the next one goes on`)
+  })
+}
+
+// An agent's measure against the gate its session runs under (the gauge's thresholds, read from
+// this session's environment): past it, the agent's own line is put to the host, never awaited, and
+// its orchestrator is sent the figures once, marked `sent` as soon as they are delivered; the
+// agent's line is marked `told` when the host takes it, both done marked `reported`. What was not
+// delivered is tried again at the next measure. Back under it, the mark is cleared for the next
+// crossing. The report is over with what was queued behind it while it ran: the mark of a line
+// the host took meanwhile.
 export async function reportGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session'>, sessionId: string, name: string, tty: string,
-  reading: { context_tokens: number; context_percent: number; context_window: number }): Promise<void> {
+  reading: GateReading, bound = RELAY_BOUND_MS): Promise<void> {
+  await gateRun($, sessionId, name, bound, signal => gateReport($, sessionId, name, tty, reading, bound, signal))
+  await gateRuns.get(sessionId)
+}
+
+async function gateReport($: Host<'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session'>, sessionId: string, name: string, tty: string,
+  reading: GateReading, bound: number, signal: AbortSignal): Promise<void> {
   const path = `${await storeOf($)}/${gateKey(sessionId)}`
   const past = tripGate(reading.context_percent, reading.context_tokens, reading.context_window, await gateEnv($)).tripped
-  const mark = String(await $.fs.read(path).catch(() => '')).trim()
+  const mark = await gateMark($, path)
+  if (signal.aborted) return
   if (!past) {
+    gateTelling.delete(sessionId)
     if (mark !== '') await $.fs.write(path, '')
     return
   }
-  let told = mark === 'told' || mark === 'reported'
-  let sent = mark === 'sent' || mark === 'reported'
-  if (told && sent) return
-  if (!told) {
-    const taken = await $.prompt.submit({ text: gateSelfText(reading.context_tokens, reading.context_percent) })
-    told = !(taken && typeof taken === 'object' && 'drop' in taken && taken.drop)
-    if (!told) await logLine($, 'supervision', `gate: the host dropped ${name}'s own line: ${String((taken as { drop: unknown }).drop)}`)
-  }
-  if (!sent) sent = await sendGate($, tty, name, reading)
-  const next = told && sent ? 'reported' : told ? 'told' : sent ? 'sent' : ''
-  if (next !== mark) await $.fs.write(path, next === '' ? '' : `${next}\n`)
+  const told = mark === 'told' || mark === 'reported'
+  if (!told && !gateTelling.has(sessionId)) tellGate($, sessionId, name, path, reading, bound)
+  if (mark === 'sent' || mark === 'reported' || !await sendGate($, tty, name, reading) || signal.aborted) return
+  await $.fs.write(path, `${told ? 'reported' : 'sent'}\n`)
+}
+
+// The agent's own gate line put to the host: once it is taken, its mark written in turn with the
+// reports, while the crossing it was put for holds. A line dropped or refused is one log line, and
+// the next measure puts it again.
+function tellGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'prompt'>, sessionId: string, name: string, path: string, reading: GateReading, bound: number): void {
+  const crossing = Symbol(sessionId)
+  gateTelling.set(sessionId, crossing)
+  void (async () => $.prompt.submit({ text: gateSelfText(reading.context_tokens, reading.context_percent) }))()
+    .then(taken => taken && typeof taken === 'object' && 'drop' in taken && taken.drop ? `the host dropped ${name}'s own line: ${String(taken.drop)}` : null,
+      (err: unknown) => `${name}'s own line was refused: ${messageOf(err)}`)
+    .then(failed => gateRun($, sessionId, name, bound, async signal => {
+      const holds = gateTelling.get(sessionId) === crossing
+      if (holds) gateTelling.delete(sessionId)
+      if (failed !== null) return logLine($, 'supervision', `gate: ${failed}`)
+      if (!holds) return
+      const mark = await gateMark($, path)
+      if (!signal.aborted && (mark === '' || mark === 'sent')) await $.fs.write(path, `${mark === 'sent' ? 'reported' : 'told'}\n`)
+    }))
+    .catch((err: unknown) => logLine($, 'supervision', `gate: ${messageOf(err)}`))
 }
 
 // The orchestrator's line of an agent's gate crossing; whether it was delivered.
