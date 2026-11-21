@@ -546,6 +546,8 @@ export function namesHead(sha: string, head: string): boolean {
 // GitHub's mergeability as pr-gate reads it: a head that conflicts with its base (false, or dirty), and one GitHub is still computing (null, unknown).
 // An absent field is not read at all, and blocks nothing.
 const isConflicting = (gate: Gate): boolean => gate.mergeable === false || gate.mergeable_state === 'dirty'
+// The item a gate names while GitHub computes mergeability; an act (merge, leaving draft) does not wait for it.
+export const COMPUTING_ITEM = 'mergeability unknown: GitHub is computing it, read again'
 const isComputing = (gate: Gate): boolean => gate.mergeable === null || gate.mergeable_state === 'unknown'
 
 // What a pull request misses to be ready at its head, as core's readiness contract defines it
@@ -562,7 +564,7 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string, excu
   // A conflict with the base is named; a mergeability GitHub has not computed yet is named too, and read again by the next gate.
   if (isConflicting(gate)) missing.push('conflict with base')
   // Only the Ready path waits for an unknown state: a merge right after a push is not refused for it.
-  else if (!holder && isComputing(gate)) missing.push('mergeability unknown: GitHub is computing it, read again')
+  else if (!holder && isComputing(gate)) missing.push(COMPUTING_ITEM)
   const { read, skipped } = headRecordsRead(gate, files)
   const ci = gate.ci
   const lacking = missingEvidence({

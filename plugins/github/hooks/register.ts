@@ -36,7 +36,7 @@ import {
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
-  RECORDS_REFUSAL, deletes, deletesRecords, postsStatus, STATUS_REFUSAL,
+  COMPUTING_ITEM, RECORDS_REFUSAL, deletes, deletesRecords, postsStatus, STATUS_REFUSAL,
   type Act, type Carried, type Gate, type HeadRead, type RecordFile,
 } from './ready.ts'
 
@@ -2003,7 +2003,10 @@ async function gateHeld($: Mod, name: string, repo: string, pr: number, r: Readi
   if (!passes(r.missing)) return heldNotReady($, name, repo, pr, r)
   const followed = await followGate($, repo, pr, r.gate, false, false, undefined, true)
   if (followed.missing === undefined) return heldUnverified(repo, pr, followed.line ?? 'the Ready label could not be put', r.gate)
-  if (!passes(followed.missing)) return heldNotReady($, name, repo, pr, { ...r, missing: followed.missing })
+  // followGate reads the gate without a holder, so it names a mergeability GitHub is still computing: an act is not refused for it,
+  // GitHub's merge API refuses a real conflict itself.
+  const followedMissing = act ? followed.missing.filter((item) => item !== COMPUTING_ITEM) : followed.missing
+  if (!passes(followedMissing)) return heldNotReady($, name, repo, pr, { ...r, missing: followedMissing })
   // Ready held over a Not Ready this machine did not set: the act waits as the gate does.
   if (followed.held && followed.gate) {
     const at = await nowMs($)

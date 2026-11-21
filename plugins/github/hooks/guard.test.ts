@@ -522,6 +522,20 @@ test('in auto-merge a merge with a record absent and CI failed is refused, both 
   expect(commands(seen)).toEqual(['pr-gate'])
 })
 
+test('a merge is not refused for a mergeability GitHub is still computing', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/thing'], mergeable: null, mergeable_state: 'unknown', verdict: { decision: 'ask' } })
+  const out = await $.tool.call(gh('pr-merge', { pr: 12 }))
+  expect(out).toEqual({ result: 'ok' })
+  expect(commands(seen)).toEqual(['pr-gate', 'pr-merge'])
+})
+
+test('a merge of a head that conflicts with its base is still refused', async ($, on) => {
+  const dirty = await world($, on, { autoMerge: ['acme/thing'], mergeable: false, mergeable_state: 'dirty', verdict: { decision: 'ask' } })
+  const refused = await $.tool.call(gh('pr-merge', { pr: 12 }))
+  expect(refused.deny).toBe('github: pr-merge refused on acme/thing#12 at 0123456: not ready. Missing: conflict with base.' + REFUSAL_END)
+  expect(commands(dirty)).toEqual(['pr-gate'])
+})
+
 test('a merge of a pull request carrying Ready whose records are absent goes through, Ready taken off', async ($, on) => {
   const seen = await world($, on, { ...NO_RECORDS, labels: ['Ready'], autoMerge: ['acme/thing'] })
   const out = await $.tool.call(gh('pr-merge', { pr: 12 }))
