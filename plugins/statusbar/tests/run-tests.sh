@@ -582,6 +582,18 @@ check_all_lines "5h over its pace says it runs out before its reset" "$ALL_ON" \
 "plain
 ⚠ 5h: 80% ▓▓▓▓▓▓▓▓░░ → 2h13
 ⚠ at this rate the 5h window is exhausted before its reset (at $CLOCK_2H)"
+# Under 5 % of the window missing at the reset, the line is orange and informative. At 2h13m30
+# left, 58 % used is 104.5 % at the reset (4.5 % missing), 59 % is 106.3 % (6.3 % missing).
+check_all_lines "5h missing under 5 % says it ends just before its reset" "$ALL_ON" \
+  "${H5}{\"used_percentage\":58,\"resets_at\":$IN_2H}}}" \
+"plain
+5h: 58% ▓▓▓▓▓▓░░░░ → 2h13
+at this pace the 5h window ends just before its reset (at $CLOCK_2H)"
+check_all_lines "5h missing 5 % or more keeps the red line" "$ALL_ON" \
+  "${H5}{\"used_percentage\":59,\"resets_at\":$IN_2H}}}" \
+"plain
+5h: 59% ▓▓▓▓▓▓░░░░ → 2h13
+⚠ at this rate the 5h window is exhausted before its reset (at $CLOCK_2H)"
 # 55 % at 56 % of the window is 99 % at the reset: no line.
 check_all_lines "5h within its pace shows no third line" "$ALL_ON" \
   "${H5}{\"used_percentage\":55,\"resets_at\":$IN_2H}}}" \
@@ -619,6 +631,17 @@ case "$RED_LINE" in
   "${ESC}[0;31m⚠ at this rate"*"${ESC}[0m") printf '  ok   the pace line is red\n'; pass=$((pass + 1)) ;;
   *) printf '  FAIL the pace line is red\n       actual: %q\n' "$RED_LINE"; fail=$((fail + 1)) ;;
 esac
+MILD_LINE=$(printf '%s' "${H5}{\"used_percentage\":58,\"resets_at\":$IN_2H}}}" | STATUSBAR_CONFIG="$ALL_ON" bash "$SCRIPT" | sed -n 3p)
+case "$MILD_LINE" in
+  "${ESC}[38;5;208mat this pace"*"${ESC}[0m") printf '  ok   the mild pace line is orange\n'; pass=$((pass + 1)) ;;
+  *) printf '  FAIL the mild pace line is orange\n       actual: %q\n' "$MILD_LINE"; fail=$((fail + 1)) ;;
+esac
+# The 7-day window follows the same rule: 3d left of 7d (4d gone), 58 % is 101.5 %, 61 % is 106.75 %.
+check_all_lines "7d missing under 5 % says it ends just before its reset" "$ALL_ON" \
+  "${D7}{\"used_percentage\":58,\"resets_at\":$IN_3D}}}" \
+"plain
+5h: 10% ▓░░░░░░░░░ → 2h13 │ 7d: 58% ▓▓▓▓▓▓░░░░ → 3d
+at this pace the 7d window ends just before its reset (at $(LC_ALL=C date -r "$IN_3D" +%d/%m 2>/dev/null || date -d "@$IN_3D" +%d/%m))"
 check_all_lines "SHOW_USAGE=0 hides the pace line with the quotas" "$(config_with SHOW_USAGE=0 SHOW_DIRECTORY=1)" \
   "${H5}{\"used_percentage\":80,\"resets_at\":$IN_2H}}}" \
 "plain"
