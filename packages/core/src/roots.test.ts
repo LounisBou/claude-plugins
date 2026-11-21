@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { DATA_FILES } from './data.ts'
-import { DATA_ROOT_DIR_PATTERN, DATA_ROOT_FILE, DATA_ROOT_VERSION, dataRootFileOf, dataRootOf, parseDataRoot, ROOTS_CONTRACT } from './orchestration.ts'
+import { DATA_ROOT_DIR_PATTERN, DATA_ROOT_FILE, DATA_ROOT_TEXT_PATTERN, DATA_ROOT_VERSION, dataRootFileOf, dataRootOf, parseDataRoot, ROOTS_CONTRACT } from './orchestration.ts'
 import { moduleDirUnder, orchestratorRoots } from './roots.ts'
 
 const file = (dir: string): string => JSON.stringify({ version: DATA_ROOT_VERSION, dir })
@@ -30,8 +30,16 @@ describe('the data-root file', () => {
     ]) assert.equal(parseDataRoot(text), null, String(text))
   })
 
-  it('is read by the other languages from roots.json: its name, its version and the pattern its dir matches', () => {
-    assert.deepEqual(DATA_FILES['roots.json'], { version: 1, file: DATA_ROOT_FILE, file_version: DATA_ROOT_VERSION, dir_pattern: DATA_ROOT_DIR_PATTERN })
+  it('names none from a text JSON.parse takes but that is no flat object of strict JSON another reader would agree on', () => {
+    for (const text of [
+      `\ufeff${file('/x')}`, '{"version": 1, "dir": "/x", "n": "\ufffd"}', '{"version": 1, "dir": "/x\\udc00"}',
+      '{"version": 1, "dir": "/x", "m": {"a": 1}}', '{"version": 1, "dir": "/x", "m": []}', `\u000c${file('/x')}`,
+    ]) assert.equal(parseDataRoot(text), null, JSON.stringify(text))
+    assert.equal(parseDataRoot('{ "version" : 1.0 ,\n "dir" : "\\/x\\u00e9", "n": null }\n'), '/xé')
+  })
+
+  it('is read by the other languages from roots.json: its name, its version and the patterns its text and its dir match', () => {
+    assert.deepEqual(DATA_FILES['roots.json'], { version: 1, file: DATA_ROOT_FILE, file_version: DATA_ROOT_VERSION, text_pattern: DATA_ROOT_TEXT_PATTERN, dir_pattern: DATA_ROOT_DIR_PATTERN })
     assert.equal(DATA_FILES['roots.json'], ROOTS_CONTRACT)
   })
 

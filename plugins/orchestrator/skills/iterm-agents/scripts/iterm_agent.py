@@ -75,11 +75,15 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "
 
 def data_root_of(root):
     """The data root the protected root `root` places, as core's parseDataRoot reads its file:
-    the first group of its `dir` matched in full by roots.json's `dir_pattern`; else `root`, for
-    a file absent, unreadable, torn, of another version, or whose `dir` the pattern refuses."""
+    the first group of its `dir` matched in full by roots.json's `dir_pattern`, once its whole text
+    matched roots.json's `text_pattern` in full; else `root`, for a file absent, unreadable, not
+    that strict JSON, of another version, or whose `dir` the pattern refuses."""
     try:
         with open(os.path.join(root, ROOTS["file"]), encoding="utf-8") as fh:
-            value = json.load(fh)
+            text = fh.read()
+        if not re.fullmatch(ROOTS["text_pattern"], text):
+            return root
+        value = json.loads(text)
     except (OSError, ValueError):
         return root
     if not isinstance(value, dict):

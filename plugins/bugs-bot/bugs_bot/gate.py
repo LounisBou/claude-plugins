@@ -31,11 +31,15 @@ def _config_dir(env: Mapping[str, str]) -> Path:
 def _data_root(root: Path) -> Path:
     """Return the data root ``root``'s data-root file names, as core's ``parseDataRoot`` reads it.
 
-    The first group of its ``dir`` matched in full by roots.json's ``dir_pattern``; else ``root``,
-    for a file absent, unreadable, torn, of another version, or whose ``dir`` the pattern refuses.
+    The first group of its ``dir`` matched in full by roots.json's ``dir_pattern``, once its whole
+    text matched roots.json's ``text_pattern`` in full; else ``root``, for a file absent,
+    unreadable, not that strict JSON, of another version, or whose ``dir`` the pattern refuses.
     """
     try:
-        value = json.loads((root / ROOTS["file"]).read_text(encoding="utf-8"))
+        text = (root / ROOTS["file"]).read_text(encoding="utf-8")
+        if not re.fullmatch(ROOTS["text_pattern"], text):
+            return root
+        value = json.loads(text)
     except (OSError, ValueError):
         return root
     if not isinstance(value, dict):

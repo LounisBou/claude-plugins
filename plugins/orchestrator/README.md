@@ -134,8 +134,9 @@ ran 13 points above the gauge.
 
 ## The deck file
 
-`deck.json`, under the data root (`~/.claude/claude-orchestrator` by default), is the one contract between the module and a
-program that draws the supervision elsewhere. Its shape is `hooks/deck.ts`'s `Deck`, and
+`deck.json`, under the data root (the directory `~/.claude/claude-orchestrator/data-root.json` names, else
+`~/.claude/claude-orchestrator`), is the one contract between the module and a program that draws the
+supervision elsewhere. Its shape is `hooks/deck.ts`'s `Deck`, and
 `version` changes on any change a reader must know of.
 
 ```jsonc

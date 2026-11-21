@@ -280,17 +280,31 @@ describe('session names: core owns the shape, the launcher reads it', () => {
 })
 
 describe('the data root: core owns the rule, the launcher, gate.py and statusline.sh read it as data', () => {
-  // Each case: the data-root file's text (null: no file), and the data root every reader must give.
+  // Each case: the data-root file's text or bytes (null: no file), and the data root every reader must give.
   const good = (dir: string): string => JSON.stringify({ version: 1, dir })
-  const CASES: readonly [string | null, string | null][] = [
+  const bytes = (before: string, byte: number, after: string): Buffer => Buffer.concat([Buffer.from(before), Buffer.from([byte]), Buffer.from(after)])
+  const CASES: readonly [string | Buffer | null, string | null][] = [
     [null, null], ['{', null], ['null', null], ['[]', null], ['"x"', null], ['', null],
     [JSON.stringify({ version: 2, dir: '/tmp/d' }), null], [JSON.stringify({ version: '1', dir: '/tmp/d' }), null],
     [JSON.stringify({ version: true, dir: '/tmp/d' }), null], [JSON.stringify({ version: 1 }), null], [JSON.stringify({ version: 1, dir: 5 }), null],
     [good(''), null], [good('/'), null], [good('//'), null], [good('relative/dir'), null], [good('~/x'), null],
     [good('/a\nb'), null], [good('/a\n'), null], [good('/a\tb'), null], [good('/a\u007f'), null], [good('/a\u0000b'), null],
     [`${good('/tmp/x')} ${good('/tmp/y')}`, null],
+    // What one JSON parser takes and another refuses: a byte-order mark, a literal no standard knows, a number
+    // spelt loosely, a raw control character or an unknown escape in a string, bytes that are no UTF-8 (read
+    // as U+FFFD by some, refused by others), an escaped lone surrogate, a nested value, a blank that is no
+    // JSON blank.
+    [`﻿${good('/tmp/x')}`, null],
+    ['{"version": 1, "dir": "/tmp/x", "n": NaN}', null], ['{"version": 1, "dir": "/tmp/x", "n": -Infinity}', null],
+    ['{"version": 01, "dir": "/tmp/x"}', null], ['{"version": +1, "dir": "/tmp/x"}', null], ['{"version": 1., "dir": "/tmp/x"}', null],
+    ['{"version": 1, "dir": "/tmp/x", "n": "a\tb"}', null], ['{"version": 1, "dir": "/tmp/x", "n": "\\q"}', null],
+    [bytes('{"version": 1, "dir": "/tmp/x", "n": "', 0xff, '"}'), null], [bytes('{"version": 1, "dir": "/tmp/', 0xff, '"}'), null],
+    ['{"version": 1, "dir": "/tmp/x", "n": "�"}', null], ['{"version": 1, "dir": "/tmp/\\ud800"}', null],
+    ['{"version": 1, "dir": "/tmp/x", "m": {"a": 1}}', null], [`\u000b${good('/tmp/x')}`, null], [` ${good('/tmp/x')}`, null],
     [good('/tmp/shared'), '/tmp/shared'], [good('/tmp/shared/'), '/tmp/shared'], [good('/tmp/a//'), '/tmp/a'],
     [good('//tmp/a'), '//tmp/a'], [good('/tmp/a b'), '/tmp/a b'], [good('/tmp/é/x'), '/tmp/é/x'],
+    ['{"version": 1, "dir": "/tmp/\\u00e9"}', '/tmp/é'], ['{"version": 1, "dir": "\\/tmp\\/s"}', '/tmp/s'],
+    ['{\n  "version": 1.0,\r\n\t"dir": "/tmp/k", "note": "x", "n": -1.5e3, "t": true, "z": null\n}\n', '/tmp/k'],
   ]
 
   it('gives the same data root from every reader, for every file', () => {
