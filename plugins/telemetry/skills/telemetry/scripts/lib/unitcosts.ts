@@ -87,6 +87,9 @@ interface Cell {
   n: number
 }
 
+/** The kinds whose `effort` is the session's own, when they carry no `agent`. */
+const OWN_EFFORT: readonly string[] = ['turn_end', 'session_end', 'session_summary']
+
 /** The reader a subagent's run end names, or undefined when it is no review reader. */
 const isReader = (e: Record<string, unknown>): boolean => e['kind'] === 'subagent' && text(e['lens']) !== undefined
 
@@ -121,7 +124,8 @@ export class UnitCosts {
     this.facts.set(session, facts)
     facts.role = text(e['role']) ?? facts.role
     facts.tier = text(e['launch_tier']) ?? facts.tier
-    if (e['agent'] === undefined) facts.effort = text(e['effort']) ?? facts.effort
+    // The session's own effort: its own turns and its own end carry it. A subagent's run end (`agent_closed`) carries the subagent's.
+    if (e['agent'] === undefined && OWN_EFFORT.includes(kind)) facts.effort = text(e['effort']) ?? facts.effort
     if (kind === 'turn_end') {
       const cost = num(e['turn_cost_usd'])
       if (day >= this.from && day <= this.to) {
@@ -233,12 +237,26 @@ export class UnitCosts {
     return { cells, count, unpriced }
   }
 
-  /** The cells that moved by more than `JUMP` against the previous day, with at least `MIN_COUNT` on both days, as flag lines. */
+  /**
+   * The unit costs that moved by more than `JUMP` against the previous day, with at least `MIN_COUNT` on both
+   * days, as flag lines. A cell is `<tier or model>/<effort>`: it is flagged by its first part whatever the
+   * effort, so a change of effort is a move of the unit cost and no new cell that has no day before it.
+   */
   private flags(what: string, unit: string, cells: ReadonlyMap<string, ReadonlyMap<string, Cell>>, days: readonly string[]): string[] {
     const lines: string[] = []
+    const merged = new Map<string, Map<string, Cell>>()
+    for (const [day, byCell] of cells) {
+      const byName = new Map<string, Cell>()
+      for (const [cell, c] of byCell) {
+        const name = cell.split('/')[0] ?? cell
+        const was = byName.get(name) ?? { cost: 0, n: 0 }
+        byName.set(name, { cost: was.cost + c.cost, n: was.n + c.n })
+      }
+      merged.set(day, byName)
+    }
     for (const day of days) {
-      for (const [name, after] of cells.get(day)?.entries() ?? []) {
-        const before = cells.get(addDays(day, -1))?.get(name)
+      for (const [name, after] of merged.get(day)?.entries() ?? []) {
+        const before = merged.get(addDays(day, -1))?.get(name)
         if (before === undefined || before.n < MIN_COUNT || after.n < MIN_COUNT) continue
         const [was, now] = [before.cost / before.n, after.cost / after.n]
         if (was > 0 && Math.abs(now - was) / was > JUMP) lines.push(`  ${what} ${name} on ${day}: ${figure(was)} → ${figure(now)} USD (${after.n} ${unit})`)

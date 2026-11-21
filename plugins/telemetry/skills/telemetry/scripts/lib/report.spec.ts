@@ -793,7 +793,7 @@ test('unit costs per day: a Paris day is not a UTC day, the day before the windo
     const out = lines(config)
     assert.ok(out.includes('  2026-11-08  deep/high $1.00 (5 sessions)'), out.join('\n'))
     assert.ok(out.includes('  2026-11-09  deep/high $2.00 (5 sessions)'), out.join('\n'))
-    assert.ok(out.includes('  agent sessions deep/high on 2026-11-09: 1.00 → 2.00 USD (5 sessions)'), out.join('\n'))
+    assert.ok(out.includes('  agent sessions deep on 2026-11-09: 1.00 → 2.00 USD (5 sessions)'), out.join('\n'))
     assert.ok(!out.some(l => l.includes('$50')))
   })
 })

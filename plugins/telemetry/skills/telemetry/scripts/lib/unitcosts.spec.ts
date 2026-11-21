@@ -57,9 +57,9 @@ test('a session whose events name no tier or no effort prints under unknown', ()
 test('a unit cost that moved more than 50 % with five sessions on both days is flagged, up or down', () => {
   const day = (d: string, cost: number, n = 5): Record<string, unknown>[] => Array.from({ length: n }, (_, i) => turn(d, S(10 + i), cost))
   const up = lines([...day(D1, 1), ...day(D2, 2)])
-  assert.ok(up.includes('  agent sessions deep/xhigh on 2026-11-21: 1.00 → 2.00 USD (5 sessions)'), up.join('\n'))
+  assert.ok(up.includes('  agent sessions deep on 2026-11-21: 1.00 → 2.00 USD (5 sessions)'), up.join('\n'))
   const down = lines([...day(D1, 2), ...day(D2, 0.5)])
-  assert.ok(down.includes('  agent sessions deep/xhigh on 2026-11-21: 2.00 → 0.50 USD (5 sessions)'), down.join('\n'))
+  assert.ok(down.includes('  agent sessions deep on 2026-11-21: 2.00 → 0.50 USD (5 sessions)'), down.join('\n'))
 })
 
 test('no flag under the floor of five on either day, nor at a move of exactly 50 %', () => {
@@ -75,7 +75,7 @@ test('the first day of the window is compared with the day before it', () => {
   const unit = new UnitCosts(PRICES, '2026-11-19', D2)
   for (const [day, cost] of [['2026-11-19', 1], [D1, 2]] as const) for (let i = 0; i < 5; i++) unit.add(turn(day, S(10 + i), cost), day)
   const out = unit.lines(input({ days: [D1, D2] }))
-  assert.ok(out.includes('  agent sessions deep/xhigh on 2026-11-20: 1.00 → 2.00 USD (5 sessions)'), out.join('\n'))
+  assert.ok(out.includes('  agent sessions deep on 2026-11-20: 1.00 → 2.00 USD (5 sessions)'), out.join('\n'))
 })
 
 test('a reader costs its calls at the price file, once however often a call is read, by model and effort', () => {
@@ -179,7 +179,7 @@ test('a session with a turn of no recorded cost is left out and counted, its day
 test('readers\' unit costs are flagged too, and not when there is no price file', () => {
   const day = (d: string, calls: number): Record<string, unknown>[] => Array.from({ length: 5 }, (_, i) => reader(d, i + (d === D1 ? 0 : 10), { calls })).flat()
   const events = [...day(D1, 1), ...day(D2, 3)]
-  assert.ok(lines(events).includes('  readers claude-sonnet-5-5/high on 2026-11-21: 2.00 → 6.00 USD (5 readers)'), lines(events).join('\n'))
+  assert.ok(lines(events).includes('  readers claude-sonnet-5-5 on 2026-11-21: 2.00 → 6.00 USD (5 readers)'), lines(events).join('\n'))
   assert.ok(!lines(events, { prices: undefined, noPrices: 'x' }).some(l => l.includes('USD (')))
 })
 
@@ -218,4 +218,22 @@ test('readPrices names the failure of a file that is no JSON', () => {
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('a change of effort inside a tier is a move of that tier\'s unit cost: deep medium then deep xhigh is flagged', () => {
+  const day = (d: string, effort: string, cost: number, n: number): Record<string, unknown>[] => Array.from({ length: n }, (_, i) => turn(d, `${d}-${effort}-${i}`, cost, { effort }))
+  const out = lines([...day(D1, 'medium', 5.6, 11), ...day(D1, 'xhigh', 12, 2), ...day(D2, 'xhigh', 13.23, 42)])
+  // (11 × 5.60 + 2 × 12.00) / 13 = 6.58 on the first day, 13.23 on the second.
+  assert.ok(out.includes('  agent sessions deep on 2026-11-21: 6.58 → 13.23 USD (42 sessions)'), out.join('\n'))
+  // The per-day line keeps the tier/effort detail.
+  assert.ok(out.includes('  2026-11-20  deep/medium $5.60 (11 sessions); deep/xhigh $12.00 (2 sessions)'), out.join('\n'))
+})
+
+test('a subagent\'s run end carries the subagent\'s effort: the session keeps its own', () => {
+  const out = lines([
+    turn(D1, S(2), 1, { effort: 'high' }),
+    ev(D1, 'agent_closed', S(2), { kind: 'subagent', child: 'x', effort: 'low', models: ['claude-sonnet-5-5'] }),
+    ev(D1, 'agent_spawned', S(2), { kind: 'subagent', child: 'x', effort: 'low' }),
+  ])
+  assert.ok(out.includes('  2026-11-20  deep/high $1.00 (1 sessions)'), out.join('\n'))
 })
