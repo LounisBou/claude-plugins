@@ -3759,9 +3759,10 @@ function tellGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'prompt'>, sessi
     .then(taken => taken && typeof taken === 'object' && 'drop' in taken && taken.drop ? `the host dropped ${name}'s own line: ${String(taken.drop)}` : null,
       (err: unknown) => `${name}'s own line was refused: ${messageOf(err)}`)
     .then(failed => gateRun(sessionId, async () => {
-      if (gateTelling.get(sessionId) !== crossing) return
-      gateTelling.delete(sessionId)
+      const holds = gateTelling.get(sessionId) === crossing
+      if (holds) gateTelling.delete(sessionId)
       if (failed !== null) return logLine($, 'supervision', `gate: ${failed}`)
+      if (!holds) return
       const mark = await gateMark($, path)
       if (mark === '' || mark === 'sent') await $.fs.write(path, `${mark === 'sent' ? 'reported' : 'told'}\n`)
     }))

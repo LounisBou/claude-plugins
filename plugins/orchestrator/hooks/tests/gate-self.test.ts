@@ -85,6 +85,11 @@ const toAgent = (tokens: number) => gateSelfText(tokens, Math.round(tokens / 100
 const settled = () => new Promise<void>(resolve => setTimeout(resolve, 0))
 // Whether a report is over once the work it queued has run, rather than waiting on a line the host holds.
 const over = (work: Promise<unknown>) => Promise.race([work.then(() => true), settled().then(() => false)])
+// A measure's report, and the host's answers to what it put, all written.
+const measure = async (fx: ReturnType<typeof fake>, tokens: number) => {
+  await report(fx, tokens)
+  await settled()
+}
 
 test('the agent is told at its own gate once per crossing, and its orchestrator once', async () => {
   const fx = fake()
@@ -130,7 +135,7 @@ test("a crossing mid-turn reaches the orchestrator at the measure that crossed, 
   fx.release()
   await settled()
   expect(fx.files.get(GATE)).toBe('reported\n')
-  await report(fx, 240000)
+  await measure(fx, 240000)
   expect(fx.sent).toEqual([toOrchestrator(210000)])
   expect(fx.submitted).toEqual([toAgent(210000)])
 })
@@ -138,6 +143,7 @@ test("a crossing mid-turn reaches the orchestrator at the measure that crossed, 
 test('two measures at once past the gate send one line to the orchestrator and one to the agent', async () => {
   const fx = fake()
   await Promise.all([report(fx, 210000), report(fx, 211000)])
+  await settled()
   expect(fx.sent).toEqual([toOrchestrator(210000)])
   expect(fx.submitted).toEqual([toAgent(210000)])
   expect(fx.files.get(GATE)).toBe('reported\n')
@@ -145,26 +151,40 @@ test('two measures at once past the gate send one line to the orchestrator and o
 
 test("a line not delivered to the orchestrator is sent at the next measure, and a new crossing is reported again", async () => {
   const fx = fake({ deliver: [false] })
-  await report(fx, 210000)
+  await measure(fx, 210000)
   expect(fx.files.get(GATE)).toBe('told\n')
-  await report(fx, 220000)
+  await measure(fx, 220000)
   expect(fx.sent).toEqual([toOrchestrator(210000), toOrchestrator(220000)])
   expect(fx.files.get(GATE)).toBe('reported\n')
-  await report(fx, 230000)
-  await report(fx, 40000)
-  await report(fx, 205000)
+  await measure(fx, 230000)
+  await measure(fx, 40000)
+  await measure(fx, 205000)
   expect(fx.sent).toEqual([toOrchestrator(210000), toOrchestrator(220000), toOrchestrator(205000)])
   expect(fx.submitted).toEqual([toAgent(210000), toAgent(205000)])
+})
+
+test("a line not delivered while the host holds the agent's: the agent's, once taken, marks it told alone, and the orchestrator's goes at a later measure", async () => {
+  const fx = fake({ submits: ['hold'], deliver: [false, false] })
+  expect(await over(report(fx, 210000))).toBe(true)
+  fx.release()
+  await settled()
+  expect(fx.files.get(GATE)).toBe('told\n')
+  await measure(fx, 220000)
+  expect(fx.files.get(GATE)).toBe('told\n')
+  await measure(fx, 230000)
+  expect(fx.sent).toEqual([toOrchestrator(210000), toOrchestrator(220000), toOrchestrator(230000)])
+  expect(fx.submitted).toEqual([toAgent(210000)])
+  expect(fx.files.get(GATE)).toBe('reported\n')
 })
 
 test("a fall back under the gate while the host holds the agent's line: taken later, it marks nothing, and the next crossing tells the agent again", async () => {
   const fx = fake({ submits: ['hold'] })
   expect(await over(report(fx, 210000))).toBe(true)
-  await report(fx, 40000)
+  await measure(fx, 40000)
   fx.release()
   await settled()
   expect(fx.files.get(GATE)).toBe('')
-  await report(fx, 205000)
+  await measure(fx, 205000)
   expect(fx.submitted).toEqual([toAgent(210000), toAgent(205000)])
   expect(fx.sent).toEqual([toOrchestrator(210000), toOrchestrator(205000)])
   expect(fx.files.get(GATE)).toBe('reported\n')
@@ -172,13 +192,11 @@ test("a fall back under the gate while the host holds the agent's line: taken la
 
 test("an agent's line the host refuses leaves the orchestrator's delivered, and is tried again at the next measure", async () => {
   const fx = fake({ submits: ['reject'] })
-  await report(fx, 210000)
+  await measure(fx, 210000)
   expect(fx.sent).toEqual([toOrchestrator(210000)])
   expect(fx.files.get(GATE)).toBe('sent\n')
   expect(fx.logged.some(line => line.includes('gate:') && line.includes('the host is gone'))).toBe(true)
-  await report(fx, 220000)
-  // Nothing left to send: the report is over before the host's answer to the line is written.
-  await settled()
+  await measure(fx, 220000)
   expect(fx.submitted).toEqual([toAgent(220000)])
   expect(fx.sent).toEqual([toOrchestrator(210000)])
   expect(fx.files.get(GATE)).toBe('reported\n')
