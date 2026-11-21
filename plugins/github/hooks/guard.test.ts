@@ -1610,6 +1610,54 @@ test('an E2E "ran" of a compound line is not observed: the refusal names the lin
   expect(recordRun(seen)![13]).toMatch(/^stated, not computed: `npm run e2e` at 0123456 not observed in \/work/)
 })
 
+test('an E2E "ran" naming a whole compound line is refused: the line is not observed, its exit code is not the command\'s', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })
+  await $.tool.call({ tool: 'Bash', command: 'cd /work && npm run e2e | tail -6' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'cd /work && npm run e2e | tail -6' })
+  expect(out.deny).toContain('this session ran no `npm run e2e | tail -6` in /work')
+  expect(out.deny).toContain('Run `npm run e2e | tail -6` alone as one foreground Bash line from /work')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('an E2E "ran" given as a whole compound line, with no cd, is refused, and the refusal quotes that line', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })
+  const line = 'npm test | tail -6; echo exit=$?'
+  await $.tool.call({ tool: 'Bash', command: line })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: line })
+  expect(out.deny).toContain('Run `' + line + '` alone as one foreground Bash line from /work')
+  expect(out.deny).toContain('the closest run seen was `' + line + '`')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+for (const line of [
+  'cd /work && cd /elsewhere && npm run e2e',
+  'cd sub && npm run e2e',
+  'cd ~/x && npm run e2e',
+  'cd "/work" && npm run e2e',
+]) {
+  test('an E2E "ran" of "' + line + '" is not observed: that cd form is not read', async ($, on) => {
+    const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+    const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })
+    await $.tool.call({ tool: 'Bash', command: line })
+    const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: line })
+    expect(out.deny).toContain('this session ran no `')
+    expect(recordRun(seen)).toBeUndefined()
+  })
+}
+
+test('an E2E "ran" after "cd /other &&", run from the session directory, is observed in /other', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const OTHER = '/other'
+  const seen = await world($, on, { git: { ...CLEAN, ...moved }, gitIn: { [OTHER]: { ...CLEAN, ...moved } }, tree: { ...SESSION_DIR, [OTHER]: { kind: 'dir', mtimeMs: 1 } } })
+  await $.tool.call({ tool: 'Bash', command: 'cd /other && npm run e2e' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'npm run e2e', dir: OTHER })
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)![9]).toBe('pass')
+  expect(recordRun(seen)![13]).toContain('observed `npm run e2e` at 0123456, run by this session')
+})
+
 test('a push keeps its head on disk with the session that pushed it, for any later session to read', async ($, on) => {
   const seen = await world($, on, { git: CLEAN })
   await $.tool.call({ tool: 'Bash', command: 'git push origin feat-a' })
