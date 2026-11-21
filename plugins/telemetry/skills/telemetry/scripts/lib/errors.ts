@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { simpleCommands } from '../../../../core/shell.ts'
-import { currentSessionName } from '../../../../core/names.ts'
+import { currentSessionName, parseSessionName } from '../../../../core/names.ts'
 import { update } from '../../../../core/store.ts'
 import { dayFiles, eventsDir } from './store.ts'
 
@@ -62,13 +62,15 @@ export interface Scope {
 }
 
 /**
- * What a reading knows of each session: true when some event of it names the orchestration (its own
- * title, or a `parent` of that name), false when its events name another, and nothing for a session
- * no event has named yet. A failure is decided by its session, whichever of its events carries the name.
+ * What a reading knows of each session: true when its events name this orchestration (its own title, or
+ * a `parent` of that name), false only when they name another orchestration (an `Orch:` title or a
+ * `parent` that is not this one), nothing for a session no event has named as either. The first
+ * orchestration a session is named as is its verdict, kept: a verdict never turns, so a failure the
+ * cursor has passed is never one a later reading would have kept.
  */
 export type Sessions = Map<string, boolean>
 
-/** Learns from one line of a day file which orchestration its session belongs to. */
+/** Learns from one line of a day file which orchestration its session belongs to, if it names one. */
 export function learn(known: Sessions, line: string, scope: Scope): void {
   if (!line.includes('"title"') && !line.includes('"parent"')) return
   let e: Fields
@@ -78,10 +80,13 @@ export function learn(known: Sessions, line: string, scope: Scope): void {
     return
   }
   const session = text(e['session'])
-  const named = [text(e['title']), text(e['parent'])].filter((name): name is string => name !== undefined)
-  if (session === undefined || named.length === 0) return
-  const name = baseName(scope.orchestration)
-  known.set(session, known.get(session) === true || named.some(n => baseName(n) === name))
+  if (session === undefined || known.has(session)) return
+  const title = text(e['title'])
+  // A title names an orchestration only as `Orch: <subject>`; a parent is always an orchestrator's name.
+  const names = [title !== undefined && parseSessionName(baseName(title))?.role === 'orchestrator' ? title : undefined, text(e['parent'])].filter((name): name is string => name !== undefined)
+  if (names.length === 0) return
+  const mine = baseName(scope.orchestration)
+  known.set(session, names.some(name => baseName(name) === mine))
 }
 
 /**

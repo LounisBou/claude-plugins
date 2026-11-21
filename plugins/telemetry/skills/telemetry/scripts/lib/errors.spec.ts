@@ -169,6 +169,8 @@ const BA = 'b0000000-0000-4000-8000-000000000002'
 const FS = 'f0000000-0000-4000-8000-000000000001'
 const FA = 'f0000000-0000-4000-8000-000000000002'
 const NS = '99999999-0000-4000-8000-000000000001'
+const AG = 'c0000000-0000-4000-8000-000000000001'
+const RN = 'c0000000-0000-4000-8000-000000000002'
 const failed = (session: string, ts: string, message: string, more: Record<string, unknown> = {}): string =>
   call(ts, { tool: 'Edit', mcp_server: undefined, outcome: 'error', error_message: message, session, ...more })
 const titled = (session: string, ts: string, title: string, parent?: string): string => call(ts, { tool: 'Edit', mcp_server: undefined, outcome: 'ok', session, title, ...(parent === undefined ? {} : { parent }) })
@@ -195,6 +197,18 @@ test('learn and concerns: a session is the orchestration\'s by its title or its 
   for (const line of [titled(BS, '2026-11-20T09:00:00Z', BILLING), titled(BA, '2026-11-20T09:00:00Z', 'Agent: x', 'Orch: billing [a1b2c3]'), titled(FS, '2026-11-20T09:00:00Z', FIRMWARE), titled(FA, '2026-11-20T09:00:00Z', 'Agent: y', 'Orch: firmware [a1b2c3]'), failed(NS, '2026-11-20T09:00:00Z', 'no name')]) learn(known, line, scope)
   assert.deepEqual([BS, BA, FS, FA].map(session => concerns(f(session), scope, known)), [true, true, false, false])
   assert.equal(concerns(f(NS), scope, known), true, 'a session no event has named is never dropped')
+  // An agent launched without a parent keeps its own title: named as no orchestration, so unknown and shown.
+  learn(known, titled(AG, '2026-11-20T09:00:00Z', 'Agent: review fw_legacy#31'), scope)
+  assert.equal(known.has(AG), false)
+  assert.equal(concerns(f(AG), scope, known), true)
+  // A host title before the rename to `Orch: billing` decides nothing; the rename does.
+  learn(known, titled(RN, '2026-11-20T09:00:00Z', 'Fix the telemetry errors'), scope)
+  assert.equal(concerns(f(RN), scope, known), true)
+  learn(known, titled(RN, '2026-11-20T09:10:00Z', BILLING), scope)
+  assert.equal(known.get(RN), true)
+  // A session named as another orchestration is its verdict for good, whatever it is titled after.
+  learn(known, titled(FS, '2026-11-20T09:30:00Z', BILLING), scope)
+  assert.equal(known.get(FS), false)
   learn(known, titled(BS, '2026-11-20T09:30:00Z', 'Agent: renamed', 'Orch: other [a1b2c3]'), scope)
   assert.equal(concerns(f(BS), scope, known), true, 'a session once known as the orchestration\'s stays its own')
   assert.equal(concerns(parsed(pluginError('2026-11-20T10:00:00Z', 'p', { session: FS }))[0]!, scope, known), false)
@@ -210,12 +224,14 @@ test('errors: each orchestration\'s reading holds the failures of its own sessio
       failed(BS, '2026-11-20T10:01:00Z', 'billing own', { title: BILLING }), failed(BA, '2026-11-20T10:02:00Z', 'billing agent', { title: 'Agent: x', parent: 'Orch: billing [a1b2c3]' }),
       failed(FS, '2026-11-20T10:03:00Z', 'firmware own', { title: FIRMWARE }), failed(FA, '2026-11-20T10:04:00Z', 'firmware agent'),
       failed(NS, '2026-11-20T10:05:00Z', 'nobody'),
+      titled(AG, '2026-11-20T09:58:00Z', 'Agent: review fw_legacy#31'), failed(AG, '2026-11-20T10:06:00Z', 'agent without parent'),
+      failed(RN, '2026-11-20T09:57:00Z', 'renamed first turn'), titled(RN, '2026-11-20T09:57:30Z', 'Fix the telemetry errors'), titled(RN, '2026-11-20T09:58:30Z', BILLING),
     ])
     const read = (orchestration: string) => messages(errors({ stateDir, now: NOW, since: 0, scope: scoped(orchestration) }))
-    assert.deepEqual(read(BILLING), ['billing agent', 'billing first turn', 'billing own', 'nobody'])
-    assert.deepEqual(read(FIRMWARE), ['firmware agent', 'firmware first turn', 'firmware own', 'nobody'])
-    assert.equal(messages(errors({ stateDir, now: NOW, since: 0 })).length, 7)
-    assert.deepEqual(read('Orch: other'), ['billing agent', 'billing first turn', 'billing own', 'firmware agent', 'firmware first turn', 'firmware own', 'nobody'].filter(() => false).concat(['nobody']))
+    assert.deepEqual(read(BILLING), ['agent without parent', 'billing agent', 'billing first turn', 'billing own', 'nobody', 'renamed first turn'])
+    assert.deepEqual(read(FIRMWARE), ['agent without parent', 'firmware agent', 'firmware first turn', 'firmware own', 'nobody'])
+    assert.equal(messages(errors({ stateDir, now: NOW, since: 0 })).length, 9)
+    assert.deepEqual(read('Orch: other'), ['agent without parent', 'nobody'])
   })
 })
 
