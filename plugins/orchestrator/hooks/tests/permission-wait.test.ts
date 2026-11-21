@@ -81,8 +81,8 @@ function mounted(bound?: number) {
   const hooks = capture<World>(on => register(on, bound))
   const check = hookOf(hooks, 'tool.check')
   const request = hookOf(hooks, 'classic.PermissionRequest')
-  const call = hookOf(hooks, 'tool.call')
-  const turn = hookOf(hooks, 'turn.complete')
+  const call = hookOf(hooks, 'tool.call', {})
+  const turn = hookOf(hooks, 'turn.complete', {})
   return {
     check: (f: Fake, e: Events['tool.check'], verdict: unknown) => check.handler(hostOf(f.parts), e, async () => verdict),
     request: (f: Fake, e: Events['classic.PermissionRequest'], answer: unknown = {}) => request.handler(hostOf(f.parts), e, async () => answer),
@@ -336,7 +336,7 @@ test('a dialog whose turn ended without its call\'s end is reminded nothing', as
 test('a call that throws still closes its dialog, and the throw goes on to the caller', async () => {
   const hooks = capture<World>(on => register(on))
   const request = hookOf(hooks, 'classic.PermissionRequest')
-  const call = hookOf(hooks, 'tool.call')
+  const call = hookOf(hooks, 'tool.call', {})
   const f = fake()
   await request.handler(hostOf(f.parts), REQUEST, async () => ({}))
   await expect(call.handler(hostOf(f.parts), CALL, async () => { throw new Error('boom') })).rejects.toThrow('boom')
@@ -360,8 +360,11 @@ test('an ask or a dialog the module cannot read leaves one log line, and the ver
   expect(f.logged.some(l => l.includes('permission: a dialog was not told: arguments that throw'))).toBe(true)
 })
 
-test('the module mounts the dialog hooks', () => {
+test('the module mounts the dialog hooks, and takes no event twice without a matcher', () => {
   const hooks = capture<World>(registerModule)
   expect(hooksOn(hooks, 'classic.PermissionRequest').length).toBe(1)
   expect(hooksOn(hooks, 'tool.check').length).toBe(1)
+  // The host refuses to load a module that registers one event twice without a matcher.
+  const bare = hooks.filter(h => h.matcher === undefined).map(h => h.event)
+  expect(bare.filter((event, i) => bare.indexOf(event) !== i)).toEqual([])
 })

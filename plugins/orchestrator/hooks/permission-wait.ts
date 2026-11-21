@@ -190,7 +190,8 @@ export function register(on: On<Relay>, bound: number = PERMISSION_BOUND_MS): vo
     await net($, next)
     return next(e)
   })
-  on('tool.call', async ($, e, next) => {
+  // Every call and every turn end, under the empty matcher: the host takes one hook without a matcher per event.
+  on('tool.call', {}, async ($, e, next) => {
     try {
       return await next(e)
     } finally {
@@ -200,7 +201,7 @@ export function register(on: On<Relay>, bound: number = PERMISSION_BOUND_MS): vo
     await net($, next)
     return next(e)
   })
-  on('turn.complete', async ($, e, next) => {
+  on('turn.complete', {}, async ($, e, next) => {
     try {
       return await next(e)
     } finally {
