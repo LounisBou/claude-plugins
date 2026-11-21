@@ -719,13 +719,14 @@ async function sweepGoneSenders($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pro
   }
 }
 
-// The session's own row goes with it: removed, or — rm failing — truncated to
-// empty, which the row parser reads as no row and the next read removes.
-export async function deleteSession($: Host<'env' | 'fs' | 'process'>, id: string): Promise<void> {
+// The session's own row goes with it: removed, or — rm failing — replaced by an empty file in one
+// rename (a link planted at the row is replaced, its target untouched), which the row parser reads
+// as no row and the next read removes.
+export async function deleteSession($: Host<'clock' | 'env' | 'fs' | 'process'>, id: string): Promise<void> {
   const path = `${await storeOf($)}/${sessionKey(id)}`
   const store = await storeOf($)
   const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`, `${store}/${rowKey(id)}`, `${store}/${successorKey(id)}`, `${store}/${answeredKey(id)}`, `${store}/${toldKey(id)}`, `${store}/${inheritKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
-  if (!done || done.exitCode !== 0) await $.fs.write(path, '')
+  if (!done || done.exitCode !== 0) await writeAtomic($, path, '')
 }
 
 // The reading's age, the pane row's last element: how long ago the row's own
@@ -3772,14 +3773,14 @@ function gateRun($: Host<'env' | 'plugin' | 'process'>, sessionId: string, name:
 // agent's line is marked `told` when the host takes it, both done marked `reported`. What was not
 // delivered is tried again at the next measure. Back under it, the mark is cleared for the next
 // crossing. The report is over with what was queued behind it while it ran: the mark of a line
-// the host took meanwhile.
-export async function reportGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session'>, sessionId: string, name: string, tty: string,
+// the host took meanwhile. The mark, a fixed name of the data root, is put in place by a rename.
+export async function reportGate($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session'>, sessionId: string, name: string, tty: string,
   reading: GateReading, bound = RELAY_BOUND_MS): Promise<void> {
   await gateRun($, sessionId, name, bound, signal => gateReport($, sessionId, name, tty, reading, bound, signal))
   await gateRuns.get(sessionId)
 }
 
-async function gateReport($: Host<'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session'>, sessionId: string, name: string, tty: string,
+async function gateReport($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session'>, sessionId: string, name: string, tty: string,
   reading: GateReading, bound: number, signal: AbortSignal): Promise<void> {
   const path = `${await storeOf($)}/${gateKey(sessionId)}`
   const past = tripGate(reading.context_percent, reading.context_tokens, reading.context_window, await gateEnv($)).tripped
@@ -3787,19 +3788,19 @@ async function gateReport($: Host<'env' | 'fs' | 'plugin' | 'process' | 'prompt'
   if (signal.aborted) return
   if (!past) {
     gateTelling.delete(sessionId)
-    if (mark !== '') await $.fs.write(path, '')
+    if (mark !== '') await writeAtomic($, path, '')
     return
   }
   const told = mark === 'told' || mark === 'reported'
   if (!told && !gateTelling.has(sessionId)) tellGate($, sessionId, name, path, reading, bound)
   if (mark === 'sent' || mark === 'reported' || !await sendGate($, tty, name, reading) || signal.aborted) return
-  await $.fs.write(path, `${told ? 'reported' : 'sent'}\n`)
+  await writeAtomic($, path, `${told ? 'reported' : 'sent'}\n`)
 }
 
 // The agent's own gate line put to the host: once it is taken, its mark written in turn with the
 // reports, while the crossing it was put for holds. A line dropped or refused is one log line, and
 // the next measure puts it again.
-function tellGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'prompt'>, sessionId: string, name: string, path: string, reading: GateReading, bound: number): void {
+function tellGate($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt'>, sessionId: string, name: string, path: string, reading: GateReading, bound: number): void {
   const crossing = Symbol(sessionId)
   gateTelling.set(sessionId, crossing)
   void (async () => $.prompt.submit({ text: gateSelfText(reading.context_tokens, reading.context_percent) }))()
@@ -3811,7 +3812,7 @@ function tellGate($: Host<'env' | 'fs' | 'plugin' | 'process' | 'prompt'>, sessi
       if (failed !== null) return logLine($, 'supervision', `gate: ${failed}`)
       if (!holds) return
       const mark = await gateMark($, path)
-      if (!signal.aborted && (mark === '' || mark === 'sent')) await $.fs.write(path, `${mark === 'sent' ? 'reported' : 'told'}\n`)
+      if (!signal.aborted && (mark === '' || mark === 'sent')) await writeAtomic($, path, `${mark === 'sent' ? 'reported' : 'told'}\n`)
     }))
     .catch((err: unknown) => logLine($, 'supervision', `gate: ${messageOf(err)}`))
 }

@@ -37,16 +37,17 @@
 // the left margin, then one key per job at the first indentation below it, a job's block running
 // to the next key of that indentation.
 //
-// The cache lives in `<state>/draft-guard`, one file per repository, workflow path and head sha
+// The cache lives in `<data root>/draft-guard`, one file per repository, workflow path and head sha
 // holding the verdict per check name, so a head already classified costs no call; a run is bound
 // to its path and sha for good, and that binding is kept too. Entries older than seven days are
 // removed whenever one is written. A verdict that could not be read is never kept.
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { setting, type Env } from '../../../core/paths.ts'
 import { orchestratorRoots } from '../../../core/roots.ts'
+import { writeAtomic } from '../../../core/store.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 
 export const CACHE_MAX_AGE_MS = 7 * 24 * 3600 * 1000
@@ -208,13 +209,16 @@ function prune(cacheDir: string, now: number): void {
   }
 }
 
-/** Written whole and renamed in place; a cache that cannot be written is no cache. */
+/*
+ * Written whole under a unique temporary name and renamed in place (core's writeAtomic): a link
+ * planted in the data root at a slot or at a temporary name is never written through. A cache that
+ * cannot be written is no cache.
+ */
 function store(cacheDir: string, path: string, data: Readonly<Record<string, unknown>>): void {
   try {
     mkdirSync(cacheDir, { recursive: true })
     prune(cacheDir, Date.now())
-    writeFileSync(`${path}.tmp`, JSON.stringify(data))
-    renameSync(`${path}.tmp`, path)
+    writeAtomic(path, JSON.stringify(data))
   } catch {
     // no cache this time
   }

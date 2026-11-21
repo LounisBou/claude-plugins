@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -176,6 +176,25 @@ test('the cache: an entry older than seven days removed when one is written, a f
   assert.ok(readdirSync(cache).some(name => name.startsWith('workflow-')))
   writeFileSync(join(dir, 'file'), '')
   assert.deepEqual([...guards('acme/thing', [check('wip-check / wip-check', 'fail', 555)], join(dir, 'file'), api(FILES, RUNS).gh)], ['wip-check / wip-check'])
+})
+
+test('the cache, in the data root, writes through no link planted at a slot or at its temporary name', () => {
+  const cache = join(dir, 'cache')
+  guards('acme/thing', [check('tests', 'fail', 555)], cache, api(FILES, RUNS).gh)
+  const slots = readdirSync(cache)
+  assert.ok(slots.length > 0)
+  rmSync(cache, { recursive: true })
+  mkdirSync(cache)
+  // The slots' names are known to any session: links toward a protected file planted under each, and under each `.tmp`.
+  const target = join(dir, 'protected')
+  writeFileSync(target, 'kept\n')
+  for (const slot of slots) {
+    symlinkSync(target, join(cache, slot))
+    symlinkSync(target, join(cache, `${slot}.tmp`))
+  }
+  guards('acme/thing', [check('tests', 'fail', 555)], cache, api(FILES, RUNS).gh)
+  assert.equal(readFileSync(target, 'utf8'), 'kept\n')
+  for (const slot of slots) assert.equal(lstatSync(join(cache, slot)).isSymbolicLink(), false, `${slot} is the cache's own file`)
 })
 
 test('a run or a file that answers something else is unread', () => {

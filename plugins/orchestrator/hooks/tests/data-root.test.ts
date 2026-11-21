@@ -8,7 +8,7 @@ import { DATA_ROOT_FILE } from '../../core/orchestration.ts'
 import { writeMeasure } from '../gauge.ts'
 import { briefRowOf } from '../ledger.ts'
 import { dataDir, logLine, moduleDir, stateDir } from '../module-io.ts'
-import { coordinatorRuns, writeDeck, writeSession } from '../supervision.ts'
+import { coordinatorRuns, deleteSession, reportGate, writeDeck, writeSession } from '../supervision.ts'
 import { holdsRecord } from '../wait.ts'
 import { readTodos } from '../todo.ts'
 import { todoPath } from '../todo-format.ts'
@@ -19,7 +19,12 @@ const PROTECTED = `${HOME}/.claude/claude-orchestrator`
 const DATA = '/tmp/shared/claude-orchestrator'
 const rootFile = (dir: string): string => JSON.stringify({ version: 1, dir })
 
-function hostOver(files: Map<string, string>, vars: Record<string, string> = {}) {
+/*
+ * `links`: links planted in the data root, each name toward its target. The host's plain write and
+ * read follow a link; a rename onto one replaces it and `rm -f` removes it, as rename(2) and
+ * unlink(2) do. `refuse`: the first words of the runs that exit 1.
+ */
+function hostOver(files: Map<string, string>, vars: Record<string, string> = {}, links = new Map<string, string>(), refuse: string[] = []) {
   const d = disk(files)
   const runs: (readonly string[])[] = []
   const $ = hostOf({
@@ -27,6 +32,8 @@ function hostOver(files: Map<string, string>, vars: Record<string, string> = {})
     env: { get: async (name: string) => ({ HOME, ...vars } as Record<string, string | undefined>)[name] },
     fs: {
       ...d.fs,
+      write: async (path: string, text: string) => d.fs.write(links.get(path) ?? path, text),
+      read: async (path: string) => d.fs.read(links.get(path) ?? path),
       exists: async (path: string) => files.has(path) || [...files.keys()].some(key => key.startsWith(`${path}/`)),
       // The entries right under `dir`, files and directories, as the host lists them.
       list: async (dir: string) => {
@@ -39,8 +46,17 @@ function hostOver(files: Map<string, string>, vars: Record<string, string> = {})
         ]
       },
     },
-    session: { id: async () => 's1' },
-    process: { run: async (argv: readonly string[]) => { runs.push(argv); return d.process.run(argv) } },
+    session: { id: async () => 's1', send: async () => ({ isDelivered: false, reason: 'nobody' }) },
+    prompt: { submit: async () => undefined },
+    process: {
+      run: async (argv: readonly string[]) => {
+        runs.push(argv)
+        if (refuse.includes(argv[0] ?? '')) return { exitCode: 1, stdout: '', stderr: '' }
+        if (argv[0] === 'mv') links.delete(String(argv[3]))
+        if (argv[0] === 'rm') for (const path of argv.slice(2)) links.delete(path)
+        return d.process.run(argv)
+      },
+    },
     clock: d.clock,
   })
   return { $, runs }
@@ -151,4 +167,41 @@ test('the stop gate holds a done on the open rows of a record the data root\'s r
   const stale = base()
   stale.set(`${PROTECTED}/records/s1`, `${record}\n`)
   expect(await run(stale)).toBe(null)
+})
+
+// The fixed names the module writes in the data root, where any session may plant a link toward a
+// protected file: each is put in place by a rename, so the link is replaced and its target untouched.
+const TARGET = `${PROTECTED}/config.json`
+const KEPT = '{"modes":{"Agent":"auto"}}\n'
+const settled = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0))
+
+test('the gate mark is put in place by a rename: a link planted at it leaves its target untouched, under the gate and over it', async () => {
+  const gate = `${DATA}/store/gates/s1`
+  const files = new Map([[`${PROTECTED}/${DATA_ROOT_FILE}`, rootFile(DATA)], [TARGET, KEPT]])
+  const links = new Map([[gate, TARGET]])
+  const { $ } = hostOver(files, { ORCHESTRATOR_CONTEXT_GATE_TOKENS: '200000' }, links)
+  // Under the gate a mark read is cleared: through the link, the protected file would be emptied.
+  await reportGate($, 's1', 'Agent: a', '/dev/ttys005', { context_tokens: 1000, context_percent: 1, context_window: 1000000 })
+  expect(files.get(TARGET)).toBe(KEPT)
+  expect(links.has(gate)).toBe(false)
+  expect(files.get(gate)).toBe('')
+  // Over it, a link planted again toward an empty protected file reads as no mark: the agent told,
+  // its mark lands on the gate's own name, never in that file.
+  const empty = `${PROTECTED}/prompts/launch-Agent--a-1700000000000.sh`
+  files.set(empty, '')
+  links.set(gate, empty)
+  files.delete(gate)
+  await reportGate($, 's1', 'Agent: a', '/dev/ttys005', { context_tokens: 210000, context_percent: 21, context_window: 1000000 })
+  await settled()
+  expect(files.get(empty)).toBe('')
+  expect(files.get(gate)).toBe('told\n')
+})
+
+test('a session end whose remove fails empties its row by a rename: a link planted at the row leaves its target untouched', async () => {
+  const row = `${DATA}/store/sessions/s1`
+  const files = new Map([[`${PROTECTED}/${DATA_ROOT_FILE}`, rootFile(DATA)], [TARGET, KEPT]])
+  const { $ } = hostOver(files, {}, new Map([[row, TARGET]]), ['rm'])
+  await deleteSession($, 's1')
+  expect(files.get(TARGET)).toBe(KEPT)
+  expect(files.get(row)).toBe('')
 })

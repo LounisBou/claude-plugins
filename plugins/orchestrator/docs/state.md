@@ -31,7 +31,7 @@ Python launcher.
 | File | Root | Writers | Discipline |
 |---|---|---|---|
 | `store/sessions/<id>` | module | the session's own hooks (measure, usage); any reader removes a dead row | one writer, one rename |
-| `store/gates/<id>`, `store/rows/<id>`, `store/answered/<id>`, `store/successors/<id>` | module | the session's own hooks | one writer, one rename (gates: a plain write) |
+| `store/gates/<id>`, `store/rows/<id>`, `store/answered/<id>`, `store/successors/<id>` | module | the session's own hooks | one writer, one rename |
 | `store/remote/<name>` | module | the receiving session; any reader removes a stale row | one rename under `<name>.lock`; a reader removes a row met stale only after reading it again, still stale, under that lock |
 | `round/<id>.json` | data | the hooks of every session (sender, pane, delivery, successor move); the coordinator's `settle` (hooks too), `round-archive` and `succession.sh takeover` | read-modify-write under the entry's lock |
 | `store/waits/<id>` | module | the session's own relay; the coordinator's hooks and its `settle`, forgetting a fingerprint | under the file's lock; a write merged with what another process changed since this one read it (`mergeWait`) |
@@ -46,6 +46,18 @@ Python launcher.
 | module log | module | every process | appends, refusing a link |
 | `close.log` | data | the launcher | appends, refusing a link |
 | `home-release.log` | protected | the launch script of a home move | appends |
+| `sweep.stamp` | data | every session's stop gate | one rename, before the sweep runs |
+| `draft-guard/<kind>-<hash>.json` | data | `draft-guard.ts` | a unique temporary name, one rename (core's `writeAtomic`); a cache that cannot be written is no cache |
+
+A link a session plants in the data root at a name a writer uses is never written through. A file
+replaced whole is renamed into place: the rename replaces the link and its target keeps its bytes (a
+hooks module's `mv -f` onto a link to a directory moves the file into that directory under its unique
+temporary name, never an executable's, and the name keeps no fact until the link is gone). An append
+or a truncation opens its file refusing a link (`O_NOFOLLOW`, `[ -L ]` in `log-append.sh`) in a
+directory that is none. What remains is a race, not a link planted beforehand: one planted between
+`log-append.sh`'s `[ -L ]` test and its `>>`, between the launcher's walk of the home-end marker's
+directories (`open_data_file`) and its open, or between `openLog`'s `lstat` of the log's directory and
+its open, is followed once.
 
 A writer in another language reads the convention as data, `core/store.json` (the launcher,
 `iterm_agent.py`, `path_lock`).

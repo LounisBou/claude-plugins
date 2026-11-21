@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -54,6 +54,17 @@ describe('store over an injected I/O', () => {
     assert.equal(readFileSync(join(dir, 'f.json'), 'utf8'), '{"a":1}\n')
     assert.deepEqual(readdirSync(dir), ['f.json'])
     assert.deepEqual(io.runs, [renameArgv(join(dir, 'f.json.tmp-t1'), join(dir, 'f.json'))])
+  })
+
+  it('replaces a link planted at the name, never writing through it', async () => {
+    const dir = scratch()
+    const target = join(dir, 'protected')
+    writeFileSync(target, 'kept\n')
+    symlinkSync(target, join(dir, 'f'))
+    await writeAtomicOver(realIo(), join(dir, 'f'), 'new\n')
+    assert.equal(readFileSync(target, 'utf8'), 'kept\n')
+    assert.equal(lstatSync(join(dir, 'f')).isSymbolicLink(), false)
+    assert.equal(readFileSync(join(dir, 'f'), 'utf8'), 'new\n')
   })
 
   it('removes its temporary file when the rename fails', async () => {
