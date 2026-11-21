@@ -51,6 +51,8 @@ type World = {
   // git's answers in another directory than the session's, by that directory, then by argv after git.
   gitIn?: Record<string, Record<string, { exitCode: number; stdout: string }>>
   verdict?: { decision: string; rule?: unknown; reason?: string }
+  // The verdict of a call of the tool by its command, ahead of `verdict`.
+  verdictOf?: Record<string, { decision: string; rule?: unknown; reason?: string }>
   answer?: string
   // What the Bash tool answers.
   bashResult?: unknown
@@ -198,7 +200,9 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
   on('command.register', () => ({ value: undefined }))
   on('tool.check', (_$, e) => {
     seen.checks.push(e.input)
-    return e.tool === 'AskUserQuestion' || e.tool === 'Read' ? { decision: 'allow' } : w.verdict ?? { decision: 'allow' }
+    if (e.tool === 'AskUserQuestion' || e.tool === 'Read') return { decision: 'allow' }
+    const command = String(fieldsOf(e.input)?.['command'] ?? '')
+    return w.verdictOf?.[command] ?? w.verdict ?? { decision: 'allow' }
   })
   on('tool.call', { tool: 'Read' }, (_$, e) =>
     ({ result: { type: 'text', file: { filePath: e['file_path'], content: '', numLines: 222, startLine: 1, totalLines: 222 } } }))
@@ -2474,6 +2478,33 @@ test('a read of a draft whose CI is green leaves it a draft', async ($, on) => {
   const seen = await world($, on, { ci: { result: 'SUCCESS', total: 1 } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(commands(seen)).not.toContain('pr-ready')
+})
+
+test('a deny rule on pr-ready stops the gate\'s own undraft, said once', async ($, on) => {
+  const seen = await world($, on, { ci: { result: 'PENDING', skipped: ['test'] }, verdictOf: { 'pr-ready': { decision: 'deny', reason: 'refused by a rule' } } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(commands(seen)).not.toContain('pr-ready')
+  expect(seen.logs.filter((l) => l.includes('not taken out of draft for its CI: refused by a rule'))).toHaveLength(1)
+})
+
+test('an explicit ask rule on pr-ready stops the gate\'s own undraft too', async ($, on) => {
+  const seen = await world($, on, { ci: { result: 'PENDING', skipped: ['test'] }, verdictOf: { 'pr-ready': { decision: 'ask', rule: 'mcp__github__gh(pr-ready)' } } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(commands(seen)).not.toContain('pr-ready')
+})
+
+test('an explicit allow rule on pr-ready lets the gate\'s own undraft through', async ($, on) => {
+  const seen = await world($, on, { ci: { result: 'PENDING', skipped: ['test'] }, verdictOf: { 'pr-ready': { decision: 'allow', rule: 'mcp__github__gh(pr-ready)' } } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(commands(seen)).toContain('pr-ready')
+})
+
+test('a draft carrying neither label that misses only its CI leaves draft for it at a tool read', async ($, on) => {
+  const seen = await world($, on, { labels: [], ci: { result: 'PENDING', total: 0 } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.runs.find((r) => r.command === 'pr-ready')?.args).toEqual({ pr: 12, 'for-ci': true })
+  expect(seen.logs).toEqual(['github: acme/thing#12 out of draft to run CI, still Not Ready'])
 })
 
 test('a read of a draft that misses its review leaves it a draft', async ($, on) => {

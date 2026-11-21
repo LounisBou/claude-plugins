@@ -252,6 +252,7 @@ test('the gate undrafts by itself a draft none of whose checks ran, or whose fai
   expect(gateUndraft(gate({}, { result: 'PENDING', total: 0, unverified: ['required checks unread'] }))).toBe(false)
   expect(gateUndraft(gate())).toBe(false)
   expect(gateUndraft(gate({}, { result: 'NONE', total: 0 }))).toBe(false)
+  // The Not Ready label is gateUndraft's own condition; a draft carrying neither label is read as Not Ready where the gate follows it (register.ts undraftForCi).
   expect(gateUndraft(gate({ labels: [] }, { result: 'PENDING', total: 0 }))).toBe(false)
 })
 

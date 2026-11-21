@@ -24,6 +24,8 @@ const EDGE = CFG + '/pr-reconcile/.edge'
 type Status = { context: string; state: string; description: string; creator: string }
 type Pull = {
   number: number; draft: boolean; head: string; base: string; labels: string[]; rollup: string | null; mergeable?: string; mergeState?: string; statuses?: Status[]
+  // The gate's CI answer, in place of the one the rollup gives.
+  ci?: Record<string, unknown>
 }
 
 // The gate's answer for a listed mergeability: pr-gate reads REST's mergeable and mergeable_state, null while computed.
@@ -88,6 +90,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'session-r' }))
   on('tool.register', () => ({ value: undefined }))
+  on('tool.check', () => ({ decision: 'allow' }))
   on('command.register', () => ({ value: undefined }))
   on('ui.log', (_$, e) => {
     state.said.push(e.text)
@@ -162,7 +165,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     const request = fieldsOf(JSON.parse(e.init?.stdin ?? '{}')) ?? {}
     const args = fieldsOf(request['args']) ?? {}
     const command = String(request['command'] ?? '')
-    state.runs.push(command + (args['head-only'] ? ' head' : '') + (args['state'] ? ' ' + String(args['state']) : ''))
+    state.runs.push(command + (args['head-only'] ? ' head' : '') + (args['state'] ? ' ' + String(args['state']) : '') + (args['for-ci'] ? ' for-ci' : ''))
     if (command === 'pr-panel') {
       state.listedRepos.push(String(request['repo']))
       if (state.panelFails !== undefined && (state.panelFailsRepo === undefined || state.panelFailsRepo === request['repo'])) return done('', 1, state.panelFails)
@@ -174,8 +177,12 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
       return done(JSON.stringify({
         repo: 'acme/app', pr: pull.number, state: 'open', draft: pull.draft, head: pull.head, labels: pull.labels, commits: 1, base: pull.base, stacked: false,
         ...mergeableOf(pull.mergeable),
-        ci: { result: pull.rollup === 'SUCCESS' ? 'SUCCESS' : 'PENDING', failed: [], running: pull.rollup === 'SUCCESS' ? 0 : 1, skipped: [], total: 1, checks: [{ name: 'ci', bucket: 'pass' }] },
+        ci: pull.ci ?? { result: pull.rollup === 'SUCCESS' ? 'SUCCESS' : 'PENDING', failed: [], running: pull.rollup === 'SUCCESS' ? 0 : 1, skipped: [], total: 1, checks: [{ name: 'ci', bucket: 'pass' }] },
       }))
+    }
+    if (command === 'pr-ready' && pull) {
+      pull.draft = false
+      return done('ok')
     }
     if (command === 'pr-readiness' && state.readinessFails) return done('', 1, 'gh: HTTP 403 label')
     if (command === 'pr-readiness' && pull) {
@@ -1170,4 +1177,15 @@ test('a Not Ready this machine did not set stays past the ceiling while the impo
   expect(Number(files.get(FAILING)?.text)).toBeGreaterThan(Number(imported))
   expect(state.labelled).toEqual([])
   expect(state.pulls[0]?.labels).toEqual(['Not Ready'])
+})
+
+test('a draft carrying neither label that misses only its CI gets Not Ready, then leaves draft for the CI, at its first beat', async ($, on) => {
+  const { clock, state } = await started($, on, {
+    pulls: [{ number: 7, draft: true, head: HEAD, base: 'main', labels: [], rollup: null, ci: { result: 'PENDING', failed: [], running: 0, skipped: [], total: 0, checks: [] } }],
+    files: passingRecords(),
+  })
+  await beat(clock)
+  expect(state.runs).toEqual(['pr-panel', 'pr-gate', 'pr-gate head', 'pr-readiness not-ready', 'pr-ready for-ci'])
+  expect(state.pulls[0]?.draft).toBe(false)
+  expect(state.said.some((line) => line.includes('out of draft to run CI, still Not Ready'))).toBe(true)
 })

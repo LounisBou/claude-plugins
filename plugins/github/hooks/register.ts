@@ -1255,10 +1255,21 @@ const undraftedForCi = new Set<string>()
 async function undraftForCi($: Mod, repo: string, pr: number, followed: Followed): Promise<Followed> {
   const { gate, missing } = followed
   if (!gate || !missing || !(followed.draft ?? gate.draft) || gate.state !== 'open' || !ciOnlyMissing(missing)) return followed
-  if (!gateUndraft({ ...gate, labels: followed.labels ?? gate.labels })) return followed
+  // A draft carrying neither label is read as Not Ready: leaving draft for its CI puts it on.
+  const labels = followed.labels ?? gate.labels
+  const labelled = labels.some((label) => [READY, NOT_READY].includes(label.toLowerCase()))
+  if (!gateUndraft({ ...gate, labels: labelled ? labels : [...labels, 'Not Ready'] })) return followed
   const key = flapKey(repo, pr) + '@' + gate.head
   if (undraftedForCi.has(key)) return followed
   undraftedForCi.add(key)
+  // The permission rules stand as for the tool's own CI undraft: a deny, or an explicit rule that is no allow, is no write (nobody is there to ask), said once.
+  // A check that cannot be made is no permission.
+  const verdict = await $.tool.check({ tool: TOOL, input: { command: 'pr-ready', args: { pr, 'for-ci': true }, repo } })
+    .catch((err: unknown) => ({ decision: 'deny', rule: undefined, reason: 'the permission check failed: ' + reasonOf(err).trim() }))
+  if (verdict.decision === 'deny' || (verdict.rule && verdict.decision !== 'allow')) {
+    note($, 'github: ' + repo + '#' + pr + ' not taken out of draft for its CI: ' + (verdict.reason || 'a permission rule on pr-ready'))
+    return followed
+  }
   try {
     await runGh($, 'pr-ready', { pr, 'for-ci': true }, repo)
   } catch (err: unknown) {
