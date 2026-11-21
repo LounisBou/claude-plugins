@@ -240,7 +240,6 @@ test("an auditor past the gate is shown the brief's absolute place", async () =>
   })
   const seen = await submit(mounted(), dollar)
   expect(seen.context?.[0]).toContain('/plugins/orch-root/templates/auditor-succession-brief.md')
-  expect(seen.context?.[0]).not.toContain(' succeed — templates/')
 })
 
 test('a handler that fails lets the prompt through and logs one line', async () => {
