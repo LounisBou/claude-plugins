@@ -769,9 +769,8 @@ test("a pkill of a path of the session's own scratchpad or checkout is no kill o
     `pkill -TERM -f "${SCRATCH}/server.js"`,
     `pkill -f /tmp/claude-501/p/8128ce6d-2c60-4e1d-b2f2-269b7f03063e/x`,
     `pkill -f ${CHECKOUT}/node_modules/.bin/vite`,
-    `pkill -fx ${CHECKOUT}`,
     `sudo pkill -f ${CHECKOUT}/dev.sh`,
-    `git status && pkill -f ${CHECKOUT}/dev.sh 2>/dev/null`,
+    `git status && pkill -f ${CHECKOUT}/dev.sh`,
   ]) expect(detectPatternKills(c, OWN), c).toEqual([])
 })
 
@@ -787,6 +786,10 @@ test('a pkill of a name, of a path that is not the session\'s, or one that widen
     `pkill -P 1 -f ${CHECKOUT}/dev.sh`,
     `pkill -f ${CHECKOUT}/a ${CHECKOUT}/b`,
     `pkill -f ${CHECKOUT}/dev.sh node`,
+    `pkill -f ${CHECKOUT}/dev.sh 1`,                                            // a second pattern, however short
+    `pkill -f ${CHECKOUT}/dev.sh 2>/dev/null`,                                  // the reader leaves the descriptor as a word
+    `pkill -f ${CHECKOUT}`,                                                     // the checkout itself also matches its siblings' paths
+    `pkill -fx ${CHECKOUT}-2`,
     `pkill ${CHECKOUT}/$(pgrep x)`,
     'pkill -f /Users/me/dev/ws/other',
     'pkill -f /private/tmp',
@@ -825,7 +828,7 @@ function fakeDollar(setup: { spawned?: string; noEnv?: boolean; own?: boolean })
       write: async () => undefined,
     },
     plugin: { root: '/plugins/orch-root' },
-    ...(setup.own ? { session: { id: async () => OWN.session, cwd: async () => CHECKOUT, root: async () => CHECKOUT } } : {}),
+    ...(setup.own ? { session: { id: async () => OWN.session, cwd: async () => '/elsewhere/a/b/c', root: async () => CHECKOUT } } : {}),
     process: {
       run: async (argv: readonly string[]) => {
         const line = logLineOf(argv)
@@ -866,7 +869,7 @@ test("a marked session's pkill of its own scratchpad reaches the tool, a pkill o
   const own = bashCall(`pkill -f ${SCRATCH}/server.js`)
   const let1 = await callBash(handlers['tool.call'], dollar, own)
   expect(let1.passedThrough).toBe(own)
-  for (const c of ['pkill node', 'killall node', `killall ${SCRATCH}/server.js`, `pkill -f ${SCRATCH.replace('8128ce6d', 'ffffffff')}/x`]) {
+  for (const c of ['pkill node', 'killall node', 'pkill -f /elsewhere/a/b/c/x' /* the cwd a `cd` moved is no root */, `killall ${SCRATCH}/server.js`, `pkill -f ${SCRATCH.replace('8128ce6d', 'ffffffff')}/x`]) {
     const { answer, passedThrough } = await callBash(handlers['tool.call'], dollar, bashCall(c))
     expect(denyOf(answer), c).toContain(DENY_START)
     expect(passedThrough, c).toBeNull()

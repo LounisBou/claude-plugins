@@ -184,19 +184,20 @@ function childrenOfRecorded(args: readonly string[], substitutions: readonly (re
 /*
  * Whether pkill's words match only the session's own processes: no option but `-f`, `-x` and a
  * signal (`-u`, `-g`, `-P`, `-t` and the others widen or move the match), and one pattern that is a
- * plain path under a checkout of the session or under its scratchpad (the session's id in it), no
- * regex operator in it (`a|b`, `.*`). A path another session does not hold: its processes' command
- * lines never carry it. A substitution or xargs fills words unseen: no path then.
+ * plain path strictly under a checkout of the session (a pattern is matched anywhere in a command
+ * line: the checkout's own path would also match `<checkout>-2`) or under its scratchpad (the
+ * session's id in it), no regex operator in it but the dot (`a|b`, `.*` are refused). A path another
+ * session does not hold: its processes' command lines never carry it. A redirection's descriptor
+ * (`2>/dev/null`) is left by the reader as a second word: that line stays refused. A substitution or xargs fills words unseen: no path then.
  */
 function matchesOnlyOwn(args: readonly string[], own: Own): boolean {
   const options = args.filter(word => word.startsWith('-'))
-  // The reader leaves the descriptor of `2>/dev/null` as a word of its own: a digit is no pattern.
-  const patterns = args.filter(word => !word.startsWith('-') && !/^[0-9]$/.test(word))
+  const patterns = args.filter(word => !word.startsWith('-'))
   const [path] = patterns
   if (patterns.length !== 1 || path === undefined || !options.every(word => /^-(?:[fx]+|[0-9]{1,2}|[A-Z]{3,}[0-9]?)$/.test(word))) return false
   if (!/^\/[\w./@:-]+$/.test(path)) return false
-  const under = (root: string): boolean => root.split('/').length > 3 && (path === root || path.startsWith(`${root}/`))
-  const scratch = own.session !== '' && new RegExp(`^/(?:private/)?tmp/claude-[0-9]+/[^/]+/${own.session.replace(/[^\w-]/g, '')}(?:/|$)`).test(path)
+  const under = (root: string): boolean => root.split('/').length > 3 && path.startsWith(`${root}/`)
+  const scratch = /^[\w-]+$/.test(own.session) && new RegExp(`^/(?:private/)?tmp/claude-[0-9]+/[^/]+/${own.session}(?:/|$)`).test(path)
   return scratch || own.roots.some(under)
 }
 

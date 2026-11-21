@@ -207,12 +207,12 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
   )
 }
 
-// What the session owns, for the kill guard: its working directory, its project root and its id. A
-// part that cannot be read is left out, so the guard refuses the more.
+// What the session owns, for the kill guard: its project root, which a shell `cd` does not move, and
+// its id. A part that cannot be read is left out, so the guard refuses the more.
 async function ownOf($: Held): Promise<Own> {
   const read = async (get: () => Promise<string>): Promise<string> => { try { return await get() } catch { return '' } }
-  const [cwd, root, session] = await Promise.all([read(() => $.session.cwd()), read(() => $.session.root()), read(() => $.session.id())])
-  return { roots: [cwd, root].filter(path => path !== ''), session }
+  const [root, session] = await Promise.all([read(() => $.session.root()), read(() => $.session.id())])
+  return { roots: root === '' ? [] : [root], session }
 }
 
 // prompt.submit's input carries no transcript path — that field belongs to the
