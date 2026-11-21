@@ -7,6 +7,7 @@ is opened, which is what lets the suite run offline.
 import json
 import os
 import shutil
+import socket
 import subprocess
 import time
 import urllib.error
@@ -19,6 +20,9 @@ from . import errors
 API = "https://api.github.com"
 _MAX_RETRIES = 3
 _MAX_WAIT = 60
+# Seconds GitHub gets to answer one attempt: under the 30 s the hooks module gives a status post, so a hang
+# comes back as a refusal the caller reports, with the run's outcome still in hand.
+REQUEST_TIMEOUT = 20
 
 
 def token():
@@ -84,7 +88,7 @@ def _send(method, url, body, headers):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
             raw = resp.read().decode()
             if not raw:
                 return resp.status, {}, {}
@@ -102,6 +106,13 @@ def _send(method, url, body, headers):
         except ValueError:
             parsed = {"message": raw[:200]}
         return exc.code, parsed, exc.headers
+    except (socket.timeout, urllib.error.URLError) as exc:
+        reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+        if not isinstance(reason, socket.timeout):
+            raise
+        raise errors.ApiError(
+            "GitHub gave no answer within %d s: the request may still have been applied" % REQUEST_TIMEOUT
+        )
 
 
 def _rate_limited(status, data):

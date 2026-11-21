@@ -6,7 +6,7 @@ exemption's the hooks module's (core's forge-status.ts); problem() checks its sh
 import json
 import os
 
-from . import http
+from . import errors, http
 
 _CORE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "core")
 with open(os.path.join(_CORE, "forge-status.json"), encoding="utf-8") as _fh:
@@ -53,8 +53,14 @@ def refusal(exc):
 
 
 def post(owner, name, sha, what, state, description):
-    """Post the status that copies `what` at the commit `sha`; GitHub's answer."""
-    return http.rest(
+    """Post the status that copies `what` at the commit `sha`; GitHub's answer, once it is the status
+    created (GitHub's 201 body, which carries its id). A 2xx that is no such status (a redirect followed as a GET, an empty or non-JSON body) is
+    refused: the caller writes nothing for a copy the forge does not hold."""
+    context = PREFIX + what
+    answer = http.rest(
         "POST", "/repos/%s/%s/statuses/%s" % (owner, name, sha),
-        {"state": state, "context": PREFIX + what, "description": description},
+        {"state": state, "context": context, "description": description},
     )
+    if not (isinstance(answer, dict) and answer.get("id")):
+        raise errors.ApiError("GitHub answered no created status for %s: %s" % (context, str(answer)[:120]))
+    return answer
