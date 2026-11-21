@@ -5467,7 +5467,7 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
                 "table — a launch that places its prompt after --name loses the boundary "
                 'between the two; pass --title "Orch: <subject>"')
         if AUDIT_NAME_SHAPE.match(title):
-            # An auditor kept on past its report succeeds at its gate (§9.4): its successor
+            # An auditor kept on past its report succeeds on the operator's word (§9.4): its successor
             # carries its name, as an orchestrator's does. Only a DERIVED audit title gets
             # here; a typed one was refused above, so `Audit:` is still no one's to claim.
             # The qualified form (« Audit neutre : <subject> ») is an auditor's name too.

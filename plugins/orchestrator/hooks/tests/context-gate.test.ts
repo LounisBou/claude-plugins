@@ -27,6 +27,13 @@ test('below the gate nothing is said', () => {
   expect(gateAnnouncement({ tripped: false, words: '' }, 'orchestrator')).toBe('')
 })
 
+test('an auditor with work in hand past the gate goes on, and hands over only on the operator\'s word', () => {
+  // Three auditors of four reached the gate within 21 minutes of their birth (2026-11-21): told to
+  // succeed, each successor spent a third of its room on the takeover and reached the gate in turn.
+  expect(roleLine('auditor')).toContain('go on; hand over only on his word')
+  expect(roleLine('auditor')).not.toContain('succeed')
+})
+
 test("the auditor's brief is named openably, from any cwd", () => {
   // An auditor's cwd is the audited repo, not the checkout, so the line carries
   // the plugin root the host sets; a trailing slash on the root changes nothing.
@@ -233,7 +240,6 @@ test("an auditor past the gate is shown the brief's absolute place", async () =>
   })
   const seen = await submit(mounted(), dollar)
   expect(seen.context?.[0]).toContain('/plugins/orch-root/templates/auditor-succession-brief.md')
-  expect(seen.context?.[0]).not.toContain(' succeed — templates/')
 })
 
 test('a handler that fails lets the prompt through and logs one line', async () => {

@@ -67,7 +67,7 @@ answer his questions, apply nothing; a question of yours for him is one `ask` ca
 Kept on to watch something, you watch through one background command that ends only on a
 finding (`until <a check that prints a line>; do sleep 600; done`), never a check in your own turns.
 
-Kept on past the report for a follow-up, at your gate you succeed instead of stopping, by the
+Kept on past the report, at your gate you tell him, go on and succeed only on his word, by the
 « Standing context » of `{{SUCCESSION_TEMPLATE}}`, read then, its placeholders being: the launcher
 `{{ITERM_AGENT_SH}}`, `brief.sh` `{{BRIEF_SH}}`, the repository `{{REPOSITORY}}`, the report
 {{REPORT_PATH}}.
