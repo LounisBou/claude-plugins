@@ -1896,6 +1896,86 @@ test('a reload arms the wake with no turn after it; a second arm starts no secon
   expect(orch.later.filter(t => t.ms === 30000)).toEqual([])
 })
 
+// A session whose name walk cannot answer in time (a loaded machine: the operator's report of
+// 2026-11-21, a successor coordinator never woken for twenty minutes): its round sender live, one
+// open question, no pane open in its tab. `over` is the fake's own, so a test lets the walk answer.
+function untoldSession(launchName: string, asked: RoundEntry | null) {
+  const over = { launchName, hangWalk: true }
+  const fx = fakeDollar(over)
+  fx.env['ORCHESTRATOR_SIDE_READ_MS'] = '50'
+  fx.files.set(RECORD, JSON.stringify({ name: 'Coord: main [abc]', tty: '/dev/ttys001' }))
+  if (asked) {
+    fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(askedOf(asked)) + '\n')
+    fx.files.set(`${SESSIONS}/${asked.session}`, JSON.stringify(row({ role: 'orchestrator', name: asked.from })) + '\n')
+  }
+  const wakes = () => fx.later.filter(t => t.ms === 30000)
+  return { fx, over, wakes }
+}
+
+test('a coordinator whose start and first turn end are told nothing in time is woken once its walk answers, once', async () => {
+  const asked = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, over, wakes } = untoldSession('Coord: main', asked)
+  // The supervision first: its register starts the round's wake memory afresh.
+  const { handlers } = mounted(registerSupervision)
+  await mounted(registerWake).handlers['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+  // The first measure's walk did not answer either: its row names no one (session.measure).
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: null, name: null })) + '\n')
+  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  expect(wakes().length).toBe(1)
+  // Still untold: the reading reads no round and asks again.
+  await wakes()[0]!.fn()
+  expect([fx.submitted.length, wakes().length]).toEqual([0, 2])
+  over.hangWalk = false
+  await wakes()[1]!.fn()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.submitted[0]).toContain('now due in this tab')
+  expect(fx.submitted[0]).toContain(asked.from)
+  await wakes()[2]!.fn()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.opened).toEqual([])
+})
+
+test('a pane the host closed at its session\'s end leaves the successor\'s questions due: it is woken for them once its walk answers', async () => {
+  const asked = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { handlers } = mounted(registerSupervision)
+  const predecessor = coordinatorSession()
+  predecessor.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(askedOf(asked)) + '\n')
+  predecessor.files.set(`${SESSIONS}/sa`, JSON.stringify(row({ role: 'orchestrator', name: asked.from })) + '\n')
+  await handlers['command.run'](predecessor.dollar, supervisionRun)
+  expect(predecessor.files.has(PANE_FILE)).toBe(true)
+  await endedByHost(predecessor, handlers)
+  expect(predecessor.files.has(PANE_FILE)).toBe(false)
+  // The successor: the machine's files as the predecessor left them, its own row gone with its end.
+  const { fx, over, wakes } = untoldSession('Coord: main', null)
+  for (const [path, text] of predecessor.files) fx.files.set(path, text)
+  const fresh = mounted(registerSupervision).handlers
+  await mounted(registerWake).handlers['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+  await fresh['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  await fresh['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  // Its walk did not answer: the pane its role left open is not put back.
+  expect(fx.opened).toEqual([])
+  expect(wakes().length).toBe(1)
+  await wakes()[0]!.fn()
+  expect(fx.submitted).toEqual([])
+  over.hangWalk = false
+  await wakes()[1]!.fn()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.submitted[0]).toContain('now due in this tab')
+  expect(JSON.parse(String(fx.files.get(WOKEN_FILE)))).toEqual([asked.id])
+})
+
+test('a session told nothing at its start arms one reading, which reads no round and ends once its row names it no coordinator', async () => {
+  const asked = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, wakes } = untoldSession('Agent: x', asked)
+  mounted(registerSupervision)
+  await mounted(registerWake).handlers['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+  expect(wakes().length).toBe(1)
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'agent', name: 'Agent: x' })) + '\n')
+  await wakes()[0]!.fn()
+  expect([wakes().length, fx.submitted.length]).toEqual([1, 0])
+  expect(fx.files.has(WOKEN_FILE)).toBe(false)
+})
+
 test('a pane record whose pid is not running, or that names none, is no pane; another session\'s live one is', async () => {
   const young = entry('Orch: a', minutesAgo(1), { session: 'sa' })
   for (const record of [{ session: 's-one', pid: '999' }, { session: 's-one' }, { session: 's-one', pid: null }]) {
