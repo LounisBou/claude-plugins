@@ -1,6 +1,7 @@
 export { configDir, setting, stateDir, type Env } from './paths.ts'
 export { claimOwner, createOnly, firstLineOf, readText, releaseOwner, update, withLock, writeAtomic, type Claim, type LockOptions } from './store.ts'
 export { DeadlineExceeded, withDeadline } from './deadline.ts'
+export { askOfDialog, stableJson, type AskKey } from './permission-ask.ts'
 export { currentSessionName, NAMES_CONTRACT, orchForm, parseSessionName, roleOf, ROLES, sessionName, type Prefix, type Role, type SessionName } from './names.ts'
 export { HOST_SESSIONS_DIR, sessionOrchestration } from './session-orchestration.ts'
 export { installRecordPath, locatePlugin, NotInstalled } from './locate.ts'
