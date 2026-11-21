@@ -4865,7 +4865,7 @@ HA=aaaa1111bbbb2222cccc3333dddd4444eeee5555
 HB=bbbb2222cccc3333dddd4444eeee5555ffff6666
 CWSCRIPT="$ROOT/skills/orchestrator/scripts/ci-watch.sh"
 # The call a green line ends with: the github tool's read of the gate.
-CWGATE='next: mcp__github__gh pr-gate {"pr": 7}'
+CWGATE='next: mcp__github__gh pr-gate {"pr": 7} on acme/thing'
 # cw <view lines> <reg lines> <watch code> <failing> [args...]: the script's stdout|exit code
 cw() {
   local view="$1" reg="$2" code="$3" failing="$4" out rc
@@ -4893,53 +4893,53 @@ cw() {
   printf '%s|%s' "$out" "$rc"
 }
 check "ci-watch exists" "yes" "$([ -f "$CWSCRIPT" ] && echo yes || echo no)"
-check "green: one line, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
+check "green: one line, exit 0" "ci-watch: green acme/thing#7 $HA $CWGATE|0" \
   "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 check "the checks are polled, no gh watch runs: its output marker never reaches a log or stdout" "0|0" \
   "$(grep -rl WATCH-OUTPUT-MARKER "$CWS" 2>/dev/null | wc -l | tr -d ' ')|$(cw "OPEN $HA" "2" 0 "" 7 --interval 1 | grep -c WATCH-OUTPUT-MARKER)"
-check "red: the failing names are on the line, exit 1" "ci-watch: red 7 $HA test, e2e|1" \
+check "red: the failing names are on the line, exit 1" "ci-watch: red acme/thing#7 $HA test, e2e|1" \
   "$(cw "OPEN $HA" "2" 1 "test\ne2e" 7 --interval 1)"
 # The watch exits 0 over a cancelled check, as it does over a passing one: the buckets read
 # after it turns a cancelled check into a red, never a green.
-check "a watch that exits 0 over cancelled checks is a red naming them, exit 1" "ci-watch: red 7 $HA build, test, lint, e2e|1" \
+check "a watch that exits 0 over cancelled checks is a red naming them, exit 1" "ci-watch: red acme/thing#7 $HA build, test, lint, e2e|1" \
   "$(CW_BUCKETS="build:cancel\ntest:cancel\ndocs:skipping\nlint:cancel\npages:skipping\nunit:pass\na:skipping\nb:skipping\nc:skipping\nd:skipping\nsmoke:pass\ne2e:cancel\ne:skipping\nf:skipping" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
-check "a watch that exits 0 over passing and skipped checks only is green, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
+check "a watch that exits 0 over passing and skipped checks only is green, exit 0" "ci-watch: green acme/thing#7 $HA $CWGATE|0" \
   "$(CW_BUCKETS="unit:pass\ndocs:skipping\nsmoke:pass" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 # A green carries evidence: a head whose every check was skipped had nothing run, and says so
 # as no checks with the count skipped, never green.
-check "a watch that exits 0 over skipped checks only is no green: no-checks with the count, exit 2" "ci-watch: no-checks 7 $HA skipped=3|2" \
+check "a watch that exits 0 over skipped checks only is no green: no-checks with the count, exit 2" "ci-watch: no-checks acme/thing#7 $HA skipped=3|2" \
   "$(CW_BUCKETS="unit:skipping\ndocs:skipping\nsmoke:skipping" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 # A conflicting pull request starts no workflow run: an external check that passed is no green.
-check "a conflicting pull request over a passing external check is no green: no-checks conflicting, exit 2" "ci-watch: no-checks 7 $HA conflicting|2" \
+check "a conflicting pull request over a passing external check is no green: no-checks conflicting, exit 2" "ci-watch: no-checks acme/thing#7 $HA conflicting|2" \
   "$(CW_BUCKETS="GitGuardian:pass" cw "OPEN $HA conflicting" "1" 0 "" 7 --interval 1)"
 # A head whose only check is a third-party one (a secret scanner) is no green while the gate still
 # counts a required check as running: the repository's own run has not registered, so after the
 # bound the line is no-checks, not green; with nothing awaited and no SUCCESS it is no-checks too, and a failed gate read is unread.
-check "a head with a third-party check alone, the gate awaiting the required one: no-checks, exit 2" "ci-watch: no-checks 7 $HA|2" \
+check "a head with a third-party check alone, the gate awaiting the required one: no-checks, exit 2" "ci-watch: no-checks acme/thing#7 $HA|2" \
   "$(CW_GATE="PENDING:1" CW_BUCKETS="GitGuardian:pass" cw "OPEN $HA" "1" 0 "" 7 --interval 1)"
-check "the gate awaiting nothing, though PENDING: no green, no-checks, exit 2" "ci-watch: no-checks 7 $HA skipped=0|2" \
+check "the gate awaiting nothing, though PENDING: no green, no-checks, exit 2" "ci-watch: no-checks acme/thing#7 $HA skipped=0|2" \
   "$(CW_GATE="PENDING:0" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
-check "a gate read that fails is unread, exit 5" "ci-watch: unread 7 pr-gate failed: error: no GitHub token|5" \
+check "a gate read that fails is unread, exit 5" "ci-watch: unread acme/thing#7 pr-gate failed: error: no GitHub token|5" \
   "$(CW_GATE="fail" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 # A slower workflow's checks are not registered yet when a faster one's are done: the watch
 # exits 0 over the checks it knows, so the head's workflow runs are read before any green, and
 # a run still going is watched to its end, then the checks are watched again.
-check "a run of the head unfinished while the gate awaits it, then a failure the gate reads: red, exit 1" "ci-watch: red 7 $HA e2e|1" \
+check "a run of the head unfinished while the gate awaits it, then a failure the gate reads: red, exit 1" "ci-watch: red acme/thing#7 $HA e2e|1" \
   "$(CW_GATE="PENDING:1\nPENDING:1\nFAILURE:0" CW_HEAD_RUNS="201:completed;202:in_progress\n201:completed;202:completed" cw "OPEN $HA" "2" 0 "e2e" 7 --interval 1)"
 check "the unfinished run is watched, then the checks polled once more" "1|0|2" \
   "$(grep -c '^run watch 202' "$CW/gh-calls")|$(grep -c '^run watch 201' "$CW/gh-calls")|$(grep -c -e 'name,bucket' "$CW/gh-calls")"
 check "the head's runs are read at the head" "2" "$(grep -c "^run list --commit $HA --json databaseId,status" "$CW/gh-calls")"
-check "every run of the head completed and every check passed: green, no extra poll, no run watched" "ci-watch: green 7 $HA $CWGATE|0|1|0" \
+check "every run of the head completed and every check passed: green, no extra poll, no run watched" "ci-watch: green acme/thing#7 $HA $CWGATE|0|1|0" \
   "$(CW_HEAD_RUNS="201:completed;202:completed" cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep -c -e 'name,bucket' "$CW/gh-calls")|$(grep -c '^run watch' "$CW/gh-calls")"
-check "a run of the head unfinished at a passing poll that ends green: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0|2" \
+check "a run of the head unfinished at a passing poll that ends green: green, exit 0" "ci-watch: green acme/thing#7 $HA $CWGATE|0|2" \
   "$(CW_HEAD_RUNS="201:queued\n201:completed" cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep -c -e 'name,bucket' "$CW/gh-calls")"
-check "the head moves while its runs are waited for: exit 3" "ci-watch: moved 7 $HA $HB|3" \
+check "the head moves while its runs are waited for: exit 3" "ci-watch: moved acme/thing#7 $HA $HB|3" \
   "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA\nOPEN $HA\nOPEN $HB" "2" 0 "" 7 --interval 1)"
-check "a head moved during a run watch is seen at once, before any second checks poll" "ci-watch: moved 7 $HA $HB|3|1" \
+check "a head moved during a run watch is seen at once, before any second checks poll" "ci-watch: moved acme/thing#7 $HA $HB|3|1" \
   "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA\nOPEN $HA\nOPEN $HB" "2" 0 "" 7 --interval 1)|$(grep -c -e 'name,bucket' "$CW/gh-calls")"
-check "closed while its runs are waited for: exit 4" "ci-watch: closed 7 CLOSED|4" \
+check "closed while its runs are waited for: exit 4" "ci-watch: closed acme/thing#7 CLOSED|4" \
   "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA\nOPEN $HA\nCLOSED $HA" "2" 0 "" 7 --interval 1)"
-check "unread: the head's runs cannot be read, exit 5" "ci-watch: unread 7 gh run list failed: gh: HTTP 502|5" \
+check "unread: the head's runs cannot be read, exit 5" "ci-watch: unread acme/thing#7 gh run list failed: gh: HTTP 502|5" \
   "$(CW_HEAD_RUNS="fail" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 check "a run of the head still unfinished past the bound is no green: unread, exit 5" "5" \
   "$(CW_WAIT=1 CW_HEAD_RUNS="201:in_progress" cw "OPEN $HA" "2" 0 "" 7 --interval 1 | sed 's/.*|//')"
@@ -4950,109 +4950,109 @@ check "the head's run watch never reaches stdout, it lands in the pull request's
 # The base branch's checks below count the logs holding a run watch's output: start them clean.
 rm -rf "$CWS/ci-watch"
 # The verdict is the gate's alone: gh pr checks counts the checks registered and waits, nothing more.
-check "gh pr checks is read to count the checks and to poll them, nothing else: green, 1 poll" "ci-watch: green 7 $HA $CWGATE|0|0" \
+check "gh pr checks is read to count the checks and to poll them, nothing else: green, 1 poll" "ci-watch: green acme/thing#7 $HA $CWGATE|0|0" \
   "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep '^pr checks' "$CW/gh-calls" | grep -vc -e 'name,bucket' -e '--json name$')"
-check "no checks within the bound: exit 2" "ci-watch: no-checks 7 $HA|2" \
+check "no checks within the bound: exit 2" "ci-watch: no-checks acme/thing#7 $HA|2" \
   "$(cw "OPEN $HA" "none" 0 "" 7 --interval 1)"
 check "and the watch never started" "0" "$(grep -c -e '--watch' "$CW/gh-calls")"
-check "checks registered after the first read (a fresh push) are waited for, not read as red" "ci-watch: green 7 $HA $CWGATE|0" \
+check "checks registered after the first read (a fresh push) are waited for, not read as red" "ci-watch: green acme/thing#7 $HA $CWGATE|0" \
   "$(cw "OPEN $HA" "none\n2" 0 "" 7 --interval 1)"
-check "moved: the head differs when the watch returns, exit 3" "ci-watch: moved 7 $HA $HB|3" \
+check "moved: the head differs when the watch returns, exit 3" "ci-watch: moved acme/thing#7 $HA $HB|3" \
   "$(cw "OPEN $HA\nOPEN $HB" "2" 1 "test" 7 --interval 1)"
-check "closed without merge: exit 4, naming the state" "ci-watch: closed 7 CLOSED|4" \
+check "closed without merge: exit 4, naming the state" "ci-watch: closed acme/thing#7 CLOSED|4" \
   "$(cw "OPEN $HA\nCLOSED $HA" "2" 0 "" 7 --interval 1)"
 check "and no base branch run is looked for" "0" "$(grep -c '^run ' "$CW/gh-calls")"
-check "already closed at the first read: exit 4" "ci-watch: closed 7 CLOSED|4" \
+check "already closed at the first read: exit 4" "ci-watch: closed acme/thing#7 CLOSED|4" \
   "$(cw "CLOSED $HA" "2" 0 "" 7 --interval 1)"
 check "and nothing is watched" "0" "$(grep -c -e '--watch' "$CW/gh-calls")"
 # Merged: the same watch follows the push run of the merge commit on the base branch.
 HM=cccc3333dddd4444eeee5555ffff6666aaaa1111
-check "merged then green on the base branch: exit 0" "ci-watch: base-green 7 $HM|0" \
+check "merged then green on the base branch: exit 0" "ci-watch: base-green acme/thing#7 $HM|0" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" cw "OPEN $HA\nMERGED $HA" "2" 0 "" 7 --interval 1)"
 # Two lists: the one that finds the run, and the one after its watch that finds nothing new.
 check "the push runs are read on the base branch at the merge commit" "2|2|1" \
   "$(grep -c '^run list' "$CW/gh-calls")|$(grep -c "^run list --branch main --commit $HM --event push" "$CW/gh-calls")|$(grep -c '^run watch 101 --exit-status' "$CW/gh-calls")"
 check "the run watch's output never reaches stdout, it lands in a log file" "1|0" \
   "$(grep -rl RUN-WATCH-MARKER "$CWS" 2>/dev/null | wc -l | tr -d ' ')|$(CW_MERGE="$HM main" CW_RUNS="101:CI" cw "MERGED $HA" "2" 0 "" 7 --interval 1 | grep -c RUN-WATCH-MARKER)"
-check "already merged at the first read: the base branch is followed, the checks never watched" "ci-watch: base-green 7 $HM|0|0" \
+check "already merged at the first read: the base branch is followed, the checks never watched" "ci-watch: base-green acme/thing#7 $HM|0|0" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" cw "MERGED $HA" "2" 0 "" 7 --interval 1)|$(grep -c -e '--watch' "$CW/gh-calls")"
-check "merged then red: the run and its failing jobs on the line, exit 6" "ci-watch: base-red 7 $HM 101 test, lint|6" \
+check "merged then red: the run and its failing jobs on the line, exit 6" "ci-watch: base-red acme/thing#7 $HM 101 test, lint|6" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_RUN_CODES="101 1" CW_JOBS="build:success\ntest:failure\ndocs:skipped\nlint:failure" cw "OPEN $HA\nMERGED $HA" "2" 0 "" 7 --interval 1)"
-check "merged with no push run within the bound: exit 7, none filtered out" "ci-watch: base-no-run 7 $HM filtered=0|7" \
+check "merged with no push run within the bound: exit 7, none filtered out" "ci-watch: base-no-run acme/thing#7 $HM filtered=0|7" \
   "$(CW_BASE_WAIT=1 CW_MERGE="$HM main" CW_RUNS="-" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
 # A misnamed workflow: every push run is left out, and the line says how many, each run once.
-check "a filter that matches nothing says how many runs it left out" "ci-watch: base-no-run 7 $HM filtered=2|7" \
+check "a filter that matches nothing says how many runs it left out" "ci-watch: base-no-run acme/thing#7 $HM filtered=2|7" \
   "$(CW_BASE_WAIT=1 CW_MERGE="$HM main" CW_RUNS="101:CI;102:Slow" cw "MERGED $HA" "2" 0 "" 7 --base-workflow Ci --interval 1)"
-check "a push run registered after the first read is waited for" "ci-watch: base-green 7 $HM|0" \
+check "a push run registered after the first read is waited for" "ci-watch: base-green acme/thing#7 $HM|0" \
   "$(CW_MERGE="$HM main" CW_RUNS="-\n101:CI" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
-check "a run registered while another was watched is watched too" "ci-watch: base-red 7 $HM 102 e2e|6" \
+check "a run registered while another was watched is watched too" "ci-watch: base-red acme/thing#7 $HM 102 e2e|6" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI\n101:CI;102:Slow" CW_RUN_CODES="102 1" CW_JOBS="unit:success\ne2e:failure" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
-check "every push run is followed when no workflow is named" "ci-watch: base-red 7 $HM 102 e2e|6" \
+check "every push run is followed when no workflow is named" "ci-watch: base-red acme/thing#7 $HM 102 e2e|6" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI;102:Slow" CW_RUN_CODES="102 1" CW_JOBS="unit:success\ne2e:failure" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
 # A base run cancelled by the branch's concurrency, for a newer push, is not a red: the newest
 # push run of the same workflow on that branch is followed instead, and reported with its sha.
 HN=dddd4444eeee5555ffff6666aaaa1111bbbb2222
 HO=eeee5555ffff6666aaaa1111bbbb2222cccc3333
-check "a cancelled base run is not a red: the newer run is followed, green with its own sha" "ci-watch: base-green 7 $HN|0" \
+check "a cancelled base run is not a red: the newer run is followed, green with its own sha" "ci-watch: base-green acme/thing#7 $HN|0" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_RUN_CODES="101 1 cancelled" CW_NEWEST="103 $HN" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
 check "the newer run is read for the same workflow on the base branch, and watched" "1|1" \
   "$(grep -c '^run list --branch main --workflow CI --event push' "$CW/gh-calls")|$(grep -c '^run watch 103 --exit-status' "$CW/gh-calls")"
-check "the newer run red: its run, its sha and its failing jobs on the line" "ci-watch: base-red 7 $HN 103 test|6" \
+check "the newer run red: its run, its sha and its failing jobs on the line" "ci-watch: base-red acme/thing#7 $HN 103 test|6" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_RUN_CODES="101 1 cancelled\n103 1" CW_JOBS="build:success\ntest:failure" CW_NEWEST="103 $HN" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
-check "a newer run cancelled in turn is followed on to the next" "ci-watch: base-green 7 $HO|0" \
+check "a newer run cancelled in turn is followed on to the next" "ci-watch: base-green acme/thing#7 $HO|0" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_RUN_CODES="101 1 cancelled\n103 1 cancelled" CW_NEWEST="103 $HN\n104 $HO" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
-check "a cancelled run with no newer one is reported red, its cancelled jobs named" "ci-watch: base-red 7 $HM 101 test|6" \
+check "a cancelled run with no newer one is reported red, its cancelled jobs named" "ci-watch: base-red acme/thing#7 $HM 101 test|6" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_RUN_CODES="101 1 cancelled" CW_JOBS="build:success\ntest:cancelled" CW_NEWEST="101 $HM" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
-check "a run red at the merge commit keeps its sha when another run was replaced" "ci-watch: base-red 7 $HM 102 test|6" \
+check "a run red at the merge commit keeps its sha when another run was replaced" "ci-watch: base-red acme/thing#7 $HM 102 test|6" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI;102:Slow" CW_RUN_CODES="101 1 cancelled\n102 1" CW_JOBS="test:failure" CW_NEWEST="103 $HN" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
 check "the repository is passed on to every gh call that follows a cancelled run" "0" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_RUN_CODES="101 1 cancelled" CW_NEWEST="103 $HN" cw "MERGED $HA" "2" 0 "" 7 --repo o/r --interval 1 >/dev/null; grep -vc -e '-R o/r' "$CW/gh-calls")"
-check "a named workflow filters out another" "ci-watch: base-green 7 $HM|0" \
+check "a named workflow filters out another" "ci-watch: base-green acme/thing#7 $HM|0" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI;102:Slow" CW_RUN_CODES="102 1" CW_JOBS="unit:success\ne2e:failure" cw "MERGED $HA" "2" 0 "" 7 --base-workflow CI --interval 1)"
 check "and the other run is never watched" "0" "$(grep -c '^run watch 102' "$CW/gh-calls")"
-check "the workflows can be named in the environment, comma-separated" "ci-watch: base-green 7 $HM|0" \
+check "the workflows can be named in the environment, comma-separated" "ci-watch: base-green acme/thing#7 $HM|0" \
   "$(CW_BASE_WORKFLOWS="Lint,CI" CW_MERGE="$HM main" CW_RUNS="101:CI;102:Slow" CW_RUN_CODES="102 1" CW_JOBS="unit:success\ne2e:failure" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
-check "a workflow name can be repeated on the command line" "ci-watch: base-red 7 $HM 102 e2e|6" \
+check "a workflow name can be repeated on the command line" "ci-watch: base-red acme/thing#7 $HM 102 e2e|6" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI;102:Slow" CW_RUN_CODES="102 1" CW_JOBS="unit:success\ne2e:failure" cw "MERGED $HA" "2" 0 "" 7 --base-workflow Slow --base-workflow CI --interval 1)"
 # Green with auto-merge enabled: the merge is coming, so the watch waits for it and follows the
 # base branch, instead of ending on a green nobody re-arms after.
-check "green with auto-merge: the merge is waited for, then the base branch followed" "ci-watch: base-green 7 $HM|0" \
+check "green with auto-merge: the merge is waited for, then the base branch followed" "ci-watch: base-green acme/thing#7 $HM|0" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" cw "OPEN $HA\nOPEN $HA auto\nOPEN $HA auto\nMERGED $HA" "2" 0 "" 7 --interval 1)"
 check "auto-merge is read with the state, once per interval until the merge" "4" "$(grep -c '^pr view 7 --json state,headRefOid,autoMergeRequest' "$CW/gh-calls")"
-check "green with auto-merge, then red on the base branch: exit 6" "ci-watch: base-red 7 $HM 101 test|6" \
+check "green with auto-merge, then red on the base branch: exit 6" "ci-watch: base-red acme/thing#7 $HM 101 test|6" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_RUN_CODES="101 1" CW_JOBS="test:failure" cw "OPEN $HA\nOPEN $HA auto\nMERGED $HA" "2" 0 "" 7 --interval 1)"
-check "green with auto-merge, not merged within the bound: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
+check "green with auto-merge, not merged within the bound: green, exit 0" "ci-watch: green acme/thing#7 $HA $CWGATE|0" \
   "$(CW_MERGE_WAIT=1 cw "OPEN $HA\nOPEN $HA auto" "2" 0 "" 7 --interval 1)"
-check "every check skipped with auto-merge, not merged within the bound: no-checks, exit 2" "ci-watch: no-checks 7 $HA skipped=1|2" \
+check "every check skipped with auto-merge, not merged within the bound: no-checks, exit 2" "ci-watch: no-checks acme/thing#7 $HA skipped=1|2" \
   "$(CW_MERGE_WAIT=1 CW_BUCKETS="docs:skipping" cw "OPEN $HA\nOPEN $HA auto" "2" 0 "" 7 --interval 1)"
-check "every check skipped with auto-merge, then merged: the base branch followed" "ci-watch: base-green 7 $HM|0" \
+check "every check skipped with auto-merge, then merged: the base branch followed" "ci-watch: base-green acme/thing#7 $HM|0" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_BUCKETS="docs:skipping" cw "OPEN $HA\nOPEN $HA auto\nMERGED $HA" "2" 0 "" 7 --interval 1)"
-check "green with auto-merge, then the head moves: exit 3" "ci-watch: moved 7 $HA $HB|3" \
+check "green with auto-merge, then the head moves: exit 3" "ci-watch: moved acme/thing#7 $HA $HB|3" \
   "$(cw "OPEN $HA\nOPEN $HA auto\nOPEN $HB auto" "2" 0 "" 7 --interval 1)"
-check "green with auto-merge, then closed without merge: exit 4" "ci-watch: closed 7 CLOSED|4" \
+check "green with auto-merge, then closed without merge: exit 4" "ci-watch: closed acme/thing#7 CLOSED|4" \
   "$(cw "OPEN $HA\nOPEN $HA auto\nCLOSED $HA" "2" 0 "" 7 --interval 1)"
-check "green with auto-merge, then auto-merge disabled: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
+check "green with auto-merge, then auto-merge disabled: green, exit 0" "ci-watch: green acme/thing#7 $HA $CWGATE|0" \
   "$(cw "OPEN $HA\nOPEN $HA auto\nOPEN $HA" "2" 0 "" 7 --interval 1)"
-check "green with auto-merge and --no-base: green at once, the merge not waited for" "ci-watch: green 7 $HA $CWGATE|0|2" \
+check "green with auto-merge and --no-base: green at once, the merge not waited for" "ci-watch: green acme/thing#7 $HA $CWGATE|0|2" \
   "$(cw "OPEN $HA\nOPEN $HA auto\nMERGED $HA" "2" 0 "" 7 --no-base --interval 1)|$(grep -c '^pr view' "$CW/gh-calls")"
-check "--no-base: merged exits at once, exit 4" "ci-watch: closed 7 MERGED|4" \
+check "--no-base: merged exits at once, exit 4" "ci-watch: closed acme/thing#7 MERGED|4" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" cw "OPEN $HA\nMERGED $HA" "2" 0 "" 7 --no-base --interval 1)"
 check "and no base branch run is looked for" "0" "$(grep -c '^run ' "$CW/gh-calls")"
-check "unread: the merge commit cannot be read, exit 5" "ci-watch: unread 7 gh pr view failed: gh: HTTP 404|5" \
+check "unread: the merge commit cannot be read, exit 5" "ci-watch: unread acme/thing#7 gh pr view failed: gh: HTTP 404|5" \
   "$(cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
-check "unread: the base branch's runs cannot be read, exit 5" "ci-watch: unread 7 gh run list failed: gh: HTTP 502|5" \
+check "unread: the base branch's runs cannot be read, exit 5" "ci-watch: unread acme/thing#7 gh run list failed: gh: HTTP 502|5" \
   "$(CW_MERGE="$HM main" cw "MERGED $HA" "2" 0 "" 7 --interval 1)"
 check "unread: a red run with no failing job named, exit 5" "5" \
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_RUN_CODES="101 1" cw "MERGED $HA" "2" 0 "" 7 --interval 1 | sed 's/.*|//')"
-check "unread: the pull request cannot be read, exit 5" "ci-watch: unread 7 gh pr view failed: gh: HTTP 502|5" \
+check "unread: the pull request cannot be read, exit 5" "ci-watch: unread acme/thing#7 gh pr view failed: gh: HTTP 502|5" \
   "$(cw "" "2" 0 "" 7 --interval 1)"
-check "unread: the registration read fails, exit 5" "ci-watch: unread 7 gh pr checks failed: error connecting to api.github.com|5" \
+check "unread: the registration read fails, exit 5" "ci-watch: unread acme/thing#7 gh pr checks failed: error connecting to api.github.com|5" \
   "$(cw "OPEN $HA" "fail" 0 "" 7 --interval 1)"
 check "a watch that fails with no failure the gate reads decides nothing: green" "0" \
   "$(cw "OPEN $HA" "2" 4 "" 7 --interval 1 | sed 's/.*|//')"
 # A rerun the gate leaves out (cancelled, superseded by a newer run of its workflow) fails the
 # --fail-fast watch, and gh pr checks still names it failing: the gate reads the head green.
-check "a cancelled run the gate leaves out is no red: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
+check "a cancelled run the gate leaves out is no red: green, exit 0" "ci-watch: green acme/thing#7 $HA $CWGATE|0" \
   "$(CW_GATE="SUCCESS:0" CW_BUCKETS="build:cancel\nbuild:pass" cw "OPEN $HA" "2" 1 "build" 7 --interval 1)"
 check "the repository is passed on to every gh call" "0" \
   "$(cw "OPEN $HA" "2" 0 "" 7 --repo o/r --interval 1 >/dev/null; grep -vc -e '-R o/r' "$CW/gh-calls")"
@@ -5075,35 +5075,35 @@ CWD="OPEN $HA draft"
 # On a draft, green needs a passed check whose job needs the guard (`draft-guard.sh --dependents`),
 # so the passed checks of these cases (build, lint) are jobs behind the guard of run 570.
 printf '[%s, %s, %s]\n' "$C_WIP_N" "$C_BUILD_N" "$C_LINT_N" > "$CW/checks-link"
-check "a draft whose only failure is a draft guard is no red: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
+check "a draft whose only failure is a draft guard is no red: green, exit 0" "ci-watch: green acme/thing#7 $HA $CWGATE|0" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
 # Measured on another project: four guard checks failed and every real job, depending on the
 # guard, was skipped. The guard settled, nothing had run, and the watch said green.
-check "a draft whose guard fails and whose every other check is skipped: no-checks, exit 2" "ci-watch: no-checks 7 $HA skipped=5|2" \
+check "a draft whose guard fails and whose every other check is skipped: no-checks, exit 2" "ci-watch: no-checks acme/thing#7 $HA skipped=5|2" \
   "$(rm -rf "$CWS/draft-guard"; CW_BUCKETS="code-style:skipping\nsecurity-check:skipping\ntests:skipping\nMigrations:skipping\nbuild:skipping\nwip-check / wip-check:fail\nwip-check / wip-check:fail\nwip-check / wip-check:fail\nwip-check / wip-check:fail" cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
-check "a draft whose guard fails, one real check passing beside skipped ones: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
+check "a draft whose guard fails, one real check passing beside skipped ones: green, exit 0" "ci-watch: green acme/thing#7 $HA $CWGATE|0" \
   "$(rm -rf "$CWS/draft-guard"; CW_BUCKETS="lint:pass\ntests:skipping\nwip-check / wip-check:fail" cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
 # Measured again on that project: an outside check (a secret scanner) depends on no guard and
 # passed, so the guard settled, one check had passed, and the watch said green with no job run.
 printf '[%s, %s, %s]\n' "$C_WIP_N" "$C_DOCS_N" "$C_EXT_P" > "$CW/checks-link"
-check "a draft whose guard fails, whose jobs are skipped and whose outside check passes: no-checks, exit 2" "ci-watch: no-checks 7 $HA skipped=1|2" \
+check "a draft whose guard fails, whose jobs are skipped and whose outside check passes: no-checks, exit 2" "ci-watch: no-checks acme/thing#7 $HA skipped=1|2" \
   "$(rm -rf "$CWS/draft-guard"; CW_BUCKETS="secrets:pass\ndocs:skipping\nwip-check / wip-check:fail" cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
 printf '[%s, %s, %s]\n' "$C_WIP_N" "$C_BUILD_N" "$C_EXT_P" > "$CW/checks-link"
-check "the same with a job behind the guard passed beside the outside check: green, exit 0" "ci-watch: green 7 $HA $CWGATE|0" \
+check "the same with a job behind the guard passed beside the outside check: green, exit 0" "ci-watch: green acme/thing#7 $HA $CWGATE|0" \
   "$(rm -rf "$CWS/draft-guard"; CW_BUCKETS="secrets:pass\nbuild:pass\nwip-check / wip-check:fail" cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
-check "a draft with no guard among its checks and one passed: green as before, no run read" "ci-watch: green 7 $HA $CWGATE|0|0" \
+check "a draft with no guard among its checks and one passed: green as before, no run read" "ci-watch: green acme/thing#7 $HA $CWGATE|0|0" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 0 "" 7 --interval 1)|$(grep -c '^api' "$CW/gh-calls")"
 printf '[%s, %s, %s]\n' "$C_WIP_N" "$C_BUILD_N" "$C_LINT_N" > "$CW/checks-link"
 printf '[%s, %s]\n' "$C_WIP" "$C_TESTS" > "$CW/checks-link"
-check "and with a real failure too: red, naming only the real one" "ci-watch: red 7 $HA tests|1" \
+check "and with a real failure too: red, naming only the real one" "ci-watch: red acme/thing#7 $HA tests|1" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check\ntests" 7 --repo acme/thing --interval 1)"
 check "a draft's watch runs without --fail-fast, once" "0|1" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1 >/dev/null
      grep -c -e '--fail-fast' "$CW/gh-calls")|$(grep -c -e '--watch' "$CW/gh-calls")"
 check "the same failures on a pull request that is no draft: red naming both, --fail-fast never passed, no run read" \
-  "ci-watch: red 7 $HA wip-check / wip-check, tests|1|0|0" \
+  "ci-watch: red acme/thing#7 $HA wip-check / wip-check, tests|1|0|0" \
   "$(rm -rf "$CWS/draft-guard"; cw "OPEN $HA" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1)|$(grep -c -e '--fail-fast' "$CW/gh-calls")|$(grep -c '^api' "$CW/gh-calls")"
-check "a pull request made ready during the watch reads its guard as a red" "ci-watch: red 7 $HA wip-check / wip-check, tests|1" \
+check "a pull request made ready during the watch reads its guard as a red" "ci-watch: red acme/thing#7 $HA wip-check / wip-check, tests|1" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD\nOPEN $HA" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1)"
 # The watch's exit code decides nothing: a draft whose watch exits non-zero with no failure the gate
 # reads is the gate's green.
@@ -5111,7 +5111,7 @@ printf '[%s]\n' "$C_PASS" > "$CW/checks-link"
 check "a draft whose watch exits non-zero with no failure the gate reads: green, exit 0" "0" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "" 7 --interval 1 | sed 's/.*|//')"
 rm -f "$CW/checks-link"
-check "a draft whose failing check cannot be classified is no guard: a red naming it, exit 1" "ci-watch: red 7 $HA wip-check / wip-check|1" \
+check "a draft whose failing check cannot be classified is no guard: a red naming it, exit 1" "ci-watch: red acme/thing#7 $HA wip-check / wip-check|1" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
 
 # The owner file: the session that armed a watch, beside its log, is the key the stop gate tells a
@@ -5123,12 +5123,12 @@ check "a watch armed by a session writes its owner file: the session's id, on on
 check "a watch armed by no session removes the owner file an earlier watch left" "present|absent" \
   "$(CW_SESSION=sess-42 cw "OPEN $HA" "2" 0 "" 7 --interval 1 >/dev/null; echo "$([ -e "$OWN" ] && echo present || echo absent)|$(cw "OPEN $HA" "2" 0 "" 7 --interval 1 >/dev/null; [ -e "$OWN" ] && echo present || echo absent)")"
 mkdir -p "$OWN"
-check "an owner file that cannot be written is unread, exit 5" "ci-watch: unread 7 cannot write $OWN|5" \
+check "an owner file that cannot be written is unread, exit 5" "ci-watch: unread acme/thing#7 cannot write $OWN|5" \
   "$(CW_SESSION=sess-42 cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 rm -rf "$OWN"
 
 # Outside a clone of the repository: a target that names it is watched on it, the bare number is refused.
-check "a target naming the repository is watched there, whatever the directory: the gate call names it" "ci-watch: green 7 $HA $CWGATE on acme/thing|0" \
+check "a target naming the repository is watched there, whatever the directory: the gate call names it" "ci-watch: green acme/thing#7 $HA $CWGATE|0" \
   "$(cd "$WORK" && cw "OPEN $HA" "2" 0 "" acme/thing#7 --interval 1)"
 CWOUT="$WORK/ci-watch-outside"
 mkdir -p "$CWOUT/bin" "$CWOUT/dir"

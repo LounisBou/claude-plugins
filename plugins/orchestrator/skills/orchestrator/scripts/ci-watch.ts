@@ -66,6 +66,7 @@ export function parseArgs(argv: readonly string[], env: Env): Options {
   if (target === undefined) throw unread('', USAGE)
   const pr = target.pr
   let repo = target.repo
+  const who = (): string => repo === undefined ? pr : `${repo}#${pr}`
   let interval = '30'
   let base = true
   let workflows: string[] = []
@@ -76,22 +77,22 @@ export function parseArgs(argv: readonly string[], env: Env): Options {
       continue
     }
     const value = rest[k + 1]
-    if (value === undefined) throw unread(pr, `${flag} needs a value`)
+    if (value === undefined) throw unread(who(), `${flag} needs a value`)
     if (flag === '--repo') {
       // A repository named twice is one repository: the watch never reads another one's number.
-      if (repo !== undefined && repo.toLowerCase() !== value.toLowerCase()) throw unread(pr, `the target names ${repo} and --repo names ${value}`)
+      if (repo !== undefined && repo.toLowerCase() !== value.toLowerCase()) throw unread(who(), `the target names ${repo} and --repo names ${value}`)
       repo = value
     }
     else if (flag === '--interval') interval = value
     else if (flag === '--base-workflow') workflows.push(value)
-    else throw unread(pr, `unknown argument: ${flag} (${USAGE})`)
+    else throw unread(who(), `unknown argument: ${flag} (${USAGE})`)
     k++
   }
-  if (!DIGITS.test(interval) || interval === '0') throw unread(pr, 'the interval is a positive number of seconds')
+  if (!DIGITS.test(interval) || interval === '0') throw unread(who(), 'the interval is a positive number of seconds')
   const seconds = (name: string, fallback: number): number => {
     const value = setting(env, name)
     if (value === undefined) return fallback
-    if (!DIGITS.test(value)) throw unread(pr, `${name} is a number of seconds`)
+    if (!DIGITS.test(value)) throw unread(who(), `${name} is a number of seconds`)
     return Number(value)
   }
   const registerWait = seconds('CI_WATCH_REGISTER_WAIT', 180)
@@ -208,7 +209,9 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   // One interval, but never past the bound the loop checks after its read: a bound shorter than
   // the interval, or the last part of one, is slept to its end and no further.
   const sleep = (bound: number): Promise<void> => deps.sleep(Math.max(0, Math.min(Number(interval), (bound - deps.now()) / 1000)))
-  const fail = (what: string, ran: Ran, fallback = 'no answer'): Said => unread(pr, `${what} failed: ${firstLine(ran.stderr) || fallback}`)
+  // How every line names the pull request: with its repository once that is known (the target's, else the directory's), so a watch run from the wrong checkout says so.
+  let who = options.repo === undefined ? pr : `${options.repo}#${pr}`
+  const fail = (what: string, ran: Ran, fallback = 'no answer'): Said => unread(who, `${what} failed: ${firstLine(ran.stderr) || fallback}`)
   let settled = false
   let log = logPath(options, false)
 
@@ -223,18 +226,18 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   // The draft guard classifies the gate's answer, given on its stdin: it reads no check itself.
   const draftGuard = async (gate: GateCi, ...args: string[]): Promise<string> => {
     const name = resolved
-    if (name === undefined || name === '') throw unread(pr, 'gh repo view failed: no repository read')
+    if (name === undefined || name === '') throw unread(who, 'gh repo view failed: no repository read')
     const ran = await deps.run([...deps.draftGuard, name, pr, ...args], { stderr: 'pipe', input: gate.raw })
-    if (ran.status !== 0) throw unread(pr, firstLine(ran.stderr) || 'draft guard failed')
+    if (ran.status !== 0) throw unread(who, firstLine(ran.stderr) || 'draft guard failed')
     return chomp(ran.stdout)
   }
 
   // CI at the head, as the github plugin's gate reads it: the one reading the watch decides on.
   const readCi = async (name: string): Promise<GateCi> => {
     const ran = await deps.gate(name, pr)
-    if (ran.status !== 0) throw unread(pr, `pr-gate failed: ${firstLine(ran.stderr) || 'no answer'}`)
+    if (ran.status !== 0) throw unread(who, `pr-gate failed: ${firstLine(ran.stderr) || 'no answer'}`)
     const ci = parseGate(ran.stdout)
-    if (ci === null) throw unread(pr, 'pr-gate failed: an answer with no ci result')
+    if (ci === null) throw unread(who, 'pr-gate failed: an answer with no ci result')
     keepGate(ci, name)
     return ci
   }
@@ -286,7 +289,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
       // `gh pr checks` exits 8 while a check is pending (its list is printed all the same): that is an answer.
       if (ran.status !== 0 && ran.status !== PENDING_EXIT) throw fail('gh pr checks', ran)
       const checks = listed(chomp(ran.stdout))
-      if (checks === undefined) throw unread(pr, 'gh pr checks failed: an answer that is no list of checks')
+      if (checks === undefined) throw unread(who, 'gh pr checks failed: an answer that is no list of checks')
       const real = checks.filter(check => !check.name.startsWith(FORGE.prefix))
       if (real.some(check => check.bucket === 'fail')) return
       if (!real.some(check => check.bucket === 'pending')) return
@@ -298,7 +301,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     try {
       mkdirSync(join(options.stateDir, CI_WATCH_DIR), { recursive: true })
     } catch {
-      throw unread(pr, `cannot create ${options.stateDir}/${CI_WATCH_DIR}`)
+      throw unread(who, `cannot create ${options.stateDir}/${CI_WATCH_DIR}`)
     }
   }
 
@@ -308,12 +311,12 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   // the base branch's push runs at the merge commit, unless --no-base. `during`: the watch saw it
   // open first, so no push run on the base branch ends the watch on the merge, exit 0.
   const ended = async (current: PullRequest, during = false): Promise<Said> => {
-    if (!(current.state === 'MERGED' && options.base)) return new Said(`closed ${pr} ${current.state}`, 4)
+    if (!(current.state === 'MERGED' && options.base)) return new Said(`closed ${who} ${current.state}`, 4)
     const view = await gh(['pr', 'view', pr, '--json', 'mergeCommit,baseRefName', '--jq', '(.mergeCommit.oid // "") + " " + .baseRefName'], { stderr: 'pipe' })
     if (view.status !== 0) throw fail('gh pr view', view)
     const out = chomp(view.stdout)
     const [sha, branch] = split(out)
-    if (sha === '' || branch === '' || branch === out) throw unread(pr, 'gh pr view failed: no merge commit or base branch read')
+    if (sha === '' || branch === '' || branch === out) throw unread(who, 'gh pr view failed: no merge commit or base branch read')
     ensureLogDir()
     log = logPath(options, true)
     try {
@@ -338,10 +341,10 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
       }
       if (fresh.length === 0) {
         // Every run listed has been watched green: one listing more found nothing new.
-        if (seen.size > 0) return new Said(`base-green ${pr} ${green ?? sha}`, 0)
+        if (seen.size > 0) return new Said(`base-green ${who} ${green ?? sha}`, 0)
         if (deps.now() >= deadline) {
-          return during ? new Said(`merged ${pr} ${sha} no push run on ${branch} filtered=${left.size}`, 0)
-            : new Said(`base-no-run ${pr} ${sha} filtered=${left.size}`, 7)
+          return during ? new Said(`merged ${who} ${sha} no push run on ${branch} filtered=${left.size}`, 0)
+            : new Said(`base-no-run ${who} ${sha} filtered=${left.size}`, 7)
         }
         await sleep(deadline)
         continue
@@ -368,8 +371,8 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
           }
           const jobs = joinNames((await gh(['run', 'view', id, '--json', 'jobs', '--jq',
             '.jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out") | .name'])).stdout)
-          if (jobs === '') throw unread(pr, `gh run watch ${id} exited ${code} with no failing job named (log: ${log})`)
-          return new Said(`base-red ${pr} ${at} ${id} ${jobs}`, 6)
+          if (jobs === '') throw unread(who, `gh run watch ${id} exited ${code} with no failing job named (log: ${log})`)
+          return new Said(`base-red ${who} ${at} ${id} ${jobs}`, 6)
         }
       }
     }
@@ -379,7 +382,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   const reread = async (first: string): Promise<PullRequest> => {
     const current = await readPr()
     if (current.state !== 'OPEN') throw await ended(current, true)
-    if (current.head !== first) throw new Said(`moved ${pr} ${first} ${current.head}`, 3)
+    if (current.head !== first) throw new Said(`moved ${who} ${first} ${current.head}`, 3)
     return current
   }
 
@@ -390,9 +393,10 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     const here = await deps.run(['gh', 'repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], { stderr: 'pipe' })
     const advice = 'pass --repo <owner/repo>'
     const why = firstLine(here.stderr)
-    if (here.status !== 0 && why !== '') throw unread(pr, `gh repo view failed: ${why}: ${advice}`)
+    if (here.status !== 0 && why !== '') throw unread(who, `gh repo view failed: ${why}: ${advice}`)
     resolved = here.status === 0 ? chomp(here.stdout) : ''
-    if (resolved === '') throw unread(pr, `this directory is not a clone of the repository: ${advice}`)
+    if (resolved === '') throw unread(who, `this directory is not a clone of the repository: ${advice}`)
+    who = `${resolved}#${pr}`
   }
 
   let current = await readPr()
@@ -406,12 +410,12 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     const why = firstLine(ran.stderr)
     if (!why.includes('no checks reported')) {
       // Any other failure, or an answer that is no list of names, is a gh failure.
-      if (ran.status !== 0) throw unread(pr, `gh pr checks failed: ${why || 'no answer'}`)
+      if (ran.status !== 0) throw unread(who, `gh pr checks failed: ${why || 'no answer'}`)
       const count = registeredCount(chomp(ran.stdout))
-      if (count === undefined) throw unread(pr, `gh pr checks failed: ${why || 'an answer that is no count'}`)
+      if (count === undefined) throw unread(who, `gh pr checks failed: ${why || 'an answer that is no count'}`)
       if (count > 0) break
     }
-    if (deps.now() >= deadline) return new Said(`no-checks ${pr} ${first}`, 2)
+    if (deps.now() >= deadline) return new Said(`no-checks ${who} ${first}`, 2)
     await sleep(deadline)
   }
 
@@ -424,7 +428,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     try {
       writeAtomic(`${log}.session`, `${options.session}\n`)
     } catch {
-      throw unread(pr, `cannot write ${log}.session`)
+      throw unread(who, `cannot write ${log}.session`)
     }
   } else {
     rmSync(`${log}.session`, { force: true })
@@ -450,8 +454,8 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     settled = false
     if (ours && ci.result === 'FAILURE') {
       const names = joinNames(current.draft ? await draftGuard(ci) : ci.failed.join('\n'))
-      if (names !== '') return new Said(`red ${pr} ${current.head} ${names}`, 1)
-      if (!current.draft) throw unread(pr, 'pr-gate read FAILURE with no failing check named')
+      if (names !== '') return new Said(`red ${who} ${current.head} ${names}`, 1)
+      if (!current.draft) throw unread(who, 'pr-gate read FAILURE with no failing check named')
       settled = true
     }
     const listing = await gh(['run', 'list', '--commit', current.head, '--json', 'databaseId,status', '--jq', '.[] | select(.status != "completed") | .databaseId'], { stderr: 'pipe' })
@@ -472,7 +476,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
         current = await reread(first)
         deadline = deps.now() + options.registerWait * 1000
       } else {
-        if (deps.now() >= deadline) throw unread(pr, `workflow runs of the head still unfinished: ${pending.join(' ')}`)
+        if (deps.now() >= deadline) throw unread(who, `workflow runs of the head still unfinished: ${pending.join(' ')}`)
         await sleep(deadline)
       }
       continue
@@ -485,14 +489,14 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     }
     // Every run listed is done: the verdict once the gate awaits no more CI, within the bound.
     if (!awaitsCi(ci, current.head)) break
-    if (deps.now() >= deadline) return new Said(`no-checks ${pr} ${current.head}`, 2)
+    if (deps.now() >= deadline) return new Said(`no-checks ${who} ${current.head}`, 2)
     await sleep(deadline)
     current = await reread(first)
   }
 
   // GitHub starts no workflow run on a conflicting pull request: what passed is an external check
   // at most, and the suites never ran. Auto-merge will never merge it either, so no wait.
-  if (current.conflicting) return new Said(`no-checks ${pr} ${current.head} conflicting`, 2)
+  if (current.conflicting) return new Said(`no-checks ${who} ${current.head} conflicting`, 2)
   if (options.base && current.auto) {
     // Auto-merge will merge: wait for it, bounded, and follow the base branch.
     const until = deps.now() + options.mergeWait * 1000
@@ -508,8 +512,8 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
   const green = settled
     ? countBucket(ci.checks, 'pass', new Set((await draftGuard(ci, '--dependents')).split('\n').filter(Boolean))) > 0
     : ci.result === 'SUCCESS'
-  if (!green) return new Said(`no-checks ${pr} ${current.head} skipped=${skipped}`, 2)
-  return new Said(`green ${pr} ${current.head} ${gateCall(pr, options.repo)}`, 0)
+  if (!green) return new Said(`no-checks ${who} ${current.head} skipped=${skipped}`, 2)
+  return new Said(`green ${who} ${current.head} ${gateCall(pr, resolved)}`, 0)
 }
 
 /**

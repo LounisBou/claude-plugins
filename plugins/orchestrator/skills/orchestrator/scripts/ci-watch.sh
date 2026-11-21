@@ -52,7 +52,10 @@
 # newest push run of the same workflow on that branch is followed instead, and its outcome is
 # reported with its own sha. A cancelled run with no newer one is a red.
 #
-# stdout, one line, and the exit code the caller reads without opening the log:
+# stdout, one line, and the exit code the caller reads without opening the log. In every line `<pr>`
+# is `<owner/name>#<n>`, the repository the watch resolved (the target's, else `--repo`, else the
+# clone's): a bare number from the wrong checkout watches that clone's pull request of the same
+# number, and its line says so (a line said before any repository is known, `unread`, has the number):
 #   ci-watch: green <pr> <head> next: mcp__github__gh pr-gate {"pr": <pr>} [on <owner/repo>]
 #                                                               0  every workflow run of the head completed and
 #                                                                  the gate reads SUCCESS; with auto-merge: no
