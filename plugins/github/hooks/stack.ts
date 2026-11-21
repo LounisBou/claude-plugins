@@ -10,6 +10,16 @@ export type StackPlan = { order: 'bottom-up' | 'top-down'; why: string; base: st
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 
+/** Whether the output is an answer about a stack (a plan, valid or not): nothing was merged. */
+export function holdsStack(text: string): boolean {
+  try {
+    const raw: unknown = JSON.parse(text)
+    return isRecord(raw) && 'stack' in raw
+  } catch {
+    return false
+  }
+}
+
 /** The plan `pr-merge --stack` answered for a pull request in a stack of several, or undefined: the output is no plan. */
 export function parseStackPlan(text: string): StackPlan | undefined {
   let raw: unknown

@@ -18,7 +18,7 @@ import {
 } from './e2e-scope.ts'
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { normalise } from './guards.ts'
-import { mergeOrder, parseStackPlan, stackMergedLine, stackStoppedLine, type StackPlan } from './stack.ts'
+import { holdsStack, mergeOrder, parseStackPlan, stackMergedLine, stackStoppedLine, type StackPlan } from './stack.ts'
 import {
   failingPath, fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, FOREIGN_CEILING_MS, foreignGivenUp, foreignHold, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS,
   listedPath, parseSeen, seenLabel, seenPath, seenText, seenWrote, sortedStatuses, takenLease, TICK_MS,
@@ -2167,35 +2167,48 @@ function toolReady($: Mod, e: GhCall, act: Act) {
 /*
  * The merge of a stack, a plan the engine read from the repository (pr-merge --stack): each member is merged
  * as a merge alone is, its own ready gate, its own permission rule and question, one after the other, in the
- * order the plan gives. Bottom-up, each member after the first is retargeted to the stack's base first. The
- * first refusal stops the walk and names the member, why, and the ones merged so far. A deny rule on pr-merge
- * stops it before any merge. The pin of the caller's `sha` is the one of the pull request they named.
+ * order the plan gives. Bottom-up, each member after the first is retargeted to the stack's base first, then
+ * gated: it is the bottom one now, and the stop line says when a member stays retargeted. The first refusal
+ * stops the walk and names the member, why, and the ones merged so far. A deny rule on pr-merge, or on the
+ * retarget, stops it before any merge. The pull request the caller named was asked already (its pin too: the
+ * member's gate pins the head it checked, which a merge below may have moved): it is gated, not asked again.
+ * `note`: what the engine said on stderr reading the stack (a branch it could not tell long-lived).
  */
-async function mergeStack($: Mod, e: GhCall, plan: StackPlan): Promise<Answer> {
+async function mergeStack($: Mod, e: GhCall, plan: StackPlan, note: string): Promise<Answer> {
   const repo = (await targetRepo($, e).catch(() => undefined)) ?? e.repo ?? 'the origin repository'
   const named = prNumber(e.args['pr'])
-  const { sha, pr: _pr, stack: _stack, ...rest } = e.args
-  const callOf = (pr: number): GhCall => ({ command: 'pr-merge', args: { ...rest, ...(pr === named && sha !== undefined ? { sha } : {}), pr }, repo: e.repo })
+  const { sha: _sha, pr: _pr, stack: _stack, ...rest } = e.args
+  const callOf = (pr: number): GhCall => ({ command: 'pr-merge', args: { ...rest, pr }, repo: e.repo })
   const order = mergeOrder(plan)
+  const retargets = (pr: number): boolean => plan.order === 'bottom-up' && pr !== order[0]
+  const said = (text: string): string => (note ? text + '\n' + note : text)
   for (const pr of order) {
-    const verdict = await $.tool.check({ tool: TOOL, input: { command: 'pr-merge', args: callOf(pr).args, repo: e.repo } })
-    if (verdict.decision === 'deny') return { deny: stackStoppedLine(repo, [], pr, verdict.reason || 'refused by a permission rule') }
+    const checks = [{ command: 'pr-merge', args: callOf(pr).args }, ...(retargets(pr) ? [{ command: 'pr-update', args: { pr, base: plan.base } }] : [])]
+    for (const input of checks) {
+      const verdict = await $.tool.check({ tool: TOOL, input: { ...input, repo: e.repo } })
+      if (verdict.decision === 'deny') return { deny: said(stackStoppedLine(repo, [], pr, verdict.reason || 'refused by a permission rule')) }
+    }
   }
   const done: number[] = []
   const lines: string[] = []
-  const stopped = (pr: number, why: string): Answer => done.length === 0
-    ? { deny: stackStoppedLine(repo, done, pr, why) }
-    : { result: stackStoppedLine(repo, done, pr, why), isError: true }
+  let retargeted: number | undefined
+  const stopped = (pr: number, why: string): Answer => {
+    const line = stackStoppedLine(repo, done, pr, why) + (retargeted === pr ? '\n' + repo + '#' + pr + ' stays retargeted to ' + plan.base : '')
+    return done.length === 0 ? { deny: said(line) } : { result: said(line), isError: true }
+  }
   for (const pr of order) {
-    try {
-      if (plan.order === 'bottom-up' && done.length > 0) await runGh($, 'pr-update', { pr, base: plan.base }, e.repo)
-    } catch (err: unknown) {
-      return stopped(pr, 'it could not be retargeted to ' + plan.base + ': ' + reasonOf(err))
+    if (retargets(pr)) {
+      try {
+        await runGh($, 'pr-update', { pr, base: plan.base }, e.repo)
+        retargeted = pr
+      } catch (err: unknown) {
+        return stopped(pr, 'it could not be retargeted to ' + plan.base + ': ' + reasonOf(err))
+      }
     }
     const m = callOf(pr)
     const act = toolAct(m.command, m.args)
     const ready = act ? toolReady($, m, act) : undefined
-    const refused = await permit($, m, ready?.beforeAsk)
+    const refused = pr === named ? await ready?.beforeAsk() : await permit($, m, ready?.beforeAsk)
     if (refused) return stopped(pr, refused)
     try {
       const ran = await runGhRaw($, m.command, m.args, m.repo)
@@ -2205,7 +2218,7 @@ async function mergeStack($: Mod, e: GhCall, plan: StackPlan): Promise<Answer> {
     }
     done.push(pr)
   }
-  return { result: stackMergedLine(repo, plan, lines) }
+  return { result: said(stackMergedLine(repo, plan, lines)) }
 }
 
 // The engine's own name for an act run through gh.py, which its refusals keep;
@@ -3210,8 +3223,9 @@ export function register(on: On<Mod>): void {
       // A merge asks the engine for the stack its pull request is in first: in a stack of several it merges nothing and answers the plan.
       const ran = await runGhRaw($, e.command, act?.kind === 'merge' ? { ...e.args, stack: true } : e.args, e.repo)
       const plan = act?.kind === 'merge' ? parseStackPlan(ran.out) : undefined
+      if (act?.kind === 'merge' && !plan && holdsStack(ran.out)) return { result: 'github: the engine answered a stack this module cannot read, and merged nothing: ' + ran.out.trim().slice(0, 300), isError: true }
       if (plan) {
-        const walked = await mergeStack($, e, plan)
+        const walked = await mergeStack($, e, plan, ran.err)
         if (watch) {
           dirty = true
           void refreshIfDue($, false)

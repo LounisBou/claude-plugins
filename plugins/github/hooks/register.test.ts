@@ -1810,10 +1810,11 @@ test('every member meets the ready gate: a red one stops the walk, naming it and
   expect(out.isError).toBe(true)
   expect(String(out.result)).toContain('stopped at acme/thing#2')
   expect(String(out.result)).toContain('merged so far: acme/thing#1')
+  expect(String(out.result)).toContain('acme/thing#2 stays retargeted to main')
   expect(walked(runs)).toEqual(['merge 1', 'retarget 2 to main'])
 })
 
-test('a red bottom of a stack stops the walk before any merge, as a deny', async ($, on) => {
+test('a red first member of the walk stops it before any merge, as a deny', async ($, on) => {
   const runs: GhRun[] = []
   await stubMod(on, runs, [], stackReply(stackPlan('top-down', [1, 2])), undefined, failingGate(2))
   stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
@@ -1852,7 +1853,7 @@ test('a retarget the engine refuses stops the walk at that member', async ($, on
   expect(String(out.result)).toContain('merged so far: acme/thing#1')
 })
 
-test('a merge the engine fails stops the walk, and the sha the caller pinned goes to the pull request they named only', async ($, on) => {
+test('a merge the engine fails stops the walk; each member is pinned to the head its own gate checked, not to the head of the named one', async ($, on) => {
   const runs: GhRun[] = []
   await stubMod(on, runs, [], stackReply(stackPlan('top-down', [1, 2, 3]), (run) => run.command === 'pr-merge' && run.args['pr'] === 2 ? 'error: Head branch was modified' : undefined), undefined, stackGate)
   stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
@@ -1866,7 +1867,7 @@ test('a merge the engine fails stops the walk, and the sha the caller pinned goe
   expect(merges.every((r) => r.args['sha'] === headOf(Number(r.args['pr'])))).toBe(true)
 })
 
-test('outside auto-merge each member of the stack is asked, and a refusal stops the walk', async ($, on) => {
+test('outside auto-merge each member of the stack is asked once, the one the caller named included', async ($, on) => {
   const runs: GhRun[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], stackReply(stackPlan('bottom-up', [1, 2])), { decision: 'allow' }, stackGate)
@@ -1876,8 +1877,48 @@ test('outside auto-merge each member of the stack is asked, and a refusal stops 
 
   const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
   expect(out.deny).toBeUndefined()
-  expect(asked.length).toBe(3)
+  expect(asked.length).toBe(2)
   expect(walked(runs)).toEqual(['merge 1', 'retarget 2 to main', 'merge 2'])
+})
+
+test('a deny rule on the retarget of a member stops the walk before any merge', async ($, on) => {
+  const runs: GhRun[] = []
+  const denyUpdate = (e: NounEvents['tool.check']): Verdict => (fieldsOf(e.input)?.['command'] === 'pr-update' ? { decision: 'deny', reason: 'no retargets', rule: 'mcp__github__gh' } : { decision: 'allow' })
+  await stubMod(on, runs, [], stackReply(stackPlan('bottom-up', [1, 2])), denyUpdate, stackGate)
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.deny).toContain('stopped at acme/thing#2: no retargets')
+  expect(walked(runs)).toEqual([])
+})
+
+test('a stack the engine answers that cannot be read is an error, and what the engine said reading the stack is kept', async ($, on) => {
+  const runs: GhRun[] = []
+  await stubMod(on, runs, [], stackReply('{"stack":{"order":"sideways","base":"main","members":[]}}'), undefined, stackGate)
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.isError).toBe(true)
+  expect(String(out.result)).toContain('cannot read, and merged nothing')
+  expect(walked(runs)).toEqual([])
+})
+
+test('what the engine said on stderr reading the stack reaches the answer of the walk', async ($, on) => {
+  const runs: GhRun[] = []
+  const reply = (e: NounEvents['process.run']): ProcessRunResult => {
+    const run = runOf(e)
+    return run.command === 'pr-merge' && run.args['stack'] === true
+      ? { exitCode: 0, stdout: stackPlan('top-down', [1, 2]), stderr: 'error: cannot read whether feat/a is a stacked base: boom' }
+      : { exitCode: 0, stdout: '{"merged":true}', stderr: '' }
+  }
+  await stubMod(on, runs, [], reply, undefined, stackGate)
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(String(out.result)).toContain('cannot read whether feat/a is a stacked base: boom')
 })
 
 test('parseStackPlan reads what the engine answers for a stack, and nothing else', () => {
