@@ -17,4 +17,4 @@ A spec settled with the operator and a plan in the method's shapes (`method:life
 
 ### Stacks
 
-- **Stack the dependent pull requests**, 2 to 4 per stack, each on the previous branch head; an independent phase takes the main branch. Merge top-down with merge commits, the bottom last. Re-merge the base into a stacked branch only on a conflict or when the files overlap (CI runs on the merge ref). Ready: the bottom one on full green CI; a stacked one as the github ready gate reads it (README « Stacked pull requests »).
+- **Stack the dependent pull requests**, 2 to 4 per stack, each on the previous branch head; an independent phase takes the main branch. Re-merge the base into a stacked branch only on a conflict or when the files overlap (CI runs on the merge ref). Ready: the bottom one on full green CI; a stacked one as the github ready gate reads it (README « Stacked pull requests »).

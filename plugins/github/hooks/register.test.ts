@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Found, NounEvents, TestOn } from 'claude-code/testing'
 import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, selfReviewRefusal, writeNetRefusal } from './register.js'
 import { touchesRecords } from './ready.js'
+import { mergeOrder, parseStackPlan } from './stack.js'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import { dialogOf, fieldsOf, listOf, type ProcessRunResult } from '../core/host.ts'
 
@@ -112,10 +113,10 @@ const readyGate = (repo: string, pr: number) => JSON.stringify({
   repo, pr, state: 'open', draft: true, head: HEAD, labels: ['Ready'], ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1 },
 })
 const RECORDS_ROOT = '/cfg/' + 'pr-records'
-function recordFiles(repo: string, pr: number): Record<string, string> {
+function recordFiles(repo: string, pr: number, head = HEAD): Record<string, string> {
   return Object.fromEntries(['review', 'norms', 'e2e'].map((kind) => [
-    RECORDS_ROOT + '/' + repo + '/' + HEAD + '/' + kind + '.20261101T100000Z.p-' + kind + '.json',
-    JSON.stringify({ v: 1, repo, pr, head: HEAD, kind, result: 'pass', producer: 'p-' + kind, detail: '', session: '', at: '2026-11-01T10:00:00Z' }),
+    RECORDS_ROOT + '/' + repo + '/' + head + '/' + kind + '.20261101T100000Z.p-' + kind + '.json',
+    JSON.stringify({ v: 1, repo, pr, head, kind, result: 'pass', producer: 'p-' + kind, detail: '', session: '', at: '2026-11-01T10:00:00Z' }),
   ]))
 }
 
@@ -127,7 +128,8 @@ async function stubMod(
   runs: GhRun[],
   writes: Write[],
   reply: Replier = { exitCode: 0, stdout: 'ok', stderr: '' },
-  verdict: Verdict = { decision: 'allow' },
+  verdict: Verdict | ((e: NounEvents['tool.check']) => Verdict) = { decision: 'allow' },
+  gate: (repo: string, pr: number) => string = readyGate,
 ) {
   const session = freshSession()
   journaled.length = 0
@@ -136,7 +138,7 @@ async function stubMod(
   on('session.id', () => ({ value: session }))
   on('session.cwd', () => ({ value: '/work' }))
   // The dialog a $.ui.ask raises is itself checked: it must not meet the verdict meant for the gh call.
-  on('tool.check', (_$, e) => (e.tool === 'AskUserQuestion' ? { decision: 'allow' } : verdict))
+  on('tool.check', (_$, e) => (e.tool === 'AskUserQuestion' ? { decision: 'allow' } : typeof verdict === 'function' ? verdict(e) : verdict))
   on('tool.register', () => ({ value: undefined }))
   on('command.register', () => ({ value: undefined }))
   on('fs.write', (_$, e) => {
@@ -155,7 +157,7 @@ async function stubMod(
     const request = runOf(e)
     runs.push(request)
     if (request.command === 'pr-gate') {
-      return { value: { exitCode: 0, stdout: readyGate(typeof request.repo === 'string' ? request.repo : 'acme/thing', Number(request.args['pr'])), stderr: '' } }
+      return { value: { exitCode: 0, stdout: gate(typeof request.repo === 'string' ? request.repo : 'acme/thing', Number(request.args['pr'])), stderr: '' } }
     }
     return { value: typeof reply === 'function' ? reply(e) : reply }
   })
@@ -780,8 +782,8 @@ test('a reserved approval refused by the person runs nothing', async ($, on) => 
 // a null text being a file that exists but cannot be read. logs: $.ui.log lines.
 // looked: the paths $.fs.exists was asked about. The records of acme/thing and acme/other #1 are
 // served beside them, so the ready guard finds a ready pull request.
-function stubAutoMerge(on: TestOn, env: Record<string, string>, given: Record<string, string | null>, logs: string[] = [], looked: string[] = []) {
-  const records = { ...recordFiles('acme/thing', 1), ...recordFiles('acme/other', 1) }
+function stubAutoMerge(on: TestOn, env: Record<string, string>, given: Record<string, string | null>, logs: string[] = [], looked: string[] = [], more: Record<string, string> = {}) {
+  const records = { ...recordFiles('acme/thing', 1), ...recordFiles('acme/other', 1), ...more }
   const files: Record<string, string | null> = { ...records, ...given }
   on('env.get', (_$, e) => ({ value: e.name === 'CLAUDE_CONFIG_DIR' && !('CLAUDE_CONFIG_DIR' in env) ? '/cfg' : env[e.name] }))
   on('fs.list', (_$, e) => {
@@ -1749,4 +1751,145 @@ test('a failed guard refuses a deletion in the records, and lets a read or anoth
   expect(bashNetRefusal('ls {1..9}{1..9}{1..9}{1..9}; mv ~/.claude/pr-records/x /tmp')).toBe(NET_REFUSAL)
   expect(bashNetRefusal('echo x > ~/.claude/pr-records/o/r/x.json')).toBe(null)
   expect(bashNetRefusal('cat ~/.claude/pr-records/o/r/x.json')).toBe(null)
+})
+// ---- a merge of a stack ----
+
+// pr-merge asked for the stack answers this plan, merging nothing; any other call answers ok.
+const stackPlan = (order: 'bottom-up' | 'top-down', prs: number[]) => JSON.stringify({
+  stack: { order, why: 'a test says so', base: 'main', members: prs.map((pr, depth) => ({ pr, depth })) },
+})
+const stackReply = (plan: string, fails: (run: GhRun) => string | undefined = () => undefined): Replier => (e) => {
+  const run = runOf(e)
+  if (run.command === 'pr-merge' && run.args['stack'] === true) return { exitCode: 0, stdout: plan, stderr: '' }
+  const failure = fails(run)
+  return failure === undefined ? { exitCode: 0, stdout: '{"merged":true}', stderr: '' } : { exitCode: 1, stdout: '', stderr: failure }
+}
+// What the walk did, in order: each merge by its pull request, each retarget with its base.
+const walked = (runs: GhRun[]) => runs
+  .filter((r) => (r.command === 'pr-merge' && r.args['stack'] !== true) || r.command === 'pr-update')
+  .map((r) => r.command === 'pr-merge' ? 'merge ' + String(r.args['pr']) : 'retarget ' + String(r.args['pr']) + ' to ' + String(r.args['base']))
+// Each pull request of the stack has a head of its own, and its records at it.
+const headOf = (pr: number) => HEAD.slice(0, -1) + String(pr)
+const stackGate = (repo: string, pr: number) => readyGate(repo, pr).replace(HEAD, headOf(pr))
+const stackRecords = Object.assign({}, ...[1, 2, 3].map((pr) => recordFiles('acme/thing', pr, headOf(pr)))) as Record<string, string>
+const failingGate = (pr: number) => (repo: string, n: number) => n === pr
+  ? JSON.stringify({ repo, pr: n, state: 'open', draft: false, head: headOf(n), labels: ['Not Ready'], ci: { result: 'FAILURE', failed: ['lint'], running: 0, skipped: [], total: 1 } })
+  : stackGate(repo, n)
+
+test('a stack that runs CI on every pull request merges bottom-up, each next retargeted to the base first', async ($, on) => {
+  const runs: GhRun[] = []
+  await stubMod(on, runs, [], stackReply(stackPlan('bottom-up', [1, 2, 3])), undefined, stackGate)
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 2 }, repo: 'acme/thing' })
+  expect(out.deny).toBeUndefined()
+  expect(walked(runs)).toEqual(['merge 1', 'retarget 2 to main', 'merge 2', 'retarget 3 to main', 'merge 3'])
+  expect(String(out.result)).toContain('merged bottom-up')
+  expect(String(out.result)).toContain('acme/thing#3')
+})
+
+test('a stack whose stacked pull requests run no CI merges top-down, the bottom last, with no retarget', async ($, on) => {
+  const runs: GhRun[] = []
+  await stubMod(on, runs, [], stackReply(stackPlan('top-down', [1, 2, 3])), undefined, stackGate)
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.deny).toBeUndefined()
+  expect(walked(runs)).toEqual(['merge 3', 'merge 2', 'merge 1'])
+})
+
+test('every member meets the ready gate: a red one stops the walk, naming it and the ones merged', async ($, on) => {
+  const runs: GhRun[] = []
+  await stubMod(on, runs, [], stackReply(stackPlan('bottom-up', [1, 2, 3])), undefined, failingGate(2))
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.isError).toBe(true)
+  expect(String(out.result)).toContain('stopped at acme/thing#2')
+  expect(String(out.result)).toContain('merged so far: acme/thing#1')
+  expect(walked(runs)).toEqual(['merge 1', 'retarget 2 to main'])
+})
+
+test('a red bottom of a stack stops the walk before any merge, as a deny', async ($, on) => {
+  const runs: GhRun[] = []
+  await stubMod(on, runs, [], stackReply(stackPlan('top-down', [1, 2])), undefined, failingGate(2))
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.deny).toContain('stopped at acme/thing#2')
+  expect(out.deny).toContain('merged so far: none')
+  expect(walked(runs)).toEqual([])
+})
+
+test('a deny rule on one member of the stack stops the walk before any merge', async ($, on) => {
+  const runs: GhRun[] = []
+  const denyThree = (e: NounEvents['tool.check']): Verdict => {
+    const args = fieldsOf(fieldsOf(e.input)?.['args']) ?? {}
+    return args['pr'] === 3 ? { decision: 'deny', reason: 'denied by a rule on pr 3', rule: 'mcp__github__gh' } : { decision: 'allow' }
+  }
+  await stubMod(on, runs, [], stackReply(stackPlan('bottom-up', [1, 2, 3])), denyThree, stackGate)
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.deny).toContain('stopped at acme/thing#3: denied by a rule on pr 3')
+  expect(walked(runs)).toEqual([])
+})
+
+test('a retarget the engine refuses stops the walk at that member', async ($, on) => {
+  const runs: GhRun[] = []
+  await stubMod(on, runs, [], stackReply(stackPlan('bottom-up', [1, 2]), (run) => run.command === 'pr-update' ? 'error: Not Found' : undefined), undefined, stackGate)
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.isError).toBe(true)
+  expect(String(out.result)).toContain('stopped at acme/thing#2: it could not be retargeted to main')
+  expect(String(out.result)).toContain('merged so far: acme/thing#1')
+})
+
+test('a merge the engine fails stops the walk, and the sha the caller pinned goes to the pull request they named only', async ($, on) => {
+  const runs: GhRun[] = []
+  await stubMod(on, runs, [], stackReply(stackPlan('top-down', [1, 2, 3]), (run) => run.command === 'pr-merge' && run.args['pr'] === 2 ? 'error: Head branch was modified' : undefined), undefined, stackGate)
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 3, sha: HEAD.slice(0, 7), method: 'squash' }, repo: 'acme/thing' })
+  expect(String(out.result)).toContain('stopped at acme/thing#2: error: Head branch was modified')
+  expect(String(out.result)).toContain('merged so far: acme/thing#3')
+  const merges = runs.filter((r) => r.command === 'pr-merge' && r.args['stack'] !== true)
+  expect(merges.map((r) => r.args['method'])).toEqual(['squash', 'squash'])
+  expect(merges.every((r) => r.args['sha'] === headOf(Number(r.args['pr'])))).toBe(true)
+})
+
+test('outside auto-merge each member of the stack is asked, and a refusal stops the walk', async ($, on) => {
+  const runs: GhRun[] = []
+  const asked: string[] = []
+  await stubMod(on, runs, [], stackReply(stackPlan('bottom-up', [1, 2])), { decision: 'allow' }, stackGate)
+  stubAsk(on, asked, 'Allow')
+  stubAutoMerge(on, {}, {}, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.deny).toBeUndefined()
+  expect(asked.length).toBe(3)
+  expect(walked(runs)).toEqual(['merge 1', 'retarget 2 to main', 'merge 2'])
+})
+
+test('parseStackPlan reads what the engine answers for a stack, and nothing else', () => {
+  expect(parseStackPlan(stackPlan('top-down', [4, 5]))).toEqual({ order: 'top-down', why: 'a test says so', base: 'main', members: [{ pr: 4, depth: 0 }, { pr: 5, depth: 1 }] })
+  for (const text of ['{"merged":true}', 'ok', '', '{"stack":{"order":"sideways","base":"main","members":[]}}', stackPlan('bottom-up', [1]),
+    '{"stack":{"order":"bottom-up","base":"main","members":[{"pr":1,"depth":0},{"pr":"2","depth":1}]}}']) {
+    expect(parseStackPlan(text)).toBeUndefined()
+  }
+})
+
+test('the order of a merge: the bottom first bottom-up, the bottom last top-down, siblings by number', () => {
+  const members = [{ pr: 9, depth: 1 }, { pr: 7, depth: 0 }, { pr: 8, depth: 1 }, { pr: 10, depth: 2 }]
+  expect(mergeOrder({ order: 'bottom-up', why: '', base: 'main', members })).toEqual([7, 8, 9, 10])
+  expect(mergeOrder({ order: 'top-down', why: '', base: 'main', members })).toEqual([10, 8, 9, 7])
 })

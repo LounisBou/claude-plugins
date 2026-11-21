@@ -18,6 +18,7 @@ import {
 } from './e2e-scope.ts'
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { normalise } from './guards.ts'
+import { mergeOrder, parseStackPlan, stackMergedLine, stackStoppedLine, type StackPlan } from './stack.ts'
 import {
   failingPath, fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, FOREIGN_CEILING_MS, foreignGivenUp, foreignHold, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS,
   listedPath, parseSeen, seenLabel, seenPath, seenText, seenWrote, sortedStatuses, takenLease, TICK_MS,
@@ -2163,6 +2164,50 @@ function toolReady($: Mod, e: GhCall, act: Act) {
   }
 }
 
+/*
+ * The merge of a stack, a plan the engine read from the repository (pr-merge --stack): each member is merged
+ * as a merge alone is, its own ready gate, its own permission rule and question, one after the other, in the
+ * order the plan gives. Bottom-up, each member after the first is retargeted to the stack's base first. The
+ * first refusal stops the walk and names the member, why, and the ones merged so far. A deny rule on pr-merge
+ * stops it before any merge. The pin of the caller's `sha` is the one of the pull request they named.
+ */
+async function mergeStack($: Mod, e: GhCall, plan: StackPlan): Promise<Answer> {
+  const repo = (await targetRepo($, e).catch(() => undefined)) ?? e.repo ?? 'the origin repository'
+  const named = prNumber(e.args['pr'])
+  const { sha, pr: _pr, stack: _stack, ...rest } = e.args
+  const callOf = (pr: number): GhCall => ({ command: 'pr-merge', args: { ...rest, ...(pr === named && sha !== undefined ? { sha } : {}), pr }, repo: e.repo })
+  const order = mergeOrder(plan)
+  for (const pr of order) {
+    const verdict = await $.tool.check({ tool: TOOL, input: { command: 'pr-merge', args: callOf(pr).args, repo: e.repo } })
+    if (verdict.decision === 'deny') return { deny: stackStoppedLine(repo, [], pr, verdict.reason || 'refused by a permission rule') }
+  }
+  const done: number[] = []
+  const lines: string[] = []
+  const stopped = (pr: number, why: string): Answer => done.length === 0
+    ? { deny: stackStoppedLine(repo, done, pr, why) }
+    : { result: stackStoppedLine(repo, done, pr, why), isError: true }
+  for (const pr of order) {
+    try {
+      if (plan.order === 'bottom-up' && done.length > 0) await runGh($, 'pr-update', { pr, base: plan.base }, e.repo)
+    } catch (err: unknown) {
+      return stopped(pr, 'it could not be retargeted to ' + plan.base + ': ' + reasonOf(err))
+    }
+    const m = callOf(pr)
+    const act = toolAct(m.command, m.args)
+    const ready = act ? toolReady($, m, act) : undefined
+    const refused = await permit($, m, ready?.beforeAsk)
+    if (refused) return stopped(pr, refused)
+    try {
+      const ran = await runGhRaw($, m.command, m.args, m.repo)
+      lines.push(repo + '#' + pr + ': ' + withNote(ran.out, ran.err).trim())
+    } catch (err: unknown) {
+      return stopped(pr, reasonOf(err))
+    }
+    done.push(pr)
+  }
+  return { result: stackMergedLine(repo, plan, lines) }
+}
+
 // The engine's own name for an act run through gh.py, which its refusals keep;
 // a gh act is named by the gh command of its kind.
 function engineName(act: Act): string | undefined {
@@ -3162,7 +3207,17 @@ export function register(on: On<Mod>): void {
     try {
       // The line of a gate read (the Actions runs it could not read) is shown after afterRead,
       // which parses the output: no added text may reach parseGate.
-      const ran = await runGhRaw($, e.command, e.args, e.repo)
+      // A merge asks the engine for the stack its pull request is in first: in a stack of several it merges nothing and answers the plan.
+      const ran = await runGhRaw($, e.command, act?.kind === 'merge' ? { ...e.args, stack: true } : e.args, e.repo)
+      const plan = act?.kind === 'merge' ? parseStackPlan(ran.out) : undefined
+      if (plan) {
+        const walked = await mergeStack($, e, plan)
+        if (watch) {
+          dirty = true
+          void refreshIfDue($, false)
+        }
+        return walked
+      }
       let result = (READS.has(e.command) ? ran.out : withNote(ran.out, ran.err)) || '(no output)'
       if (ready) await ready.ran()
       if (e.command === 'pr-create') await noteCreated($, ran.out)
