@@ -26,7 +26,7 @@ installable, versioned and independent of that machine.
 Four ideas carry the rest, each stated where it binds:
 
 - **The operator's word comes first**, and it is answered: `skills/orchestrator/SKILL.md`,
-  « The operator's word comes first, and it is answered » (section 47 here).
+  « The principles » (section 47 here).
 - **The orchestrator orchestrates and never implements**, and it launches, verifies,
   terminates and replaces its agents itself: `skills/orchestrator/SKILL.md`, « The principles »,
   and `skills/orchestrator/references/agents.md`.
@@ -533,7 +533,7 @@ The version lives in `plugin.json`; the repository's catalogue is generated from
 
 ### 9.1 A session's life, from launch to close
 
-The orchestrator's core loop (plan, brief, launch, verify, review, terminate, replace) is `skills/orchestrator/SKILL.md`, « Where the rest lives, read at the moment of the action », each moment naming the file or files it reads. A file is one moment's and binds whole: a rule shared by two moments lives in its own file, named on each line of the table that needs it. A successor read lifecycle.md whole at its birth when the step named only the file, so the reference was split by moment, and the hand-over row sends a takeover to its brief, then to succession-successor.md, where the measure, the wait and the close proof live.
+The orchestrator's core loop (plan, brief, launch, verify, review, terminate, replace) is `skills/orchestrator/SKILL.md`, « Where the rest lives, read at the moment of the action », each moment naming the file or files it reads. A file is one moment's and binds whole: a rule shared by two moments lives in its own file, named on each line of the table that needs it. A successor read lifecycle.md whole at its birth when the step named only the file, so the reference was split by moment, and the hand-over row sends a takeover to its brief (`templates/orchestrator-succession-brief.md`), where the measure, the wait and the close proof live.
 
 - **Plan.** `skills/orchestrator/references/phases.md`.
 - **Brief.** Written from a template, carrying its tier and the reading that chose it (`orchestrator:model-routing`, section 10): `references/brief.md`.
@@ -838,7 +838,7 @@ A green suite and a read diff say what the code does, not what a surface shows: 
 
 ## 60. The launch can set one session's gate
 
-The operator's ruling (2026-10-02): 300,000 tokens by default, and a parameter changes the value. `spawn --gate-tokens <N>`, which `rotate` forwards, takes a positive integer and refuses anything else before a tab exists, and the launch exports it as the variable the module's context gate already reads, so the launcher adds no new reader: the gate of a session inherits what its launch exports, as the kill guard's marker already showed. The gate stays the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000, the option standing in for the 300,000. With `--brief`, the startup prompt states the real value, so a brief's « past 300,000 » is read against it; the brief is not rewritten. A successor does not inherit its predecessor's gate: it carries one only when the option is given. There is no per-role default and no configuration file.
+The operator's ruling (2026-10-02): 300,000 tokens by default, and a parameter changes the value. `spawn --gate-tokens <N>`, which `rotate` forwards, takes a positive integer and refuses anything else before a tab exists, and the launch exports it as the variable the module's context gate already reads, so the launcher adds no new reader: the gate of a session inherits what its launch exports, as the kill guard's marker already showed. The gate stays the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000, the option standing in for the 300,000. With `--brief`, the startup prompt states the real value, so a brief's « past 300,000 » is read against it; the brief is not rewritten. A successor does not inherit its predecessor's gate: it carries one only when the option is given. Apart from the agent's 240,000 (section 65), there is no per-role default and no configuration file.
 
 ## 61. A temporary directory is cleaned once its purpose is over
 
@@ -885,7 +885,7 @@ The script does not depend on `gh pr checks --watch`'s own code beyond zero (mea
 
 ## 63. An agent's report to the orchestrator is capped
 
-The operator's ruling, after a trial: successions cost too much, and an orchestrator's context grows after its takeover mostly by the reports it reads. Uncapped reports measured 1,700 to 9,500 characters each, review reports the longest. A trial on three running orchestrations capped them; per one orchestration's report, 4 capped reports of 260 to 960 characters against 1,700 to 2,300 before, no follow-up question needed, nothing the artifact showed missing from them, and the « wrong or doubtful » line surfaced two points the orchestrator would not have seen. The implementer and rotation briefs therefore cap every report at 12 lines / 1,000 characters, a « wrong or doubtful » line never cut to fit the cap, with details in the pull request body or a file of the repository's, cited by path, and one channel for what an agent says: the end of its turn, which the module relays and holds to the verdict limit (`core/verdict.ts`), no start or per-push message. The review brief leaves its findings uncapped in number, since they are the report's substance and the orchestrator verifies each, but writes each on one line of at most 200 characters, ending with its proposed fix.
+The operator's ruling, after a trial: successions cost too much, and an orchestrator's context grows after its takeover mostly by the reports it reads. Uncapped reports measured 1,700 to 9,500 characters each, review reports the longest. A trial on three running orchestrations capped them; per one orchestration's report, 4 capped reports of 260 to 960 characters against 1,700 to 2,300 before, no follow-up question needed, nothing the artifact showed missing from them, and the « wrong or doubtful » line surfaced two points the orchestrator would not have seen. The briefs therefore cap every report, a « wrong or doubtful » line never cut to fit the cap, with details in the pull request body or a file of the repository's, cited by path, and one channel for what an agent says: the end of its turn, which the module relays and holds to the verdict limit (`core/verdict.ts`), no start or per-push message. The review brief leaves its findings uncapped in number, since they are the report's substance and the orchestrator verifies each, but writes each on one line of at most 200 characters, ending with its proposed fix.
 
 ## 64. Done is measured against the spec's goals
 
