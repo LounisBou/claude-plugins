@@ -51,10 +51,10 @@ echo "### dispatch"
 bash "$S/orchestrator/scripts/dispatch-record.sh" goals "$REC" init --spec none; echo "exit=$?"
 bash "$S/orchestrator/scripts/dispatch-record.sh" open "$REC" --class c --tier light --label "E2E: data root"; echo "exit=$?"
 echo "### brief"
-bash "$S/orchestrator/scripts/brief.sh" phase --record "$REC" --row 1 --plan "$D/briefs/e2e/phase-1.md" --worktree "$W" --branch main --orchestrator "Orch: e2e [abc123]" --out "$D/briefs/e2e/1-brief.md"; echo "exit=$?"
+bash "$S/orchestrator/scripts/brief.sh" phase --record "$REC" --row 1 --plan "$D/briefs/e2e/phase-1.md" --worktree "$W" --branch main --orchestrator "Orch: e2e [a1b2c3]" --out "$D/briefs/e2e/1-brief.md"; echo "exit=$?"
 mkdir -p "$D/chains"; printf '{"tab_id":"t-1","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$D/chains/ttys900.jsonl"
 echo "### spawn (dry run: the app is not asked)"
-bash "$S/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$W" --tier light --title "Agent: e2e" --brief "$D/briefs/e2e/1-brief.md" --orchestrator "Orch: e2e [abc123]" --right-of self > "$E/spawn.out" 2>&1
+bash "$S/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$W" --tier light --title "Agent: e2e" --brief "$D/briefs/e2e/1-brief.md" --orchestrator "Orch: e2e [a1b2c3]" --right-of self > "$E/spawn.out" 2>&1
 spawn_exit=$?
 grep -E '^(spawn:|prompt_file|mcp|mcp_file|anchor|launch|effort|pair_source|ERROR)' "$E/spawn.out"; echo "exit=$spawn_exit"
 
