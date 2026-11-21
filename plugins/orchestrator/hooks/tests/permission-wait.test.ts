@@ -349,7 +349,8 @@ test('an ask or a dialog the module cannot read leaves one log line, and the ver
   const hooks = mounted()
   const f = fake()
   const unreadable = { get decision(): string { throw new Error('a verdict that throws') } }
-  expect(await hooks.check(f, CHECK, unreadable)).toBe(unreadable)
+  // Compared by identity: the kit's toBe prints its operands, which reads the getter.
+  expect(await hooks.check(f, CHECK, unreadable) === unreadable).toBe(true)
   const input = { get file_path(): string { throw new Error('arguments that throw') } }
   const answer = {}
   expect(await hooks.request(f, { ...REQUEST, tool_input: input }, answer)).toBe(answer)
