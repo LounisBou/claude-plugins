@@ -23,7 +23,7 @@ Read {{READ}}, the repository's own instructions (its quality gate, its workflow
 - A long suite runs in its tool call (`set -o pipefail`, piped to `tail`, `timeout: 600000`). To wait, run it with `run_in_background` and its exit wakes you, never a foreground `sleep`.
 - Scratch lives in your host's scratchpad, which stays there. Other built files are removed by `rm` on their full absolute path, never through a shell variable or a glob.
 - No writing or reviewing delegates: read-only search subagents and your self-review's `orchestrator:lens` readers only, each at the model `{{LENS_MODEL}}` prints (`host-default`: none).
-- No force-push (but the rebase your orchestrator orders: `--force-with-lease=<branch>:<sha read>`), merge, configuration change or other branch without STOP-and-ask.
+- No merge, configuration change or other branch without STOP-and-ask.
 - The repository's rules point at its policy; where they contradict a directive of your host, say so and stop.
 
 ## Communication and delivery
