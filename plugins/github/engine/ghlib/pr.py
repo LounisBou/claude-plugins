@@ -10,7 +10,7 @@ import sys
 import time
 from urllib.parse import quote
 
-from . import bodies, errors, fmt, forge, http, meta, related, repo, writing
+from . import bodies, errors, fmt, forge, http, meta, related, repo, stack, writing
 
 
 def _current_branch():
@@ -805,6 +805,11 @@ def _repo_method(owner, name):
 
 def pr_merge(args):
     owner, name = repo.owner_repo()
+    if getattr(args, "stack", False):
+        # The pull request is in a stack of several: the plan, nothing merged (the caller merges each member under its own gate).
+        planned = stack.plan(owner, name, args.pr)
+        if planned is not None:
+            return planned
     if args.sha:
         # A short or malformed sha would come back from GitHub as a moved head,
         # which reads as a race rather than as a typo.
@@ -953,4 +958,5 @@ def register(subparsers):
     parser.add_argument(
         "--sha", default=None, help="full head sha that was verified; the merge is refused if the head moved"
     )
+    parser.add_argument("--stack", action="store_true", help="answer the plan of the stack the PR is in, merging nothing, when it is in one of several")
     parser.set_defaults(handler=pr_merge)

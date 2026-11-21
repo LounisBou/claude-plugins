@@ -3538,6 +3538,85 @@ check "--json after the subcommand is read as before it" "7" \
 check "a format named beside --json wins" "7" "$(gh9 pr-get --branch feat --json --format pr-number)"
 
 
+echo "== pr-merge --stack: the stack a pull request is in, and its order =="
+
+# stackfix <dir> <default-branch> <workflow text|-> : acme/thing with pull requests 10 (feat/a on main),
+# 11 (feat/b on feat/a), 12 (feat/c on feat/b), 20 (feat/z on main); a workflow file at main, or none for "-".
+stackfix() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import base64, json, os, sys
+d, default, wf = sys.argv[1:4]
+os.makedirs(d, exist_ok=True)
+for name in os.listdir(d):
+    os.remove(os.path.join(d, name))
+def pull(n, head, base):
+    return {"number": n, "state": "open", "head": {"ref": head, "repo": {"full_name": "acme/thing"}},
+            "base": {"ref": base, "repo": {"default_branch": default}}}
+pulls = [pull(10, "feat/a", "main"), pull(11, "feat/b", "feat/a"), pull(12, "feat/c", "feat/b"), pull(20, "feat/z", "main")]
+for p in pulls:
+    json.dump(p, open("%s/GET_repos_acme_thing_pulls_%d.json" % (d, p["number"]), "w"))
+json.dump(pulls, open("%s/GET_repos_acme_thing_pulls__state=open&per_page=100.json" % d, "w"))
+if wf == "-":
+    json.dump({"__status": 404, "message": "Not Found"}, open("%s/GET_repos_acme_thing_contents_.github_workflows__ref=main.json" % d, "w"))
+else:
+    json.dump([{"path": ".github/workflows/ci.yml", "type": "file"}], open("%s/GET_repos_acme_thing_contents_.github_workflows__ref=main.json" % d, "w"))
+    json.dump({"content": base64.b64encode(wf.encode()).decode(), "encoding": "base64"}, open("%s/GET_repos_acme_thing_contents_.github_workflows_ci.yml__ref=main.json" % d, "w"))
+PY
+}
+SF="$WORK/stackfix"
+ghs() { env GH_FIXTURES="$SF" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+# plan <pr> : "<order> <members in order>" of the stack plan, or "none" when the pull request merges alone.
+plan() {
+  ghs pr-merge "$1" --stack --format raw 2>/dev/null | python3 -c '
+import json, sys
+text = sys.stdin.read()
+try:
+    s = json.loads(text)["stack"]
+    print(s["order"], s["base"], " ".join(str(m["pr"]) for m in s["members"]))
+except (KeyError, ValueError):
+    print("none")'
+}
+
+stackfix "$SF" main $'on:\n  pull_request:\n  push:\n    branches: [main]\njobs: {}\n'
+check "stacked pull requests with CI merge bottom-up, whichever member is named" "bottom-up main 10 11 12|bottom-up main 10 11 12|bottom-up main 10 11 12" \
+  "$(plan 10)|$(plan 11)|$(plan 12)"
+check "a pull request in no stack is no plan" "none" "$(plan 20)"
+
+stackfix "$SF" main $'on:\n  pull_request:\n    branches:\n      - develop\n      - staging\n      - main\n    types: [opened, synchronize, reopened, ready_for_review]\n'
+check "CI only on pull requests to the base merges top-down" "top-down main 10 11 12" "$(plan 11)"
+
+stackfix "$SF" main $'on:\n  pull_request:\n    branches-ignore:\n      - "feat/**"\n'
+check "a branches-ignore filter that spares the base but not the stacked branches reads top-down" "top-down main 10 11 12" "$(plan 12)"
+
+stackfix "$SF" main $'on: [push, pull_request]\n'
+check "a pull_request in a list of events runs on every base: bottom-up" "bottom-up main 10 11 12" "$(plan 10)"
+
+stackfix "$SF" main $'on: {pull_request: {branches: [main]}}\n'
+check "a filter this reader cannot read falls back to bottom-up" "bottom-up main 10 11 12" "$(plan 10)"
+check "the plan says why it fell back" "a pull_request filter of main cannot be read" \
+  "$(ghs pr-merge 10 --stack --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)["stack"]["why"])')"
+
+stackfix "$SF" main $'on:\n  push:\n    branches: [main]\n'
+check "no workflow runs for a pull request: bottom-up, nothing to wait" "bottom-up main 10 11 12" "$(plan 10)"
+
+stackfix "$SF" main -
+check "no workflow files: bottom-up" "bottom-up main 10 11 12" "$(plan 10)"
+
+stackfix "$SF" main $'on:\n  pull_request:\n    types: [closed]\n'
+check "a pull_request workflow that never runs on open or push is no CI" "bottom-up main 10 11 12" "$(plan 12)"
+
+# A protected branch is no stack base: a release pull request's head is not one.
+stackfix "$SF" main $'on: pull_request\n'
+printf '%s' '{"protected":true}' > "$SF/GET_repos_acme_thing_branches_feat%2Fa.json"
+check "a protected head is no stacked base: 10 is alone, 11 and 12 stack on it" "none|bottom-up feat/a 11 12" "$(plan 10)|$(plan 11)"
+
+# Without --stack the merge goes through whatever the stack, as it always did.
+stackfix "$SF" main $'on: pull_request\n'
+printf '%s' '{"merged":true,"message":"ok"}' > "$SF/PUT_repos_acme_thing_pulls_10_merge.json"
+check "pr-merge without --stack merges the pull request itself" "True" \
+  "$(ghs pr-merge 10 --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)["merged"])')"
+check "and reads no stack" "0" "$(grep -c 'contents' "$SF/sent.jsonl" || true)"
+
 echo "== the hooks module's tests =="
 
 # The guards' own tests (hooks/*.test.ts) run only in the host's kit. Without `claude` the check

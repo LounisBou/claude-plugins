@@ -34,7 +34,7 @@ below, and the `args` object holds the subcommand's arguments.
 | `pr-commits` | `<pr>` | A line per commit (`commits-summary`); `--json`: the commits, paginated |
 | `file-at-ref` | `<path> <ref>` | A file's contents at a ref |
 | `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, a draft by default. One line (`pr-created`): `owner/name#N`, URL, head, labels, then `related` and the PRs updated; `--json` the PR. It gets `Not Ready`; a label failure only prints `error:`. Each open PR its `Related PRs` section names gets the new PR added to its own `Related PRs`; one that cannot be updated only prints `error:` |
-| `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR; `--sha` pins the verified head; no `--method`: the first the repository allows |
+| `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, or its whole stack; `--sha` pins the verified head; no `--method`: the first the repository allows |
 
 `pr-gate` is the one reading of CI, the ready guard's and the orchestrator's: it reads the PR, then at
 its head the statuses, check runs and Actions runs, and the base's required checks. `state` is `open`,
@@ -47,7 +47,7 @@ draft-time run skips its jobs again: push a new commit.
 `file-at-ref` returns `content` and `binary`: a file not valid UTF-8 has `binary` true and
 `content` in base64.
 
-`pr-merge --sha <sha>` pins the verified head: GitHub refuses the merge if it moved. The tool takes
+GitHub refuses a `pr-merge --sha <sha>` whose head moved. The tool takes
 a prefix of it (7 hex or more); without one it pins the head the gate checked.
 A PR in a stack refuses the synchronous merge (403): `pr-merge` then uses the
 asynchronous merge endpoint, same method and `--sha`, and waits for the merge at most `GH_MERGE_WAIT` seconds

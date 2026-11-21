@@ -18,6 +18,7 @@ import {
 } from './e2e-scope.ts'
 import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, planPath, planText, WAIVED, type CheckPlan, type Excused, type Waivable } from './check-plan.ts'
 import { normalise } from './guards.ts'
+import { holdsStack, mergeOrder, parseStackPlan, stackMergedLine, stackStoppedLine, walkedHead, type StackPlan } from './stack.ts'
 import {
   failingPath, fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, FOREIGN_CEILING_MS, foreignGivenUp, foreignHold, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS,
   listedPath, parseSeen, seenLabel, seenPath, seenText, seenWrote, sortedStatuses, takenLease, TICK_MS,
@@ -36,7 +37,7 @@ import {
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
-  COMPUTING_ITEM, RECORDS_REFUSAL, deletes, deletesRecords, postsStatus, STATUS_REFUSAL,
+  COMPUTING_ITEM, LIGHT_CI_ABSENT, RECORDS_REFUSAL, deletes, deletesRecords, postsStatus, STATUS_REFUSAL,
   type Act, type Carried, type Gate, type HeadRead, type RecordFile,
 } from './ready.ts'
 
@@ -2027,8 +2028,12 @@ async function heldNotReady($: Mod, name: string, repo: string, pr: number, r: R
 }
 
 // Whether a pull request misses only records absent at its head, the exemption's expiry line beside them.
-function missesOnlyRecords(missing: string[]): boolean {
-  return onlyAbsentRecords(missing.filter((item) => !isExpiryLine(item)))
+// `walked`: the head is one a walk of a stack moved, and the light CI's absence is one of the absent records.
+function missesOnlyRecords(missing: string[], walked = false): boolean {
+  const rest = missing.filter((item) => !isExpiryLine(item))
+  if (!walked) return onlyAbsentRecords(rest)
+  const unproven = rest.filter((item) => !LIGHT_CI_ABSENT.test(item))
+  return unproven.length === 0 ? rest.length > 0 : onlyAbsentRecords(unproven)
 }
 
 /*
@@ -2038,9 +2043,9 @@ function missesOnlyRecords(missing: string[]): boolean {
  * An act (`act` true: a merge, leaving draft) goes through as well when only records are absent at
  * the head: CI, a record that failed and a readiness unread still refuse it.
  */
-async function gateHeld($: Mod, name: string, repo: string, pr: number, r: Readiness, act = false): Promise<Held | undefined> {
+async function gateHeld($: Mod, name: string, repo: string, pr: number, r: Readiness, act = false, walked = false): Promise<Held | undefined> {
   if (r.error) return heldUnverified(repo, pr, r.error, r.gate)
-  const passes = (missing: string[]): boolean => missing.length === 0 || (act && missesOnlyRecords(missing))
+  const passes = (missing: string[]): boolean => missing.length === 0 || (act && missesOnlyRecords(missing, walked))
   if (!passes(r.missing)) return heldNotReady($, name, repo, pr, r)
   const followed = await followGate($, repo, pr, r.gate, false, false, undefined, true)
   if (followed.missing === undefined) return heldUnverified(repo, pr, followed.line ?? 'the Ready label could not be put', r.gate)
@@ -2091,7 +2096,7 @@ function guardThrew(act: Act | undefined, err: unknown): string {
 }
 
 // The tool's act: checked before any question. A CI undraft runs as pr-ready --for-ci, which keeps Not Ready.
-function toolReady($: Mod, e: GhCall, act: Act) {
+function toolReady($: Mod, e: GhCall, act: Act, walked = false) {
   let read: Readiness | undefined
   let forCi = false
   const repoPr = async (): Promise<{ repo?: string | undefined; pr?: number | undefined }> => {
@@ -2127,7 +2132,7 @@ function toolReady($: Mod, e: GhCall, act: Act) {
   // The gate's refusal of the act, or undefined once it lets it through.
   // A merge the gate lets through is pinned to the head it checked: GitHub refuses it if that head moved.
   const heldAct = async (repo: string, pr: number, r: Readiness): Promise<string | undefined> => {
-    const held = await gateHeld($, act.name, repo, pr, r, true)
+    const held = await gateHeld($, act.name, repo, pr, r, true, walked)
     // A sha the gate accepted as a prefix of the head reaches the tool as the full head, the only form it takes.
     const given = e.args['sha']
     if (!held && act.kind === 'merge' && r.gate && (typeof given !== 'string' || given.length < r.gate.head.length)) e.args = { ...e.args, sha: r.gate.head }
@@ -2161,6 +2166,99 @@ function toolReady($: Mod, e: GhCall, act: Act) {
       if (repo && pr !== undefined) note($, ciUndraftLine(repo, pr))
     },
   }
+}
+
+/*
+ * The merge of a stack, a plan the engine read from the repository (pr-merge --stack): each member is merged
+ * as a merge alone is, its own ready gate, its own permission rule and question, one after the other, in the
+ * order the plan gives. Bottom-up, each member after the first is retargeted to the stack's base first (a write
+ * under the same rules, asked as a merge is), then gated: it is the bottom one now, and the stop line says when a
+ * member stays retargeted. The first refusal stops the walk and names the member, why, and the ones merged so far.
+ * A deny rule on pr-merge, or on the retarget, stops it before any merge.
+ *
+ * `pin`: the head the caller named for their pull request, which that one is merged at. Top-down, every member
+ * is gated at its head before the first merge, and the head a merge below moved is read again: when it is the
+ * head gated plus the merge of the members this walk merged into its branch (read from its commits), it is no new
+ * head to prove, and the light CI's run of the head gated stands for it. The named one is asked already: gated, not asked again.
+ * `note`: what the engine said on stderr reading the stack (a branch it could not tell long-lived).
+ */
+async function mergeStack($: Mod, e: GhCall, plan: StackPlan, note: string, pin?: string): Promise<Answer> {
+  const repo = (await targetRepo($, e).catch(() => undefined)) ?? e.repo ?? 'the origin repository'
+  const named = prNumber(e.args['pr'])
+  const { sha: _sha, pr: _pr, stack: _stack, ...rest } = e.args
+  const callOf = (pr: number, sha?: string): GhCall => ({ command: 'pr-merge', args: { ...rest, ...(sha === undefined ? {} : { sha }), pr }, repo: e.repo })
+  const retargetOf = (pr: number): GhCall => ({ command: 'pr-update', args: { pr, base: plan.base }, repo: e.repo })
+  const order = mergeOrder(plan)
+  const members = new Map(plan.members.map((m) => [m.pr, m]))
+  const retargets = (pr: number): boolean => plan.order === 'bottom-up' && pr !== order[0]
+  const said = (text: string): string => (note ? text + '\n' + note : text)
+  for (const pr of order) {
+    for (const call of [callOf(pr), ...(retargets(pr) ? [retargetOf(pr)] : [])]) {
+      const verdict = await $.tool.check({ tool: TOOL, input: { command: call.command, args: call.args, repo: e.repo } })
+      if (verdict.decision === 'deny') return { deny: said(stackStoppedLine(repo, [], pr, verdict.reason || 'refused by a permission rule')) }
+    }
+  }
+  // Top-down the heads move: each member's head as its gate read it before any merge.
+  const started = new Map<number, string>()
+  if (plan.order === 'top-down') {
+    for (const pr of order) {
+      const m = callOf(pr, pr === named ? pin : undefined)
+      const act = toolAct(m.command, m.args)
+      const refused = act ? await toolReady($, m, act).beforeAsk() : undefined
+      if (refused) return { deny: said(stackStoppedLine(repo, [], pr, refused)) }
+      const head = m.args['sha']
+      if (typeof head === 'string') started.set(pr, head)
+    }
+  }
+  const done: number[] = []
+  const mergedAt = new Map<number, string>()
+  const lines: string[] = []
+  let retargeted: number | undefined
+  const stopped = (pr: number, why: string): Answer => {
+    const line = stackStoppedLine(repo, done, pr, why) + (retargeted === pr ? '\n' + repo + '#' + pr + ' stays retargeted to ' + plan.base : '')
+    return done.length === 0 ? { deny: said(line) } : { result: said(line), isError: true }
+  }
+  for (const pr of order) {
+    if (retargets(pr)) {
+      const retarget = retargetOf(pr)
+      const refusedRetarget = await permit($, retarget)
+      if (refusedRetarget) return stopped(pr, refusedRetarget)
+      try {
+        await runGh($, 'pr-update', retarget.args, e.repo)
+        retargeted = pr
+      } catch (err: unknown) {
+        return stopped(pr, 'it could not be retargeted to ' + plan.base + ': ' + reasonOf(err))
+      }
+    }
+    // The members merged into this one's branch, their heads as merged: is its head those and the one gated?
+    const into = done.filter((u) => members.get(u)?.base === members.get(pr)?.head)
+    let moved = false
+    if (plan.order === 'top-down' && into.length > 0) {
+      try {
+        const start = started.get(pr)
+        const head = parseHeadRead(await runGh($, 'pr-gate', { pr, 'head-only': true }, e.repo)).head
+        const commits: unknown = JSON.parse(await runGh($, 'pr-commits', { pr }, e.repo))
+        moved = start !== undefined && walkedHead(commits, head, start, into.flatMap((u) => mergedAt.get(u) ?? []))
+      } catch {
+        moved = false
+      }
+    }
+    const m = callOf(pr, pr === named && !moved ? pin : undefined)
+    const act = toolAct(m.command, m.args)
+    const ready = act ? toolReady($, m, act, moved) : undefined
+    const refused = pr === named ? await ready?.beforeAsk() : await permit($, m, ready?.beforeAsk)
+    if (refused) return stopped(pr, refused)
+    try {
+      const ran = await runGhRaw($, m.command, m.args, m.repo)
+      lines.push(repo + '#' + pr + ': ' + withNote(ran.out, ran.err).trim())
+    } catch (err: unknown) {
+      return stopped(pr, reasonOf(err))
+    }
+    done.push(pr)
+    const merged = m.args['sha']
+    if (typeof merged === 'string') mergedAt.set(pr, merged)
+  }
+  return { result: said(stackMergedLine(repo, plan, lines)) }
 }
 
 // The engine's own name for an act run through gh.py, which its refusals keep;
@@ -3154,6 +3252,8 @@ export function register(on: On<Mod>): void {
       }
     }
     const e: GhCall = { ...raw, args: withHouseDefaults(raw.command, raw.args ?? {}) }
+    // The head the caller pinned, as the call gave it: the gate completes a prefix of it in the arguments.
+    const pinned = typeof e.args['sha'] === 'string' ? e.args['sha'] : undefined
     const act = toolAct(e.command, e.args)
     const ready = act ? toolReady($, e, act) : undefined
     const label = ready ? undefined : readyLabelCall($, e)
@@ -3162,7 +3262,18 @@ export function register(on: On<Mod>): void {
     try {
       // The line of a gate read (the Actions runs it could not read) is shown after afterRead,
       // which parses the output: no added text may reach parseGate.
-      const ran = await runGhRaw($, e.command, e.args, e.repo)
+      // A merge asks the engine for the stack its pull request is in first: in a stack of several it merges nothing and answers the plan.
+      const ran = await runGhRaw($, e.command, act?.kind === 'merge' ? { ...e.args, stack: true } : e.args, e.repo)
+      const plan = act?.kind === 'merge' ? parseStackPlan(ran.out) : undefined
+      if (act?.kind === 'merge' && !plan && holdsStack(ran.out)) return { result: 'github: the engine answered a stack this module cannot read, and merged nothing: ' + ran.out.trim().slice(0, 300), isError: true }
+      if (plan) {
+        const walked = await mergeStack($, e, plan, ran.err, pinned)
+        if (watch) {
+          dirty = true
+          void refreshIfDue($, false)
+        }
+        return walked
+      }
       let result = (READS.has(e.command) ? ran.out : withNote(ran.out, ran.err)) || '(no output)'
       if (ready) await ready.ran()
       if (e.command === 'pr-create') await noteCreated($, ran.out)
