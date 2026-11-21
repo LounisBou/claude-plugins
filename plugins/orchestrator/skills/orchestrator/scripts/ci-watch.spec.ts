@@ -9,7 +9,7 @@ import { parseJournalEvent } from '../../../core/learning.ts'
 
 const HA = 'a'.repeat(40)
 // The call every green line ends with.
-const GATE = 'next: mcp__github__gh pr-gate {"pr": 7}'
+const GATE = 'next: mcp__github__gh pr-gate {"pr": 7} on acme/thing'
 const HB = 'b'.repeat(40)
 const HM = 'c'.repeat(40)
 const HN = 'd'.repeat(40)
@@ -187,6 +187,8 @@ test('the command line: a number, then known options; the bounds are numbers', (
   assert.equal(bad([]), `unread - ${USAGE}|5`)
   assert.equal(bad(['x7']), `unread - ${USAGE}|5`)
   assert.equal(bad(['7', '--repo']), 'unread 7 --repo needs a value|5')
+  assert.equal(bad(['7', '--repo', 'o/r', '--interval', '0']), 'unread o/r#7 the interval is a positive number of seconds|5')
+  assert.equal(bad(['7', '--bogus', 'x', '--repo', 'o/r']), `unread o/r#7 unknown argument: --bogus (${USAGE})|5`)
   assert.equal(bad(['7', '--bogus', 'x']), `unread 7 unknown argument: --bogus (${USAGE})|5`)
   assert.equal(bad(['7', '--interval', '0']), 'unread 7 the interval is a positive number of seconds|5')
   assert.equal(bad(['7'], { CI_WATCH_REGISTER_WAIT: '1m' }), 'unread 7 CI_WATCH_REGISTER_WAIT is a number of seconds|5')
@@ -218,14 +220,14 @@ test('the target: a number, owner/name#number or a pull request URL, and a repos
   assert.equal(named(['https://github.com/acme/thing/pull/12']), '12|acme/thing')
   assert.equal(named(['7', '--repo', 'acme/thing']), '7|acme/thing')
   assert.equal(named(['acme/thing#12', '--repo', 'ACME/Thing']), '12|ACME/Thing')
-  assert.equal(named(['acme/thing#12', '--repo', 'other/thing']), 'unread 12 the target names acme/thing and --repo names other/thing|5')
-  assert.equal(named(['https://github.com/acme/thing/pull/12', '--repo', 'other/thing']), 'unread 12 the target names acme/thing and --repo names other/thing|5')
+  assert.equal(named(['acme/thing#12', '--repo', 'other/thing']), 'unread acme/thing#12 the target names acme/thing and --repo names other/thing|5')
+  assert.equal(named(['https://github.com/acme/thing/pull/12', '--repo', 'other/thing']), 'unread acme/thing#12 the target names acme/thing and --repo names other/thing|5')
 })
 
 test('a target that names the repository is watched on it, whatever the directory is', async () => {
   for (const argv of [['acme/thing#7', '--interval', '1'], ['https://github.com/acme/thing/pull/7', '--interval', '1']]) {
     const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', repoViewFails: 'fatal: not a git repository\n' })
-    assert.equal((await watch(options(argv), deps)).line, `green 7 ${HA} ${GATE} on acme/thing`)
+    assert.equal((await watch(options(argv), deps)).line, `green acme/thing#7 ${HA} ${GATE}`)
     assert.deepEqual(deps.calls.filter(call => !call.includes(' -R acme/thing') && !call.startsWith('gh pr checks 7 --watch')), [])
     assert.equal(deps.calls.some(call => call.startsWith('gh repo view')), false)
   }
@@ -256,6 +258,29 @@ test('a failed repo view says why, and an empty answer is refused at once', asyn
   assert.equal(await refused({ repoView: '\n' }), 'unread 7 this directory is not a clone of the repository: pass --repo <owner/repo>|5')
 })
 
+test('a bare number is the directory\'s repository, and every line says which: a watch from the wrong checkout says so in its line', async () => {
+  // GeoSecureBeltFirmware#31 is open; the watch ran from a clone of another repository whose #31 was merged long ago.
+  const wrongCheckout = { repoView: 'acme/home\n', view: [`MERGED ${HA}`], merge: `${HM} main`, runs: ['-'] }
+  assert.equal(await said(wrongCheckout, ['31', '--interval', '1']), `base-no-run acme/home#31 ${HM} filtered=0|7`)
+  assert.equal(await said(wrongCheckout, ['31', '--interval', '1', '--no-base']), 'closed acme/home#31 MERGED|4')
+  // The same pull request named by its repository is read there, whatever the directory is, and its lines name that repository.
+  const named = fake({ ...wrongCheckout, view: [`OPEN ${HA} draft`, `OPEN ${HA} draft`], reg: ['2'], buckets: 'build:pass' })
+  assert.equal((await watch(options(['acme/firmware#31', '--interval', '1']), named)).line,
+    `green acme/firmware#31 ${HA} next: mcp__github__gh pr-gate {"pr": 31} on acme/firmware`)
+  assert.equal(named.calls.some(call => call.startsWith('gh repo view')), false)
+  // Every line a watch ends on carries `<owner/name>#<n>` after its first word, the bare number never: closed, moved, unread, red, no-checks.
+  const open = { repoView: 'acme/home\n', reg: ['2'] }
+  assert.equal(await said({ ...open, view: [`OPEN ${HA}`, `CLOSED ${HA}`] }, ['31', '--interval', '1']), 'closed acme/home#31 CLOSED|4')
+  assert.equal(await said({ ...open, view: [`OPEN ${HA}`, `OPEN ${HB}`] }, ['31', '--interval', '1']), `moved acme/home#31 ${HA} ${HB}|3`)
+  assert.equal(await said({ ...open, view: [`OPEN ${HA}`], failing: 'test' }, ['31', '--interval', '1']), `red acme/home#31 ${HA} test|1`)
+  assert.equal(await said({ ...open, view: [`OPEN ${HA}`], reg: ['none'] }, ['31', '--interval', '1']), `no-checks acme/home#31 ${HA}|2`)
+  assert.equal(await said({ ...open, view: [`OPEN ${HA}`], gate: ['fail'] }, ['31', '--interval', '1']), 'unread acme/home#31 pr-gate failed: error: no GitHub token; run /github:install|5')
+  assert.equal(await said({ ...open, view: [`OPEN ${HA}`, `MERGED ${HA}`], merge: `${HM} main`, runs: ['-'] }, ['31', '--interval', '1']), `merged acme/home#31 ${HM} no push run on main filtered=0|0`)
+  // Refused before any repository is known, the line has only the number to name.
+  assert.equal(await said({ repoViewFails: '' }, ['31', '--interval', '1']), 'unread 31 this directory is not a clone of the repository: pass --repo <owner/repo>|5')
+})
+
+
 test('the small readings', () => {
   assert.equal(firstLine('a\r\nb'), 'a')
   assert.equal(joinNames('a\nb,c\n'), 'a, b, c')
@@ -282,46 +307,46 @@ test('a readiness/ status is no registered check: the watch waits for a check of
   assert.equal(registeredCount('many'), undefined)
   assert.equal(registeredCount('[{"context":"x"}]'), undefined)
   // Only the operator's readiness status is on the head: no check registered, so no-checks at the bound.
-  assert.equal(await said({ view: [`OPEN ${HA}`], names: 'readiness/review' }), `no-checks 7 ${HA}|2`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], names: 'readiness/review' }), `no-checks acme/thing#7 ${HA}|2`)
   // Without the filter this head counts a check, and the gate reads it green.
-  assert.equal(await said({ view: [`OPEN ${HA}`], names: 'readiness/review\nbuild', buckets: 'build:pass' }), `green 7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], names: 'readiness/review\nbuild', buckets: 'build:pass' }), `green acme/thing#7 ${HA} ${GATE}|0`)
 })
 
 test('a failed readiness/ status while a real check runs: the wait goes on until that check is done', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['readiness/review:fail,build:pending', 'readiness/review:fail,build:pass'] })
-  assert.equal((await watch(options(), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal((await watch(options(), deps)).line, `green acme/thing#7 ${HA} ${GATE}`)
   assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
 })
 
 test('a real check failing while another runs: the wait returns at once, the gate reads the red', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:fail\ntest:pending', polls: ['build:fail,test:pending', 'build:fail,test:pass'] })
-  assert.equal((await watch(options(), deps)).line, `red 7 ${HA} build`)
+  assert.equal((await watch(options(), deps)).line, `red acme/thing#7 ${HA} build`)
   assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 1)
 })
 
 test('a pending check is an answer, even when gh exits 8 for it: the wait goes on, then green', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['build:pending', 'build:pass'], pollExit: 8 })
-  assert.equal((await watch(options(), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal((await watch(options(), deps)).line, `green acme/thing#7 ${HA} ${GATE}`)
   assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
 })
 
 test('a poll that fails is unread, a poll that answers no list is unread, a poll that finds no checks returns quietly', async () => {
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollFails: 'error connecting to api.github.com\n' }), 'unread 7 gh pr checks failed: error connecting to api.github.com|5')
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollRaw: 'many\n' }), 'unread 7 gh pr checks failed: an answer that is no list of checks|5')
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollFails: "no checks reported on the 'feat' branch\n" }), `green 7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollFails: 'error connecting to api.github.com\n' }), 'unread acme/thing#7 gh pr checks failed: error connecting to api.github.com|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollRaw: 'many\n' }), 'unread acme/thing#7 gh pr checks failed: an answer that is no list of checks|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', pollFails: "no checks reported on the 'feat' branch\n" }), `green acme/thing#7 ${HA} ${GATE}|0`)
 })
 
 test('the poll sleeps 30 s between two reads by default', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['build:pending', 'build:pass'] })
   const start = deps.now()
-  assert.equal((await watch(parseArgs(['7'], { ORCHESTRATOR_STATE_DIR: state }), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal((await watch(parseArgs(['7'], { ORCHESTRATOR_STATE_DIR: state }), deps)).line, `green acme/thing#7 ${HA} ${GATE}`)
   assert.equal(deps.now() - start, 30000)
 })
 
 test('the checks are read each interval: the wait sleeps the interval between two reads, 30 s by default', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', polls: ['build:pending', 'build:pass'] })
   const start = deps.now()
-  assert.equal((await watch(options(['7', '--interval', '3']), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal((await watch(options(['7', '--interval', '3']), deps)).line, `green acme/thing#7 ${HA} ${GATE}`)
   assert.equal(deps.now() - start, 3000)
   assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
   assert.equal(parseArgs(['7'], { ORCHESTRATOR_STATE_DIR: state }).interval, '30')
@@ -330,7 +355,7 @@ test('the checks are read each interval: the wait sleeps the interval between tw
 test('green: one passed check at least, the watch output in the log', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' })
   assert.equal(await main(['7', '--interval', '3'], { ORCHESTRATOR_STATE_DIR: state, CLAUDE_CODE_SESSION_ID: 'sess-42' }, deps), 0)
-  assert.deepEqual(deps.out, [`ci-watch: green 7 ${HA} ${GATE}\n`])
+  assert.deepEqual(deps.out, [`ci-watch: green acme/thing#7 ${HA} ${GATE}\n`])
   const log = join(state, 'ci-watch', 'here-pr7.log')
   assert.equal(readFileSync(log, 'utf8'), '')
   assert.equal(readFileSync(`${log}.session`, 'utf8'), 'sess-42\n')
@@ -354,51 +379,51 @@ test('the repository is passed to every gh call', async () => {
 })
 
 test('red, cancelled and skipped readings are the gate\'s, whatever the checks watch exits with', async () => {
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [1], failing: 'test\ne2e' }), `red 7 ${HA} test, e2e|1`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:cancel\nunit:pass\ne2e:cancel' }), `red 7 ${HA} build, e2e|1`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'unit:skipping\ndocs:skipping' }), `no-checks 7 ${HA} skipped=2|2`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [4] }), `green 7 ${HA} ${GATE}|0`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['FAILURE:0'] }), 'unread 7 pr-gate read FAILURE with no failing check named|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [1], failing: 'test\ne2e' }), `red acme/thing#7 ${HA} test, e2e|1`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:cancel\nunit:pass\ne2e:cancel' }), `red acme/thing#7 ${HA} build, e2e|1`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'unit:skipping\ndocs:skipping' }), `no-checks acme/thing#7 ${HA} skipped=2|2`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [4] }), `green acme/thing#7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['FAILURE:0'] }), 'unread acme/thing#7 pr-gate read FAILURE with no failing check named|5')
 })
 
 // A rerun the gate leaves out (cancelled, superseded by a newer run of its workflow) fails the checks
 // watch and `gh pr checks` still names it: the gate reads the head green, and so does the watch.
 test('a cancelled run the gate leaves out is no red: the watch says the gate\'s green', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [1], failing: 'build', buckets: 'build:pass', gate: ['SUCCESS:0'] })
-  assert.equal((await watch(options(), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal((await watch(options(), deps)).line, `green acme/thing#7 ${HA} ${GATE}`)
   assert.equal(deps.calls.filter(call => call.includes('select(.bucket')).length, 0)
 })
 
 // The facts line of a delivery reads CI from the gate's last answer the watch kept, never from GitHub.
 test('each gate answer read is kept whole for the facts line, under the gate\'s repository lowercased', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' })
-  assert.equal((await watch(options(['Acme/Thing#7', '--interval', '1']), deps)).line, `green 7 ${HA} ${GATE} on Acme/Thing`)
+  assert.equal((await watch(options(['Acme/Thing#7', '--interval', '1']), deps)).line, `green Acme/Thing#7 ${HA} next: mcp__github__gh pr-gate {"pr": 7} on Acme/Thing`)
   const kept = JSON.parse(readFileSync(join(state, 'ci-gate', 'acme_thing-pr7.json'), 'utf8')) as { head: string; ci: { result: string } }
   assert.deepEqual([kept.head, kept.ci.result], [HA, 'SUCCESS'])
   // A read that failed keeps nothing; a reading kept before stays.
-  assert.match(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['fail'] }, ['Acme/Thing#7', '--interval', '1']), /^unread 7 pr-gate failed/)
+  assert.match(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['fail'] }, ['Acme/Thing#7', '--interval', '1']), /^unread Acme\/Thing#7 pr-gate failed/)
   assert.equal((JSON.parse(readFileSync(join(state, 'ci-gate', 'acme_thing-pr7.json'), 'utf8')) as { ci: { result: string } }).ci.result, 'SUCCESS')
   assert.equal(readdirSync(join(state, 'ci-gate')).length, 1)
 })
 
 test('a gate answer that cannot be kept stops no watch: the facts line then says CI unread', async () => {
   writeFileSync(join(state, 'ci-gate'), 'a file where the directory goes')
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' }), `green 7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass' }), `green acme/thing#7 ${HA} ${GATE}|0`)
 })
 
 test('a pull request GitHub reports as conflicting is no green: its suites never ran, whatever else passed', async () => {
   // GitHub starts no workflow run on a conflicting pull request: only an external check (a secret scanner) reports.
   const external = { reg: ['1'], buckets: 'GitGuardian:pass' }
-  assert.equal(await said({ ...external, view: [`OPEN ${HA} conflicting`] }), `no-checks 7 ${HA} conflicting|2`)
+  assert.equal(await said({ ...external, view: [`OPEN ${HA} conflicting`] }), `no-checks acme/thing#7 ${HA} conflicting|2`)
   // Auto-merge never merges it: no wait for a merge, no read of the pull request beyond the two of every watch.
   const deps = fake({ ...external, view: [`OPEN ${HA} auto conflicting`] })
-  assert.equal((await watch(options(), deps)).line, `no-checks 7 ${HA} conflicting`)
+  assert.equal((await watch(options(), deps)).line, `no-checks acme/thing#7 ${HA} conflicting`)
   assert.equal(deps.calls.filter(call => call.startsWith('gh pr view')).length, 2)
   // The read asks GitHub for the mergeability, and only a conflict counts: an uncomputed one is no obstacle.
   assert.ok(deps.calls.some(call => call.includes('--json state,headRefOid,autoMergeRequest,isDraft,mergeable')))
-  assert.equal(await said({ ...external, view: [`OPEN ${HA}`] }), `green 7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ ...external, view: [`OPEN ${HA}`] }), `green acme/thing#7 ${HA} ${GATE}|0`)
   // A red stays a red: the failing names come first.
-  assert.equal(await said({ reg: ['1'], buckets: 'build:cancel\nGitGuardian:pass', view: [`OPEN ${HA} conflicting`] }), `red 7 ${HA} build|1`)
+  assert.equal(await said({ reg: ['1'], buckets: 'build:cancel\nGitGuardian:pass', view: [`OPEN ${HA} conflicting`] }), `red acme/thing#7 ${HA} build|1`)
 })
 
 test('the pull request line: state, head, then the flags it carries', () => {
@@ -408,30 +433,30 @@ test('the pull request line: state, head, then the flags it carries', () => {
 })
 
 test('registration: waited for, bounded, and a failure is unread', async () => {
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['none'] }), `no-checks 7 ${HA}|2`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['0'] }), `no-checks 7 ${HA}|2`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['none', '2'], buckets: 'a:pass' }), `green 7 ${HA} ${GATE}|0`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['fail'] }), 'unread 7 gh pr checks failed: error connecting to api.github.com|5')
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['many'] }), 'unread 7 gh pr checks failed: an answer that is no count|5')
-  assert.equal(await said({}), 'unread 7 gh pr view failed: gh: HTTP 502|5')
-  assert.equal(await said({ viewFails: '' }), 'unread 7 gh pr view failed: no answer|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['none'] }), `no-checks acme/thing#7 ${HA}|2`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['0'] }), `no-checks acme/thing#7 ${HA}|2`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['none', '2'], buckets: 'a:pass' }), `green acme/thing#7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['fail'] }), 'unread acme/thing#7 gh pr checks failed: error connecting to api.github.com|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['many'] }), 'unread acme/thing#7 gh pr checks failed: an answer that is no count|5')
+  assert.equal(await said({}), 'unread acme/thing#7 gh pr view failed: gh: HTTP 502|5')
+  assert.equal(await said({ viewFails: '' }), 'unread acme/thing#7 gh pr view failed: no answer|5')
 })
 
 test('moved and closed, at each read', async () => {
-  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HB}`], reg: ['2'] }), `moved 7 ${HA} ${HB}|3`)
-  assert.equal(await said({ view: [`OPEN ${HA}`, `CLOSED ${HA}`], reg: ['2'] }), 'closed 7 CLOSED|4')
-  assert.equal(await said({ view: [`CLOSED ${HA}`] }), 'closed 7 CLOSED|4')
-  assert.equal(await said({ view: [`OPEN ${HA}`, `MERGED ${HA}`], reg: ['2'] }, ['7', '--no-base']), 'closed 7 MERGED|4')
+  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HB}`], reg: ['2'] }), `moved acme/thing#7 ${HA} ${HB}|3`)
+  assert.equal(await said({ view: [`OPEN ${HA}`, `CLOSED ${HA}`], reg: ['2'] }), 'closed acme/thing#7 CLOSED|4')
+  assert.equal(await said({ view: [`CLOSED ${HA}`] }), 'closed acme/thing#7 CLOSED|4')
+  assert.equal(await said({ view: [`OPEN ${HA}`, `MERGED ${HA}`], reg: ['2'] }, ['7', '--no-base']), 'closed acme/thing#7 MERGED|4')
 })
 
 test('the head\'s unfinished runs are watched, then the checks again', async () => {
   const deps = fake({ view: [`OPEN ${HA}`], reg: ['2'], failing: 'e2e', gate: ['PENDING:1', 'PENDING:1', 'FAILURE:0'], headRuns: ['201:completed;202:in_progress', '-'] })
-  assert.equal((await watch(options(), deps)).line, `red 7 ${HA} e2e`)
+  assert.equal((await watch(options(), deps)).line, `red acme/thing#7 ${HA} e2e`)
   assert.equal(deps.calls.filter(call => call.startsWith('gh run watch 202')).length, 1)
   assert.equal(deps.calls.filter(call => call.includes('name,bucket')).length, 2)
-  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA}`, `OPEN ${HB}`], reg: ['2'], headRuns: ['201:in_progress', '-'] }), `moved 7 ${HA} ${HB}|3`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['201:in_progress'] }), 'unread 7 workflow runs of the head still unfinished: 201|5')
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['fail'] }), 'unread 7 gh run list failed: gh: HTTP 502|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA}`, `OPEN ${HB}`], reg: ['2'], headRuns: ['201:in_progress', '-'] }), `moved acme/thing#7 ${HA} ${HB}|3`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['201:in_progress'] }), 'unread acme/thing#7 workflow runs of the head still unfinished: 201|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], headRuns: ['fail'] }), 'unread acme/thing#7 gh run list failed: gh: HTTP 502|5')
 })
 
 test('a bound shorter than the default interval is slept to its end, never past it', async () => {
@@ -439,7 +464,7 @@ test('a bound shorter than the default interval is slept to its end, never past 
   let clock = 0
   const sleeps: number[] = []
   const deps = { ...fake({ view: [`OPEN ${HA}`], reg: ['none'] }), now: () => clock, sleep: async (seconds: number) => { sleeps.push(seconds); clock += seconds * 1000 } }
-  assert.equal((await watch(options(['7', '--repo', 'o/r'], { CI_WATCH_REGISTER_WAIT: '10' }), deps)).line, `no-checks 7 ${HA}`)
+  assert.equal((await watch(options(['7', '--repo', 'o/r'], { CI_WATCH_REGISTER_WAIT: '10' }), deps)).line, `no-checks o/r#7 ${HA}`)
   assert.deepEqual(sleeps, [10])
 })
 
@@ -447,11 +472,11 @@ test('a head with a third-party check alone is no green: it waits for the reposi
   // Only a secret scanner has registered and passed: the gate still counts the required `ci` as running.
   const alone = { view: [`OPEN ${HA}`], reg: ['1'], buckets: 'scanner:pass', gate: ['PENDING:1'] }
   const bounded = fake(alone)
-  assert.equal((await watch(options(), bounded)).line, `no-checks 7 ${HA}`)
+  assert.equal((await watch(options(), bounded)).line, `no-checks acme/thing#7 ${HA}`)
   assert.ok(bounded.gates.length <= 3, `${bounded.gates.length} gate reads inside a bound of 2 s at 1 s`)
   // The run registers late: it is watched to its end, the checks read again, and only then is it green.
   const late = fake({ ...alone, headRuns: ['-', '-', '201:in_progress', '201:completed'], gate: ['PENDING:1', 'PENDING:1', 'SUCCESS:0'], buckets: 'scanner:pass\nci:pass' })
-  assert.equal((await watch(options(), late)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal((await watch(options(), late)).line, `green acme/thing#7 ${HA} ${GATE}`)
   assert.equal(late.calls.filter(call => call.startsWith('gh run watch 201')).length, 1)
   assert.equal(late.calls.filter(call => call.includes('name,bucket')).length, 2)
   // The gate is read on the repository the watch names.
@@ -459,75 +484,75 @@ test('a head with a third-party check alone is no green: it waits for the reposi
   await watch(options(['7', '--repo', 'o/r', '--interval', '1']), named)
   assert.deepEqual(named.gates, ['o/r#7'])
   // A head that moves while the run is awaited is said at once.
-  assert.equal(await said({ ...alone, view: [`OPEN ${HA}`, `OPEN ${HA}`, `OPEN ${HB}`] }), `moved 7 ${HA} ${HB}|3`)
+  assert.equal(await said({ ...alone, view: [`OPEN ${HA}`, `OPEN ${HA}`, `OPEN ${HB}`] }), `moved acme/thing#7 ${HA} ${HB}|3`)
 })
 
 test('the gate: nothing to await, or a read that failed', async () => {
   // PENDING over something that proved nothing (a skipped check) awaits no run, and is no green.
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass\nlint:skipping', gate: ['PENDING:0'] }), `no-checks 7 ${HA} skipped=1|2`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass\nlint:skipping', gate: ['PENDING:0'] }), `no-checks acme/thing#7 ${HA} skipped=1|2`)
   // The result counts: a check running under a failure or a success awaits no run.
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:fail', gate: ['FAILURE:1'] }), `red 7 ${HA} build|1`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', gate: ['SUCCESS:1'] }), `green 7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:fail', gate: ['FAILURE:1'] }), `red acme/thing#7 ${HA} build|1`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', gate: ['SUCCESS:1'] }), `green acme/thing#7 ${HA} ${GATE}|0`)
   // The checks the base requires could not be read: green cannot be told, so it waits, then no-checks.
   const blind = { view: [`OPEN ${HA}`], reg: ['1'], buckets: 'scanner:pass', gate: ['PENDING:0'] }
-  assert.equal(await said({ ...blind, gateUnverified: ['rulesets of main: HTTP 403'] }), `no-checks 7 ${HA}|2`)
-  assert.equal(await said(blind), `no-checks 7 ${HA} skipped=0|2`)
+  assert.equal(await said({ ...blind, gateUnverified: ['rulesets of main: HTTP 403'] }), `no-checks acme/thing#7 ${HA}|2`)
+  assert.equal(await said(blind), `no-checks acme/thing#7 ${HA} skipped=0|2`)
   // A verdict of another head is none: the watch waits and reads the pull request again.
-  assert.equal(await said({ ...blind, gateHead: HB }), `no-checks 7 ${HA}|2`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', gateHead: HA.toUpperCase() }), `green 7 ${HA} ${GATE}|0`)
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['fail'] }), 'unread 7 pr-gate failed: error: no GitHub token; run /github:install|5')
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['bad'] }), 'unread 7 pr-gate failed: an answer with no ci result|5')
+  assert.equal(await said({ ...blind, gateHead: HB }), `no-checks acme/thing#7 ${HA}|2`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], buckets: 'build:pass', gateHead: HA.toUpperCase() }), `green acme/thing#7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['fail'] }), 'unread acme/thing#7 pr-gate failed: error: no GitHub token; run /github:install|5')
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'], gate: ['bad'] }), 'unread acme/thing#7 pr-gate failed: an answer with no ci result|5')
   // A red is the gate's: read once, it ends the watch.
   const red = fake({ view: [`OPEN ${HA}`], reg: ['2'], watchCodes: [1], failing: 'e2e' })
-  assert.equal((await watch(options(), red)).line, `red 7 ${HA} e2e`)
+  assert.equal((await watch(options(), red)).line, `red acme/thing#7 ${HA} e2e`)
   assert.deepEqual(red.gates, ['acme/thing#7'])
 })
 
 test('a draft: a red of guards alone settles, and its green needs a check behind a guard', async () => {
   const draft = `OPEN ${HA} draft`
   const deps = fake({ view: [draft], reg: ['2'], watchCodes: [1], failing: 'wip', guard: '', buckets: 'build:pass\nwip:fail', dependents: 'build\n' })
-  assert.equal((await watch(options(), deps)).line, `green 7 ${HA} ${GATE}`)
+  assert.equal((await watch(options(), deps)).line, `green acme/thing#7 ${HA} ${GATE}`)
   assert.ok(deps.calls.includes('gh pr checks 7 --watch --interval 1'))
-  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], failing: 'wip', buckets: 'secrets:pass\nwip:fail', dependents: '' }), `no-checks 7 ${HA} skipped=0|2`)
-  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], failing: 'wip', guard: 'tests\n' }), `red 7 ${HA} tests|1`)
-  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1] }), `green 7 ${HA} ${GATE}|0`)
-  assert.equal(await said({ view: [draft], reg: ['2'], failing: 'wip', guardFails: 'draft_guard: gh failed\n' }), 'unread 7 draft_guard: gh failed|5')
-  assert.equal(await said({ view: [draft], reg: ['2'], failing: 'wip', guardFails: '' }), 'unread 7 draft guard failed|5')
+  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], failing: 'wip', buckets: 'secrets:pass\nwip:fail', dependents: '' }), `no-checks acme/thing#7 ${HA} skipped=0|2`)
+  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1], failing: 'wip', guard: 'tests\n' }), `red acme/thing#7 ${HA} tests|1`)
+  assert.equal(await said({ view: [draft], reg: ['2'], watchCodes: [1] }), `green acme/thing#7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [draft], reg: ['2'], failing: 'wip', guardFails: 'draft_guard: gh failed\n' }), 'unread acme/thing#7 draft_guard: gh failed|5')
+  assert.equal(await said({ view: [draft], reg: ['2'], failing: 'wip', guardFails: '' }), 'unread acme/thing#7 draft guard failed|5')
   const named = fake({ view: [draft], reg: ['2'], failing: 'wip', guard: 'tests\n' })
   await watch(options(['7', '--repo', 'acme/x']), named).catch(() => undefined)
   assert.ok(named.calls.includes('node /plugin/draft-guard.ts acme/x 7'))
 })
 
 test('auto-merge: the merge is waited for, bounded, and followed', async () => {
-  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA} auto`, `MERGED ${HA}`], reg: ['2'], buckets: 'a:pass', merge: `${HM} main`, runs: ['101:CI'] }), `base-green 7 ${HM}|0`)
-  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA} auto`], reg: ['2'], buckets: 'a:pass' }), `green 7 ${HA} ${GATE}|0`)
-  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA} auto`, `OPEN ${HA}`], reg: ['2'], buckets: 'a:pass' }), `green 7 ${HA} ${GATE}|0`)
-  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA} auto`, `OPEN ${HB} auto`], reg: ['2'], buckets: 'a:pass' }), `moved 7 ${HA} ${HB}|3`)
+  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA} auto`, `MERGED ${HA}`], reg: ['2'], buckets: 'a:pass', merge: `${HM} main`, runs: ['101:CI'] }), `base-green acme/thing#7 ${HM}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA} auto`], reg: ['2'], buckets: 'a:pass' }), `green acme/thing#7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA} auto`, `OPEN ${HA}`], reg: ['2'], buckets: 'a:pass' }), `green acme/thing#7 ${HA} ${GATE}|0`)
+  assert.equal(await said({ view: [`OPEN ${HA}`, `OPEN ${HA} auto`, `OPEN ${HB} auto`], reg: ['2'], buckets: 'a:pass' }), `moved acme/thing#7 ${HA} ${HB}|3`)
 })
 
 test('merged: the base branch\'s push runs are followed', async () => {
   const merged = { view: [`MERGED ${HA}`], merge: `${HM} main` }
   const deps = fake({ ...merged, runs: ['101:CI'] })
-  assert.equal((await watch(options(), deps)).line, `base-green 7 ${HM}`)
+  assert.equal((await watch(options(), deps)).line, `base-green acme/thing#7 ${HM}`)
   assert.deepEqual(deps.logs.get('gh run watch 101 --exit-status --interval 1'), { path: join(state, 'ci-watch', 'here-pr7-base.log'), append: true })
   assert.equal(readFileSync(join(state, 'ci-watch', 'here-pr7-base.log'), 'utf8'), '')
-  assert.equal(await said({ ...merged, runs: ['101:CI'], runCodes: { 101: 1 }, jobs: 'test\nlint\n' }), `base-red 7 ${HM} 101 test, lint|6`)
-  assert.equal(await said({ ...merged, runs: ['-'] }), `base-no-run 7 ${HM} filtered=0|7`)
-  assert.equal(await said({ ...merged, runs: ['101:CI;102:Slow'] }, ['7', '--base-workflow', 'Ci']), `base-no-run 7 ${HM} filtered=2|7`)
-  assert.equal(await said({ ...merged, runs: ['-', '101:CI'] }), `base-green 7 ${HM}|0`)
-  assert.equal(await said({ ...merged, runs: ['101:CI;102:Slow'], runCodes: { 102: 1 }, jobs: 'e2e\n' }, ['7', '--base-workflow', 'CI']), `base-green 7 ${HM}|0`)
-  assert.equal(await said({ ...merged, runs: ['101:CI'], runCodes: { 101: 1 } }), `unread 7 gh run watch 101 exited 1 with no failing job named (log: ${join(state, 'ci-watch', 'here-pr7-base.log')})|5`)
-  assert.equal(await said({ view: [`MERGED ${HA}`] }), 'unread 7 gh pr view failed: gh: HTTP 404|5')
-  assert.equal(await said({ view: [`MERGED ${HA}`], merge: ` main` }), 'unread 7 gh pr view failed: no merge commit or base branch read|5')
-  assert.equal(await said({ ...merged }), 'unread 7 gh run list failed: gh: HTTP 502|5')
+  assert.equal(await said({ ...merged, runs: ['101:CI'], runCodes: { 101: 1 }, jobs: 'test\nlint\n' }), `base-red acme/thing#7 ${HM} 101 test, lint|6`)
+  assert.equal(await said({ ...merged, runs: ['-'] }), `base-no-run acme/thing#7 ${HM} filtered=0|7`)
+  assert.equal(await said({ ...merged, runs: ['101:CI;102:Slow'] }, ['7', '--base-workflow', 'Ci']), `base-no-run acme/thing#7 ${HM} filtered=2|7`)
+  assert.equal(await said({ ...merged, runs: ['-', '101:CI'] }), `base-green acme/thing#7 ${HM}|0`)
+  assert.equal(await said({ ...merged, runs: ['101:CI;102:Slow'], runCodes: { 102: 1 }, jobs: 'e2e\n' }, ['7', '--base-workflow', 'CI']), `base-green acme/thing#7 ${HM}|0`)
+  assert.equal(await said({ ...merged, runs: ['101:CI'], runCodes: { 101: 1 } }), `unread acme/thing#7 gh run watch 101 exited 1 with no failing job named (log: ${join(state, 'ci-watch', 'here-pr7-base.log')})|5`)
+  assert.equal(await said({ view: [`MERGED ${HA}`] }), 'unread acme/thing#7 gh pr view failed: gh: HTTP 404|5')
+  assert.equal(await said({ view: [`MERGED ${HA}`], merge: ` main` }), 'unread acme/thing#7 gh pr view failed: no merge commit or base branch read|5')
+  assert.equal(await said({ ...merged }), 'unread acme/thing#7 gh run list failed: gh: HTTP 502|5')
 })
 
 test('merged during the watch with no push run on the base branch ends the watch, exit 0', async () => {
   const during = { view: [`OPEN ${HA}`, `MERGED ${HA}`], reg: ['2'], merge: `${HM} main` }
-  assert.equal(await said({ ...during, runs: ['-'] }), `merged 7 ${HM} no push run on main filtered=0|0`)
-  assert.equal(await said({ ...during, runs: ['101:CI;102:Slow'] }, ['7', '--base-workflow', 'Ci']), `merged 7 ${HM} no push run on main filtered=2|0`)
+  assert.equal(await said({ ...during, runs: ['-'] }), `merged acme/thing#7 ${HM} no push run on main filtered=0|0`)
+  assert.equal(await said({ ...during, runs: ['101:CI;102:Slow'] }, ['7', '--base-workflow', 'Ci']), `merged acme/thing#7 ${HM} no push run on main filtered=2|0`)
   // A red on the base branch after a merge during the watch is still a red.
-  assert.equal(await said({ ...during, runs: ['101:CI'], runCodes: { 101: 1 }, jobs: 'test\n' }), `base-red 7 ${HM} 101 test|6`)
+  assert.equal(await said({ ...during, runs: ['101:CI'], runCodes: { 101: 1 }, jobs: 'test\n' }), `base-red acme/thing#7 ${HM} 101 test|6`)
 })
 
 test('the owner file is written whole, through a temporary name and one rename', async () => {
@@ -541,20 +566,20 @@ test('the owner file is written whole, through a temporary name and one rename',
 
 test('a cancelled base run is replaced by its newer run, never by itself', async () => {
   const merged = { view: [`MERGED ${HA}`], merge: `${HM} main`, runs: ['101:CI'] }
-  assert.equal(await said({ ...merged, runCodes: { 101: 1 }, conclusions: { 101: 'cancelled' }, newest: [`103 ${HN}`] }), `base-green 7 ${HN}|0`)
-  assert.equal(await said({ ...merged, runCodes: { 101: 1, 103: 1 }, conclusions: { 101: 'cancelled' }, newest: [`103 ${HN}`], jobs: 'test\n' }), `base-red 7 ${HN} 103 test|6`)
-  assert.equal(await said({ ...merged, runCodes: { 101: 1 }, conclusions: { 101: 'cancelled' }, newest: [`101 ${HM}`], jobs: 'test\n' }), `base-red 7 ${HM} 101 test|6`)
-  assert.equal(await said({ ...merged, runCodes: { 101: 1 }, conclusions: { 101: 'cancelled' }, newest: ['-'], jobs: 'test\n' }), `base-red 7 ${HM} 101 test|6`)
-  assert.equal(await said({ ...merged, runCodes: { 101: 1 }, conclusions: { 101: 'cancelled' } }), 'unread 7 gh run list failed: gh: HTTP 502|5')
+  assert.equal(await said({ ...merged, runCodes: { 101: 1 }, conclusions: { 101: 'cancelled' }, newest: [`103 ${HN}`] }), `base-green acme/thing#7 ${HN}|0`)
+  assert.equal(await said({ ...merged, runCodes: { 101: 1, 103: 1 }, conclusions: { 101: 'cancelled' }, newest: [`103 ${HN}`], jobs: 'test\n' }), `base-red acme/thing#7 ${HN} 103 test|6`)
+  assert.equal(await said({ ...merged, runCodes: { 101: 1 }, conclusions: { 101: 'cancelled' }, newest: [`101 ${HM}`], jobs: 'test\n' }), `base-red acme/thing#7 ${HM} 101 test|6`)
+  assert.equal(await said({ ...merged, runCodes: { 101: 1 }, conclusions: { 101: 'cancelled' }, newest: ['-'], jobs: 'test\n' }), `base-red acme/thing#7 ${HM} 101 test|6`)
+  assert.equal(await said({ ...merged, runCodes: { 101: 1 }, conclusions: { 101: 'cancelled' } }), 'unread acme/thing#7 gh run list failed: gh: HTTP 502|5')
 })
 
 test('the state directory: one that cannot be made, an owner file that cannot be written', async () => {
   const blocked = join(state, 'file')
   mkdirSync(join(state, 'ci-watch', 'here-pr7.log.session'), { recursive: true })
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'] }, undefined, { CLAUDE_CODE_SESSION_ID: 's' }), `unread 7 cannot write ${join(state, 'ci-watch', 'here-pr7.log.session')}|5`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'] }, undefined, { CLAUDE_CODE_SESSION_ID: 's' }), `unread acme/thing#7 cannot write ${join(state, 'ci-watch', 'here-pr7.log.session')}|5`)
   rmSync(join(state, 'ci-watch'), { recursive: true })
   await import('node:fs').then(fs => fs.writeFileSync(blocked, ''))
-  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'] }, undefined, { ORCHESTRATOR_STATE_DIR: blocked }), `unread 7 cannot create ${blocked}/ci-watch|5`)
+  assert.equal(await said({ view: [`OPEN ${HA}`], reg: ['2'] }, undefined, { ORCHESTRATOR_STATE_DIR: blocked }), `unread acme/thing#7 cannot create ${blocked}/ci-watch|5`)
 })
 
 test('main: a failure that is no watch line is not hidden', async () => {
