@@ -33,7 +33,9 @@ Who merges: the auto-merge bullet of the repository's CLAUDE.md states it.
   copied.
 - Between languages, a rule travels as data (a JSON file both sides read), never as two
   implementations.
-- A document points at the rule; it does not restate it.
+- A document points at the rule; it does not restate it. A design document keeps what the code
+  cannot say (the why, the dated decisions, the invariants across files) and is not edited in a
+  fix pull request.
 
 ## Types and boundaries
 
