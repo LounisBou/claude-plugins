@@ -25,8 +25,8 @@ export interface Newer {
 }
 
 /*
- * A newer install is told only once no other has followed it for this long: while main keeps merging,
- * the deploy installs a commit every few minutes, and a notice on each would make an orchestration
+ * A newer install is acted on only once no other has followed it for this long: while main keeps merging,
+ * the deploy installs a commit every few minutes, and a coordinator's notice on each would make it
  * spend its time handing over.
  */
 export const NOTICE_SETTLE_MS = 30 * 60_000
@@ -37,11 +37,11 @@ export const NOTICE_SETTLE_MS = 30 * 60_000
 export const NOTICE_CAP_MS = 60 * 60_000
 
 // The commit the continuous deploy installed since this session loaded its plugin, once per
-// commit: `told` is the last one decided. `announced` says whether a notice was already given:
-// the cap is said once. Null when the plugin does not run from a deploy directory, when the
+// commit: `told` is the last one decided. `announced` says whether a newer commit was already acted on:
+// the cap holds once. Null when the plugin does not run from a deploy directory, when the
 // installed commit is the session's own or was already decided, when neither the settle nor the
-// cap has passed, and when the state file cannot be read or is not valid — a notice that cannot be
-// decided is not given.
+// cap has passed, and when the state file cannot be read or is not valid — an install that cannot be
+// decided is not acted on.
 export async function newerInstalled(
   root: string, read: (path: string) => Promise<string>, told: string | null, now: number = Date.now(), announced = false,
 ): Promise<Newer | null> {
@@ -114,9 +114,9 @@ export function runtimeChanges(out: string, newer: Newer, loaded: ReadonlySet<st
 }
 
 /*
- * An orchestrator's generation is told of a newer install only once it has lived: run this long, or
- * held this much context. A younger one keeps its code; a defect fix it needs reaches it by an
- * explicit message.
+ * An orchestrator's generation has the home servers read a newer install's conf only once it has
+ * lived: run this long, or held this much context, and it is told nothing either way. A younger one
+ * keeps its code; a defect fix it needs reaches it by an explicit message.
  */
 export const GENERATION_LIVED_MS = 2 * 3_600_000
 export const GENERATION_LIVED_TOKENS = 150_000

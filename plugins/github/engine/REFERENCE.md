@@ -226,18 +226,15 @@ A review record is refused from a session that pushed the head it reviews
 
 **E2E computed from its run.** `run` (an argv, no shell) is run by the tool in the checkout at the
 head, after the head and clean checks, only when Bash would run it without asking, within 570 s,
-the head unmoved after. `ran` names a foreground Bash command line this session ran to its end, in that checkout (its directory or a leading `cd <absolute path> &&`) since its `HEAD`
-last moved. Exit 0 is `pass`, else `fail`; the detail names the command, head and exit. A
+the head unmoved after. `ran` names a command run to its end as a foreground Bash line in that checkout (its directory, or a leading `cd <absolute path> &&`) since its `HEAD` last moved; a pipe, `;`, `&`, a newline, an unclosed quote, a `\` or a non-plain first word: kept, quoted, never matched (its exit code is the line's). Exit 0 is `pass`, else `fail`. A
 `result: pass|fail` with neither, or with a `ran` not seen, is written, its detail opening `stated, not
-computed: `, and observed (`github.record.e2e-stated`). `waived` and `not-applicable` take no run.
+computed: `, and observed. `waived` and `not-applicable` take no run.
 
 Not producers: `start-review`, `process-comments`, a human `APPROVED` review on GitHub.
 
 ### E2E a pull request does not need
 
-Both routes are `hooks/e2e-scope.ts`'s.
-
-- **No runtime.** `not-applicable` only when no PR file (`pr-files` at the head) holds runtime (`runtimeFiles`).
+- **No runtime.** `not-applicable` only when no PR file (`pr-files` at the head) holds runtime.
 - **Check plan.** `mcp__orchestrator__review`'s `{pr, plan}`: e2e `required|none|screenshots`, norms `required|none`, review
   `required[: max <n>]|one-pass` (core's `readiness.ts`), each `<need>[: <reason>]`, a reason unless the first; rules
   in `writing/pull-requests.md`. One file per PR in `<data dir>/check-plans/`, posted on the PR;

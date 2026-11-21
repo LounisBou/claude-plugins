@@ -2,10 +2,10 @@
 // message's variable parts normalised, and the cursor that moves one reading to the next.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CURSOR_FILE, errors, failureOf, group, normalise, pluginScript, promptGroups, readDay, render } from './errors.ts'
+import { CURSOR_FILE, baseName, concerns, cursorFileOf, errors, failureOf, group, learn, normalise, pluginScript, promptGroups, readDay, render } from './errors.ts'
 import { toolEvents } from '../../../../hooks/collect.ts'
 import { append, eventsDir } from './store.ts'
 
@@ -157,6 +157,139 @@ test('errors: a cursor that is no JSON, or a file shorter than its offset, reads
     assert.equal(errors({ stateDir, now: NOW })[0], 'errors since 2026-11-19T12:00Z: 1 failed call(s)')
     writeFileSync(join(stateDir, CURSOR_FILE), JSON.stringify({ v: 1, offsets: { '2026-11-20.jsonl': 999_999 } }))
     assert.equal(errors({ stateDir, now: NOW })[0], 'errors since 2026-11-19T12:00Z: 1 failed call(s)')
+  })
+})
+
+// Two orchestrations on one machine, each with its own session and an agent that reports to it. A session is
+// told by its events: the failure of its first turn has no title yet, and is the session's all the same.
+const BILLING = 'Orch: billing'
+const FIRMWARE = 'Orch: firmware'
+const BS = 'b0000000-0000-4000-8000-000000000001'
+const BA = 'b0000000-0000-4000-8000-000000000002'
+const FS = 'f0000000-0000-4000-8000-000000000001'
+const FA = 'f0000000-0000-4000-8000-000000000002'
+const NS = '99999999-0000-4000-8000-000000000001'
+const AG = 'c0000000-0000-4000-8000-000000000001'
+const RN = 'c0000000-0000-4000-8000-000000000002'
+const failed = (session: string, ts: string, message: string, more: Record<string, unknown> = {}): string =>
+  call(ts, { tool: 'Edit', mcp_server: undefined, outcome: 'error', error_message: message, session, ...more })
+const titled = (session: string, ts: string, title: string, parent?: string): string => call(ts, { tool: 'Edit', mcp_server: undefined, outcome: 'ok', session, title, ...(parent === undefined ? {} : { parent }) })
+const pluginError = (ts: string, message: string, more: Record<string, unknown> = {}): string => refusal(ts, message, more)
+const messages = (lines: string[]): string[] => lines.filter(l => /^\d+× /.test(l)).map(l => /: (.*?) \[/.exec(l)?.[1] ?? l).sort()
+const scoped = (orchestration: string, plugins = false) => ({ orchestration, plugins })
+
+test('baseName: a reference and the former shape are dropped, so a successor shares its predecessors\' name', () => {
+  assert.equal(baseName('Orch: billing [a1b2c3]'), 'Orch: billing')
+  assert.equal(baseName('Orch : billing'), 'Orch: billing')
+  assert.equal(baseName(' Orch: billing '), 'Orch: billing')
+  assert.equal(baseName('Orch: build [2]'), 'Orch: build')
+  assert.equal(baseName('Orch: build [ZZ9] '), 'Orch: build')
+  assert.equal(cursorFileOf(undefined), CURSOR_FILE)
+  assert.equal(cursorFileOf('Orch: Claude plugins [21cd55]'), 'errors-Orch%3A%20Claude%20plugins.json')
+  assert.notEqual(cursorFileOf('Orch: Billing'), cursorFileOf('Orch: billing'))
+  assert.notEqual(cursorFileOf('Orch: a-b'), cursorFileOf('Orch: a b'))
+})
+
+test('learn and concerns: a session is the orchestration\'s by its title or its parent under any reference; a failure is dropped only when its session is known as another\'s', () => {
+  const known = new Map<string, boolean>()
+  const scope = scoped(BILLING)
+  const f = (session: string) => parsed(failed(session, '2026-11-20T10:00:00Z', 'x'))[0]!
+  for (const line of [titled(BS, '2026-11-20T09:00:00Z', BILLING), titled(BA, '2026-11-20T09:00:00Z', 'Agent: x', 'Orch: billing [a1b2c3]'), titled(FS, '2026-11-20T09:00:00Z', FIRMWARE), titled(FA, '2026-11-20T09:00:00Z', 'Agent: y', 'Orch: firmware [a1b2c3]'), failed(NS, '2026-11-20T09:00:00Z', 'no name')]) learn(known, line, scope)
+  assert.deepEqual([BS, BA, FS, FA].map(session => concerns(f(session), scope, known)), [true, true, false, false])
+  assert.equal(concerns(f(NS), scope, known), true, 'a session no event has named is never dropped')
+  // An agent launched without a parent keeps its own title: named as no orchestration, so unknown and shown.
+  learn(known, titled(AG, '2026-11-20T09:00:00Z', 'Agent: review fw_legacy#31'), scope)
+  assert.equal(known.has(AG), false)
+  assert.equal(concerns(f(AG), scope, known), true)
+  // A host title before the rename to `Orch: billing` decides nothing; the rename does.
+  learn(known, titled(RN, '2026-11-20T09:00:00Z', 'Fix the telemetry errors'), scope)
+  assert.equal(concerns(f(RN), scope, known), true)
+  learn(known, titled(RN, '2026-11-20T09:10:00Z', BILLING), scope)
+  assert.equal(known.get(RN), true)
+  // A session named as another orchestration is its verdict for good, whatever it is titled after.
+  learn(known, titled(FS, '2026-11-20T09:30:00Z', BILLING), scope)
+  assert.equal(known.get(FS), false)
+  learn(known, titled(BS, '2026-11-20T09:30:00Z', 'Agent: renamed', 'Orch: other [a1b2c3]'), scope)
+  assert.equal(concerns(f(BS), scope, known), true, 'a session once known as the orchestration\'s stays its own')
+  assert.equal(concerns(parsed(pluginError('2026-11-20T10:00:00Z', 'p', { session: FS }))[0]!, scope, known), false)
+  assert.equal(concerns(parsed(pluginError('2026-11-20T10:00:00Z', 'p', { session: FS }))[0]!, scoped(BILLING, true), known), true)
+})
+
+test('errors: each orchestration\'s reading holds the failures of its own sessions, the first turn\'s untitled ones too, and an unscoped reading holds all', () => {
+  scratch(({ stateDir, day }) => {
+    day('2026-11-20', [
+      failed(BS, '2026-11-20T09:59:00Z', 'billing first turn'), failed(FS, '2026-11-20T09:59:30Z', 'firmware first turn'),
+      titled(BS, '2026-11-20T10:00:00Z', BILLING), titled(BA, '2026-11-20T10:00:00Z', 'Agent: x', 'Orch: billing [a1b2c3]'),
+      titled(FS, '2026-11-20T10:00:00Z', FIRMWARE), titled(FA, '2026-11-20T10:00:00Z', 'Agent: y', 'Orch: firmware [a1b2c3]'),
+      failed(BS, '2026-11-20T10:01:00Z', 'billing own', { title: BILLING }), failed(BA, '2026-11-20T10:02:00Z', 'billing agent', { title: 'Agent: x', parent: 'Orch: billing [a1b2c3]' }),
+      failed(FS, '2026-11-20T10:03:00Z', 'firmware own', { title: FIRMWARE }), failed(FA, '2026-11-20T10:04:00Z', 'firmware agent'),
+      failed(NS, '2026-11-20T10:05:00Z', 'nobody'),
+      titled(AG, '2026-11-20T09:58:00Z', 'Agent: review fw_legacy#31'), failed(AG, '2026-11-20T10:06:00Z', 'agent without parent'),
+      failed(RN, '2026-11-20T09:57:00Z', 'renamed first turn'), titled(RN, '2026-11-20T09:57:30Z', 'Fix the telemetry errors'), titled(RN, '2026-11-20T09:58:30Z', BILLING),
+    ])
+    const read = (orchestration: string) => messages(errors({ stateDir, now: NOW, since: 0, scope: scoped(orchestration) }))
+    assert.deepEqual(read(BILLING), ['agent without parent', 'billing agent', 'billing first turn', 'billing own', 'nobody', 'renamed first turn'])
+    assert.deepEqual(read(FIRMWARE), ['agent without parent', 'firmware agent', 'firmware first turn', 'firmware own', 'nobody'])
+    assert.equal(messages(errors({ stateDir, now: NOW, since: 0 })).length, 9)
+    assert.deepEqual(read('Orch: other'), ['agent without parent', 'nobody'])
+  })
+})
+
+test('errors: what a reading learnt of a session is kept, so an untitled failure of a later reading is decided by it', () => {
+  scratch(({ stateDir, day, add }) => {
+    day('2026-11-20', [titled(BS, '2026-11-20T10:00:00Z', BILLING), titled(FS, '2026-11-20T10:00:00Z', FIRMWARE)])
+    assert.deepEqual(messages(errors({ stateDir, now: NOW, scope: scoped(BILLING) })), [])
+    add('2026-11-20', [failed(BS, '2026-11-20T12:10:00Z', 'billing later'), failed(FS, '2026-11-20T12:11:00Z', 'firmware later'), failed(NS, '2026-11-20T12:12:00Z', 'unknown later')])
+    assert.deepEqual(messages(errors({ stateDir, now: NOW + 1000, scope: scoped(BILLING) })), ['billing later', 'unknown later'])
+  })
+})
+
+test('errors: with plugins, the plugins\' errors of every session join the orchestration\'s own, and only those', () => {
+  scratch(({ stateDir, day }) => {
+    day('2026-11-20', [
+      titled(BS, '2026-11-20T09:00:00Z', BILLING), titled(FS, '2026-11-20T09:00:00Z', FIRMWARE), titled(FA, '2026-11-20T09:00:00Z', 'Agent: y', 'Orch: firmware [a1b2c3]'),
+      failed(BS, '2026-11-20T10:00:00Z', 'billing own'), failed(FS, '2026-11-20T10:02:00Z', 'firmware own'),
+      pluginError('2026-11-20T10:03:00Z', 'plugin a', { session: FS }), pluginError('2026-11-20T10:04:00Z', 'plugin b', { session: FA }), pluginError('2026-11-20T10:05:00Z', 'plugin mine', { session: BS }),
+    ])
+    const since = Date.parse('2026-11-20T00:00:00Z')
+    const read = (orchestration: string, plugins: boolean) => errors({ stateDir, now: NOW, since, scope: scoped(orchestration, plugins) })
+    assert.deepEqual(messages(read(BILLING, false)), ['billing own', 'plugin mine'])
+    const withPlugins = read(BILLING, true)
+    assert.deepEqual(messages(withPlugins), ['billing own', 'plugin a', 'plugin b', 'plugin mine'])
+    assert.match(withPlugins[1] ?? '', /^plugin \(3 call\(s\), 3 group\(s\)\):$/)
+    // The other orchestration's reader, flagged the same way, sees the plugin errors of both.
+    assert.deepEqual(messages(read(FIRMWARE, true)), ['firmware own', 'plugin a', 'plugin b', 'plugin mine'])
+  })
+})
+
+test('errors: two readers\' cursors are their own — one reading never swallows what the other has not read, and a successor reads where its predecessor stopped', () => {
+  scratch(({ stateDir, day, add }) => {
+    day('2026-11-20', [titled(BS, '2026-11-20T09:00:00Z', BILLING), titled(FS, '2026-11-20T09:00:00Z', FIRMWARE), failed(BS, '2026-11-20T10:00:00Z', 'billing one'), failed(FS, '2026-11-20T10:01:00Z', 'firmware one')])
+    const read = (orchestration: string, now: number) => messages(errors({ stateDir, now, scope: scoped(orchestration) }))
+    assert.deepEqual(read(BILLING, NOW), ['billing one'])
+    add('2026-11-20', [failed(FS, '2026-11-20T12:10:00Z', 'firmware two'), failed(BS, '2026-11-20T12:11:00Z', 'billing two')])
+    assert.deepEqual(read(FIRMWARE, NOW + 1000), ['firmware one', 'firmware two'])
+    assert.deepEqual(read(BILLING, NOW + 1000), ['billing two'])
+    assert.deepEqual(read('Orch: billing [ffffff]', NOW + 2000), [])
+    assert.deepEqual(read(FIRMWARE, NOW + 2000), [])
+    assert.equal(messages(errors({ stateDir, now: NOW + 3000 })).length, 4, 'the unscoped cursor is a third one: it reads the machine from the first reading')
+    assert.deepEqual(readdirSync(stateDir).filter(n => n.endsWith('.json')).sort(), ['errors-Orch%3A%20billing.json', 'errors-Orch%3A%20firmware.json', 'errors.json'])
+  })
+})
+
+test('errors: the permission prompts and their answers follow their session, the untitled ones too', () => {
+  scratch(({ stateDir, day }) => {
+    day('2026-11-20', [
+      ask('2026-11-20T09:00:00Z', 'a', 'mine', { session: BS }), call('2026-11-20T09:00:05Z', { tool: 'Write', tool_use_id: 'a', outcome: 'ok', ask_ms: 5000, session: BS }),
+      titled(BS, '2026-11-20T10:00:00Z', BILLING), titled(FS, '2026-11-20T10:00:00Z', FIRMWARE),
+      ask('2026-11-20T10:01:00Z', 'b', 'theirs', { session: FS }),
+    ])
+    const since = Date.parse('2026-11-20T00:00:00Z')
+    const billing = errors({ stateDir, now: NOW, since, scope: scoped(BILLING, true) })
+    assert.equal(billing.filter(l => l.startsWith('permission prompts')).length, 1)
+    assert.match(billing.join('\n'), /1× asked Write: mine \(allowed 1, denied 0, unanswered 0, up to 5 s\)/)
+    assert.doesNotMatch(billing.join('\n'), /theirs/)
+    assert.match(errors({ stateDir, now: NOW, since, scope: scoped(FIRMWARE, true) }).join('\n'), /1× asked Write: theirs \(allowed 0, denied 0, unanswered 1\)/)
   })
 })
 

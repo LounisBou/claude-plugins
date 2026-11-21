@@ -135,8 +135,9 @@ directory of its own, never changed after, its manifests' versions stamped with 
 the marketplace is pointed at it, in the configuration directory that owns the `plugins` and in
 every `<owner>-*` sibling whose `plugins` is a link to them, whichever runs the deploy (a config that cannot be pointed fails the
 run, named): a new session reads the new directory, a running one keeps the
-one it loaded, and a running orchestrator or coordinator is told at its next prompt, once per
-commit, to hand over to a successor. `--rollback` points back at the commit installed before; `--status` prints the
+one it loaded, and a running coordinator is told at its next prompt, once per commit, to hand over
+to a successor. A running orchestrator is not: it keeps its version to its context gate, and hands
+over earlier only when a defect of that version blocks it. `--rollback` points back at the commit installed before; `--status` prints the
 installed commit in one line, and `installed.json` is what another machine reads (`contracts.md`).
 Run every 5 minutes by the machine's scheduler, from the installed tree itself (a commit whose own
 `deploy.ts --status` fails is refused before `current` moves), its output and errors kept in a

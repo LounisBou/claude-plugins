@@ -12,7 +12,10 @@
 //   telemetry.ts sweep    [--auto] --config <dir>         the sessions that never ended, summarized, the settled
 //                                                         round questions and the dispatch record's writes the
 //                                                         orchestrator's journal holds; with --auto, at most once a day
-//   telemetry.ts errors   --config <dir> [--since <ISO>]  the failed calls since the last reading, grouped; --since reads from a time and moves no cursor
+//   telemetry.ts errors   --config <dir> [--since <ISO>] [--orchestration <name> [--plugins]]
+//                                                         the failed calls since the last reading, grouped; --since reads from a time and moves no cursor;
+//                                                         --orchestration keeps the calls of that orchestration's sessions, with a cursor of its own,
+//                                                         --plugins adding the plugins' errors of every session
 //   telemetry.ts report   --config <dir> [--week <first day>] [--tool <owner/name>]...
 //                                                         the week's cost, delay, questions, refusals and figures
 //
@@ -24,12 +27,13 @@ import { homedir, hostname } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findingCounts, findingId, parseLensDescription, parseLensFindings } from '../../../core/lens.ts'
+import { parseSessionName } from '../../../core/names.ts'
 import { moduleDirOf } from '../../../core/orchestration.ts'
 import { firstRepository, makeEvent, remoteUrlsArgv, type Event } from '../../../hooks/collect.ts'
 import { planArchive } from './lib/archive.ts'
 import { apiCalls, callFields, callTotals, END_SLACK_AFTER_MS, lastTurn } from './lib/cache.ts'
 import { runAuto } from './lib/auto.ts'
-import { errors } from './lib/errors.ts'
+import { baseName, errors } from './lib/errors.ts'
 import { exportExclusive, logsRepo, machineName, type Git } from './lib/export.ts'
 import { parseOptions, report, type Check, type Gh } from './lib/report.ts'
 import { parseEnvFile, type EnvSecrets } from './lib/redact.ts'
@@ -37,7 +41,7 @@ import { append, check, eventsDir, parseEvent } from './lib/store.ts'
 import { claimSweep, sweep, sweepDue } from './lib/sweep.ts'
 import { summarize, summarizeFile, transcriptOf } from './lib/transcript.ts'
 
-export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill [--calls]|sweep [--auto]|errors [--since <ISO>]|report [--week <YYYY-MM-DD>] [--tool <owner/name>]...} --config <dir> [<transcript>...]'
+export const USAGE = 'usage: telemetry.ts {append|check|export [--auto [--foreground]]|backfill [--calls]|sweep [--auto]|errors [--since <ISO>] [--orchestration <name> [--plugins]]|report [--week <YYYY-MM-DD>] [--tool <owner/name>]...} --config <dir> [<transcript>...]'
 
 /** A git command is never left running past this. */
 export const GIT_TIMEOUT_MS = 60_000
@@ -243,7 +247,18 @@ export function run(args: readonly string[], deps: Deps): number {
       deps.err('errors: --since takes an ISO time (2026-11-20T00:00:00Z)')
       return 2
     }
-    for (const line of errors({ stateDir, now: deps.now(), since })) deps.out(line)
+    const named = operands.indexOf('--orchestration')
+    const orchestration = named >= 0 ? operands[named + 1] : undefined
+    const plugins = operands.includes('--plugins')
+    const used = new Set([...(at >= 0 ? [at, at + 1] : []), ...(named >= 0 ? [named, named + 1] : [])])
+    const unknown = operands.filter((word, i) => word !== '--plugins' && !used.has(i))
+    // A name that is no session name, or a flag misspelled, would read the whole machine or nothing: refused, not guessed.
+    if (unknown.length > 0 || (named >= 0 && (orchestration === undefined || parseSessionName(baseName(orchestration)) === null)) || (plugins && named < 0)) {
+      deps.err('errors: usage: [--since <ISO>] [--orchestration "Orch: billing" [--plugins]]; --orchestration takes a session name and --plugins goes with it')
+      return 2
+    }
+    const scope = orchestration === undefined ? undefined : { orchestration, plugins }
+    for (const line of errors({ stateDir, now: deps.now(), since, scope })) deps.out(line)
     return 0
   }
   const read = readSecrets(deps.env)
