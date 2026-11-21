@@ -484,6 +484,10 @@ test('on a data root placed apart, the deck, the chains, the round and the to-do
   const quoted = (path: string): string => path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   assert.match(w.text(), new RegExp(`State directory: \`${quoted(w.state)}\`; data directory: \`${quoted(data)}\``))
   assert.ok(w.text().includes(`grep -rl '<keyword>' ${data}/round`))
+  // Step 2 sends the successor to each question's entry in the data root's round, never the protected root's.
+  assert.ok(w.text().includes(`\`<id>.json\` under \`${data}/round/\``))
+  assert.ok(!w.text().includes(`${w.state}/round`))
+  assert.ok(!w.text().includes("the state directory's `round/`"))
 })
 
 test('rowOfBrief reads the row a brief was printed for: a phase brief\'s, a rotation brief\'s; none from free text', () => {
