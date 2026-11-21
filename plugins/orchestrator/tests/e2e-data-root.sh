@@ -1,10 +1,10 @@
 #!/bin/bash
 # tests/e2e-data-root.sh [<scratch dir that does not exist yet>]
 # The orchestrator's two roots end to end, over the real scripts and no terminal: a throwaway agent's
-# dispatch, its brief and its spawn (a dry run: the app is not asked), a question entered in the round,
-# the launcher's log and its launch script, with the protected root and the data root two scratch
-# directories. Nothing of the machine's state is read or written: HOME, CLAUDE_CONFIG_DIR and
-# ORCHESTRATOR_STATE_DIR are scratch. What a session could plant in the data root, under the names of
+# dispatch, its brief and its spawn (a dry run: the app is not asked, so no launch script is run), a
+# question entered in the round, the launcher's log and the directory its launch-script writer picks,
+# with the protected root and the data root two scratch directories. Nothing of the machine's state
+# is read or written: HOME, CLAUDE_CONFIG_DIR and ORCHESTRATOR_STATE_DIR are scratch. What a session could plant in the data root, under the names of
 # what runs, is planted there; the run holds that none of it ran or was read, that what any session
 # writes (the record, the brief, the registry, the round entry, the log) is under the data root and
 # what runs (the venv, the launch script, the server catalogue, the models file) under the protected root.
@@ -22,13 +22,13 @@ P="$E/protected"; D="$E/data"; C="$E/config"; W="$E/work"
 mkdir -p "$P/venv/bin" "$D" "$C/claude-orchestrator" "$C/sessions" "$E/bin" "$E/projects" "$W"
 printf '{"version": 1, "dir": "%s"}\n' "$D" > "$P/data-root.json"
 printf '{"version": 1, "dir": "%s"}\n' "$D" > "$C/claude-orchestrator/data-root.json"
-# The protected venv: says it ran, then runs the machine's interpreter.
-printf '#!/bin/sh\necho "venv run: %s/venv/bin/python" >> "%s/ran.log"\nexec python3 "$@"\n' "$P" "$E" > "$P/venv/bin/python"
+# The protected venv: says it ran and with what, then runs the machine's interpreter.
+printf '#!/bin/sh\necho "venv run: %s/venv/bin/python $*" >> "%s/ran.log"\nexec python3 "$@"\n' "$P" "$E" > "$P/venv/bin/python"
 chmod +x "$P/venv/bin/python"
 printf '{"servers":{"a":{"command":"a-cmd"}},"default":["a"]}\n' > "$P/mcp.json"
 printf '{"deep":"","standard":"","light":"a-model/low"}\n' > "$P/models.json"
 # Planted in the data root, under the names of what runs: an interpreter, a catalogue, a models file.
-mkdir -p "$D/venv/bin" "$D/prompts" "$P/round"
+mkdir -p "$D/venv/bin" "$P/round"
 printf '#!/bin/sh\necho "PLANTED venv run" >> "%s/ran.log"\nexit 1\n' "$E" > "$D/venv/bin/python"
 chmod +x "$D/venv/bin/python"
 printf '{"servers":{"evil":{"command":"evil-cmd"}},"default":["evil"]}\n' > "$D/mcp.json"
@@ -58,16 +58,13 @@ bash "$S/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$W" --tier light --ti
 spawn_exit=$?
 grep -E '^(spawn:|prompt_file|mcp|mcp_file|anchor|launch|effort|pair_source|ERROR)' "$E/spawn.out"; echo "exit=$spawn_exit"
 
-echo "### the launch script, written by the launcher's own writer, then run"
-# The launch script is written under the protected root. A script of the same name planted in the
-# data root, where a session could put one, must not be the one that runs.
-E2E_RAN="$E/ran.log" PYTHONPATH="$S/iterm-agents/scripts" "$P/venv/bin/python" -c '
-import os, iterm_agent as m
-print(m.write_launch_script("echo \"launch run: $0\" >> \"" + os.environ["E2E_RAN"] + "\"", "Agent: e2e"))
+echo "### the launch script's directory, as the launcher's own writer picks it"
+# The dry run writes no launch script: the writer a real spawn calls says where it puts one.
+PYTHONPATH="$S/iterm-agents/scripts" "$P/venv/bin/python" -c '
+import iterm_agent as m
+print(m.write_launch_script("true", "Agent: e2e"))
 ' > "$E/launch.path" 2> "$E/launch.err"
 launch=$(tail -1 "$E/launch.path")
-printf '#!/bin/sh\necho "PLANTED launch run" >> "%s/ran.log"\n' "$E" > "$D/prompts/$(basename "$launch")"
-sh "$launch"
 echo "launch=$launch"
 
 echo "### a question entered in the round through core's store at the data root, read by the coordinator"
@@ -110,8 +107,7 @@ check "the launch script is under the protected root" 'case "$launch" in "$P/pro
 check "the servers are the protected catalogue" '[ "$(said mcp)" = a ]'
 check "the model is the protected models file's" 'grep -q -- "--model a-model --effort low " "$E/spawn.out"'
 check "the anchor is the data root chain" '[ "$(said anchor)" = /dev/ttys901 ]'
-check "the protected launch script ran, the one of the same name planted in the data root did not" 'grep -q "^launch run: $launch$" "$E/ran.log" && ! grep -q "PLANTED launch" "$E/ran.log"'
-check "only the protected venv ran" 'grep -q "^venv run: $P/venv/bin/python$" "$E/ran.log" && ! grep -q "PLANTED venv" "$E/ran.log"'
+check "the spawn ran the launcher on the protected venv, never the one planted in the data root" 'grep -q "^venv run: $P/venv/bin/python [^ ]*/iterm_agent.py --request .*\"command\":\"spawn\"" "$E/ran.log" && ! grep -q "PLANTED venv" "$E/ran.log"'
 check "nothing planted was read" '! grep -q evil "$E/spawn.out"'
 check "no data item on the protected root" '[ -z "$(cd "$P" && find . -type f ! -path "./venv/*" ! -path "./prompts/*" ! -name mcp.json ! -name models.json ! -name data-root.json)" ]'
 exit $fail
