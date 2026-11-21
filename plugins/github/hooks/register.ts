@@ -1262,7 +1262,10 @@ async function undraftForCi($: Mod, repo: string, pr: number, followed: Followed
   try {
     await runGh($, 'pr-ready', { pr, 'for-ci': true }, repo)
   } catch (err: unknown) {
-    return { ...followed, line: followed.line ?? gateLeftLine(repo, pr, reasonOf(err).trim()) }
+    // Said by itself, whatever line the gate has, and tried again at the next read of this head.
+    undraftedForCi.delete(key)
+    note($, 'github: ' + repo + '#' + pr + ' not taken out of draft for its CI: ' + reasonOf(err).trim())
+    return followed
   }
   note($, ciUndraftLine(repo, pr))
   return { ...followed, draft: false }

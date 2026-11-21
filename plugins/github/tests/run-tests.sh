@@ -2356,7 +2356,7 @@ check "pr-gate never reads the default branch as a stacked base, nor asks" "0" \
 DRAFT8='{"number":12,"state":"open","draft":true,"commits":3,"head":{"sha":"'$GATEHEAD'","ref":"feat"},"labels":[{"name":"Not Ready"}]}'
 WIPRUN8='{"id":1,"name":"wip-check / wip-check","status":"completed","conclusion":"failure","check_suite":{"id":501}}'
 APPRUN8='{"id":2,"name":"tests","status":"completed","conclusion":"failure","check_suite":{"id":501}}'
-ACTIONS8='{"workflow_runs":[{"id":901,"check_suite_id":501,"workflow_id":7,"path":".github/workflows/app.yml","status":"completed","conclusion":"failure"}]}'
+ACTIONS8='{"workflow_runs":[{"id":901,"check_suite_id":501,"workflow_id":7,"path":".github/workflows/app.yml","event":"pull_request","status":"completed","conclusion":"failure"}]}'
 workflow8() { printf '{"content":"%s"}' "$(printf '%s' "$2" | base64 | tr -d '\n')" > "$F8/GET_repos_acme_thing_contents_.github_workflows_$1__ref=$GATEHEAD.json"; }
 draft8() {
   gate8 "$1" "$DRAFT8" '{"statuses":[]}' '{"total_count":2,"check_runs":['"$2"']}' "$ACTIONS8"
@@ -2371,7 +2371,20 @@ check "pr-gate does not say it when another check of the draft failed for its ow
 draft8 draftunread "$WIPRUN8"
 rm "$F8/GET_repos_acme_thing_contents_.github_workflows_wip-check.yml__ref=$GATEHEAD.json"
 check "pr-gate does not say it when the workflow a failure rests on cannot be read" "False" "$(draftflag8)"
-gate8 notdraft "$(printf '%s' "$DRAFT8" | sed 's/"draft":true/"draft":false/')" '{"statuses":[]}' '{"total_count":1,"check_runs":['"$WIPRUN8"']}' "$ACTIONS8"
+draft8 draftdirect "$WIPRUN8"
+workflow8 app.yml "$(printf 'jobs:\n  wip-check:\n    runs-on: ubuntu\n    steps:\n      - run: test "${{ github.event.pull_request.draft }}" = false\n')"
+check "pr-gate says it when the failed job itself reads the draft state" "True" "$(draftflag8)"
+draft8 draftpush "$WIPRUN8"
+printf '%s' "${ACTIONS8/pull_request/push}" > "$F8/GET_repos_acme_thing_actions_runs__head_sha=${GATEHEAD}&per_page=100.json"
+check "pr-gate does not say it of a failure in a run of another event than the pull request's" "False" "$(draftflag8)"
+draft8 draftother "$WIPRUN8"
+workflow8 wip-check.yml "$(printf 'jobs:\n  wip-check:\n    steps:\n      - run: exit 1\n  other:\n    if: github.event.pull_request.draft\n')"
+check "pr-gate does not say it when the draft state is read by another job of the called workflow" "False" "$(draftflag8)"
+draft8 draftstatus "$WIPRUN8"
+printf '%s' '{"statuses":[{"context":"ci/legacy","state":"failure"}]}' > "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_status.json"
+check "pr-gate does not say it when a commit status failed beside the draft's own failures" "False" "$(draftflag8)"
+draft8 notdraft "$WIPRUN8"
+printf '%s' "$(cat "$F8/GET_repos_acme_thing_pulls_12.json" | sed 's/"draft":true/"draft":false/')" > "$F8/GET_repos_acme_thing_pulls_12.json"
 check "pr-gate says nothing of it on a pull request out of draft" "False" "$(draftflag8)"
 
 # The base branch and its rules are read once per computation, by the stacked test and the required checks alike.

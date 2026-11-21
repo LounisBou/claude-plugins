@@ -656,7 +656,8 @@ export function gateUndraft(gate: Gate): boolean {
   if (!ciUndraft(gate)) return false
   const ci = gate.ci
   const failed = (ci.failed ?? []).length
-  return failed === 0 ? (ci.running ?? 0) === 0 : ci.draft_failed === true
+  // A read of the required checks that failed is no evidence the draft state keeps CI from running.
+  return failed === 0 ? (ci.running ?? 0) === 0 && (ci.unverified ?? []).length === 0 : ci.draft_failed === true
 }
 
 // Whether what a pull request misses is CI alone (missingItems names each CI item « CI … »): the only thing a draft gains by leaving draft.

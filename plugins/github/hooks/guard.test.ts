@@ -2435,7 +2435,7 @@ test('a read that finds the four short of a pull request not Ready says nothing'
 })
 
 test('a read of a Ready pull request whose CI turned red puts Not Ready back', async ($, on) => {
-  const seen = await world($, on, { labels: ['Ready'], draft: false, ci: { result: 'FAILURE', failed: ['lint'] } })
+  const seen = await world($, on, { labels: ['Ready'], ci: { result: 'FAILURE', failed: ['lint'] } })
   const out = await $.tool.call(gh('pr-checks', { pr: 12 }))
   expect(out.result).toBe('ok')
   expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: CI failed: lint'])

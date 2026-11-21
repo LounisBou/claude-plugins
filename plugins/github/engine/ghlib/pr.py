@@ -322,7 +322,8 @@ def _suite_workflows(owner, name, sha):
     workflows = {str(run["check_suite_id"]): run["workflow_id"] for run in placed}
     suite_runs = {str(run["check_suite_id"]): run.get("id") for run in placed}
     states = {str(run["check_suite_id"]): _run_state(run) for run in placed}
-    paths = {str(run["check_suite_id"]): run.get("path") for run in placed}
+    # Only the runs of a pull_request event: a push at the same head names its checks alike, and fails for its own reasons.
+    paths = {str(run["check_suite_id"]): run.get("path") for run in placed if run.get("event") == "pull_request"}
     return workflows, suite_runs, states, paths
 
 
@@ -432,10 +433,11 @@ def _workflow_text(owner, name, path, sha, texts):
 
 
 def _job_block(text, key):
-    """The lines of the job `key` of a workflow file (its key line to the next line of its level), or None."""
+    """The lines of the job `key` of a workflow file, under its `jobs:` (its key line to the next line of its level), or None."""
     lines = text.splitlines()
-    for at, line in enumerate(lines):
-        found = re.match(r"^(\s+)%s:\s*$" % re.escape(key), line)
+    first = next((at for at, line in enumerate(lines) if re.match(r"^jobs:\s*$", line)), len(lines))
+    for at in range(first + 1, len(lines)):
+        found = re.match(r"^(\s+)%s:\s*$" % re.escape(key), lines[at])
         if found:
             block = []
             for after in lines[at + 1:]:
@@ -454,7 +456,8 @@ def _draft_failed(owner, name, sha, check_runs, failed, paths):
     for run in check_runs:
         if run.get("status") == "completed" and run.get("conclusion") in _FAILING and run.get("name") in failed:
             suites.setdefault(str((run.get("check_suite") or {}).get("id")), []).append(run.get("name") or "")
-    if not suites or sum(len(names) for names in suites.values()) < len(failed):
+    # Every failure is one of these runs, by name: a status, or a run of another event, that failed is a failure of its own.
+    if not suites or not set(failed) <= {check for names in suites.values() for check in names}:
         return False
     texts = {}
     for suite, names in suites.items():
@@ -463,14 +466,16 @@ def _draft_failed(owner, name, sha, check_runs, failed, paths):
         if text is None:
             return False
         for check in names:
-            block = _job_block(text, check.split(" / ")[0])
+            job, _, called_job = check.partition(" / ")
+            block = _job_block(text, job)
             if block is None:
                 return False
             if _DRAFT_READ.search(block):
                 continue
             called = _CALLED_WORKFLOW.search(block)
-            callee = _workflow_text(owner, name, called.group(1), sha, texts) if called else None
-            if not callee or not _DRAFT_READ.search(callee):
+            callee = _workflow_text(owner, name, called.group(1), sha, texts) if called and called_job else None
+            callee_block = _job_block(callee, called_job) if callee else None
+            if not callee_block or not _DRAFT_READ.search(callee_block):
                 return False
     return True
 

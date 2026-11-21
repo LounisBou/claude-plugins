@@ -165,8 +165,7 @@ follows. There, opening a pull request out of draft, `pr-ready`, a merge
 and every other write run without a question, which ends agents held on a
 dialog nobody answers in a repository that merges on its own. A deny rule
 still refuses, an ask from an explicit rule still asks, and the writing
-rules still apply. Elsewhere leaving draft is asked, and every other write
-is asked as before. An absent file
+rules still apply. Elsewhere a write is asked as before. An absent file
 lists no repository; an unreadable or malformed one lists none either and
 says so in one transcript line.
 

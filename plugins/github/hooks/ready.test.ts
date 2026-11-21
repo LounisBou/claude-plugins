@@ -249,6 +249,7 @@ test('the gate undrafts by itself a draft none of whose checks ran, or whose fai
   expect(gateUndraft(gate({}, { result: 'FAILURE', failed: ['test'], total: 1 }))).toBe(false)
   expect(gateUndraft(gate({}, { result: 'FAILURE', failed: ['wip-check', 'test'], total: 2, draft_failed: false }))).toBe(false)
   expect(gateUndraft(gate({}, { result: 'FAILURE', failed: ['wip-check'], total: 2, draft_failed: true }))).toBe(false)
+  expect(gateUndraft(gate({}, { result: 'PENDING', total: 0, unverified: ['required checks unread'] }))).toBe(false)
   expect(gateUndraft(gate())).toBe(false)
   expect(gateUndraft(gate({}, { result: 'NONE', total: 0 }))).toBe(false)
   expect(gateUndraft(gate({ labels: [] }, { result: 'PENDING', total: 0 }))).toBe(false)
