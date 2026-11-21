@@ -59,7 +59,7 @@ Verify every finding on the artifact, drop what it does not bear out, merge dupl
 
 ## 7. Resource envelope
 
-- To wait for a lens or a run, run it with `run_in_background` and its exit wakes you, never a foreground `sleep`; load Monitor with `ToolSearch select:Monitor` first.
+- To wait for a lens or a run, run it with `run_in_background` and its exit wakes you, never a foreground `sleep`.
 - Kill what you start. Delete nothing in your scratchpad; other built files are removed by `rm` on their full absolute path, never through a shell variable or a glob.
 - Scratch lives in the host scratchpad your system context names, never in a directory you invent.
 {{RESOURCE_ENVELOPE}}
