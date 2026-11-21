@@ -23,7 +23,7 @@ import {
 import { tripGate, parseMeasure, measureFilePath, newerInstalled, generationLived, runtimeChanges, runtimeDiffArgv, homeReloadArgv, type Newer } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
-import { detectPatternKills } from './pattern-kills.ts'
+import { detectPatternKills, type Own } from './pattern-kills.ts'
 import {
   withDeadline, isDegradedPass, type DegradedPass,
   listing, chainOwner, ownAgents, hostStatusOf, pullRequestOf, isSuccessorSpawn,
@@ -32,10 +32,9 @@ import {
 import { launcherOf, recordsRegistryPath } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { agentsOf, ledgerLines } from '../core/pr-ledger.ts'
-import { REFERENCED, refreshRowAndDeck, showPrStates } from './supervision.ts'
+import { refreshRowAndDeck, showPrStates } from './supervision.ts'
 import { pullRequestsRead } from './tab-state.ts'
 import { fieldsOf, messageOf, reasonOf, type Host, type On, type ProcessRunResult } from './host.ts'
-import { shorten } from '../core/verdict.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, bashWritesTheMap } from './models-guard.ts'
 import { configDir, gateEnv, logLine, stateDir } from './module-io.ts'
 import { prWake } from './ledger.ts'
@@ -113,10 +112,11 @@ function setNames(env: { gate?: number; gateTokens?: number }): string[] {
 // what it started, by the pid it recorded in a file (`cmd & echo $! > <file>`, then
 // `kill $(cat <file>)`; a shell variable does not outlive a Bash call, a file does). A
 // kill by pattern reaches other sessions' processes (their dev servers, the sleep of
-// their wait loops).
-export function killDecision(spawned: string | null | undefined, command: string): { deny: string } | null {
+// their wait loops) — but a `pkill` of a path that is the session's own (under its scratchpad)
+// reaches only its own, and passes.
+export function killDecision(spawned: string | null | undefined, command: string, own?: Own): { deny: string } | null {
   if (!spawned) return null                        // the operator's own sessions: untouched
-  const kills = detectPatternKills(command)
+  const kills = detectPatternKills(command, own)
   if (kills.length === 0) return null
   return { deny: `kill refused: this session was spawned by the launcher, and it kills only what it started, by the pid it recorded in a file (start it with \`cmd & echo $! > <file>\`, end it with \`kill $(cat <file>)\`). A kill by name or pattern can end other sessions' processes. Seen: ${kills.join(', ')}.` }
 }
@@ -125,9 +125,9 @@ export function killDecision(spawned: string | null | undefined, command: string
 // A session the launcher marked refuses its kills by pattern as the guard would; a mark
 // never read refuses them with the reason the guard did not finish — the safe side when
 // nothing says which session this is; an operator's own session is left alone.
-export function guardFallback(mark: string | null | undefined, command: string, why: string): { deny: string } | null {
-  if (mark !== undefined) return killDecision(mark, command)
-  const kills = detectPatternKills(command)
+export function guardFallback(mark: string | null | undefined, command: string, why: string, own?: Own): { deny: string } | null {
+  if (mark !== undefined) return killDecision(mark, command, own)
+  const kills = detectPatternKills(command, own)
   if (kills.length === 0) return null
   return { deny: `kill refused: the kill guard could not read whether the launcher spawned this session (${why}), and a kill by name or pattern waits until it can. Seen: ${kills.join(', ')}.` }
 }
@@ -205,6 +205,16 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
     hostNamesReader($, left),
     sessionId,
   )
+}
+
+// What the session owns, for the kill guard: its id. One that cannot be read is left empty, so the
+// guard refuses the more.
+async function ownOf($: Held): Promise<Own> {
+  try {
+    return { session: await $.session.id() }
+  } catch {
+    return { session: '' }
+  }
 }
 
 // prompt.submit's input carries no transcript path — that field belongs to the
@@ -344,35 +354,6 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     return next(e)
   })
 
-  // An agent's long message to its orchestrator. Mounted before the Bash guard below.
-  on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
-    const { to: target, message } = e
-    const to = typeof target === 'string' ? target.trim() : ''
-    // An agent's message to an orchestrator over the verdict limit: cut to it with the pointer to the
-    // report it names, let through whole when it names none. The sender is read only for such a message; one
-    // that cannot be read lets the message through.
-    let sending = e
-    if (to && typeof message === 'string' && roleOf(to.replace(REFERENCED, '').trim()) === 'orchestrator') {
-      const short = shorten(message)
-      if (short.kind === 'cut') {
-        try {
-          const sessionId = await $.session.id()
-          const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
-          if (roleOf(name) === 'agent') {
-            await logLine($, 'guards', `a message of ${message.length} characters to ${to} cut, its report at ${short.path}`)
-            sending = { ...e, message: short.text }
-          }
-        } catch (err) {
-          await logLine($, 'guards', `the sender of a message to ${to} could not be read: ${messageOf(err)}`)
-        }
-      }
-    }
-    return next(sending)
-  }).catch(async ($, e, next) => {
-    await logLine($, 'guards', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
-
   // The tier map's guard: a session of the orchestration (one whose name gives it a role)
   // that runs a Bash line overwriting the operator's map (a redirection, `tee`, `sed -i`, `mv`,
   // `cp`, `install`, `ln`) is refused: that destroys his bindings with no backup, the deletion
@@ -411,7 +392,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       if (fallback) return fallback
       return next(e)
     }
-    const decision = killDecision(spawnedMark, command)
+    const decision = killDecision(spawnedMark, command, spawnedMark && command.includes('pkill') ? await ownOf($) : undefined)
     if (decision) return decision
     const out = await next(e)
     if (!e.agentId && isSuccessorSpawn(command) && out && !answered(out).isError && !answered(out).deny) {

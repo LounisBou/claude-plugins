@@ -222,12 +222,6 @@ export function factsLine(f: DeliveryFacts): string {
   return `facts (read by the module): ${said}${tree}, ${pushed}, ${head}${ci}`
 }
 
-// What an agent's message over the limit that names no report file should have done: the line
-// the guards log when they let it through.
-export function unnamedReport(length: number): string {
-  return `Your message to the orchestrator is ${length} characters, over its ${VERDICT_LIMIT}: write the full report to a file first, then send its verdict line naming it (report: <absolute path>).`
-}
-
 // The wait as its file last held it: the current wait, or the one a turn's start
 // cleared (`last_waiting`, its blocks and start kept beside it).
 export type PriorWait = { waiting?: WaitKind | null; last_waiting?: WaitKind | null; blocks?: string | null; waiting_since?: string | null }
