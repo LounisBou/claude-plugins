@@ -33,14 +33,15 @@ const later = <T>(ms: number, value: T) => new Promise<T>(resolve => setTimeout(
 type Fake = { parts: HostParts; sent: { to: unknown; text: string }[]; logged: string[]; timers: { ms: number; run: () => unknown }[] }
 
 // A machine where this session is `name` on ttys005, its orchestrator Orch: belt on ttys001, whose
-// launcher chain names ttys005; `send` answers each send, `id` the session's id.
-function fake(over: { name?: string; role?: string | null; send?: () => Promise<SessionSendResult>; id?: () => Promise<string> } = {}): Fake {
+// launcher chain names ttys005 (none when `orphan`); `send` answers each send, `id` the session's id,
+// and a listing of a folder answers after `listMs`.
+function fake(over: { name?: string; role?: string | null; send?: () => Promise<SessionSendResult>; id?: () => Promise<string>; orphan?: boolean; listMs?: number } = {}): Fake {
   const name = over.name ?? AGENT
   const files = new Map<string, string>([
     [`${STATE}/store/sessions/s-one`, JSON.stringify({ role: over.role === undefined ? 'agent' : over.role, name, pid: '501', tty: '/dev/ttys005', repo: null, context_percent: 1, context_tokens: 1, window: 1, model: 'm', busy: true, updated_at: 'T' })],
     [`${STATE}/store/sessions/s-orch`, JSON.stringify({ role: 'orchestrator', name: ORCH, pid: '400', tty: '/dev/ttys001', repo: null, context_percent: 1, context_tokens: 1, window: 1, model: 'm', busy: false, updated_at: 'T' })],
-    [`${STATE}/chains/ttys001.jsonl`, JSON.stringify({ tab_id: 'tab-a', tty: '/dev/ttys005', owner: 'own' }) + '\n'],
   ])
+  if (!over.orphan) files.set(`${STATE}/chains/ttys001.jsonl`, JSON.stringify({ tab_id: 'tab-a', tty: '/dev/ttys005', owner: 'own' }) + '\n')
   const sent: Fake['sent'] = []
   const logged: string[] = []
   const timers: Fake['timers'] = []
@@ -61,8 +62,11 @@ function fake(over: { name?: string; role?: string | null; send?: () => Promise<
         if (text === undefined) throw new Error(`ENOENT: ${p}`)
         return text
       },
-      list: async (dir: string) => [...files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
-        .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false })),
+      list: async (dir: string) => {
+        if (over.listMs !== undefined) await later(over.listMs, null)
+        return [...files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
+          .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }))
+      },
     },
     process: {
       run: async (argv: readonly string[]) => {
@@ -170,6 +174,23 @@ test('a request for a dialog still open is the same dialog; the call\'s end clos
   expect(memory.open).toEqual([])
 })
 
+test("a call's end closes its own dialog only: another call's, another tool's or another loop's stays open", () => {
+  const memory = newDialogMemory()
+  noteAsk(memory, CHECK, ASK)
+  noteAsk(memory, { ...CHECK, input: { file_path: '/w/other', content: 'y' }, tool_use_id: 'toolu_2' }, ASK)
+  noteAsk(memory, { ...CHECK, tool_use_id: 'toolu_s', agentId: 'sub' }, ASK)
+  openDialog(memory, 'Write', INPUT, undefined)
+  openDialog(memory, 'Write', { file_path: '/w/other', content: 'y' }, undefined)
+  openDialog(memory, 'Write', INPUT, 'sub')
+  openDialog(memory, 'Bash', { command: 'ls' }, undefined)
+  openDialog(memory, 'Write', { file_path: '/w/third', content: 'z' }, 'sub')
+  settleCall(memory, CALL)
+  expect(memory.open.map(d => [d.id, d.tool, d.agent])).toEqual([['toolu_2', 'Write', undefined], ['toolu_s', 'Write', 'sub'], [null, 'Bash', undefined], [null, 'Write', 'sub']])
+  // A call of the main loop's Write ends: the subagent's unmatched Write dialog stays.
+  settleCall(memory, { tool: 'Write', tool_use_id: 'toolu_2' })
+  expect(memory.open.map(d => d.id)).toEqual(['toolu_s', null, null])
+})
+
 test('a new ask for the arguments of a dialog left open is a new dialog: the one whose end was not seen gives way', () => {
   const memory = newDialogMemory()
   noteAsk(memory, CHECK, ASK)
@@ -187,12 +208,14 @@ test('a loop\'s turn end forgets its dialogs and its asks, and only its own', ()
   noteAsk(memory, CHECK, ASK)
   noteAsk(memory, { ...CHECK, tool_use_id: 'toolu_s', agentId: 'sub' }, ASK)
   noteAsk(memory, { ...CHECK, input: { file_path: '/w/other', content: 'y' }, tool_use_id: 'toolu_3' }, ASK)
+  noteAsk(memory, { ...CHECK, input: { file_path: '/w/later', content: 'y' }, tool_use_id: 'toolu_t', agentId: 'sub' }, ASK)
   openDialog(memory, 'Write', INPUT, undefined)
   openDialog(memory, 'Write', INPUT, 'sub')
   settleLoop(memory, undefined)
-  expect(memory.asks).toEqual([])
+  expect(memory.asks.map(a => a.id)).toEqual(['toolu_t'])
   expect(memory.open.map(d => d.id)).toEqual(['toolu_s'])
   settleLoop(memory, 'sub')
+  expect(memory.asks).toEqual([])
   expect(memory.open).toEqual([])
 })
 
@@ -249,6 +272,23 @@ test('a lookup that ends past the bound sends nothing, and the reminder is armed
   expect(slow.sent).toEqual([])
   expect(slow.logged.some(l => l.includes('permission: the line of this session did not go within 20 ms'))).toBe(true)
   expect(slow.timers.map(t => t.ms)).toEqual([NOTICE_TTL_MS])
+  // The session known in time, its orchestrator found past the bound: nothing is sent after the log.
+  const late = fake({ listMs: 30 })
+  await mounted(20).request(late, REQUEST)
+  // Long enough for the lookup to end (two listings) and a send to follow it, were one made.
+  await later(150, null)
+  expect(late.sent).toEqual([])
+  expect(late.logged.some(l => l.includes(`permission: the line of ${AGENT} did not go within 20 ms`))).toBe(true)
+  expect(late.timers.map(t => t.ms)).toEqual([NOTICE_TTL_MS])
+})
+
+test('an agent whose orchestrator is found nowhere sends nothing and leaves one log line', async () => {
+  const f = fake({ orphan: true })
+  await mounted().request(f, REQUEST)
+  await settled()
+  await settled()
+  expect(f.sent).toEqual([])
+  expect(f.logged.some(l => l.includes(`permission: no orchestrator found for ${AGENT} on /dev/ttys005`))).toBe(true)
 })
 
 test('a second request in the same dialog sends nothing; the next dialog after the answer sends again', async () => {
@@ -319,6 +359,26 @@ test('a dialog no announced ask matches sends its line without a reason, and is 
   await f.timers[0]!.run()
   await settled()
   expect(f.sent.length).toBe(2)
+})
+
+test("a subagent's dialog takes its own ask, and outlives the main loop's turn end until its own", async () => {
+  const hooks = mounted()
+  const f = fake()
+  await hooks.check(f, { ...CHECK, tool_use_id: 'toolu_s', agentId: 'sub' }, ASK)
+  await hooks.request(f, { ...REQUEST, agent_id: 'sub' })
+  await settled()
+  expect(f.sent.map(s => s.text)).toEqual([LINE])
+  await hooks.turn(f, {})
+  await f.timers[0]!.run()
+  await settled()
+  expect(f.sent.map(s => s.text)).toEqual([LINE, REMINDER])
+  const g = fake()
+  await hooks.request(g, { ...REQUEST, tool_input: { file_path: '/w/again', content: 'x' }, agent_id: 'sub' })
+  await settled()
+  await hooks.turn(g, { agentId: 'sub' })
+  await g.timers[0]!.run()
+  await settled()
+  expect(g.sent.length).toBe(1)
 })
 
 test('a dialog whose turn ended without its call\'s end is reminded nothing', async () => {
