@@ -8,10 +8,12 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { journalDir, JOURNAL_FOLD_FILE, LEARNING_CONTRACT, parseJournalEvent } from '../../../../core/learning.ts'
 import { ROLES } from '../../../../core/names.ts'
-import { MEASURE_DIR, parseMeasure, RECORDS_DIR, ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
+import { MEASURE_DIR, MODULE_DIR, parseMeasure, RECORDS_DIR, ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
+import { setting } from '../../../../core/env.ts'
 import { moduleDirUnder } from '../../../../core/roots.ts'
 import { num, record, text } from './manifest.ts'
 import { dayFiles, eventsDir } from './store.ts'
+import { readPrices, UnitCosts, type ClosedRow, type Merged } from './unitcosts.ts'
 
 
 /** What each figure of the target is held to. */
@@ -119,7 +121,7 @@ const roleOfRefusal = (role: string | undefined): string => REFUSAL_ROLES.find(r
 const PLUGIN_NAME = new RegExp(LEARNING_CONTRACT.patterns.plugin)
 
 /** The events of the store, folded into what the report needs. */
-function gather(input: ReportInput, start: string, end: string, skipped: { n: number }) {
+function gather(input: ReportInput, start: string, end: string, skipped: { n: number }, unit: UnitCosts) {
   const sessions = new Map<string, Session>()
   const questions = new Map<string, number>()
   const turns: { session: string; tokens: number }[] = []
@@ -137,6 +139,7 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       const id = text(e['session'])
       const day = dayOf(text(e['ts']))
       if (kind === undefined || id === undefined || day === undefined) continue
+      unit.add(e, day)
       const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, before: 0, upTo: undefined, peak: undefined, restarted: false, turnCost: 0, turnCosted: 0, turnUncosted: false, inside: false, tokens: 0, life: undefined, firstContext: undefined, began: false, seenBefore: false, live: false, targets: new Set<string>(), refused: [], summarized: undefined }
       sessions.set(id, s)
       s.cwd = text(e['cwd']) ?? s.cwd
@@ -312,13 +315,13 @@ function journalRefusals(config: string, skipped: { n: number }): { found: { plu
   return { found, journals }
 }
 
-/** The closed rows of every dispatch record the registry points at: `{opened, closed}` in ms. */
-function dispatchLines(module: string, skipped: { n: number }): { opened: number; closed: number }[] {
+/** The closed rows of every dispatch record the registry points at: `{opened, closed}` in ms, and the review rounds the row had. */
+function dispatchLines(module: string, skipped: { n: number }): (ClosedRow & { opened: number })[] {
   const paths = new Set<string>()
   for (const { value } of filesOf(join(module, RECORDS_DIR), body => body, skipped)) {
     for (const path of value.split('\n')) if (path.trim() !== '') paths.add(path.trim())
   }
-  const rows: { opened: number; closed: number }[] = []
+  const rows: (ClosedRow & { opened: number })[] = []
   for (const path of paths) {
     let body = ''
     try {
@@ -328,7 +331,7 @@ function dispatchLines(module: string, skipped: { n: number }): { opened: number
       try {
         const row = record(JSON.parse(line))
         const [opened, closed] = [Date.parse(text(row['opened']) ?? ''), Date.parse(text(row['closed']) ?? '')]
-        if (row['state'] === 'closed' && Number.isFinite(opened) && Number.isFinite(closed)) rows.push({ opened, closed })
+        if (row['state'] === 'closed' && Number.isFinite(opened) && Number.isFinite(closed)) rows.push({ opened, closed, rounds: num(row['rounds']) })
       } catch { /* a line that is no row */ }
     }
   }
@@ -397,7 +400,11 @@ export function report(input: ReportInput): string[] {
   const module = moduleDirUnder(input.config, input.env['ORCHESTRATOR_MODULE_DIR'])
   const tools = input.tools.length > 0 ? input.tools : [input.repositoryAt(input.cwd)].filter((r): r is string => r !== undefined)
   const skipped = { n: 0 }
-  const { sessions, questions, turns, calls } = gather(input, start, end, skipped)
+  // The prices are the orchestrator's (its protected root's routing/prices.json): the cost rule is core's usage-cost.ts.
+  const priceFile = join(setting(input.env, 'ORCHESTRATOR_STATE_DIR') ?? join(input.config, MODULE_DIR), 'routing', 'prices.json')
+  const priced = readPrices(priceFile)
+  const unit = new UnitCosts('prices' in priced ? priced.prices : undefined, addDays(start, -1), end)
+  const { sessions, questions, turns, calls } = gather(input, start, end, skipped, unit)
   const isTool = (name: string): boolean => tools.some(t => t.toLowerCase() === name.toLowerCase())
   const remotes = new Map<string, string | undefined>()
   const repositoryAt = (dir: string): string | undefined => (remotes.has(dir) ? remotes.get(dir) : remotes.set(dir, input.repositoryAt(dir)).get(dir))
@@ -502,6 +509,7 @@ export function report(input: ReportInput): string[] {
   // Pull requests merged in the week: delay from GitHub, cost from the sessions that name only that one.
   const repos = [...new Set([...tools, ...[...groups.keys()].filter(r => r.includes('/')), ...[...prCost.keys()].map(k => k.split('#')[0] ?? '')])].filter(r => r !== '')
   const delays: number[] = []
+  const mergedByDay = new Map<string, number>()
   let unlisted = 0
   out.push('', 'pull requests merged (created → merged, cost of the sessions that name that one pull request)')
   for (const repo of repos) {
@@ -514,6 +522,8 @@ export function report(input: ReportInput): string[] {
     for (const row of listed.map(record).filter(r => inWindow(dayOf(text(r['mergedAt'])))).sort((a, b) => (num(a['number']) ?? 0) - (num(b['number']) ?? 0))) {
       const delay = Date.parse(text(row['mergedAt']) ?? '') - Date.parse(text(row['createdAt']) ?? '')
       if (Number.isFinite(delay)) delays.push(delay)
+      const mergedDay = dayOf(text(row['mergedAt']))
+      if (mergedDay !== undefined) mergedByDay.set(mergedDay, (mergedByDay.get(mergedDay) ?? 0) + 1)
       const spent = prCost.get(`${repo}#${num(row['number'])}`)
       out.push(`  ${repo}#${num(row['number'])}  ${(Number.isFinite(delay) ? span(delay) : 'n/a').padStart(8)}  ${spent === undefined ? 'cost n/a' : usd(spent)}`)
     }
@@ -566,6 +576,10 @@ export function report(input: ReportInput): string[] {
 
   out.push('', `cold rewrites: ${coldRewrites(calls, session => sessions.get(session)?.role ?? 'other', start => inWindow(parisDay(start)))}`)
 
+  const closedRows = dispatchLines(module, skipped)
+  const mergedPrs: Merged = repos.length === 0 ? { why: 'no repository to list the pull requests of' } : unlisted === repos.length ? { why: 'gh listed no repository\'s pull requests' } : { byDay: mergedByDay, unlisted }
+  out.push(...unit.lines({ days, prices: 'prices' in priced ? priced.prices : undefined, noPrices: 'why' in priced ? priced.why : '', merged: mergedPrs, rows: closedRows.length === 0 ? undefined : closedRows, dayOf: parisDay }))
+
   // The figures of the target, in its order.
   const roleTurns = new Map<string, number[]>()
   for (const t of turns) {
@@ -581,7 +595,7 @@ export function report(input: ReportInput): string[] {
     if (measured?.start !== undefined && inWindow(dayOf(measured.start.at))) starts.set(name.replace(/\.json$/, ''), measured.start.tokens)
   }
   const firsts = orchestrators.flatMap(([id, s]) => { const f = starts.get(id) ?? (s.began ? s.firstContext : undefined); return f === undefined ? [] : [f] })
-  const lines = dispatchLines(module, skipped).filter(l => inWindow(parisDay(l.closed))).map(l => l.closed - l.opened)
+  const lines = closedRows.filter(l => inWindow(parisDay(l.closed))).map(l => l.closed - l.opened)
   const asked = round.map(r => text(r['blocks'])).filter((b): b is string => b !== undefined)
   const repeated = asked.filter((b, i) => asked.indexOf(b) < i).length
   const merged = median(delays)
