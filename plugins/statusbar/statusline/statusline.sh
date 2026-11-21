@@ -182,14 +182,15 @@ window_text() {
   printf '%s%s%s: %s%%%s%s%s' "$color" "$mark" "$label" "$pct" "$bar" "$tail" "$end"
 }
 
-# The pace of one quota window: "<label>|<reset>" when, at the pace of the window so far, its
-# quota is exhausted before it resets, nothing otherwise. The window's length is its own (5 hours,
+# The pace of one quota window: "<label>|<reset>|<kind>" when, at the pace of the window so far, its
+# quota is exhausted before it resets, nothing otherwise. The kind is « mild » when what is missing
+# at the reset (the projected use minus 100, in % of the window) is under 5, « short » from 5 on. The window's length is its own (5 hours,
 # 7 days), its start the reset minus that length; the pace is read once a tenth of the window has
 # gone, because the first minutes of a window say nothing. Only the percentage and the reset the
 # host sends are read. $1 label, $2 percentage, $3 reset epoch, $4 window seconds,
 # $5 time|date (the format of the reset it names).
 window_pace() {
-  local pct=${2%%.*} epoch=$3 span=$4 rem elapsed
+  local pct=${2%%.*} epoch=$3 span=$4 rem elapsed kind
   is_number "$pct" && is_number "$epoch" || return 1
   rem=$(( epoch - $(date +%s) ))
   [ "$rem" -gt 0 ] && [ "$rem" -le "$span" ] || return 1
@@ -197,8 +198,10 @@ window_pace() {
   [ $(( elapsed * 10 )) -ge "$span" ] || return 1
   # pct / elapsed * span >= 100, in integers.
   [ $(( pct * span )) -ge $(( 100 * elapsed )) ] || return 1
-  if [ "$5" = "date" ]; then printf '%s|%s' "$1" "$(fmt_date "$epoch")"
-  else printf '%s|%s' "$1" "$(fmt_time "$epoch")"
+  # The projected use is pct * span / elapsed: under 105 is under 5 % of the window missing.
+  kind=short; [ $(( pct * span )) -lt $(( 105 * elapsed )) ] && kind=mild
+  if [ "$5" = "date" ]; then printf '%s|%s|%s' "$1" "$(fmt_date "$epoch")" "$kind"
+  else printf '%s|%s|%s' "$1" "$(fmt_time "$epoch")" "$kind"
   fi
 }
 
@@ -417,13 +420,23 @@ if is_number "$q_open" && [ "$q_open" -gt 0 ]; then
 fi
 
 # Line 3, only while it is true: at the pace so far a quota window is used up before it resets.
-# Computed from the rate_limits above, nothing else; the 5-hour window is named first.
+# Computed from the rate_limits above, nothing else; the 5-hour window is named first. Red when the
+# window falls 5 % or more short of its reset, orange and informative below that.
 if [ "$show_usage" = "1" ]; then
-  pace=""
-  pace=$(window_pace "5h" "$h5_pct" "$h5_reset" 18000 time) ||
-    { [ "$show_seven" = "1" ] && pace=$(window_pace "7d" "$d7_pct" "$d7_reset" 604800 date); }
+  pace=$(window_pace "5h" "$h5_pct" "$h5_reset" 18000 time)
+  # The 7-day window is read when the 5-hour one says nothing or only the mild line: a calm line
+  # must not hide a red one.
+  if [ "$show_seven" = "1" ] && { [ -z "$pace" ] || [ "${pace##*|}" = "mild" ]; }; then
+    pace7=$(window_pace "7d" "$d7_pct" "$d7_reset" 604800 date)
+    [ -n "$pace7" ] && { [ -z "$pace" ] || [ "${pace7##*|}" = "short" ]; } && pace=$pace7
+  fi
   if [ -n "$pace" ]; then
-    line3="${RED}⚠ at this rate the ${pace%%|*} window is exhausted before its reset (at ${pace#*|})${RESET}"
+    IFS='|' read -r pace_label pace_reset pace_kind <<<"$pace"
+    if [ "$pace_kind" = "mild" ]; then
+      line3="${ORANGE}at this pace the ${pace_label} window ends just before its reset (at ${pace_reset})${RESET}"
+    else
+      line3="${RED}⚠ at this rate the ${pace_label} window is exhausted before its reset (at ${pace_reset})${RESET}"
+    fi
   fi
 fi
 
