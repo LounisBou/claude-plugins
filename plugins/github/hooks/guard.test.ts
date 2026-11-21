@@ -57,6 +57,10 @@ type World = {
   bashResult?: unknown
   // What record.py answers when it fails: its exit code and stderr.
   recordFails?: { exitCode: number; stderr: string }
+  // What record.py answers when it writes, its status read and posted first: its exit code and stderr.
+  recordWriteFails?: { exitCode: number; stderr: string }
+  // What record.py --status prints in place of the status of the record.
+  recordStatus?: string
   // The files and directories $.fs sees beside the records, by path.
   tree?: Record<string, { kind: 'file' | 'dir'; mtimeMs: number; text?: string }>
   // The move that puts a new auto-merge.json in place fails with this stderr.
@@ -315,6 +319,14 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
       // An acceptance keeps its producer and the detail that names the failed record it answers.
       const acceptance = option('--result') === 'accepted' ? { producer: option('--producer'), detail: option('--detail') } : {}
       const [name, text] = record(String(option('--kind')), String(option('--result')), '2026-11-02T10:00:00Z', { producer: 'session-e2e', ...acceptance })
+      // Asked for its status first, it writes nothing and gives the post that copies the record on the forge.
+      if (e.argv.includes('--status')) {
+        if (w.recordStatus !== undefined) return { value: { exitCode: 0, stdout: w.recordStatus, stderr: '' } }
+        const { kind, result, producer, at } = JSON.parse(text) as { kind: string; result: string; producer: string; at: string }
+        const state = result === 'fail' ? 'failure' : 'success'
+        return { value: { exitCode: 0, stdout: JSON.stringify({ description: 'v1 ' + at + ' ' + result + ' ' + producer, state, what: kind }) + '\n', stderr: '' } }
+      }
+      if (w.recordWriteFails) return { value: { stdout: '', ...w.recordWriteFails } }
       records[name] = text
       return { value: { exitCode: 0, stdout: HEAD_DIR + '/e2e.20261102T100000Z.session-e2e.json\n', stderr: '' } }
     }
@@ -4219,29 +4231,52 @@ test('a record the tool writes is posted to the forge at its head at once', asyn
     .toEqual(['acme/thing', HEAD, 'e2e', 'success', 'v1 2026-11-02T10:00:00Z pass session-e2e'])
 })
 
-test('light_ci run posts the record its line names, and a post refused is one line, the answer unchanged', async ($, on) => {
-  const [name] = record('tests', 'pass', '2026-11-02T10:00:00Z')
-  const line = 'tests pass at 0123456 of acme/thing#12: npm test — exit 0 — 9s; output /tmp/x.log; record ' + HEAD_DIR + '/' + name + '\n'
-  const seen = await world($, on, { ...PENDING, stacked: true, tree: { ...CHECKOUTS, ...LIGHT_CI_ON }, gitIn: { [REVIEW_DIR]: REVIEW_ORIGIN },
-    lightCi: { exitCode: 0, stdout: line, stderr: '', result: 'pass' }, forgeFails: 'error: cannot post: HTTP 403' })
-  const out = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, dir: REVIEW_DIR })
-  expect(forgeRun(seen).map((argv) => flagOf(argv, '--what') + ' ' + flagOf(argv, '--description'))).toEqual(['tests v1 2026-11-02T10:00:00Z pass light-ci'])
-  expect(out.result).toBe(line + READY_BEFORE_CI + ' passed local tests (light-ci) hold at its head.')
-  expect(seen.logs.filter((log) => log.startsWith('github: the record is not copied to the forge yet'))).toEqual([
-    'github: the record is not copied to the forge yet (error: cannot post: HTTP 403): the reconciler copies it at a later beat.',
-  ])
+test('a record whose status the forge refuses is not written, and the answer names the refusal', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, forgeFails: 'error: cannot post readiness/e2e at 0123456: HTTP 403: Resource not accessible by integration' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  expect(out.isError).toBe(true)
+  // The run's outcome stays in the answer: it is not run again only to learn it.
+  expect(out.result).toMatch(new RegExp('^github: the e2e record of acme/thing#12 \\(pass: ran `npm run e2e` at 0123456: exit 0 in \\d+ s\\) is not written: '
+    + 'the forge refused its status \\(error: cannot post readiness/e2e at 0123456: HTTP 403: Resource not accessible by integration\\)\\. Record it again once the forge takes it\\.$'))
+  expect(seen.runs.filter((r) => String(r.argv[1]).endsWith('/engine/record.py')).map((r) => r.argv.includes('--status'))).toEqual([true])
+  expect(readinessRuns(seen)).toEqual([])
 })
 
-test('a record written in an archived repository is not posted again, and its note does not promise a later copy', async ($, on) => {
+test('a record\'s status reaches the forge before the record is written, at the instant the status gives', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  const steps = seen.runs.filter((r) => /\/engine\/(record|forge_status)\.py$/.test(String(r.argv[1]))).map((r) => {
+    const argv = r.argv.map(String)
+    if (argv[1]?.endsWith('/forge_status.py')) return 'post ' + flagOf(argv, '--what')
+    return argv.includes('--status') ? 'status' : 'write at ' + flagOf(argv, '--at')
+  })
+  expect(steps).toEqual(['status', 'post e2e', 'write at 2026-11-02T10:00:00Z'])
+})
+
+test('a record whose status record.py does not give is not posted nor written, and the answer says what it gave', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, recordStatus: '{"what": "e2e", "state": "success"}\n' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  expect(out).toEqual({ result: 'github: record.py --status gave no status to post: {"what": "e2e", "state": "success"}', isError: true })
+  expect(forgeRun(seen)).toEqual([])
+  expect(seen.runs.filter((r) => String(r.argv[1]).endsWith('/engine/record.py')).map((r) => r.argv.includes('--status'))).toEqual([true])
+})
+
+test('a record whose write fails once its status is posted is an error that says the status is on the forge', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN, recordWriteFails: { exitCode: 1, stderr: 'error: cannot write the record: disk full\n' } })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', run: E2E_RUN })
+  expect(out).toEqual({ result: 'error: cannot write the record: disk full (its status is on the forge: the reconciler copies it here)', isError: true })
+  expect(forgeRun(seen)).toHaveLength(1)
+  expect(readinessRuns(seen)).toEqual([])
+})
+
+test('light_ci run leaves its record\'s post to the script: the module posts nothing', async ($, on) => {
   const [name] = record('tests', 'pass', '2026-11-02T10:00:00Z')
   const line = 'tests pass at 0123456 of acme/thing#12: npm test — exit 0 — 9s; output /tmp/x.log; record ' + HEAD_DIR + '/' + name + '\n'
   const seen = await world($, on, { ...PENDING, stacked: true, tree: { ...CHECKOUTS, ...LIGHT_CI_ON }, gitIn: { [REVIEW_DIR]: REVIEW_ORIGIN },
-    lightCi: { exitCode: 0, stdout: line, stderr: '', result: 'pass' }, forgeFails: 'error: cannot post tests at 0123456: Repository was archived so is read-only.' })
-  await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, dir: REVIEW_DIR })
-  await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, dir: REVIEW_DIR })
-  expect(forgeRun(seen)).toHaveLength(1)
-  expect(seen.logs.filter((log) => log.includes('later beat'))).toEqual([])
-  expect(seen.logs.filter((log) => log.includes('acme/thing is archived (read-only)'))).toHaveLength(1)
+    lightCi: { exitCode: 0, stdout: line, stderr: '', result: 'pass' } })
+  const out = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12, dir: REVIEW_DIR })
+  expect(forgeRun(seen)).toEqual([])
+  expect(out.result).toBe(line + READY_BEFORE_CI + ' passed local tests (light-ci) hold at its head.')
 })
 
 test('light_ci run that writes nothing is an error with its line, and the gate is not read', async ($, on) => {

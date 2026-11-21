@@ -267,7 +267,7 @@ class Ok(io.BytesIO):
 def run(answers, api="rest"):
     calls, sleeps = [], []
 
-    def urlopen(req):
+    def urlopen(req, **_):
         calls.append(req.full_url)
         answer = answers.pop(0)
         if isinstance(answer, Exception):
@@ -2941,12 +2941,29 @@ for at in 2026-11-19 2026-11-19T10:00:00.123Z 2026-13-01T10:00:00Z "2026-11-19 1
 done
 check "record.py imports nothing outside the standard library" "" \
   "$(grep -E '^(import|from) ' "$RECORD" | grep -vE '^(import|from) (argparse|datetime|json|os|re|sys|tempfile)( |$)')"
+out=$(rm -rf "$WORK/cfgrec3"; env CLAUDE_CONFIG_DIR="$WORK/cfgrec3" python3 "$RECORD" --repo acme/thing --pr 12 --head "$HEAD40" --kind review --result fail --producer pr-review --at 2026-11-19T10:00:00Z --status)
+check "record.py --status prints the status that copies the record on the forge, and writes nothing" \
+  '{"description": "v1 2026-11-19T10:00:00Z fail pr-review", "state": "failure", "what": "review"}|no' \
+  "$out|$([ -e "$WORK/cfgrec3/pr-records" ] && echo yes || echo no)"
+# A copy from the forge keeps the record its tool wrote between its status's post and the listing that brought the copy.
+path=$(recbase --kind review --result pass --detail "points set aside: x" --at 2026-11-19T11:00:00Z)
+recbase --kind review --result pass --detail "copied from the forge" --session forge --at 2026-11-19T11:00:00Z --copy >/dev/null
+check "record.py --copy keeps a record of that name and result already there, its detail with it" "points set aside: x" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["detail"])' "$path")"
+recbase --kind review --result fail --detail "copied from the forge" --session forge --at 2026-11-19T11:00:00Z --copy >/dev/null
+check "record.py --copy replaces a record of that name with another result" "fail forge" \
+  "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["result"], d["session"])' "$path")"
+path=$(recbase --kind review --result pass --detail "copied from the forge" --session forge --at 2026-11-19T11:30:00Z --copy)
+check "record.py --copy writes a record where none is, and leaves no temporary file" "pass forge|" \
+  "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["result"], d["session"])' "$path")|$(ls -A "$(dirname "$path")" | grep '^\.tmp-')"
 
 
 echo "== forge statuses =="
 
 FORGE="$ROOT/engine/forge_status.py"
 FF="$WORK/fixforge"; rm -rf "$FF"; mkdir -p "$FF"
+# What GitHub answers a status it created (201): the status, with its id.
+printf '%s' '{"id":1}' > "$FF/POST_repos_acme_thing_statuses_$HEAD40.json"
 fs() { env GH_FIXTURES="$FF" GH_TOKEN=x python3 "$FORGE" --repo acme/thing --head "$HEAD40" "$@"; }
 out=$(fs --what review --state failure --description "v1 2026-11-19T10:00:00Z fail orchestrator")
 check "forge_status.py posts the status under readiness/, and says so" "0|readiness/review failure at 0123456 of acme/thing" "$?|$out"
@@ -2973,6 +2990,53 @@ for case in \
 done
 check_status "forge_status.py refuses a description longer than GitHub keeps with exit 2" 2 fs --what review --state success --description "$long"
 check "forge_status.py posts nothing on a usage error" "no" "$([ -e "$FF/sent.jsonl" ] && echo yes || echo no)"
+printf '%s' '{"__status": 403, "message": "Resource not accessible by integration"}' > "$FF/POST_repos_acme_thing_statuses_$HEAD40.json"
+check "forge_status.py names the HTTP status and the message of a refusal" \
+  "1|error: cannot post readiness/review at 0123456: HTTP 403: Resource not accessible by integration" \
+  "$(fs --what review --state success --description "v1 2026-11-19T10:00:00Z pass x" >/dev/null 2>"$FF/err"; echo "$?|$(cat "$FF/err")")"
+# A 2xx that is no created status (a redirect followed as a GET answers a list, a proxy an empty body) is a refusal.
+for answer in '[]' ''; do
+  printf '%s' "$answer" > "$FF/POST_repos_acme_thing_statuses_$HEAD40.json"
+  [ -z "$answer" ] && rm -f "$FF/POST_repos_acme_thing_statuses_$HEAD40.json"
+  check "forge_status.py refuses a 2xx answer that is no created status: ${answer:-empty}" "1|1" \
+    "$(fs --what review --state success --description "v1 2026-11-19T10:00:00Z pass x" >/dev/null 2>"$FF/err"; echo "$?|$(grep -c 'error: cannot post readiness/review at 0123456: GitHub answered no created status for readiness/review' "$FF/err")")"
+done
+rm -f "$FF/err"
+# An attempt GitHub does not answer in time is a refusal, inside the 30 s the hooks module gives a post, naming the wait.
+check "an attempt carries a 20 s timeout, and one that times out, on its read or its connection, is refused naming the wait" \
+  "20 [20]|3 GitHub gave no answer within 20 s: the request may still have been applied|3 GitHub gave no answer within 20 s: the request may still have been applied" \
+  "$(python3 -c '
+import socket, sys, urllib.error
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+from ghlib import errors, http
+seen = []
+def hang(req, **kw):
+    seen.append(kw.get("timeout"))
+    raise socket.timeout("timed out")
+def connect(req, **kw):
+    raise urllib.error.URLError(socket.timeout("timed out"))
+out = []
+for opener in (hang, connect):
+    with patch("urllib.request.urlopen", opener), patch.dict("os.environ", {"GH_TOKEN": "x", "GH_FIXTURES": ""}):
+        try:
+            http.rest("POST", "/repos/a/b/statuses/x", {})
+        except errors.GhError as exc:
+            out.append("%d %s" % (exc.code, exc.message))
+print("%s %s|%s|%s" % (http.REQUEST_TIMEOUT, seen, out[0], out[1]))' "$GHDIR")"
+check "a connection that fails for another reason stays the error it was" "refused" \
+  "$(python3 -c '
+import sys, urllib.error
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+from ghlib import http
+def refused(req, **kw):
+    raise urllib.error.URLError(ConnectionRefusedError("refused"))
+with patch("urllib.request.urlopen", refused), patch.dict("os.environ", {"GH_TOKEN": "x", "GH_FIXTURES": ""}):
+    try:
+        http.rest("GET", "/repos/a/b")
+    except urllib.error.URLError as exc:
+        print(exc.reason.args[0])' "$GHDIR")"
 
 echo "== light CI =="
 
@@ -2990,6 +3054,7 @@ lcgit checkout -qb feat-b; printf 'b\n' > "$LC/co/b.txt"; lcgit add b.txt; lcgit
 LCHEAD=$(lcgit rev-parse HEAD)
 lcpull() { printf '%s' '{"number":12,"state":"open","head":{"sha":"'"$1"'","ref":"feat-b"},"base":{"ref":"feat-a"}}' > "$LC/fix/GET_repos_acme_thing_pulls_12.json"; }
 lcpull "$LCHEAD"
+printf '%s' '{"id":1}' > "$LC/fix/POST_repos_acme_thing_statuses_$LCHEAD.json"
 lcproject() { printf '%s' "$1" > "$LC/cfg/light-ci/acme-thing.json"; }
 lc() { (cd "$LC/co" && env -u CLAUDE_CODE_SESSION_ID GH_FIXTURES="$LC/fix" GH_TOKEN=x CLAUDE_CONFIG_DIR="$LC/cfg" python3 "$LIGHT" "$@"); }
 lcrun() { lc run --pr 12 --repo acme/thing --session s-1; }
@@ -3085,7 +3150,55 @@ lcproject '{"command": ["python3", "-c", "print(1)"]}'
 mv "$LC/cfg/pr-records" "$LC/cfg/pr-records.kept"; : > "$LC/cfg/pr-records"
 check "light_ci run exits 1 and says so when its record cannot be written" "1 1" \
   "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'error: cannot write the tests record' "$LC/err")")"
+check "light_ci run whose record cannot be written once its status is posted says so, with the run's outcome" "1" \
+  "$(grep -c "cannot write the tests record (its status is on the forge): .* (tests pass at ${LCHEAD:0:7}: .*; output " "$LC/err")"
 rm "$LC/cfg/pr-records"; mv "$LC/cfg/pr-records.kept" "$LC/cfg/pr-records"
+# The record's status reaches the forge before its file: a post refused writes nothing; one taken finds no file yet.
+n=$(lccount)
+printf '%s' '{"__status": 403, "message": "Resource not accessible by integration"}' > "$LC/fix/POST_repos_acme_thing_statuses_$LCHEAD.json"
+sleep 1
+check "light_ci run whose status the forge refuses writes nothing and names the HTTP status" "1 1 $n" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'cannot post the tests record to the forge, nothing recorded: HTTP 403: Resource not accessible by integration' "$LC/err") $(lccount)")"
+check "light_ci run whose status the forge refuses keeps the run's outcome in its line" "1" \
+  "$(grep -c "nothing recorded: HTTP 403: Resource not accessible by integration (tests pass at ${LCHEAD:0:7}: .*; output " "$LC/err")"
+# A 2xx that is no created status is refused the same way, and a post GitHub does not answer in time too: each
+# writes nothing and keeps the run's outcome.
+rm -f "$LC/fix/POST_repos_acme_thing_statuses_$LCHEAD.json"
+check "light_ci run whose status answer is no created status writes nothing, and keeps the run's outcome" "1 1 1 $n" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'cannot post the tests record to the forge, nothing recorded: GitHub answered no created status for readiness/tests' "$LC/err") $(grep -c "(tests pass at ${LCHEAD:0:7}: .*; output " "$LC/err") $(lccount)")"
+check "light_ci run whose status post gets no answer in time writes nothing, and keeps the run's outcome" "1 1 1 $n" \
+  "$(cd "$LC/co" && env -u CLAUDE_CODE_SESSION_ID GH_FIXTURES="$LC/fix" GH_TOKEN=x CLAUDE_CONFIG_DIR="$LC/cfg" python3 -c '
+import os, socket, sys
+from unittest.mock import patch
+sys.path.insert(0, sys.argv[1])
+import light_ci
+from ghlib import http
+real = http._call
+def call(method, path, *rest, **kw):
+    if method != "POST" or "/statuses/" not in path:
+        return real(method, path, *rest, **kw)
+    def hang(req, **opts):
+        raise socket.timeout("timed out")
+    with patch.dict("os.environ", {"GH_FIXTURES": ""}), patch("urllib.request.urlopen", hang):
+        return real(method, path, *rest, **kw)
+http._call = call
+sys.exit(light_ci.main(["run", "--pr", "12", "--repo", "acme/thing", "--session", "s-1"]))' "$ROOT/engine" >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'cannot post the tests record to the forge, nothing recorded: GitHub gave no answer within 20 s' "$LC/err") $(grep -c "(tests pass at ${LCHEAD:0:7}: .*; output " "$LC/err") $(lccount)")"
+printf '%s' '{"id":1}' > "$LC/fix/POST_repos_acme_thing_statuses_$LCHEAD.json"
+check "light_ci run posts the tests record's status before its file exists, then writes it" "0 False True readiness/tests success" \
+  "$(cd "$LC/co" && env -u CLAUDE_CODE_SESSION_ID GH_FIXTURES="$LC/fix" GH_TOKEN=x CLAUDE_CONFIG_DIR="$LC/cfg" python3 -c '
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import light_ci
+seen = []
+real = light_ci.forge.post
+def post(owner, name, sha, what, state, description):
+    stamp = description.split(" ")[1].replace("-", "").replace(":", "")
+    path = os.path.join(sys.argv[2], "tests.%s.light-ci.json" % stamp)
+    seen.extend([path, os.path.exists(path), "readiness/" + what, state])
+    return real(owner, name, sha, what, state, description)
+light_ci.forge.post = post
+code = light_ci.main(["run", "--pr", "12", "--repo", "acme/thing", "--session", "s-1"])
+print(code, seen[1], os.path.exists(seen[0]), seen[2], seen[3])' "$ROOT/engine" "$LC/cfg/pr-records/acme/thing/$LCHEAD" 2>&1 | tail -1)"
 check_status "light_ci run refuses a pull request number of 0 with exit 2" 2 lc run --pr 0 --repo acme/thing
 check "light_ci.py imports nothing outside the standard library and the engine" "" \
   "$(grep -E '^(import|from) ' "$LIGHT" | grep -vE '^(import|from) (argparse|json|os|re|signal|subprocess|sys|tempfile|time|record|ghlib)( |$)')"

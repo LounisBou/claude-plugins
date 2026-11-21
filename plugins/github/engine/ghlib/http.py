@@ -7,6 +7,7 @@ is opened, which is what lets the suite run offline.
 import json
 import os
 import shutil
+import socket
 import subprocess
 import time
 import urllib.error
@@ -19,6 +20,9 @@ from . import errors
 API = "https://api.github.com"
 _MAX_RETRIES = 3
 _MAX_WAIT = 60
+# Seconds GitHub gets to answer one attempt: under the 30 s the hooks module gives a status post, so a hang
+# comes back as a refusal the caller reports, with the run's outcome still in hand.
+REQUEST_TIMEOUT = 20
 
 
 def token():
@@ -68,12 +72,15 @@ def _raise_for(status, data):
     # would still reach message.lower() below and raise.
     message = (data.get("message") or "request failed") if isinstance(data, dict) else "request failed"
     if status == 429 or (status in (401, 403) and "rate limit" in message.lower()):
-        raise errors.RateLimited(message)
-    if status in (401, 403):
-        raise errors.AuthError(message)
-    if status == 404:
-        raise errors.NotFound(message)
-    raise errors.ApiError("%s (HTTP %s)" % (message, status))
+        exc = errors.RateLimited(message)
+    elif status in (401, 403):
+        exc = errors.AuthError(message)
+    elif status == 404:
+        exc = errors.NotFound(message)
+    else:
+        exc = errors.ApiError("%s (HTTP %s)" % (message, status))
+    exc.status = status
+    raise exc
 
 
 def _send(method, url, body, headers):
@@ -81,7 +88,7 @@ def _send(method, url, body, headers):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
             raw = resp.read().decode()
             if not raw:
                 return resp.status, {}, {}
@@ -99,6 +106,13 @@ def _send(method, url, body, headers):
         except ValueError:
             parsed = {"message": raw[:200]}
         return exc.code, parsed, exc.headers
+    except (socket.timeout, urllib.error.URLError) as exc:
+        reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+        if not isinstance(reason, socket.timeout):
+            raise
+        raise errors.ApiError(
+            "GitHub gave no answer within %d s: the request may still have been applied" % REQUEST_TIMEOUT
+        )
 
 
 def _rate_limited(status, data):

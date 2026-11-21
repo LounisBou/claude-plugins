@@ -1,21 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  FORGE, forgeContext, forgeDescription, forgeName, parseForgeDescription, parseRecordStatus, recordPost, trustedStatuses, type ForgeStatus,
+  FORGE, forgeContext, forgeDescription, forgeName, parseForgeDescription, parseRecordStatus, trustedStatuses, type ForgeStatus,
 } from './forge-status.ts'
-import { parsePrRecord } from './pr-record.ts'
-
-const RECORD = parsePrRecord({
-  v: 1, repo: 'owner/name', pr: 7, head: 'a'.repeat(40), kind: 'review', result: 'fail',
-  producer: 'orchestrator', detail: 'two findings', session: 's', at: '2026-11-19T10:00:00Z',
-})
 
 describe('records copied to the forge', () => {
-  it('posts a record as its kind\'s context, its result\'s state and `v1 <at> <result> <producer>`', () => {
-    assert.ok(RECORD)
-    assert.deepEqual(recordPost(RECORD), { name: 'review', state: 'failure', description: 'v1 2026-11-19T10:00:00Z fail orchestrator' })
-  })
-
   it('reads back the record a status copies, and nothing from one whose state says another result', () => {
     const status: ForgeStatus = { context: 'readiness/review', state: 'failure', description: 'v1 2026-11-19T10:00:00Z fail orchestrator', creator: 'me' }
     assert.deepEqual(parseRecordStatus(status), { kind: 'review', result: 'fail', producer: 'orchestrator', at: '2026-11-19T10:00:00Z' })

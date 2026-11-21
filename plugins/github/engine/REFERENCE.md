@@ -188,12 +188,11 @@ rule and the JSON has `images`, one `{url, path, reused, title}` per file.
 
 ### The one writer: `engine/record.py`
 
-`python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e|tests --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>] [--at <instant>]`
+`python3 <github root>/engine/record.py --repo <owner/name> --pr <n> --head <40 hex> --kind review|norms|e2e|tests --result pass|fail|waived|not-applicable|accepted --producer <slug> [--detail <text>] [--session <id>] [--at <instant>] [--status] [--copy]`
 
-- Contract: core's `pr-record.ts` (`core/pr-record.json`).
-- It validates the sha shape, the kind, `waived` for `e2e` or `norms`, `not-applicable` for `e2e` (its `--detail` giving its reason), `accepted` for `review` only, `tests` `pass|fail` by `light-ci` only, a detail of 500 characters at most.
-- It writes under a temporary name, then renames; prints the path; exits 2 on a usage error. `--at`: a copy from the forge.
-- Forge: each record, the plan and the exemption are also a status `readiness/<name>` at the head, no CI, posted by `forge_status.py` alone; the reconciler imports the operator's newer ones.
+- Contract: core's `pr-record.ts` (`core/pr-record.json`), which it validates: each kind's results and producers, a waiver's reason, a detail of 500 characters at most.
+- It writes under a temporary name, then renames; prints the path; exits 2 on a usage error. `--status`: prints its status as JSON, writes nothing. `--copy`: a forge copy, keeping a same-result record.
+- Forge: each record (posted first, or not written), the plan and the exemption are also a status `readiness/<name>` at the head, no CI; the reconciler imports the operator's newer ones.
 
 ### Fields (one JSON object per file)
 

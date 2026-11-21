@@ -93,13 +93,15 @@ it. `/github:doctor` then confirms everything is ready.
 - **Records on the forge** — each record, check plan and E2E exemption is copied as a commit
   status at the pull request's head, `readiness/<kind|plan|exemption>`, `v1 <at> <body>` in its
   description (core's `forge-status.ts`), so the operator's two machines judge on the same truth:
-  `mcp__github__record` and `mcp__github__light_ci` post the record they wrote, and the reconciler,
-  from the same listing, imports here what the operator's account posted newer than this machine's
-  copy, and posts what this machine holds newer, eight statuses a beat at most. The CI the gate, the reconciler and the
-  pane's CI cell read leaves them out. Only `engine/forge_status.py` posts them: a session posting a status from the
-  shell is refused (`github.status.write`).
-  A label never moves ahead of the copy that justifies it: a failure is posted at once, a move to `Ready` waits
-  for every copy of the head to reach the forge, a move to `Not Ready` for the failures'. `Ready` does not go
+  `mcp__github__record` and `mcp__github__light_ci` post a record's status before they write the record,
+  and write nothing when the forge refuses it (the refusal names its HTTP status); the reconciler, from the
+  same listing, imports here what the operator's account posted newer than this machine's copy, and posts
+  the plan and the exemption this machine holds newer, eight statuses a beat at most. The CI the gate, the
+  reconciler and the pane's CI cell read leaves them out. Only the github engine posts them (`engine/forge_status.py`,
+  and `engine/light_ci.py` for its tests record): a session posting a status from the shell is refused
+  (`github.status.write`).
+  A label never moves ahead of the copy that justifies it: a record is on the forge before it is written, and
+  a move to `Ready` waits for the head's plan and exemption to reach the forge, ten minutes at most. `Ready` does not go
   back over a `Not Ready` this machine did not set (or of unknown origin) before the forge was listed two beats
   after it was first seen and its statuses imported, on the reconciler's beat, on a `pr-gate` or `pr-checks` read and on
   `pr-readiness ready`, `pr-ready` and `pr-merge` alike; the gate then decides as before. A listing counts only once its statuses are imported here: one that
