@@ -14,7 +14,7 @@
 //
 // `--index` is the path where the REVIEW agent writes its index (the three-level report's second
 // level), never the implementer's report: it must be a new file, and an existing path is refused.
-// `--delivery-report` is the implementer's report (its self-review lines and its E2E line), a path the
+// `--delivery-report` is the implementer's report (its E2E line), a path the
 // brief names so the review session reads it; it is only read, never written.
 // `--report`, the index flag's former name, read as the implementer's report and was taken for it, so it
 // is refused with a message naming `--index`.

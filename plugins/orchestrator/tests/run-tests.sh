@@ -3000,7 +3000,7 @@ check "an auditor given neither runs on its caller's model and effort" "1" \
 check "an auditor given a model without an effort is refused" "1" \
   "$(aud --auditor --model m-x --title 'Audit: tm' >/dev/null 2>&1; echo $?)"
 
-# An auditor kept on past its report succeeds at its gate (§9.4, §52): `spawn --successor` from
+# An auditor kept on past its report succeeds on the operator's word (§9.4, §52): `spawn --successor` from
 # a session named `Audit: <subject>` derives that name like it does for `Orch:`, lands
 # immediately right of the caller (so, once the predecessor's tab is closed, in the auditor's
 # own place right of its orchestrator), runs on the caller's model under remote control, and

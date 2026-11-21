@@ -561,7 +561,7 @@ Why the successor reads little: measured on transcripts, a successor confirmed i
 
 ### 9.4 The audit
 
-An auditor weighs the method's cost against its yield and proposes to the operator, who launched it; it writes one report and stops: section 52. Kept on by the operator past its report, it succeeds at its gate instead, like the coordinator below.
+An auditor weighs the method's cost against its yield and proposes to the operator, who launched it; it writes one report and stops: section 52. Kept on by the operator past its report, at its gate it tells him and goes on, and succeeds only on his word.
 
 ### 9.5 The coordinator
 

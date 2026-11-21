@@ -66,12 +66,6 @@ that cannot be read leaves the event as it came.
 event with those names as written. Whether one was merged, and is where the defect came from, is its
 reader's join with the merges; a message read from a file is not read.
 
-**Self-review outcomes.** The module lists one tool of its own, `self_review`, at the session's
-start. An implementer calls it once its self-review is done, with each finding's lens, file, line,
-severity and outcome (`fixed`, or `answered` with its reason) and the pull request; each finding is a
-`self_review` event, written at once with what the session had buffered. A call with no finding, a
-finding with no lens or outcome, or an answered one with no reason records nothing and says why.
-
 **The daily sweep.** `telemetry.ts sweep` reads what no hook hands the writer. When the writer
 stores a `session_end` and no sweep was started that UTC day (`<config>/telemetry/sweep.json`),
 it starts `sweep --auto` as a detached process, whatever `CLAUDE_LOGS_REPO` says. Over the last

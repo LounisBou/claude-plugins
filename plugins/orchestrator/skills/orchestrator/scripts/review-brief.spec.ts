@@ -41,7 +41,7 @@ test('every field of the real template is filled: no placeholder is left, and th
   assert.deepEqual(placeholdersOf(text), [])
   assert.match(text, /^# app — review: a fix of the thing \(row 9 THING\)\n/)
   assert.match(text, /1\. Spec: `\/b\/thing-brief\.md`/)
-  assert.match(text, /pull request 12 \(first the self-review lines of the implementer's report, `\/b\/thing-report\.md`\), branch `fix\/thing`, head `0123456789abcdef0123456789abcdef01234567`, base `origin\/main`/)
+  assert.match(text, /pull request 12 \(the implementer's report, `\/b\/thing-report\.md`\), branch `fix\/thing`, head `0123456789abcdef0123456789abcdef01234567`, base `origin\/main`/)
   assert.match(text, /Working directory: `\/w\/review-12`/)
   assert.match(text, /session \*\*`Orch: acme \[a1b2c3\]`\*\*/)
   assert.match(text, /`<repo>#12 0123456789abcdef0123456789abcdef01234567 — <n> findings/)
@@ -168,7 +168,7 @@ test('--index is the path the review agent writes its index to: it fills the tem
   assert.equal(existsSync(join(dir, 'review-12.md')), false)
 })
 
-test('--delivery-report names the implementer\'s report in the brief, for its self-review lines and its E2E line, and is an absolute path', () => {
+test('--delivery-report names the implementer\'s report in the brief, for its E2E line, and is an absolute path', () => {
   assert.equal(run(FIELDS()).code, 0)
   const text = readFileSync(join(dir, 'review-12.md'), 'utf8')
   assert.match(text, /its E2E line, from the implementer's report \(`\/b\/thing-report\.md`\), never/)

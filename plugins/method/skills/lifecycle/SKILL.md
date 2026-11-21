@@ -17,11 +17,8 @@ description: The development method every role follows - the lifecycle, definiti
 
 ## Self-review
 
-Once the gate is green, before the pull request opens, the implementer reviews its change: the
-review round's lenses (correctness, tests,
-silent failures, spec conformity, security if relevant) over `origin/<base>...HEAD`, each a
-read-only `orchestrator:lens`. Its findings, fixed or answered, go to `mcp__telemetry__self_review`; its answer, one line
-each, goes after `files:` in the implementer's report, not the pull request. The outside review reads those lines first.
+Once the gate is green, before the pull request opens, the implementer reads its own diff against
+`origin/<base>` once, alone, and fixes what it finds. It launches no reader: the separate review is the only one.
 
 ## Done means ready
 
