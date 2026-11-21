@@ -2339,12 +2339,30 @@ async def own_session_id(app, tty):
     return sess.session_id if sess is not None else ""
 
 
+async def session_tty(sess):
+    """The tty of an iTerm2 session, or "" when neither the app nor the process table gives one.
+
+    The app's `tty` variable is empty for a session iTerm2 restored after a restart (a tab that
+    re-attached a tmux client, for one), while the session still carries the pid of its job and
+    the process table still says which tty that process runs on. The tty is a claim, the process
+    is the fact: the variable first, then the tty of the job's pid."""
+    tty = await sess.async_get_variable("tty")
+    if tty:
+        return tty
+    for name in ("jobPid", "pid"):
+        pid = await sess.async_get_variable(name)
+        listed = (process_table() or {}).get(str(pid)) if pid else None
+        if listed and listed.get("tty") not in (None, "", "??", "-"):
+            return "/dev/" + listed["tty"].replace("/dev/", "", 1)
+    return ""
+
+
 async def find_tab(app, tty):
     """A session behind a maximized sibling is in all_sessions and not in sessions (§25)."""
     for w in app.windows:
         for t in w.tabs:
             for s in t.all_sessions:
-                if await s.async_get_variable("tty") == tty:
+                if await session_tty(s) == tty:
                     return w, t, s
     return None, None, None
 
@@ -4514,9 +4532,9 @@ async def list_rows(app):
         for ti, t in enumerate(w.tabs, 1):
             visible = {s.session_id for s in t.sessions}
             for s in t.all_sessions:
-                tty = await s.async_get_variable("tty")
-                # A session iTerm2 gives no tty for (not attached yet, or just restarted) has
-                # no process to read its name from: listed with a dash, its name unreadable.
+                tty = await session_tty(s)
+                # A session with no tty from the app nor from its job's pid (not attached yet)
+                # has no process to read its name from: listed with a dash, its name unreadable.
                 shown = tty or "-"
                 title = await s.async_get_variable("autoName") or ""
                 is_self, hidden = bool(own) and tty == own, s.session_id not in visible

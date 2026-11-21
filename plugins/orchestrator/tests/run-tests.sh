@@ -5341,6 +5341,38 @@ print('|'.join(rows))" "$ROOT/skills/iterm-agents/scripts")"
 check "the process table is not read for a missing tty: no rows, no name, no raise" "[]|" \
   "$("$py" -c "$NOTTY
 print('%s|%s' % (ia.ps_rows(None), ia.session_name_on(None) or ''))" "$ROOT/skills/iterm-agents/scripts")"
+# A session iTerm2 restored after a restart has no `tty` variable either, but it carries the
+# pid of its job and the process table knows that pid's tty: the listing shows it, and a
+# lookup by that tty finds it (row 455). The shape is the live one: a tmux client of a home
+# server, `tty` None, `jobPid` set. The tty the table does not know stays a dash.
+RESTORED='
+import asyncio, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+class S:
+    def __init__(s, sid, tty, pid, name): s.session_id=sid; s.tty=tty; s.pid=pid; s.name=name
+    async def async_get_variable(s, k): return {"tty": s.tty, "jobPid": s.pid, "pid": s.pid, "autoName": s.name}.get(k)
+class T:
+    def __init__(s, tid, sessions): s.tab_id=tid; s.sessions=sessions; s.all_sessions=sessions
+class W:
+    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
+class App:
+    def __init__(s, wins): s.windows=wins
+app=App([W([T("1",[S("R",None,"48166","Default")]),T("2",[S("G",None,"48999","Default")]),T("3",[S("O","/dev/ttys802",None,"ok")])])])
+'
+printf '/dev/ttys008 48166 /opt/homebrew/bin/tmux -u -L orch-d6fc6f4d attach -t home\n' > "$WORK/ps-restored.txt"
+check "a restored session with no tty variable is listed on the tty of its job's pid, as the tmux client it is" \
+  "w1/t1 | /dev/ttys008 | tmux client | tmux client of home (orch-d6fc6f4d) — displays its windows" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
+print(asyncio.run(ia.list_rows(app))[0])" "$ROOT/skills/iterm-agents/scripts")"
+check "a session whose pid the process table does not know keeps its dash" \
+  "w1/t2 | - | Default | (name unreadable)" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
+print(asyncio.run(ia.list_rows(app))[1])" "$ROOT/skills/iterm-agents/scripts")"
+check "a restored session is found by the tty its pid proves, and a tty nobody has is not found" "R|None" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
+_,_,a=asyncio.run(ia.find_tab(app,'/dev/ttys008')); _,_,b=asyncio.run(ia.find_tab(app,'/dev/ttys999'))
+print('%s|%s' % (a.session_id, b))" "$ROOT/skills/iterm-agents/scripts")"
 # The caller is not always IN the app. A session running in another terminal — a multiplexer,
 # a plain shell, a remote one — still has a tty, `self_tty` still resolves it, and the app has
 # no session on it. The chain is the app's and cannot be kept for a caller the app does not
