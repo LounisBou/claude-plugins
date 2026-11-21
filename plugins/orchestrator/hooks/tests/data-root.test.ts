@@ -7,7 +7,8 @@ import { hostOf } from '../../core/capture.ts'
 import { DATA_ROOT_FILE } from '../../core/orchestration.ts'
 import { writeMeasure } from '../gauge.ts'
 import { dataDir, logLine, moduleDir, stateDir } from '../module-io.ts'
-import { coordinatorRuns, writeSession } from '../supervision.ts'
+import { coordinatorRuns, writeDeck, writeSession } from '../supervision.ts'
+import { holdsRecord } from '../wait.ts'
 import { readTodos } from '../todo.ts'
 import { todoPath } from '../todo-format.ts'
 import { disk, logLineOf } from './fakes.ts'
@@ -23,7 +24,21 @@ function hostOver(files: Map<string, string>, vars: Record<string, string> = {})
   const $ = hostOf({
     plugin: { root: '/plugin' },
     env: { get: async (name: string) => ({ HOME, ...vars } as Record<string, string | undefined>)[name] },
-    fs: { ...d.fs, exists: async (path: string) => files.has(path), list: async () => [] },
+    fs: {
+      ...d.fs,
+      exists: async (path: string) => files.has(path) || [...files.keys()].some(key => key.startsWith(`${path}/`)),
+      // The entries right under `dir`, files and directories, as the host lists them.
+      list: async (dir: string) => {
+        const below = [...files.keys()].filter(key => key.startsWith(`${dir}/`)).map(key => key.slice(dir.length + 1))
+        if (below.length === 0) throw new Error(`ENOENT: ${dir}`)
+        const dirs = [...new Set(below.filter(key => key.includes('/')).map(key => key.split('/')[0] ?? ''))]
+        return [
+          ...below.filter(key => !key.includes('/')).map(name => ({ name, kind: 'file' as const, size: 0, isLink: false, mtimeMs: 1 })),
+          ...dirs.map(name => ({ name, kind: 'dir' as const, size: 0, isLink: false, mtimeMs: 1 })),
+        ]
+      },
+    },
+    session: { id: async () => 's1' },
     process: { run: async (argv: readonly string[]) => { runs.push(argv); return d.process.run(argv) } },
     clock: d.clock,
   })
@@ -88,4 +103,37 @@ test('a holder\'s to-do list is read under the data root, never one left on the 
   const item = (label: string): string => `${JSON.stringify({ v: 1, id: 1, opened: '2026-11-21T09:00:00Z', label, state: 'open', verdict: '', words: 'w', said_at: '2026-11-21T09:00:00Z', from: 'Orch: o', agent: 'Agent: a' })}\n`
   const files = new Map([[`${PROTECTED}/${DATA_ROOT_FILE}`, rootFile(DATA)], [todoPath(DATA, 'Orch: o'), item('shared')], [todoPath(PROTECTED, 'Orch: o'), item('stale')]])
   expect((await readTodos(hostOver(files).$, 'Orch: o')).map(one => one.label)).toEqual(['shared'])
+})
+
+test('the deck is written under the data root, from the chains and the round there and the sleepers\' record of the protected root', async () => {
+  const sleeper = (name: string): string => JSON.stringify([{ name, slept: '2026-11-21T09:00:00Z', dir: '/w', prs: [] }])
+  const entry = (id: string, from: string): string => `${JSON.stringify({ id, from, session: 's1', kind: 'operator', since: '2026-11-21T09:00:00Z', blocks: 'b', question: 'q?', choices: [], recommendation: null, status: 'open', at: '2026-11-21T09:00:00Z', answer: null })}\n`
+  const files = new Map([
+    [`${PROTECTED}/${DATA_ROOT_FILE}`, rootFile(DATA)],
+    [`${PROTECTED}/sleeping.json`, sleeper('Orch: kept')], [`${DATA}/sleeping.json`, sleeper('Orch: planted')],
+    [`${DATA}/round/x.json`, entry('x', 'Orch: shared')], [`${PROTECTED}/round/y.json`, entry('y', 'Orch: stale')],
+    [`${DATA}/chains/ttys003.jsonl`, '{"tab_id":"t1","tty":"/dev/ttys005","owner":"o1"}\n'],
+  ])
+  const { $ } = hostOver(files)
+  await writeDeck($)
+  const deck = JSON.parse(files.get(`${DATA}/deck.json`) ?? 'null')
+  expect(files.has(`${PROTECTED}/deck.json`)).toBe(false)
+  expect(deck.sleeping.map((one: { name: string }) => one.name)).toEqual(['Orch: kept'])
+  expect(deck.round.open).toBe(1)
+})
+
+test('the stop gate holds a done on the open rows of a record the data root\'s registry names, not one left on the protected root', async () => {
+  const record = '/briefs/o/dispatch-record.jsonl'
+  const base = (): Map<string, string> => new Map([[`${PROTECTED}/${DATA_ROOT_FILE}`, rootFile(DATA)], [record, `${JSON.stringify({ id: 1, state: 'open', label: 'a row' })}\n`]])
+  const run = async (files: Map<string, string>): Promise<string | null> => {
+    const { $ } = hostOver(files)
+    await writeSession($, 's1', { role: 'orchestrator', name: 'Orch: o' })
+    return holdsRecord($, { kind: 'done', blocks: 'nothing' })
+  }
+  const shared = base()
+  shared.set(`${DATA}/records/s1`, `${record}\n`)
+  expect(await run(shared)).not.toBe(null)
+  const stale = base()
+  stale.set(`${PROTECTED}/records/s1`, `${record}\n`)
+  expect(await run(stale)).toBe(null)
 })

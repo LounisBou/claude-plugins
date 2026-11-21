@@ -145,6 +145,19 @@ test('two sessions reading in the same interval make one forge call; past the in
   expect(files.get(prLogPath(STATE))).toBe('2026-11-17T16:01:00Z acme/app#9 no longer open\n')
 })
 
+test('on a data root placed apart, the file is written there from the registries there, nothing on the state directory', async () => {
+  const DATA = '/tmp/shared/claude-orchestrator'
+  const { dollar, files } = world()
+  for (const key of [...files.keys()].filter(path => path.startsWith(`${STATE}/records/`))) {
+    files.set(key.replace(STATE, DATA), files.get(key)!)
+    files.delete(key)
+  }
+  files.set(`${STATE}/data-root.json`, JSON.stringify({ version: 1, dir: DATA }))
+  await refreshPrFile(dollar, NOW)
+  expect(parsePrFile(files.get(prFilePath(DATA)) ?? '')?.repos).toEqual(['acme/app', 'acme/lib'])
+  expect([...files.keys()].filter(path => path.startsWith(`${STATE}/`))).toEqual([`${STATE}/data-root.json`])
+})
+
 test('a failed call keeps the pull requests read before, says so on the log, and waits a whole interval before the next', async () => {
   const forge: Record<string, string | null> = { 'acme/app': JSON.stringify([{ number: 7 }]), 'acme/lib': '[]' }
   const { dollar, calls, file, files, logs } = world(forge)
