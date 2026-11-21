@@ -16,7 +16,8 @@
 // `goals.md` names and the sections of it that phase cites, and the base's head; `rotation` from the
 // row, git (branch, head, the commits landed since the base, what is uncommitted), the plan's open
 // items and the replaced agent's last report, the agent's two lines (in flight, decisions) when it
-// gave them, and says the launcher's `rotate` line that starts the replacement on it;
+// gave them, and says the launcher's line that starts the replacement on it (`rotate`, or `spawn` for an
+// agent already gone);
 // `audit` from the briefs directory (the previous report, its date) and the repository; the two
 // takeovers from the to-do list of the session handing over and, for the coordinator, its notes. The
 // session that dispatches passes paths and, at most, a few words of its own judgment; a brief typed by
@@ -239,7 +240,7 @@ function lastGate(row: Row): string {
   return `${verdict}${typeof head === 'string' ? ` at ${head.slice(0, 12)}` : ''}${typeof words === 'string' && words !== '' ? ` — ${words}` : ''}`
 }
 
-/** The rotation's values; the `rotate` line is the caller's to print. */
+/** The rotation's values; the `rotate` or `spawn` line is the caller's to print. */
 function rotationValues(f: Fields, deps: Deps): Values {
   const found = openRow(f)
   if ('error' in found) return found
@@ -282,16 +283,47 @@ function rotationValues(f: Fields, deps: Deps): Values {
   }
 }
 
+/** A value as one shell word. */
+const shellQuote = (text: string): string => `'${text.replace(/'/g, `'\\''`)}'`
+
+/** An agent already gone: no tty, or the `none` the record gives it. Nothing is open to rotate. */
+const isGone = (f: Fields): boolean => (f['tty'] ?? '') === '' || f['tty'] === 'none'
+
+/**
+ * The launch flags of a replacement, from the row: its tier, else the model and its effort (the launcher takes
+ * the pair together). A row with neither gives '': the launcher refuses a spawn that names no launch.
+ */
+function spawnArgsOf(row: Row): string {
+  const words = (key: string): string => (typeof row[key] === 'string' ? (row[key] as string) : '')
+  if (words('tier') !== '') return `--tier ${shellQuote(words('tier'))}`
+  if (words('model') === '' || words('effort') === '') return ''
+  return `--model ${shellQuote(words('model'))} --effort ${shellQuote(words('effort'))}`
+}
+
 /**
  * The launcher's line that starts the replacement on the rotation brief and closes the old agent. For a
  * window of a home session (`window`) it carries `--expect-title`, which the launcher requires there: the
- * window's name is fixed, and the tty printed here may be another agent's by the time the line runs.
+ * window's name is fixed, and the tty printed here may be another agent's by the time the line runs. An
+ * agent already gone (`isGone`) has nothing to rotate: its line is a `spawn` with the row's launch flags (`launch`).
  */
-export function rotateLine(f: Fields, window = false): string {
-  const q = (text: string): string => `'${text.replace(/'/g, `'\\''`)}'`
+export function rotateLine(f: Fields, window = false, launch = ''): string {
+  const q = shellQuote
+  if (isGone(f)) return [LAUNCHER, 'spawn', '--dir', q(f['worktree'] ?? ''), '--trust', '--right-of', 'self', launch,
+    '--title', q(f['title'] ?? ''), '--brief', q(f['out'] ?? ''), '--orchestrator', q(f['orchestrator'] ?? '')].filter(part => part !== '').join(' ')
   return [LAUNCHER, 'rotate', '--old-tty', f['tty'] ?? '', '--dir', q(f['worktree'] ?? ''), '--title', q(f['title'] ?? ''),
     '--brief', q(f['out'] ?? ''), '--orchestrator', q(f['orchestrator'] ?? ''), '--right-of', 'self',
     ...(window ? ['--expect-title', q(f['title'] ?? '')] : [])].join(' ')
+}
+
+/** The line the rotation prints after its brief: `rotate`, or `spawn` for an agent already gone. */
+function rotationSaid(f: Fields, deps: Deps): string {
+  if (isGone(f)) {
+    const found = openRow(f)
+    const launch = 'error' in found ? '' : spawnArgsOf(found.row)
+    return launch === '' ? 'spawn: none — the row names neither a tier nor a model with its effort: choose the launch before spawning'
+      : `spawn: ${rotateLine(f, false, launch)}`
+  }
+  return `rotate: ${rotateLine(f, (deps.paneWindow ?? tmuxWindow)(f['tty'] ?? '') !== undefined)}`
 }
 
 /** A subject as a file name takes it. */
@@ -431,7 +463,7 @@ export function main(argv: readonly string[], io: Io, deps: Deps, templates: Rea
     } catch (error) {
       return fail(`${out} cannot be written: ${(error as Error).message}`)
     }
-    io.out(`${parsed.command} brief: ${out}\nreport: ${values['REPORT_PATH']}\n${parsed.command === 'rotation' ? `rotate: ${rotateLine(parsed.fields, (deps.paneWindow ?? tmuxWindow)(parsed.fields['tty'] ?? '') !== undefined)}\n` : ''}`)
+    io.out(`${parsed.command} brief: ${out}\nreport: ${values['REPORT_PATH']}\n${parsed.command === 'rotation' ? `${rotationSaid(parsed.fields, deps)}\n` : ''}`)
     return 0
   }
   io.out(filled.endsWith('\n') ? filled : `${filled}\n`)

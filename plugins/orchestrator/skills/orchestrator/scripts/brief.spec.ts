@@ -206,6 +206,30 @@ test('rotation for an agent gone: nothing of its own, the brief says what git an
   assert.equal(rotateLine({ tty: 't', worktree: "/a b'c", title: 'T', out: '/o', orchestrator: 'O' }).split(' rotate ')[1], "--old-tty t --dir '/a b'\\''c' --title 'T' --brief '/o' --orchestrator 'O' --right-of self")
 })
 
+test('rotation for an agent already gone (tty none): the line is the spawn that starts its replacement, on the row\'s tier or model', () => {
+  const w = world()
+  const phaseBrief = join(w.briefs, 'routes.md')
+  writeFileSync(phaseBrief, '# brief\n')
+  const run = (row: string) => w.run('rotation', '--record', w.record, '--row', row, '--phase-brief', phaseBrief, '--worktree', w.worktree, '--orchestrator', ORCH,
+    '--tty', 'none', '--title', 'Agent: api routes', '--out', join(w.briefs, `routes-r${row}.md`), '--repo', 'acme/app')
+  assert.equal(run('2'), 0)
+  assert.match(w.text(), /^rotation brief: .+\nreport: .+\nspawn: \S+iterm-agent\.sh spawn --dir '[^']+' --trust --right-of self --tier 'standard' --title 'Agent: api routes' --brief '[^']+routes-r2\.md' --orchestrator 'Orch: belt \[a1b2c3\]'\n$/)
+  assert.doesNotMatch(w.text(), /iterm-agent\.sh rotate /)
+  assert.equal(run('3'), 0)
+  assert.match(w.text(), /spawn: \S+iterm-agent\.sh spawn --dir '[^']+' --trust --right-of self --model 'big' --effort 'high' --title 'Agent: api routes'/)
+  // A row the launcher cannot start from (no tier nor model, or a model without its effort) gets no runnable line.
+  writeFileSync(w.record, readFileSync(w.record, 'utf8') + JSON.stringify({ id: 4, label: 'NONE', state: 'open', tier: '' }) + '\n'
+    + JSON.stringify({ id: 5, label: 'MODEL', state: 'open', tier: '', model: 'big' }) + '\n')
+  assert.equal(run('4'), 0)
+  assert.match(w.text(), /spawn: none — the row names neither a tier nor a model with its effort/)
+  assert.equal(run('5'), 0)
+  assert.match(w.text(), /spawn: none — the row names neither/)
+  assert.doesNotMatch(w.text(), /--model 'big' --title/)
+  const gone = rotateLine({ tty: '', worktree: '/w', title: 'T', out: '/o', orchestrator: 'O' }, false, "--tier 'light'")
+  assert.match(gone, / spawn --dir '\/w' --trust --right-of self --tier 'light' --title 'T' --brief '\/o' --orchestrator 'O'$/)
+  assert.ok(!gone.includes('  '), 'an empty launch leaves no double space')
+})
+
 test('rotation: the rotate line carries --expect-title for a window of a home session, which the launcher requires there, and not for a tab', () => {
   const fields = { tty: '/dev/ttys012', worktree: '/w', title: 'Agent: api routes', out: '/o.md', orchestrator: ORCH }
   assert.match(rotateLine(fields, true), / --right-of self --expect-title 'Agent: api routes'$/)
