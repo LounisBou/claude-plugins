@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CURSOR_FILE, errors, failureOf, group, normalise, pluginScript, readDay, render } from './errors.ts'
+import { CURSOR_FILE, errors, failureOf, group, normalise, pluginScript, promptGroups, readDay, render } from './errors.ts'
 import { toolEvents } from '../../../../hooks/collect.ts'
 import { append, eventsDir } from './store.ts'
 
@@ -181,5 +181,41 @@ test('readDay: a day file removed since it was listed is skipped, the offset kep
   scratch(({ stateDir }) => {
     assert.equal(readDay(eventsDir(stateDir), '2026-11-19.jsonl', 42, () => assert.fail('nothing to read')), 42)
     assert.throws(() => readDay(eventsDir(stateDir), '.', 0, () => undefined))
+  })
+})
+
+const ask = (ts: string, id: string, reason: string | undefined, more: Record<string, unknown> = {}): string =>
+  JSON.stringify({ v: 1, ts, event: 'permission_ask', session: S, tool: 'Write', tool_use_id: id, ...(reason === undefined ? {} : { ask_reason: reason }), ...more })
+const REASON = (path: string): string => `Claude requested permissions to write to ${path}, which is a sensitive file.`
+
+test('prompts: the same reason on other paths is one line with its count and sessions; the answers come from the calls of the same id', () => {
+  const items = parsed(
+    ask('2026-11-20T10:00:00Z', 'a', REASON('/Users/me/a/.env')),
+    ask('2026-11-20T10:05:00Z', 'b', REASON('/Users/me/b/.env'), { session: T }),
+    ask('2026-11-20T10:09:00Z', 'c', REASON('/Users/me/c/.env')),
+    ask('2026-11-20T10:10:00Z', 'd', undefined, { tool: 'Bash' }),
+    call('2026-11-20T10:00:09Z', { tool: 'Write', tool_use_id: 'a', outcome: 'ok', ask_ms: 9000 }),
+    call('2026-11-20T10:05:30Z', { tool: 'Write', tool_use_id: 'b', outcome: 'refused', decided_by: 'user', ask_ms: 30000, error_message: 'The user doesn\'t want to proceed' }),
+  )
+  const [sensitive, bare] = promptGroups(items)
+  assert.deepEqual([sensitive?.count, sensitive?.sessions.size, sensitive?.allowed, sensitive?.denied, sensitive?.waitMs, sensitive?.normalised], [3, 2, 1, 1, 30000, 'Claude requested permissions to write to <path> which is a sensitive file.'])
+  assert.deepEqual([bare?.tool, bare?.normalised, bare?.count], ['Bash', '(no reason)', 1])
+  const lines = render(items, NOW - 3_600_000)
+  assert.equal(lines[0], 'errors since 2026-11-20T11:00Z: 1 failed call(s)')
+  assert.ok(lines.includes('permission prompts (4 shown, 2 group(s)):'))
+  assert.match(lines.find(l => l.startsWith('3× asked Write')) ?? '', /^3× asked Write: Claude requested permissions to write to <path> which is a sensitive file\. \(allowed 1, denied 1, unanswered 1, up to 30 s\) \[11-20 10:00Z → 11-20 10:09Z, 2 session\(s\)\] — e\.g\. /)
+})
+
+test('prompts: a store with prompts only prints them; one without any prints none; an ended call that was never prompted is not one', () => {
+  assert.deepEqual(render(parsed(ask('2026-11-20T10:00:00Z', 'a', 'why')), NOW).slice(1), ['permission prompts (1 shown, 1 group(s)):', '1× asked Write: why (allowed 0, denied 0, unanswered 1) [11-20 10:00Z, 1 session(s)] — e.g. "why"'])
+  assert.deepEqual(render(parsed(call('2026-11-20T10:00:00Z', { outcome: 'ok' })), NOW), ['errors since 2026-11-20T12:00Z: 0 failed call(s)'])
+})
+
+test('errors: the prompts of a day file are read from the cursor like the failures', () => {
+  scratch(({ stateDir, day }) => {
+    day('2026-11-20', [ask('2026-11-20T10:00:00Z', 'a', 'why'), call('2026-11-20T10:00:05Z', { tool: 'Write', tool_use_id: 'a', outcome: 'ok', ask_ms: 5000 })])
+    const first = errors({ stateDir, now: NOW })
+    assert.match(first[2] ?? '', /^1× asked Write: why \(allowed 1, denied 0, unanswered 0, up to 5 s\)/)
+    assert.deepEqual(errors({ stateDir, now: NOW + 1000 }), ['errors since 2026-11-20T12:00Z: 0 failed call(s)'])
   })
 })

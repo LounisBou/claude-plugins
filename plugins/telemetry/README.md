@@ -16,7 +16,7 @@ times; no derived value), each tool call (tool, MCP server, outcome, who refused
 duration, a redacted Bash line), subagents (each of their runs, with its type, task, models, effort, calls and token sums, read from the child's transcript; a review reader's lens, pull request, range and findings by severity with their ids) and launched sessions spawned and closed, questions put
 to the operator and the letters chosen (the orchestrator's round questions with their id and asker, read once settled), the dispatch record's writes (read from the events its script publishes in the orchestrator's journal), and each finding of an implementer's self-review, fixed or answered with its reason, recorded by the module's tool `mcp__telemetry__self_review`. Each fix opened or committed whose text names pull requests is an `escape` candidate, the names kept as written. Every line names the session that acted (`title` and `role`, once the
 module has learned them; `parent` and `launch_tier` in a session the orchestrator's launcher spawned for an orchestrator, on a tier) and each GitHub act the repository, pull request and head it names
-(`target`). A call that failed or was refused keeps the first paragraph of its message, redacted and cut to 800 characters (`error_message`); no prompt, answer or other tool output is kept in the events; the
+(`target`). Each permission dialog shown to the operator is a `permission_ask` event, written when it appears (hook `classic.PermissionRequest`): the tool, its target (a path, a redacted command line, a URL), Claude Code's reason as `tool.check` gave it (`ask_reason`) and the call's id; his answer is the `outcome` of the `tool_call` of the same id, the time from the dialog to its end its `ask_ms`. A call that failed or was refused keeps the first paragraph of its message, redacted and cut to 800 characters (`error_message`); no prompt, answer or other tool output is kept in the events; the
 session's transcript, which holds them, is exported beside them, redacted (see Commands).
 
 ## Commands
@@ -56,7 +56,8 @@ session's transcript, which holds them, is exported beside them, redacted (see C
   `--since` reads from a time and moves no cursor), one line per group: the decider or tool, the command
   and the message with its repository and pull request, shas, paths and numbers normalised, with its count,
   first and last time, sessions and one example verbatim. The plugins' own (`plugin:*` refusals, errors of
-  a plugin's tools and scripts) come first, then the rest.
+  a plugin's tools and scripts) come first, then the rest, then the permission prompts shown to the operator, grouped by tool and
+  reason, with the answers (allowed, denied, unanswered) and the longest wait of the calls that ended in the same reading.
 - `telemetry.ts report --config <dir> [--week <first day>] [--tool <owner/name>]...`: the weekly
   report, read-only, on the seven Paris days from `--week` (the seven ending today by default). It
   prints the spend of the tool against the products' and the unattributed (by repository, from the

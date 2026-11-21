@@ -74,7 +74,7 @@ const through = (answer: unknown) => async () => answer
 test('register mounts the observers and the export command', () => {
   const names: string[] = []
   register((event: string, ...rest: unknown[]) => names.push(rest.length === 2 ? `${event}:${(rest[0] as Record<string, string>)['command']}` : event))
-  assert.deepEqual(names, ['session.start', 'turn.start', 'turn.complete', 'tool.check', 'tool.call', 'agent.spawn', 'session.end', 'command.run:telemetry:export'])
+  assert.deepEqual(names, ['session.start', 'turn.start', 'turn.complete', 'tool.check', 'classic.PermissionRequest', 'tool.call', 'agent.spawn', 'session.end', 'command.run:telemetry:export'])
   assert.deepEqual(scriptArgv('/r', 'append', '/c'), ['node', '--experimental-strip-types', '--no-warnings', '/r/skills/telemetry/scripts/telemetry.ts', 'append', '--config', '/c'])
 })
 
@@ -343,4 +343,44 @@ test('session.start: not a repository, no remote or a host that fails: the direc
   for (const options of [{ repo: undefined }, { repo: { root: '/r', remote: null, internal: false } }, { repo: new Error('no repo') }]) {
     assert.equal((await projectOfStart(options)).project, 'claude-plugins', JSON.stringify(options))
   }
+})
+
+test('a permission prompt: written at once, before the call ends, with the reason tool.check gave; the call then carries the wait', async () => {
+  const { $, runs } = host()
+  const { hook } = hooks()
+  const input = { tool: 'Write', input: { file_path: '/Users/me/dev/app/config.json', content: 'never kept' }, tool_use_id: 'toolu_01Write' }
+  assert.equal(await hook('tool.check')($, input, through(F('tool.check.ask.write'))), F('tool.check.ask.write'))
+  assert.equal(runs.length, 0)
+  const request = F('permission.request.write')
+  assert.equal(await hook('classic.PermissionRequest')($, request, through(undefined)), undefined)
+  // The operator has not answered yet: the line is already written, alone.
+  assert.equal(runs.length, 1)
+  const [asked] = (runs[0]?.stdin ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+  assert.deepEqual([asked?.['event'], asked?.['tool'], asked?.['tool_use_id'], asked?.['file'], asked?.['permission_mode']], ['permission_ask', 'Write', 'toolu_01Write', '/Users/me/dev/app/config.json', 'default'])
+  assert.match(String(asked?.['ask_reason']), /sensitive file/)
+  // He allows: the call runs and ends; its event gives the time since the dialog and its outcome.
+  await hook('tool.call')($, { tool: 'Write', tool_use_id: 'toolu_01Write', file_path: '/Users/me/dev/app/config.json' }, through(F('result.ok')))
+  await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+  const call = (runs[1]?.stdin ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>).find(e => e['event'] === 'tool_call')
+  assert.deepEqual([call?.['outcome'], typeof call?.['ask_ms']], ['ok', 'number'])
+})
+
+test('a permission request a settings hook answered shows no dialog: nothing is written; a failing writer never fails the hook', async () => {
+  const quiet = host()
+  const h = hooks()
+  const answered = { hookSpecificOutput: { decision: { behavior: 'allow' } }, decision: { behavior: 'allow' } }
+  assert.equal(await h.hook('classic.PermissionRequest')(quiet.$, F('permission.request.write'), through(answered)), answered)
+  assert.equal(quiet.runs.length, 0)
+  const broken = host({ exitCode: 1 })
+  const result = await hooks().hook('classic.PermissionRequest')(broken.$, F('permission.request.write'), through({ passed: true }))
+  assert.deepEqual(result, { passed: true })
+  assert.equal(broken.runs.length, 1)
+  assert.match(broken.logs.join('\n'), /permission request skipped: append exited 1/)
+})
+
+test('a prompt no announced ask matches is still written, without the call\'s id or the reason', async () => {
+  const { $, runs } = host()
+  await hooks().hook('classic.PermissionRequest')($, F('permission.request.write'), through(undefined))
+  const asked = JSON.parse((runs[0]?.stdin ?? '').trim()) as Record<string, unknown>
+  assert.deepEqual([asked['event'], asked['tool_use_id'], asked['ask_reason']], ['permission_ask', undefined, undefined])
 })

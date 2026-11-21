@@ -36,7 +36,9 @@ export const MESSAGE_RAW_MAX = 4000
  * redacts each whole value first and cuts after (`cutFields`), so a secret straddling a limit is
  * never left half-matched and half-kept.
  */
-export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, description: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX, reason: TEXT_MAX, error_message: MESSAGE_MAX }
+export const CUTS: Readonly<Record<string, number>> = { line: LINE_MAX, file: LINE_MAX, url: LINE_MAX, ask_reason: LINE_MAX, description: TEXT_MAX, headers: HEADER_MAX, title: TEXT_MAX, parent: TEXT_MAX, reason: TEXT_MAX, error_message: MESSAGE_MAX }
+/** The prompts and shown dialogs the module remembers at once, the oldest dropped: a call that never ends leaves one. */
+export const ASKS_KEPT = 100
 /** Past this many buffered events the module writes without waiting for the turn's end. */
 export const FLUSH_AT = 100
 
@@ -557,7 +559,7 @@ function escapesOf(at: number, session: string, agent: string | undefined, e: Fi
 }
 
 /** The `tool_call` event, and the events the call's arguments carry (a question, a spawn, an escape). */
-export function toolEvents(at: number, session: string, input: unknown, result: unknown, check: Check | undefined, durationMs: number | undefined): Event[] {
+export function toolEvents(at: number, session: string, input: unknown, result: unknown, check: Check | undefined, durationMs: number | undefined, askedAt?: number): Event[] {
   const e = record(input)
   const tool = text(e['tool']) ?? 'unknown'
   const agent = text(e['agentId'])
@@ -581,6 +583,7 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
     error_message: messageOf(result),
     check,
     duration_ms: durationMs,
+    ask_ms: askedAt === undefined ? undefined : Math.max(0, at - askedAt),
     bash,
     skill: tool === 'Skill' ? text(e['skill']) : undefined,
     subagent_type: tool === 'Agent' ? text(e['subagent_type']) : undefined,
@@ -597,6 +600,65 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
   }
   if (outcome === 'ok') events.push(...escapesOf(at, session, agent, e, mcp, target !== undefined && Object.keys(target).length > 0 ? target : undefined))
   return events
+}
+
+/** A permission prompt `tool.check` announced (its verdict was an ask), waiting for the dialog's own hook. */
+export interface Ask {
+  readonly tool: string
+  /** The call's arguments as `tool.check` read them, in the stable form `sameInput` compares. */
+  readonly input: string
+  readonly id: string | undefined
+  readonly agent: string | undefined
+  readonly reason: string | undefined
+  readonly check: Check | undefined
+}
+
+/** `value` as JSON with each object's keys in order: two inputs equal as values give one text. */
+export function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (typeof value === 'object' && value !== null) {
+    return `{${Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+/** The ask a `tool.check` verdict is, or undefined for a verdict that is no ask. */
+export function askOf(input: unknown, result: unknown): Ask | undefined {
+  const e = record(input)
+  const check = checkOf(result)
+  const tool = text(e['tool'])
+  if (check?.decision !== 'ask' || tool === undefined) return undefined
+  return { tool, input: stableJson(e['input']), id: text(e['tool_use_id']), agent: text(e['agentId']), reason: text(record(result)['reason']), check }
+}
+
+/**
+ * The `permission_ask` event of a dialog about to be shown, from the classic `PermissionRequest`
+ * input (the tool, its arguments, the mode) and the `tool.check` ask it matched, which gives the
+ * call's id, Claude Code's reason and who asked. The target is what the arguments name plainly:
+ * a path, a command line, a URL, a skill; the writer redacts and cuts it like any other field.
+ */
+export function permissionAsk(at: number, session: string, input: unknown, ask: Ask | undefined): Event {
+  const e = record(input)
+  const tool = text(e['tool_name']) ?? ask?.tool ?? 'unknown'
+  const args = record(e['tool_input'])
+  const mcp = mcpOf(tool)
+  const command = text(args['command'])
+  const mcpCommand = mcp !== undefined && command !== undefined && /^[a-z][a-z0-9-]{0,40}$/.test(command) ? command : undefined
+  return makeEvent('permission_ask', at, session, {
+    agent: text(e['agent_id']) ?? ask?.agent,
+    tool,
+    mcp_server: mcp?.server,
+    mcp_tool: mcp?.name,
+    tool_use_id: ask?.id,
+    ask_reason: ask?.reason,
+    check: ask?.check,
+    permission_mode: text(e['permission_mode']),
+    file: text(args['file_path']) ?? text(args['notebook_path']) ?? text(args['path']),
+    bash: tool === 'Bash' && command !== undefined ? bashOf(command) : undefined,
+    url: text(args['url']),
+    skill: tool === 'Skill' ? text(args['skill']) : undefined,
+    command: mcpCommand,
+  })
 }
 
 /** The ids of the plugin and MCP calls a conversation already holds, answered or not. */
@@ -698,6 +760,8 @@ export function originOf(reportsTo: string | undefined, tier: string | undefined
 export class Collector {
   private buffer: Event[] = []
   private readonly checks = new Map<string, Check>()
+  private asks: Ask[] = []
+  private readonly shown = new Map<string, number>()
   private readonly children = new Map<string, { spawnedAt: number; runs: number }>()
   private readonly runStarts = new Map<string, number>()
   private readonly recorded = new Set<string>()
@@ -789,6 +853,39 @@ export class Collector {
     const check = this.checks.get(toolUseId)
     this.checks.delete(toolUseId)
     return check
+  }
+
+  /** A prompt `tool.check` announced: held until the dialog's hook claims it or its call ends. */
+  noteAsk(ask: Ask | undefined): void {
+    if (ask === undefined) return
+    this.asks.push(ask)
+    if (this.asks.length > ASKS_KEPT) this.asks = this.asks.slice(-ASKS_KEPT)
+  }
+
+  /**
+   * The announced ask a dialog is for: the latest of the same tool and loop with the same arguments,
+   * else the only one of that tool and loop. Taken once; a call that has an id is marked shown at `at`.
+   */
+  takeAsk(tool: string, input: unknown, agent: string | undefined, at: number): Ask | undefined {
+    const same = this.asks.filter(ask => ask.tool === tool && ask.agent === agent)
+    const wanted = stableJson(input)
+    const found = [...same].reverse().find(ask => ask.input === wanted) ?? (same.length === 1 ? same[0] : undefined)
+    if (found === undefined) return undefined
+    this.asks = this.asks.filter(ask => ask !== found)
+    if (found.id !== undefined) {
+      this.shown.set(found.id, at)
+      if (this.shown.size > ASKS_KEPT) this.shown.delete([...this.shown.keys()][0] ?? '')
+    }
+    return found
+  }
+
+  /** The call ended: when its prompt was shown, if it was; its announced ask, shown or not, is forgotten. */
+  settleAsk(toolUseId: string | undefined): number | undefined {
+    if (toolUseId === undefined) return undefined
+    this.asks = this.asks.filter(ask => ask.id !== toolUseId)
+    const at = this.shown.get(toolUseId)
+    this.shown.delete(toolUseId)
+    return at
   }
 
   spawned(child: string | undefined, at: number): void {

@@ -4,7 +4,7 @@
 // a failure here never changes, delays past its bound, or repeats the call it observed (an
 // observer fails open). The events are built in collect.ts; this file only reads the host.
 import {
-  agentClosed, agentSpawned, checkOf, Collector, firstRepository, firstTurn, mcpOf, originOf, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES, transcriptCallIds, transcriptToolEvents,
+  agentClosed, agentSpawned, askOf, checkOf, Collector, firstRepository, firstTurn, mcpOf, originOf, permissionAsk, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES, transcriptCallIds, transcriptToolEvents,
   turnEnd, usageFacts, type Event,
 } from './collect.ts'
 import { SELF_REVIEW_DESCRIPTION, SELF_REVIEW_SCHEMA, SELF_REVIEW_TOOL, selfReviewEvents, selfReviewLine } from './self-review.ts'
@@ -198,6 +198,24 @@ export function mount(on: On, collector: Collector): void {
     const result = await next(e)
     await quietly($, 'tool.check', async () => {
       collector.noteCheck(typeof e['tool_use_id'] === 'string' ? e['tool_use_id'] : undefined, checkOf(result))
+      collector.noteAsk(askOf(e, result))
+    })
+    return result
+  })
+
+  // The classic event the host raises as it is about to show a permission dialog. A settings hook that
+  // answers the request (a decision on `next`'s result) shows none: nothing is written then. Written at
+  // once, not at the turn's end: a call still waiting on the operator has this line alone.
+  on('classic.PermissionRequest', async ($, e, next) => {
+    const result = await next(e)
+    await quietly($, 'permission request', async () => {
+      if (typeof result === 'object' && result !== null && 'decision' in result) return
+      const at = await $.clock.now()
+      const tool = typeof e['tool_name'] === 'string' ? e['tool_name'] : ''
+      const agent = typeof e['agent_id'] === 'string' ? e['agent_id'] : undefined
+      const ask = collector.takeAsk(tool, e['tool_input'], agent, at)
+      collector.push(permissionAsk(at, await $.session.id(), e, ask))
+      await flush($, collector)
     })
     return result
   })
@@ -214,7 +232,8 @@ export function mount(on: On, collector: Collector): void {
       const at = await $.clock.now()
       if (typeof e['tool_use_id'] === 'string' && mcpOf(String(e['tool'])) !== undefined) collector.claim(e['tool_use_id'])
       const check = collector.takeCheck(typeof e['tool_use_id'] === 'string' ? e['tool_use_id'] : undefined)
-      await add($, collector, toolEvents(at, await $.session.id(), e, result, check, started === undefined ? 0 : Math.max(0, at - started)))
+      const askedAt = collector.settleAsk(typeof e['tool_use_id'] === 'string' ? e['tool_use_id'] : undefined)
+      await add($, collector, toolEvents(at, await $.session.id(), e, result, check, started === undefined ? 0 : Math.max(0, at - started), askedAt))
       collector.setTitle(renamedTo(e, result, check))
     })
     return result

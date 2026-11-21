@@ -9,6 +9,12 @@
   "turn.complete.refused": { "answer": "", "durationMs": 900, "isAborted": false, "turnId": "turn-2", "reason": "refusal", "refusal": { "category": "cyber", "explanation": "never kept" } },
   "tool.check.deny": { "decision": "deny", "reason": "never kept", "rule": "Bash(git push --force:*)" },
   "tool.check.ask": { "decision": "ask", "hook": "PreToolUse" },
+  "tool.check.ask.write": { "decision": "ask", "reason": "Claude requested permissions to write to /Users/me/dev/app/config.json, which is a sensitive file." },
+  "permission.request.write": {
+    "session_id": "60ed5626-9879-4041-892a-5db0ff0bad69", "hook_event_name": "PermissionRequest", "permission_mode": "default",
+    "tool_name": "Write", "tool_input": { "file_path": "/Users/me/dev/app/config.json", "content": "never kept" },
+    "permission_suggestions": [{ "type": "addRules", "rules": [{ "toolName": "Write" }], "behavior": "allow", "destination": "localSettings" }]
+  },
   "tool.check.allow": { "decision": "allow" },
   "tool.call.bash": { "tool": "Bash", "tool_use_id": "toolu_01Bash", "command": "cd /tmp/x && npm test -- --grep 'a b' | tail -5", "description": "run" },
   "result.ok": { "result": { "stdout": "never kept" }, "text": "never kept", "ref": 3 },

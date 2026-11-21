@@ -1,5 +1,7 @@
 // The failed calls of the store, grouped for a model to act on: every `tool_call` whose outcome is
-// `error` or `refused`, one line per group, the plugins' own failures first. A group is the same
+// `error` or `refused`, one line per group, the plugins' own failures first; then the permission
+// prompts shown to the operator (`permission_ask` events), grouped by tool and Claude Code's reason,
+// each with his answers and waits read from the calls that had one (`ask_ms`) in the same reading. A group is the same
 // decider (or tool), the same command and the same message once its variable parts (a repository
 // and pull request, a sha, a path, a number) are normalised, so two refusals that differ by a PR
 // number are one line with a count. The reading keeps a cursor, one byte offset per day file, so
@@ -38,19 +40,32 @@ export interface Failure {
   readonly command: string | undefined
   readonly message: string | undefined
   readonly plugin: boolean
+  /** A prompt (`outcome` `asked`) or a call that had one: the call's id, the join between them. */
+  readonly id?: string | undefined
+  /** A call that had a prompt: from the dialog to its end. */
+  readonly askMs?: number | undefined
 }
 
 /** One line of a day file as a failure, or undefined for any other event. */
 export function failureOf(line: string): Failure | undefined {
-  if (!line.includes('"tool_call"') || !(line.includes('"outcome":"error"') || line.includes('"outcome":"refused"'))) return undefined
+  const isAsk = line.includes('"permission_ask"')
+  const answered = line.includes('"tool_call"') && line.includes('"ask_ms"')
+  if (!isAsk && !answered && (!line.includes('"tool_call"') || !(line.includes('"outcome":"error"') || line.includes('"outcome":"refused"')))) return undefined
   let e: Fields
   try {
     e = record(JSON.parse(line))
   } catch {
     return undefined
   }
-  const outcome = text(e['outcome'])
   const ts = Date.parse(text(e['ts']) ?? '')
+  if (e['event'] === 'permission_ask' && Number.isFinite(ts)) {
+    return { ts, session: text(e['session']) ?? '?', outcome: 'asked', by: text(e['tool']) ?? 'unknown', command: undefined, message: text(e['ask_reason']), plugin: false, id: text(e['tool_use_id']) }
+  }
+  const outcome = text(e['outcome'])
+  const askMs = typeof e['ask_ms'] === 'number' && Number.isFinite(e['ask_ms']) ? e['ask_ms'] : undefined
+  if (e['event'] === 'tool_call' && outcome === 'ok' && askMs !== undefined && Number.isFinite(ts)) {
+    return { ts, session: text(e['session']) ?? '?', outcome: 'answered', by: text(e['tool']) ?? 'unknown', command: undefined, message: undefined, plugin: false, id: text(e['tool_use_id']), askMs }
+  }
   if (e['event'] !== 'tool_call' || (outcome !== 'error' && outcome !== 'refused') || !Number.isFinite(ts)) return undefined
   const tool = text(e['tool']) ?? 'unknown'
   const server = text(e['mcp_server'])
@@ -62,6 +77,7 @@ export function failureOf(line: string): Failure | undefined {
     ts, session: text(e['session']) ?? '?', outcome, by: decided ?? (server ?? tool),
     command: text(e['command']), message: text(e['error_message']),
     plugin: pluginRefusal || (outcome === 'error' && pluginTool),
+    id: text(e['tool_use_id']), askMs,
   }
 }
 
@@ -171,12 +187,70 @@ function section(title: string, groups: readonly Group[], since: number): string
   return [`${title} (${groups.reduce((n, g) => n + g.count, 0)} call(s), ${groups.length} group(s)):`, ...shown.map(lineOf), ...more]
 }
 
-/** The printed groups: the plugins' first, then the rest. */
-export function render(failures: readonly Failure[], since: number): string[] {
+/** A group of permission prompts: the same tool and the same reason once its variable parts are normalised. */
+export interface PromptGroup {
+  readonly tool: string
+  readonly normalised: string
+  count: number
+  first: number
+  last: number
+  readonly sessions: Set<string>
+  /** The calls of the group that ended, by the operator's answer: allowed (`ok`, or an `error` of the tool after it), denied (refused by `user`), then the longest `ask_ms`. */
+  allowed: number
+  denied: number
+  waitMs: number
+  readonly example: string | undefined
+}
+
+/**
+ * The prompts, grouped by tool and normalised reason, each with the answers of the calls of the same id
+ * that this reading holds: `ok` or `error` is allowed, a refusal is denied, and a prompt with no ended
+ * call is unanswered (still waiting, or its call's end is in another reading). Wait is the longest
+ * `ask_ms` of the group: the operator's wait plus the tool's own run.
+ */
+export function promptGroups(items: readonly Failure[]): PromptGroup[] {
+  const ended = new Map<string, Failure>()
+  for (const f of items) if (f.id !== undefined && f.askMs !== undefined) ended.set(f.id, f)
+  const groups = new Map<string, PromptGroup>()
+  for (const f of items) {
+    if (f.outcome !== 'asked') continue
+    const normalised = f.message === undefined ? '(no reason)' : normalise(f.message)
+    const key = JSON.stringify([f.by, normalised])
+    const g = groups.get(key) ?? { tool: f.by, normalised, count: 0, first: f.ts, last: f.ts, sessions: new Set<string>(), allowed: 0, denied: 0, waitMs: 0, example: f.message }
+    groups.set(key, g)
+    g.count++
+    g.first = Math.min(g.first, f.ts)
+    g.last = Math.max(g.last, f.ts)
+    g.sessions.add(f.session)
+    const answer = f.id === undefined ? undefined : ended.get(f.id)
+    if (answer !== undefined) {
+      if (answer.outcome === 'refused') g.denied++
+      else g.allowed++
+      g.waitMs = Math.max(g.waitMs, answer.askMs ?? 0)
+    }
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count || a.first - b.first)
+}
+
+/** One prompt group as one line: count, tool, reason, the answers, the wait, when, where, one example verbatim. */
+export function promptLine(g: PromptGroup): string {
+  const span = g.first === g.last ? at(g.first) : `${at(g.first)} → ${at(g.last)}`
+  const open = g.count - g.allowed - g.denied
+  const answers = `allowed ${g.allowed}, denied ${g.denied}, unanswered ${open}`
+  const wait = g.allowed + g.denied === 0 ? '' : `, up to ${Math.round(g.waitMs / 1000)} s`
+  const example = g.example === undefined ? '' : ` — e.g. ${JSON.stringify(oneLine(g.example, EXAMPLE_MAX))}`
+  return `${g.count}× asked ${g.tool}: ${g.normalised} (${answers}${wait}) [${span}, ${g.sessions.size} session(s)]${example}`
+}
+
+/** The printed groups: the plugins' first, then the rest, then the permission prompts. */
+export function render(items: readonly Failure[], since: number): string[] {
+  const failures = items.filter(f => f.outcome === 'error' || f.outcome === 'refused')
   const groups = group(failures)
+  const prompts = promptGroups(items)
   const header = `errors since ${new Date(since).toISOString().slice(0, 16)}Z: ${failures.length} failed call(s)`
-  if (groups.length === 0) return [`${header}`]
-  return [header, ...section('plugin', groups.filter(g => g.plugin), since), ...section('other', groups.filter(g => !g.plugin), since)]
+  const asked = prompts.length === 0 ? [] : [`permission prompts (${prompts.reduce((n, g) => n + g.count, 0)} shown, ${prompts.length} group(s)):`, ...prompts.slice(0, GROUPS_SHOWN).map(promptLine), ...(prompts.length > GROUPS_SHOWN ? [`… ${prompts.length - GROUPS_SHOWN} more group(s)`] : [])]
+  if (groups.length === 0) return [header, ...asked]
+  return [header, ...section('plugin', groups.filter(g => g.plugin), since), ...section('other', groups.filter(g => !g.plugin), since), ...asked]
 }
 
 /** The cursor: for each day file, the bytes already read. */
