@@ -423,9 +423,13 @@ fi
 # Computed from the rate_limits above, nothing else; the 5-hour window is named first. Red when the
 # window falls 5 % or more short of its reset, orange and informative below that.
 if [ "$show_usage" = "1" ]; then
-  pace=""
-  pace=$(window_pace "5h" "$h5_pct" "$h5_reset" 18000 time) ||
-    { [ "$show_seven" = "1" ] && pace=$(window_pace "7d" "$d7_pct" "$d7_reset" 604800 date); }
+  pace=$(window_pace "5h" "$h5_pct" "$h5_reset" 18000 time)
+  # The 7-day window is read when the 5-hour one says nothing or only the mild line: a calm line
+  # must not hide a red one.
+  if [ "$show_seven" = "1" ] && { [ -z "$pace" ] || [ "${pace##*|}" = "mild" ]; }; then
+    pace7=$(window_pace "7d" "$d7_pct" "$d7_reset" 604800 date)
+    [ -n "$pace7" ] && { [ -z "$pace" ] || [ "${pace7##*|}" = "short" ]; } && pace=$pace7
+  fi
   if [ -n "$pace" ]; then
     IFS='|' read -r pace_label pace_reset pace_kind <<<"$pace"
     if [ "$pace_kind" = "mild" ]; then

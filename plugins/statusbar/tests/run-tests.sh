@@ -642,6 +642,23 @@ check_all_lines "7d missing under 5 % says it ends just before its reset" "$ALL_
 "plain
 5h: 10% ▓░░░░░░░░░ → 2h13 │ 7d: 58% ▓▓▓▓▓▓░░░░ → 3d
 at this pace the 7d window ends just before its reset (at $(LC_ALL=C date -r "$IN_3D" +%d/%m 2>/dev/null || date -d "@$IN_3D" +%d/%m))"
+check_all_lines "7d missing 5 % or more keeps the red line" "$ALL_ON" \
+  "${D7}{\"used_percentage\":61,\"resets_at\":$IN_3D}}}" \
+"plain
+5h: 10% ▓░░░░░░░░░ → 2h13 │ 7d: 61% ▓▓▓▓▓▓░░░░ → 3d
+⚠ at this rate the 7d window is exhausted before its reset (at $(LC_ALL=C date -r "$IN_3D" +%d/%m 2>/dev/null || date -d "@$IN_3D" +%d/%m))"
+# A mild 5h line does not hide a red 7d one; a red 5h line stays first.
+D7M="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":58,\"resets_at\":$IN_2H},\"seven_day\":"
+check_all_lines "a mild 5h line gives way to a red 7d one" "$ALL_ON" \
+  "${D7M}{\"used_percentage\":75,\"resets_at\":$IN_3D}}}" \
+"plain
+5h: 58% ▓▓▓▓▓▓░░░░ → 2h13 │ 7d: 75% ▓▓▓▓▓▓▓▓░░ → 3d
+⚠ at this rate the 7d window is exhausted before its reset (at $(LC_ALL=C date -r "$IN_3D" +%d/%m 2>/dev/null || date -d "@$IN_3D" +%d/%m))"
+check_all_lines "a mild 5h line stays before a mild 7d one" "$ALL_ON" \
+  "${D7M}{\"used_percentage\":58,\"resets_at\":$IN_3D}}}" \
+"plain
+5h: 58% ▓▓▓▓▓▓░░░░ → 2h13 │ 7d: 58% ▓▓▓▓▓▓░░░░ → 3d
+at this pace the 5h window ends just before its reset (at $CLOCK_2H)"
 check_all_lines "SHOW_USAGE=0 hides the pace line with the quotas" "$(config_with SHOW_USAGE=0 SHOW_DIRECTORY=1)" \
   "${H5}{\"used_percentage\":80,\"resets_at\":$IN_2H}}}" \
 "plain"
