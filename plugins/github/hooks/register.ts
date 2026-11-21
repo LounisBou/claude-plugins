@@ -2551,10 +2551,8 @@ async function notDirectory($: Mod, path: string): Promise<string | undefined> {
   }
 }
 
-// ---- the E2E run: performed by the record tool, or observed in the session ----
+// ---- the E2E run: observed in the session ----
 
-// The E2E run the record tool performs stays under the host's limit on one process, as the light CI's does.
-const E2E_TIMEOUT_MS = LIGHT_CI_BUDGET_S * 1000
 // The Bash runs this module observed, newest last: what a record « ran » may name.
 const OBSERVED_RUNS_MAX = 50
 // The words a line may start with and still not be one plain command: their exit code is not the command's.
@@ -2564,6 +2562,9 @@ const observedRuns: Array<{ line: string; cwd: string; ok: boolean; at: number; 
 // A command line that starts in another directory: `cd <absolute path> && …`. The `;` form is not read: when its `cd`
 // fails, the command runs in the old directory and its exit code still reads as a pass.
 const CD_FIRST = /^\s*cd\s+(\/[^\s;&|]+)\s*&&\s*/
+// `set -o pipefail; <cmd> 2>&1 | tail -n <N>`: pipefail keeps <cmd>'s exit code as the line's, so the line observes <cmd>.
+const PIPEFAIL_TAIL = /^set\s+-o\s+pipefail\s*;\s*(\S.*?)\s+2>&1\s*\|\s*tail\s+-n\s*\d+\s*$/s
+const commandOf = (line: string): string => PIPEFAIL_TAIL.exec(line.trim())?.[1] ?? line
 
 // A Bash call run to its end, kept with the directory it ran in, whether it succeeded and when it started. A line
 // that starts with a `cd` is kept as the command after it, in that directory. A line that still pipes, chains,
@@ -2573,7 +2574,7 @@ async function noteRun($: Mod, line: string, started: number, result: unknown): 
   try {
     const cd = CD_FIRST.exec(line)
     const cwd = cd ? String(cd[1]) : String(await $.session.cwd())
-    const command = cd ? line.slice(cd[0].length) : line
+    const command = commandOf(cd ? line.slice(cd[0].length) : line)
     // A backslash, or a quote left unbalanced once its pairs are removed, may hide a separator from this reading: not alone.
     const bare = command.replace(/'[^']*'|"[^"]*"/g, '')
     // Only a plain command word first: `!`, `coproc`, `time`, `exec` and the like change what the exit code is, and a
@@ -2588,11 +2589,6 @@ async function noteRun($: Mod, line: string, started: number, result: unknown): 
   }
 }
 
-// An argv shown as one line, each word quoted when it holds a character the shell reads.
-function shownArgv(argv: readonly string[]): string {
-  return argv.map((word) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : "'" + word.replace(/'/g, "'\\''") + "'")).join(' ')
-}
-
 // When the checkout's HEAD last moved, from its reflog, in ms; undefined when it cannot be read.
 async function headMovedAt($: Mod, inDir: { cwd?: string }): Promise<number | undefined> {
   const out = await $.process.run(['git', 'log', '-g', '-1', '--date=unix', '--format=%gd', 'HEAD'], { timeoutMs: 10_000, ...inDir })
@@ -2600,66 +2596,38 @@ async function headMovedAt($: Mod, inDir: { cwd?: string }): Promise<number | un
   return out.exitCode === 0 && at ? Number(at[1]) * 1000 : undefined
 }
 
-type E2eRun = { argv: string[] } | { ran: string; cd?: string }
+type E2eRun = { ran: string; cd?: string }
 
 // The mark of an E2E pass or fail written on the session's word, with no run the tool performed or observed.
 const STATED = 'stated, not computed: '
 
-// The E2E run a pass or a fail rests on, from the input: `run` (an argv the tool runs) or `ran` (a command line the
-// session ran in Bash); a string says why the input names none.
+// The E2E run a pass or a fail rests on, from the input: `ran`, a command line the session ran in Bash; a string says
+// why the input names none.
 function e2eRunOf(e: ToolInput): E2eRun | string | undefined {
-  const run: unknown = e['run']
   const ran: unknown = e['ran']
-  if (run !== undefined && ran !== undefined) return 'github: an E2E rests on one run: "run" (the tool runs it) or "ran" (a command this session ran in Bash), not both.'
-  if (run !== undefined) {
-    if (!Array.isArray(run) || run.length === 0 || !run.every((word): word is string => typeof word === 'string' && word !== '')) {
-      return 'github: "run" is the E2E command as an argv, no shell: ["npm", "run", "e2e"].'
-    }
-    return { argv: run }
-  }
-  if (ran !== undefined) {
-    if (typeof ran !== 'string' || ran.trim() === '') return 'github: "ran" is the command line this session ran in Bash, as it ran it.'
-    // The `ran` text may carry the same leading `cd <checkout> &&` the observed line does: the run is matched by its
-    // command, and that directory must be the record's own (checked in e2eOutcome).
-    const cd = CD_FIRST.exec(ran.trim())
-    return cd ? { ran: ran.trim().slice(cd[0].length), cd: String(cd[1]).replace(/\/+$/, '') } : { ran: ran.trim() }
-  }
-  return undefined
+  if (e['run'] !== undefined) return 'github: "run" no longer exists: run the command in Bash, then record with "ran": "<the command line>".'
+  if (ran === undefined) return undefined
+  if (typeof ran !== 'string' || ran.trim() === '') return 'github: "ran" is the command line this session ran in Bash, as it ran it.'
+  // The `ran` text may carry the same leading `cd <checkout> &&` the observed line does: the run is matched by its
+  // command, and that directory must be the record's own (checked in e2eOutcome).
+  const cd = CD_FIRST.exec(ran.trim())
+  return cd ? { ran: commandOf(ran.trim().slice(cd[0].length)).trim(), cd: String(cd[1]).replace(/\/+$/, '') } : { ran: commandOf(ran.trim()).trim() }
 }
 
 /*
- * The result and detail of an E2E record, computed from its run: the tool runs `run` in the checkout at the head
- * (allowed as that command would be in Bash), or finds `ran` among the Bash runs this session made in that checkout
- * since its HEAD last moved. Pass on exit 0, fail otherwise; the session's own detail follows. A `ran` not found is
- * not computed: it is the session's word, `stated`, under the result it gave.
+ * The result and detail of an E2E record, computed from its run: finds `ran` among the Bash runs this session made in
+ * that checkout since its HEAD last moved. Pass on exit 0, fail otherwise; the session's own detail follows. A `ran`
+ * not found is not computed: it is the session's word, `stated`, under the result it gave.
  */
 async function e2eOutcome($: Mod, run: E2eRun, dir: string | undefined, head: string, inDir: { cwd?: string }, said: string, given: string): Promise<{ result: 'pass' | 'fail'; detail: string; stated?: true } | { deny: string }> {
   const tail = said.trim() === '' ? '' : '; ' + said.trim()
   const cut = (text: string): string => text.slice(0, DETAIL_MAX)
-  if ('argv' in run) {
-    const line = shownArgv(run.argv)
-    const allowed = await $.tool.check({ tool: 'Bash', input: { command: line } })
-    if (allowed.decision !== 'allow') {
-      return { deny: 'github: the record tool runs only what Bash may run without asking; `' + line + '` is not: run it in Bash' + (dir ? ' from ' + dir : '') + ', then record with "ran".' }
-    }
-    const started = Date.now()
-    const out = await $.process.run(run.argv, { timeoutMs: E2E_TIMEOUT_MS, ...inDir })
-    const secs = Math.round((Date.now() - started) / 1000)
-    if (Date.now() - started >= E2E_TIMEOUT_MS - 1000) {
-      return { deny: 'github: `' + line + '` ran past ' + LIGHT_CI_BUDGET_S + ' s and was stopped, nothing written: run it in Bash in the background, then record with "ran".' }
-    }
-    const now = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000, ...inDir })
-    if (String(now.stdout).trim().toLowerCase() !== head) return { deny: 'github: the checkout moved off ' + head.slice(0, 7) + ' while `' + line + '` ran: nothing written.' }
-    const last = String(out.stderr || out.stdout || '').trim().split('\n').pop() ?? ''
-    const result = out.exitCode === 0 ? 'pass' : 'fail'
-    return { result, detail: cut('ran `' + line + '` at ' + head.slice(0, 7) + ': exit ' + out.exitCode + ' in ' + secs + ' s' + (result === 'fail' && last ? ' (' + last.slice(0, 120) + ')' : '') + tail) }
-  }
   const cwd = (dir ?? String(await $.session.cwd())).replace(/\/+$/, '')
-  if ('cd' in run && run.cd !== undefined && run.cd !== cwd) {
+  if (run.cd !== undefined && run.cd !== cwd) {
     return { deny: 'github: `ran` names the directory ' + run.cd + ' but the record is for ' + cwd + ': record with "ran": "' + run.ran + '" from ' + cwd + ', or name the checkout ' + run.cd + ' with "dir".' }
   }
   const moved = await headMovedAt($, inDir)
-  if (moved === undefined) return { deny: 'github: when the checkout ' + cwd + ' last moved cannot be read from its reflog: record with "run" instead.' }
+  if (moved === undefined) return { deny: 'github: when the checkout ' + cwd + ' last moved cannot be read from its reflog: give "result" to record it as stated.' }
   const seen = observedRuns.filter((r) => r.alone && r.line === run.ran && r.cwd === cwd && r.at >= moved).pop()
   if (!seen) {
     if (given !== 'pass' && given !== 'fail') {
@@ -2678,7 +2646,7 @@ async function e2eOutcome($: Mod, run: E2eRun, dir: string | undefined, head: st
 }
 
 async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer> {
-  const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e['pr'], repo: e['repo'], kind: e['kind'], result: e['result'], detail: e['detail'], dir: e['dir'], run: e['run'], ran: e['ran'] } })
+  const verdict = await $.tool.check({ tool: RECORD_TOOL, input: { pr: e['pr'], repo: e['repo'], kind: e['kind'], result: e['result'], detail: e['detail'], dir: e['dir'], ran: e['ran'] } })
   if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
   // The checkout the tests ran in: named, or the session's directory.
   const dir = e['dir'] === undefined || e['dir'] === null || e['dir'] === '' ? undefined : String(e['dir'])
@@ -2695,14 +2663,14 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   if (e['exempt'] !== undefined) return owned === 'e2e' ? await setExemption($, e, detail) : await refuse($, REFUSED.recordKind, kindRefusal('e2e', origin, owned))
   if (e['plan'] !== undefined) return origin === PLAN_WRITER.plugin ? await setPlan($, e) : await refuse($, REFUSED.recordPlan, PLAN_REFUSAL)
   let result = String(e['result'] ?? '')
-  // An E2E pass or fail is computed from a run the tool performs or observed, never taken from the session's word.
+  // An E2E pass or fail is computed from a run the tool observed, never taken from the session's word.
   const e2eRun = kind === 'e2e' ? e2eRunOf(e) : undefined
   if (typeof e2eRun === 'string') return { deny: e2eRun }
   if (e2eRun && result !== '' && result !== 'pass' && result !== 'fail') {
-    return { deny: 'github: a run gives a pass or a fail; a ' + result + ' rests on no run: leave "run" and "ran" out.' }
+    return { deny: 'github: a run gives a pass or a fail; a ' + result + ' rests on no run: leave "ran" out.' }
   }
   if (kind === 'e2e' && !e2eRun && result === '') {
-    return { deny: 'github: an E2E record gives "run" (the command as an argv, run here in the checkout), "ran" (the command line this session ran there in Bash), or a result.' }
+    return { deny: 'github: an E2E record gives "ran" (the command line this session ran there in Bash), or a result.' }
   }
   // An E2E pass or fail with no run (one made on another machine), or with a `ran` not seen, is written as stated, not computed, and observed.
   let stated = kind === 'e2e' && !e2eRun && (result === 'pass' || result === 'fail')
@@ -2940,7 +2908,7 @@ export function register(on: On<Mod>): void {
         name: 'record',
         isDeferred: false,
         description:
-          'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail computed from a run, "run" (an argv the tool runs there) or "ran" (a command line this session ran there in Bash), or stated with neither, or a "ran" not seen, '
+          'Record a pull request\'s E2E at its head, from a clean checkout of it: pass or fail computed from "ran" (a command line this session ran there in Bash), or stated with none, or a "ran" not seen, '
           + 'not-applicable with its reason when no file holds runtime (docs, tests, CI, prompts), or waived on the operator\'s quoted, dated words. '
           + '{repo, exempt, paths?, labels?, until?} exempts a repository\'s pull requests for good, or until the instant given '
           + '(false revokes) and quotes the operator\'s dated words in detail. See '
@@ -2952,7 +2920,6 @@ export function register(on: On<Mod>): void {
             repo: { type: 'string', description: 'owner/name, overriding origin' },
             result: { type: 'string', enum: ['pass', 'fail', 'waived', 'not-applicable', ACCEPTANCE.result] },
             detail: { type: 'string', description: 'the reason, the operator\'s words, or a note added after the run' },
-            run: { type: 'array', items: { type: 'string' }, description: 'E2E: the command as an argv, run by the tool in the checkout; its exit code gives pass or fail' },
             ran: { type: 'string', description: 'E2E: the command line this session ran in Bash in that checkout since its head was checked out; its outcome gives pass or fail' },
             kind: { type: 'string', enum: KINDS.filter((kind) => kind !== SCRIPTED.kind), description: 'default: the kind this caller writes' },
             exempt: { type: 'boolean', description: 'exempt the repository (true) or revoke it (false), in place of pr and result' },

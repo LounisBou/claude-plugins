@@ -223,9 +223,7 @@ Core's `pr-record.ts` declares each kind's producer, the only plugin github writ
 A review record is refused from a session that pushed the head it reviews
 (`${CLAUDE_CONFIG_DIR:-~/.claude}/pushed-heads/<sha>`, read machine-wide, pruned with the records).
 
-**E2E computed from its run.** `run` (an argv, no shell) is run by the tool in the checkout at the
-head, after the head and clean checks, only when Bash would run it without asking, within 570 s,
-the head unmoved after. `ran` names a command run to its end as a foreground Bash line in that checkout (its directory, or a leading `cd <absolute path> &&`) since its `HEAD` last moved; a pipe, `;`, `&`, a newline, an unclosed quote, a `\` or a non-plain first word: kept, quoted, never matched (its exit code is the line's). Exit 0 is `pass`, else `fail`. A
+**E2E computed from its run.** `ran` names a command run to its end as a foreground Bash line in that checkout (its directory, or a leading `cd <absolute path> &&`) since its `HEAD` last moved; a pipe, `;`, `&`, a newline (but `set -o pipefail; <cmd> 2>&1 | tail -n <N>` observes `<cmd>`), an unclosed quote, a `\` or a non-plain first word: kept, quoted, never matched (its exit code is the line's). Exit 0 is `pass`, else `fail`. A
 `result: pass|fail` with neither, or with a `ran` not seen, is written, its detail opening `stated, not
 computed: `, and observed. `waived` and `not-applicable` take no run.
 

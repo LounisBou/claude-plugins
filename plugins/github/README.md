@@ -221,7 +221,7 @@ records are small JSON files under
 `${CLAUDE_CONFIG_DIR:-~/.claude}/pr-records/<owner>/<name>/<head>/`, written by the producers
 core's `pr-record.ts` declares; a review record written by the session that pushed the head is
 refused (the pushed heads are kept on disk, `pushed-heads/`); an E2E pass or fail is computed from a
-run the record tool performs (`run`) or observed in the session's Bash calls (`ran`); with neither, or a `ran` not seen,
+run observed in the session's Bash calls (`ran`); with none, or a `ran` not seen,
 it is written marked `stated, not computed`, and observed. `engine/REFERENCE.md` « Records » holds the record contract.
 
 The module puts `Ready` itself: after a record is written, and after a
