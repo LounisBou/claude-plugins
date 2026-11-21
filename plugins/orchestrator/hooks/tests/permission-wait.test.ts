@@ -22,8 +22,8 @@ const STATE = `${HOME}/.claude/claude-orchestrator`
 const AGENT = 'Agent: belt-p3'
 const ORCH = 'Orch: belt'
 const FILE = '/w/outside/notes.txt'
-const REASON = 'Claude requested permissions to write to /w/outside/notes.txt, which is a sensitive file.'
-const LINE = `[module] ${AGENT} waits on a permission dialog: Write ${FILE} — Claude requested permissions to write to /w/outside/notes.txt, which is a sensitive file; the operator answers it in its tab (ttys005)`
+const REASON = 'Permission is needed to write to /w/outside/notes.txt, which is a sensitive file.'
+const LINE = `[module] ${AGENT} waits on a permission dialog: Write ${FILE} — Permission is needed to write to /w/outside/notes.txt, which is a sensitive file; the operator answers it in its tab (ttys005)`
 const REMINDER = LINE.replace('waits on a permission dialog:', 'still waits on a permission dialog after 2h00:')
 
 // Lets the relay the hook left running finish: its reads and its send answer at once here.
@@ -117,7 +117,7 @@ test('the line names the agent, the tool, the target and the reason, and the tab
   expect(dialogLine(AGENT, DIALOG, '/dev/ttys005')).toBe(LINE)
   expect(dialogLine(AGENT, { ...DIALOG, reason: null }, null)).toBe(`[module] ${AGENT} waits on a permission dialog: Write ${FILE}; the operator answers it in its tab`)
   expect(dialogLine(AGENT, { ...DIALOG, target: '' }, null, true))
-    .toBe(`[module] ${AGENT} still waits on a permission dialog after 2h00: Write — Claude requested permissions to write to /w/outside/notes.txt, which is a sensitive file; the operator answers it in its tab`)
+    .toBe(`[module] ${AGENT} still waits on a permission dialog after 2h00: Write — Permission is needed to write to /w/outside/notes.txt, which is a sensitive file; the operator answers it in its tab`)
 })
 
 test('a text past its room is cut between words, so a secret in it is kept whole or left out', () => {
