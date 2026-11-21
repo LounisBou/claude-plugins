@@ -286,18 +286,58 @@ const DIRS_OF = (installed: string) => ({ ownDir: `/cfg/deploys/lounisbou/${RUNN
 const LIVED = JSON.stringify({ context_tokens: 170000, context_window: 1000000, context_percent: 17, model: 'a-model', updated_at: 't' })
 const YOUNG = JSON.stringify({ context_tokens: 40000, context_window: 1000000, context_percent: 4, model: 'a-model', updated_at: new Date().toISOString(), start: { tokens: 1, at: new Date().toISOString(), brief: null, brief_bytes: null } })
 
-test('an orchestrator and a coordinator are told of a newer installed commit once, then of the next one', async () => {
-  for (const launchName of ['Orch: belt', 'Coord: belt']) {
-    const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName, measure: LIVED }
-    const { dollar } = fakeDollar(setup)
-    const handlers = mounted()
-    const role = launchName.startsWith('Orch') ? 'orchestrator' : 'coordinator'
-    expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED, ...DIRS_OF(INSTALLED) }, role, role === 'coordinator' ? DEPLOYED : '')])
-    expect((await submit(handlers, dollar)).context).toBeUndefined()
-    const next = 'c'.repeat(40)
-    setup.installed = installedState(next, INSTALLED, RUNNING)
-    expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: next, ...DIRS_OF(next) }, role, role === 'coordinator' ? DEPLOYED : '')])
-  }
+test('a coordinator is told of a newer installed commit once, then of the next one', async () => {
+  const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt', measure: LIVED }
+  const { dollar } = fakeDollar(setup)
+  const handlers = mounted()
+  expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED, ...DIRS_OF(INSTALLED) }, 'coordinator', DEPLOYED)])
+  expect((await submit(handlers, dollar)).context).toBeUndefined()
+  const next = 'c'.repeat(40)
+  setup.installed = installedState(next, INSTALLED, RUNNING)
+  expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: next, ...DIRS_OF(next) }, 'coordinator', DEPLOYED)])
+})
+
+// An orchestrator keeps its version to its context gate: a newer install alone gives it no hand-over
+// line, install after install. Once its generation has lived, its home servers still read the installed conf.
+test('a newer installed commit alone gives an orchestrator no hand-over line, commit after commit', async () => {
+  const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt', measure: LIVED }
+  const { dollar, ran } = fakeDollar(setup)
+  const handlers = mounted()
+  expect((await submit(handlers, dollar)).context).toBeUndefined()
+  const next = 'c'.repeat(40)
+  setup.installed = installedState(next, INSTALLED, RUNNING)
+  expect((await submit(handlers, dollar)).context).toBeUndefined()
+  expect(ran.filter(argv => argv.at(-1) === 'home-reload')).toEqual([RELOAD(INSTALLED), RELOAD(next)])
+})
+
+test('a young orchestrator generation has no line and reloads no home server until it has lived', async () => {
+  const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt', measure: YOUNG }
+  const { dollar, ran } = fakeDollar(setup)
+  const handlers = mounted()
+  expect((await submit(handlers, dollar)).context).toBeUndefined()
+  expect(ran.filter(argv => argv.at(-1) === 'home-reload')).toEqual([])
+  setup.measure = LIVED
+  expect((await submit(handlers, dollar)).context).toBeUndefined()
+  expect(ran.filter(argv => argv.at(-1) === 'home-reload')).toEqual([RELOAD(INSTALLED)])
+})
+
+test('a reload that fails for an orchestrator is said in the log, and no line is given', async () => {
+  const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt', measure: LIVED, reload: { exitCode: 1, stdout: 'home-reload: orch-x not reloaded: no server running\n', stderr: '' } }
+  const { dollar, written } = fakeDollar(setup)
+  expect((await submit(mounted(), dollar)).context).toBeUndefined()
+  expect(written.some(line => line.includes(`the home servers did not all reload ${INSTALLED.slice(0, 7)}'s conf`))).toBe(true)
+})
+
+// What still hands an orchestrator over: its context gate, whatever is installed. A defect of its
+// running version that blocks it is the orchestrator's own judgment, not the module's: its rule is
+// in `succession-predecessor.md`, pinned in tests/run-tests.sh.
+test('an orchestrator at its context gate is told to succeed whatever is installed, and only that', async () => {
+  const atGate = JSON.stringify({ context_tokens: 310000, context_window: 1000000, context_percent: 31, model: 'a-model', updated_at: 't' })
+  const { dollar } = fakeDollar({ root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt', measure: atGate })
+  const seen = (await submit(mounted(), dollar)).context ?? []
+  expect(seen).toHaveLength(1)
+  expect(seen[0]).toContain('CONTEXT GATE')
+  expect(seen[0]).not.toContain('NEWER VERSION')
 })
 
 // The home servers read the installed commit's tmux conf when a session is told of it: the installed
@@ -346,15 +386,6 @@ test('a newer commit that changes no runtime file of a loaded plugin is not told
 test('a comparison that cannot be made gives the notice', async () => {
   const { dollar } = fakeDollar({ root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt', diff: { exitCode: 2, stdout: '' } })
   expect((await submit(mounted(), dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED, ...DIRS_OF(INSTALLED) }, 'coordinator', DEPLOYED)])
-})
-
-test('a young orchestrator generation is not told of a newer commit until it has lived', async () => {
-  const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt', measure: YOUNG }
-  const { dollar } = fakeDollar(setup)
-  const handlers = mounted()
-  expect((await submit(handlers, dollar)).context).toBeUndefined()
-  setup.measure = LIVED
-  expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED, ...DIRS_OF(INSTALLED) }, 'orchestrator', '')])
 })
 
 test('a /clear starts the memo over: the new session is told of the newer commit too', async () => {

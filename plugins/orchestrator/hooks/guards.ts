@@ -83,8 +83,8 @@ export function gateAnnouncement(gate: { tripped: boolean; words: string }, role
   return `CONTEXT GATE: this session is at ${gate.words}.${setLine(set)} ${roleLine(role, root)}`
 }
 
-// A newer commit installed under a running session: only a successor loads it, so the session is
-// told to hand over, by its role's own line. The commits are named short, as the deploy's status does.
+// A newer commit installed under a running coordinator: only a successor loads it, so it is told to
+// hand over, by its role's own line. The commits are named short, as the deploy's status does.
 export function versionAnnouncement(newer: Newer, role: string, root = ''): string {
   return `NEWER VERSION: commit ${newer.installed.slice(0, 7)} of the plugins is installed and this session still runs ${newer.own.slice(0, 7)}; only a successor runs the newer one. Hand over at the end of the step in progress, at once when a defect of the running version blocks you. ${roleLine(role, root)}`
 }
@@ -275,7 +275,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // /clear the id changes and no session.start fires, so a memo held across it
   // would name the old session's transcript. `toldCommit` is the newer commit last
   // decided (told, or found to change nothing the session runs), `announced` whether
-  // a version notice was given.
+  // a newer commit was already acted on.
   let memo: { sessionId: string; transcript: string | null; toldCommit: string | null; announced: boolean } | null = null
   // The launcher's mark, read once and kept: a re-entered call, or one past its
   // budget, can no longer read the environment, and the kill guard's net decides
@@ -320,14 +320,16 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       let raw: string | null = null
       try { raw = await $.fs.read(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))) } catch { /* no file yet: unmeasured */ }
       const reading = parseMeasure(String(raw ?? ''))
-      // A newer installed commit is said to the sessions that last, once per commit, when it changes
-      // a file the session runs; an orchestrator only once its generation has lived. An agent ends at
-      // its merge and is not told.
+      // A newer installed commit that changes a file the session runs has the home servers read its
+      // conf, once per commit; an orchestrator only once its generation has lived. Only a coordinator
+      // is also told to hand over: an orchestrator keeps its version to its context gate, and hands
+      // over earlier only when a defect of it blocks the orchestrator (`succession-predecessor.md`).
+      // An agent ends at its merge and is not told.
       if (role === 'coordinator' || (role === 'orchestrator' && generationLived(reading, Date.now()))) {
         const newer = await newerInstalled($.plugin.root, (path: string) => $.fs.read(path), memo.toldCommit, Date.now(), memo.announced)
         if (newer && await changesRuntime($, newer)) {
           memo.announced = true
-          blocks.push(versionAnnouncement(newer, role, root))
+          if (role === 'coordinator') blocks.push(versionAnnouncement(newer, role, root))
           await reloadHomes($, newer)
         }
         if (newer) memo.toldCommit = newer.installed
