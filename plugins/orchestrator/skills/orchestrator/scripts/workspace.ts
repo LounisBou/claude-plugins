@@ -833,8 +833,18 @@ export async function pin(ctx: Context, argv: readonly string[]): Promise<void> 
   if (pr !== undefined && !/^[0-9]+$/.test(pr)) throw new Refused(`pin: --pr needs a pull request number: ${pr}`)
   const src = await topLevel(ctx, 'pin', given)
   if (!NAME.test(name)) throw new Refused(`pin: name must match [A-Za-z0-9._-]+: ${name}`)
-  const sha = await gitOut(ctx, src, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
-  if (sha === undefined) throw new Refused(`pin: the source does not know ${ref}`)
+  const resolve = (): Promise<string | undefined> => gitOut(ctx, src, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+  let sha = await resolve()
+  if (sha === undefined && pr === undefined) throw new Refused(`pin: the source does not know ${ref} (--pr <n> makes pin fetch that pull request's head)`)
+  if (sha === undefined) {
+    // The head of the pull request may not be fetched yet: one fetch, written to FETCH_HEAD only.
+    const f = await git(ctx, src, ['fetch', '--quiet', 'origin', `refs/pull/${pr}/head`])
+    sha = await resolve()
+    if (sha === undefined) {
+      const why = f.status === 0 ? `the head of pull request ${pr} does not contain it` : `fetch of pull request ${pr} failed: ${chomp(f.stderr)}`
+      throw new Refused(`pin: the source does not know ${ref}; ${why}`)
+    }
+  }
   const target = `${ctx.root}/${basename(src)}/${name}`
   makeParent('pin', target)
   // A detached worktree: a reader's copy carries the code at the head and none of the
