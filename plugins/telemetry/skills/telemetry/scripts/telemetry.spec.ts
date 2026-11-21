@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { findingId } from '../../../core/lens.ts'
-import { backfillEvent, enrich, readSecrets, realCheck, realGh, realGit, realRepositoryAt, run, type Deps } from './telemetry.ts'
+import { backfillEvent, enrich, lastAnswer, readSecrets, realCheck, realGh, realGit, realRepositoryAt, run, type Deps } from './telemetry.ts'
 
 const S = '60ed5626-9879-4041-892a-5db0ff0bad69'
 const FIXTURE = fileURLToPath(new URL(`../../../tests/fixtures/${S}.jsonl`, import.meta.url))
@@ -453,16 +453,31 @@ test('append: a subagent\'s agent_closed takes its type, task, model, effort and
 test('append: a turn_end of the session\'s own loop carries the reasoning effort of its turn\'s last call, while the session runs; with none in the transcript it is as it came', () => {
   harness((config, deps, setStdin) => {
     mkdirSync(join(config, 'projects', '-w'), { recursive: true })
-    const withEffort = CALL_LINES.split('\n').map(l => JSON.stringify({ ...JSON.parse(l) as Record<string, unknown>, ...(JSON.parse(l).type === 'assistant' ? { effort: 'xhigh' } : {}) })).join('\n')
+    // The turn's three calls: the first names an effort, the second another, the last none; the last one that names one is read.
+    const efforts: Record<string, string> = { m1: 'low', m2: 'high' }
+    const withEffort = CALL_LINES.split('\n').map(l => { const entry = JSON.parse(l) as { type: string; message?: { id?: string } }; const effort = efforts[entry.message?.id ?? '']; return JSON.stringify(entry.type === 'assistant' && effort !== undefined ? { ...entry, effort } : entry) }).join('\n')
     writeFileSync(join(config, 'projects', '-w', `${S}.jsonl`), `${withEffort}\n`)
     setStdin(`${turnEndLine()}\n`)
     assert.equal(run(['append', '--config', config], deps), 0)
     const lines = readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
-    assert.deepEqual(lines.map(l => [l['event'], l['effort']]), [['turn_end', 'xhigh'], ['api_call', undefined], ['api_call', undefined]])
+    assert.deepEqual(lines.map(l => [l['event'], l['effort']]), [['turn_end', 'high'], ['api_call', undefined], ['api_call', undefined]])
     assert.equal(lines[0]?.['turn'], 'host-turn')
     writeFileSync(join(config, 'projects', '-w', `${S}.jsonl`), `${CALL_LINES}\n`)
     assert.equal(JSON.parse(enrich(turnEndLine(), config).split('\n')[0] ?? '{}').effort, undefined)
   })
+})
+
+test('lastAnswer: the last hand-back inside the window, else the last text; an empty or non-string hand-back and one outside the window are not the answer', () => {
+  const entry = (at: string, content: unknown[]): string => JSON.stringify({ type: 'assistant', timestamp: at, message: { content } })
+  const handback = (message: unknown) => ({ type: 'tool_use', name: 'SubagentHandback', input: { message } })
+  const text = (t: string) => ({ type: 'text', text: t })
+  const from = Date.parse('2026-11-17T11:00:00.000Z')
+  const to = Date.parse('2026-11-17T11:10:00.000Z')
+  const body = (...lines: string[]): string => lines.join('\n')
+  assert.equal(lastAnswer(body(entry('2026-11-17T11:01:00.000Z', [handback('first')]), entry('2026-11-17T11:02:00.000Z', [text('then text'), handback('second')])), from, to), 'second')
+  assert.equal(lastAnswer(body(entry('2026-11-17T11:01:00.000Z', [text('the text'), handback('')]), entry('2026-11-17T11:02:00.000Z', [handback(7)])), from, to), 'the text')
+  assert.equal(lastAnswer(body(entry('2026-11-17T11:01:00.000Z', [text('the text')]), entry('2026-11-17T12:00:00.000Z', [handback('too late')]), entry('2026-11-17T10:00:00.000Z', [handback('too early')])), from, to), 'the text')
+  assert.equal(lastAnswer('', from, to), '')
 })
 
 test('append: a review reader that hands its report back counts the finding lines of the hand-back, not the line of text that follows it', () => {

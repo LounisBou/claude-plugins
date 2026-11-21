@@ -55,6 +55,16 @@ describe('lens readers', () => {
       ['important', 'test/test_dead_tcp.c', 554, 'The test claims too much'],
       ['minor', 'state_machine.c', 553, 'SET_TMR1S_IE(1) is unconditional'],
     ])
+    // A bullet of `*`, a file in backticks, a severity in capitals.
+    assert.deepEqual(parseLensFindings('* [Critical] `src/y.ts:4` (the loop) — the claim — evidence\nIMPORTANT | src/z.ts:5 | another claim').map(f => [f.severity, f.file, f.line, f.claim]), [
+      ['critical', 'src/y.ts', 4, 'the claim'],
+      ['important', 'src/z.ts', 5, 'another claim'],
+    ])
+    // The claim is what follows the separator, whatever the shape; a pipe inside a dash line's claim stays in it, as in the contract's own shape.
+    assert.deepEqual(parseLensFindings('[important] src/a.ts:12 (sym) — a | b — c').map(f => f.claim), ['a | b'])
+    assert.deepEqual(parseLensFindings('**important** src/x.ts:9 — bold bare — e').map(f => f.claim), ['bold bare'])
+    // No separator right after the location: the evidence is not taken for the claim, and a time is no location.
+    assert.deepEqual(parseLensFindings('[important] src/a.ts:12: the claim — the evidence\nimportant src/a.ts:12 the claim — the evidence\nImportant 10:30 — standup moved'), [])
     // Prose that merely starts with a severity word, or a bracket with no location, is no finding.
     assert.deepEqual(parseLensFindings('Important: read the diff first\n[important] no location — a claim\nminor typos only'), [])
     // A line the contract's shape reads keeps its reading, so its id does not move.

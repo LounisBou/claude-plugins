@@ -74,6 +74,12 @@ test('self_review: a finding\'s id, the one its lens\'s line carries, is kept on
   await hook('tool.call')($, call({ findings: [{ lens: 'correctness', file: 'a.ts', line: 3, outcome: 'fixed', finding_id: ` ${id} ` }, { lens: 'tests', outcome: 'fixed' }] }), unreached)
   const [first, second] = written(runs[0]?.stdin)
   assert.deepEqual([first?.['finding_id'], 'finding_id' in (second ?? {})], [id, false])
+  // An id that merely contains one is not an id.
+  for (const bad of ['x:zz', 'see x:0123456789', 'x:0123456789 and more']) {
+    const refused = host()
+    assert.deepEqual(await hooks()('tool.call')(refused.$, call({ findings: [{ lens: 'x', outcome: 'fixed', finding_id: bad }] }), unreached), { result: 'self-review: not recorded — finding 1: its finding_id is not a `<lens>:<hash>` id', isError: true })
+    assert.equal(refused.runs.length, 0)
+  }
   const refused = host()
   assert.deepEqual(await hooks()('tool.call')(refused.$, call({ findings: [{ lens: 'x', outcome: 'fixed', finding_id: 'x:zz' }] }), unreached), { result: 'self-review: not recorded — finding 1: its finding_id is not a `<lens>:<hash>` id', isError: true })
   assert.equal(refused.runs.length, 0)
