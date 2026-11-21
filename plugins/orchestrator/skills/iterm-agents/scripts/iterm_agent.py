@@ -3292,6 +3292,34 @@ HOME_WAIT = int(os.environ.get("ORCHESTRATOR_HOME_WAIT", "120"))
 # window of the server.
 HOME_ENV_KEPT = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
                  "TMPDIR", "TMUX_TMPDIR", "CLAUDE_CONFIG_DIR")
+# What marks a variable as the host's own, the identity of the session that set it and its
+# nesting (its id, its messaging socket and token, its bridge, its children's notes): the
+# one place the two kinds of launch read it from. A home server is started without any
+# (`home_env`); a plain tab opens in an app that may have been started from a session and
+# so carries all of them, and a session launched there took itself for that session's child
+# (row 451): its launch line unsets them (`nesting_unset`). The account's CLAUDE_CONFIG_DIR
+# is kept, by the list above.
+NESTING_ENV_PREFIXES = ("CLAUDE_CODE_",)
+NESTING_ENV_NAMES = ("CLAUDECODE", "CLAUDE_PID")
+
+
+def nesting_var(name):
+    """True for a variable of the host's session identity or nesting that no launch passes on."""
+    return name not in HOME_ENV_KEPT and (
+        name in NESTING_ENV_NAMES or name.startswith(NESTING_ENV_PREFIXES))
+
+
+def nesting_unset():
+    """The shell words that unset, in the tab's own environment, every variable `nesting_var`
+    names: the tab's names are not the caller's (the app's environment is read, not ours), so
+    they are read there, by `env`, when the launch runs. awk, not sed: the system's sed has no
+    alternation."""
+    tests = ['$1=="%s"' % name for name in NESTING_ENV_NAMES]
+    tests += ["$1~/^%s[A-Za-z0-9_]*$/" % prefix for prefix in NESTING_ENV_PREFIXES]
+    return ("for v in $(env | awk -F= '%s {print $1}'); do unset \"$v\"; done"
+            % " || ".join(tests))
+
+
 # The suite's stand-ins: a test's, never a home server's.
 HOME_ENV_DROPPED = ("ORCHESTRATOR_DRY_RUN", "ORCHESTRATOR_SELF_TTY", "ORCHESTRATOR_SELF_ID",
                     "ORCHESTRATOR_PS_TABLE", "ORCHESTRATOR_CWD_TABLE", "ORCHESTRATOR_HOST_ARGV",
@@ -3365,7 +3393,8 @@ def home_env():
     """The environment a home server starts with, and so every window it makes: the
     operator's own variables and this plugin's settings, the suite's stand-ins left out."""
     env = {k: v for k, v in os.environ.items()
-           if k in HOME_ENV_KEPT or (k.startswith("ORCHESTRATOR_") and k not in HOME_ENV_DROPPED)}
+           if not nesting_var(k)
+           and (k in HOME_ENV_KEPT or (k.startswith("ORCHESTRATOR_") and k not in HOME_ENV_DROPPED))}
     env["TERM"] = "xterm-256color"
     return env
 
@@ -4708,6 +4737,11 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     config = os.environ.get("CLAUDE_CONFIG_DIR", "")
     if config:
         parts.insert(2, "export CLAUDE_CONFIG_DIR=%s" % shq(config))
+    # The caller's session identity and nesting marks stay out of the tab: its environment is the
+    # app's, which may have been started from a session, and the one launched there took itself
+    # for that session's child (no transcript of its own: row 451). Right after the `cd`, so what
+    # the launch exports below is not touched.
+    parts.insert(1, nesting_unset())
     if title_role(title) == AUDIT:
         # A marker the session carries in its own environment. The auditor's name is read
         # from the process table, which cannot give it back for a session launched without

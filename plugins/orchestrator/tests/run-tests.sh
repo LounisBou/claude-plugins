@@ -2504,6 +2504,13 @@ check "the launch changes into the working directory" "1" "$(printf '%s' "$cmd" 
 # Every spawn marks the session as launcher-spawned: the kill guard is active only
 # where this is set, and the operator's own sessions never carry it (phase 3 ruling 5).
 check "the launch marks the session launcher-spawned" "1" "$(printf '%s' "$out" | grep -c 'export ORCHESTRATOR_SPAWNED=1')"
+# Row 451: a plain tab opens in an app that may have been started from a session, so it carries
+# that session's id and nesting marks, and a coordinator's successor launched there wrote no
+# transcript. The launch, run as the tab runs it, leaves none of them and keeps the account's.
+pre=${cmd%% && exec *}
+check "the launch leaves the tab without the caller's session identity and nesting marks, and keeps the account" \
+  "CLAUDEX=1|CLAUDE_CONFIG_DIR=/acct" \
+  "$(env -i PATH="$PATH" CLAUDECODE=1 CLAUDE_PID=5 CLAUDE_CODE_SESSION_ID=abc CLAUDE_CODE_CHILD_SESSION=1 CLAUDE_CODE_CHILD_NOTES_DIR=/n CLAUDE_CODE_MESSAGING_TOKEN=t CLAUDE_CODE_BRIDGE_SESSION_ID=b CLAUDEX=1 CLAUDE_CONFIG_DIR=/acct sh -c "$pre >/dev/null; env | grep '^CLAUDE' | sort | paste -sd'|' -")"
 # Named absolutely even though the tab now runs a login shell: a dotfile that breaks PATH
 # must not be able to kill the launch, and the session dies before its tty can be read
 # when the name does not resolve.
