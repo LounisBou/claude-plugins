@@ -9778,14 +9778,15 @@ check "and so is a spawn's, which records the directory the same way" "$before|1
 rm -f "$BTRUST" "$BTRUST.orchestrator-bak"
 
 # The dry run is the launch: the command it prints is the one the opening runs, the servers'
-# configuration included, up to the files' timestamps.
+# configuration included, up to the files' timestamps. The launch file opens with the shebang and
+# the unset line, which the dry run does not print: the opening's command is what follows them.
 BCAT="$WORK/bench-mcp.json"; printf '{"servers":{"a":{"command":"a-cmd"},"b":{"command":"b-cmd"}},"default":["a"]}\n' > "$BCAT"
 stamps() { sed 's/-[0-9]\{13\}\./-@T@./g'; }
 reset_homerec
 out=$(benchrun env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_MCP_CATALOGUE="$BCAT" bash "$AGENT" "${BENCH_OPEN[@]}" --mcp b)
 dry=$(sfield "$out" launch | stamps)
 benchrun env ORCHESTRATOR_MCP_CATALOGUE="$BCAT" bash "$AGENT" "${BENCH_OPEN[@]}" --mcp b --no-verify >/dev/null
-real=$(tail -n +2 "$(sed 's/^\/bin\/sh -l //' "$HR/window0")" | stamps)
+real=$(tail -n +3 "$(sed 's/^\/bin\/sh -l //' "$HR/window0")" | stamps)
 check "the dry run prints the launch the opening runs, the servers' file among its words" "$real|1|a,b" \
   "$dry|$(printf '%s' "$dry" | grep -c -- '--mcp-config ')|$(sfield "$out" mcp)"
 
