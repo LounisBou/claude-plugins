@@ -2305,7 +2305,7 @@ async def tty_of(tab, connection=None, tries=10):
         sess = tab.current_session
         if sess is not None:
             try:
-                tty = await sess.async_get_variable("tty")
+                tty = await session_tty(sess)
                 if tty:
                     return tty
             except Exception:
@@ -2351,9 +2351,11 @@ async def session_tty(sess):
         return tty
     for name in ("jobPid", "pid"):
         pid = await sess.async_get_variable(name)
-        listed = (process_table() or {}).get(str(pid)) if pid else None
-        if listed and listed.get("tty") not in (None, "", "??", "-"):
-            return "/dev/" + listed["tty"].replace("/dev/", "", 1)
+        table = process_table() if pid else None
+        # A pid that is exiting or a zombie proves no tty: the table's own liveness reading.
+        if table and runs_live(table, pid) and table[str(pid)].get("tty") not in (
+                None, "", "?", "??", "-"):
+            return "/dev/" + table[str(pid)]["tty"].replace("/dev/", "", 1)
     return ""
 
 
