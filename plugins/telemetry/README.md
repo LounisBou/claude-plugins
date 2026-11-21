@@ -54,9 +54,10 @@ session's transcript, which holds them, is exported beside them, redacted (see C
 - `/telemetry:errors [--since <ISO>] [--orchestration <name> [--plugins]]` (`telemetry.ts errors`): the failed and refused calls since its last reading
   (a byte offset per day file, in `errors.json` of the state directory; the first reading looks back a day;
   `--since` reads from a time and moves no cursor). `--orchestration "Orch: x"` keeps the calls of that
-  orchestration's own sessions (its title, or the orchestrator its `parent` names, a reference such as `[a1b2c3]` ignored,
-  so a successor reads as its predecessors) with a cursor of its own (`errors-<name>.json`), so one reader never
-  swallows another's calls; `--plugins` adds the plugins' errors of every session. Without `--orchestration` the whole machine is read. One line per group: the decider or tool, the command
+  orchestration's own sessions: a session is told by any of its events (its title, or the orchestrator its `parent` names,
+  a reference such as `[a1b2c3]` ignored, so a successor reads as its predecessors), and a call is dropped only when its
+  session is known as another's, so the failure of a first turn, before the title, is shown. It has a cursor of its own
+  (`errors-<name>.json`, which keeps the sessions learnt), so one reader never swallows another's calls; `--plugins` adds the plugins' errors of every session. Without `--orchestration` the whole machine is read. One line per group: the decider or tool, the command
   and the message with its repository and pull request, shas, paths and numbers normalised, with its count,
   first and last time, sessions and one example verbatim. The plugins' own (`plugin:*` refusals, errors of
   a plugin's tools and scripts) come first, then the rest, then the permission prompts shown to the operator, grouped by tool and

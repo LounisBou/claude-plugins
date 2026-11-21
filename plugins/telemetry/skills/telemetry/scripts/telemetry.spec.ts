@@ -98,10 +98,13 @@ test('errors: the failed calls of the store, grouped, read without the env file;
 test('errors: --orchestration reads one orchestration with a cursor of its own, --plugins adds the plugins\' errors; a missing name, or --plugins alone, is refused', () => {
   harness((config, deps) => {
     mkdirSync(join(config, 'telemetry', 'events'), { recursive: true })
+    const T2 = '11111111-2222-4333-8444-555555555555'
     const failed = (more: Record<string, unknown>) => JSON.stringify({ v: 1, ts: '2026-11-13T20:00:00.000Z', event: 'tool_call', session: S, outcome: 'error', ...more })
+    const named = (session: string, title: string) => JSON.stringify({ v: 1, ts: '2026-11-13T19:00:00.000Z', event: 'tool_call', session, outcome: 'ok', tool: 'Edit', title })
     writeFileSync(join(config, 'telemetry', 'events', '2026-11-13.jsonl'), [
-      failed({ tool: 'Edit', title: 'Orch: demo', error_message: 'mine' }), failed({ tool: 'Edit', title: 'Orch: other', error_message: 'theirs' }),
-      failed({ tool: 'mcp__github__gh', mcp_server: 'github', title: 'Orch: other', error_message: 'a plugin of theirs' }),
+      named(S, 'Orch: demo'), named(T2, 'Orch: other'),
+      failed({ tool: 'Edit', error_message: 'mine' }), failed({ tool: 'Edit', session: T2, error_message: 'theirs' }),
+      failed({ tool: 'mcp__github__gh', mcp_server: 'github', session: T2, error_message: 'a plugin of theirs' }),
     ].join('\n') + '\n')
     const since = ['--since', '2026-11-13T00:00:00Z']
     assert.equal(run(['errors', '--config', config, ...since, '--orchestration', 'Orch: demo [a1b2c3]'], deps), 0)
