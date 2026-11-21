@@ -450,6 +450,47 @@ test('append: a subagent\'s agent_closed takes its type, task, model, effort and
   })
 })
 
+test('append: a turn_end of the session\'s own loop carries the reasoning effort of its turn\'s last call, while the session runs; with none in the transcript it is as it came', () => {
+  harness((config, deps, setStdin) => {
+    mkdirSync(join(config, 'projects', '-w'), { recursive: true })
+    const withEffort = CALL_LINES.split('\n').map(l => JSON.stringify({ ...JSON.parse(l) as Record<string, unknown>, ...(JSON.parse(l).type === 'assistant' ? { effort: 'xhigh' } : {}) })).join('\n')
+    writeFileSync(join(config, 'projects', '-w', `${S}.jsonl`), `${withEffort}\n`)
+    setStdin(`${turnEndLine()}\n`)
+    assert.equal(run(['append', '--config', config], deps), 0)
+    const lines = readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
+    assert.deepEqual(lines.map(l => [l['event'], l['effort']]), [['turn_end', 'xhigh'], ['api_call', undefined], ['api_call', undefined]])
+    assert.equal(lines[0]?.['turn'], 'host-turn')
+    writeFileSync(join(config, 'projects', '-w', `${S}.jsonl`), `${CALL_LINES}\n`)
+    assert.equal(JSON.parse(enrich(turnEndLine(), config).split('\n')[0] ?? '{}').effort, undefined)
+  })
+})
+
+test('append: a review reader that hands its report back counts the finding lines of the hand-back, not the line of text that follows it', () => {
+  harness((config, deps, setStdin) => {
+    const dir = join(config, 'projects', '-w', S, 'subagents')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(config, 'projects', '-w', `${S}.jsonl`), `${CALL_LINES}\n`)
+    // As the hosts write it: the findings in a SubagentHandback call's message, a short text beside it.
+    const message = [
+      'Read the diff.',
+      '[important] plugins/github/hooks/register.ts:1338 — Nothing tests how `kept` is filled — never kept',
+      '- [important] scripts/deploy.test.ts:~337 — one failing configuration is not proved — never kept',
+      '[critical] scripts/deploy.ts:206-214 (`existsSync` filter) — both branches are untested — never kept',
+      'important | test/test_dead_tcp.c:554 (guard at IP_Commands.c:245) | The test claims too much | never kept',
+    ].join('\n')
+    const answer = { type: 'assistant', isSidechain: true, timestamp: '2026-11-17T11:10:09.500Z', message: { id: 'm4', model: 'claude-sonnet-5-5', content: [{ type: 'text', text: 'Handed back.' }, { type: 'tool_use', id: 't1', name: 'SubagentHandback', input: { message } }], usage: { input_tokens: 1, output_tokens: 1 } } }
+    writeFileSync(join(dir, 'agent-a1.jsonl'), `${SUBAGENT_LINES}\n${JSON.stringify(answer)}\n`)
+    writeFileSync(join(dir, 'agent-a1.meta.json'), JSON.stringify({ agentType: 'orchestrator:lens', description: 'lens tests acme/thing#12 origin/main..0123456789ab' }))
+    setStdin(`${closedLine()}\n`)
+    assert.equal(run(['append', '--config', config], deps), 0)
+    const day = readFileSync(join(config, 'telemetry', 'events', '2026-11-17.jsonl'), 'utf8')
+    const closed = JSON.parse(day.split('\n')[0] ?? '{}') as Record<string, unknown>
+    assert.deepEqual(closed['findings'], { critical: 1, important: 3, minor: 0 })
+    assert.equal((closed['finding_ids'] as string[]).length, 4)
+    assert.ok(!day.includes('never kept'))
+  })
+})
+
 test('append: a subagent\'s run end is followed by one api_call per call of the run, raw, naming the child (`agent`) and stamped like the event', () => {
   harness((config, deps, setStdin) => {
     const dir = join(config, 'projects', '-w', S, 'subagents')

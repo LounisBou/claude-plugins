@@ -2,6 +2,7 @@
 // The `self_review` tool: an implementer records the outcome of each finding of its self-review,
 // fixed or answered with its reason, as one `self_review` event per finding. register.ts lists the
 // tool and answers its calls; a call that cannot be recorded says why and records nothing.
+import { parseFindingId } from '../core/lens.ts'
 import { makeEvent, type Event } from './collect.ts'
 
 export const SELF_REVIEW_TOOL = 'mcp__telemetry__self_review'
@@ -24,6 +25,7 @@ export const SELF_REVIEW_SCHEMA = {
         type: 'object',
         properties: {
           lens: { type: 'string', description: 'the reader\'s lens that reported it' },
+          finding_id: { type: 'string', description: 'its `<lens>:<hash>` id, at the end of the finding line' },
           file: { type: 'string' },
           line: { type: 'integer', minimum: 1 },
           severity: { type: 'string', enum: [...SEVERITIES] },
@@ -57,7 +59,10 @@ export function selfReviewEvents(at: number, session: string, input: unknown): {
     if (lens === undefined || outcome === undefined) return { why: `finding ${index + 1}: a lens and an outcome (fixed or answered) are needed` }
     if (outcome === 'answered' && reason === undefined) return { why: `finding ${index + 1}: an answered finding needs its reason` }
     const severity = (SEVERITIES as readonly unknown[]).includes(finding['severity']) ? finding['severity'] as string : undefined
-    events.push(makeEvent('self_review', at, session, { agent: text(e['agentId']), lens, file: text(finding['file']), line: positive(finding['line']), severity, outcome, reason, target }))
+    const id = text(finding['finding_id'])
+    // The id the lens's finding line carries (the module writes it there); one that is none of that shape is refused, not dropped.
+    if (id !== undefined && parseFindingId(id)?.id !== id) return { why: `finding ${index + 1}: its finding_id is not a \`<lens>:<hash>\` id` }
+    events.push(makeEvent('self_review', at, session, { agent: text(e['agentId']), lens, file: text(finding['file']), line: positive(finding['line']), severity, outcome, reason, target, finding_id: id }))
   }
   return { events }
 }
