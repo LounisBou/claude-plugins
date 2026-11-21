@@ -2358,7 +2358,7 @@ async def tty_of(tab, connection=None, tries=10):
         sess = tab.current_session
         if sess is not None:
             try:
-                tty = await sess.async_get_variable("tty")
+                tty = await session_tty(sess)
                 if tty:
                     return tty
             except Exception:
@@ -2392,12 +2392,36 @@ async def own_session_id(app, tty):
     return sess.session_id if sess is not None else ""
 
 
+async def session_tty(sess):
+    """The tty of an iTerm2 session, or "" when neither the app nor the process table gives one.
+
+    The app's `tty` variable is empty for a session iTerm2 restored after a restart (a tab that
+    re-attached a tmux client, for one), while the session still carries the pid of its job and
+    the process table still says which tty that process runs on. The tty is a claim, the process
+    is the fact: the variable first, then the tty of the job's pid."""
+    tty = await sess.async_get_variable("tty")
+    if tty:
+        return tty
+    for name in ("jobPid", "pid"):
+        pid = await sess.async_get_variable(name)
+        table = process_table() if pid else None
+        # A pid that is exiting or a zombie proves no tty: the table's own liveness reading.
+        if table and runs_live(table, pid) and table[str(pid)].get("tty") not in (
+                None, "", "?", "??", "-"):
+            return "/dev/" + table[str(pid)]["tty"].replace("/dev/", "", 1)
+    return ""
+
+
 async def find_tab(app, tty):
-    """A session behind a maximized sibling is in all_sessions and not in sessions (§25)."""
+    """A session behind a maximized sibling is in all_sessions and not in sessions (§25).
+    No tty names no session: a restored session with no tty is not the one an empty tty asks
+    for."""
+    if not tty:
+        return None, None, None
     for w in app.windows:
         for t in w.tabs:
             for s in t.all_sessions:
-                if await s.async_get_variable("tty") == tty:
+                if await session_tty(s) == tty:
                     return w, t, s
     return None, None, None
 
@@ -3833,6 +3857,73 @@ def home_of_tab(tty, strict=False):
     return ""
 
 
+def home_client_of_pane(tty):
+    """`(client tty, why, unread)` for a tty that may be the pane of window 0 of a home server.
+
+    A home session's tab is the tmux client of its server and its host is the server's window
+    0, on a pane tty no iTerm2 session carries: a close that names that pane means the tab. Read
+    from the servers' own files and panes. The client is "" with `why` empty when `tty` is no
+    window 0 of a server; "" with the reason when it is one and its tab cannot be told (the
+    clients cannot be listed, none is attached, or several are: which tab is meant is not
+    guessed); else the one client's tty. `unread` names the servers whose panes could not be
+    listed, whether or not another matched."""
+    unread = []
+    if not tty:
+        return "", "", unread
+    folder = os.path.dirname(home_socket_path(HOME_SOCKET_PREFIX))
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.startswith(HOME_SOCKET_PREFIX))
+    except OSError:
+        return "", "", unread
+    for socket in names:
+        if not home_answers(socket):
+            continue
+        panes, why = home_panes(socket)
+        if panes is None:
+            unread.append("%s: %s" % (socket, why))
+            continue
+        if not any(index == "0" and pane == tty for index, pane in panes):
+            continue
+        try:
+            done = tmux_call(["-L", socket, "list-clients", "-F", "#{client_tty}"])
+        except TmuxError as exc:
+            return "", "the clients of %s cannot be listed (%s)" % (socket, exc), unread
+        if done.returncode != 0:
+            return "", "the clients of %s cannot be listed (%s)" % (socket, tmux_refusal(done)), \
+                unread
+        clients = done.stdout.split()
+        if len(clients) != 1:
+            return "", ("%s has %d tmux clients (%s): which tab is meant is not guessed"
+                        % (socket, len(clients), ", ".join(clients) or "none")), unread
+        return clients[0], "", unread
+    return "", "", unread
+
+
+def pane_tab_tty(tty):
+    """The tty `close` acts on for `tty`: the tab's own when `tty` is the pane of window 0 of a
+    home server that one iTerm2 tab shows, `tty` itself when it is no such pane. A pane whose
+    tab cannot be told, or whose one client is no tab of iTerm2's, is refused: nothing is closed
+    and no server ended. A caller whose terminal is not iTerm2's keeps its own refusals (window
+    0 of its own server is its orchestrator's place: `refuse_window_zero`), and a tty that is a
+    client tab's own needs no mapping; neither is mapped here."""
+    if terminal_for(tty) is not ITERM or home_of_tab(tty):
+        return tty
+    client, why, unread = home_client_of_pane(tty)
+    for line in unread:
+        print("close: a home server's panes could not be read (%s)" % line, file=sys.stderr)
+    if why:
+        die("close: refused: %s is window 0 of a home server whose tab cannot be told: %s; "
+            "nothing was closed and no server ended" % (tty, why))
+    if not client:
+        return tty
+    if not ITERM.find(client):
+        die("close: refused: %s is window 0 of a home server whose one client, on %s, is no tab "
+            "of iTerm2's; nothing was closed and no server ended" % (tty, client))
+    print("close: %s is window 0 of a home server: closing its tab, on %s" % (tty, client),
+          file=sys.stderr)
+    return client
+
+
 def home_panes(socket):
     """The panes of the home server `socket`: `([(window index, tty)], "")`, or `(None, why)`
     when the server cannot be listed."""
@@ -4567,9 +4658,9 @@ async def list_rows(app):
         for ti, t in enumerate(w.tabs, 1):
             visible = {s.session_id for s in t.sessions}
             for s in t.all_sessions:
-                tty = await s.async_get_variable("tty")
-                # A session iTerm2 gives no tty for (not attached yet, or just restarted) has
-                # no process to read its name from: listed with a dash, its name unreadable.
+                tty = await session_tty(s)
+                # A session with no tty from the app nor from its job's pid (not attached yet)
+                # has no process to read its name from: listed with a dash, its name unreadable.
                 shown = tty or "-"
                 title = await s.async_get_variable("autoName") or ""
                 is_self, hidden = bool(own) and tty == own, s.session_id not in visible
@@ -6190,6 +6281,9 @@ def cmd_close(args):
         print("close=%s expect_title=%s" % (args.tty, args.expect))
         return
 
+    # The host's own tty, the pane of window 0 of a home server, names the tab that shows it:
+    # the close is the home tab's, server and agents handled as for the tab's own tty.
+    args.tty = pane_tab_tty(args.tty)
     socket, listed, host_tty = close_host_tty(args.tty)
     # Read BEFORE the close: what the proof below is a proof ABOUT.
     was_running = host_cli_on(host_tty)

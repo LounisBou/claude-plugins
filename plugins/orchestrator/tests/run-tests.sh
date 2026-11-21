@@ -5358,6 +5358,122 @@ print('|'.join(rows))" "$ROOT/skills/iterm-agents/scripts")"
 check "the process table is not read for a missing tty: no rows, no name, no raise" "[]|" \
   "$("$py" -c "$NOTTY
 print('%s|%s' % (ia.ps_rows(None), ia.session_name_on(None) or ''))" "$ROOT/skills/iterm-agents/scripts")"
+# A session iTerm2 restored after a restart has no `tty` variable either, but it carries the
+# pid of its job and the process table knows that pid's tty: the listing shows it, and a
+# lookup by that tty finds it (row 455). The shape is the live one: a tmux client of a home
+# server, `tty` None, `jobPid` set. The tty the table does not know stays a dash.
+RESTORED='
+import asyncio, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+class S:
+    def __init__(s, sid, tty, pid, name): s.session_id=sid; s.tty=tty; s.pid=pid; s.name=name
+    async def async_get_variable(s, k): return {"tty": s.tty, "jobPid": s.pid, "pid": s.pid, "autoName": s.name}.get(k)
+class T:
+    def __init__(s, tid, sessions): s.tab_id=tid; s.sessions=sessions; s.all_sessions=sessions
+class W:
+    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
+class App:
+    def __init__(s, wins): s.windows=wins
+app=App([W([T("1",[S("R",None,"48166","Default")]),T("2",[S("G",None,"48999","Default")]),T("3",[S("O","/dev/ttys802",None,"ok")])])])
+'
+printf '/dev/ttys008 48166 /opt/homebrew/bin/tmux -u -L orch-d6fc6f4d attach -t home\n' > "$WORK/ps-restored.txt"
+check "a restored session with no tty variable is listed on the tty of its job's pid, as the tmux client it is" \
+  "w1/t1 | /dev/ttys008 | tmux client | tmux client of home (orch-d6fc6f4d) — displays its windows" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
+print(asyncio.run(ia.list_rows(app))[0])" "$ROOT/skills/iterm-agents/scripts")"
+check "a session whose pid the process table does not know keeps its dash" \
+  "w1/t2 | - | Default | (name unreadable)" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
+print(asyncio.run(ia.list_rows(app))[1])" "$ROOT/skills/iterm-agents/scripts")"
+check "a restored session is found by the tty its pid proves, and a tty nobody has is not found" "R|None" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
+_,_,a=asyncio.run(ia.find_tab(app,'/dev/ttys008')); _,_,b=asyncio.run(ia.find_tab(app,'/dev/ttys999'))
+print('%s|%s' % (a.session_id, b))" "$ROOT/skills/iterm-agents/scripts")"
+check "a pid that is a zombie proves no tty, and the pid fallback reads pid when jobPid is unlisted" "|/dev/ttys008" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
+class P(S):
+    async def async_get_variable(s, k): return s.pid if k == 'pid' else '1' if k == 'jobPid' else None
+real=ia.process_table
+ia.process_table = lambda: dict([('48999', dict(stat='Z', tty='ttys009'))])
+z=asyncio.run(ia.session_tty(P('Z',None,'48999','x')))
+ia.process_table = real
+a=asyncio.run(ia.session_tty(P('R',None,'48166','x')))
+print('%s|%s' % (z, a))" "$ROOT/skills/iterm-agents/scripts")"
+# The host of a home session runs in window 0 of its tmux server, on a pane tty no iTerm2
+# session carries; the tab that shows the server is the server's tmux client. A close that
+# names the pane (row 455: Coord's) means that tab.
+HOMEPANE='
+import asyncio, os, sys, tempfile, types
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+class S:
+    def __init__(s, sid, tty): s.session_id=sid; s.tty=tty
+    async def async_get_variable(s, k): return {"tty": s.tty}.get(k)
+class T:
+    def __init__(s, tid, sessions): s.tab_id=tid; s.sessions=sessions; s.all_sessions=sessions
+class W:
+    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
+class App:
+    def __init__(s, wins): s.windows=wins
+tmp = tempfile.mkdtemp()
+os.makedirs(os.path.join(tmp, "tmux-%d" % os.getuid()))
+open(os.path.join(tmp, "tmux-%d" % os.getuid(), "orch-abcdef12"), "w").close()
+os.environ["TMUX_TMPDIR"] = tmp
+ia.home_answers = lambda socket: True
+ia.home_panes = lambda socket: ([["0", "/dev/ttys950"], ["1", "/dev/ttys951"]], "")
+ia.tmux_call = lambda args, env=None: types.SimpleNamespace(returncode=0, stdout="/dev/ttys811\n", stderr="")
+app = App([W([T("1", [S("A", "/dev/ttys801")]), T("2", [S("C", "/dev/ttys811")])])])
+'
+check "find_tab does not map a home server's pane to a tab, and a tty nobody has finds nothing" "None|None|C" \
+  "$("$py" -c "$HOMEPANE
+f = lambda tty: asyncio.run(ia.find_tab(app, tty))[2]
+print('%s|%s|%s' % (f('/dev/ttys950'), f('/dev/ttys999'), f('/dev/ttys811').session_id))" "$ROOT/skills/iterm-agents/scripts")"
+# No tty names no session: a restored session whose pid the table does not know has no tty and
+# is not what an empty tty asks for (the home command's « not a tab of iTerm2's » guard).
+check "find_tab with no tty finds no session, though a session of the app has none" "None|None" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
+print('%s|%s' % (asyncio.run(ia.find_tab(app, ''))[2], asyncio.run(ia.find_tab(app, None))[2]))" "$ROOT/skills/iterm-agents/scripts")"
+# `close --tty <pane of window 0 of a home server>`: the tab whose one tmux client shows the server,
+# for an iTerm2 caller only, and refused, nothing closed, when the tab cannot be told.
+CLOSEPANE='
+class Stop(Exception): pass
+seen = []
+def host(tty, strict=False): seen.append(tty); raise Stop()
+ia.close_host_tty = host
+ia.DRY_RUN = False
+ia.terminal_for = lambda tty: ia.ITERM
+ia.home_of_tab = lambda tty, strict=False: ""
+ia.ITERM.find = lambda tty: tty in ("/dev/ttys811", "/dev/ttys812")
+def close(tty="/dev/ttys950", clients="/dev/ttys811\n", rc=0, find=None):
+    ia.tmux_call = lambda args, env=None: types.SimpleNamespace(returncode=rc, stdout=clients, stderr="boom")
+    del seen[:]
+    try: ia.cmd_close(types.SimpleNamespace(bench=False, socket=None, tty=tty, expect=None))
+    except Stop: return "closed:%s" % seen[0]
+    except SystemExit: return "refused:%d" % len(seen)
+    return "returned"
+'
+check "close --tty the pane of window 0 goes on with the tab of the one client the app shows" "closed:/dev/ttys811" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+print(close())" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
+check "a pane with two clients (both tabs, or one not), one with no client, a client that is no tab, a failing list-clients: refused, nothing closed" \
+  "refused:0|refused:0|refused:0|refused:0|refused:0" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+print('|'.join([close(clients='/dev/ttys811\n/dev/ttys812\n'), close(clients='/dev/ttys999\n/dev/ttys811\n'), close(clients=''), close(clients='/dev/ttys999\n'), close(rc=1, clients='')]))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
+check "a caller whose terminal is not iTerm2's keeps its own refusals: the pane is not mapped" "closed:/dev/ttys950" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+ia.terminal_for = lambda tty: object()
+print(close())" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
+check "a tty that is a client tab's own is not mapped, and no server is read for it" "closed:/dev/ttys811|0" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+ia.home_of_tab = lambda tty, strict=False: 'orch-abcdef12'
+calls = []
+ia.home_client_of_pane = lambda tty: calls.append(tty) or ('', '', [])
+print('%s|%d' % (close(tty='/dev/ttys811'), len(calls)))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
 # The caller is not always IN the app. A session running in another terminal — a multiplexer,
 # a plain shell, a remote one — still has a tty, `self_tty` still resolves it, and the app has
 # no session on it. The chain is the app's and cannot be kept for a caller the app does not
@@ -6380,11 +6496,11 @@ reads = []
 class S:
     async def async_get_variable(self, name):
         reads.append(name)
-        return '/dev/ttys969' if len(reads) > 2 else None
+        return '/dev/ttys969' if name == 'tty' and reads.count('tty') > 2 else None
 class T:
     tab_id = 'NEW'
     current_session = S()
-print('%s|%d' % (asyncio.run(ia.tty_of(T())), len(reads)))")"
+print('%s|%d' % (asyncio.run(ia.tty_of(T())), reads.count('tty')))")"
 check "a tab whose tty never comes is given up after its tries, with no tty" "None|3" \
   "$(ipy "
 import asyncio
@@ -6396,7 +6512,7 @@ class S:
 class T:
     tab_id = 'NEW'
     current_session = S()
-print('%s|%d' % (asyncio.run(ia.tty_of(T(), None, 3)) or None, len(reads)))")"
+print('%s|%d' % (asyncio.run(ia.tty_of(T(), None, 3)) or None, reads.count('tty')))")"
 # tmux leaves its socket file behind when its server is killed (measured: tmux 3.8, every
 # kill-server). A home server the launcher ended takes its file with it; one tmux did not end
 # keeps it, since the server may still listen there.
