@@ -318,7 +318,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types --exclude-dir=core \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_GITHUB_ROOT|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_SESSION_KIND|CLAUDE_JOB_DIR|syncClaudeAiSkills' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_GITHUB_ROOT|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|CLAUDE_CODE_CHILD_SESSION|CLAUDE_CODE_CHILD_NOTES_DIR|CLAUDE_CODE_BRIDGE_SESSION_ID|CLAUDE_CODE_MESSAGING_SOCKET|CLAUDE_CODE_MESSAGING_TOKEN|CLAUDE_CODE_SESSION_ATTENDED|CLAUDE_PID|CLAUDECODE|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_SESSION_KIND|CLAUDE_JOB_DIR|syncClaudeAiSkills' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
@@ -2504,6 +2504,21 @@ check "the launch changes into the working directory" "1" "$(printf '%s' "$cmd" 
 # Every spawn marks the session as launcher-spawned: the kill guard is active only
 # where this is set, and the operator's own sessions never carry it (phase 3 ruling 5).
 check "the launch marks the session launcher-spawned" "1" "$(printf '%s' "$out" | grep -c 'export ORCHESTRATOR_SPAWNED=1')"
+# Row 451: a plain tab opens in an app that may have been started from a session, so it carries
+# that session's id and nesting marks, and a coordinator's successor launched there wrote no
+# transcript. The launch file, run as the tab runs it, leaves none of them and keeps the account's
+# and the operator's own configuration under the same prefix.
+check "the launch file leaves the tab without the caller's session identity and nesting marks, and keeps the account and the operator's configuration" \
+  "CLAUDEX=1|CLAUDE_CODE_USE_BEDROCK=1|CLAUDE_CONFIG_DIR=/acct" \
+  "$(ORCHESTRATOR_STATE_DIR="$ISTATE" "$(command -v python3)" -c "
+import subprocess, sys
+sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+script = ia.write_launch_script(\"env | grep '^CLAUDE' | sort | paste -sd'|' -\", 'Agent: nesting')
+env = {'PATH': '$PATH', 'CLAUDEX': '1', 'CLAUDE_CONFIG_DIR': '/acct', 'CLAUDE_CODE_USE_BEDROCK': '1'}
+for name in 'CLAUDECODE CLAUDE_PID CLAUDE_CODE_SESSION_ID CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_CHILD_NOTES_DIR CLAUDE_CODE_BRIDGE_SESSION_ID CLAUDE_CODE_MESSAGING_SOCKET CLAUDE_CODE_MESSAGING_TOKEN CLAUDE_CODE_SESSION_ATTENDED'.split():
+    env[name] = '1'
+print(subprocess.run(['/bin/sh', script], env=env, capture_output=True, text=True).stdout.strip())")"
 # Named absolutely even though the tab now runs a login shell: a dotfile that breaks PATH
 # must not be able to kill the launch, and the session dies before its tty can be read
 # when the name does not resolve.
@@ -9789,14 +9804,15 @@ check "and so is a spawn's, which records the directory the same way" "$before|1
 rm -f "$BTRUST" "$BTRUST.orchestrator-bak"
 
 # The dry run is the launch: the command it prints is the one the opening runs, the servers'
-# configuration included, up to the files' timestamps.
+# configuration included, up to the files' timestamps. The launch file opens with the shebang and
+# the unset line, which the dry run does not print: the opening's command is what follows them.
 BCAT="$WORK/bench-mcp.json"; printf '{"servers":{"a":{"command":"a-cmd"},"b":{"command":"b-cmd"}},"default":["a"]}\n' > "$BCAT"
 stamps() { sed 's/-[0-9]\{13\}\./-@T@./g'; }
 reset_homerec
 out=$(benchrun env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_MCP_CATALOGUE="$BCAT" bash "$AGENT" "${BENCH_OPEN[@]}" --mcp b)
 dry=$(sfield "$out" launch | stamps)
 benchrun env ORCHESTRATOR_MCP_CATALOGUE="$BCAT" bash "$AGENT" "${BENCH_OPEN[@]}" --mcp b --no-verify >/dev/null
-real=$(tail -n +2 "$(sed 's/^\/bin\/sh -l //' "$HR/window0")" | stamps)
+real=$(tail -n +3 "$(sed 's/^\/bin\/sh -l //' "$HR/window0")" | stamps)
 check "the dry run prints the launch the opening runs, the servers' file among its words" "$real|1|a,b" \
   "$dry|$(printf '%s' "$dry" | grep -c -- '--mcp-config ')|$(sfield "$out" mcp)"
 
