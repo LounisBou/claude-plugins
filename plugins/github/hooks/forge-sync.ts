@@ -1,9 +1,9 @@
-// What the reconciler copies between this machine and the forge at a pull request's head (core's forge-status.ts):
-// for each record kind, the check plan and the repository's E2E exemption, the newer side wins. A copy the forge holds
-// that is newer than this machine's is imported here. A plan or an exemption this machine holds that the forge lacks, or
-// holds older, is posted; a record's status is posted by the tool that writes it, before the record is written, so a
-// record is never posted here. Only the statuses the operator's account created are read. Pure: the module
-// (register.ts) reads, writes and posts.
+// What the reconciler copies between this machine and the forge at a pull request's head (core's forge-status.ts). A
+// record the forge holds that decides over this machine's (ready.ts supersedes) is imported here; for the check plan and
+// the repository's E2E exemption the newer side wins, imported here or posted. A record's status is posted by the tool
+// that writes it, before the record is written, so a record is never posted here: when two posts of one kind land out
+// of order, the machine holding the later record keeps it and the other judges on the forge's. Only the statuses the
+// operator's account created are read. Pure: the module (register.ts) reads, writes and posts.
 
 import {
   FORGE, forgeContext, forgeDescription, parseForgeDescription, parseRecordStatus, trustedStatuses,
@@ -101,7 +101,7 @@ function newestByKind(records: readonly PrRecord[]): Map<string, PrRecord> {
   return newest
 }
 
-/** What to import and what to post at one head, the newer side winning for each record kind, the plan and the exemption. */
+/** What to import and what to post at one head: the records of the forge that decide here, the newer side of the plan and the exemption. */
 export function forgeSync(sides: ForgeSides): ForgeSync {
   const trusted = trustedStatuses(sides.statuses, sides.viewer)
   const out: { records: ForgeRecord[]; plan?: NonNullable<ForgeSync['plan']>; exemption?: Exemption; posts: ForgePost[]; unposted: string[] } = { records: [], posts: [], unposted: [] }

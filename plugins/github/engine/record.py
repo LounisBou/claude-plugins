@@ -8,7 +8,8 @@ in that directory and then renamed, so a reader never sees half a file. It
 prints the file's path, and exits 2 on a usage error with one error: line.
 With --status it writes nothing and prints the status that copies the record on
 the forge: its writer posts that status first, then writes the record at the
-instant the status gives (--at).
+instant the status gives (--at). A copy from the forge (--copy) keeps the record
+of that name and result already there, its tool's detail with it.
 """
 
 import argparse
@@ -71,6 +72,8 @@ def build_parser():
                         help="the instant of a record copied from the forge, or of one whose status was posted first, UTC to the second; defaults to now")
     parser.add_argument("--status", action="store_true",
                         help="write nothing: print the status that copies the record on the forge, as one JSON object")
+    parser.add_argument("--copy", action="store_true",
+                        help="a copy from the forge: a record of that name and result already there is kept")
     return parser
 
 
@@ -143,7 +146,25 @@ def records_root():
     return os.path.join(config, "pr-records")
 
 
-def write(record):
+def _in_place(tmp, path, result):
+    """Whether a copy from the forge written at `tmp` needs no rename to `path`: linked there when no file is (the record
+    its tool writes after replaces it), or a record of the same result there already, written by its tool between its
+    status's post and the listing that brought the copy."""
+    try:
+        os.link(tmp, path)
+        return True
+    except FileExistsError:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                there = json.load(fh)
+        except (OSError, ValueError):
+            return False
+        return isinstance(there, dict) and there.get("result") == result
+    except OSError:
+        return False
+
+
+def write(record, copy=False):
     """Write the record under its head's directory and return its path."""
     directory = os.path.join(records_root(), record["repo"], record["head"])
     os.makedirs(directory, exist_ok=True)
@@ -155,7 +176,10 @@ def write(record):
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(record, fh, sort_keys=True)
             fh.write("\n")
-        os.replace(tmp, path)
+        if copy and _in_place(tmp, path, record["result"]):
+            os.unlink(tmp)
+        else:
+            os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -174,7 +198,7 @@ def main(argv):
         print(json.dumps(status_of(record), sort_keys=True))
         return 0
     try:
-        print(write(record))
+        print(write(record, copy=args.copy))
     except OSError as exc:
         print("error: cannot write the record: %s" % exc, file=sys.stderr)
         return 1

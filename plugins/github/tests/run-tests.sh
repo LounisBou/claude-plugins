@@ -2945,6 +2945,17 @@ out=$(rm -rf "$WORK/cfgrec3"; env CLAUDE_CONFIG_DIR="$WORK/cfgrec3" python3 "$RE
 check "record.py --status prints the status that copies the record on the forge, and writes nothing" \
   '{"description": "v1 2026-11-19T10:00:00Z fail pr-review", "state": "failure", "what": "review"}|no' \
   "$out|$([ -e "$WORK/cfgrec3/pr-records" ] && echo yes || echo no)"
+# A copy from the forge keeps the record its tool wrote between its status's post and the listing that brought the copy.
+path=$(recbase --kind review --result pass --detail "points set aside: x" --at 2026-11-19T11:00:00Z)
+recbase --kind review --result pass --detail "copied from the forge" --session forge --at 2026-11-19T11:00:00Z --copy >/dev/null
+check "record.py --copy keeps a record of that name and result already there, its detail with it" "points set aside: x" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["detail"])' "$path")"
+recbase --kind review --result fail --detail "copied from the forge" --session forge --at 2026-11-19T11:00:00Z --copy >/dev/null
+check "record.py --copy replaces a record of that name with another result" "fail forge" \
+  "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["result"], d["session"])' "$path")"
+path=$(recbase --kind review --result pass --detail "copied from the forge" --session forge --at 2026-11-19T11:30:00Z --copy)
+check "record.py --copy writes a record where none is, and leaves no temporary file" "pass forge|" \
+  "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["result"], d["session"])' "$path")|$(ls -A "$(dirname "$path")" | grep '^\.tmp-')"
 
 
 echo "== forge statuses =="
@@ -3094,6 +3105,8 @@ lcproject '{"command": ["python3", "-c", "print(1)"]}'
 mv "$LC/cfg/pr-records" "$LC/cfg/pr-records.kept"; : > "$LC/cfg/pr-records"
 check "light_ci run exits 1 and says so when its record cannot be written" "1 1" \
   "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'error: cannot write the tests record' "$LC/err")")"
+check "light_ci run whose record cannot be written once its status is posted says so, with the run's outcome" "1" \
+  "$(grep -c "cannot write the tests record (its status is on the forge): .* (tests pass at ${LCHEAD:0:7}: .*; output " "$LC/err")"
 rm "$LC/cfg/pr-records"; mv "$LC/cfg/pr-records.kept" "$LC/cfg/pr-records"
 # The record's status reaches the forge before its file: a post refused writes nothing; one taken finds no file yet.
 n=$(lccount)
@@ -3101,6 +3114,8 @@ printf '%s' '{"__status": 403, "message": "Resource not accessible by integratio
 sleep 1
 check "light_ci run whose status the forge refuses writes nothing and names the HTTP status" "1 1 $n" \
   "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'cannot post the tests record to the forge, nothing recorded: HTTP 403: Resource not accessible by integration' "$LC/err") $(lccount)")"
+check "light_ci run whose status the forge refuses keeps the run's outcome in its line" "1" \
+  "$(grep -c "nothing recorded: HTTP 403: Resource not accessible by integration (tests pass at ${LCHEAD:0:7}: .*; output " "$LC/err")"
 rm -f "$LC/fix/POST_repos_acme_thing_statuses_$LCHEAD.json"
 check "light_ci run posts the tests record's status before its file exists, then writes it" "0 False True readiness/tests success" \
   "$(cd "$LC/co" && env -u CLAUDE_CODE_SESSION_ID GH_FIXTURES="$LC/fix" GH_TOKEN=x CLAUDE_CONFIG_DIR="$LC/cfg" python3 -c '

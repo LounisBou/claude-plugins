@@ -279,18 +279,20 @@ def run(args):
         tests = record.validate(fields)
     except record.UsageError as exc:
         raise Failure("cannot write the tests record: %s" % exc)
-    # Its status reaches the forge before the record is written: the other machine reads it there.
+    # Its status reaches the forge before the record is written: the other machine reads it there. A failure keeps the
+    # run's outcome in its line, so the tests are not run again only to learn it.
     status = record.status_of(tests)
+    outcome = "tests %s at %s: %s; output %s" % (result, head[:7], detail, log_path)
     try:
         forge.post(owner, name, head, status["what"], status["state"], status["description"])
     except errors.GhError as exc:
-        raise Failure("cannot post the tests record to the forge, nothing recorded: %s" % forge.refusal(exc))
+        raise Failure("cannot post the tests record to the forge, nothing recorded: %s (%s)" % (forge.refusal(exc), outcome))
     except OSError as exc:
-        raise Failure("cannot post the tests record to the forge, nothing recorded: %s" % exc)
+        raise Failure("cannot post the tests record to the forge, nothing recorded: %s (%s)" % (exc, outcome))
     try:
         written = record.write(tests)
     except OSError as exc:
-        raise Failure("cannot write the tests record (its status is on the forge): %s" % exc)
+        raise Failure("cannot write the tests record (its status is on the forge): %s (%s)" % (exc, outcome))
     print("tests %s at %s of %s#%d: %s; output %s; record %s" % (result, head[:7], nwo, args.pr, detail, log_path, written))
     return 0
 

@@ -437,8 +437,8 @@ export function headRecordsRead(gate: Gate, files: RecordFile[], head: string = 
 
 /**
  * Whether `a` decides over `b`, two records of one kind (or a record and a forge copy of it): the later instant; on
- * the same second, a failure over any other result, then the result's name. Every machine picks the same one of two
- * that tell different stories, so the Ready label does not follow each machine's own reading.
+ * the same second, a failure over any other result, then the result's name. Every machine holding both picks the same
+ * one of two that tell different stories, so the Ready label does not follow each machine's own reading.
  */
 export function supersedes(a: Pick<PrRecord, 'at' | 'result'>, b: Pick<PrRecord, 'at' | 'result'>): boolean {
   if (a.at !== b.at) return a.at > b.at

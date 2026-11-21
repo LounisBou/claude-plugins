@@ -20,7 +20,8 @@ export const RETRY_MS = 300_000
 export const FLAP_UNDONE = 3
 /**
  * A Not Ready this machine did not set is left this long to the other machine's records before Ready goes back over it:
- * the time that machine takes to post what justifies it (a beat to settle, a beat to be listed).
+ * the time for what justifies it to be listed here (a beat to be listed, a beat more for a machine of a version that
+ * posted its records a beat after writing them).
  */
 export const FOREIGN_WAIT_MS = 2 * TICK_MS
 /**

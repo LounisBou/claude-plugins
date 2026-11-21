@@ -1,7 +1,7 @@
 """The forge's copy of what the ready gate reads on a machine: one commit status a record kind, the check plan and
 the exemption, under one context prefix (core's forge-status contract). CI is not theirs to judge:
-the gate's CI reading leaves them out. The hooks module writes their description (core's forge-status.ts);
-post() checks its shape and posts it."""
+the gate's CI reading leaves them out. A record's description is record.py's (status_of), the plan's and the
+exemption's the hooks module's (core's forge-status.ts); problem() checks its shape, post() posts it."""
 
 import json
 import os

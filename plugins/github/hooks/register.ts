@@ -1570,7 +1570,7 @@ async function reconcilePr(
         return true
       }
       if (missingCopies.length > 0) {
-        sayOnce($, rec, 'github: the ' + (move === 'ready' ? 'Ready' : 'Not Ready') + ' label of ' + key + ' at ' + gate.head.slice(0, 7) + ' no longer waits for '
+        sayOnce($, rec, 'github: the Ready label of ' + key + ' at ' + gate.head.slice(0, 7) + ' no longer waits for '
           + missingCopies.map((post) => forgeContext(post.name)).join(', ') + ' to reach the forge: it was not posted within ' + String(PUBLISH_WAIT_MS / 60_000) + ' minutes')
       }
       return false
@@ -1707,7 +1707,7 @@ async function syncForge(
     const run = await $.process.run([
       'python3', $.plugin.root + '/engine/record.py', '--repo', repo, '--pr', String(row.number), '--head', row.head, '--kind', copy.kind,
       '--result', copy.result, '--producer', copy.producer, '--detail', 'copied from the forge, ' + forgeContext(copy.kind) + ' posted by ' + viewer,
-      '--session', FORGE_SESSION, '--at', copy.at,
+      '--session', FORGE_SESSION, '--at', copy.at, '--copy',
     ], { timeoutMs: 30_000 })
     if (run.exitCode !== 0) {
       ok = false
@@ -2794,7 +2794,12 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   if (!copy) return { result: 'github: record.py --status gave no status to post: ' + String(checked.stdout).trim(), isError: true }
   const refused = await postForge($, repo, gate.head, copy.post)
   if (refused) {
-    return { result: 'github: the ' + kind + ' record of ' + repo + '#' + pr + ' is not written: the forge refused its status (' + refused + '). Record it again once the forge takes it.', isError: true }
+    // The result and its detail stay in the answer: an E2E run is not run again only to learn them.
+    return {
+      result: 'github: the ' + kind + ' record of ' + repo + '#' + pr + ' (' + result + (written ? ': ' + written : '') + ') is not written: the forge refused its status ('
+        + refused + '). Record it again once the forge takes it.',
+      isError: true,
+    }
   }
   const run = await $.process.run([...argv, '--at', copy.at], { timeoutMs: 30_000 })
   if (run.exitCode !== 0) {
@@ -2843,7 +2848,7 @@ async function lightCi($: Mod, e: ToolInput): Promise<Answer> {
   const run = await $.process.run([...script, 'run', '--pr', String(pr), '--session', session, '--budget', String(LIGHT_CI_BUDGET_S), ...repoArgs],
     { timeoutMs: LIGHT_CI_TIMEOUT_MS, ...inDir })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'light_ci.py exited ' + run.exitCode).trim(), isError: true }
-  const repo =await targetRepo($, { repo: named, args: {} }, dir).catch(() => undefined)
+  const repo = await targetRepo($, { repo: named, args: {} }, dir).catch(() => undefined)
   // The record may complete readiness, or break it: the gate reads the pull request again.
   const { line } = repo ? await followGate($, repo, pr, undefined, true) : { line: undefined }
   return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }

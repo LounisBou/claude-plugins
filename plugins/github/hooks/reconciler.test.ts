@@ -76,6 +76,8 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     listedRepos: [] as string[],
     postedRepos: [] as string[],
     copied: [] as string[],
+    // Whether each copy was written as one (record.py --copy), keeping a record of that name and result already there.
+    asCopies: [] as boolean[],
     // Every copy of a record from the forge fails; a write to a path matching this is refused; this directory cannot be listed, once.
     copyFails: false,
     writeFails: undefined as RegExp | undefined,
@@ -152,6 +154,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
       state.listedWhenCopied = files.has(LISTED)
       if (state.copyFails) return done('', 1, 'record.py: cannot write')
       state.copied.push(flag('--kind') + ' ' + flag('--result') + ' ' + flag('--producer') + ' ' + at + ' ' + flag('--session'))
+      state.asCopies.push(argv.includes('--copy'))
       const record = { v: 1, repo: flag('--repo'), pr: Number(flag('--pr')), head: flag('--head'), kind: flag('--kind'), result: flag('--result'), producer: flag('--producer'), detail: flag('--detail'), session: flag('--session'), at }
       put(RECORDS + '/' + record.repo + '/' + record.head + '/' + record.kind + '.' + at.replace(/[-:]/g, '') + '.' + record.producer + '.json', JSON.stringify(record), T0 + 10 * TICK_MS)
       return done('written')
@@ -644,6 +647,13 @@ test('a record the other machine posted is copied here before the gate reads it'
   expect(state.copied).toHaveLength(1)
 })
 
+test('a record the other machine posted is written here as a copy, which keeps the record of that name its tool wrote in between', async ($, on) => {
+  const pulls = pullWith([status('readiness/review', 'success', 'v1 2026-11-19T09:00:00Z pass orchestrator')])
+  const { clock, state } = await started($, on, { pulls, viewer: 'operator' })
+  await beat(clock)
+  expect(state.asCopies).toEqual([true])
+})
+
 test('a status another account posted is never copied', async ($, on) => {
   const pulls = pullWith([status('readiness/review', 'success', 'v1 2026-11-19T09:00:00Z pass orchestrator', 'intruder')])
   const { clock, state } = await started($, on, { pulls, viewer: 'operator' })
@@ -1045,6 +1055,18 @@ test('a Not Ready this machine did not set stays while the forge only holds what
   expect(state.labelled).toEqual([])
   await beat(clock)
   expect(state.labelled).toEqual(['7 ready'])
+})
+
+test('a plan whose post is refused holds the move to Ready, the post tried again after RETRY_MS and the label moved once it reached the forge', async ($, on) => {
+  const { clock, state } = await started($, on, { pulls: readyPull([]), files: { ...passingRecords(), [PLAN]: planAt('2026-11-19T09:00:00Z') }, viewer: 'operator' })
+  state.postFails = true
+  await beat(clock)
+  await beat(clock, RETRY_MS / TICK_MS - 1)
+  expect(state.posted).toHaveLength(1)
+  expect(state.labelled).toEqual([])
+  state.postFails = false
+  await beat(clock)
+  expect(state.order).toEqual(['post plan success', 'label ready'])
 })
 
 test('a post the forge refuses for good holds the label no longer than PUBLISH_WAIT_MS, and the move then goes with a line saying so', async ($, on) => {
