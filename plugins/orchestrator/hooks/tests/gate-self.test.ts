@@ -14,10 +14,13 @@ const AGENT = 'Agent: belt-p3'
 const ORCH = 'Orch: belt'
 
 // How the host answers each of the agent's own lines in turn, the rest taken at once: `hold` keeps it
-// for the end of the agent's turn (release), `reject` refuses it.
-type Submit = 'take' | 'hold' | 'reject'
+// for the end of the agent's turn (release), `hold-drop` keeps it and drops it then, `reject` refuses it.
+type Submit = 'take' | 'hold' | 'hold-drop' | 'reject'
+// How each send to the orchestrator answers in turn, the rest delivered: delivered or not, `hang`
+// never answering, `late` delivered at release, `throw` failing.
+type Deliver = boolean | 'hang' | 'late' | 'throw'
 
-function fake(over: { orchestrator?: boolean; drop?: boolean; submits?: Submit[]; deliver?: boolean[] } = {}) {
+function fake(over: { orchestrator?: boolean; drop?: boolean; submits?: Submit[]; deliver?: Deliver[] } = {}) {
   const files = new Map<string, string>()
   const submitted: string[] = []
   const held: (() => void)[] = []
@@ -60,6 +63,7 @@ function fake(over: { orchestrator?: boolean; drop?: boolean; submits?: Submit[]
         if (how === 'reject') throw new Error('the host is gone')
         submitted.push(text)
         if (how === 'hold') return new Promise<undefined>(resolve => held.push(() => resolve(undefined)))
+        if (how === 'hold-drop') return new Promise<{ drop: string }>(resolve => held.push(() => resolve({ drop: 'interrupted' })))
         return undefined
       },
     },
@@ -67,18 +71,25 @@ function fake(over: { orchestrator?: boolean; drop?: boolean; submits?: Submit[]
       id: async () => 's-one',
       send: async (args: { to: unknown; text: string }) => {
         sent.push(args)
-        return { isDelivered: deliver.shift() ?? true }
+        const how = deliver.shift() ?? true
+        if (how === 'hang') return new Promise<never>(() => undefined)
+        if (how === 'late') return new Promise<{ isDelivered: boolean }>(resolve => held.push(() => resolve({ isDelivered: true })))
+        if (how === 'throw') throw new Error('the peer is gone')
+        return { isDelivered: how }
       },
     },
   }
-  // The agent's turn ends: the host takes every line it held.
+  // The agent's turn ends: the host answers every line it held.
   const release = () => held.splice(0).forEach(take => take())
   return { dollar, files, submitted, sent, logged, release }
 }
 
 const reading = (tokens: number) => ({ context_tokens: tokens, context_percent: Math.round(tokens / 10000), context_window: 1000000 })
 // The fake holds only the nouns reportGate calls.
-const report = (fx: ReturnType<typeof fake>, tokens: number) => reportGate(fx.dollar as never, 's-one', AGENT, '/dev/ttys005', reading(tokens))
+const report = (fx: ReturnType<typeof fake>, tokens: number, bound?: number) => reportGate(fx.dollar as never, 's-one', AGENT, '/dev/ttys005', reading(tokens), bound)
+// A report's bound where one is meant to run out, and the time a test gives what waits on it.
+const BOUND = 50
+const within = (work: Promise<unknown>, ms: number) => Promise.race([work.then(() => true), new Promise<boolean>(resolve => setTimeout(() => resolve(false), ms))])
 const toOrchestrator = (tokens: number) => ({ to: { sessionId: 's-orch' }, text: gateText(AGENT, tokens, Math.round(tokens / 10000)) })
 const toAgent = (tokens: number) => gateSelfText(tokens, Math.round(tokens / 10000))
 // Every promise the fake's nouns answer is settled by the next macrotask: they run no timer.
@@ -200,6 +211,83 @@ test("an agent's line the host refuses leaves the orchestrator's delivered, and 
   expect(fx.submitted).toEqual([toAgent(220000)])
   expect(fx.sent).toEqual([toOrchestrator(210000)])
   expect(fx.files.get(GATE)).toBe('reported\n')
+})
+
+test('a send that throws fails its own measure alone: the next one sends and reports the crossing', async () => {
+  const fx = fake({ deliver: ['throw'] })
+  await report(fx, 210000).catch(() => undefined)
+  await settled()
+  await measure(fx, 220000)
+  expect(fx.sent).toEqual([toOrchestrator(210000), toOrchestrator(220000)])
+  expect(fx.files.get(GATE)).toBe('reported\n')
+})
+
+test("a send that never answers holds no later measure past its bound: the next one sends, and the stuck one is logged", async () => {
+  const fx = fake({ deliver: ['hang'] })
+  void report(fx, 210000, BOUND)
+  await settled()
+  expect(await within(measure(fx, 220000), BOUND * 10)).toBe(true)
+  expect(fx.sent).toEqual([toOrchestrator(210000), toOrchestrator(220000)])
+  expect(fx.files.get(GATE)).toBe('reported\n')
+  expect(fx.logged.some(line => line.includes(`gate: a report of ${AGENT} did not finish within ${BOUND} ms`))).toBe(true)
+})
+
+test('a fall under the gate behind a send that never answers still clears the mark, and the next crossing is reported', async () => {
+  const fx = fake({ deliver: ['hang'] })
+  void report(fx, 210000, BOUND)
+  await settled()
+  expect(await within(measure(fx, 40000), BOUND * 10)).toBe(true)
+  expect(fx.files.get(GATE)).toBe('')
+  await measure(fx, 205000)
+  expect(fx.submitted).toEqual([toAgent(210000), toAgent(205000)])
+  expect(fx.sent).toEqual([toOrchestrator(210000), toOrchestrator(205000)])
+  expect(fx.files.get(GATE)).toBe('reported\n')
+})
+
+test('a send delivered past its bound writes nothing: a fall behind it stays cleared, and the next crossing is sent', async () => {
+  const fx = fake({ deliver: ['late'] })
+  void report(fx, 210000, BOUND)
+  await settled()
+  expect(await within(measure(fx, 40000), BOUND * 10)).toBe(true)
+  fx.release()
+  await settled()
+  expect(fx.files.get(GATE)).toBe('')
+  await measure(fx, 205000)
+  expect(fx.sent).toEqual([toOrchestrator(210000), toOrchestrator(205000)])
+  expect(fx.files.get(GATE)).toBe('reported\n')
+})
+
+test('two lines held across a fall and a new crossing, taken together: the crossing is reported and the agent told no third time', async () => {
+  const fx = fake({ submits: ['hold', 'hold'] })
+  await report(fx, 210000)
+  await measure(fx, 40000)
+  await report(fx, 205000)
+  fx.release()
+  await settled()
+  expect(fx.files.get(GATE)).toBe('reported\n')
+  await measure(fx, 206000)
+  expect(fx.submitted).toEqual([toAgent(210000), toAgent(205000)])
+})
+
+test('a fall under the gate with nothing delivered yet forgets the held line too: the next crossing tells the agent', async () => {
+  const fx = fake({ submits: ['hold'], deliver: [false] })
+  await report(fx, 210000)
+  await measure(fx, 40000)
+  fx.release()
+  await settled()
+  expect(fx.files.get(GATE) ?? '').toBe('')
+  await measure(fx, 205000)
+  expect(fx.submitted).toEqual([toAgent(210000), toAgent(205000)])
+})
+
+test('a held line the host drops after its crossing ended is logged, and marks nothing', async () => {
+  const fx = fake({ submits: ['hold-drop'] })
+  await report(fx, 210000)
+  await measure(fx, 40000)
+  fx.release()
+  await settled()
+  expect(fx.logged.some(line => line.includes(`the host dropped ${AGENT}'s own line: interrupted`))).toBe(true)
+  expect(fx.files.get(GATE)).toBe('')
 })
 
 test('the line tells the agent what to do at its gate', () => {
