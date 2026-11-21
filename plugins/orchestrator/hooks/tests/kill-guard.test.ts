@@ -755,10 +755,62 @@ test('a mark never read refuses a line the reader cannot read, and a mark as rea
   }
 })
 
+// A `pkill` of a path that is the session's own: its checkout, its scratchpad. Any other pattern is
+// still a kill that can reach another session's processes.
+const CHECKOUT = '/Users/me/dev/ws/guardfriction'
+const SCRATCH = '/private/tmp/claude-501/-Users-me-dev-ws-guardfriction/8128ce6d-2c60-4e1d-b2f2-269b7f03063e'
+const OWN = { roots: [CHECKOUT], session: '8128ce6d-2c60-4e1d-b2f2-269b7f03063e' }
+
+test("a pkill of a path of the session's own scratchpad or checkout is no kill of another's", () => {
+  for (const c of [
+    `pkill -f ${SCRATCH}/server.js`,
+    `pkill -f ${SCRATCH}`,
+    `pkill -9 -f ${SCRATCH}/server.js`,
+    `pkill -TERM -f "${SCRATCH}/server.js"`,
+    `pkill -f /tmp/claude-501/p/8128ce6d-2c60-4e1d-b2f2-269b7f03063e/x`,
+    `pkill -f ${CHECKOUT}/node_modules/.bin/vite`,
+    `pkill -fx ${CHECKOUT}`,
+    `sudo pkill -f ${CHECKOUT}/dev.sh`,
+    `git status && pkill -f ${CHECKOUT}/dev.sh 2>/dev/null`,
+  ]) expect(detectPatternKills(c, OWN), c).toEqual([])
+})
+
+test('a pkill of a name, of a path that is not the session\'s, or one that widens the match is still a kill', () => {
+  for (const c of [
+    'pkill node',
+    'pkill -f node',
+    `pkill -f ${SCRATCH.replace('8128ce6d', 'ffffffff')}/server.js`,           // another session's scratchpad
+    `pkill -f ${CHECKOUT}x`,                                                    // a sibling directory, not a path under it
+    `pkill -f '${CHECKOUT}|node'`,                                               // an alternation in the pattern
+    `pkill -f '${CHECKOUT}/.*'`,
+    `pkill -u me -f ${CHECKOUT}/dev.sh`,
+    `pkill -P 1 -f ${CHECKOUT}/dev.sh`,
+    `pkill -f ${CHECKOUT}/a ${CHECKOUT}/b`,
+    `pkill -f ${CHECKOUT}/dev.sh node`,
+    `pkill ${CHECKOUT}/$(pgrep x)`,
+    'pkill -f /Users/me/dev/ws/other',
+    'pkill -f /private/tmp',
+    `pgrep node | xargs pkill -f ${CHECKOUT}`,
+    `killall ${CHECKOUT}/dev.sh`,
+    `killall -9 ${SCRATCH}/server.js`,
+    'killall node',
+  ]) expect(detectPatternKills(c, OWN), c).not.toEqual([])
+})
+
+test('a root of fewer than three segments is no checkout of the session', () => {
+  expect(detectPatternKills('pkill -f /Users/me/dev/x', { roots: ['/Users/me'], session: '' })).not.toEqual([])
+  expect(detectPatternKills('pkill -f /Users/me/dev/x', { roots: ['/'], session: '' })).not.toEqual([])
+})
+
+test('with nothing known of the session, a pkill of a path is a kill as before', () => {
+  expect(detectPatternKills(`pkill -f ${SCRATCH}/server.js`)).toEqual(['pkill'])
+  expect(detectPatternKills(`pkill -f ${CHECKOUT}`, { roots: [], session: '' })).toEqual(['pkill'])
+})
+
 // The wiring half: the whole of the reduced $ faked.
 const HOME = '/tmp/h'
 
-function fakeDollar(setup: { spawned?: string; noEnv?: boolean }): { dollar: World; written: string[] } {
+function fakeDollar(setup: { spawned?: string; noEnv?: boolean; own?: boolean }): { dollar: World; written: string[] } {
   const written: string[] = []
   const env: Record<string, string> = { HOME, ...(setup.spawned === undefined ? {} : { ORCHESTRATOR_SPAWNED: setup.spawned }) }
   const dollar = hostOf({
@@ -773,6 +825,7 @@ function fakeDollar(setup: { spawned?: string; noEnv?: boolean }): { dollar: Wor
       write: async () => undefined,
     },
     plugin: { root: '/plugins/orch-root' },
+    ...(setup.own ? { session: { id: async () => OWN.session, cwd: async () => CHECKOUT, root: async () => CHECKOUT } } : {}),
     process: {
       run: async (argv: readonly string[]) => {
         const line = logLineOf(argv)
@@ -805,6 +858,27 @@ test("a marked session's kill by pattern is denied, the tool never asked", async
     expect(denyOf(answer), c).toContain(DENY_START)
     expect(passedThrough, c).toBeNull()
   }
+})
+
+test("a marked session's pkill of its own scratchpad reaches the tool, a pkill of a name is still denied", async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({ spawned: '1', own: true })
+  const own = bashCall(`pkill -f ${SCRATCH}/server.js`)
+  const let1 = await callBash(handlers['tool.call'], dollar, own)
+  expect(let1.passedThrough).toBe(own)
+  for (const c of ['pkill node', 'killall node', `killall ${SCRATCH}/server.js`, `pkill -f ${SCRATCH.replace('8128ce6d', 'ffffffff')}/x`]) {
+    const { answer, passedThrough } = await callBash(handlers['tool.call'], dollar, bashCall(c))
+    expect(denyOf(answer), c).toContain(DENY_START)
+    expect(passedThrough, c).toBeNull()
+  }
+})
+
+test("a marked session whose own paths cannot be read keeps denying a pkill of a path", async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({ spawned: '1' })
+  const { answer, passedThrough } = await callBash(handlers['tool.call'], dollar, bashCall(`pkill -f ${SCRATCH}/server.js`))
+  expect(denyOf(answer)).toContain(DENY_START)
+  expect(passedThrough).toBeNull()
 })
 
 test("a marked session's wide kill is denied, the tool never asked", async () => {

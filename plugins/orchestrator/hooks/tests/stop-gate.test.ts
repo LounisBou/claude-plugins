@@ -433,18 +433,16 @@ type Guards = {
   'prompt.submit': Hook<World, Events['prompt.submit']>
   // The guard on Bash, the last tool call it registers.
   'tool.call': Hook<World, Events['tool.call']>
-  'tool.call:SendMessage': Hook<World, Events['tool.call']>
 }
-function mounted(declarations: Declarations = new Declarations()): { handlers: Guards; matchers: { 'classic.Stop': Matcher | undefined; 'tool.call:SendMessage': Matcher | undefined } } {
+function mounted(declarations: Declarations = new Declarations()): { handlers: Guards; matchers: { 'classic.Stop': Matcher | undefined } } {
   const hooks = capture<World>(on => registerGuards(on, declarations))
   const stopHook = hookOf(hooks, 'classic.Stop')
   const handlers: Guards = {
     'classic.Stop': stopHook.handler,
     'prompt.submit': hookOf(hooks, 'prompt.submit').handler,
     'tool.call': hooksOn(hooks, 'tool.call').filter(h => h.matcher?.['tool'] === 'Bash').at(-1)!.handler,
-    'tool.call:SendMessage': hookOf(hooks, 'tool.call', { tool: 'SendMessage' }).handler,
   }
-  return { handlers, matchers: { 'classic.Stop': stopHook.matcher, 'tool.call:SendMessage': hookOf(hooks, 'tool.call', { tool: 'SendMessage' }).matcher } }
+  return { handlers, matchers: { 'classic.Stop': stopHook.matcher } }
 }
 
 const stopEvent = (over: Record<string, unknown> = {}): StopEvent => ({
@@ -1470,40 +1468,13 @@ test('the turn\'s end passes the answer on unchanged: its readers read the decla
   expect(shown).toEqual({ text: 'Watching.' })
 })
 
-// --- an agent's report held to the verdict limit ---------------------------------------------
+// --- an agent's message to its orchestrator -------------------------------------------------
 
-const REPORT = '/tmp/h/briefs/demo/report-p3.md'
-const LONG = 'w'.repeat(VERDICT_LIMIT + 20)
-
-const message = (to: string, text: string) => ({ tool: 'SendMessage', to, message: text })
-// The text a delivered message carried, as the fake delivery answers it.
-const sentBy = (out: unknown) => fieldsOf(fieldsIn(out).result)?.['sent']
-const delivered = async (e: Events['tool.call']) => ({ result: { sent: e['message'] } })
-
-test("an agent's long message to its orchestrator is cut to the limit with the pointer to its report", async () => {
-  const { handlers } = mounted()
-  const { dollar } = fakeDollar({ launchName: 'Agent: belt-p3' })
-  const out = await handlers['tool.call:SendMessage'](dollar, message('Orch: belt [a1b2c3]', `${LONG} report: ${REPORT}`), delivered)
-  expect(sentBy(out)).toBe(`${'w'.repeat(VERDICT_LIMIT)} … (cut: full report at ${REPORT})`)
-})
-
-test("an agent's long message to its orchestrator that names no report goes whole, a short one goes whole too", async () => {
-  const { handlers } = mounted()
-  const fx = journalled(fakeDollar({ launchName: 'Agent: belt-p3' }).dollar)
-  const dollar = fx.dollar
-  expect(sentBy(await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', LONG), delivered))).toBe(LONG)
-  const short = `demo#12 abc1234 — gate green — blocking: none — report: ${REPORT}`
-  expect(sentBy(await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', short), delivered))).toBe(short)
-  expect(fx.journal()).toEqual([])
-})
-
-test("the coordinator's and an orchestrator's long messages are never cut", async () => {
-  const { handlers } = mounted()
-  for (const launchName of ['Coord: machine', 'Orch: other']) {
-    const { dollar } = fakeDollar({ launchName })
-    const out = await handlers['tool.call:SendMessage'](dollar, message('Orch: belt', LONG), delivered)
-    expect(sentBy(out)).toBe(LONG)
-  }
+// Auto mode refuses a call whose input a hook changed after it judged it (« gave no verdict »), so
+// no hook rewrites a SendMessage: the message goes as written, whatever its length or sender.
+test("no hook is mounted on SendMessage: an agent's long message to its orchestrator goes as written", () => {
+  const hooks = capture<World>(on => registerGuards(on, new Declarations()))
+  expect(hooksOn(hooks, 'tool.call').filter(h => h.matcher?.['tool'] === 'SendMessage')).toEqual([])
 })
 
 // --- an operator wait waits on the questions asked with `ask` (hooks/wait.ts, hooks/guards.ts) ------------

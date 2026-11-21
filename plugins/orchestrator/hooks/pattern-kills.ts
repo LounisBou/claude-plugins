@@ -24,6 +24,12 @@ function baseName(word: string): string {
   return word.replace(/^.*\//, '')
 }
 
+// What belongs to the session, a pattern that names it reaching no other session's process: the
+// checkouts it works in (its working directory, its project root) and its id, which its scratchpad
+// (`/private/tmp/claude-<uid>/<project>/<session id>/…`) carries.
+export type Own = { readonly roots: readonly string[]; readonly session: string }
+const NOTHING: Own = { roots: [], session: '' }
+
 // The kills by name or pattern a command line holds, one short reason each, none when
 // there is none. A kill is pkill or killall whatever their options, or a kill whose pids
 // come from a command substitution or, through xargs, from a lister, or one that reaches
@@ -36,12 +42,13 @@ function baseName(word: string): string {
 // other programs are data, but for the string a shell runs after `-c` and the words eval
 // runs, and the text the line writes to the standard input of a shell (`echo 'pkill x' | sh`,
 // `sh <<< 'pkill x'`, a heredoc): those are command lines themselves and read as such,
-// STRING_DEPTH nested at most.
-export function detectPatternKills(command: string): string[] {
+// STRING_DEPTH nested at most. A `pkill` whose one pattern is a path of the session (`own`) is no
+// kill of another's: it reaches the session's own processes.
+export function detectPatternKills(command: string, own: Own = NOTHING): string[] {
   const found: string[] = []
   const seen = (reason: string): void => { if (!found.includes(reason)) found.push(reason) }
   try {
-    killsIn(command, 0, seen)
+    killsIn(command, 0, seen, own)
   } catch (error) {
     // A line the reader refuses (a brace expansion past its limit) may hide a kill: it is read as one.
     if (!(error instanceof RangeError)) throw error
@@ -55,32 +62,33 @@ type Filled = Map<string, string>
 
 // A line is read with the variables a lister filled in the one that holds it (`inherited`): a
 // shell string or text given to a shell in the middle of a loop expands them as the loop does.
-function killsIn(line: string, depth: number, seen: (reason: string) => void, inherited: Filled = new Map()): void {
+function killsIn(line: string, depth: number, seen: (reason: string) => void, own: Own, inherited: Filled = new Map()): void {
   const filled: Filled = new Map(inherited)
   const commands = readCommands(line)
   // What a loop reads through a here-string, `done <<< "$(pgrep x)"`, is in the `done` that
   // closes it, after the commands of its body.
   const loop = commands.map(c => (c.argv[0] === 'done' ? listerIn(c.substitutions) : undefined)).find(l => l !== undefined)
-  for (const command of commands) killOf(command, depth, seen, filled, loop)
+  for (const command of commands) killOf(command, depth, seen, own, filled, loop)
 }
 
-function killOf(command: ShellCommand, depth: number, seen: (reason: string) => void, filled: Filled, loop?: string): void {
+function killOf(command: ShellCommand, depth: number, seen: (reason: string) => void, own: Own, filled: Filled, loop?: string): void {
   const bare = unwrapPath(command.argv)
   if (bare.wrappers.length > 0) {
     const wrappers = [...command.wrappers, ...bare.wrappers]
-    return killOf({ ...command, argv: bare.argv, wrappers, lookup: command.lookup || bare.lookup }, depth, seen, filled, loop)
+    return killOf({ ...command, argv: bare.argv, wrappers, lookup: command.lookup || bare.lookup }, depth, seen, own, filled, loop)
   }
   const { argv, wrappers, lookup, substitutions, piped } = command
   if (lookup) return
   const program = baseName(argv[0] ?? '')
   if (program === 'pkill' && childrenOfRecorded(argv.slice(1), substitutions)) return
+  if (program === 'pkill' && substitutions.length === 0 && !wrappers.includes('xargs') && matchesOnlyOwn(argv.slice(1), own)) return
   if (program === 'pkill' || program === 'killall') { seen(program); return }
   if (program === 'fuser' && argv.some(isFuserKill)) { seen('fuser -k'); return }
   if (runsKillPort(argv)) { seen('kill-port'); return }
   const text = depth < STRING_DEPTH ? innerLine(argv) : undefined
-  if (text !== undefined) { killsIn(text, depth + 1, seen, filled); return }
+  if (text !== undefined) { killsIn(text, depth + 1, seen, own, filled); return }
   const fed = depth < STRING_DEPTH ? stdinLines(command) : []
-  if (fed.length > 0) { for (const line of fed) killsIn(line, depth + 1, seen, filled); return }
+  if (fed.length > 0) { for (const line of fed) killsIn(line, depth + 1, seen, own, filled); return }
   fill(command, filled, loop)
   if (program !== 'kill' || argv[1] === '-0') return
   if (substitutions.some(held => !isRecordedPid(held))) seen('kill of a command substitution')
@@ -171,6 +179,25 @@ function childrenOfRecorded(args: readonly string[], substitutions: readonly (re
   const target = words.slice(1)
   const [only] = substitutions
   return substitutions.length === 1 && only !== undefined && isRecordedPid(only) && target.length > 0 && target.every(word => word === '')
+}
+
+/*
+ * Whether pkill's words match only the session's own processes: no option but `-f`, `-x` and a
+ * signal (`-u`, `-g`, `-P`, `-t` and the others widen or move the match), and one pattern that is a
+ * plain path under a checkout of the session or under its scratchpad (the session's id in it), no
+ * regex operator in it (`a|b`, `.*`). A path another session does not hold: its processes' command
+ * lines never carry it. A substitution or xargs fills words unseen: no path then.
+ */
+function matchesOnlyOwn(args: readonly string[], own: Own): boolean {
+  const options = args.filter(word => word.startsWith('-'))
+  // The reader leaves the descriptor of `2>/dev/null` as a word of its own: a digit is no pattern.
+  const patterns = args.filter(word => !word.startsWith('-') && !/^[0-9]$/.test(word))
+  const [path] = patterns
+  if (patterns.length !== 1 || path === undefined || !options.every(word => /^-(?:[fx]+|[0-9]{1,2}|[A-Z]{3,}[0-9]?)$/.test(word))) return false
+  if (!/^\/[\w./@:-]+$/.test(path)) return false
+  const under = (root: string): boolean => root.split('/').length > 3 && (path === root || path.startsWith(`${root}/`))
+  const scratch = own.session !== '' && new RegExp(`^/(?:private/)?tmp/claude-[0-9]+/[^/]+/${own.session.replace(/[^\w-]/g, '')}(?:/|$)`).test(path)
+  return scratch || own.roots.some(under)
 }
 
 // A signal option: a number, or a name of three letters or more (`-TERM`, `-SIGKILL`, `-USR1`), never
