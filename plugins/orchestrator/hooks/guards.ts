@@ -112,7 +112,7 @@ function setNames(env: { gate?: number; gateTokens?: number }): string[] {
 // what it started, by the pid it recorded in a file (`cmd & echo $! > <file>`, then
 // `kill $(cat <file>)`; a shell variable does not outlive a Bash call, a file does). A
 // kill by pattern reaches other sessions' processes (their dev servers, the sleep of
-// their wait loops) — but a `pkill` of a path that is the session's own (its checkout, its scratchpad)
+// their wait loops) — but a `pkill` of a path that is the session's own (under its scratchpad)
 // reaches only its own, and passes.
 export function killDecision(spawned: string | null | undefined, command: string, own?: Own): { deny: string } | null {
   if (!spawned) return null                        // the operator's own sessions: untouched
@@ -207,12 +207,14 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
   )
 }
 
-// What the session owns, for the kill guard: its project root, which a shell `cd` does not move, and
-// its id. A part that cannot be read is left out, so the guard refuses the more.
+// What the session owns, for the kill guard: its id. One that cannot be read is left empty, so the
+// guard refuses the more.
 async function ownOf($: Held): Promise<Own> {
-  const read = async (get: () => Promise<string>): Promise<string> => { try { return await get() } catch { return '' } }
-  const [root, session] = await Promise.all([read(() => $.session.root()), read(() => $.session.id())])
-  return { roots: root === '' ? [] : [root], session }
+  try {
+    return { session: await $.session.id() }
+  } catch {
+    return { session: '' }
+  }
 }
 
 // prompt.submit's input carries no transcript path — that field belongs to the

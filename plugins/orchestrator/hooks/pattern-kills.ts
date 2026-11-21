@@ -24,11 +24,10 @@ function baseName(word: string): string {
   return word.replace(/^.*\//, '')
 }
 
-// What belongs to the session, a pattern that names it reaching no other session's process: the
-// checkouts it works in (its working directory, its project root) and its id, which its scratchpad
-// (`/private/tmp/claude-<uid>/<project>/<session id>/…`) carries.
-export type Own = { readonly roots: readonly string[]; readonly session: string }
-const NOTHING: Own = { roots: [], session: '' }
+// What belongs to the session, a pattern that names it reaching no other session's process: its id,
+// which its scratchpad (`/private/tmp/claude-<uid>/<project>/<session id>/…`) carries.
+export type Own = { readonly session: string }
+const NOTHING: Own = { session: '' }
 
 // The kills by name or pattern a command line holds, one short reason each, none when
 // there is none. A kill is pkill or killall whatever their options, or a kill whose pids
@@ -181,24 +180,26 @@ function childrenOfRecorded(args: readonly string[], substitutions: readonly (re
   return substitutions.length === 1 && only !== undefined && isRecordedPid(only) && target.length > 0 && target.every(word => word === '')
 }
 
+// A segment of a path a pkill may name: no leading dot (`.`, `..`, a hidden name), never empty.
+const SEGMENT = /^[\w@:-][\w.@:-]*$/
+
 /*
  * Whether pkill's words match only the session's own processes: no option but `-f`, `-x` and a
- * signal (`-u`, `-g`, `-P`, `-t` and the others widen or move the match), and one pattern that is a
- * plain path strictly under a checkout of the session (a pattern is matched anywhere in a command
- * line: the checkout's own path would also match `<checkout>-2`) or under its scratchpad (the
- * session's id in it), no regex operator in it but the dot (`a|b`, `.*` are refused). A path another
- * session does not hold: its processes' command lines never carry it. A redirection's descriptor
- * (`2>/dev/null`) is left by the reader as a second word: that line stays refused. A substitution or xargs fills words unseen: no path then.
+ * signal (`-u`, `-g`, `-P`, `-t`, `-v`, `-i` and the others widen or move the match), and one
+ * pattern that is a plain absolute path under the session's scratchpad, the session's id in it. A
+ * pattern is matched anywhere in a command line, so the path is read as written: no empty, `.` or
+ * `..` segment, no trailing `/`, no regex operator but the dot inside a name. Only a path carrying
+ * the session's id reaches that session's processes alone. A substitution or xargs fills words
+ * unseen, and a redirection's descriptor (`2>/dev/null`) is left by the reader as a second word:
+ * those lines stay refused.
  */
 function matchesOnlyOwn(args: readonly string[], own: Own): boolean {
   const options = args.filter(word => word.startsWith('-'))
   const patterns = args.filter(word => !word.startsWith('-'))
   const [path] = patterns
   if (patterns.length !== 1 || path === undefined || !options.every(word => /^-(?:[fx]+|[0-9]{1,2}|[A-Z]{3,}[0-9]?)$/.test(word))) return false
-  if (!/^\/[\w./@:-]+$/.test(path)) return false
-  const under = (root: string): boolean => root.split('/').length > 3 && path.startsWith(`${root}/`)
-  const scratch = /^[\w-]+$/.test(own.session) && new RegExp(`^/(?:private/)?tmp/claude-[0-9]+/[^/]+/${own.session}(?:/|$)`).test(path)
-  return scratch || own.roots.some(under)
+  if (!path.startsWith('/') || !path.slice(1).split('/').every(segment => SEGMENT.test(segment))) return false
+  return /^[\w-]+$/.test(own.session) && new RegExp(`^(?:/private)?/tmp/claude-[0-9]+/[^/]+/${own.session}(?:/|$)`).test(path)
 }
 
 // A signal option: a number, or a name of three letters or more (`-TERM`, `-SIGKILL`, `-USR1`), never
