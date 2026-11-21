@@ -15,7 +15,8 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { journalDir, journalEntryOf, parseAuditEvent, type AuditEvent } from '../../../../core/learning.ts'
-import { moduleDirOf, ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
+import { ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
+import { moduleDirUnder } from '../../../../core/roots.ts'
 import { parseRoundQuestion, type RoundQuestion } from '../../../../core/round-question.ts'
 import { readText, update } from '../../../../core/store.ts'
 import { HEAD_MAX, makeEvent, roleOf, type Event } from '../../../../hooks/collect.ts'
@@ -264,7 +265,7 @@ export function sweep(options: SweepOptions): SweepResult {
   const dir = eventsDir(stateDir)
   const window = readWindow(dir, firstDay)
   const summaries = [...window.sessions].flatMap(([session, seen]) => unendedSummary(config, session, seen, now) ?? [])
-  const questions = settledQuestions(moduleDirOf(config, options.moduleDir))
+  const questions = settledQuestions(moduleDirUnder(config, options.moduleDir))
     .filter(question => question.answer !== null && question.answer.at.slice(0, 10) >= firstDay && !window.questions.has(question.id))
     .flatMap(question => questionEvent(question) ?? [])
   const dispatches = journalDispatches(options.journalDir ?? journalDir(config, DISPATCH_PLUGIN), firstDay)

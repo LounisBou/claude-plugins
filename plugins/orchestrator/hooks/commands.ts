@@ -26,12 +26,11 @@ import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, runsLive, l
 import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow } from './remote-row.ts'
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
-import { moduleDirOf } from './module-log.ts'
 import { recordsRegistryPath } from '../core/orchestration.ts'
 import { subjectOf } from '../core/pr-ledger.ts'
 import { commandForms, commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import { messageOf, type CatchHook, type Events, type Host, type On } from './host.ts'
-import { configDir, logLine, stateDir } from './module-io.ts'
+import { configDir, dataDir, logLine, moduleDir, stateDir } from './module-io.ts'
 import { END_TODO_OPEN_CODE, observed } from './observe.ts'
 import { openFor, todoCounts, whoAmI } from './todo.ts'
 import { todoFile, todoName } from './todo-format.ts'
@@ -55,7 +54,7 @@ async function readBoundMs($: Held): Promise<number> {
 // unreadable (a line caught mid-write parses to no row). An absent store is no
 // failure — nothing was ever written — and answers as no sessions.
 async function readRows($: Held): Promise<Record<string, SessionRow>> {
-  const dir = `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store/sessions`
+  const dir = `${await moduleDir($)}/store/sessions`
   let entries: { name: string; kind: string }[]
   try {
     entries = await $.fs.list(dir)
@@ -86,7 +85,7 @@ async function readRows($: Held): Promise<Record<string, SessionRow>> {
 // file's own read of the store's remote directory, each checked again; the supervision
 // domain's reader removes the stale ones, this one only skips them.
 async function readRemote($: Held): Promise<RemoteRow[]> {
-  const dir = `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store/remote`
+  const dir = `${await moduleDir($)}/store/remote`
   const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
   const rows: RemoteRow[] = []
   for (const entry of entries.slice(0, 64)) {
@@ -244,7 +243,7 @@ export function progressLines(groups: readonly DispatchRow[][], goals: readonly 
 // that itself loses the race is said as unreadable rather than as absent.
 async function progressText($: Held): Promise<string> {
   const id = await $.session.id()
-  const registry = recordsRegistryPath(await stateDir($), id)
+  const registry = recordsRegistryPath(await dataDir($), id)
   const bound = await readBoundMs($)
   const listed = await withDeadline(() => $.fs.read(registry).catch(() => ''), bound)
   if (isDegradedPass(listed)) {

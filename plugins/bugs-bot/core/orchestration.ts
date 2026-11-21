@@ -7,6 +7,75 @@
 
 /** The orchestrator module's directory under the host's configuration directory. */
 export const MODULE_DIR = 'claude-orchestrator'
+
+/*
+ * The orchestrator's state has two roots. The protected one, `<config>/claude-orchestrator` (or
+ * ORCHESTRATOR_STATE_DIR), holds what runs or is trusted: the venv, the launch files under
+ * `prompts/`, the server catalogue, the tier map, the routing tables, the coordinator's and the
+ * sleepers' records, and this file. The data root holds the rest, written by any session: it is
+ * the directory this file names, else the protected root itself. Nothing read from the data root
+ * decides what runs.
+ */
+/** Under the protected root, the operator's file that places the data root: `{"version": 1, "dir": "<absolute path>"}`. */
+export const DATA_ROOT_FILE = 'data-root.json'
+export const DATA_ROOT_VERSION = 1
+
+/** The data-root file of the protected root `root`. */
+export function dataRootFileOf(root: string): string {
+  return `${root.replace(/\/+$/, '')}/${DATA_ROOT_FILE}`
+}
+
+/*
+ * What a data-root file's `dir` must be, matched in full: an absolute path of printable characters
+ * below the filesystem's root, its first group the directory with its trailing slashes dropped. A
+ * control character would split the line a shell reader reads it as. The readers in another
+ * language take it from `roots.json`, so the rule is written here alone.
+ */
+export const DATA_ROOT_DIR_PATTERN = '^(/[^\\x00-\\x1f\\x7f]*[^/\\x00-\\x1f\\x7f])/*$'
+
+/*
+ * What a data-root file's whole text must be, matched in full before it is parsed: one flat object
+ * of strict JSON, its values strings, numbers, true, false or null. Each reader's parser takes more
+ * than JSON.parse (jq a byte-order mark, NaN or 01, Python NaN; a byte that is no UTF-8 is U+FFFD to
+ * one and refused by another), and every reader must give the same root for every file. A string
+ * holds no U+FFFD and no escaped surrogate, paired or not; U+FFFD is written as itself, jq's regex
+ * knowing no `\u` escape.
+ */
+const JSON_BLANK = '[ \\t\\n\\r]*'
+const JSON_STRING = '"(?:[^"\\\\\\x00-\\x1f\ufffd]|\\\\(?:["\\\\/bfnrt]|u(?![dD][89a-fA-F])[0-9a-fA-F]{4}))*"'
+const JSON_SCALAR = `(?:${JSON_STRING}|-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|true|false|null)`
+const JSON_MEMBER = `${JSON_STRING}${JSON_BLANK}:${JSON_BLANK}${JSON_SCALAR}`
+export const DATA_ROOT_TEXT_PATTERN = `^${JSON_BLANK}\\{${JSON_BLANK}(?:${JSON_MEMBER}(?:${JSON_BLANK},${JSON_BLANK}${JSON_MEMBER})*)?${JSON_BLANK}\\}${JSON_BLANK}$`
+
+/** The match of `pattern` over the whole of `text`, else null. */
+function matchInFull(pattern: string, text: string): RegExpExecArray | null {
+  const match = new RegExp(pattern).exec(text)
+  return match !== null && match[0] === text ? match : null
+}
+
+/** The directory a data-root file's text names, or null for none: no text, a text DATA_ROOT_TEXT_PATTERN refuses, another version, or a `dir` DATA_ROOT_DIR_PATTERN refuses. */
+export function parseDataRoot(text: string | null | undefined): string | null {
+  if (text === null || text === undefined || matchInFull(DATA_ROOT_TEXT_PATTERN, text) === null) return null
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+  const { version, dir } = value as Record<string, unknown>
+  if (version !== DATA_ROOT_VERSION || typeof dir !== 'string') return null
+  return matchInFull(DATA_ROOT_DIR_PATTERN, dir)?.[1] ?? null
+}
+
+/** The data root of the protected root `root`, from its data-root file's text as the caller read it (undefined when absent): the one it names, else `root`. */
+export function dataRootOf(root: string, text: string | null | undefined): string {
+  return parseDataRoot(text) ?? root
+}
+
+/** The data-root file for the readers in another language (the launcher, `statusline.sh`, `gate.py`): its name under the protected root, its version, the pattern its whole text matches in full before it is parsed and the one its `dir` matches in full. */
+export const ROOTS_CONTRACT = { version: 1, file: DATA_ROOT_FILE, file_version: DATA_ROOT_VERSION, text_pattern: DATA_ROOT_TEXT_PATTERN, dir_pattern: DATA_ROOT_DIR_PATTERN } as const
+
 /** The measure files' directory under the module's, one `<session id>.json` each. */
 export const MEASURE_DIR = 'measure'
 export const MEASURE_VERSION = 1

@@ -14,7 +14,7 @@ import { launcherOf, RECORDS_DIR, recordsRegistryPath } from '../core/orchestrat
 import { tabsOf, isDegradedPass, isOwnRecord, listing, liveNames, orchestrationOf, ownerOf, withDeadline, type DeclaredWait } from './stop-gate.ts'
 import { parseSessionRow, publishUnattended, sessionKey, storeOf } from './supervision.ts'
 import { fieldsOf, messageOf, type Host, type On } from './host.ts'
-import { logLine, stateDir, storeIo } from './module-io.ts'
+import { dataDir, logLine, storeIo } from './module-io.ts'
 import { fileWanted, readPrFile, refreshPrFile } from './pr-file.ts'
 import { prsOfRepo, type FilePr, type PrFile } from './pr-file-format.ts'
 import { readyHeadsOf } from './ready-agent.ts'
@@ -133,7 +133,7 @@ export async function archive($: Held, path: string, lines: readonly LedgerLine[
 export async function readUnattended($: Held, sessionId: string, now: number = Date.now()): Promise<Reading | null> {
   const row = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`))
   if (row?.role !== 'orchestrator' || !row.name) return null
-  const state = await stateDir($)
+  const state = await dataDir($)
   const own = await linesOf($, await projectRecords($, state, sessionId, orchestrationOf(row.name)), orchestrationOf(row.name))
   // Only the repositories the session's dispatch record names, read in the machine's file, refreshed
   // first when it is older than its interval; a turn end refreshes it too when the sweep wants

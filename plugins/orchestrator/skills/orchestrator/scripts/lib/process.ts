@@ -1,7 +1,8 @@
 // What a script of the orchestrator's skill reaches outside itself: the commands it runs and the
 // streams it writes. Passed in as values, so a test stands in for each one.
 import { spawn } from 'node:child_process'
-import { closeSync, openSync, realpathSync, writeSync } from 'node:fs'
+import { closeSync, constants, lstatSync, openSync, realpathSync, writeSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export interface Ran {
@@ -32,6 +33,17 @@ export interface RunOptions {
 
 export type Run = (argv: readonly [string, ...string[]], options?: RunOptions) => Promise<Ran>
 
+/**
+ * A log of the data root opened for writing, refusing a link: the directory that holds it and the
+ * file itself must not be one, so a link a session planted there never lets the write truncate or
+ * append to what it points at. Appends, or truncates when `append` is off. Throws on a link.
+ */
+export function openLog(path: string, append: boolean): number {
+  if (lstatSync(dirname(path)).isSymbolicLink()) throw new Error(`${dirname(path)} is a link: refused`)
+  const how = append ? constants.O_APPEND : constants.O_TRUNC
+  return openSync(path, constants.O_WRONLY | constants.O_CREAT | how | constants.O_NOFOLLOW, 0o600)
+}
+
 /** Runs `argv` without a shell and collects its stdout; never rejects. */
 export const run: Run = (argv, options = {}) =>
   new Promise(resolve => {
@@ -39,7 +51,7 @@ export const run: Run = (argv, options = {}) =>
     let fd: number | undefined
     if (options.log !== undefined) {
       try {
-        fd = openSync(options.log.path, options.log.append ? 'a' : 'w')
+        fd = openLog(options.log.path, options.log.append)
       } catch {
         resolve({ status: 1, stdout: '', stderr: '' })
         return

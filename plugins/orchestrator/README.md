@@ -70,6 +70,19 @@ user commands, and needs the host at 2.1.287 or later (the hooks module's events
 itself needs no wiring: the module measures every session in-process, and a session restart
 makes it take effect.
 
+## The state directory and the data root
+
+`~/.claude/claude-orchestrator` (`$CLAUDE_CONFIG_DIR` when set) holds what runs or is trusted:
+the environment, the launch files, the server catalogue, the tier map, the routing tables, the
+coordinator's and the sleepers' records. What the sessions write (the round, the records, the
+briefs' registry, the to-do lists, the chains, the logs, the measure files, the deck) can live
+elsewhere, in a directory any session may write without a prompt: name it in
+`~/.claude/claude-orchestrator/data-root.json`, `{"version": 1, "dir": "<absolute path>"}`, and move
+the data there. Without that file, everything stays in the state directory. Nothing read from the
+data root decides what runs. `docs/state.md` lists each file and its root; an install names the data
+root it reads, or the file that names none, and an uninstall removes the state directory and leaves
+a data root placed elsewhere.
+
 ## Requirements
 
 - `bash` 3.2 (the version macOS ships), `jq`
@@ -100,7 +113,7 @@ makes it take effect.
 The hooks module measures every session in-process. After each turn the host
 fires a measure event that carries the fill itself — tokens, window,
 percentage, the model that answered — and the module writes one line to
-`~/.claude/claude-orchestrator/measure/<session-id>.json`, the only file
+`measure/<session-id>.json` under the data root (`~/.claude/claude-orchestrator` by default), the only file
 external processes read: any tool of your own can read the figures the same way. `start`
 keeps the session's first figure and, for a session the launcher opened, the brief it started
 on and its size, so each start is measured.
@@ -122,8 +135,9 @@ ran 13 points above the gauge.
 
 ## The deck file
 
-`~/.claude/claude-orchestrator/deck.json` is the one contract between the module and a
-program that draws the supervision elsewhere. Its shape is `hooks/deck.ts`'s `Deck`, and
+`deck.json`, under the data root (the directory `~/.claude/claude-orchestrator/data-root.json` names, else
+`~/.claude/claude-orchestrator`), is the one contract between the module and a program that draws the
+supervision elsewhere. Its shape is `hooks/deck.ts`'s `Deck`, and
 `version` changes on any change a reader must know of.
 
 ```jsonc

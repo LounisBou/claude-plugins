@@ -21,6 +21,7 @@ import asyncio
 import collections
 import contextlib
 import datetime
+import errno
 import glob
 import io
 import json
@@ -62,9 +63,60 @@ STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
     os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude"),
     "claude-orchestrator",
 )
+# The data root (core's orchestration.ts, read here as the generated `roots.json`). What runs or
+# is trusted stays on STATE_DIR, the protected root: the venv, the launch files under prompts/,
+# the server catalogue, the tier map, the coordinator's and the sleepers' records. What any
+# session writes (the chains, the auditors' records, the logs) is under
+# DATA_DIR, the directory the protected root's data-root file names. Nothing read from DATA_DIR
+# decides what runs.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "core", "roots.json"),
+          encoding="utf-8") as _fh:
+    ROOTS = json.load(_fh)
+
+
+def data_root_of(root):
+    """The data root the protected root `root` places, as core's parseDataRoot reads its file:
+    the first group of its `dir` matched in full by roots.json's `dir_pattern`, once its whole text
+    matched roots.json's `text_pattern` in full; else `root`, for a file absent, unreadable, not
+    that strict JSON, of another version, or whose `dir` the pattern refuses."""
+    try:
+        with open(os.path.join(root, ROOTS["file"]), encoding="utf-8") as fh:
+            text = fh.read()
+        if not re.fullmatch(ROOTS["text_pattern"], text):
+            return root
+        value = json.loads(text)
+    except (OSError, ValueError):
+        return root
+    if not isinstance(value, dict):
+        return root
+    version, directory = value.get("version"), value.get("dir")
+    if isinstance(version, bool) or version != ROOTS["file_version"] or not isinstance(directory, str):
+        return root
+    match = re.fullmatch(ROOTS["dir_pattern"], directory)
+    return match.group(1) if match else root
+
+
+DATA_DIR = data_root_of(STATE_DIR)
+
+
+def open_data_file(path, flags, mode=0o600):
+    """A file of the data root opened by `os.open`, refusing a link. A session may plant a
+    symlink in a directory any session writes; a write through it would truncate or append to
+    the file it points at, a protected one included. The last component is opened with
+    O_NOFOLLOW, and no directory between the data root and the file may be a link (the data
+    root itself may be one: the operator names it). Raises OSError (ELOOP) on a link."""
+    below = os.path.relpath(os.path.dirname(path), DATA_DIR)
+    walked = DATA_DIR
+    for part in [] if below == "." else below.split(os.sep):
+        walked = os.path.join(walked, part)
+        if os.path.islink(walked):
+            raise OSError(errno.ELOOP, "a link in the data root, refused", walked)
+    return os.open(path, flags | os.O_NOFOLLOW | os.O_CLOEXEC, mode)
+
+
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
-CHAINS_DIR = os.path.join(STATE_DIR, "chains")
-AUDITORS_DIR = os.path.join(STATE_DIR, "auditors")
+CHAINS_DIR = os.path.join(DATA_DIR, "chains")
+AUDITORS_DIR = os.path.join(DATA_DIR, "auditors")
 SELF_TTY = os.environ.get("ORCHESTRATOR_SELF_TTY", "")
 
 
@@ -1046,10 +1098,10 @@ def process_gone(pid, start, state=_READ):
 
 
 def module_dir():
-    """The hooks module's own directory, where its store lives: ORCHESTRATOR_MODULE_DIR when
-    set, as the module reads it."""
+    """The hooks module's own directory, where its store lives, as the module reads it:
+    ORCHESTRATOR_MODULE_DIR when set, else the data root of the config dir's claude-orchestrator."""
     return (os.environ.get("ORCHESTRATOR_MODULE_DIR")
-            or os.path.join(host_config_dir(), "claude-orchestrator"))
+            or data_root_of(os.path.join(host_config_dir(), "claude-orchestrator")))
 
 
 # --- the session's row in the hooks module's store -----------------------------------
@@ -1262,13 +1314,14 @@ def name_lingering(pids):
 
 def close_log(what, line, echo=True):
     """Say one step of a host's end on stderr (unless `echo` is off) and append it,
-    timestamped, to close.log in the state directory, where a close that went wrong is read
+    timestamped, to close.log in the data root, where a close that went wrong is read
     afterwards."""
     if echo:
         print("%s: %s" % (what, line), file=sys.stderr)
     try:
-        os.makedirs(STATE_DIR, exist_ok=True)
-        with open(os.path.join(STATE_DIR, "close.log"), "a") as fh:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        fd = open_data_file(os.path.join(DATA_DIR, "close.log"), os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+        with os.fdopen(fd, "a") as fh:
             fh.write("%s %s: %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                                       what, line))
     except OSError:
@@ -1998,7 +2051,7 @@ def chain_store(*argv):
     pruned (chain_prune), the ones just written and the caller's own kept."""
     node = os.environ.get("ORCHESTRATOR_ADAPTER_NODE") or "node"
     done = subprocess.run([node, "--experimental-strip-types", "--no-warnings", CHAINS_WRITER,
-                           argv[0], STATE_DIR] + [str(a) for a in argv[1:]],
+                           argv[0], DATA_DIR] + [str(a) for a in argv[1:]],
                           capture_output=True, text=True, timeout=30)
     if done.returncode != 0:
         raise RuntimeError((done.stderr or "").strip() or "chains: exit %d" % done.returncode)
@@ -3550,7 +3603,7 @@ HOME_WATCH_UP = 3
 def home_end_marker(socket):
     """The file a launcher command leaves before it ends the home server `socket`: the
     server's watcher then knows the end was traced by that command and says nothing."""
-    return os.path.join(STATE_DIR, "home-ended", socket)
+    return os.path.join(DATA_DIR, "home-ended", socket)
 
 
 def trace_home(socket, ended, cause, tty):
@@ -3629,7 +3682,7 @@ def kill_watched_home(socket):
     next real end is not silent. True when tmux ended it."""
     try:
         os.makedirs(os.path.dirname(home_end_marker(socket)), exist_ok=True)
-        open(home_end_marker(socket), "w").close()
+        os.close(open_data_file(home_end_marker(socket), os.O_WRONLY | os.O_CREAT))
     except OSError:
         pass
     ended = kill_home(socket)
@@ -5676,9 +5729,9 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
 # A harness (the outcome evals') opens an orchestrator it drives with no operator, on a bench
 # of its own: a directory the caller names. The home server and its socket, in the bench's own
 # tmux directory, and the orchestrator's working directory sit inside the bench, so no server
-# of the machine is touched and a tab is never asked for. The launch script, the prompt, the
-# servers' file and `close.log` go to the launcher's state directory, as for any launch. The
-# orchestrator runs in window 0 of a home session marked like any other, so the agents it
+# of the machine is touched and a tab is never asked for. The launch script, the prompt and the
+# servers' file go to the launcher's state directory, `close.log` to its data root, as for any
+# launch. The orchestrator runs in window 0 of a home session marked like any other, so the agents it
 # spawns are windows of that session. The caller gives the plugin directories and the settings
 # the orchestrator runs on, since it is no host session whose launch they could be read from.
 # No remote control. `close --bench --socket` ends the home, every window of it. This is not an

@@ -1,6 +1,6 @@
 ---
 description: Where the build stands, and the orchestrator's context
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(jq:*), Bash(cat:*), Bash(date:*), ListAgents, Read, Edit
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(jq:*), Bash(cat:*), Bash(date:*), ListAgents, Read, Edit
 ---
 
 Report the state of the whole build to the user, from the artifacts — never
@@ -31,12 +31,10 @@ whatever this command printed.
 3. Read the dispatch record's summary:
    `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh summary <record>`
    — the record `/orchestrator:succeed` and the takeover name. Keep every `signal=` line: they are
-   the routing corrections this build has earned, and a signal nobody reads is a
-   measurement nobody took.
-4. Measure your own context: read
-   `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/measure/$CLAUDE_CODE_SESSION_ID.json`
-   — one JSON line the module writes on every gauge pass — and keep its
-   `context_percent`, `context_tokens` and `context_window`.
+   the routing corrections this build has earned: a signal nobody reads is a measurement nobody took.
+4. Measure your own context: read `<module>/measure/$CLAUDE_CODE_SESSION_ID.json`
+   (`<module>`: `module=` of `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh roots`)
+   and keep its `context_percent`, `context_tokens` and `context_window`.
 5. Present, in this order and nothing else:
    - **Goals** — the goals line of `dispatch-record.sh goals <record> status`.
    - **Done** — phases merged, with PR numbers and what each delivered in one line.

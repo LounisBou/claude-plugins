@@ -1,10 +1,10 @@
 // hooks/gauge.ts
 import { gateThresholds } from '../core/env.ts'
-import { gateTokensOf, MEASURE_DIR, MEASURE_VERSION, moduleDirOf } from '../core/orchestration.ts'
+import { gateTokensOf, MEASURE_DIR, MEASURE_VERSION } from '../core/orchestration.ts'
 import { measureFilePath, hasFigures, parseMeasure, startOf, type MeasureReading, type MeasureStart } from './gauge-core.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { removeArgv } from '../core/store-io.ts'
-import { configDir, logLine, writeAtomic } from './module-io.ts'
+import { configDir, logLine, moduleDir, writeAtomic } from './module-io.ts'
 
 // The nouns the gauge holds.
 type Gauge = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session' | 'ui'>
@@ -51,7 +51,7 @@ export async function writeMeasure(
 ): Promise<void> {
   // One JSON line, put in place in one rename: $.fs.write alone creates the file empty and
   // fills it after, and a reader (or a crash) in between found — or left — a 0-byte measure.
-  await writeAtomic($, measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR')), JSON.stringify(reading) + '\n')
+  await writeAtomic($, measureFilePath(await configDir($), sessionId, await moduleDir($)), JSON.stringify(reading) + '\n')
 }
 
 // A conversation whose figures are gone (a compaction) has no measure file: removed, never rewritten
@@ -59,7 +59,7 @@ export async function writeMeasure(
 // every session that was compacted or had not answered yet. Removing a file that is not there is no
 // failure. A session's end does not come here: its last figures stay as the series the method is judged on.
 async function removeMeasure($: Host<'env' | 'process'>, sessionId: string): Promise<void> {
-  const path = measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))
+  const path = measureFilePath(await configDir($), sessionId, await moduleDir($))
   const removed = await $.process.run(removeArgv(path), { timeoutMs: 5000 })
   if (removed.exitCode !== 0) throw new Error(`the measure file ${path} could not be removed${removed.stderr ? `: ${removed.stderr.trim()}` : ''}`)
 }
@@ -69,7 +69,7 @@ async function removeMeasure($: Host<'env' | 'process'>, sessionId: string): Pro
 const EMPTY_MEASURE_AGE_MS = 24 * 3600 * 1000
 
 async function sweepEmptyMeasures($: Host<'env' | 'fs' | 'process'>): Promise<void> {
-  const dir = `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/${MEASURE_DIR}`
+  const dir = `${await moduleDir($)}/${MEASURE_DIR}`
   const now = Date.now()
   const stale = (await $.fs.list(dir))
     .filter(entry => entry.kind === 'file' && entry.size === 0 && entry.name.endsWith('.json') && now - (entry.mtimeMs ?? now) > EMPTY_MEASURE_AGE_MS)
@@ -183,7 +183,7 @@ async function gateEnv($: Host<'env'>): Promise<{ gate?: number; gateTokens?: nu
 // The start a session's measure file already holds, when the module was reloaded since.
 async function keptStart($: Host<'fs' | 'env'>, sessionId: string): Promise<MeasureStart | undefined> {
   try {
-    return parseMeasure(await $.fs.read(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))))?.start
+    return parseMeasure(await $.fs.read(measureFilePath(await configDir($), sessionId, await moduleDir($))))?.start
   } catch {
     return undefined
   }

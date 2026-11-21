@@ -354,10 +354,11 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         const block = blockOf(argv, () => setup.transcript ?? '')
         if (block !== null) return { exitCode: 0, stdout: block, stderr: '' }
         ran.push(argv.join(' '))
+        // The store's rename (core's renameArgv, `mv -f <temporary> <path>`): the file lands on its name.
+        if (argv[0] === 'mv') { wrote[argv[3]!] = wrote[argv[2]!]!; return { exitCode: 0, stdout: '', stderr: '' } }
         if (setup.forge !== undefined) {
           const asked = prQueryRun(argv, repo => setup.forge?.[repo] ?? null)
           if (asked !== null) return asked
-          if (argv[0] === 'mv') { wrote[argv[3]!] = wrote[argv[2]!]!; return { exitCode: 0, stdout: '', stderr: '' } }
           if (argv[0] === 'sh' && String(argv[2] ?? '').includes('set -C')) return { exitCode: 0, stdout: '', stderr: '' }
         }
         if (argv[0] === 'tmux') {
@@ -911,6 +912,14 @@ test('a due sweep runs once, writes the shared stamp first, and logs its deletio
   expect(sweepLine(fx.ran)).toContain(`bash ${WORKSPACE} sweep --deadline`)
   expect(fx.written.some(l => l.includes('sweep deleted /tmp/h/work/repo/belt'))).toBe(true)
   expect(fx.written.some(l => l.includes('kept'))).toBe(false)
+})
+
+test('the stamp, a fixed name of the data root, is renamed into place: a link planted at it is replaced, never written through', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ stampMtimeMs: OLD_STAMP })
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent(PASSING))
+  expect(fx.ran.some(l => l.startsWith(`mv -f ${STAMP}.tmp-`) && l.endsWith(` ${STAMP}`))).toBe(true)
+  expect(fx.stamp.atRun).toMatch(/^\d{10}\n$/)
 })
 
 test('a due sweep logs what it pushed and the reason a checkout stays when first written, never its kept lines', async () => {

@@ -15,7 +15,9 @@
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { dataRootFileOf, MEASURE_DIR, parseDataRoot } from '../../../core/orchestration.ts'
 import { configDir, setting, type Env } from '../../../core/paths.ts'
+import { orchestratorRoots } from '../../../core/roots.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { isEntry, processIo, resolvedPath, type Io } from './lib/process.ts'
 import { main as shortCommands } from './short-commands.ts'
@@ -94,6 +96,8 @@ export function main(argv: readonly string[], deps: Deps): number {
   const home = setting(env, 'HOME') ?? ''
   const config = configDir(env, home)
   const state = join(config, 'claude-orchestrator')
+  // The data root and the module's directory that state's data-root file places, read before an uninstall removes it.
+  const roots = orchestratorRoots({ ...env, ORCHESTRATOR_STATE_DIR: state }, home)
   const tap = join(state, 'statusline-tap.sh')
   const previous = join(state, 'statusline.previous.json')
   const settings = join(config, 'settings.json')
@@ -186,6 +190,8 @@ export function main(argv: readonly string[], deps: Deps): number {
         say(`removed ${state} (measure files, the module's log with its rotation and lock, prompts, tier map)`)
       }
     }
+    // A data root placed elsewhere is the operator's directory: named, never removed.
+    if (roots.dataRoot !== state && isDir(roots.dataRoot)) say(`left ${roots.dataRoot}, the data root ${state} placed: remove it by hand once no session writes there`)
     const code = short('uninstall')
     if (code !== 0) return code
     say('Done. Restart your session.')
@@ -208,9 +214,16 @@ export function main(argv: readonly string[], deps: Deps): number {
   say(`host ${version}`)
 
   step('State directory')
-  const measure = join(state, 'measure')
+  const measure = join(roots.moduleDir, MEASURE_DIR)
   run(`mkdir -p '${measure}'`, () => mkdirSync(measure, { recursive: true }))
   say(`measure directory ready: ${measure}`)
+  // The data root the operator placed, or the file that places none: a refused file leaves the data on the protected root.
+  const rootFile = dataRootFileOf(state)
+  if (isFile(rootFile)) {
+    say(parseDataRoot(readFileSync(rootFile, 'utf8')) === null
+      ? `${rootFile} names no absolute data root: the data stays on ${state}`
+      : `data root: ${roots.dataRoot}`)
+  }
   // The tap's ctx/ directory: nothing reads it since the module measures the session itself.
   if (isDir(join(state, 'ctx'))) {
     remove(join(state, 'ctx'), '-rf')

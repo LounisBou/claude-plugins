@@ -491,6 +491,24 @@ describe('facts', () => {
   })
 })
 
+describe('roots', () => {
+  it('prints the protected root, the data root its file names and the module directory, and the protected one when the file is refused', () => {
+    const f = fixture()
+    const data = join(f.root, 'data')
+    mkdirSync(f.state)
+    writeFileSync(join(f.state, 'data-root.json'), JSON.stringify({ version: 1, dir: data }))
+    assert.equal(main(f.ctx, ['roots']), 0)
+    assert.deepEqual(f.out.slice(0, 2), [`protected=${f.state}`, `data=${data}`])
+    assert.match(f.out[2] ?? '', /^module=\//)
+    const refused = fixture()
+    mkdirSync(refused.state)
+    writeFileSync(join(refused.state, 'data-root.json'), JSON.stringify({ version: 1, dir: '~/shared' }))
+    assert.equal(main(refused.ctx, ['roots']), 0)
+    assert.deepEqual(refused.out.slice(0, 2), [`protected=${refused.state}`, `data=${refused.state}`])
+    assert.equal(main(refused.ctx, ['roots', 'x']), 1)
+  })
+})
+
 describe('owners', () => {
   it('traces each open pull request to its orchestrator, else says why it cannot', () => {
     const { f, t } = bench()

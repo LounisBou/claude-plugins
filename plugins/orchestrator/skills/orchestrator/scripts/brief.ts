@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url'
 import { readText } from '../../../core/store.ts'
 import type { Env } from '../../../core/paths.ts'
 import { openTodos, todoItems, todoPath, type TodoItem } from '../../../hooks/todo-format.ts'
-import { parseRecord, stateRoot, type Row } from './dispatch-record.ts'
+import { parseRecord, protectedRoot, stateRoot, type Row } from './dispatch-record.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { goalsFileOf } from './lib/record-paths.ts'
 import { placeholdersOf } from './review-brief.ts'
@@ -414,7 +414,8 @@ function coordinatorValues(f: Fields, deps: Deps): Values {
     ITERM_AGENT_SH: LAUNCHER,
     COORDINATOR_SH: COORDINATOR,
     BRIEF_SH: SCRIPT,
-    STATE_DIR: state,
+    STATE_DIR: protectedRoot(deps.env),
+    DATA_DIR: state,
   }
 }
 

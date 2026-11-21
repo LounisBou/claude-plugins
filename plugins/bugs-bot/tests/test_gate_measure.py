@@ -111,6 +111,29 @@ def test_measure_path_never_answers_the_state_dir_override():
     assert measure_path(env) == Path("/config/claude-orchestrator/measure/abc123.json")
 
 
+def test_measure_path_follows_the_data_root_the_config_dirs_file_places(tmp_path):
+    own = tmp_path / "config" / "claude-orchestrator"
+    own.mkdir(parents=True)
+    env = {"CLAUDE_CODE_SESSION_ID": "abc123", "CLAUDE_CONFIG_DIR": str(tmp_path / "config")}
+    shared = tmp_path / "shared"
+    (own / "data-root.json").write_text(json.dumps({"version": 1, "dir": f"{shared}//"}))
+    # A data-root file in the data root itself moves nothing further.
+    shared.mkdir()
+    (shared / "data-root.json").write_text(json.dumps({"version": 1, "dir": str(tmp_path / "elsewhere")}))
+
+    assert measure_path(env) == shared / "measure" / "abc123.json"
+
+
+@pytest.mark.parametrize("text", ["{", "[]", '{"dir": "/x"}', '{"version": 2, "dir": "/x"}', '{"version": true, "dir": "/x"}',
+                                  '{"version": 1, "dir": "relative"}', '{"version": 1, "dir": "/"}', '{"version": 1, "dir": "/x\\ny"}'])
+def test_measure_path_stays_under_the_config_dir_when_its_file_names_no_data_root(tmp_path, text):
+    own = tmp_path / "claude-orchestrator"
+    own.mkdir()
+    (own / "data-root.json").write_text(text)
+
+    assert measure_path({"CLAUDE_CODE_SESSION_ID": "abc123", "CLAUDE_CONFIG_DIR": str(tmp_path)}) == own / "measure" / "abc123.json"
+
+
 def test_measure_path_without_a_session_id_is_none():
     assert measure_path({"CLAUDE_CONFIG_DIR": "/config"}) is None
 

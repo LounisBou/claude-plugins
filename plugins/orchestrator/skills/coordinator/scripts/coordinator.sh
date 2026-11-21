@@ -12,6 +12,8 @@
 #                            line; nothing on the first check (<state>/coordinator-check.json keeps
 #                            the last). --every reads again at that pace until a line is new: run in
 #                            the background, it wakes its session only on a finding
+#   coordinator.sh roots     the roots, one line each by core's rule: protected=<what runs>, data=<what
+#                            any session writes>, module=<the hooks module's own files, measure/ among them>
 #   coordinator.sh sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id>
 #                        --effort <level> [--session <id>] [--mode build|investigate] [--config <dir>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
 #                            records a paused orchestrator as sleeping, once its tab is closed;

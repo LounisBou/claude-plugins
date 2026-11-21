@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -178,6 +178,35 @@ test('the cache: an entry older than seven days removed when one is written, a f
   assert.deepEqual([...guards('acme/thing', [check('wip-check / wip-check', 'fail', 555)], join(dir, 'file'), api(FILES, RUNS).gh)], ['wip-check / wip-check'])
 })
 
+test('the cache, in the data root, writes through no link planted at a slot or at its temporary name', () => {
+  const cache = join(dir, 'cache')
+  guards('acme/thing', [check('tests', 'fail', 555)], cache, api(FILES, RUNS).gh)
+  const slots = readdirSync(cache)
+  assert.ok(slots.length > 0)
+  rmSync(cache, { recursive: true })
+  mkdirSync(cache)
+  // The slots' names are known to any session: links toward a protected file planted under each, and under each `.tmp`.
+  const target = join(dir, 'protected')
+  writeFileSync(target, 'kept\n')
+  for (const slot of slots) {
+    symlinkSync(target, join(cache, slot))
+    symlinkSync(target, join(cache, `${slot}.tmp`))
+  }
+  guards('acme/thing', [check('tests', 'fail', 555)], cache, api(FILES, RUNS).gh)
+  assert.equal(readFileSync(target, 'utf8'), 'kept\n')
+  for (const slot of slots) assert.equal(lstatSync(join(cache, slot)).isSymbolicLink(), false, `${slot} is the cache's own file`)
+})
+
+test('a cache directory planted as a link is no cache: nothing in its target is pruned or written', () => {
+  const target = join(dir, 'protected')
+  mkdirSync(target)
+  writeFileSync(join(target, 'models.json'), '{}')
+  utimesSync(join(target, 'models.json'), new Date('2020-01-01'), new Date('2020-01-01'))
+  symlinkSync(target, join(dir, 'cache'))
+  guards('acme/thing', [check('tests', 'fail', 555)], join(dir, 'cache'), api(FILES, RUNS).gh)
+  assert.deepEqual(readdirSync(target), ['models.json'])
+})
+
 test('a run or a file that answers something else is unread', () => {
   const odd = (answer: string) => (): string => answer
   assert.deepEqual([...guards('a/b', [check('t', 'fail', 1)], join(dir, 'c1'), odd('not json'))], [])
@@ -237,4 +266,10 @@ test('the command: usage, no gate answer, the gate\'s failing names that are no 
   assert.equal(cli(['acme/thing', '7', '--dependents'], gate(false)), '0||')
   assert.equal(cacheDirOf({ ORCHESTRATOR_STATE_DIR: '/s' }), '/s/draft-guard')
   assert.equal(cacheDirOf({ CLAUDE_CONFIG_DIR: '/c' }), '/c/claude-orchestrator/draft-guard')
+})
+
+test('the cache follows the data root the protected root places', () => {
+  const state = mkdtempSync(join(tmpdir(), 'draft-guard-'))
+  writeFileSync(join(state, 'data-root.json'), JSON.stringify({ version: 1, dir: '/shared/o' }))
+  assert.equal(cacheDirOf({ ORCHESTRATOR_STATE_DIR: state }), '/shared/o/draft-guard')
 })

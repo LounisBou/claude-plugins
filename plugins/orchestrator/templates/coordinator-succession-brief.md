@@ -32,5 +32,5 @@ You are the SUCCESSOR COORDINATOR of this machine. Your predecessor, `{{PREDECES
 
 ## Standing context
 
-- Subject: `Coord: {{SUBJECT}}`. State directory: `{{STATE_DIR}}`.
+- Subject: `Coord: {{SUBJECT}}`. State directory: `{{STATE_DIR}}`; data directory: `{{DATA_DIR}}`.
 - Your own succession: the successor's prompt is « Run {{BRIEF_SH}} coordinator-takeover --name '<your name>' --tty <your tty> and execute what it prints. »

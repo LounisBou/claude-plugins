@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { Refusal, type Context, type RunOptions, type RunResult } from './context.ts'
 import { releaseHeld } from './lock.ts'
 import { clear, lookup, register } from './record.ts'
-import { checkCommand, factsCommand, ownersCommand } from './facts.ts'
+import { checkCommand, factsCommand, ownersCommand, rootsCommand } from './facts.ts'
 import { round, roundArchive } from './round.ts'
 import { drop, sleep, sleeping, wakeDone } from './sleeping.ts'
 
@@ -18,6 +18,7 @@ export const COMMANDS: Readonly<Record<string, (ctx: Context, args: readonly str
   facts: factsCommand,
   owners: ownersCommand,
   check: checkCommand,
+  roots: rootsCommand,
   sleep,
   sleeping,
   'wake-done': wakeDone,

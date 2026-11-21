@@ -287,27 +287,45 @@ fmt_tokens() {
 case ${BASH_SOURCE[0]} in */*) here=${BASH_SOURCE[0]%/*} ;; *) here=. ;; esac
 contract="$here/../core/orchestration.json"
 
+# The orchestrator's data root under its protected root $1: the first group of the `dir` the
+# protected root's data-root file names, matched in full by roots.json's `dir_pattern`, once the
+# file's whole text matched its `text_pattern` in full (its name, version and patterns core's,
+# parseDataRoot the reader), else $1 itself. The text is read raw: jq's parser takes more than JSON.
+# Prints the directory.
+data_root() {
+  local roots="$here/../core/roots.json" name dir=''
+  name=$(jq -r '.file' "$roots" 2>/dev/null)
+  case $name in ''|*/*) ;; *)
+    dir=$(jq -r -R -s --slurpfile r "$roots" '$r[0] as $c | . as $t | select(first(match($c.text_pattern)).string == $t)
+      | fromjson | select(type == "object" and .version == $c.file_version and (.dir | type) == "string")
+      | .dir as $d | first($d | match($c.dir_pattern)) | select(.string == $d) | .captures[0].string' "$1/$name" 2>/dev/null) ;;
+  esac
+  printf '%s\n' "${dir:-$1}"
+}
+
 # The session's context gate, in tokens: the figure the orchestrator's module writes in the
 # session's measure file at each turn, so the bar shows the gate the session is held to.
 # Prints nothing without a measure file.
 # The gate only applies to orchestration sessions: a name of one of core's prefixes, a blank
 # before its colon or none.
 ctx_gate_tokens() {
-  local name=${session_name#\"} dir file
+  local name=${session_name#\"} module dir file
   case "$session_id" in ''|*[!A-Za-z0-9_-]*) return 0 ;; esac
   [ -f "$contract" ] || return 0
-  dir=$(jq -r --arg name "$name" --slurpfile names "$here/../core/names.json" 'select($names[0].roles | keys
-    | any(. as $w | $name | startswith($w + ":") or startswith($w + " :"))) | .measure | "\(.module_dir)/\(.dir)"' "$contract" 2>/dev/null) || return 0
+  IFS=' ' read -r module dir <<<"$(jq -r --arg name "$name" --slurpfile names "$here/../core/names.json" 'select($names[0].roles | keys
+    | any(. as $w | $name | startswith($w + ":") or startswith($w + " :"))) | .measure | "\(.module_dir) \(.dir)"' "$contract" 2>/dev/null)"
   [ -n "$dir" ] || return 0
-  file="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/$dir/$session_id.json"
+  # The module's directory is the data root of the config dir's, as the module writes it.
+  file="$(data_root "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/$module")/$dir/$session_id.json"
   [ -f "$file" ] || return 0
   jq -r '.gate_tokens // empty' "$file" 2>/dev/null
 }
 
 # The operator's open questions, for the sessions that handle them: an orchestrator, a coordinator
 # or an auditor (a name of those prefixes, a blank before its colon or none); any other session
-# prints nothing. Core's contracts say where the orchestrator's state lies (the module's directory
-# in orchestration.json, ORCHESTRATOR_STATE_DIR when set, as the orchestrator itself resolves it).
+# prints nothing. Core's contracts say where the orchestrator's state lies (the data root of the
+# module's directory in orchestration.json, or of ORCHESTRATOR_STATE_DIR when set, as the
+# orchestrator itself resolves it).
 # Prints "<open> <urgent> <stale>" when some are open, nothing when none are. Reads only; nothing
 # here is written.
 #
@@ -335,6 +353,7 @@ open_questions() {
   if [ -n "${ORCHESTRATOR_STATE_DIR:-}" ]; then state=$ORCHESTRATOR_STATE_DIR
   else state="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/$state"
   fi
+  state=$(data_root "$state")
   if [ "$own" = "0" ]; then
     [ -f "$state/$file" ] || return 0
     jq -r --argjson now "$(date +%s)" --argjson version "$version" --argjson stale "$stale" '
@@ -445,8 +464,9 @@ fi
 # The quota is the account's, not the session's: any session of it shows the same figures, and only
 # the payloads carry them. So each payload with `rate_limits` writes them to
 # `<orchestrator state>/quota/<account>.json` (core's quota.ts, quota.json here), where the
-# coordinator reads each plan's room. Nothing is written without the orchestrator's state directory:
-# a machine with the status line alone keeps nothing. A window already reset is no reading. The
+# coordinator reads each plan's room, and the launcher the configuration directory a spawn runs on:
+# the protected root, which no session writes, never the data root. Nothing is written without the
+# orchestrator's state directory: a machine with the status line alone keeps nothing. A window already reset is no reading. The
 # account is `oauthAccount.accountUuid` of the host's `.claude.json` (`$CLAUDE_CONFIG_DIR/.claude.json`,
 # else `~/.claude.json`), a file of megabytes: it is read once per refresh, and a marker beside the
 # quota files (`.config-<directory>`: account, when it was read, when the file was written, figures)

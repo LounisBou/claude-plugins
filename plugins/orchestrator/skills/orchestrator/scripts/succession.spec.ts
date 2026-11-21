@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -457,6 +457,37 @@ test('an agent spawned since the deck\'s last write is printed from the launcher
   assert.ok(!w.text().includes('someone else') && !w.text().includes('ttys008'))
   assert.match(w.err.join(''), / agents=2 agents_disagree=0 /)
   assert.equal(w.journaled.length, 0)
+})
+
+test('on a data root placed apart, the deck, the chains, the round and the to-do list are read there, the launch scripts on the protected root alone', () => {
+  const w = world({
+    deck: deckOf([seated(NAME, '/dev/ttys009', []), seated(NAME, '/dev/ttys005', ['Agent: api'])]),
+    listed: [row('/dev/ttys005', NAME), row('/dev/ttys009', NAME, true), row('/dev/ttys004', 'Agent: api'), row('/dev/ttys006', 'Agent: per-unit restarts')],
+  })
+  const data = join(w.state, '..', 'shared')
+  cpSync(w.state, data, { recursive: true })
+  for (const name of ['deck.json', 'round', 'todo']) rmSync(join(w.state, name), { recursive: true, force: true })
+  writeFileSync(join(w.state, 'data-root.json'), JSON.stringify({ version: 1, dir: data }))
+  mkdirSync(join(data, 'chains'), { recursive: true })
+  writeFileSync(join(data, 'chains', 'ttys005.jsonl'), '{"tab_id": "t6", "tty": "/dev/ttys006", "owner": "s-old"}\n')
+  mkdirSync(join(w.state, 'prompts'), { recursive: true })
+  writeFileSync(join(w.state, 'prompts', 'launch-Agent--per-unit-restarts-1700000000000.sh'), '#!/bin/sh\nexport ORCHESTRATOR_BRIEF=/b/rows/57-brief.md && run\n')
+  // A launch script planted among the data, newer than the protected one, names no brief the takeover prints.
+  mkdirSync(join(data, 'prompts'), { recursive: true })
+  writeFileSync(join(data, 'prompts', 'launch-Agent--per-unit-restarts-1700000009000.sh'), '#!/bin/sh\nexport ORCHESTRATOR_BRIEF=/planted.md && run\n')
+  assert.equal(w.run('--tty', '/dev/ttys005'), 0)
+  assert.match(w.text(), /Agent: per-unit restarts \(ttys006, brief \/b\/rows\/57-brief\.md\)/)
+  assert.ok(!w.text().includes('/planted.md'))
+  assert.match(w.text(), /Which schema\?/)
+  assert.ok(w.text().includes('to-do 3 → row 9 missing'))
+  // The brief names both roots: what runs on the protected one, the round the answers are read from on the data root.
+  const quoted = (path: string): string => path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  assert.match(w.text(), new RegExp(`State directory: \`${quoted(w.state)}\`; data directory: \`${quoted(data)}\``))
+  assert.ok(w.text().includes(`grep -rl '<keyword>' ${data}/round`))
+  // Step 2 sends the successor to each question's entry in the data root's round, never the protected root's.
+  assert.ok(w.text().includes(`\`<id>.json\` in the \`round/\` of \`${data}\``))
+  assert.ok(!w.text().includes(`${w.state}/round`))
+  assert.ok(!w.text().includes("the state directory's `round/`"))
 })
 
 test('rowOfBrief reads the row a brief was printed for: a phase brief\'s, a rotation brief\'s; none from free text', () => {

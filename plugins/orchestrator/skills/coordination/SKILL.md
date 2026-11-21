@@ -51,7 +51,7 @@ subcommand prints is below, and its header is read only for a line this does not
 
 **Every answer you give rests on a reading made in that turn**, never on your memory of the
 last one. `/orchestrator:status` reads every live session, its role and its fill. Your only
-file is `<state dir>/coordinator/notes.md` (the script's state directory): the pull requests
+file is `<data>/coordinator/notes.md` (`<data>`: `data=` of `coordinator.sh roots`): the pull requests
 each orchestrator holds — what `owners` attributed at your start, overridden by its
 correction — the flags you sent, and the sessions you have announced to; only what no
 command answers, under 4,000 characters, a line that no longer holds removed. After a
@@ -106,7 +106,7 @@ he has every question, grouped by the orchestrator that asks. Every message of t
 names you and the sender.
 
 **The turn ends of an orchestrator on this machine reach you in the round directory, not as
-messages.** The hooks module writes each as an entry, `<state dir>/round/<id>.json`: its
+messages.** The hooks module writes each as an entry, `<data>/round/<id>.json`: its
 question for the operator (`operator`) or its closing proposal (`done`). It withdraws an entry
 itself when he answers in the sender's tab, when a new question of that session supersedes it,
 and when that session ends or hands over. Entering them wakes you for none: your pane shows him

@@ -13,7 +13,7 @@ import { ledgerLines, prKey } from '../core/pr-ledger.ts'
 import { withLockOver } from '../core/store-io.ts'
 import { RECORDS_DIR } from '../core/orchestration.ts'
 import { messageOf, type Host } from './host.ts'
-import { logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { dataDir, logLine, storeIo, writeAtomic } from './module-io.ts'
 import {
   ENDED_KEPT_MS, filePrOf, isFresh, parsePrFile, prFilePath, prLogPath, prWantedPath, PR_FILE_VERSION, wantedRepos, type FilePr, type PrFile,
 } from './pr-file-format.ts'
@@ -200,7 +200,7 @@ export function withEnded(before: PrFile | undefined, answer: readonly FilePr[],
 
 /** The file as it stands, undefined when there is none. */
 export async function readPrFile($: Host<'env' | 'fs'>): Promise<PrFile | undefined> {
-  return parsePrFile(await readOr($, prFilePath(await stateDir($))))
+  return parsePrFile(await readOr($, prFilePath(await dataDir($))))
 }
 
 /**
@@ -210,7 +210,7 @@ export async function readPrFile($: Host<'env' | 'fs'>): Promise<PrFile | undefi
  */
 export async function refreshPrFile($: Held, now: number = Date.now()): Promise<void> {
   try {
-    const state = await stateDir($)
+    const state = await dataDir($)
     const path = prFilePath(state)
     if (isFresh(parsePrFile(await readOr($, path)), now)) return
     await withLockOver(storeIo($), path, async () => {

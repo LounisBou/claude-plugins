@@ -3,17 +3,18 @@
 // launcher every caller runs.
 //
 // No temporary file: what a failed `gh` said is read from its stderr in memory.
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, mkdirSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { setting, stateDir, type Env } from '../../../core/paths.ts'
+import { setting, type Env } from '../../../core/paths.ts'
+import { orchestratorRoots } from '../../../core/roots.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { ENV } from '../../../core/env.ts'
 import { gateArgv, parseGate, type GateCheck, type GateCi } from '../../../core/ci-gate.ts'
 import { FORGE } from '../../../core/forge-status.ts'
 import { locatePlugin, NotInstalled } from '../../../core/locate.ts'
-import { CI_GATE_DIR, ciGatePath, CI_WATCH_DIR, ciWatchLogPath, MODULE_DIR } from '../../../core/orchestration.ts'
-import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
+import { CI_GATE_DIR, ciGatePath, CI_WATCH_DIR, ciWatchLogPath } from '../../../core/orchestration.ts'
+import { isEntry, openLog, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import { auditRun, fullHead, scriptJournal, writeAudit, type Journal } from './lib/audit.ts'
 
 export { parseGate, type GateCheck, type GateCi }
@@ -104,7 +105,7 @@ export function parseArgs(argv: readonly string[], env: Env): Options {
   }
   return {
     pr, repo, interval, base, workflows, registerWait, baseWait, mergeWait,
-    stateDir: setting(env, 'ORCHESTRATOR_STATE_DIR') ?? stateDir(MODULE_DIR, env, setting(env, 'HOME')),
+    stateDir: orchestratorRoots(env, setting(env, 'HOME')).dataRoot,
     session: setting(env, 'CLAUDE_CODE_SESSION_ID'),
   }
 }
@@ -274,7 +275,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     }
     if (!append) {
       try {
-        writeFileSync(log, '')
+        closeSync(openLog(log, false))
       } catch {
         // As the watch's own log: a write that fails stops no watch.
       }
@@ -316,7 +317,7 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
     ensureLogDir()
     log = logPath(options, true)
     try {
-      writeFileSync(log, '')
+      closeSync(openLog(log, false))
     } catch {
       // As `: > "$log"`: the watches below append, or fail, on their own.
     }

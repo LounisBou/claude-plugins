@@ -8,7 +8,7 @@ import { prRefsOf } from '../core/learning.ts'
 import { updateOver } from '../core/store-io.ts'
 import { messageOf, type Host } from './host.ts'
 import { ownRecords } from './ledger.ts'
-import { logLine, stateDir, storeIo } from './module-io.ts'
+import { dataDir, logLine, storeIo } from './module-io.ts'
 import { parseSessionRow, sessionKey, storeOf } from './supervision.ts'
 import { readOr } from './unattended.ts'
 
@@ -99,7 +99,7 @@ export async function countRound($: Held, input: { pr: number; repo: string; dir
     const sessionId = String(await $.session.id())
     const session = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`))
     const found: { path: string; id: number; open: boolean }[] = []
-    for (const path of await ownRecords($, await stateDir($), sessionId, session?.name ?? null)) {
+    for (const path of await ownRecords($, await dataDir($), sessionId, session?.name ?? null)) {
       for (const { row } of rowsOf(await readOr($, path))) {
         const id = row['id']
         if (typeof id !== 'number' || !names(row, repo, input.pr)) continue

@@ -9,7 +9,7 @@ import { setting } from '../../../core/paths.ts'
 import { parseQuota, planOfConfig, QUOTA_DIR, quotaLine, type Quota } from '../../../core/quota.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, repoOfOrigin } from '../../../hooks/pr-file-format.ts'
-import { die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
+import { dataOf, die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
 import { fieldsOf, readSleeping } from './sleeping.ts'
 
 /** A remote row is kept for a day after its updated_at (REMOTE_STALE_AFTER_MS in hooks/remote-row.ts). */
@@ -503,7 +503,7 @@ export function readFacts(ctx: Context): Facts {
   // The open pull requests, as the machine's pull request file holds them (the hooks module
   // refreshes it, one forge call a minute for the whole machine): a repository it holds no current
   // reading of is unread. The file reads the repositories the records and the sweep name.
-  const state = stateOf(ctx.env)
+  const state = dataOf(ctx.env)
   const file = parsePrFile(readFile(prFilePath(state)) ?? '')
   for (const repo of new Set(facts.places.map(p => p.repo))) {
     const named = repoOfOrigin(repo)
@@ -717,7 +717,7 @@ export function collisions(facts: Facts): string[] {
   return [...lines, ...prCollisions(facts)]
 }
 
-/** Each plan's quota, as the status lines keep it under `<state>/quota/`: a file that is no reading is skipped, the plans in order. */
+/** Each plan's quota, as the status lines keep it under `<state>/quota/`, the protected root: a file that is no reading is skipped, the plans in order. */
 export function quotaLines(ctx: Context): string[] {
   const home = ctx.env['HOME'] ?? ''
   const readings: Quota[] = []
@@ -757,6 +757,18 @@ export function factsCommand(ctx: Context, args: readonly string[]): number {
   return finish(ctx, facts, found.length > 0 ? 1 : 0)
 }
 
+/**
+ * `roots`: the roots a prompt reads, resolved by core's rule (the protected root's data-root file,
+ * matched whole, else the protected root), one `name=<directory>` line each. A prompt never reads the file itself.
+ */
+export function rootsCommand(ctx: Context, args: readonly string[]): number {
+  if (args.length > 0) die(`roots: unexpected argument ${args[0]}`)
+  ctx.out(`protected=${stateOf(ctx.env)}`)
+  ctx.out(`data=${dataOf(ctx.env)}`)
+  ctx.out(`module=${moduleOf(ctx.env)}`)
+  return 0
+}
+
 /** What a check reports: each orchestrator's name (a successor under it is no newcomer), each collision and each source not read, one line each. */
 export function findings(facts: Facts): string[] {
   return [
@@ -774,7 +786,7 @@ export function findings(facts: Facts): string[] {
 export function checkCommand(ctx: Context, args: readonly string[]): number {
   const every = args[0] === '--every' && args.length === 2 ? Number(args[1]) : args.length === 0 ? 0 : NaN
   if (!Number.isInteger(every) || every < 0) die(`check: usage: check [--every <seconds>]`)
-  const path = join(stateOf(ctx.env), 'coordinator-check.json')
+  const path = join(dataOf(ctx.env), 'coordinator-check.json')
   for (;;) {
     const was = parseJson(readFile(path) ?? '')
     const now = findings(readFacts(ctx))

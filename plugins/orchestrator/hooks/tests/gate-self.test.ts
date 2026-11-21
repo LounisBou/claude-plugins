@@ -53,6 +53,12 @@ function fake(over: { orchestrator?: boolean; drop?: boolean; submits?: Submit[]
         const line = logLineOf(argv)
         if (line !== null) logged.push(line)
         if (argv[0] === 'ps' && argv[1] === '-A') return { exitCode: 0, stdout: '620\n', stderr: '' }
+        // The store's rename (core's renameArgv, `mv -f <temporary> <path>`): the mark lands on its name.
+        if (argv[0] === 'mv') {
+          files.set(String(argv[3]), files.get(String(argv[2])) ?? '')
+          files.delete(String(argv[2]))
+          return { exitCode: 0, stdout: '', stderr: '' }
+        }
         return { exitCode: line !== null ? 0 : 1, stdout: '', stderr: '' }
       },
     },

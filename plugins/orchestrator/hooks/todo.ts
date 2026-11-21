@@ -17,7 +17,7 @@ import { todoOpen, type DeclaredWait } from './stop-gate.ts'
 import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf, walkedName } from './supervision.ts'
 import { roleOf } from './session-name.ts'
 import { parseRemoteRow, ROW_MARKER } from './remote-row.ts'
-import { logLine, stateDir, storeIo } from './module-io.ts'
+import { dataDir, logLine, storeIo } from './module-io.ts'
 import { messageOf, type Host, type On, type Timer } from './host.ts'
 
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock'>
@@ -69,7 +69,7 @@ export async function whoAmI($: Held): Promise<{ name: string; role: string } | 
 
 /** The items a holder's list keeps, open or closed; none when there is no list. */
 export async function readTodos($: Held, name: string): Promise<TodoItem[]> {
-  return todoItems(String(await $.fs.read(todoPath(await stateDir($), name)).catch(() => '')))
+  return todoItems(String(await $.fs.read(todoPath(await dataDir($), name)).catch(() => '')))
 }
 
 // One change of a holder's list, under the store's lock: the item it made, or why it made none. An
@@ -86,7 +86,7 @@ async function writeTodos($: Held, name: string, change: (text: string) => { tex
       return undefined
     }),
   }
-  const path = todoPath(await stateDir($), name)
+  const path = todoPath(await dataDir($), name)
   await updateOver(io, path, current => {
     if (unreadable !== null) {
       made = { error: `the list of ${holderOf(name)} could not be read (${unreadable}); nothing was written, so no request of his is lost.` }
@@ -223,7 +223,7 @@ export async function callTodo($: Held, e: Record<string, unknown>, now: Date = 
 
 /** The count of open items in each list, by the list's file name (todo-format.ts's todoFile of the holder). */
 export async function todoCounts($: Held): Promise<Map<string, number>> {
-  const dir = `${await stateDir($)}/${TODO_CONTRACT.dir}`
+  const dir = `${await dataDir($)}/${TODO_CONTRACT.dir}`
   const counts = new Map<string, number>()
   for (const entry of await $.fs.list(dir).catch(() => [])) {
     if (entry.kind !== 'file' || !entry.name.endsWith(TODO_CONTRACT.suffix) || entry.name.includes('.tmp-')) continue
@@ -287,7 +287,7 @@ export async function surfaceDue($: Surfacing, name: string, now: number = Date.
   if (typeof taken === 'object' && taken !== null && 'drop' in taken && taken.drop) throw new Error(`the host dropped the wake: ${String(taken.drop)}`)
   // Marked only as told: the same item, date and wait. One whose wait was set anew meanwhile is left due.
   const told = new Set(due.map(entry => toldKey(entry)))
-  await updateOver(storeIo($), todoPath(await stateDir($), name), current => current === undefined ? undefined
+  await updateOver(storeIo($), todoPath(await dataDir($), name), current => current === undefined ? undefined
     : surfaceTodos(current, dueTodos(todoItems(current), now).filter(entry => told.has(toldKey(entry)))))
   return due
 }

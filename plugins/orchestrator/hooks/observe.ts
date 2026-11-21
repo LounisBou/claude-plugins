@@ -8,8 +8,7 @@ import { journalDir } from '../core/learning.ts'
 import { parseSessionName } from '../core/names.ts'
 import { observedEvent, PLUGIN, stampOf, type Built, type Stamp, type WaitSeen } from './audit-events.ts'
 import { messageOf, type Host } from './host.ts'
-import { configDir, logLine, storeIo } from './module-io.ts'
-import { moduleDirOf } from './module-log.ts'
+import { configDir, logLine, moduleDir, storeIo } from './module-io.ts'
 import { parseSessionRow, sessionKey } from './supervision.ts'
 
 // The stable code of the observation left, as the journal holds it.
@@ -28,7 +27,7 @@ function ioOf($: Held): JournalIo {
 async function roleOf($: Held, config: string, session: string | null): Promise<string | null> {
   if (session === null) return null
   try {
-    const row = parseSessionRow(await $.fs.read(`${moduleDirOf(config, await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store/${sessionKey(session)}`))
+    const row = parseSessionRow(await $.fs.read(`${await moduleDir($)}/store/${sessionKey(session)}`))
     return typeof row?.name === 'string' ? parseSessionName(row.name)?.role ?? null : null
   } catch {
     return null
