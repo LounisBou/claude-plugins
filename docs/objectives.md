@@ -12,5 +12,5 @@ claude-plugins serves the other projects, not itself.
 4. **Remove before adding.** When a plugin has a defect, we first look at what can be removed.
 5. **main always green, deployed on its own.** CI green, automatic deployment (already granted).
 
-Working mode: changes are dispatched by an orchestrator, one pull request per change, reviewed by
-read-only `orchestrator:lens` readers, merged when CI is green.
+Working mode: one pull request per change, written by any session (the repository's `CLAUDE.md`
+says who), reviewed by read-only `orchestrator:lens` readers, merged when CI is green.
