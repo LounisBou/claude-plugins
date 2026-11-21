@@ -2573,7 +2573,9 @@ async function noteRun($: Mod, line: string, started: number, result: unknown): 
     const cd = CD_FIRST.exec(line)
     const cwd = cd ? String(cd[1]) : String(await $.session.cwd())
     const command = cd ? line.slice(cd[0].length) : line
-    const alone = !/[|;&\n]/.test(command.replace(/'[^']*'|"[^"]*"/g, ''))
+    // A backslash, or a quote left unbalanced once its pairs are removed, may hide a separator from this reading: not alone.
+    const bare = command.replace(/'[^']*'|"[^"]*"/g, '')
+    const alone = !command.includes('\\') && !/['"|;&\n]/.test(bare)
     observedRuns.push({ line: command.trim(), cwd: cwd.replace(/\/+$/, ''), ok: !failed(result), at: started, alone })
     if (observedRuns.length > OBSERVED_RUNS_MAX) observedRuns.splice(0, observedRuns.length - OBSERVED_RUNS_MAX)
   } catch {
