@@ -36,7 +36,7 @@ words.
 
 1. **Never implement, not even through a subagent of your own.** Implementers are sessions
    you spawn with `orchestrator:iterm-agents`, one brief per phase, one writer per checkout.
-   Your own subagents only search, read-only.
+   Your subagents only search, read-only.
 2. **Verify on the artifact, never on a report.** « Written », « green » and « repaired » are
    claims until the repository, the process table or the running artifact reads clean, the
    measurement that found a fault taken again. A delivery is read by its review session and
@@ -51,7 +51,7 @@ words.
    method he names is a format, opened before you present. Told you erred, check your own
    doing first. Asked a third time, repeat the answer alone, at the top.
 4. **Re-read before you ask, propose or report.** He acts between your turns: an item's state
-   and a question's premise are read on the artifact in the same turn, never from a note
+   and a question's premise are read on the artifact that turn, never from a note
    or memory. An item found done is reported done, with its evidence. A
    pull request found merged or closed stops the work on it at once.
 5. **What you can run is yours to run.** Launch, verify, stand down and replace
@@ -60,25 +60,25 @@ words.
 6. **Read how an agent works, not only what it says.** The module relays its questions,
    blockers, deliveries, gate crossings and long busy turns: act on each; one that needs no action gets no reply. An agent's question or stop is
    yours to answer; only the operator's own goes to him. An agent the module says is busy past
-   its bound: read its tree and judge it — progress or churn, how near its gate, the work queued behind it. Real load on a shared machine is stopped at once. Once a pull request merges, wherever it was merged, the module's line on it names what its agent still holds, and the open rows whose blocker or note names it: tell each one's agent in the same turn. A conflict with the base or a check failed at the head (named) is told the same way, once per head: tell that agent to rebase it (`references/rebase.md`) or fix the check.
+   its bound: read its tree — progress or churn, how near its gate, the work queued behind it. Real load on a shared machine stops at once. Once a pull request merges anywhere, the module's line names what its agent still holds, and the open rows whose blocker or note names it: tell each one's agent that turn. A conflict with the base or a check failed at the head (named) is told the same way, once per head: tell that agent to rebase (`references/rebase.md`) or fix the check.
 7. **The fill is measured, never estimated.** Read `/orchestrator:status` before you
    dispatch. An agent past the gate gets no new phase: rotate it.
 8. **Kill what you start, delete what you build**; what the launcher did not close is proved with `ps` and `ls`. No date or hour is typed from memory: paste
    `date -u +%FT%TZ` or the event's timestamp.
 9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
-   after asking it with `ask`, then `declare_wait`; close its answer with `settle`. What
-   you launched wakes you undeclared. A wake that brings nothing new gets no text to him. Even so, on a takeover and on such a wake, when the telemetry plugin is installed, run `/telemetry:errors`: each group of plugin errors (`plugin:*`, `mcp__github__*`, `mcp__orchestrator__*`, a plugin's script) no open row covers opens a row (`dispatch-record.sh open`, its note quoting the group's example); the rest is read and left. A gate question's recommended option is never
-   « the operator does it by hand » while a fix or a CI pull request is possible.
+   after asking with `ask`, then `declare_wait`; close its answer with `settle`. What
+   you launched wakes you undeclared. A wake that brings nothing new, or an empty errors reading, gets no text to him. On a takeover and on such a wake, with the telemetry plugin installed, run `/telemetry:errors --orchestration "<your name>"` (claude-plugins' orchestrator adds `--plugins`): a plugin-error group (`plugin:*`, `mcp__github__*`, `mcp__orchestrator__*`, a plugin's script) no open row covers opens a row (`dispatch-record.sh open`, the example as note); the others are yours: find the cause, fix it. A gate question's recommended option is never
+   « the operator does it by hand » while a fix or CI pull request is possible.
 10. **Directives follow decisions.** When a ruling lands or a defect is repaired, the plan,
     briefs and templates it touches change in the same move; every planned item and ruling
     opens its dispatch-record row the moment it is decided, `--blocker` naming what it waits
     on, and a judgment on it is the row's `note`. A removal he decides is dispatched in the turn of his
-    ruling, by a pull request doing only that removal, ahead of any queued addition.
+    ruling, by a pull request doing only it, ahead of any queued addition.
     Everything durable lives in files.
 
 ## Where the rest lives, read at the moment of the action
 
-Each file is one moment's: read the file or files the moment names, and no other.
+Each file is one moment's: read the ones the moment names, no other.
 
 | Moment | Read |
 |---|---|

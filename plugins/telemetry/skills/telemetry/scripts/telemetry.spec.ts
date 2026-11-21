@@ -95,6 +95,32 @@ test('errors: the failed calls of the store, grouped, read without the env file;
   })
 })
 
+test('errors: --orchestration reads one orchestration with a cursor of its own, --plugins adds the plugins\' errors; a missing name, or --plugins alone, is refused', () => {
+  harness((config, deps) => {
+    mkdirSync(join(config, 'telemetry', 'events'), { recursive: true })
+    const failed = (more: Record<string, unknown>) => JSON.stringify({ v: 1, ts: '2026-11-13T20:00:00.000Z', event: 'tool_call', session: S, outcome: 'error', ...more })
+    writeFileSync(join(config, 'telemetry', 'events', '2026-11-13.jsonl'), [
+      failed({ tool: 'Edit', title: 'Orch: demo', error_message: 'mine' }), failed({ tool: 'Edit', title: 'Orch: other', error_message: 'theirs' }),
+      failed({ tool: 'mcp__github__gh', mcp_server: 'github', title: 'Orch: other', error_message: 'a plugin of theirs' }),
+    ].join('\n') + '\n')
+    const since = ['--since', '2026-11-13T00:00:00Z']
+    assert.equal(run(['errors', '--config', config, ...since, '--orchestration', 'Orch: demo [a1b2c3]'], deps), 0)
+    assert.deepEqual(deps.outs.map(l => l.slice(0, 44)), ['errors since 2026-11-13T00:00Z: 1 failed call(s)', 'other (1 call(s), 1 group(s)):', '1× error Edit: mine [11-13 20:00Z, 1 session(s)]'].map(l => l.slice(0, 44)))
+    deps.outs.length = 0
+    assert.equal(run(['errors', '--config', config, ...since, '--orchestration', 'Orch: demo', '--plugins'], deps), 0)
+    assert.equal(deps.outs[0], 'errors since 2026-11-13T00:00Z: 2 failed call(s)')
+    assert.equal(existsSync(join(config, 'telemetry', 'errors-Orch%3A%20demo.json')), false, '--since moves no cursor, scoped or not')
+    assert.equal(run(['errors', '--config', config, '--orchestration', 'Orch: demo'], deps), 0)
+    assert.equal(existsSync(join(config, 'telemetry', 'errors-Orch%3A%20demo.json')), true)
+    assert.equal(existsSync(join(config, 'telemetry', 'errors.json')), false)
+    for (const bad of [['--orchestration'], ['--orchestration', '--plugins'], ['--plugins'], ['--orchestration', 'billing'], ['--orchestration=Orch: demo'], ['--orchestration', 'Orch: demo', '--plugin']]) {
+      deps.errs.length = 0
+      assert.equal(run(['errors', '--config', config, ...bad], deps), 2, bad.join(' '))
+      assert.deepEqual(deps.errs, ['errors: usage: [--since <ISO>] [--orchestration "Orch: billing" [--plugins]]; --orchestration takes a session name and --plugins goes with it'])
+    }
+  })
+})
+
 test('usage: no subcommand, no config, an unknown subcommand', () => {
   harness((config, deps) => {
     assert.equal(run([], deps), 2)
