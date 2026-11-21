@@ -84,7 +84,10 @@ test('the other lens shapes: a scope with no lens, lenses with no scope, a size 
   assert.match(text, /criticality: a reading by you and a second look, because/)
   assert.match(text, /at the \*\*none\*\* tier/)
   assert.match(text, /\nnone\n?$/)
-  assert.match(run([...FIELDS(), '--tier', 'deep']).err, /--tier goes with --lens/)
+  assert.equal(run([...FIELDS(), '--tier', 'light']).code, 0)
+  text = readFileSync(join(dir, 'review-12.md'), 'utf8')
+  assert.match(text, /at the \*\*none\*\* tier, `model: none`/)
+  assert.match(text, /\n\nnone\n\nThe norms check is no default lens/)
   assert.match(text, /git fetch origin && git status -sb \| head -1 && git log --oneline -1/)
 })
 
