@@ -3348,6 +3348,25 @@ HOME_WAIT = int(os.environ.get("ORCHESTRATOR_HOME_WAIT", "120"))
 # window of the server.
 HOME_ENV_KEPT = ("HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
                  "TMPDIR", "TMUX_TMPDIR", "CLAUDE_CONFIG_DIR")
+# The host's variables of a session's identity and nesting (its id, its messaging socket and
+# token, its bridge, its children's notes), named one by one: the operator's own configuration
+# under the same prefix (a provider switch, a token) is never in it. The one list the two kinds
+# of launch read: a home server is started without them (`home_env`), and a plain tab, opened in
+# an app that may have been started from a session and so carries them, has them unset by its
+# launch line (`nesting_unset`): a session launched there took itself for that session's child
+# and wrote no transcript (row 451). The account's CLAUDE_CONFIG_DIR is kept, by the list above.
+NESTING_ENV = ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_CHILD_SESSION",
+               "CLAUDE_CODE_CHILD_NOTES_DIR", "CLAUDE_CODE_BRIDGE_SESSION_ID",
+               "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
+               "CLAUDE_CODE_SESSION_ATTENDED")
+
+
+def nesting_unset():
+    """The shell words that unset the variables of `NESTING_ENV` in the tab's own environment,
+    which is the app's and not the caller's."""
+    return "unset " + " ".join(NESTING_ENV)
+
+
 # The suite's stand-ins: a test's, never a home server's.
 HOME_ENV_DROPPED = ("ORCHESTRATOR_DRY_RUN", "ORCHESTRATOR_SELF_TTY", "ORCHESTRATOR_SELF_ID",
                     "ORCHESTRATOR_PS_TABLE", "ORCHESTRATOR_CWD_TABLE", "ORCHESTRATOR_HOST_ARGV",
@@ -3421,7 +3440,8 @@ def home_env():
     """The environment a home server starts with, and so every window it makes: the
     operator's own variables and this plugin's settings, the suite's stand-ins left out."""
     env = {k: v for k, v in os.environ.items()
-           if k in HOME_ENV_KEPT or (k.startswith("ORCHESTRATOR_") and k not in HOME_ENV_DROPPED)}
+           if k not in NESTING_ENV
+           and (k in HOME_ENV_KEPT or (k.startswith("ORCHESTRATOR_") and k not in HOME_ENV_DROPPED))}
     env["TERM"] = "xterm-256color"
     return env
 
@@ -4887,7 +4907,11 @@ def write_launch_script(command, title, kind="launch"):
     os.makedirs(PROMPTS_DIR, exist_ok=True)
     path = state_file_path(kind, title, "sh")
     with open(path, "w") as fh:
-        fh.write("#!/bin/sh\n" + command + "\n")
+        # The caller's session identity and nesting marks stay out of the tab, in the file and not
+        # in the command, which a launch prints and a test bounds: the app's environment may be
+        # a session's, and a session launched there took itself for that session's child (no
+        # transcript of its own: row 451).
+        fh.write("#!/bin/sh\n" + nesting_unset() + "\n" + command + "\n")
     return path
 
 

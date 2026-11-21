@@ -4,6 +4,7 @@
 // `unknown` and read through the small readers below; a field the host did not give is left out.
 import { currentSessionName, parseSessionName } from '../core/names.ts'
 import { WAIT_KINDS, WAIT_TOOL } from '../core/orchestration.ts'
+import { askOfDialog, stableJson, type AskKey } from '../core/permission-ask.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { EVENTS, type EventName } from './schema.ts'
 
@@ -603,23 +604,9 @@ export function toolEvents(at: number, session: string, input: unknown, result: 
 }
 
 /** A permission prompt `tool.check` announced (its verdict was an ask), waiting for the dialog's own hook. */
-export interface Ask {
-  readonly tool: string
-  /** The call's arguments as `tool.check` read them, in the stable form `sameInput` compares. */
-  readonly input: string
-  readonly id: string
-  readonly agent: string | undefined
+export interface Ask extends AskKey {
   readonly reason: string | undefined
   readonly check: Check | undefined
-}
-
-/** `value` as JSON with each object's keys in order: two inputs equal as values give one text. */
-export function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
-  if (typeof value === 'object' && value !== null) {
-    return `{${Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`).join(',')}}`
-  }
-  return JSON.stringify(value) ?? 'null'
 }
 
 /** The ask a `tool.check` verdict is, or undefined for a verdict that is no ask or names no call (a query, a call straight to its server: no dialog is raised for it). */
@@ -863,16 +850,9 @@ export class Collector {
     if (this.asks.length > ASKS_KEPT) this.asks = this.asks.slice(-ASKS_KEPT)
   }
 
-  /**
-   * The announced ask a dialog is for, taken at once (no clock): the one the payload's own call id names
-   * when it carries one, else the only ask of the same tool and loop with the same arguments. Several
-   * such asks, or none, leave the dialog unmatched: it is never bound to an ask by a guess.
-   */
+  /** The announced ask a dialog is for, by core's rule (`askOfDialog`), taken at once (no clock): a matched ask is not offered again. */
   takeAsk(tool: string, input: unknown, agent: string | undefined, toolUseId?: string): Ask | undefined {
-    const same = this.asks.filter(ask => ask.tool === tool && ask.agent === agent)
-    const wanted = stableJson(input)
-    const exact = same.filter(ask => ask.input === wanted)
-    const found = toolUseId === undefined ? (exact.length === 1 ? exact[0] : undefined) : same.find(ask => ask.id === toolUseId)
+    const found = askOfDialog(this.asks, tool, input, agent, toolUseId)
     if (found === undefined) return undefined
     this.asks = this.asks.filter(ask => ask !== found)
     return found
