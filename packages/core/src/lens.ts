@@ -29,6 +29,13 @@ export const LENS_HEAD_CHARS = 12
 const SLUG = /^[a-z0-9][a-z0-9-]{0,29}$/
 const DESCRIPTION = /^lens ([a-z0-9][a-z0-9-]{0,29}) ([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#([1-9][0-9]*) (\S+)\.\.([0-9a-f]{7,40})$/
 const FINDING = /^\s*(?:[-*]\s+)?\[(critical|important|minor)\]\s+`?([^\s`:]+):(\d+)(?:[-:]\d+)?`?\s+—\s+(.*)$/i
+/*
+ * The finding lines real readers write beside the contract's own: the severity bare and followed by a
+ * dash, a pipe or a space (`important | file:line | claim`), the line given as `~120` or a range, words
+ * between the location and the dash (`file:12 and 14`, `file:12 (symbol)`), a bold severity. The
+ * contract's shape is tried first, so a line it reads keeps its reading, and so its id.
+ */
+const LENIENT = /^\s*(?:[-*]\s+)?\**(?:\[(critical|important|minor)\]|(critical|important|minor)(?=[\s|]))\**\s*\|?\s*`?([^\s`:|()]+):~?(\d+)[^—|\n]*?\s[—|]\s+(.*)$/i
 const ID = /\b([a-z0-9][a-z0-9-]{0,29}):([0-9a-f]{10})\b/
 const MARK = / — id [a-z0-9][a-z0-9-]{0,29}:[0-9a-f]{10}$/
 
@@ -54,11 +61,15 @@ export function parseLensDescription(text: string): LensFacts | undefined {
 export function parseLensFindings(text: string): LensFinding[] {
   const found: LensFinding[] = []
   for (const raw of text.split('\n')) {
-    const m = FINDING.exec(raw.replace(MARK, ''))
+    const line = raw.replace(MARK, '')
+    const strict = FINDING.exec(line)
+    const m = strict ?? LENIENT.exec(line)
     if (m === null) continue
-    const claim = (m[4] ?? '').split(' — ')[0]?.trim() ?? ''
+    // The strict form's groups are severity, file, line, claim; the lenient form's severity is in the first or the second.
+    const [severity, file, no, rest] = strict === null ? [m[1] ?? m[2], m[3], m[4], m[5]] : [m[1], m[2], m[3], m[4]]
+    const claim = (rest ?? '').split(strict === null ? / [—|] / : ' — ')[0]?.trim() ?? ''
     if (claim === '') continue
-    found.push({ severity: (m[1] ?? '').toLowerCase() as LensSeverity, file: m[2] ?? '', line: Number(m[3]), claim })
+    found.push({ severity: (severity ?? '').toLowerCase() as LensSeverity, file: file ?? '', line: Number(no), claim })
   }
   return found
 }

@@ -36,6 +36,31 @@ describe('lens readers', () => {
     assert.deepEqual(findingCounts(parseLensFindings('no findings: read the diff')), { critical: 0, important: 0, minor: 0 })
   })
 
+  it('the finding lines real readers write are read: a location marked `~`, a range, words after the location, a bold or bare severity, a pipe', () => {
+    const real = [
+      '[important] plugins/github/hooks/register.ts:1338 — Nothing tests how `kept` is filled after a restart — If the block is removed, every pull request goes back',
+      '- [important] scripts/deploy.test.ts:~337 — the doc promises that one failing configuration does not hold back the others — the only failure test',
+      '[critical] plugins/orchestrator/skills/orchestrator/scripts/workspace.ts:1175-1195 (`sweepOne`) — ruling 5 says `--keep-checkout` keeps the checkout — the check sits after',
+      '[important] iterm_agent.py:3829 and 3831 — `home_client_of_pane` drops the cause on every failure — close ends in a generic message',
+      '**[important]** src/x.ts:9 — the bold severity — evidence',
+      'important | test/test_dead_tcp.c:554 (guard at IP_Commands.c:245) | The test claims too much | it checks one socket',
+      'minor state_machine.c:553 — SET_TMR1S_IE(1) is unconditional — It re-enables TMR4IE',
+    ].join('\n')
+    assert.deepEqual(parseLensFindings(real).map(f => [f.severity, f.file, f.line, f.claim]), [
+      ['important', 'plugins/github/hooks/register.ts', 1338, 'Nothing tests how `kept` is filled after a restart'],
+      ['important', 'scripts/deploy.test.ts', 337, 'the doc promises that one failing configuration does not hold back the others'],
+      ['critical', 'plugins/orchestrator/skills/orchestrator/scripts/workspace.ts', 1175, 'ruling 5 says `--keep-checkout` keeps the checkout'],
+      ['important', 'iterm_agent.py', 3829, '`home_client_of_pane` drops the cause on every failure'],
+      ['important', 'src/x.ts', 9, 'the bold severity'],
+      ['important', 'test/test_dead_tcp.c', 554, 'The test claims too much'],
+      ['minor', 'state_machine.c', 553, 'SET_TMR1S_IE(1) is unconditional'],
+    ])
+    // Prose that merely starts with a severity word, or a bracket with no location, is no finding.
+    assert.deepEqual(parseLensFindings('Important: read the diff first\n[important] no location — a claim\nminor typos only'), [])
+    // A line the contract's shape reads keeps its reading, so its id does not move.
+    assert.deepEqual(parseLensFindings('[important] src/a.ts:12 — a | b — c').map(f => f.claim), ['a | b'])
+  })
+
   it('a finding id is stable over lens, file, line and claim (case and spacing of the claim aside), and names its lens', () => {
     const id = findingId('correctness', 'src/a.ts', 12, 'the lock is released before the write')
     assert.match(id, /^correctness:[0-9a-f]{10}$/)
