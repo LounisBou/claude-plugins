@@ -241,11 +241,16 @@ export async function holdsDone($: Held, wait: DeclaredWait): Promise<string | n
   return merging.length > 0 ? mergeRefusal(unattendedLine(merging, []) ?? '') : null
 }
 
-// The pull requests of the session's record waiting on the operator's merge, which an operator wait
-// that asks him nothing with `ask` may name; none when the reading fails.
-export async function mergeWaits($: Held): Promise<Unattended[]> {
-  const reading = await boundedReading($, await $.session.id())
-  return waitingOnMerge(reading?.list ?? [])
+// What an operator wait is refused while a row of the record is ready and nobody is on it (an open row, its blocker fallen, no
+// live agent, no open pull request): the rows named, then the way out. A merge is never awaited (references/phases.md): the rows
+// start at once, stacked on the branch heads they need, and a row that cannot start for a measured reason carries it as its blocker.
+// The rows the operator put off (their date come) are for him to rule on, not for a dispatch: they do not hold a wait. Null when none.
+export const READY_REFUSAL_MAX = 600
+export function readyRefusal(reading: Reading | null): string | null {
+  const named = readyRowsLine((reading?.ready ?? []).filter(row => row.deferred !== true))
+  if (named === null) return null
+  return `An operator wait parks work that can start. ${named.slice(0, READY_REFUSAL_MAX)}. Dispatch them now, stacked on the branch heads they need: a merge is never awaited. `
+    + 'A row you cannot start for a measured reason carries it as its blocker (`dispatch-record.sh blocker <id> "measure …"` or `until …`): declare the wait once it does.'
 }
 
 // The reading as the session's row says it, written when it differs from what the row holds (true when it wrote): the

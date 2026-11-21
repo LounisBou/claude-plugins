@@ -4,6 +4,7 @@
 // (docs/conventions.md, « Guards and consent »). A declaration belongs to the turn that made
 // it: the next turn's start makes it stale, and a stale one is never read.
 //
+// An operator wait is refused while a row of the record is ready with nobody on it (unattended.ts, `readyRefusal`).
 // The refusals of a done or deferred wait live in stop-gate.ts; the turn's end reads the declaration
 // itself (supervision.ts). The model's own line decides nothing.
 import {
@@ -15,7 +16,7 @@ import { fieldsOf, messageOf, type Host, type On } from './host.ts'
 import { configDir, logLine, stateDir } from './module-io.ts'
 import { recordedInstallPaths } from '../core/install-record.ts'
 import { RETROSPECTIVE_CONTRACT, retrospectiveStartArgv } from '../core/learning.ts'
-import { holdsDone, mergeWaits, projectRecords } from './unattended.ts'
+import { boundedReading, holdsDone, projectRecords, readyRefusal, waitingOnMerge } from './unattended.ts'
 import { prKey, unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 import { holdsTodos, openFor, whoAmI } from './todo.ts'
 import { todoName } from './todo-format.ts'
@@ -255,19 +256,26 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     // A subagent's turn is not the session's: its end wakes the session, not a wait of its own.
     if (e.agentId) return { result: `${WAIT_TOOL} is the main session's: a subagent ends its turn by answering.`, isError: true }
     const asked = await openAsked($)
-    // With no question of its own open, an operator wait may wait on the pull requests that wait on his merge.
-    const merging = e['kind'] === 'operator' && asked.length === 0 ? await mergeWaits($) : []
+    const handedOver = declarations.handedOver(await $.session.id())
+    // An operator wait reads the record once: the pull requests that wait on his merge, which it may wait on with no question of
+    // its own open, and the rows ready with nobody on them, which it never parks.
+    const reading = e['kind'] === 'operator' ? await boundedReading($, await $.session.id()) : null
+    const merging = asked.length === 0 ? waitingOnMerge(reading?.list ?? []) : []
+    // The rows are the successor's once the session handed over, as the pull requests are. Said before the declaration's own
+    // faults: the work to start is what the wait is refused for first.
+    const ready = handedOver ? null : readyRefusal(reading)
+    if (ready !== null) return { result: ready, isError: true }
     const parsed = parseDeclaration(e, asked, merging)
     if ('error' in parsed) return { result: parsed.error, isError: true }
     // A done or a deferred wait is held while a pull request is unattended (unattended.ts).
     // The pull requests are the successor's once the session handed over: it is not held on them.
-    const held = declarations.handedOver(await $.session.id()) ? null : await holdsDone($, parsed.wait)
+    const held = handedOver ? null : await holdsDone($, parsed.wait)
     if (held !== null) return { result: held, isError: true }
     // So is one while a to-do of the session's own list is open (todo.ts).
     const owed = await holdsTodos($, parsed.wait)
     if (owed !== null) return { result: owed, isError: true }
     // And one the dispatch record contradicts: an open row or goal, or a deferral he never made.
-    const left = declarations.handedOver(await $.session.id()) ? null : await holdsRecord($, parsed.wait)
+    const left = handedOver ? null : await holdsRecord($, parsed.wait)
     if (left !== null) return { result: left, isError: true }
     declarations.declare(parsed.wait)
     return { result: `Wait declared: ${waitLine(parsed.wait)}. End the turn now.` }

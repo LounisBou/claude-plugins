@@ -595,6 +595,69 @@ test('an operator wait with no question asked is taken when its blocks name ever
   expect((await declare(unreadable.dollar, { kind: 'operator', blocks: 'acme/app#9' })).result).toBe(ASK_FIRST)
 })
 
+// A question the session asked with `ask`: an operator wait with it open is taken, but for a row ready with nobody on it.
+const QUESTION = JSON.stringify({
+  v: 2, id: 'q-s-orch-1', sender: { session: 's-orch', name: 'Orch: app', role: 'orchestrator', machine: 'box-1' },
+  subject: 'the merge', context: 'what is known', ask: 'Merge it?', choices: [], recommended: null, why: null,
+  blocks: 'the merge', status: 'open', at: '2026-11-14T10:00:00Z', answer: null, seq: 1,
+})
+
+test('an operator wait is refused while a row is ready with nobody on it, naming the rows and the way out, whatever it names or asks', async () => {
+  // The incident of 2026-11-21: « merges …; then rows 6 and 11 » passed with both rows open, unassigned and ready.
+  const declarations = new Declarations()
+  const declare = declaring(declarations)
+  const { dollar, files } = world({ forge: labelled({ 9: ['Ready'] }) })
+  files.set(RECORD, `${readyRecord([ROW(6, 'SIX: first stacked row'), ROW(11, 'ELEVEN: second stacked row')])}${line(9, 'working', { agent: 'Agent: nine' })}\n`)
+  for (const input of [{ kind: 'operator', blocks: 'merges acme/app#9; then rows 6 and 11' }, { kind: 'operator' }, { kind: 'operator', blocks: 'the merge', urgent: true }]) {
+    const refused = await declare(dollar, input)
+    expect(refused.isError).toBe(true)
+    expect(refused.result).toContain('Sujets prêts sans agent : first stacked row (ligne 6) ; second stacked row (ligne 11)')
+    expect(refused.result).toContain('Dispatch them now, stacked on the branch heads they need: a merge is never awaited')
+    expect(refused.result).toContain('dispatch-record.sh blocker <id> "measure …"')
+    expect(declarations.current()).toBe(null)
+  }
+  // With a question of the session's open too, the rows still hold the wait.
+  files.set(`${MODULE}/round/q-s-orch-1.json`, QUESTION)
+  expect((await declare(dollar, { kind: 'operator', blocks: 'the merge' })).result).toContain('ligne 6')
+  // A session that handed over leaves its rows to its successor.
+  declarations.handOver('s-orch')
+  expect((await declare(dollar, { kind: 'operator', blocks: 'the merge' })).isError).toBe(undefined)
+  expect(declarations.current()?.kind).toBe('operator')
+})
+
+test('an operator wait is taken once no row is ready: an agent runs on it, a measure or a future until holds it, or the operator put it off', async () => {
+  const declare = declaring(new Declarations())
+  const taken = async (rows: object[], launcher?: string | null) => {
+    const { dollar, files } = world(launcher === undefined ? {} : { launcher })
+    files.set(RECORD, readyRecord(rows))
+    files.set(`${MODULE}/round/q-s-orch-1.json`, QUESTION)
+    return (await declare(dollar, { kind: 'operator', blocks: 'the merge' })).isError === undefined
+  }
+  expect(await taken([ROW(6, 'SIX: nobody on it')])).toBe(false)
+  // An agent the launcher lists running holds the row.
+  expect(await taken([ROW(6, 'SIX: its agent runs', { agent: 'Agent: six' })], 'w1/t1 | /dev/ttys001 | ✳ Agent: six | Agent: six')).toBe(true)
+  // A blocker the row carries: a measure never falls, an until still to come, a row another closes.
+  expect(await taken([ROW(6, 'SIX: waits on a measure', { blocker: 'measure p95 under 300 ms' })])).toBe(true)
+  expect(await taken([ROW(6, 'SIX: waits on a date', { blocker: 'until 2999-01-01T00:00:00Z' })])).toBe(true)
+  expect(await taken([ROW(6, 'SIX: its date has passed', { blocker: 'until 2026-11-14T12:00:00Z' })])).toBe(false)
+  expect(await taken([ROW(6, 'SIX: waits on a row', { blocker: 'row 4 closed' })])).toBe(true)
+  // A row the operator put off, its date not come, or any row closed.
+  expect(await taken([ROW(6, 'SIX: put off', { deferred: 'later', blocker: 'until 2999-01-01T00:00:00Z' })])).toBe(true)
+  expect(await taken([ROW(6, 'SIX: closed', { state: 'closed' })])).toBe(true)
+  // An open pull request of the record on the row holds it (line 7 names Agent: seven).
+  expect(await taken([ROW(6, 'SEVEN: its pull request is open', { agent: 'Agent: seven' })], 'w1/t1 | /dev/ttys001 | zsh | zsh')).toBe(true)
+  // A listing that cannot be read names no row ready.
+  expect(await taken([ROW(6, 'SIX: nobody on it')], null)).toBe(true)
+})
+
+test('a deferred wait is refused while a row is ready, by the record\'s own reading of its open rows', async () => {
+  const { dollar, files } = world()
+  files.set(RECORD, readyRecord([ROW(6, 'SIX: nobody on it')]))
+  const refused = await declaring(new Declarations())(dollar, { kind: 'deferred', blocks: '1 items' })
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toContain('6')
+})
+
 test('parseDeclaration takes the pull requests waiting on his merge beside a question already asked: the question\'s wait is the one it was', () => {
   const merging = [{ repo: 'acme/app', pr: 9, since: null, waits: { why: 'ready' as const } }]
   const asked = [{ id: 'q-1', blocks: 'the schema' }]
