@@ -5408,22 +5408,55 @@ ia.home_panes = lambda socket: ([["0", "/dev/ttys950"], ["1", "/dev/ttys951"]], 
 ia.tmux_call = lambda args, env=None: types.SimpleNamespace(returncode=0, stdout="/dev/ttys811\n", stderr="")
 app = App([W([T("1", [S("A", "/dev/ttys801")]), T("2", [S("C", "/dev/ttys811")])])])
 '
-check "the pane of window 0 of a home server finds the tab that shows the server" "C|C|None|None|None" \
+check "find_tab does not map a home server's pane to a tab, and a tty nobody has finds nothing" "None|None|C" \
   "$("$py" -c "$HOMEPANE
 f = lambda tty: asyncio.run(ia.find_tab(app, tty))[2]
-print('%s|%s|%s|%s|%s' % (f('/dev/ttys950').session_id, f('/dev/ttys811').session_id, f('/dev/ttys951'), f('/dev/ttys999'), ia.home_client_of_pane('/dev/ttys801') or None))" "$ROOT/skills/iterm-agents/scripts")"
-check "close --tty the pane of window 0 of a home server goes on with the tab's own tty" "/dev/ttys811|/dev/ttys999" \
-  "$("$py" -c "$HOMEPANE
+print('%s|%s|%s' % (f('/dev/ttys950'), f('/dev/ttys999'), f('/dev/ttys811').session_id))" "$ROOT/skills/iterm-agents/scripts")"
+# No tty names no session: a restored session whose pid the table does not know has no tty and
+# is not what an empty tty asks for (the home command's « not a tab of iTerm2's » guard).
+check "find_tab with no tty finds no session, though a session of the app has none" "None|None" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
+print('%s|%s' % (asyncio.run(ia.find_tab(app, ''))[2], asyncio.run(ia.find_tab(app, None))[2]))" "$ROOT/skills/iterm-agents/scripts")"
+# `close --tty <pane of window 0 of a home server>`: the tab whose one tmux client shows the server,
+# for an iTerm2 caller only, and refused, nothing closed, when the tab cannot be told.
+CLOSEPANE='
 class Stop(Exception): pass
 seen = []
 def host(tty, strict=False): seen.append(tty); raise Stop()
 ia.close_host_tty = host
 ia.DRY_RUN = False
-for t in ('/dev/ttys950', '/dev/ttys999'):
-    try: ia.cmd_close(types.SimpleNamespace(bench=False, socket=None, tty=t, expect=None))
-    except Stop: pass
-    ia.home_panes = lambda socket: ([['0', '/dev/ttys950']], '')
-print('|'.join(seen))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
+ia.terminal_for = lambda tty: ia.ITERM
+ia.home_of_tab = lambda tty, strict=False: ""
+ia.ITERM.find = lambda tty: tty in ("/dev/ttys811", "/dev/ttys812")
+def close(tty="/dev/ttys950", clients="/dev/ttys811\n", rc=0, find=None):
+    ia.tmux_call = lambda args, env=None: types.SimpleNamespace(returncode=rc, stdout=clients, stderr="boom")
+    del seen[:]
+    try: ia.cmd_close(types.SimpleNamespace(bench=False, socket=None, tty=tty, expect=None))
+    except Stop: return "closed:%s" % seen[0]
+    except SystemExit: return "refused:%d" % len(seen)
+    return "returned"
+'
+check "close --tty the pane of window 0 goes on with the tab of the one client the app shows" "closed:/dev/ttys811" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+print(close())" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
+check "a pane with two clients (both tabs, or one not), one with no client, a client that is no tab, a failing list-clients: refused, nothing closed" \
+  "refused:0|refused:0|refused:0|refused:0|refused:0" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+print('|'.join([close(clients='/dev/ttys811\n/dev/ttys812\n'), close(clients='/dev/ttys999\n/dev/ttys811\n'), close(clients=''), close(clients='/dev/ttys999\n'), close(rc=1, clients='')]))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
+check "a caller whose terminal is not iTerm2's keeps its own refusals: the pane is not mapped" "closed:/dev/ttys950" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+ia.terminal_for = lambda tty: object()
+print(close())" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
+check "a tty that is a client tab's own is not mapped, and no server is read for it" "closed:/dev/ttys811|0" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+ia.home_of_tab = lambda tty, strict=False: 'orch-abcdef12'
+calls = []
+ia.home_client_of_pane = lambda tty: calls.append(tty) or ('', '', [])
+print('%s|%d' % (close(tty='/dev/ttys811'), len(calls)))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
 # The caller is not always IN the app. A session running in another terminal — a multiplexer,
 # a plain shell, a remote one — still has a tty, `self_tty` still resolves it, and the app has
 # no session on it. The chain is the app's and cannot be kept for a caller the app does not
