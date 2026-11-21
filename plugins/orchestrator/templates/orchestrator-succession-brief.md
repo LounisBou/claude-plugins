@@ -17,7 +17,7 @@ Every script below is in `{{SCRIPTS}}`, the copy this takeover ran from. A path 
    {{LAUNCHER}} {{CLOSE_VERB}} --tty {{PREDECESSOR_TTY}} --expect-title "{{PREDECESSOR_NAME_PATTERN}}"
    ```
    Where the host refuses it, message the predecessor « call mcp__orchestrator__end_session », prove its end with `verify --tty` failing, and tell the operator in one line its tab holds only a shell. Show him verbatim what any `conversation:` section leaves pending: questions, commands, explanations.
-2. The questions below, each by its entry, `<id>.json` under `{{DATA_DIR}}/round/`: leave the open ones, apply each answer, and ask again, verbatim, each withdrawn one whose reason names no answer and whose premise still stands: one `ask` per turn, so the first at the end of this turn, the others each after his answer.
+2. The questions below, each by its entry, `<id>.json` in the `round/` of `{{DATA_DIR}}`: leave the open ones, apply each answer, and ask again, verbatim, each withdrawn one whose reason names no answer and whose premise still stands: one `ask` per turn, so the first at the end of this turn, the others each after his answer.
 3. Errors read (principle 9 of your skill), then announce in one message: state inherited, predecessor closed, the open rows with no agent, the questions kept or asked again, the Project line's `goals met=m/n open: …`. {{TURN_END}}{{HOME_STEP}}
 4. {{DISPATCH_WHEN}} every open row with no agent that the phase rules allow, dependent ones stacked: each READY NOT STARTED, each NO OWNER once its blocker is set; DISPATCHED, NO LIVE AGENT after reading its pull request. A `blocked:` row waits on its blocker; a « next step » naming several rows is a stack to open, not a queue. The open rows below are the work, each at level 1.
 
