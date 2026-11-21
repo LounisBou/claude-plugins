@@ -7,7 +7,6 @@ import {
   agentClosed, agentSpawned, askOf, checkOf, Collector, firstRepository, firstTurn, mcpOf, originOf, permissionAsk, remoteUrlsArgv, renamedTo, repositoryOf, sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, TRANSCRIPT_HEAD_BYTES, transcriptCallIds, transcriptToolEvents,
   turnEnd, usageFacts, type Event,
 } from './collect.ts'
-import { SELF_REVIEW_DESCRIPTION, SELF_REVIEW_SCHEMA, SELF_REVIEW_TOOL, selfReviewEvents, selfReviewLine } from './self-review.ts'
 
 type Next = (e: unknown) => Promise<unknown>
 type Hook = ($: Host, e: Record<string, unknown>, next: Next) => Promise<unknown>
@@ -113,19 +112,6 @@ async function readRepository($: Host): Promise<string | undefined> {
   }
 }
 
-/** The `self_review` tool's answer: its events written at once, and the report's lines, one per finding, or why none was. */
-async function selfReview($: Host, collector: Collector, input: Record<string, unknown>): Promise<{ result: string; isError?: boolean }> {
-  try {
-    const built = selfReviewEvents(await $.clock.now(), await $.session.id(), input)
-    if ('why' in built) return { result: `self-review: not recorded — ${built.why}`, isError: true }
-    collector.push(...built.events)
-    await flush($, collector)
-    return { result: built.events.map(selfReviewLine).join('\n') }
-  } catch (error) {
-    return { result: `self-review: not recorded — ${error instanceof Error ? error.message : String(error)}`, isError: true }
-  }
-}
-
 /** Buffers `events`, and writes them once the buffer reaches its threshold. */
 async function add($: Host, collector: Collector, events: readonly Event[]): Promise<void> {
   if (collector.push(...events)) await flush($, collector)
@@ -144,10 +130,6 @@ export function mount(on: On, collector: Collector): void {
       // The launcher's own words on a session it spawned (core's ENV.reportsTo and ENV.tier); neither is set in the operator's own.
       collector.setOrigin(originOf(await $.env.get('ORCHESTRATOR_REPORTS_TO'), await $.env.get('ORCHESTRATOR_TIER')))
       await add($, collector, [sessionStart(at, await $.session.id(), e, { model: await $.session.model(), startedAt: usage.startedAt, spawned, repository: await readRepository($) })])
-    })
-    // Listed from the start (not deferred): the self-review's last act calls it.
-    await quietly($, 'the self_review tool', async () => {
-      await $.tool.register({ name: 'self_review', description: SELF_REVIEW_DESCRIPTION, inputSchema: SELF_REVIEW_SCHEMA, isDeferred: false })
     })
     // A resumed session, or a reloaded module, holds calls an earlier run already wrote: they are not written again.
     await quietly($, 'session.start calls', async () => {
@@ -228,8 +210,6 @@ export function mount(on: On, collector: Collector): void {
   })
 
   on('tool.call', async ($, e, next) => {
-    // The module's own tool: answered here, its call read back from the transcript like any plugin's.
-    if (e['tool'] === SELF_REVIEW_TOOL) return selfReview($, collector, e)
     let started: number | undefined
     try {
       started = await $.clock.now()
