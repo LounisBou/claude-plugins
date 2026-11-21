@@ -10,7 +10,7 @@ import { DECK_FILE, DECK_VERSION, deckSessions, parseDeck } from '../packages/co
 import { DECK_READER_CONTRACT, DECK_STALE_AFTER_MS } from '../packages/core/src/deck-reader.ts'
 import { parseJournalEvent } from '../packages/core/src/learning.ts'
 import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '../packages/core/src/names.ts'
-import { gateTokensOf, measureFilePath, MEASURE_VERSION, ROUND_DIR, type MeasureReading } from '../packages/core/src/orchestration.ts'
+import { gateTokensOf, measureFilePath, MEASURE_VERSION, ROUND_DIR, SPAWN_TIMEOUT_MS, type MeasureReading } from '../packages/core/src/orchestration.ts'
 import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
 import { parseQuota, quotaFilePath, QUOTA_CONTRACT, quotaLine } from '../packages/core/src/quota.ts'
 import { CI_CHECK } from '../packages/core/src/readiness.ts'
@@ -228,6 +228,20 @@ describe('the measure file: the orchestrator writes, bugs-bot reads', () => {
       'print(json.dumps({"path": str(measure_path(env)), "figures": measure(env)}))',
     ].join('\n'), config], { encoding: 'utf8' })
     assert.deepEqual(JSON.parse(read), { path, figures: [810_000, 1_000_000] })
+  })
+})
+
+describe('spawn: the launcher waits, its callers allow it', () => {
+  it('holds the callers\' deadline above the launcher\'s worst case, a refused spawn', () => {
+    const source = readFileSync('plugins/orchestrator/skills/iterm-agents/scripts/iterm_agent.py', 'utf8')
+    const seconds = (name: string): number => {
+      const found = new RegExp(`os\\.environ\\.get\\("ORCHESTRATOR_${name}", "(\\d+)"\\)`).exec(source)
+      assert.ok(found?.[1], name)
+      return Number(found[1])
+    }
+    // The host's start, the transcript's wait, the screen read, and the tab's close (twice its wait on the process).
+    const worst = seconds('SPAWN_TIMEOUT') + seconds('MODE_TIMEOUT') + seconds('PROBE_TIMEOUT') + 2 * seconds('CLOSE_TIMEOUT')
+    assert.ok(SPAWN_TIMEOUT_MS >= (worst + 15) * 1000, `${SPAWN_TIMEOUT_MS} ms against a worst case of ${worst} s`)
   })
 })
 

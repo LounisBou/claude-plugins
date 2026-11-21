@@ -3,6 +3,7 @@ import type { Engine, Reply, TestOn } from 'claude-code/testing'
 import { TOOL } from './register.ts'
 import { METHOD_LINE } from './core.ts'
 import { fieldsOf, listOf, type Events, type ToolSpec } from '../core/host.ts'
+import { SPAWN_TIMEOUT_MS } from '../core/orchestration.ts'
 
 const FIXTURE = `**Codename**: demo
 **Bump**: minor
@@ -279,7 +280,7 @@ const LAUNCHER = '/cache/orchestrator/0.60.0/skills/iterm-agents/scripts/iterm-a
 
 // A machine: its system, its install record, whether the launcher exists, what it answers.
 function machine(on: TestOn, m: { system: string; record?: string; launcher?: boolean; spawn?: { exitCode: number; stdout: string; stderr: string }; branch?: string }) {
-  const runs: string[][] = []
+  const runs: string[][] & { launcherTimeout?: number | undefined } = []
   const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '' } })
   on('env.get', (_$, e) => ({ value: { HOME: '/home/op' }[e.name] }))
   on('fs.read', (_$, e) => (e.path === '/home/op/.claude/plugins/installed_plugins.json' && m.record !== undefined ? { value: m.record } : { deny: 'ENOENT' }))
@@ -290,6 +291,7 @@ function machine(on: TestOn, m: { system: string; record?: string; launcher?: bo
     if (args === 'git branch --show-current') return ok(m.branch ?? 'feat/demo')
     if (args === 'git rev-parse --show-toplevel') return ok('/work')
     if (args === 'uname -s') return ok(m.system)
+    if (e.argv[0] === LAUNCHER) runs.launcherTimeout = e.init?.timeoutMs
     if (e.argv[0] === LAUNCHER) return { value: m.spawn ?? { exitCode: 0, stdout: 'spawned\n/dev/ttys004', stderr: '' } }
     return ok()
   })
@@ -306,6 +308,12 @@ test('on macOS with the orchestrator, the reviewer opens in iTerm through its la
   expect(spawn[7]).toContain('mcp__orchestrator__review')
   expect(spawn.slice(-2)).toEqual(['--keep-tool', 'mcp__orchestrator__review'])
   expect(String(out.text)).toContain('launched in iTerm on /dev/ttys004')
+})
+
+test('the launcher is given core\'s spawn deadline, above its worst case', async ($, on) => {
+  const runs = machine(on, { system: 'Darwin', record: RECORD, launcher: true })
+  await review($)
+  expect(runs.launcherTimeout).toBe(SPAWN_TIMEOUT_MS)
 })
 
 test('a launcher that refuses is said as it stands, and nothing is launched another way', async ($, on) => {
