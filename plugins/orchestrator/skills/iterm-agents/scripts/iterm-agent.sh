@@ -68,7 +68,7 @@
 #     session once it has ended in its tab, and a tab right of that one showing it. Prints
 #     `moved: …` or `stay: <why>`; nothing is ended, and a failure leaves the session in place
 #   iterm-agent.sh home-reload
-#     run by the hooks module of a session told of a newer install, with the installed
+#     run by the hooks module of a session that sees a newer install, with the installed
 #     commit's launcher: every live home server sources that commit's tmux/home.conf, with no
 #     restart; one line per server, exit 1 when one was not reloaded
 #   iterm-agent.sh home-release --tty /dev/ttysNNN --session-id <app session id> --pane-tty /dev/ttysNNN --resumed <session id>
