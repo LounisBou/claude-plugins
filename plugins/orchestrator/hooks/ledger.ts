@@ -167,9 +167,34 @@ export function mergeRelayLine(merged: { repo: string | null; pr: number }, rows
   return `[module] ${merged.repo ?? ''}#${merged.pr} merged; open rows waiting on it: ${named.join(', ')}. Tell each one's agent now.`
 }
 
-// The call goes through; its answer is read for a creation and the line written within the bound.
+/*
+ * The pull requests this session's own `pr-merge` merged (`<session> <repo>#<n>`, the repository lower-cased), kept
+ * until the tick that tells their end: the session knows of that merge, so the bare « merged. » line is not sent to it.
+ * Held beside the tick's `told` keys, in memory as they are: a restart loses both, and the line is then sent as before.
+ */
+const mergedHere = new Set<string>()
+
+const mergeKey = (session: string, repo: string, pr: number): string => `${session} ${prKey(repo.toLowerCase(), pr)}`
+
+// The pull request a `pr-merge` of the github tool merged, from the call and its answer; null for any other call, a refused or failed one, or an answer that says it merged nothing.
+export function mergedByCall(e: Readonly<Record<string, unknown>>, result: unknown): { repo: string; pr: number } | null {
+  if (e['tool'] !== 'mcp__github__gh' || e['command'] !== 'pr-merge' || typeof e['repo'] !== 'string') return null
+  const args = typeof e['args'] === 'object' && e['args'] !== null ? e['args'] as Record<string, unknown> : {}
+  const pr = Number(String(args['pr'] ?? '').replace('#', ''))
+  const answer = answerText(result)
+  if (answer === null || !Number.isInteger(pr) || pr < 1) return null
+  try {
+    return (JSON.parse(answer) as { merged?: unknown } | null)?.merged === true ? { repo: e['repo'].trim(), pr } : null
+  } catch {
+    return null
+  }
+}
+
+// The call goes through; its answer is read for a merge, remembered, and for a creation, the line written within the bound.
 async function afterCall($: Held, e: Call, next: Next<Call>, now: () => Date, bound: number): Promise<unknown> {
   const result = await next(e)
+  const merged = mergedByCall(e, result)
+  if (merged !== null) mergedHere.add(mergeKey(await $.session.id(), merged.repo, merged.pr))
   const created = createdPr(e, result)
   if (created === null) return result
   try {
@@ -500,6 +525,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
+  const session = await $.session.id()
   const waitingOn = (ended: (typeof reading.ended)[number]) => ended.state === 'MERGED'
     ? reading.records.flatMap(record => waitingRows(record.text, { repo: ended.line.repo.toLowerCase(), pr: ended.line.pr }))
     : []
@@ -550,7 +576,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
         : act.kind === 'refused' && told.has(refusedKey) ? null : acted
       if (act.kind === 'refused') told.add(refusedKey)
     }
-    if (said === null && first) said = `[module] ${pk} ${what}.`
+    // The bare line tells a session nothing of a merge it made itself through pr-merge: left out, the agent and relay lines stay.
+    const own = mergedHere.delete(mergeKey(session, repo, pr)) && ended.state === 'MERGED'
+    if (said === null && first && !own) said = `[module] ${pk} ${what}.`
     if (said !== null) lines.push(said)
     const relay = first ? mergeRelayLine({ repo, pr }, waitingOn(ended)) : null
     if (relay !== null) lines.push(relay)

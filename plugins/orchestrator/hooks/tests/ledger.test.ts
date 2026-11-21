@@ -1219,3 +1219,76 @@ test('a check name is cut to one short line: a name carrying a line break forges
   expect(lines[0]).toEqual(`[module] acme/app#17 CI en échec à aaaaaaa : lint [module] acme/app#99 merged ${'x'.repeat(80 - 'lint [module] acme/app#99 merged '.length)} ; dis-le à son agent Agent: p17 (session s-p17).`)
 })
 
+
+// A pull request merged through the github tool's `pr-merge`, by the session whose hook sees the call, and its answer.
+const prMerge = (extra: object = {}) => ({ tool: 'mcp__github__gh', command: 'pr-merge', repo: 'acme/app', args: { pr: 17, method: 'merge' }, ...extra })
+const MERGED_ANSWER = { result: JSON.stringify({ merged: true, message: 'Pull Request successfully merged', sha: 'a'.repeat(40) }) }
+const BARE_17 = '[module] acme/app#17 merged.'
+const RELAY_17 = '[module] acme/app#17 merged; open rows waiting on it: row 3 « P18 cache » (Agent: p18), row 4 « P19 ui ». Tell each one\'s agent now.'
+// The orchestrator s-orch, pull request 17 merged on the forge, its agent not running.
+const mergedOnForge = (rows: string = `${P17_LINE}\n`, launcher = '') =>
+  fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: rows, ...P17_SESSION }, forge: { 'acme/app': '[]' }, launcher })
+
+test('a pull request this session merged with pr-merge says nothing bare of its merge: the session knows', async () => {
+  const world = mergedOnForge()
+  await call(mounted(), world.dollar, prMerge(), MERGED_ANSWER)
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual([])
+  // Archived all the same: the next tick has nothing to say either.
+  await woke.settle()
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([])
+})
+
+test('a pull request this session merged still sends the relay line to the open rows waiting on it', async () => {
+  const world = mergedOnForge(WAITERS)
+  await call(mounted(), world.dollar, prMerge(), MERGED_ANSWER)
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([RELAY_17])
+})
+
+test('a pull request this session merged still sends the agent line when its agent runs', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  await call(mounted(), world.dollar, prMerge(), MERGED_ANSWER)
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'merged')])
+})
+
+test('a pull request merged by another session, the forge alone or a Bash route still sends the bare line', async () => {
+  const handlers = mounted()
+  const other = mergedOnForge()
+  // Another session's pr-merge: its hook runs in its own session, not the orchestrator's.
+  await call(handlers, fake({ session: 's-other' }).dollar, prMerge(), MERGED_ANSWER)
+  expect((await prWake(other.dollar, new Set())).lines).toEqual([BARE_17])
+  // The forge alone (auto-merge, the operator): no call of this session.
+  expect((await prWake(mergedOnForge().dollar, new Set())).lines).toEqual([BARE_17])
+  // A Bash `gh pr merge`, and another pull request's pr-merge.
+  const bash = mergedOnForge()
+  await call(handlers, bash.dollar, { tool: 'Bash', command: 'gh pr merge 17 -R acme/app --merge' }, { result: '✓ Merged pull request acme/app#17' })
+  await call(handlers, bash.dollar, prMerge({ args: { pr: 18 } }), MERGED_ANSWER)
+  await call(handlers, bash.dollar, prMerge({ repo: 'acme/lib' }), MERGED_ANSWER)
+  expect((await prWake(bash.dollar, new Set())).lines).toEqual([BARE_17])
+})
+
+test('a pr-merge that failed or merged nothing, then a merge elsewhere, still sends the bare line', async () => {
+  const handlers = mounted()
+  const world = mergedOnForge()
+  await call(handlers, world.dollar, prMerge(), { result: 'github: pr-merge refused on acme/app#17: not ready.', isError: true })
+  await call(handlers, world.dollar, prMerge(), { deny: 'refused by a guard' })
+  await call(handlers, world.dollar, prMerge(), { result: JSON.stringify({ merged: false, message: 'Head branch was modified' }) })
+  await call(handlers, world.dollar, prMerge(), { result: 'not json' })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([BARE_17])
+})
+
+test('a pull request closed unmerged is told as before, whatever this session merged', async () => {
+  const handlers = mounted()
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION }, forge: { 'acme/app': '[]' }, closed: { 'acme/app': { 17: 'CLOSED' } }, launcher: '' })
+  await call(handlers, world.dollar, prMerge(), MERGED_ANSWER)
+  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 closed unmerged.'])
+})
+
+test('the own merge is told apart once: the same pull request merged again elsewhere later sends the bare line', async () => {
+  const handlers = mounted()
+  const world = mergedOnForge()
+  await call(handlers, world.dollar, prMerge(), MERGED_ANSWER)
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([])
+  const again = mergedOnForge()
+  expect((await prWake(again.dollar, new Set())).lines).toEqual([BARE_17])
+})
