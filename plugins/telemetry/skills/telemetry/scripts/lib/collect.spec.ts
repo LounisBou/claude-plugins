@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  agentClosed, agentSpawned, bashOf, checkOf, Collector, CUTS, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, MESSAGE_MAX, MESSAGE_RAW_MAX, mcpOf, orchestrationOf, originOf, projectOf, renamedTo, repositoryOf, roleOf,
+  agentClosed, agentSpawned, askOf, bashOf, checkOf, Collector, CUTS, cutFields, cutText, deciderOf, FLUSH_AT, firstTurn, LINE_MAX, MESSAGE_MAX, MESSAGE_RAW_MAX, mcpOf, orchestrationOf, originOf, permissionAsk, projectOf, renamedTo, repositoryOf, roleOf,
   sessionEnd, sessionStart, sessionTitleOf, titleFromTranscriptHead, toolEvents, transcriptToolEvents, turnEnd, usageFacts,
 } from '../../../../hooks/collect.ts'
 import { redactValue } from './redact.ts'
@@ -503,4 +503,106 @@ test('escape: a feature, a fix naming no pull request, a refused or failed call,
   assert.equal(escapeOf(gh('pr-update', { title: 'fix: x', body: '#12' })), undefined)
   assert.equal(escapeOf(bashCall('git commit -F /tmp/msg')), undefined)
   assert.equal(escapeOf(bashCall("git commit -m 'refactor: #12'")), undefined)
+})
+
+const ASK_INPUT = { file_path: '/Users/me/dev/app/config.json', content: 'never kept' }
+const writeAsk = () => askOf({ tool: 'Write', input: ASK_INPUT, tool_use_id: 'toolu_01Write' }, F('tool.check.ask.write'))
+
+test('permission_ask: the dialog\'s tool, target and mode, with the id, reason and asker of the ask tool.check announced', () => {
+  const event = permissionAsk(AT, S, F('permission.request.write'), writeAsk())
+  assert.deepEqual(event, {
+    ...HEAD, event: 'permission_ask', tool: 'Write', tool_use_id: 'toolu_01Write',
+    ask_reason: 'Claude requested permissions to write to /Users/me/dev/app/config.json, which is a sensitive file.',
+    check: { decision: 'ask' }, permission_mode: 'default', file: '/Users/me/dev/app/config.json',
+  })
+  assert.equal(JSON.stringify(event).includes('never kept'), false)
+})
+
+test('permission_ask: a Bash line, an MCP call and a subagent\'s dialog; no matching ask leaves the id and reason out', () => {
+  const bash = permissionAsk(AT, S, { tool_name: 'Bash', tool_input: { command: 'git push origin main' }, permission_mode: 'auto', agent_id: 'a1' }, undefined)
+  assert.deepEqual([bash['tool'], bash['bash'], bash['agent'], bash['permission_mode'], bash['tool_use_id'], bash['ask_reason']], ['Bash', { head: 'git', heads: ['git'], line: 'git push origin main' }, 'a1', 'auto', undefined, undefined])
+  const mcp = permissionAsk(AT, S, { tool_name: 'mcp__github__gh', tool_input: { command: 'pr-merge', args: { pr: 1 } } }, undefined)
+  assert.deepEqual([mcp['mcp_server'], mcp['mcp_tool'], mcp['command']], ['github', 'gh', 'pr-merge'])
+  assert.equal(permissionAsk(AT, S, { tool_name: 'WebFetch', tool_input: { url: 'https://example.org/a' } }, undefined)['url'], 'https://example.org/a')
+})
+
+test('permission_ask: a secret in the line or the path is redacted by the writer, and a long reason is cut', () => {
+  const secret = ['gh', 'p_', 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gjabcd'].join('')
+  const event = permissionAsk(AT, S, { tool_name: 'Bash', tool_input: { command: `curl -H 'Authorization: Bearer ${secret}' https://x.example` } }, askOf({ tool: 'Bash', input: {}, tool_use_id: 'toolu_01Long' }, { decision: 'ask', reason: `why ${'r'.repeat(900)}` }))
+  const stored = cutFields(redactValue(event, new Map()).value) as Record<string, unknown>
+  assert.equal(JSON.stringify(stored).includes(secret), false)
+  assert.match(JSON.stringify(stored), /REDACTED/)
+  assert.equal(String(stored['ask_reason']).length <= CUTS['ask_reason']! + 1, true)
+})
+
+test('askOf: only an ask verdict is an ask', () => {
+  assert.equal(askOf({ tool: 'Bash', input: {} }, { decision: 'allow' }), undefined)
+  assert.equal(askOf({ tool: 'Bash', input: {} }, { decision: 'deny', reason: 'x' }), undefined)
+  assert.equal(askOf({ input: {}, tool_use_id: 'x' }, { decision: 'ask' }), undefined)
+  // A query or a call straight to its server names no call: no dialog is raised for it.
+  assert.equal(askOf({ tool: 'Bash', input: {} }, { decision: 'ask' }), undefined)
+  assert.equal(writeAsk()?.reason?.startsWith('Claude requested'), true)
+})
+
+test('takeAsk: a dialog takes the one ask of its tool, loop and arguments, once; several equal asks, other arguments, another tool or another loop leave it unmatched', () => {
+  const c = new Collector()
+  const ask = (id: string, input: unknown, tool = 'Write', agent?: string) => askOf({ tool, input, tool_use_id: id, agentId: agent }, { decision: 'ask', reason: id })
+  c.noteAsk(ask('one', { a: 1, b: 2 }))
+  c.noteAsk(ask('other', { a: 9 }))
+  assert.equal(c.takeAsk('Write', { b: 2, a: 1 }, undefined)?.id, 'one')
+  assert.equal(c.takeAsk('Write', { a: 1, b: 2 }, undefined), undefined)
+  // Two concurrent asks of one tool: each dialog finds its own by its arguments; a rewrite of the arguments finds none.
+  assert.equal(c.takeAsk('Write', { a: 5 }, undefined), undefined)
+  assert.equal(c.takeAsk('Write', { a: 9 }, undefined)?.id, 'other')
+  // The same call run twice: the dialog could be either, so it is bound to neither (and the stale ask stays out of reach of a guess).
+  c.noteAsk(ask('first', { path: 'x' }))
+  c.noteAsk(ask('second', { path: 'x' }))
+  assert.equal(c.takeAsk('Write', { path: 'x' }, undefined), undefined)
+  // The payload's own call id settles it.
+  assert.equal(c.takeAsk('Write', { path: 'x' }, undefined, 'second')?.id, 'second')
+  assert.equal(c.takeAsk('Write', { path: 'x' }, undefined)?.id, 'first')
+  c.noteAsk(ask('bash', { command: 'ls' }, 'Bash'))
+  c.noteAsk(ask('sub', { path: 'x' }, 'Write', 'a1'))
+  assert.equal(c.takeAsk('Edit', { command: 'ls' }, undefined), undefined)
+  assert.equal(c.takeAsk('Write', { path: 'x' }, undefined), undefined)
+  assert.equal(c.takeAsk('Write', { path: 'x' }, 'a1')?.id, 'sub')
+})
+
+test('settleAsk: gives when the dialog was shown, once; an ask never shown is forgotten with its call; the memory is bounded', () => {
+  const c = new Collector()
+  c.noteAsk(askOf({ tool: 'Write', input: {}, tool_use_id: 'a' }, { decision: 'ask' }))
+  c.noteAsk(askOf({ tool: 'Edit', input: {}, tool_use_id: 'b' }, { decision: 'ask' }))
+  assert.equal(c.takeAsk('Write', {}, undefined)?.id, 'a')
+  c.markShown('a', AT)
+  assert.equal(c.settleAsk('a'), AT)
+  assert.equal(c.settleAsk('a'), undefined)
+  assert.equal(c.settleAsk('b'), undefined)
+  assert.equal(c.takeAsk('Edit', {}, undefined), undefined)
+  assert.equal(c.settleAsk(undefined), undefined)
+  for (let i = 0; i < 250; i++) c.noteAsk(askOf({ tool: 'Write', input: { i }, tool_use_id: `t${i}` }, { decision: 'ask' }))
+  assert.equal(c.takeAsk('Write', { i: 0 }, undefined)?.id, undefined)
+  assert.equal(c.takeAsk('Write', { i: 249 }, undefined)?.id, 't249')
+})
+
+test('tool_call: a call whose dialog was shown carries the time from the dialog to its end; any other carries none', () => {
+  const input = { tool: 'Write', tool_use_id: 'toolu_01Write' }
+  assert.equal(toolEvents(AT + 7000, S, input, F('result.ok'), undefined, 7100, AT)[0]?.['ask_ms'], 7000)
+  assert.equal('ask_ms' in (toolEvents(AT, S, input, F('result.ok'), undefined, 100)[0] ?? {}), false)
+  const denied = toolEvents(AT + 3000, S, input, F('result.user'), undefined, 3100, AT)[0]
+  assert.deepEqual([denied?.['outcome'], denied?.['decided_by'], denied?.['ask_ms']], ['refused', 'user', 3000])
+})
+
+test('permission_ask: a secret in the path or the URL is redacted like the line\'s, and both are cut', () => {
+  const secret = ['gh', 'p_', 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gjabcd'].join('')
+  const event = permissionAsk(AT, S, { tool_name: 'Write', tool_input: { file_path: `/work/${secret}/notes.txt` } }, undefined)
+  const fetched = permissionAsk(AT, S, { tool_name: 'WebFetch', tool_input: { url: `https://x.example/a?token=${secret}&${'q'.repeat(600)}` } }, undefined)
+  for (const e of [event, fetched]) assert.equal(JSON.stringify(cutFields(redactValue(e, new Map()).value)).includes(secret), false)
+  assert.equal(String((cutFields(redactValue(fetched, new Map()).value) as Record<string, unknown>)['url']).length <= LINE_MAX + 1, true)
+})
+
+test('markShown: the shown dialogs are bounded', () => {
+  const c = new Collector()
+  for (let i = 0; i < 150; i++) c.markShown(`e${i}`, AT)
+  assert.equal(c.settleAsk('e0'), undefined)
+  assert.equal(c.settleAsk('e149'), AT)
 })
