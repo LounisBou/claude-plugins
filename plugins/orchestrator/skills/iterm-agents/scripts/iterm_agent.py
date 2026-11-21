@@ -857,6 +857,9 @@ def ps_rows(tty, strict=False):
     there, and one written to check the host's registry carries it as an all-digit second
     field. Both readers below are built on this, and so is the close's proof, because they
     were asking the process table the same question in three different ways."""
+    if not tty:
+        # iTerm2 gives no tty for a session it has not attached: no tty, no process on it.
+        return []
     short = tty.replace("/dev/", "")
     table = os.environ.get("ORCHESTRATOR_PS_TABLE", "")
     try:
@@ -4492,15 +4495,18 @@ async def list_rows(app):
             visible = {s.session_id for s in t.sessions}
             for s in t.all_sessions:
                 tty = await s.async_get_variable("tty")
+                # A session iTerm2 gives no tty for (not attached yet, or just restarted) has
+                # no process to read its name from: listed with a dash, its name unreadable.
+                shown = tty or "-"
                 title = await s.async_get_variable("autoName") or ""
                 is_self, hidden = bool(own) and tty == own, s.session_id not in visible
                 socket = tmux_client_socket(tty)
                 if socket:
-                    lines.append(client_row(wi, ti, tty, socket, is_self, hidden))
+                    lines.append(client_row(wi, ti, shown, socket, is_self, hidden))
                 else:
-                    lines.append(row_for(wi, ti, tty, title, session_name_on(tty),
-                                         is_self, hidden))
-                listed.append(("w%d/t%d" % (wi, ti), tty, t.tab_id))
+                    name = session_name_on(tty) if tty else UNREADABLE_NAME
+                    lines.append(row_for(wi, ti, shown, title, name, is_self, hidden))
+                listed.append(("w%d/t%d" % (wi, ti), shown, t.tab_id))
     lines += orphan_lines(listed)
     return lines
 
