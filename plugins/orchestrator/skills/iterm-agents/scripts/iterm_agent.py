@@ -2305,7 +2305,7 @@ async def tty_of(tab, connection=None, tries=10):
         sess = tab.current_session
         if sess is not None:
             try:
-                tty = await session_tty(sess)
+                tty = await sess.async_get_variable("tty")
                 if tty:
                     return tty
             except Exception:

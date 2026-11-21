@@ -5373,16 +5373,16 @@ check "a restored session is found by the tty its pid proves, and a tty nobody h
   "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
 _,_,a=asyncio.run(ia.find_tab(app,'/dev/ttys008')); _,_,b=asyncio.run(ia.find_tab(app,'/dev/ttys999'))
 print('%s|%s' % (a.session_id, b))" "$ROOT/skills/iterm-agents/scripts")"
-check "the tty a tab's session is waited for is read from its job's pid too, and a zombie's pid proves none" "/dev/ttys008|None" \
+check "a pid that is a zombie proves no tty, and the pid fallback reads pid when jobPid is unlisted" "|/dev/ttys008" \
   "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-restored.txt" "$py" -c "$RESTORED
-t=T('9',[]); t.current_session=S('R',None,'48166','Default')
-z=T('8',[]); z.current_session=S('Z',None,'48999','Default')
+class P(S):
+    async def async_get_variable(s, k): return s.pid if k == 'pid' else '1' if k == 'jobPid' else None
 real=ia.process_table
-ia.process_table = lambda: {'48999': {'stat': 'Z', 'tty': 'ttys009'}}
-b=asyncio.run(ia.tty_of(z, tries=1))
+ia.process_table = lambda: dict([('48999', dict(stat='Z', tty='ttys009'))])
+z=asyncio.run(ia.session_tty(P('Z',None,'48999','x')))
 ia.process_table = real
-a=asyncio.run(ia.tty_of(t, tries=1))
-print('%s|%s' % (a, b))" "$ROOT/skills/iterm-agents/scripts")"
+a=asyncio.run(ia.session_tty(P('R',None,'48166','x')))
+print('%s|%s' % (z, a))" "$ROOT/skills/iterm-agents/scripts")"
 # The caller is not always IN the app. A session running in another terminal — a multiplexer,
 # a plain shell, a remote one — still has a tty, `self_tty` still resolves it, and the app has
 # no session on it. The chain is the app's and cannot be kept for a caller the app does not
