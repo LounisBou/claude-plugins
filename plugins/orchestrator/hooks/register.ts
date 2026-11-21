@@ -15,6 +15,7 @@ import { register as registerUnattended } from './unattended.ts'
 import { register as registerLedger } from './ledger.ts'
 import { register as registerGateRecheck } from './gate-recheck.ts'
 import { register as registerSupervision, registerWake, registerPaneTool, registerStartState } from './supervision.ts'
+import { register as registerPermissionWait } from './permission-wait.ts'
 import { register as registerTodo, registerSurface as registerTodoSurface } from './todo.ts'
 import { register as registerQuestion, registerSettle } from './question.ts'
 import { register as registerReview } from './review.ts'
@@ -48,6 +49,7 @@ export function register(on: On<Mod>): void {
   // Ahead of the supervision: its turn end sends the row and writes the deck, which carry the pull requests this turn end publishes.
   registerUnattended(on)
   registerSupervision(on)
+  registerPermissionWait(on)
   registerWake(on)
   registerPaneTool(on)
   registerStartState(on)
