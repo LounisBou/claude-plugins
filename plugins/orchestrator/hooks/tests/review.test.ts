@@ -511,9 +511,17 @@ const REAL_INDEX = [
   '3. [critical] plugins/orchestrator/hooks/pattern-kills.ts:~200-211 — `pkill -f <root>/<anything>` passes — security:bbbbbbbbbb — review-558-index/1.md',
   '4. [important] plugins/implement/hooks/register.ts:169 — headless reviewer\'s name and record path unproven — correctness:573f70eaad, tests:b26da34b8e — review-506-index/2.md',
   '5. [minor] b.ts:9 — no id here — review-1.md',
+  // The shapes core's reading does not take, which the index's own reading always did: a second file location (real lines of rev456 and rev456b), a hyphen or an en dash, no space after the number or before the dash.
+  '6. [minor] plugins/orchestrator/hooks/supervision.ts:2557,2583-2591 ; question.ts:558 — chemins hérités restés sur answersChoice — correctness:cccccccccc — rev456-index/7.md',
+  '7. [critical] packages/core/src/consent-record.ts:303,314 ; plugins/orchestrator/hooks/question.ts:423 — NOT_PLAIN survives removal — tests:dddddddddd — rev456b-index/1.md',
+  '8. [important] hooks/tests/tab-state.test.ts:383, stop-gate.test.ts:1084 — fixtures use the old shape — tests:eeeeeeeeee — rev456-index/2.md',
+  '9. [important] hooks/a.ts:11 - a hyphen for the dash - correctness:1111111111 - x-index/9.md',
+  '10. [important] hooks/b.ts:12 – an en dash for the dash – correctness:2222222222 – x-index/10.md',
+  '11.[important] hooks/c.ts:13 — no space after the number — correctness:3333333333 — x-index/11.md',
+  '12. [important] hooks/d.ts:14—no space before the dash — correctness:4444444444 — x-index/12.md',
 ].join('\n')
 
-test('a decision finds its index line by file and first line whatever the location\'s shape: a range, a list, a marked line, a plain one; a line with no id is none', () => {
+test('a decision finds its index line by file and first line whatever the location\'s shape: a range, a list, a marked line, a plain one, a second file location, another dash, no space; a line with no id is none', () => {
   const decided = (file: string, line: number, severity: 'critical' | 'important' | 'minor') => ({ decision: 'kept' as const, severity, file, line })
   const out = withIndexIds([
     decided('hooks/unattended.ts', 67, 'important'),
@@ -521,6 +529,13 @@ test('a decision finds its index line by file and first line whatever the locati
     decided('plugins/orchestrator/hooks/pattern-kills.ts', 200, 'critical'),
     decided('plugins/implement/hooks/register.ts', 169, 'important'),
     decided('b.ts', 9, 'minor'),
+    decided('plugins/orchestrator/hooks/supervision.ts', 2557, 'minor'),
+    decided('packages/core/src/consent-record.ts', 303, 'critical'),
+    decided('hooks/tests/tab-state.test.ts', 383, 'important'),
+    decided('hooks/a.ts', 11, 'important'),
+    decided('hooks/b.ts', 12, 'important'),
+    decided('hooks/c.ts', 13, 'important'),
+    decided('hooks/d.ts', 14, 'important'),
   ], REAL_INDEX)
   expect(out.map(f => [f.finding_id, f.lens])).toEqual([
     ['correctness:aaaaaaaaaa', 'correctness'],
@@ -528,6 +543,13 @@ test('a decision finds its index line by file and first line whatever the locati
     ['security:bbbbbbbbbb', 'security'],
     ['correctness:573f70eaad', 'correctness'],
     [null, null],
+    ['correctness:cccccccccc', 'correctness'],
+    ['tests:dddddddddd', 'tests'],
+    ['tests:eeeeeeeeee', 'tests'],
+    ['correctness:1111111111', 'correctness'],
+    ['correctness:2222222222', 'correctness'],
+    ['correctness:3333333333', 'correctness'],
+    ['correctness:4444444444', 'correctness'],
   ])
 })
 

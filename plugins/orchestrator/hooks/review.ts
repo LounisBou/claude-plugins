@@ -231,8 +231,18 @@ export function findingsOf(input: Record<string, unknown>): { decision: Decision
 }
 
 // A finding of the review index (`<n>. [severity] file:line — title — <id> — <detail>`): after its number, the
-// finding line core's lens reading takes, whatever the shape of its location (`file:~337`, a range, a list).
+// finding line core's lens reading takes, whatever the shape of its location (`file:~337`, a range, a list); a
+// line it does not take (another dash, no space after the number, a second file location) is read by its start,
+// the severity and the first `file:line`, as the index's lines always were.
 const INDEX_NUMBER = /^\s*\d+\.\s+/
+const INDEX_START = /^\s*\d+\.\s*\[(critical|important|minor)\]\s+`?([^\s`:]+):~?(\d+)/i
+
+function indexFinding(line: string): { severity: string; file: string; line: number } | undefined {
+  const [read] = INDEX_NUMBER.test(line) ? parseLensFindings(line.replace(INDEX_NUMBER, '')) : []
+  if (read !== undefined) return { severity: read.severity, file: read.file, line: read.line }
+  const m = INDEX_START.exec(line)
+  return m === null ? undefined : { severity: (m[1] ?? '').toLowerCase(), file: m[2] ?? '', line: Number(m[3]) }
+}
 
 type Decided = ReturnType<typeof findingsOf>[number]
 
@@ -241,9 +251,9 @@ type Decided = ReturnType<typeof findingsOf>[number]
 // or none of the index's, keeps them unknown.
 export function withIndexIds(findings: readonly Decided[], index: string | null): (Decided & { finding_id: string | null; lens: string | null })[] {
   const lines = (index ?? '').split('\n').flatMap(line => {
-    const [finding] = INDEX_NUMBER.test(line) ? parseLensFindings(line.replace(INDEX_NUMBER, '')) : []
+    const finding = indexFinding(line)
     const id = parseFindingId(line)
-    return finding === undefined || id === undefined ? [] : [{ severity: finding.severity, file: finding.file, line: finding.line, ...id }]
+    return finding === undefined || id === undefined ? [] : [{ ...finding, ...id }]
   })
   const taken = new Set<number>()
   return findings.map(finding => {
