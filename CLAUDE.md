@@ -28,7 +28,9 @@ A monorepo of independent Claude Code plugins under `plugins/<name>/`.
   orchestrator, never by its agent; a session working alone merges its own. The method is in
   `docs/conventions.md`, « What the method is »; what CI runs, and when, is in
   `docs/architecture.md`, « What CI holds ».
-- The repository's objectives are `docs/objectives.md`; changes here are dispatched by an orchestrator.
+- The repository's objectives are `docs/objectives.md`. The method does not bind its own
+  development: any session, whatever its role, writes and merges a correction here. A guard of the
+  method that blocks a correction of the method is the defect, and is removed first.
 - Each change is one pull request, with one review, green CI and auto-merge.
 - A friction met only while working on claude-plugins becomes no new rule, guard, gate or check of
   the method unless the same problem is seen on one of the operator's other projects; it is fixed by
