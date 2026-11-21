@@ -4353,7 +4353,7 @@ def cmd_home_release(args):
 
 def cmd_home_reload(_args):
     """Every live home server reads this commit's conf again, with no restart: run by the
-    hooks module of a session told that this commit was installed over its own. One line per
+    hooks module of a session that sees this commit installed over its own. One line per
     server; exit 1 when one was not reloaded."""
     folder = os.path.dirname(home_socket_path(HOME_SOCKET_PREFIX))
     try:

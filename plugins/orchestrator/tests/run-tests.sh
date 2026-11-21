@@ -602,8 +602,8 @@ rm -f "$CHAINS/ttys899.jsonl" "$CHAINS/ttys898.jsonl"
 # An orchestrator keeps its version to its context gate: the module no longer tells it to hand over at
 # each install (hooks/tests/context-gate.test.ts), and a defect of its running version that blocks it
 # is its own reason, said in its succession rule, with the newer install alone named as none.
-check "the predecessor's succession rule hands over at the gate or on a blocking defect, a newer install alone is no reason" "yes|no" \
-  "$(spells "$ORCH_REFS/succession-predecessor.md" 'or when a defect of your running version blocks you (a newer install alone is no reason)')|$(spells "$ORCH_REFS/succession-predecessor.md" 'at the next quiet boundary, you SPAWN')"
+check "the predecessor's succession rule hands over at the gate or at once on a blocking defect whose fix is installed, a newer install alone is no reason" "yes|yes|yes|no" \
+  "$(spells "$ORCH_REFS/succession-predecessor.md" 'a newer install alone is no reason')|$(spells "$ORCH_REFS/succession-predecessor.md" 'at once when a defect of your running version blocks you and its fix is installed')|$(spells "$ORCH_REFS/succession-predecessor.md" '`installed.json` of your configuration')|$(spells "$ORCH_REFS/succession-predecessor.md" 'at the next quiet boundary, you SPAWN')"
 
 check "an existing test's assertion is never edited to pass: brief rule, template, review item" "1|1|1" \
   "$(grep -c "An existing test's assertion is never edited to make it pass" "$ROOT/skills/orchestrator/references/standing-rules.md")|$(grep -c "Never edit an existing test's assertion to make it pass" "$ROOT/templates/agent-phase-brief.md")|$(grep -c "A diff that changes an existing test's assertions is read first" "$ROOT/skills/orchestrator/references/review-verdict.md")"

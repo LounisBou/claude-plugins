@@ -340,11 +340,11 @@ test('an orchestrator at its context gate is told to succeed whatever is install
   expect(seen[0]).not.toContain('NEWER VERSION')
 })
 
-// The home servers read the installed commit's tmux conf when a session is told of it: the installed
+// The home servers read the installed commit's tmux conf when a session sees it (a coordinator is also told, an orchestrator never): the installed
 // commit's own launcher reloads them, the session's older one would read its own conf again.
 const RELOAD = (installed: string) => [`/cfg/deploys/lounisbou/${installed}/plugins/orchestrator/skills/iterm-agents/scripts/iterm-agent.sh`, 'home-reload']
 
-test('the session told of a newer commit has every home server reload that commit\'s conf, once', async () => {
+test('a session that sees a newer commit has every home server reload that commit\'s conf, once', async () => {
   const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt' }
   const { dollar, ran } = fakeDollar(setup)
   const handlers = mounted()
@@ -354,20 +354,20 @@ test('the session told of a newer commit has every home server reload that commi
   expect(ran.filter(argv => argv.at(-1) === 'home-reload')).toHaveLength(1)
 })
 
-test('a reload that fails is said in the log, and the notice is given all the same', async () => {
+test('a reload that fails is said in the log, and the coordinator\'s notice is given all the same', async () => {
   const setup: Setup = { root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt', reload: { exitCode: 1, stdout: 'home-reload: orch-x not reloaded: no server running\n', stderr: '' } }
   const { dollar, written } = fakeDollar(setup)
   expect((await submit(mounted(), dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED, ...DIRS_OF(INSTALLED) }, 'coordinator', DEPLOYED)])
   expect(written.some(line => line.includes(`the home servers did not all reload ${INSTALLED.slice(0, 7)}'s conf: home-reload: orch-x not reloaded: no server running`))).toBe(true)
 })
 
-test('a session not told of the newer commit reloads no home server', async () => {
+test('a session that does not see the newer commit reloads no home server', async () => {
   const { dollar, ran } = fakeDollar({ root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Orch: belt', measure: YOUNG })
   await submit(mounted(), dollar)
   expect(ran.filter(argv => argv.at(-1) === 'home-reload')).toEqual([])
 })
 
-test('a newer commit that changes no runtime file of a loaded plugin is not told, the next one that does is', async () => {
+test('a newer commit that changes no runtime file of a loaded plugin is not told to a coordinator, the next one that does is', async () => {
   const setup: Setup = {
     root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt',
     diff: { exitCode: 1, stdout: `Files /cfg/deploys/lounisbou/${RUNNING}/plugins/orchestrator/README.md and /cfg/deploys/lounisbou/${INSTALLED}/plugins/orchestrator/README.md differ\n` },
@@ -383,12 +383,12 @@ test('a newer commit that changes no runtime file of a loaded plugin is not told
   expect((await submit(handlers, dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: next, ...DIRS_OF(next) }, 'coordinator', DEPLOYED)])
 })
 
-test('a comparison that cannot be made gives the notice', async () => {
+test('a comparison that cannot be made gives a coordinator the notice', async () => {
   const { dollar } = fakeDollar({ root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt', diff: { exitCode: 2, stdout: '' } })
   expect((await submit(mounted(), dollar)).context).toEqual([versionAnnouncement({ own: RUNNING, installed: INSTALLED, ...DIRS_OF(INSTALLED) }, 'coordinator', DEPLOYED)])
 })
 
-test('a /clear starts the memo over: the new session is told of the newer commit too', async () => {
+test('a /clear starts the memo over: the new coordinator session is told of the newer commit too', async () => {
   const { dollar } = fakeDollar({ root: DEPLOYED, installed: installedState(INSTALLED, RUNNING), launchName: 'Coord: belt' })
   const handlers = mounted()
   expect((await submit(handlers, dollar)).context).toHaveLength(1)

@@ -134,7 +134,7 @@ short-commands.sh                    launches skills/orchestrator/scripts/short-
 hooks/hooks.json                     declares the hooks module, and nothing else
 hooks/host.ts                        the part of the host's API the strict hooks call: core's types (core/host.ts), under the name the module's files import them by
 hooks/register.ts                    the hooks module's entry point: mounts the domains as they land, the gauge before the store that reads its figure
-hooks/gauge-core.ts                  the measurement rules, pure: the double gate, the measure file path, tolerant parsing, and when a newer installed commit is told
+hooks/gauge-core.ts                  the measurement rules, pure: the double gate, the measure file path, tolerant parsing, and when a newer installed commit is acted on (a coordinator told, the home servers reloaded)
 hooks/gate-recheck.ts                re-runs github's Ready gate on a pull request an open question of the round names, once per new install and once per hour, and tells the session when it is Ready
 hooks/gauge.ts                       measures the context into one file per session on session events, and announces model drift
 hooks/session-name.ts                the session's naming, pure: core's role prefixes, the custom-title value's normalization, the launch-name parse of a flat ps listing, and the name walk itself over injected reader thunks
@@ -180,7 +180,7 @@ hooks/module-log.ts                  the module's log line, pure: the argv modul
 hooks/module-io.ts                   the module's own I/O over a handler's $, once for every domain: the config dir, the state root, the log line, the store's I/O and atomic write, the gate's thresholds
 hooks/log-append.sh                  appends one line to the module's log, shared by every session, and rotates it to one .1 generation past the cap
 hooks/tests/scaffold.test.ts         proves the module chain loads, run by the host's plugin test
-hooks/tests/gauge-core.test.ts       the double gate's boundaries, the measure line, the drift announcement and its once rule, the newer-version settle, cap and runtime comparison
+hooks/tests/gauge-core.test.ts       the double gate's boundaries, the measure line, the drift announcement and its once rule, the newer-install settle, cap and runtime comparison
 hooks/tests/gate-recheck.test.ts     the pull requests a question names, the due rule, github's ready line, and the session told once
 hooks/tests/no-band.test.ts          the module registers no render handler for the area above the prompt
 hooks/tests/session-name.test.ts     the role prefixes, the rename's normalization, and the last rename winning over the earlier title, read from the end in blocks, and a run launched from a session's shell named by nobody while that session keeps its name
