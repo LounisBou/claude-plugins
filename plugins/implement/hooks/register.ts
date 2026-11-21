@@ -11,7 +11,7 @@ import {
   type Band, type Guard, type Snapshot,
 } from './core.ts'
 import { fieldsOf, reasonOf, type Host, type On, type OnStream } from '../core/host.ts'
-import { spawnArgv } from '../core/orchestration.ts'
+import { SPAWN_TIMEOUT_MS, spawnArgv } from '../core/orchestration.ts'
 import { startRetrospective } from './retrospective.ts'
 import { candidateLaunchers, headlessArgv, lastLine, reviewerPrompt, reviewerTitle } from './review.ts'
 
@@ -160,7 +160,7 @@ async function launchReviewer($: ImplementHost): Promise<string> {
   // The review tool knows a review session by this name, in iTerm and headless alike.
   const title = reviewerTitle(codenameOf(branch.out))
   if (launcher !== null) {
-    const spawned = await $.process.run(spawnArgv(launcher, { dir: top.out, title, prompt, keepTools: ['mcp__orchestrator__review'] }), { cwd: top.out, timeoutMs: 120_000 })
+    const spawned = await $.process.run(spawnArgv(launcher, { dir: top.out, title, prompt, keepTools: ['mcp__orchestrator__review'] }), { cwd: top.out, timeoutMs: SPAWN_TIMEOUT_MS })
     const tty = lastLine(spawned.stdout)
     if (spawned.exitCode === 0 && tty.startsWith('/dev/')) return `Reviewer « ${title} » launched in iTerm on ${tty}. Its review record is the ready gate's; nothing more to do here.`
     return `The launcher refused the reviewer (exit ${spawned.exitCode}): ${lastLine(spawned.stderr) || tty || 'no tty printed'}. Nothing was launched another way.`

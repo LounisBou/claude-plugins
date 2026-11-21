@@ -104,7 +104,8 @@ PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or os.path.join(
 # 11-20 and 11-21, 61 s at the slowest. Ninety seconds is that slowest with half again as much
 # room: a slow start is waited for, not refused with its tab closed (§29). A session truly
 # parked is told apart by its screen, read when the wait ends (`unread_refusal`). A refusal
-# comes after up to SPAWN_TIMEOUT + this wait: a caller's own deadline must allow it.
+# comes after SPAWN_TIMEOUT + this wait + the screen read + the close, about 150 s: a caller's
+# deadline is core's SPAWN_TIMEOUT_MS (180 s), held above it by scripts/contracts.test.ts.
 MODE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_MODE_TIMEOUT", "90"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
 # The host's effort levels. A tier may bind one with its model: effort moves token spend

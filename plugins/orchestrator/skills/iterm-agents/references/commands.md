@@ -99,9 +99,10 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # naming both modes, the model, and the two repairs: rebind the tier, or pass
     # --permission-mode acceptEdits for an agent that only edits. A transcript that has
     # not appeared within ORCHESTRATOR_MODE_TIMEOUT (90s) refuses the spawn too, the tab
-    # closed the same way, quoting what the tab showed; the caller's timeout must allow the
-    # 120 s that takes. --no-verify skips it, with the CLI check (but not the promptless
-    # refusal above, which runs before either check and does not depend on --verify).
+    # closed the same way, quoting what the tab showed, about 150 s after the launch: a
+    # caller's timeout is core's SPAWN_TIMEOUT_MS (180 s). --no-verify skips it, with the
+    # CLI check (but not the promptless refusal above, which runs before either check and
+    # does not depend on --verify).
     # writes the prompt to a file under the plugin's state directory, writes the launch
     # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints

@@ -4,6 +4,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import { mount, ROOT_LISTING, type Reply } from './fakes.ts'
+import { SPAWN_TIMEOUT_MS } from '../core.ts'
 
 const ORCH = '/home/op/.claude/plugins/cache/lounisbou/orchestrator/0.49.1-2afa38391c2b'
 const SCRIPT = `${ORCH}/skills/iterm-agents/scripts/iterm-agent.sh`
@@ -51,6 +52,7 @@ test('it runs the seven steps and spawns the resident agent right of the launche
   expect(runs[2]?.argv).toEqual([SCRIPT, 'spawn', '--dir', '/repo', '--title', 'Bugs : demo', '--prompt-file',
     '/home/op/.bugs-bot/demo/agent/startup-prompt.txt', '--right-of', 'self', '--resident', '--keep-tool', 'mcp__bugs-bot'])
   expect(runs[2]?.timeoutMs).toBeGreaterThanOrEqual(60_000)
+  expect(runs[2]?.timeoutMs).toBe(SPAWN_TIMEOUT_MS)
   expect(out.text).toContain('Spawned « Bugs : demo » on /dev/ttys009, launched by Orch: demo [a1b2c3].')
   expect(out.text).toContain('It sits right of this session.')
   expect(out.text).toContain('Verified')

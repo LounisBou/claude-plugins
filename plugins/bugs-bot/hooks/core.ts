@@ -8,9 +8,9 @@
 // The orchestrator release whose launcher knows `spawn --resident`.
 export const MIN_ORCHESTRATOR = '0.46.1'
 
-// How long a spawn may take: the launcher waits up to 30 s for the host CLI on
-// the new tty, and the app itself answers in a few seconds.
-export const SPAWN_TIMEOUT_MS = 120_000
+// How long a spawn may take: core's figure, above the launcher's worst case (a refused spawn:
+// the host CLI's start, the transcript's wait, the screen read and the tab's close).
+export { SPAWN_TIMEOUT_MS } from '../core/orchestration.ts'
 
 // Every other child of the start: the CLI's own commands and the launcher's
 // list, move and verify.
