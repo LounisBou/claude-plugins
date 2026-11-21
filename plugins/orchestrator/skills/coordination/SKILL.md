@@ -190,10 +190,10 @@ operator's.
 
 ## What is the operator's
 
-A merge, an undraft, an approval, a scope, a method, ending another's process or session —
+A merge, an approval, a scope, a method, ending another's process or session —
 asked of you, it is relayed to him verbatim in the round above, under its sender's address,
 and his answer goes back verbatim and dated (`date -u +%FT%TZ`) to the session that asked.
-Merging and undrafting are his by default; where a project's own method decides otherwise, that
+Merging is his by default; where a project's own method decides otherwise, that
 project's orchestrator does not ask you. You never decide it and never offer to. You add no verdict, no summary and no
 recommendation of your own: a fact you read yourself is your own reading, and stays out of a
 relay.

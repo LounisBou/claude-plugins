@@ -57,7 +57,8 @@ export type Gate = {
   // Its base branch, and whether that base is the head branch of another open pull request.
   base?: string
   stacked?: boolean
-  ci: { result: string; failed: string[]; running?: number; skipped?: string[]; unverified?: string[]; total: number }
+  // draft_failed: the engine read that every failed check of a draft fails because it is a draft (its job, or the workflow it calls, reads the draft state).
+  ci: { result: string; failed: string[]; running?: number; skipped?: string[]; unverified?: string[]; total: number; draft_failed?: boolean }
 }
 
 // One file of a head's records directory.
@@ -646,6 +647,22 @@ export function ciUndraft(gate: Gate): boolean {
   const ci = gate.ci
   const passed = (ci.total ?? 0) - (ci.failed ?? []).length - (ci.running ?? 0) - (ci.skipped ?? []).length
   return gate.labels.some((label) => label.toLowerCase() === NOT_READY) && ci.result !== 'SUCCESS' && ci.result !== NO_CI && passed <= 0
+}
+
+// A draft the gate takes out of draft by itself, for the CI the draft state keeps from passing: a CI undraft, and either no check ran
+// (none, or all skipped) or every failed check failed because it is a draft (the engine read it in the workflow). A CI that runs and
+// passes, or fails for a reason of its own, leaves the draft as it is.
+export function gateUndraft(gate: Gate): boolean {
+  if (!ciUndraft(gate)) return false
+  const ci = gate.ci
+  const failed = (ci.failed ?? []).length
+  // A read of the required checks that failed is no evidence the draft state keeps CI from running.
+  return failed === 0 ? (ci.running ?? 0) === 0 && (ci.unverified ?? []).length === 0 : ci.draft_failed === true
+}
+
+// Whether what a pull request misses is CI alone (missingItems names each CI item « CI … »): the only thing a draft gains by leaving draft.
+export function ciOnlyMissing(missing: readonly string[]): boolean {
+  return missing.length > 0 && missing.every((item) => item.startsWith('CI '))
 }
 
 export function carriesReady(gate: Gate): boolean {

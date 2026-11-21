@@ -63,9 +63,8 @@ it. `/github:doctor` then confirms everything is ready.
   `pr-create` opens a
   draft unless the call says otherwise. Opening out of draft (`draft: false`)
   goes through; outside a repository in auto-merge (below), leaving draft
-  (`pr-ready`) is the operator's act on GitHub after their review, and it is asked
-  as any write no rule allows, the readiness gate refusing a pull request whose CI is
-  not green or whose record failed (« Ready pull requests »); a merge
+  (`pr-ready`) is asked as any write no rule allows, the readiness gate refusing a pull request
+  whose CI is not green or whose record failed (« Ready pull requests »); a merge
   (`pr-merge`) is asked outside auto-merge, whatever the rules allow, and runs inside it once
   the gate lets it. An existing
   description is replaced without asking, under the writing rules.
@@ -166,8 +165,7 @@ follows. There, opening a pull request out of draft, `pr-ready`, a merge
 and every other write run without a question, which ends agents held on a
 dialog nobody answers in a repository that merges on its own. A deny rule
 still refuses, an ask from an explicit rule still asks, and the writing
-rules still apply. Elsewhere leaving draft is asked, and every other write
-is asked as before. An absent file
+rules still apply. Elsewhere a write is asked as before. An absent file
 lists no repository; an unreadable or malformed one lists none either and
 says so in one transcript line.
 
@@ -235,8 +233,9 @@ green after the last record is followed by the next read of the gate; the
 orchestrator makes one when its CI watch says green, the call printed on its
 green line.
 
-When the CI does not run on a draft, the pull request leaves draft for it,
-still `Not Ready`, as long as no check of its head has passed. The gate never puts
+A draft that misses only its CI, which the draft state keeps from passing (no check ran, or every failed
+check is one its workflow fails on a draft: `ci.draft_failed`), leaves draft by itself at the gate's next
+read, still `Not Ready`; a CI that runs, or fails for its own reason, leaves it a draft. The gate never puts
 a pull request back to draft: once out of draft, for its CI or by the operator, it stays out, and
 `Ready` lands on it as it stands. That undraft runs in every repository, with one transcript line:
 

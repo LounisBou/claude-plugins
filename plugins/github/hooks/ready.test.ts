@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashPushes, ciUndraft, createdPr, gateReadyLine, missingItems, namesHead, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, touchesRecords, onlyReads, deletes, deletesRecords, postsStatus,
+  bashActs, bashPushes, ciOnlyMissing, ciUndraft, gateUndraft, createdPr, gateReadyLine, missingItems, namesHead, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, touchesRecords, onlyReads, deletes, deletesRecords, postsStatus,
   recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove, stackedCi, supersedes,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -238,6 +238,28 @@ test('a CI undraft is a Not Ready pull request none of whose checks has passed y
   // A check of the head already passed: its CI ran, and a red one is no reason to leave draft.
   expect(ciUndraft(gate({}, { result: 'FAILURE', failed: ['test'], total: 2 }))).toBe(false)
   expect(ciUndraft(gate({}, { result: 'PENDING', running: 1, total: 2 }))).toBe(false)
+})
+
+test('the gate undrafts by itself a draft none of whose checks ran, or whose failures are the draft state\'s own', () => {
+  expect(gateUndraft(gate({}, { result: 'PENDING', total: 0 }))).toBe(true)
+  expect(gateUndraft(gate({}, { result: 'PENDING', skipped: ['test'], total: 1 }))).toBe(true)
+  expect(gateUndraft(gate({}, { result: 'FAILURE', failed: ['wip-check'], total: 1, draft_failed: true }))).toBe(true)
+  // A check running: its CI runs. A failure of its own, a failure the engine did not read as the draft's, a check passed, a green CI, no CI at all, no label.
+  expect(gateUndraft(gate({}, { result: 'PENDING', running: 1, total: 1 }))).toBe(false)
+  expect(gateUndraft(gate({}, { result: 'FAILURE', failed: ['test'], total: 1 }))).toBe(false)
+  expect(gateUndraft(gate({}, { result: 'FAILURE', failed: ['wip-check', 'test'], total: 2, draft_failed: false }))).toBe(false)
+  expect(gateUndraft(gate({}, { result: 'FAILURE', failed: ['wip-check'], total: 2, draft_failed: true }))).toBe(false)
+  expect(gateUndraft(gate({}, { result: 'PENDING', total: 0, unverified: ['required checks unread'] }))).toBe(false)
+  expect(gateUndraft(gate())).toBe(false)
+  expect(gateUndraft(gate({}, { result: 'NONE', total: 0 }))).toBe(false)
+  // The Not Ready label is gateUndraft's own condition; a draft carrying neither label is read as Not Ready where the gate follows it (register.ts undraftForCi).
+  expect(gateUndraft(gate({ labels: [] }, { result: 'PENDING', total: 0 }))).toBe(false)
+})
+
+test('what a pull request misses is CI alone when every item names CI', () => {
+  expect(ciOnlyMissing(['CI failed: wip-check', 'CI still running'])).toBe(true)
+  expect(ciOnlyMissing(['CI failed: wip-check', 'review: no record at 0123456'])).toBe(false)
+  expect(ciOnlyMissing([])).toBe(false)
 })
 
 test('the Bash merges and undrafts are recognised with their repository and pull request', () => {

@@ -32,7 +32,7 @@ import { auditEvent, journalDir } from '../core/learning.ts'
 import { isCatchable, observe, OBSERVED, REFUSED } from './observe.ts'
 import {
   acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
-  carriesReady, ciUndraft, ciUndraftLine, createdPr, durableWaiver, gateHeldAnswer, gateHeldGivenUpLine, gateHeldLine, gateHeldRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
+  carriesReady, ciOnlyMissing, ciUndraft, gateUndraft, ciUndraftLine, createdPr, durableWaiver, gateHeldAnswer, gateHeldGivenUpLine, gateHeldLine, gateHeldRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
@@ -1243,6 +1243,46 @@ async function forgeBringsNothing($: Mod, repo: string, pr: number, head: string
 // exemption to reach the forge. Whoever follows, Ready is held over a Not Ready this machine did not set (`held`: when it may go). act: an explicit
 // act (pr-ready, pr-merge, pr-readiness ready) follows: its hold has no ceiling.
 async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false, unlabelled = false, watch?: Watch, act = false): Promise<Followed> {
+  const followed = await readGate($, repo, pr, known, always, unlabelled, watch, act)
+  return act ? followed : undraftForCi($, repo, pr, followed)
+}
+
+// Pull requests (repo#pr@head) taken out of draft for their CI by this instance: a head the operator put back to draft is not taken out again.
+const undraftedForCi = new Set<string>()
+
+// A draft that misses only its CI, which its draft state keeps from running or passing (gateUndraft), leaves draft for it, still Not Ready, in every
+// repository: no session has to know the undraft or ask for it. What else it misses is the ready guard's, so a draft missing a record stays one.
+async function undraftForCi($: Mod, repo: string, pr: number, followed: Followed): Promise<Followed> {
+  const { gate, missing } = followed
+  if (!gate || !missing || !(followed.draft ?? gate.draft) || gate.state !== 'open' || !ciOnlyMissing(missing)) return followed
+  // A draft carrying neither label is read as Not Ready: leaving draft for its CI puts it on.
+  const labels = followed.labels ?? gate.labels
+  const labelled = labels.some((label) => [READY, NOT_READY].includes(label.toLowerCase()))
+  if (!gateUndraft({ ...gate, labels: labelled ? labels : [...labels, 'Not Ready'] })) return followed
+  const key = flapKey(repo, pr) + '@' + gate.head
+  if (undraftedForCi.has(key)) return followed
+  undraftedForCi.add(key)
+  // The permission rules stand as for the tool's own CI undraft: a deny, or an explicit rule that is no allow, is no write (nobody is there to ask), said once.
+  // A check that cannot be made is no permission.
+  const verdict = await $.tool.check({ tool: TOOL, input: { command: 'pr-ready', args: { pr, 'for-ci': true }, repo } })
+    .catch((err: unknown) => ({ decision: 'deny', rule: undefined, reason: 'the permission check failed: ' + reasonOf(err).trim() }))
+  if (verdict.decision === 'deny' || (verdict.rule && verdict.decision !== 'allow')) {
+    note($, 'github: ' + repo + '#' + pr + ' not taken out of draft for its CI: ' + (verdict.reason || 'a permission rule on pr-ready'))
+    return followed
+  }
+  try {
+    await runGh($, 'pr-ready', { pr, 'for-ci': true }, repo)
+  } catch (err: unknown) {
+    // Said by itself, whatever line the gate has, and tried again at the next read of this head.
+    undraftedForCi.delete(key)
+    note($, 'github: ' + repo + '#' + pr + ' not taken out of draft for its CI: ' + reasonOf(err).trim())
+    return followed
+  }
+  note($, ciUndraftLine(repo, pr))
+  return { ...followed, draft: false }
+}
+
+async function readGate($: Mod, repo: string, pr: number, known?: Gate, always = false, unlabelled = false, watch?: Watch, act = false): Promise<Followed> {
   let gate: Gate
   let missing: string[]
   let excused: Excused
@@ -1866,6 +1906,7 @@ async function reconcileTick($: Mod): Promise<void> {
 async function startReconciler($: Mod): Promise<void> {
   reconciler?.timer?.cancel()
   markersInMemory.clear()
+  undraftedForCi.clear()
   const session = String(await Promise.resolve().then(() => $.session.id()).catch(() => ''))
   const now = await nowMs($)
   const rec: Reconciler = {

@@ -60,8 +60,7 @@ batch, the origin of the bug, or a link of that strength. A follow-up PR, one th
 after this one, is never listed
 in Related PRs. Two PRs never depend on each other. English always. No workflow vocabulary.
 Every PR is opened as a draft and leaves
-draft only for its CI to run or to be merged. Outside auto-merge, leaving draft (a CI undraft aside) is the operator's,
-on GitHub after their review, and a merge needs their explicit word, given through this tool.
+draft only for its CI to run or to be merged. Outside auto-merge, a merge needs the operator's explicit word, given through this tool.
 A deployment needs its repository listed for its environment (`auto-deploy-set`).
 Reviewers are requested only when the operator asks, and never on a draft.
 The description of the operator's own draft PR is published and edited without asking.

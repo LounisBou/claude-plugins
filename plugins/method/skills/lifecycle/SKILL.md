@@ -30,7 +30,7 @@ A pull request is done when the github ready gate puts `Ready` at its head; core
 
 ## Consent
 
-The operator's consent rests on his words quoted with their date. Pushing a branch and opening a draft pull request need none; outside auto-merge, leaving draft and the merge need it.
+The operator's consent rests on his words quoted with their date. Pushing a branch and opening a draft pull request need none; outside auto-merge, the merge needs it.
 
 ## Reports
 

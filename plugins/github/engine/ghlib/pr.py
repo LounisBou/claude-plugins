@@ -304,16 +304,16 @@ def _suite_workflows(owner, name, sha):
     """The workflow of each check suite at a head, {suite id as a string: workflow
     id}, its workflow run, {suite id as a string: run id}, and that run's state,
     {suite id as a string: its conclusion once finished, else its status (_run_state)}, from the Actions
-    runs. (None, None, None) when the call fails: the gate then counts every run rather
-    than guess which belong together."""
+    runs, and the workflow file of each, {suite id as a string: its path}. (None, None, None, None) when the call
+    fails: the gate then counts every run rather than guess which belong together."""
     try:
         data = http.rest("GET", "/repos/%s/%s/actions/runs?head_sha=%s&per_page=100" % (owner, name, sha))
     except errors.GhError as exc:
         print("error: cannot read the Actions runs of %s: %s" % (sha, exc.message), file=sys.stderr)
-        return None, None, None
+        return None, None, None, None
     except OSError as exc:
         print("error: cannot read the Actions runs of %s: %s" % (sha, exc), file=sys.stderr)
-        return None, None, None
+        return None, None, None, None
     placed = [
         run
         for run in (data or {}).get("workflow_runs") or []
@@ -322,7 +322,9 @@ def _suite_workflows(owner, name, sha):
     workflows = {str(run["check_suite_id"]): run["workflow_id"] for run in placed}
     suite_runs = {str(run["check_suite_id"]): run.get("id") for run in placed}
     states = {str(run["check_suite_id"]): _run_state(run) for run in placed}
-    return workflows, suite_runs, states
+    # Only the runs of a pull_request event: a push at the same head names its checks alike, and fails for its own reasons.
+    paths = {str(run["check_suite_id"]): run.get("path") for run in placed if run.get("event") == "pull_request"}
+    return workflows, suite_runs, states, paths
 
 
 _PLAN_REFUSAL = "upgrade to github pro"
@@ -413,14 +415,83 @@ def _no_ci(owner, name, pull, statuses, runs, required, unverified):
         return False
 
 
+_DRAFT_READ = re.compile(r"pull_request\.draft")
+_CALLED_WORKFLOW = re.compile(r"^\s*uses:\s*\./(\.github/workflows/[^\s#'\"]+)", re.M)
+_FAILING = ("failure", "timed_out", "startup_failure", "action_required")
+
+
+def _workflow_text(owner, name, path, sha, texts):
+    """A workflow file at the head, or None when it cannot be read; each is read once."""
+    if path not in texts:
+        try:
+            answer = http.rest("GET", "/repos/%s/%s/contents/%s?ref=%s" % (owner, name, quote(path, safe="/"), sha))
+            raw = answer.get("content") if isinstance(answer, dict) else None
+            texts[path] = base64.b64decode(raw).decode("utf-8") if isinstance(raw, str) else None
+        except (errors.GhError, OSError, ValueError):
+            texts[path] = None
+    return texts[path]
+
+
+def _job_block(text, key):
+    """The lines of the job `key` of a workflow file, under its `jobs:` (its key line to the next line of its level), or None."""
+    lines = text.splitlines()
+    first = next((at for at, line in enumerate(lines) if re.match(r"^jobs:\s*$", line)), len(lines))
+    for at in range(first + 1, len(lines)):
+        found = re.match(r"^(\s+)%s:\s*$" % re.escape(key), lines[at])
+        if found:
+            block = []
+            for after in lines[at + 1:]:
+                if after.strip() and len(after) - len(after.lstrip()) <= len(found.group(1)):
+                    break
+                block.append(after)
+            return "\n".join(block)
+    return None
+
+
+def _draft_failed(owner, name, sha, check_runs, failed, paths):
+    """Whether every failed check of a draft's head fails because it is a draft: its job reads the draft state
+    (github.event.pull_request.draft), or the reusable workflow it calls does. Read from the workflow files, never
+    guessed from a name: a failure whose workflow, job or file cannot be read is a failure of its own."""
+    suites = {}
+    for run in check_runs:
+        if run.get("status") == "completed" and run.get("conclusion") in _FAILING and run.get("name") in failed:
+            suites.setdefault(str((run.get("check_suite") or {}).get("id")), []).append(run.get("name") or "")
+    # Every failure is one of these runs, by name: a status, or a run of another event, that failed is a failure of its own.
+    if not suites or not set(failed) <= {check for names in suites.values() for check in names}:
+        return False
+    texts = {}
+    for suite, names in suites.items():
+        path = (paths or {}).get(suite)
+        text = _workflow_text(owner, name, path, sha, texts) if path else None
+        if text is None:
+            return False
+        for check in names:
+            job, _, called_job = check.partition(" / ")
+            block = _job_block(text, job)
+            if block is None:
+                return False
+            if _DRAFT_READ.search(block):
+                continue
+            called = _CALLED_WORKFLOW.search(block)
+            callee = _workflow_text(owner, name, called.group(1), sha, texts) if called and called_job else None
+            callee_block = _job_block(callee, called_job) if callee else None
+            if not callee_block or not _DRAFT_READ.search(callee_block):
+                return False
+    return True
+
+
 def _gate_ci(owner, name, pull, sha, statuses, runs, reads=None):
     """CI at the head as the ready guard reads it (fmt.gate_ci), the checks the base requires and whether
     the repository has no CI at all read beside it. The gate's own copies on the forge (forge.PREFIX) are no CI."""
     statuses = forge.without_readiness(statuses)
-    workflows, suite_runs, states = _suite_workflows(owner, name, sha)
+    workflows, suite_runs, states, paths = _suite_workflows(owner, name, sha)
     required, unverified = _required_checks(owner, name, _base(pull), reads)
     no_ci = _no_ci(owner, name, pull, statuses, runs, required, unverified)
-    return fmt.gate_ci(statuses, runs, bool(pull.get("draft")), workflows, suite_runs, required, unverified, no_ci, states)
+    ci = fmt.gate_ci(statuses, runs, bool(pull.get("draft")), workflows, suite_runs, required, unverified, no_ci, states)
+    # A draft whose only failures are the draft state's own (a job that fails on a draft): said only then, so the other answers are as they were.
+    if pull.get("draft") and ci["result"] == "FAILURE" and _draft_failed(owner, name, sha, runs, ci["failed"], paths):
+        ci["draft_failed"] = True
+    return ci
 
 
 def _stacked(owner, name, pull, reads):
@@ -455,7 +526,7 @@ def pr_checks(args):
     # The gate's own copies on the forge (forge.PREFIX) are no CI.
     statuses = forge.without_readiness(http.rest("GET", "/repos/%s/%s/commits/%s/status" % (owner, name, sha)))
     runs = _check_runs(owner, name, sha)
-    workflows, suite_runs, states = _suite_workflows(owner, name, sha)
+    workflows, suite_runs, states, _ = _suite_workflows(owner, name, sha)
     required, unverified = _required_checks(owner, name, _base(pull))
     check_runs = runs.get("check_runs", [])
     return {
