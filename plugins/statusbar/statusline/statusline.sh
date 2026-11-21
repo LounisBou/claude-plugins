@@ -284,17 +284,16 @@ fmt_tokens() {
 case ${BASH_SOURCE[0]} in */*) here=${BASH_SOURCE[0]%/*} ;; *) here=. ;; esac
 contract="$here/../core/orchestration.json"
 
-# The orchestrator's data root under its protected root $1: the absolute directory of printable
-# characters, its trailing slashes dropped, that the protected root's data-root file names (its name
-# and version in roots.json, core's parseDataRoot the rule), else $1 itself. Prints the directory.
+# The orchestrator's data root under its protected root $1: the first group of the `dir` the
+# protected root's data-root file names, matched in full by roots.json's `dir_pattern` (its name,
+# version and pattern core's, parseDataRoot the reader), else $1 itself. Prints the directory.
 data_root() {
-  local roots="$here/../core/roots.json" name version dir=''
-  IFS=' ' read -r name version <<<"$(jq -r '"\(.file) \(.file_version)"' "$roots" 2>/dev/null)"
+  local roots="$here/../core/roots.json" name dir=''
+  name=$(jq -r '.file' "$roots" 2>/dev/null)
   case $name in ''|*/*) ;; *)
-    is_number "$version" && dir=$(jq -r -s --argjson v "$version" 'select(length == 1) | .[0]
-      | select(type == "object" and .version == $v and (.dir | type) == "string" and (.dir | startswith("/"))
-               and (.dir | test("[\u0000-\u001f\u007f]") | not))
-      | .dir | sub("/+$"; "") | select(. != "")' "$1/$name" 2>/dev/null) ;;
+    dir=$(jq -r -s --slurpfile r "$roots" '$r[0] as $c | select(length == 1) | .[0]
+      | select(type == "object" and .version == $c.file_version and (.dir | type) == "string")
+      | .dir as $d | first($d | match($c.dir_pattern)) | select(.string == $d) | .captures[0].string' "$1/$name" 2>/dev/null) ;;
   esac
   printf '%s\n' "${dir:-$1}"
 }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { DATA_FILES } from './data.ts'
-import { DATA_ROOT_FILE, DATA_ROOT_VERSION, dataRootFileOf, dataRootOf, parseDataRoot, ROOTS_CONTRACT } from './orchestration.ts'
+import { DATA_ROOT_DIR_PATTERN, DATA_ROOT_FILE, DATA_ROOT_VERSION, dataRootFileOf, dataRootOf, parseDataRoot, ROOTS_CONTRACT } from './orchestration.ts'
 import { moduleDirUnder, orchestratorRoots } from './roots.ts'
 
 const file = (dir: string): string => JSON.stringify({ version: DATA_ROOT_VERSION, dir })
@@ -30,8 +30,8 @@ describe('the data-root file', () => {
     ]) assert.equal(parseDataRoot(text), null, String(text))
   })
 
-  it('is read by the other languages from roots.json: its name and its version', () => {
-    assert.deepEqual(DATA_FILES['roots.json'], { version: 1, file: DATA_ROOT_FILE, file_version: DATA_ROOT_VERSION })
+  it('is read by the other languages from roots.json: its name, its version and the pattern its dir matches', () => {
+    assert.deepEqual(DATA_FILES['roots.json'], { version: 1, file: DATA_ROOT_FILE, file_version: DATA_ROOT_VERSION, dir_pattern: DATA_ROOT_DIR_PATTERN })
     assert.equal(DATA_FILES['roots.json'], ROOTS_CONTRACT)
   })
 

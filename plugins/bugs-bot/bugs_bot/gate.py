@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -30,8 +31,8 @@ def _config_dir(env: Mapping[str, str]) -> Path:
 def _data_root(root: Path) -> Path:
     """Return the data root ``root``'s data-root file names, as core's ``parseDataRoot`` reads it.
 
-    An absolute directory of printable characters, its trailing slashes dropped; else ``root``,
-    for a file absent, unreadable, torn, of another version, or naming no such directory.
+    The first group of its ``dir`` matched in full by roots.json's ``dir_pattern``; else ``root``,
+    for a file absent, unreadable, torn, of another version, or whose ``dir`` the pattern refuses.
     """
     try:
         value = json.loads((root / ROOTS["file"]).read_text(encoding="utf-8"))
@@ -42,10 +43,8 @@ def _data_root(root: Path) -> Path:
     version, directory = value.get("version"), value.get("dir")
     if isinstance(version, bool) or version != ROOTS["file_version"] or not isinstance(directory, str):
         return root
-    trimmed = directory.rstrip("/")
-    if not directory.startswith("/") or not trimmed or any(ord(c) < 0x20 or ord(c) == 0x7F for c in directory):
-        return root
-    return Path(trimmed)
+    match = re.fullmatch(ROOTS["dir_pattern"], directory)
+    return Path(match.group(1)) if match else root
 
 
 def measure_path(env: Mapping[str, str]) -> Path | None:

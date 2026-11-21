@@ -2,5 +2,6 @@
   "$comment": "Generated from packages/core/src by `npm run core`: edit the source, never this copy.",
   "version": 1,
   "file": "data-root.json",
-  "file_version": 1
+  "file_version": 1,
+  "dir_pattern": "^(/[^\\x00-\\x1f\\x7f]*[^/\\x00-\\x1f\\x7f])/*$"
 }

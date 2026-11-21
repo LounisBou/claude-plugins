@@ -25,11 +25,14 @@ export function dataRootFileOf(root: string): string {
 }
 
 /*
- * The directory a data-root file's text names, or null for none: no text, no JSON object, another
- * version, or a `dir` that is not an absolute path of printable characters below the filesystem's
- * root (a control character would split the line a shell reader reads it as). Its trailing slashes
- * are dropped.
+ * What a data-root file's `dir` must be, matched in full: an absolute path of printable characters
+ * below the filesystem's root, its first group the directory with its trailing slashes dropped. A
+ * control character would split the line a shell reader reads it as. The readers in another
+ * language take it from `roots.json`, so the rule is written here alone.
  */
+export const DATA_ROOT_DIR_PATTERN = '^(/[^\\x00-\\x1f\\x7f]*[^/\\x00-\\x1f\\x7f])/*$'
+
+/** The directory a data-root file's text names, or null for none: no text, no JSON object, another version, or a `dir` DATA_ROOT_DIR_PATTERN refuses. */
 export function parseDataRoot(text: string | null | undefined): string | null {
   if (text === null || text === undefined) return null
   let value: unknown
@@ -41,9 +44,8 @@ export function parseDataRoot(text: string | null | undefined): string | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const { version, dir } = value as Record<string, unknown>
   if (version !== DATA_ROOT_VERSION || typeof dir !== 'string') return null
-  const trimmed = dir.replace(/\/+$/, '')
-  if (!dir.startsWith('/') || trimmed === '' || /[\u0000-\u001f\u007f]/.test(dir)) return null
-  return trimmed
+  const match = new RegExp(DATA_ROOT_DIR_PATTERN).exec(dir)
+  return match !== null && match[0] === dir ? match[1] ?? null : null
 }
 
 /** The data root of the protected root `root`, from its data-root file's text as the caller read it (undefined when absent): the one it names, else `root`. */
@@ -51,8 +53,8 @@ export function dataRootOf(root: string, text: string | null | undefined): strin
   return parseDataRoot(text) ?? root
 }
 
-/** The data-root file for the readers in another language (the launcher, `statusline.sh`, `gate.py`): its name under the protected root and its version. */
-export const ROOTS_CONTRACT = { version: 1, file: DATA_ROOT_FILE, file_version: DATA_ROOT_VERSION } as const
+/** The data-root file for the readers in another language (the launcher, `statusline.sh`, `gate.py`): its name under the protected root, its version and the pattern its `dir` matches in full. */
+export const ROOTS_CONTRACT = { version: 1, file: DATA_ROOT_FILE, file_version: DATA_ROOT_VERSION, dir_pattern: DATA_ROOT_DIR_PATTERN } as const
 
 /** The measure files' directory under the module's, one `<session id>.json` each. */
 export const MEASURE_DIR = 'measure'

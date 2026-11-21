@@ -10,7 +10,7 @@ import { DECK_FILE, DECK_VERSION, deckSessions, parseDeck } from '../packages/co
 import { DECK_READER_CONTRACT, DECK_STALE_AFTER_MS } from '../packages/core/src/deck-reader.ts'
 import { parseJournalEvent } from '../packages/core/src/learning.ts'
 import { currentSessionName, NAMES_CONTRACT, parseSessionName, roleOf } from '../packages/core/src/names.ts'
-import { gateTokensOf, measureFilePath, MEASURE_VERSION, ROUND_DIR, type MeasureReading } from '../packages/core/src/orchestration.ts'
+import { DATA_ROOT_FILE, dataRootOf, gateTokensOf, measureFilePath, MEASURE_VERSION, ROUND_DIR, type MeasureReading } from '../packages/core/src/orchestration.ts'
 import { accepts, parsePrRecord } from '../packages/core/src/pr-record.ts'
 import { parseQuota, quotaFilePath, QUOTA_CONTRACT, quotaLine } from '../packages/core/src/quota.ts'
 import { CI_CHECK } from '../packages/core/src/readiness.ts'
@@ -276,6 +276,46 @@ describe('session names: core owns the shape, the launcher reads it', () => {
       ['orchestrator', true, 'Lead: abc'], ['agent', true, 'Hand: ab'], ['coordinator', false, 'Desk: abcd'], [null, false, 'Orch: abc'],
     ])
     rmSync(plugin, { recursive: true, force: true })
+  })
+})
+
+describe('the data root: core owns the rule, the launcher, gate.py and statusline.sh read it as data', () => {
+  // Each case: the data-root file's text (null: no file), and the data root every reader must give.
+  const good = (dir: string): string => JSON.stringify({ version: 1, dir })
+  const CASES: readonly [string | null, string | null][] = [
+    [null, null], ['{', null], ['null', null], ['[]', null], ['"x"', null], ['', null],
+    [JSON.stringify({ version: 2, dir: '/tmp/d' }), null], [JSON.stringify({ version: '1', dir: '/tmp/d' }), null],
+    [JSON.stringify({ version: true, dir: '/tmp/d' }), null], [JSON.stringify({ version: 1 }), null], [JSON.stringify({ version: 1, dir: 5 }), null],
+    [good(''), null], [good('/'), null], [good('//'), null], [good('relative/dir'), null], [good('~/x'), null],
+    [good('/a\nb'), null], [good('/a\n'), null], [good('/a\tb'), null], [good('/a\u007f'), null], [good('/a\u0000b'), null],
+    [`${good('/tmp/x')} ${good('/tmp/y')}`, null],
+    [good('/tmp/shared'), '/tmp/shared'], [good('/tmp/shared/'), '/tmp/shared'], [good('/tmp/a//'), '/tmp/a'],
+    [good('//tmp/a'), '//tmp/a'], [good('/tmp/a b'), '/tmp/a b'], [good('/tmp/é/x'), '/tmp/é/x'],
+  ]
+
+  it('gives the same data root from every reader, for every file', () => {
+    const work = mkdtempSync(join(tmpdir(), 'data-root-'))
+    const roots = CASES.map(([text], i) => {
+      const root = join(work, `p${i}`)
+      mkdirSync(root)
+      if (text !== null) writeFileSync(join(root, DATA_ROOT_FILE), text)
+      return root
+    })
+    const expected = CASES.map(([, dir], i) => dir ?? roots[i]!)
+    const lines = (text: string): string[] => text.split('\n').slice(0, roots.length)
+    const env = { ...process.env, HOME: work, CLAUDE_CONFIG_DIR: work, ORCHESTRATOR_STATE_DIR: work }
+    const core = roots.map(root => dataRootOf(root, (() => { try { return readFileSync(join(root, DATA_ROOT_FILE), 'utf8') } catch { return undefined } })()))
+    const launcher = execFileSync('python3', ['-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); import iterm_agent as m; print("\\n".join(m.data_root_of(r) for r in sys.argv[2:]))',
+      'plugins/orchestrator/skills/iterm-agents/scripts', ...roots], { env, encoding: 'utf8' })
+    const gate = execFileSync('python3', ['-I', '-c', 'import sys; sys.path.insert(0, sys.argv[1]); from pathlib import Path; from bugs_bot.gate import _data_root; print("\\n".join(str(_data_root(Path(r))) for r in sys.argv[2:]))',
+      'plugins/bugs-bot', ...roots], { env, encoding: 'utf8' })
+    const statusline = execFileSync('bash', ['-c', 'here=$1; shift; eval "$(sed -n \'/^data_root() {/,/^}/p\' "$here/statusline.sh")"; for root; do data_root "$root"; done',
+      '_', 'plugins/statusbar/statusline', ...roots], { env, encoding: 'utf8' })
+    assert.deepEqual(core, expected)
+    assert.deepEqual(lines(launcher), expected)
+    assert.deepEqual(lines(gate), expected)
+    assert.deepEqual(lines(statusline), expected)
+    rmSync(work, { recursive: true, force: true })
   })
 })
 

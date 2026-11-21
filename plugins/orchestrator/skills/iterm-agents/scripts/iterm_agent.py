@@ -75,8 +75,8 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "
 
 def data_root_of(root):
     """The data root the protected root `root` places, as core's parseDataRoot reads its file:
-    an absolute directory of printable characters, its trailing slashes dropped; else `root`,
-    for a file absent, unreadable, torn, of another version, or naming no such directory."""
+    the first group of its `dir` matched in full by roots.json's `dir_pattern`; else `root`, for
+    a file absent, unreadable, torn, of another version, or whose `dir` the pattern refuses."""
     try:
         with open(os.path.join(root, ROOTS["file"]), encoding="utf-8") as fh:
             value = json.load(fh)
@@ -87,10 +87,8 @@ def data_root_of(root):
     version, directory = value.get("version"), value.get("dir")
     if isinstance(version, bool) or version != ROOTS["file_version"] or not isinstance(directory, str):
         return root
-    trimmed = directory.rstrip("/")
-    if not directory.startswith("/") or not trimmed or any(ord(c) < 0x20 or ord(c) == 0x7F for c in directory):
-        return root
-    return trimmed
+    match = re.fullmatch(ROOTS["dir_pattern"], directory)
+    return match.group(1) if match else root
 
 
 DATA_DIR = data_root_of(STATE_DIR)
