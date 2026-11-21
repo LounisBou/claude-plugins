@@ -4255,19 +4255,18 @@ check "a closed agent whose last turn is past the hour is refused, a fresh agent
 check "a resume with no transcript is refused, and a resume of no agent or wake is refused" "1|1|1|1" \
   "$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-none >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-none | grep -c 'no transcript for session s-e7-none')|$(e7 "$E7ORCH" --successor --resume s-e7-closed | grep -c "is a wake's or an agent's")|$(e7 "$E7ORCH" --title 'Audit: x' --auditor --resume s-e7-closed >/dev/null 2>&1; echo $?)"
 # An agent's pair is its orchestrator's: a tier, or a model with its effort. The plugin ships
-# the tier efforts the map does not bind (deep xhigh, standard high, light medium), never the
+# the tier efforts the map does not bind (deep medium, standard high, light medium), never the
 # calling orchestrator's own effort; an effort the map binds wins over them.
 E7PMAP="$WORK/e7-pair-map.json"
 printf '{"deep":"a-model","standard":"b-model","light":{"model":"c-model"}}' > "$E7PMAP"
 check "a tier bound without an effort types the shipped tier effort, deep included" "1|1|1|tier standard" \
-  "$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier standard | grep -c -- '--model b-model --effort high')|$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier light | grep -c -- '--model c-model --effort medium')|$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--model a-model --effort xhigh')|$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier standard)" pair_source)"
+  "$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier standard | grep -c -- '--model b-model --effort high')|$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier light | grep -c -- '--model c-model --effort medium')|$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--model a-model --effort medium')|$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier standard)" pair_source)"
 check "a deep agent's pair source is its tier, never the transcript of its orchestrator" "tier deep|tier light" \
   "$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier deep)" pair_source)|$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier light)" pair_source)"
-# An orchestrator that runs at medium spawned its deep agents at medium (the 2026-11-20 incident):
-# the deep tier's shipped effort is xhigh whatever the caller runs at.
-pair_transcript s-e7-med t-model medium
-check "a deep agent runs at xhigh whatever effort its orchestrator runs at" "1|1|0|tier deep" \
-  "$(E7SID=s-e7-med E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--model a-model --effort xhigh')|$(E7SID=s-e7-med E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier standard | grep -c -- '--model b-model --effort high')|$(E7SID=s-e7-med E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--effort medium')|$(e7f "$(E7SID=s-e7-med E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier deep)" pair_source)"
+# The deep tier's shipped effort is medium whatever the caller runs at.
+pair_transcript s-e7-med t-model xhigh
+check "a deep agent runs at medium whatever effort its orchestrator runs at" "1|1|0|tier deep" \
+  "$(E7SID=s-e7-med E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--model a-model --effort medium')|$(E7SID=s-e7-med E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier standard | grep -c -- '--model b-model --effort high')|$(E7SID=s-e7-med E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--effort xhigh')|$(e7f "$(E7SID=s-e7-med E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier deep)" pair_source)"
 check "an effort the map binds wins over the shipped one" "1" \
   "$(E7MAP="$PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--model a-model --effort high')"
 check "an agent's explicit model without an effort is refused" "1|1|0" \

@@ -167,7 +167,7 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # (decision 3 of docs/agent-dispatches.md, dated there). Every tier has one, the deep tier
 # included: an agent never takes its calling orchestrator's effort, which was medium on a deep
 # agent. An effort the map binds wins over it.
-SHIPPED_TIER_EFFORTS = {"deep": "xhigh", "standard": "high", "light": "medium"}
+SHIPPED_TIER_EFFORTS = {"deep": "medium", "standard": "high", "light": "medium"}
 EFFORT_LIST = "low, medium, high, xhigh or max"
 # The session-name shape is core's (names.ts), read here as the data `npm run core` writes beside
 # the plugin's copy of core: the role words, in the order a listing shows them, and the subject's

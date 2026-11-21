@@ -67,8 +67,8 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
     `--successor`; nothing is a default, and a pair that cannot be read refuses the launch.
   - An agent's pair is its orchestrator's: a tier, or `--model` with `--effort`. A tier the
     map binds a model alone runs at the effort the plugin ships for it, `standard` high and
-    `light` medium (choices 4 and 5), `deep` xhigh (the orchestrator's ruling of 2026-11-20:
-    a deep agent had run at its orchestrator's medium). An effort the map binds wins over
+    `light` medium (choices 4 and 5), `deep` medium (the operator's order of 2026-11-21,
+    over-consumption: deep at xhigh cost twice the medium). An effort the map binds wins over
     them. A model without an effort, and an agent
     with neither a tier nor a model, are refused.
   - An opened orchestrator types the model and the effort its order names, or neither. A
