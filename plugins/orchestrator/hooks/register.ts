@@ -15,6 +15,7 @@ import { register as registerUnattended } from './unattended.ts'
 import { register as registerLedger } from './ledger.ts'
 import { register as registerGateRecheck } from './gate-recheck.ts'
 import { register as registerSupervision, registerWake, registerPaneTool, registerStartState } from './supervision.ts'
+import { register as registerPermissionWait } from './permission-wait.ts'
 import { register as registerTodo, registerSurface as registerTodoSurface } from './todo.ts'
 import { register as registerQuestion, registerSettle } from './question.ts'
 import { register as registerReview } from './review.ts'
@@ -40,6 +41,8 @@ export function register(on: On<Mod>): void {
     })
   // First: the audit trail reads what every later handler answered, after it decided.
   registerAudit(on)
+  // Ahead of every hook that answers a call without its tool (the guards, the module's own tools): a dialog's call ends here whatever answers it.
+  registerPermissionWait(on)
   registerGauge(on)
   // Before the guards and the supervision: the turn's end reads the declared wait it hands on.
   registerWait(on)

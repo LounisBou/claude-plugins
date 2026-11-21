@@ -2538,6 +2538,17 @@ export function entersRound(role: string | null): boolean {
   return role === 'orchestrator' || role === 'coordinator' || role === 'auditor'
 }
 
+// The session's name, host pid and tty, with its row: the row's (the measure's walk named it), else
+// a walk of its own when the row names no role, or an agent without its tty.
+export async function selfOf($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<{ row: SessionRow | null; name: string | null; pid: string | null; tty: string | null }> {
+  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
+  if (row?.role && (row.role !== 'agent' || row.tty)) return { row, name: row.name, pid: row.pid ?? null, tty: row.tty ?? null }
+  const walked = await walkWithinBound($, sessionId)
+  return walked.known
+    ? { row, name: walked.name, pid: walked.pid ?? row?.pid ?? null, tty: walked.tty ?? row?.tty ?? null }
+    : { row, name: row?.name ?? null, pid: row?.pid ?? null, tty: row?.tty ?? null }
+}
+
 // A turn's end, read and reported. The role comes from the session's row (the measure's
 // walk named it), else from a walk of its own. An orchestrator's machine line goes to the
 // coordinator: an entry of its round when it runs on this machine, a message when it runs
@@ -2561,18 +2572,7 @@ export function entersRound(role: string | null): boolean {
 export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer',
   declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }, outbox: Outgoing[] = []): Promise<void> {
   const sessionId = await $.session.id()
-  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
-  let name = row?.name ?? null
-  let pid = row?.pid ?? null
-  let tty = row?.tty ?? null
-  if (!row?.role || (row.role === 'agent' && !tty)) {
-    const walked = await walkWithinBound($, sessionId)
-    if (walked.known) {
-      name = walked.name
-      pid = walked.pid ?? pid
-      tty = walked.tty ?? tty
-    }
-  }
+  const { row, name, pid, tty } = await selfOf($, sessionId)
   const role = roleOf(name)
   const orchestrating = entersRound(role)
   if (!name || (!orchestrating && role !== 'agent')) return

@@ -58,9 +58,7 @@ words.
    your agents without waiting for him; never hand him a line to paste. What reaches him is
    an arbitration, through `orchestrator:decide`; a report to him is a few lines unless he asks more.
 6. **Read how an agent works, not only what it says.** The module relays its questions,
-   blockers, deliveries, gate crossings and long busy turns: act on each; one that needs no action gets no reply. An agent's question or stop is
-   yours to answer; only the operator's own goes to him. An agent the module says is busy past
-   its bound: read its tree and judge it — progress or churn, how near its gate, the work queued behind it. Real load on a shared machine is stopped at once. Once a pull request merges, wherever it was merged, the module's line on it names what its agent still holds, and the open rows whose blocker or note names it: tell each one's agent in the same turn. A conflict with the base or a check failed at the head (named) is told the same way, once per head: tell that agent to rebase it (`references/rebase.md`) or fix the check.
+   blockers, dialogs, deliveries, gate crossings and long busy turns: act on each; one that needs no action gets no reply. An agent's question or stop is yours; the operator's own, or a dialog whose cause you cannot remove, is his. An agent busy past its bound: read its tree and judge it — progress or churn, how near its gate, the work queued behind it. Real load on a shared machine is stopped at once. Once a pull request merges, wherever it was merged, the module's line names what its agent still holds and the open rows whose blocker or note names it: tell each one's agent in the same turn. A conflict with the base or a check failed at the head (named) is told the same way, once per head: tell that agent to rebase (`references/rebase.md`) or fix the check.
 7. **The fill is measured, never estimated.** Read `/orchestrator:status` before you
    dispatch. An agent past the gate gets no new phase: rotate it.
 8. **Kill what you start, delete what you build**; what the launcher did not close is proved with `ps` and `ls`. No date or hour is typed from memory: paste
