@@ -5300,6 +5300,32 @@ check "a tmux client of a server that is not a home session is listed as an ordi
   "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-client.txt" "$py" -c "$STUB
 c=S('C','/dev/ttys812','✳ Work')
 print(asyncio.run(ia.list_rows(App([W([T('1',[c],[])])])))[0])" "$ROOT/skills/iterm-agents/scripts")"
+# iTerm2 gives no tty for a session it has not attached, or one that a restart has just
+# recreated: the listing crashed on `None.replace` and every row of the list went with it
+# (row 449). Such a session is listed with `-` for its tty, its name unreadable, and the
+# rest of the list still prints; reading a process table for no tty finds no process.
+NOTTY='
+import asyncio, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+class S:
+    def __init__(s, sid, tty, name): s.session_id=sid; s.tty=tty; s.name=name
+    async def async_get_variable(s, k): return {"tty": s.tty, "autoName": s.name}.get(k)
+class T:
+    def __init__(s, tid, sessions): s.tab_id=tid; s.sessions=sessions; s.all_sessions=sessions
+class W:
+    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
+class App:
+    def __init__(s, wins): s.windows=wins
+'
+check "a session with no tty is listed with a dash, and the rest of the list still prints" \
+  "w1/t1 | - | untitled | (name unreadable)|w1/t1 | /dev/ttys802 | visible two | (host default)" \
+  "$(ORCHESTRATOR_SELF_TTY=/dev/ttys999 ORCHESTRATOR_PS_TABLE="$WORK/ps-stub.txt" "$py" -c "$NOTTY
+rows=asyncio.run(ia.list_rows(App([W([T('1',[S('A',None,'untitled'),S('B','/dev/ttys802','visible two')])])])))
+print('|'.join(rows))" "$ROOT/skills/iterm-agents/scripts")"
+check "the process table is not read for a missing tty: no rows, no name, no raise" "[]|" \
+  "$("$py" -c "$NOTTY
+print('%s|%s' % (ia.ps_rows(None), ia.session_name_on(None) or ''))" "$ROOT/skills/iterm-agents/scripts")"
 # The caller is not always IN the app. A session running in another terminal — a multiplexer,
 # a plain shell, a remote one — still has a tty, `self_tty` still resolves it, and the app has
 # no session on it. The chain is the app's and cannot be kept for a caller the app does not
