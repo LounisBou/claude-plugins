@@ -1,6 +1,7 @@
 // The review readers' contract (the orchestrator's `orchestrator:lens` agent): the description its
 // launcher gives it, which names its lens, pull request and range as facts, and the finding lines it
-// answers, `[severity] file:line — claim — evidence`. Each finding has a stable id over its lens,
+// answers, `[severity] file:line — claim — evidence`, or `file:line — claim — evidence — severity` with the
+// severity last. Each finding has a stable id over its lens,
 // file, line and claim, which the orchestrator's module writes at the end of the reader's line, the
 // review index carries, and the review's decision on it names. Read by the orchestrator (the ids, the
 // decisions) and telemetry (a reader's counts by severity and its ids, at its end). Pure: no node module.
@@ -37,6 +38,12 @@ const FINDING = /^\s*(?:[-*]\s+)?\[(critical|important|minor)\]\s+`?([^\s`:]+):(
  * contract's shape is tried first, so a line it reads keeps its reading, and so its id.
  */
 const LENIENT = /^\s*(?:[-*]\s+)?\**(?:\[(critical|important|minor)\]|(critical|important|minor)(?=[\s|*]))\**\s*\|?\s*`?(?=[^\s`:|()]*[./])([^\s`:|()]+):~?(\d+)(?:[-,/]\s?\d+)*`?(?:\s+and\s+[^\s—|(]+|\s*\([^)\n]*\))*\s+([—|])\s+(.*)$/i
+/*
+ * A severity last: `file:line — claim — … — severity`, the last ` — `-separated field exactly one of the three
+ * words (any case, in brackets, backticks or bold), the location as the lenient form reads it. Tried after
+ * both leading forms, so a line they read keeps its reading, and so its id.
+ */
+const TRAILING = /^\s*(?:[-*]\s+)?`?(?=[^\s`:|()]*[./])([^\s`:|()]+):~?(\d+)(?:[-,/]\s?\d+)*`?(?:\s+and\s+[^\s—|(]+|\s*\([^)\n]*\))*\s+—\s+(.+?)\s+—\s+[[`*]*(critical|important|minor)[\]`*]*\s*$/i
 const ID = /\b([a-z0-9][a-z0-9-]{0,29}):([0-9a-f]{10})\b/
 const MARK = / — id [a-z0-9][a-z0-9-]{0,29}:[0-9a-f]{10}$/
 
@@ -65,7 +72,12 @@ export function parseLensFindings(text: string): LensFinding[] {
     const line = raw.replace(MARK, '')
     const strict = FINDING.exec(line)
     const m = strict ?? LENIENT.exec(line)
-    if (m === null) continue
+    if (m === null) {
+      const t = TRAILING.exec(line)
+      const claim = t?.[3]?.trim() ?? ''
+      if (t !== null && claim !== '') found.push({ severity: (t[4] ?? '').toLowerCase() as LensSeverity, file: t[1] ?? '', line: Number(t[2]), claim })
+      continue
+    }
     // The strict form's groups are severity, file, line, claim; the lenient form's severity is in the first or the second.
     const [severity, file, no, rest] = strict === null ? [m[1] ?? m[2], m[3], m[4], m[6]] : [m[1], m[2], m[3], m[4]]
     // A lenient claim ends where the separator that opened it comes again (a pipe form is cut at its next pipe, a dash form at its next dash).
