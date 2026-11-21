@@ -56,7 +56,7 @@
 # is `<owner/name>#<n>`, the repository the watch resolved (the target's, else `--repo`, else the
 # clone's): a bare number from the wrong checkout watches that clone's pull request of the same
 # number, and its line says so (a line said before any repository is known, `unread`, has the number):
-#   ci-watch: green <pr> <head> next: mcp__github__gh pr-gate {"pr": <pr>} [on <owner/repo>]
+#   ci-watch: green <pr> <head> next: mcp__github__gh pr-gate {"pr": <n>} on <owner/repo>
 #                                                               0  every workflow run of the head completed and
 #                                                                  the gate reads SUCCESS; with auto-merge: no
 #                                                                  merge within the bound

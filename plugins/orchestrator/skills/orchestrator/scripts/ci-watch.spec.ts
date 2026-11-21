@@ -187,6 +187,8 @@ test('the command line: a number, then known options; the bounds are numbers', (
   assert.equal(bad([]), `unread - ${USAGE}|5`)
   assert.equal(bad(['x7']), `unread - ${USAGE}|5`)
   assert.equal(bad(['7', '--repo']), 'unread 7 --repo needs a value|5')
+  assert.equal(bad(['7', '--repo', 'o/r', '--interval', '0']), 'unread o/r#7 the interval is a positive number of seconds|5')
+  assert.equal(bad(['7', '--bogus', 'x', '--repo', 'o/r']), `unread o/r#7 unknown argument: --bogus (${USAGE})|5`)
   assert.equal(bad(['7', '--bogus', 'x']), `unread 7 unknown argument: --bogus (${USAGE})|5`)
   assert.equal(bad(['7', '--interval', '0']), 'unread 7 the interval is a positive number of seconds|5')
   assert.equal(bad(['7'], { CI_WATCH_REGISTER_WAIT: '1m' }), 'unread 7 CI_WATCH_REGISTER_WAIT is a number of seconds|5')

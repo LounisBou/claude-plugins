@@ -66,7 +66,12 @@ export function parseArgs(argv: readonly string[], env: Env): Options {
   if (target === undefined) throw unread('', USAGE)
   const pr = target.pr
   let repo = target.repo
-  const who = (): string => repo === undefined ? pr : `${repo}#${pr}`
+  // The repository the command line names, wherever its `--repo` stands: a refusal names it as soon as it is known.
+  const who = (): string => {
+    const at = rest.indexOf('--repo')
+    const named = repo ?? (at === -1 ? undefined : rest[at + 1])
+    return named === undefined ? pr : `${named}#${pr}`
+  }
   let interval = '30'
   let base = true
   let workflows: string[] = []
