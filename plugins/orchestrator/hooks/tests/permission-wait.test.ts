@@ -24,7 +24,7 @@ const ORCH = 'Orch: belt'
 const FILE = '/w/outside/notes.txt'
 const REASON = 'Permission is needed to write to /w/outside/notes.txt, which is a sensitive file.'
 const LINE = `[module] ${AGENT} waits on a permission dialog: Write ${FILE} — Permission is needed to write to /w/outside/notes.txt, which is a sensitive file; the operator answers it in its tab (ttys005)`
-const REMINDER = LINE.replace('waits on a permission dialog:', 'still waits on a permission dialog after 2h00:')
+const REMINDER = `[module] ${AGENT}: the call that opened a permission dialog 2h00 ago has not ended: Write ${FILE} — Permission is needed to write to /w/outside/notes.txt, which is a sensitive file; its dialog may still wait in the operator's tab (ttys005), or the call runs on`
 
 // Lets the relay the hook left running finish: its reads and its send answer at once here.
 const settled = () => new Promise(resolve => setTimeout(resolve, 0))
@@ -117,7 +117,7 @@ test('the line names the agent, the tool, the target and the reason, and the tab
   expect(dialogLine(AGENT, DIALOG, '/dev/ttys005')).toBe(LINE)
   expect(dialogLine(AGENT, { ...DIALOG, reason: null }, null)).toBe(`[module] ${AGENT} waits on a permission dialog: Write ${FILE}; the operator answers it in its tab`)
   expect(dialogLine(AGENT, { ...DIALOG, target: '' }, null, true))
-    .toBe(`[module] ${AGENT} still waits on a permission dialog after 2h00: Write — Permission is needed to write to /w/outside/notes.txt, which is a sensitive file; the operator answers it in its tab`)
+    .toBe(`[module] ${AGENT}: the call that opened a permission dialog 2h00 ago has not ended: Write — Permission is needed to write to /w/outside/notes.txt, which is a sensitive file; its dialog may still wait in the operator's tab, or the call runs on`)
 })
 
 test('a text past its room is cut between words, so a secret in it is kept whole or left out', () => {
@@ -347,6 +347,34 @@ test('a dialog still open past the busy bound is reminded once; one answered bef
   await g.timers[0]!.run()
   await settled()
   expect(g.sent.length).toBe(1)
+})
+
+test('an approved call still running at the bound is reminded as a call not ended, never as a dialog that still waits', async () => {
+  // The host raises nothing at the operator's answer: an approved call runs inside its tool.call, whose end comes after the run.
+  const hooks = mounted()
+  const f = fake()
+  await hooks.check(f, CHECK, ASK)
+  await hooks.request(f, REQUEST)
+  await settled()
+  await f.timers[0]!.run()
+  await settled()
+  const reminder = f.sent[1]!.text
+  expect(reminder).toBe(REMINDER)
+  expect(reminder.includes('still waits')).toBe(false)
+  expect(reminder.endsWith('or the call runs on')).toBe(true)
+})
+
+test('a dialog once reminded is forgotten: a later request of its arguments, whose call end was missed, is told again', async () => {
+  const hooks = mounted()
+  const f = fake()
+  await hooks.request(f, REQUEST)
+  await settled()
+  await f.timers[0]!.run()
+  await settled()
+  await hooks.request(f, REQUEST)
+  await settled()
+  expect(f.sent.length).toBe(3)
+  expect(f.sent[2]!.text).toBe(f.sent[0]!.text)
 })
 
 test('a dialog no announced ask matches sends its line without a reason, and is reminded like any other', async () => {

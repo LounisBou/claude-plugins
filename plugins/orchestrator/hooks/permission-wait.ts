@@ -3,8 +3,10 @@
 // raises the classic PermissionRequest as it is about to show the dialog; the ask `tool.check`
 // announced for the call, bound to it by core's rule (permission-ask.ts), gives the call's id and the
 // host's reason; the call's end (`tool.call`), or its loop's turn end, is the dialog's answer at the
-// latest. One line per dialog, and one reminder when it is still open past the busy bound
-// (stop-gate.ts NOTICE_TTL_MS). The line is a side effect: the hook hands back what the chain beneath
+// latest. One line per dialog, and one reminder when its call has not ended past the busy bound
+// (stop-gate.ts NOTICE_TTL_MS): the host raises nothing at the operator's answer, and an approved call
+// runs inside the same `tool.call`, so the reminder says the dialog may still wait or the call runs on,
+// and the dialog is forgotten once reminded. The line is a side effect: the hook hands back what the chain beneath
 // answered at once, and the relay runs after it, bounded and never awaited, so no read or send of it
 // holds the dialog. Only an agent's dialog is told: any other role's is the operator's own tab.
 import { NOTICE_TTL_MS, isDegradedPass, withDeadline } from './stop-gate.ts'
@@ -109,15 +111,18 @@ export function settleLoop(memory: DialogMemory, agent: string | undefined): voi
   memory.open = memory.open.filter(d => d.agent !== agent)
 }
 
-// The line the orchestrator is sent; `reminder` for the one past the busy bound.
+// The line the orchestrator is sent; `reminder` for the one past the busy bound, which says only what
+// is known then: the call has not ended, its dialog still open or the call running once approved.
 export function dialogLine(agent: string, dialog: Dialog, tty: string | null, reminder = false): string {
   const hours = Math.floor(NOTICE_TTL_MS / 3_600_000)
   const minutes = Math.floor((NOTICE_TTL_MS % 3_600_000) / 60_000)
-  const waits = reminder ? `still waits on a permission dialog after ${hours}h${String(minutes).padStart(2, '0')}` : 'waits on a permission dialog'
   const what = dialog.target === '' ? dialog.tool : `${dialog.tool} ${cutWords(dialog.target, TARGET_ROOM)}`
   const reason = dialog.reason === null ? '' : ` — ${cutWords(dialog.reason.replace(/\s+/g, ' ').trim().replace(/\.$/, ''), REASON_ROOM)}`
   const tab = tty === null ? '' : ` (${tty.replace(/^\/dev\//, '')})`
-  return `[module] ${agent} ${waits}: ${what}${reason}; the operator answers it in its tab${tab}`
+  if (reminder) {
+    return `[module] ${agent}: the call that opened a permission dialog ${hours}h${String(minutes).padStart(2, '0')} ago has not ended: ${what}${reason}; its dialog may still wait in the operator's tab${tab}, or the call runs on`
+  }
+  return `[module] ${agent} waits on a permission dialog: ${what}${reason}; the operator answers it in its tab${tab}`
 }
 
 type Relay = Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>
@@ -138,6 +143,8 @@ async function tell($: Relay, memory: DialogMemory, dialog: Dialog, bound: numbe
       $.clock.after(NOTICE_TTL_MS, () => {
         if (!due || !memory.open.includes(dialog)) return
         due = false
+        // Reminded, forgotten: a call whose end the module missed holds no later request of the same arguments.
+        memory.open = memory.open.filter(d => d !== dialog)
         void tell($, memory, dialog, bound, true).catch(err => logLine($, 'supervision', `permission: ${messageOf(err)}`))
       })
     }
