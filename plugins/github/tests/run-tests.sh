@@ -2352,6 +2352,28 @@ gh8 pr-gate 12 >/dev/null
 check "pr-gate never reads the default branch as a stacked base, nor asks" "0" \
   "$(grep -c 'state=open&head=' "$F8/sent.jsonl")"
 
+# A draft whose only failures are the draft state's own: the gate says so (ci.draft_failed), from the workflow files, never from a name.
+DRAFT8='{"number":12,"state":"open","draft":true,"commits":3,"head":{"sha":"'$GATEHEAD'","ref":"feat"},"labels":[{"name":"Not Ready"}]}'
+WIPRUN8='{"id":1,"name":"wip-check / wip-check","status":"completed","conclusion":"failure","check_suite":{"id":501}}'
+APPRUN8='{"id":2,"name":"tests","status":"completed","conclusion":"failure","check_suite":{"id":501}}'
+ACTIONS8='{"workflow_runs":[{"id":901,"check_suite_id":501,"workflow_id":7,"path":".github/workflows/app.yml","status":"completed","conclusion":"failure"}]}'
+workflow8() { printf '{"content":"%s"}' "$(printf '%s' "$2" | base64 | tr -d '\n')" > "$F8/GET_repos_acme_thing_contents_.github_workflows_$1__ref=$GATEHEAD.json"; }
+draft8() {
+  gate8 "$1" "$DRAFT8" '{"statuses":[]}' '{"total_count":2,"check_runs":['"$2"']}' "$ACTIONS8"
+  workflow8 app.yml "$(printf 'jobs:\n  wip-check:\n    uses: ./.github/workflows/wip-check.yml\n  tests:\n    needs: wip-check\n    runs-on: ubuntu\n')"
+  workflow8 wip-check.yml "$(printf 'jobs:\n  wip-check:\n    steps:\n      - run: if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then exit 1; fi\n')"
+}
+draftflag8() { gh8 pr-gate 12 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["ci"].get("draft_failed", False))'; }
+draft8 draftcheck "$WIPRUN8"
+check "pr-gate says the failures of a draft are the draft's own when the called workflow reads the draft state" "True" "$(draftflag8)"
+draft8 draftreal "$WIPRUN8,$APPRUN8"
+check "pr-gate does not say it when another check of the draft failed for its own reason" "False" "$(draftflag8)"
+draft8 draftunread "$WIPRUN8"
+rm "$F8/GET_repos_acme_thing_contents_.github_workflows_wip-check.yml__ref=$GATEHEAD.json"
+check "pr-gate does not say it when the workflow a failure rests on cannot be read" "False" "$(draftflag8)"
+gate8 notdraft "$(printf '%s' "$DRAFT8" | sed 's/"draft":true/"draft":false/')" '{"statuses":[]}' '{"total_count":1,"check_runs":['"$WIPRUN8"']}' "$ACTIONS8"
+check "pr-gate says nothing of it on a pull request out of draft" "False" "$(draftflag8)"
+
 # The base branch and its rules are read once per computation, by the stacked test and the required checks alike.
 gate8 base-once "$STACK8" '{"statuses":[]}' '{"check_runs":[]}'
 printf '%s' '[{"number":11,"head":{"ref":"feat-a"}}]' > "$F8/GET_repos_acme_thing_pulls__state=open&head=acme%3Afeat-a&per_page=100.json"
