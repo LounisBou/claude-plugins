@@ -2,9 +2,9 @@
 """Post one copy of what the ready gate reads, a record, the check plan or the exemption, as a commit status at a
 pull request's head, as REFERENCE.md « Records » describes it.
 
-The one writer of the readiness/ statuses: the hooks module runs it after a record is written and from its
-reconciler, which copies the statuses the other machine posted back into this one's records. It prints the context
-posted, and exits 2 on a usage error and 1 when GitHub refuses, with one error: line.
+The one writer of the readiness/ statuses: the hooks module runs it before a record is written, and its reconciler
+for the check plan and the exemption (light_ci.py posts its tests record through the same ghlib.forge). It prints the
+context posted, and exits 2 on a usage error and 1 when GitHub refuses, with one error: line naming its HTTP status.
 """
 
 import argparse
@@ -61,7 +61,7 @@ def main(argv):
     try:
         forge.post(owner, name, args.head, args.what, args.state, args.description)
     except errors.GhError as exc:
-        print("error: cannot post %s%s at %s: %s" % (forge.PREFIX, args.what, args.head[:7], exc.message), file=sys.stderr)
+        print("error: cannot post %s%s at %s: %s" % (forge.PREFIX, args.what, args.head[:7], forge.refusal(exc)), file=sys.stderr)
         return 1
     except OSError as exc:
         print("error: cannot post %s%s at %s: %s" % (forge.PREFIX, args.what, args.head[:7], exc), file=sys.stderr)

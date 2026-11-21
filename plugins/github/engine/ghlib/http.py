@@ -68,12 +68,15 @@ def _raise_for(status, data):
     # would still reach message.lower() below and raise.
     message = (data.get("message") or "request failed") if isinstance(data, dict) else "request failed"
     if status == 429 or (status in (401, 403) and "rate limit" in message.lower()):
-        raise errors.RateLimited(message)
-    if status in (401, 403):
-        raise errors.AuthError(message)
-    if status == 404:
-        raise errors.NotFound(message)
-    raise errors.ApiError("%s (HTTP %s)" % (message, status))
+        exc = errors.RateLimited(message)
+    elif status in (401, 403):
+        exc = errors.AuthError(message)
+    elif status == 404:
+        exc = errors.NotFound(message)
+    else:
+        exc = errors.ApiError("%s (HTTP %s)" % (message, status))
+    exc.status = status
+    raise exc
 
 
 def _send(method, url, body, headers):

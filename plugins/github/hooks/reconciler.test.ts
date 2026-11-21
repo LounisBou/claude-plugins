@@ -626,6 +626,11 @@ const reviewAt = (at: string, result = 'pass', producer = 'orchestrator') => JSO
 })
 const status = (context: string, state: string, description: string, creator = 'operator'): Status => ({ context, state, description, creator })
 const PLAN = '/data/github/check-plans/acme/app/7.json'
+// A check plan of this machine, the vehicle of the reconciler's posts: a record's status is posted by its tool, never here.
+const planOf = (pr: number, repo = 'acme/app') => '/data/github/check-plans/' + repo + '/' + pr + '.json'
+const planAt = (at: string, pr = 7, repo = 'acme/app') => JSON.stringify({
+  v: 1, repo, pr, e2e: { need: 'required', reason: '' }, norms: { need: 'none', reason: 'docs' }, review: { need: 'required', reason: '', max: 2 }, at,
+})
 const pullWith = (statuses: Status[]): Pull[] => [{ number: 7, draft: false, head: HEAD, base: 'main', labels: [], rollup: 'SUCCESS', statuses }]
 
 test('a record the other machine posted is copied here before the gate reads it', async ($, on) => {
@@ -653,25 +658,22 @@ test('a listing that names no account copies nothing either way', async ($, on) 
   expect([state.copied, state.posted]).toEqual([[], []])
 })
 
-test('a record this machine holds newer than the forge\'s is posted over it, once', async ($, on) => {
+test('a record this machine holds newer than the forge\'s is not posted over it: its tool posted it before writing it', async ($, on) => {
   const pulls = pullWith([status('readiness/review', 'success', 'v1 2026-11-19T08:00:00Z pass orchestrator')])
   const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z', 'fail') }
   const { clock, state } = await started($, on, { pulls, files, viewer: 'operator' })
-  await beat(clock)
-  expect(state.posted).toEqual(['review a v1 2026-11-19T09:00:00Z fail orchestrator'])
-  expect(state.copied).toEqual([])
-  await beat(clock, 3)
-  expect(state.posted).toHaveLength(1)
+  await beat(clock, 4)
+  expect([state.posted, state.copied]).toEqual([[], []])
 })
 
 test('a post refused is said once and tried again after RETRY_MS', async ($, on) => {
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const files = { [PLAN]: planAt('2026-11-19T09:00:00Z') }
   const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
   state.postFails = true
   await beat(clock)
   await beat(clock, RETRY_MS / TICK_MS - 1)
   expect(state.posted).toHaveLength(1)
-  expect(state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7'))).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not post readiness/plan of acme/app#7'))).toHaveLength(1)
   state.postFails = false
   await beat(clock)
   expect(state.posted).toHaveLength(2)
@@ -681,12 +683,12 @@ test('a post refused because the repository is archived stops the reconciler on 
   const second = { number: 8, draft: false, head: 'd'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
   const pulls = [...pullWith([]), second]
   const files = {
-    [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z'),
-    [RECORDS + '/acme/app/' + second.head + '/review.a.json']: JSON.stringify({ v: 1, repo: 'acme/app', pr: 8, head: second.head, kind: 'review', result: 'pass', producer: 'orchestrator', detail: '', session: 's', at: '2026-11-19T09:00:00Z' }),
+    [PLAN]: planAt('2026-11-19T09:00:00Z'),
+    [planOf(8)]: planAt('2026-11-19T09:00:00Z', 8),
   }
   const { clock, state } = await started($, on, { pulls, files, viewer: 'operator' })
   state.postFails = true
-  state.postRefusal = 'error: cannot post readiness/review at aaaaaaa: Repository was archived so is read-only.'
+  state.postRefusal = 'error: cannot post readiness/plan at aaaaaaa: Repository was archived so is read-only.'
   await beat(clock)
   // The first refusal ends the beat for the repository: the second pull request is not posted, nor a gate read.
   expect(state.posted).toHaveLength(1)
@@ -704,20 +706,19 @@ test('a post refused because the repository is archived stops the reconciler on 
 })
 
 test('two posts of one pull request that keep failing are each said once, over many retries', async ($, on) => {
-  const plan = JSON.stringify({ v: 1, repo: 'acme/app', pr: 7, e2e: { need: 'none', reason: 'docs' }, norms: { need: 'required', reason: '' }, review: { need: 'required', reason: '', max: 2 }, at: '2026-11-19T09:00:00Z' })
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z'), [PLAN]: plan }
+  const files = { [PLAN]: planAt('2026-11-19T09:00:00Z'), ['/data/github/e2e-exempt/acme/app.json']: JSON.stringify({ v: 1, repo: 'acme/app', exempt: true, paths: ['docs/**'], labels: [], detail: '« docs only », 2026-11-19', session: 's', at: '2026-11-19T09:00:00Z' }) }
   const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
   state.postFails = true
   await beat(clock, 3 * RETRY_MS / TICK_MS + 1)
-  // Each retry posts again (review and plan), and says nothing new.
+  // Each retry posts again (plan and exemption), and says nothing new.
   expect(state.posted.length).toBeGreaterThanOrEqual(6)
-  expect(state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7'))).toHaveLength(1)
   expect(state.said.filter((line) => line.includes('could not post readiness/plan of acme/app#7'))).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not post readiness/exemption of acme/app#7'))).toHaveLength(1)
 })
 
 test('a failure that recovers is said again when it fails again, though another failure keeps speaking at every beat', async ($, on) => {
   const other = { number: 9, draft: false, head: 'e'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const files = { [PLAN]: planAt('2026-11-19T09:00:00Z') }
   const { clock, state, put } = await started($, on, { pulls: pullWith([]), other: [other], files, viewer: 'operator' })
   // acme/other fails to list at every beat (the edge marker wakes each listing), acme/app's post fails, goes through, then fails again.
   state.panelFails = 'gh: HTTP 502'
@@ -727,15 +728,15 @@ test('a failure that recovers is said again when it fails again, though another 
     put(EDGE, '', T0 + n * TICK_MS - 1)
     await beat(clock)
   }
-  const posting = (n: number) => state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7')).length === n
+  const posting = (n: number) => state.said.filter((line) => line.includes('could not post readiness/plan of acme/app#7')).length === n
   for (let n = 1; n <= RETRY_MS / TICK_MS + 1; n++) await edge(n)
   expect(posting(1)).toBe(true)
   state.postFails = false
   const first = RETRY_MS / TICK_MS + 2
   for (let n = first; n < first + RETRY_MS / TICK_MS; n++) await edge(n)
   const posted = state.posted.length
-  // A newer record of this machine is due on the forge, and its post is refused again, as before.
-  put(RECORDS + '/acme/app/' + HEAD + '/review.b.json', reviewAt('2026-11-19T09:30:00Z'), T0 + 40 * TICK_MS)
+  // A newer plan of this machine is due on the forge, and its post is refused again, as before.
+  put(PLAN, planAt('2026-11-19T09:30:00Z'), T0 + 40 * TICK_MS)
   state.postFails = true
   await edge(first + RETRY_MS / TICK_MS)
   expect(state.posted.length).toBeGreaterThan(posted)
@@ -744,7 +745,7 @@ test('a failure that recovers is said again when it fails again, though another 
 })
 
 test('a repository the forge lists as archived is left alone: no post, no gate, no label, no second listing, said once', async ($, on) => {
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const files = { [PLAN]: planAt('2026-11-19T09:00:00Z') }
   const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
   state.archived = true
   await beat(clock, 3 * RETRY_MS / TICK_MS)
@@ -759,12 +760,12 @@ test('a repository the forge lists as archived is left alone: no post, no gate, 
 })
 
 test('the posts a repository had waiting are not tried again once the forge lists it as archived, said once', async ($, on) => {
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const files = { [PLAN]: planAt('2026-11-19T09:00:00Z') }
   const { clock, state, put } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
   state.postFails = true
   await beat(clock)
   expect(state.posted).toHaveLength(1)
-  expect(state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7'))).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not post readiness/plan of acme/app#7'))).toHaveLength(1)
   // The repository is archived meanwhile: the edge marker wakes a listing, which says so.
   const gates = count(state.runs, 'pr-gate')
   state.archived = true
@@ -782,8 +783,8 @@ test('the posts a repository had waiting are not tried again once the forge list
 test('the other repositories go on when the forge lists one as archived: still listed, still posted to', async ($, on) => {
   const other = { number: 9, draft: false, head: 'e'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
   const files = {
-    [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z'),
-    [RECORDS + '/acme/other/' + other.head + '/review.a.json']: JSON.stringify({ v: 1, repo: 'acme/other', pr: 9, head: other.head, kind: 'review', result: 'pass', producer: 'orchestrator', detail: '', session: 's', at: '2026-11-19T09:00:00Z' }),
+    [PLAN]: planAt('2026-11-19T09:00:00Z'),
+    [planOf(9, 'acme/other')]: planAt('2026-11-19T09:00:00Z', 9, 'acme/other'),
   }
   const { clock, state } = await started($, on, { pulls: pullWith([]), other: [other], files, viewer: 'operator' })
   state.archived = true
@@ -796,7 +797,7 @@ test('the other repositories go on when the forge lists one as archived: still l
 })
 
 test('a repository found archived stays left alone after the session restarts, its line unsaid again', async ($, on) => {
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const files = { [PLAN]: planAt('2026-11-19T09:00:00Z') }
   const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
   state.archived = true
   await beat(clock)
@@ -808,40 +809,40 @@ test('a repository found archived stays left alone after the session restarts, i
 })
 
 test('a repository found archived by a refused post leaves no failing marker for the tools of the sessions', async ($, on) => {
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const files = { [PLAN]: planAt('2026-11-19T09:00:00Z') }
   const { clock, state, files: written } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
   state.postFails = true
-  state.postRefusal = 'error: cannot post readiness/review at aaaaaaa: Repository was archived so is read-only.'
+  state.postRefusal = 'error: cannot post readiness/plan at aaaaaaa: Repository was archived so is read-only.'
   await beat(clock, 3)
   expect(written.has(FAILING)).toBe(false)
 })
 
 test('a failure said before the session restarts (resume, clear, compact) is not said again', async ($, on) => {
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const files = { [PLAN]: planAt('2026-11-19T09:00:00Z') }
   const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
   state.postFails = true
   await beat(clock)
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await beat(clock, 2 * RETRY_MS / TICK_MS)
   expect(state.posted.length).toBeGreaterThanOrEqual(2)
-  expect(state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7'))).toHaveLength(1)
+  expect(state.said.filter((line) => line.includes('could not post readiness/plan of acme/app#7'))).toHaveLength(1)
 })
 
 test('a post failing another way is said again, once', async ($, on) => {
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const files = { [PLAN]: planAt('2026-11-19T09:00:00Z') }
   const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
   state.postFails = true
   await beat(clock, RETRY_MS / TICK_MS + 1)
   state.postRefusal = 'error: cannot post: HTTP 502'
   await beat(clock, 2 * RETRY_MS / TICK_MS)
-  const said = state.said.filter((line) => line.includes('could not post readiness/review of acme/app#7'))
+  const said = state.said.filter((line) => line.includes('could not post readiness/plan of acme/app#7'))
   expect(said).toHaveLength(2)
   expect(said[0]).toContain('HTTP 403')
   expect(said[1]).toContain('HTTP 502')
 })
 
 test('a refusal that only names "archived" is no archive: the post is tried again after RETRY_MS', async ($, on) => {
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z') }
+  const files = { [PLAN]: planAt('2026-11-19T09:00:00Z') }
   const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
   state.postFails = true
   state.postRefusal = 'error: HTTP 502 from the proxy of archived-mirror.example'
@@ -853,13 +854,13 @@ test('a refusal that only names "archived" is no archive: the post is tried agai
 test('the other repositories go on when one is archived: still listed, still posted to', async ($, on) => {
   const other = { number: 9, draft: false, head: 'e'.repeat(40), base: 'main', labels: [] as string[], rollup: 'SUCCESS', statuses: [] as Status[] }
   const files = {
-    [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt('2026-11-19T09:00:00Z'),
-    [RECORDS + '/acme/other/' + other.head + '/review.a.json']: JSON.stringify({ v: 1, repo: 'acme/other', pr: 9, head: other.head, kind: 'review', result: 'pass', producer: 'orchestrator', detail: '', session: 's', at: '2026-11-19T09:00:00Z' }),
+    [PLAN]: planAt('2026-11-19T09:00:00Z'),
+    [planOf(9, 'acme/other')]: planAt('2026-11-19T09:00:00Z', 9, 'acme/other'),
   }
   const { clock, state } = await started($, on, { pulls: pullWith([]), other: [other], files, viewer: 'operator' })
   state.postFails = true
   state.postFailsRepo = 'acme/app'
-  state.postRefusal = 'error: cannot post readiness/review at aaaaaaa: Repository was archived so is read-only.'
+  state.postRefusal = 'error: cannot post readiness/plan at aaaaaaa: Repository was archived so is read-only.'
   await beat(clock)
   expect(state.postedRepos.sort()).toEqual(['acme/app', 'acme/other'])
   state.listedRepos.length = 0
@@ -872,8 +873,7 @@ test('no more than POSTS_PER_TICK statuses are posted at one beat, the others at
   const numbers = Array.from({ length: POSTS_PER_TICK + 2 }, (_, i) => i + 1)
   const headOf = (n: number) => n.toString(16).padStart(40, 'c')
   const pulls = numbers.map((number) => ({ number, draft: false, head: headOf(number), base: 'main', labels: [], rollup: 'SUCCESS', statuses: [] }))
-  const files = Object.fromEntries(numbers.map((number) => [RECORDS + '/acme/app/' + headOf(number) + '/review.a.json',
-    JSON.stringify({ v: 1, repo: 'acme/app', pr: number, head: headOf(number), kind: 'review', result: 'pass', producer: 'orchestrator', detail: '', session: 's', at: '2026-11-19T09:00:00Z' })]))
+  const files = Object.fromEntries(numbers.map((number) => [planOf(number), planAt('2026-11-19T09:00:00Z', number)]))
   const { clock, state } = await started($, on, { pulls, files, viewer: 'operator' })
   await beat(clock)
   expect(state.posted).toHaveLength(POSTS_PER_TICK)
@@ -897,14 +897,10 @@ test('this machine\'s check plan is posted at a head where the forge lacks it', 
   expect(state.posted).toEqual(['plan a v1 2026-11-19T09:00:00Z e2e=none norms=required review=required/2'])
 })
 
-test('a record this machine just wrote, left to its tool at the first listing, is posted at a later beat', async ($, on) => {
-  // Written at the first beat's instant: that listing leaves it to the tool, whose post failed.
-  const files = { [RECORDS + '/acme/app/' + HEAD + '/review.a.json']: reviewAt(new Date(T0 + TICK_MS).toISOString().replace(/\.\d+Z$/, 'Z')) }
-  const { clock, state } = await started($, on, { pulls: pullWith([]), files, viewer: 'operator' })
+test('a plan this machine just wrote is posted at the first listing, left to no tool', async ($, on) => {
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files: { [PLAN]: planAt(new Date(T0 + TICK_MS).toISOString().replace(/\.\d+Z$/, 'Z')) }, viewer: 'operator' })
   await beat(clock)
-  expect(state.posted).toEqual([])
-  await beat(clock, 4)
-  expect(state.posted).toEqual(['review a v1 2026-11-19T10:01:00Z pass orchestrator'])
+  expect(state.posted).toEqual(['plan a v1 2026-11-19T10:01:00Z e2e=required norms=none review=required/2'])
 })
 
 const EXEMPTION = '/data/github/e2e-exempt/acme/app.json'
@@ -970,7 +966,7 @@ test('a label write that fails counts no undo: the label is put back once the wr
   expect(state.said.filter((line) => line.includes('put back'))).toHaveLength(0)
 })
 
-// A record this machine wrote at the first beat's instant, which that beat's listing finds younger than SETTLE_MS.
+// A record this machine wrote at the first beat's instant, its status posted by its tool before it was written.
 const FRESH = new Date(T0 + TICK_MS).toISOString().replace(/\.\d+Z$/, 'Z')
 const freshRecord = (kind: string, result: string) => ({
   [RECORDS + '/acme/app/' + HEAD + '/' + kind + '.a.json']:
@@ -978,39 +974,21 @@ const freshRecord = (kind: string, result: string) => ({
 })
 const readyPull = (labels: string[], rollup = 'SUCCESS'): Pull[] => [{ number: 7, draft: false, head: HEAD, base: 'main', labels, rollup, statuses: [] }]
 
-test('a fail written here reaches the forge before the label moves to Not Ready, though it is younger than SETTLE_MS', async ($, on) => {
+test('a fail written here moves the label to Not Ready at the first beat, the reconciler posting nothing and holding nothing', async ($, on) => {
   const files = { ...freshRecord('review', 'fail'), ...freshRecord('e2e', 'pass') }
   const { clock, state } = await started($, on, { pulls: readyPull(['Ready']), files, viewer: 'operator' })
   await beat(clock)
-  expect(state.labelled).toEqual(['7 not-ready'])
-  expect(state.order.indexOf('post review failure')).toBeGreaterThanOrEqual(0)
-  expect(state.order.indexOf('post review failure')).toBeLessThan(state.order.indexOf('label not-ready'))
+  expect([state.order, state.posted]).toEqual([['label not-ready'], []])
 })
 
-test('a fail whose post is refused holds the move to Not Ready, the post tried again after RETRY_MS and the label moved once it reached the forge', async ($, on) => {
-  const { clock, state } = await started($, on, { pulls: readyPull(['Ready']), files: freshRecord('review', 'fail'), viewer: 'operator' })
-  state.postFails = true
-  await beat(clock)
-  await beat(clock, RETRY_MS / TICK_MS - 1)
-  expect(state.posted).toHaveLength(1)
-  expect(state.labelled).toEqual([])
-  expect(count(state.runs, 'pr-gate')).toBe(1)
-  state.postFails = false
-  await beat(clock)
-  expect(state.order).toEqual(['post review failure', 'label not-ready'])
-})
-
-test('a pass left to its tool holds the move to Ready until it is posted, and the move follows the post', async ($, on) => {
+test('a pass written here moves the label to Ready at the first beat, the reconciler posting nothing and holding nothing', async ($, on) => {
   const files = { ...freshRecord('review', 'pass'), ...freshRecord('e2e', 'pass') }
   const { clock, state } = await started($, on, { pulls: readyPull([]), files, viewer: 'operator' })
   await beat(clock)
-  expect(state.labelled).toEqual([])
-  expect(state.posted).toEqual([])
-  await beat(clock)
-  expect(state.order).toEqual(['post review success', 'post e2e success', 'label ready'])
+  expect([state.order, state.posted]).toEqual([['label ready'], []])
 })
 
-test('a pass still left to its tool holds no move to Not Ready', async ($, on) => {
+test('a pass written here holds no move to Not Ready', async ($, on) => {
   const { clock, state } = await started($, on, { pulls: readyPull(['Ready'], 'PENDING'), files: freshRecord('review', 'pass'), viewer: 'operator' })
   await beat(clock)
   expect(state.order).toEqual(['label not-ready'])
@@ -1070,13 +1048,13 @@ test('a Not Ready this machine did not set stays while the forge only holds what
 })
 
 test('a post the forge refuses for good holds the label no longer than PUBLISH_WAIT_MS, and the move then goes with a line saying so', async ($, on) => {
-  const { clock, state } = await started($, on, { pulls: readyPull(['Ready']), files: freshRecord('review', 'fail'), viewer: 'operator' })
+  const { clock, state } = await started($, on, { pulls: readyPull([]), files: { ...passingRecords(), [PLAN]: planAt('2026-11-19T09:00:00Z') }, viewer: 'operator' })
   state.postFails = true
   await beat(clock, PUBLISH_WAIT_MS / TICK_MS - 1)
   expect(state.labelled).toEqual([])
   await beat(clock, 2)
-  expect(state.labelled).toEqual(['7 not-ready'])
-  expect(state.said.filter((line) => line.includes('no longer waits for readiness/review'))).toHaveLength(1)
+  expect(state.labelled).toEqual(['7 ready'])
+  expect(state.said.filter((line) => line.includes('no longer waits for readiness/plan'))).toHaveLength(1)
 })
 
 test('the listing is kept for the tools of the sessions once the forge\'s statuses are imported, not before', async ($, on) => {
@@ -1110,13 +1088,15 @@ test('a listing that cannot be kept is said once, and this machine\'s own gate s
 })
 
 test('records that cannot be read keep what the head waited to post: the move still waits for it', async ($, on) => {
-  const { clock, state, put } = await started($, on, { pulls: readyPull(['Ready']), files: freshRecord('review', 'fail'), viewer: 'operator' })
+  const records = passingRecords()
+  const { clock, state, put } = await started($, on, { pulls: readyPull([]), files: { ...records, [PLAN]: planAt('2026-11-19T09:00:00Z') }, viewer: 'operator' })
   state.postFails = true
   await beat(clock)
   expect(state.posted).toHaveLength(1)
   // The records directory cannot be listed at the next sync, and a record changed: the head is read again, the gate reads it fine.
   state.listFails = RECORDS + '/acme/app/' + HEAD
-  put(RECORDS + '/acme/app/' + HEAD + '/review.a.json', freshRecord('review', 'fail')[RECORDS + '/acme/app/' + HEAD + '/review.a.json'] ?? '', T0 + 5 * TICK_MS)
+  const [review, text] = Object.entries(records).find(([path]) => path.includes('/review.')) ?? ['', '']
+  put(review, text, T0 + 5 * TICK_MS)
   await beat(clock)
   expect(state.said.filter((line) => line.includes('could not read the records of acme/app#7'))).toHaveLength(1)
   expect(count(state.runs, 'pr-gate')).toBeGreaterThan(1)
@@ -1124,7 +1104,7 @@ test('records that cannot be read keep what the head waited to post: the move st
 })
 
 test('a post the forge refuses does not hold back the kept listing: what the forge holds was imported', async ($, on) => {
-  const { clock, state, files } = await started($, on, { pulls: readyPull(['Ready']), files: freshRecord('review', 'fail'), viewer: 'operator' })
+  const { clock, state, files } = await started($, on, { pulls: readyPull(['Ready']), files: { [PLAN]: planAt('2026-11-19T09:00:00Z') }, viewer: 'operator' })
   state.postFails = true
   await beat(clock)
   expect(state.posted).toHaveLength(1)

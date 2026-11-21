@@ -45,6 +45,13 @@ def problem(name, state, description):
     return None
 
 
+def refusal(exc):
+    """Why GitHub refused a post: its HTTP status, when it answered one, and its message."""
+    if exc.status is None or "(HTTP %s)" % exc.status in exc.message:
+        return exc.message
+    return "HTTP %s: %s" % (exc.status, exc.message)
+
+
 def post(owner, name, sha, what, state, description):
     """Post the status that copies `what` at the commit `sha`; GitHub's answer."""
     return http.rest(

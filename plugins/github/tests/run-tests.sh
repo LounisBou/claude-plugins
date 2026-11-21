@@ -2941,6 +2941,10 @@ for at in 2026-11-19 2026-11-19T10:00:00.123Z 2026-13-01T10:00:00Z "2026-11-19 1
 done
 check "record.py imports nothing outside the standard library" "" \
   "$(grep -E '^(import|from) ' "$RECORD" | grep -vE '^(import|from) (argparse|datetime|json|os|re|sys|tempfile)( |$)')"
+out=$(rm -rf "$WORK/cfgrec3"; env CLAUDE_CONFIG_DIR="$WORK/cfgrec3" python3 "$RECORD" --repo acme/thing --pr 12 --head "$HEAD40" --kind review --result fail --producer pr-review --at 2026-11-19T10:00:00Z --status)
+check "record.py --status prints the status that copies the record on the forge, and writes nothing" \
+  '{"description": "v1 2026-11-19T10:00:00Z fail pr-review", "state": "failure", "what": "review"}|no' \
+  "$out|$([ -e "$WORK/cfgrec3/pr-records" ] && echo yes || echo no)"
 
 
 echo "== forge statuses =="
@@ -2973,6 +2977,11 @@ for case in \
 done
 check_status "forge_status.py refuses a description longer than GitHub keeps with exit 2" 2 fs --what review --state success --description "$long"
 check "forge_status.py posts nothing on a usage error" "no" "$([ -e "$FF/sent.jsonl" ] && echo yes || echo no)"
+printf '%s' '{"__status": 403, "message": "Resource not accessible by integration"}' > "$FF/POST_repos_acme_thing_statuses_$HEAD40.json"
+check "forge_status.py names the HTTP status and the message of a refusal" \
+  "1|error: cannot post readiness/review at 0123456: HTTP 403: Resource not accessible by integration" \
+  "$(fs --what review --state success --description "v1 2026-11-19T10:00:00Z pass x" >/dev/null 2>"$FF/err"; echo "$?|$(cat "$FF/err")")"
+rm -f "$FF/POST_repos_acme_thing_statuses_$HEAD40.json" "$FF/err"
 
 echo "== light CI =="
 
@@ -3086,6 +3095,28 @@ mv "$LC/cfg/pr-records" "$LC/cfg/pr-records.kept"; : > "$LC/cfg/pr-records"
 check "light_ci run exits 1 and says so when its record cannot be written" "1 1" \
   "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'error: cannot write the tests record' "$LC/err")")"
 rm "$LC/cfg/pr-records"; mv "$LC/cfg/pr-records.kept" "$LC/cfg/pr-records"
+# The record's status reaches the forge before its file: a post refused writes nothing; one taken finds no file yet.
+n=$(lccount)
+printf '%s' '{"__status": 403, "message": "Resource not accessible by integration"}' > "$LC/fix/POST_repos_acme_thing_statuses_$LCHEAD.json"
+sleep 1
+check "light_ci run whose status the forge refuses writes nothing and names the HTTP status" "1 1 $n" \
+  "$(lcrun >/dev/null 2>"$LC/err"; echo "$? $(grep -c 'cannot post the tests record to the forge, nothing recorded: HTTP 403: Resource not accessible by integration' "$LC/err") $(lccount)")"
+rm -f "$LC/fix/POST_repos_acme_thing_statuses_$LCHEAD.json"
+check "light_ci run posts the tests record's status before its file exists, then writes it" "0 False True readiness/tests success" \
+  "$(cd "$LC/co" && env -u CLAUDE_CODE_SESSION_ID GH_FIXTURES="$LC/fix" GH_TOKEN=x CLAUDE_CONFIG_DIR="$LC/cfg" python3 -c '
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import light_ci
+seen = []
+real = light_ci.forge.post
+def post(owner, name, sha, what, state, description):
+    stamp = description.split(" ")[1].replace("-", "").replace(":", "")
+    path = os.path.join(sys.argv[2], "tests.%s.light-ci.json" % stamp)
+    seen.extend([path, os.path.exists(path), "readiness/" + what, state])
+    return real(owner, name, sha, what, state, description)
+light_ci.forge.post = post
+code = light_ci.main(["run", "--pr", "12", "--repo", "acme/thing", "--session", "s-1"])
+print(code, seen[1], os.path.exists(seen[0]), seen[2], seen[3])' "$ROOT/engine" "$LC/cfg/pr-records/acme/thing/$LCHEAD" 2>&1 | tail -1)"
 check_status "light_ci run refuses a pull request number of 0 with exit 2" 2 lc run --pr 0 --repo acme/thing
 check "light_ci.py imports nothing outside the standard library and the engine" "" \
   "$(grep -E '^(import|from) ' "$LIGHT" | grep -vE '^(import|from) (argparse|json|os|re|signal|subprocess|sys|tempfile|time|record|ghlib)( |$)')"

@@ -4,7 +4,7 @@
 run --pr N: from a clean checkout of the pull request's head, runs the repository's
 `prepare` then `command` (argument lists, no shell, each under its timeout) as its
 project file declares them, and writes the tests record of the command's exit code at
-that head (record.py, producer light-ci). status: what the project file holds; with no file,
+that head (record.py, producer light-ci), once its status is on the forge. status: what the project file holds; with no file,
 the repository has no light CI.
 
 The project file is ${CLAUDE_CONFIG_DIR:-$HOME/.claude}/light-ci/<owner>-<name>.json:
@@ -29,7 +29,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import record  # noqa: E402
-from ghlib import errors, http, repo  # noqa: E402
+from ghlib import errors, forge, http, repo  # noqa: E402
 
 PRODUCER = record.SCRIPTED["producer"]
 KIND = record.SCRIPTED["kind"]
@@ -276,9 +276,21 @@ def run(args):
     fields = argparse.Namespace(repo=nwo, pr=args.pr, head=head, kind=KIND, result=result, producer=PRODUCER,
                                 detail=detail, session=session)
     try:
-        written = record.write(record.validate(fields))
-    except (record.UsageError, OSError) as exc:
+        tests = record.validate(fields)
+    except record.UsageError as exc:
         raise Failure("cannot write the tests record: %s" % exc)
+    # Its status reaches the forge before the record is written: the other machine reads it there.
+    status = record.status_of(tests)
+    try:
+        forge.post(owner, name, head, status["what"], status["state"], status["description"])
+    except errors.GhError as exc:
+        raise Failure("cannot post the tests record to the forge, nothing recorded: %s" % forge.refusal(exc))
+    except OSError as exc:
+        raise Failure("cannot post the tests record to the forge, nothing recorded: %s" % exc)
+    try:
+        written = record.write(tests)
+    except OSError as exc:
+        raise Failure("cannot write the tests record (its status is on the forge): %s" % exc)
     print("tests %s at %s of %s#%d: %s; output %s; record %s" % (result, head[:7], nwo, args.pr, detail, log_path, written))
     return 0
 

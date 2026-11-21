@@ -946,7 +946,7 @@ export function deletesRecords(line: string, root?: string): boolean {
   return touches && deletes(line, names)
 }
 
-export const STATUS_REFUSAL = 'github: commit statuses are posted by the github module alone (engine/forge_status.py, after a record'
+export const STATUS_REFUSAL = 'github: commit statuses are posted by the github module alone (engine/forge_status.py, before a record'
   + ' is written and from its reconciler): the readiness/ copies of the records are its own, and any other status reads as CI.'
 
 // A commit status's write path, `…/statuses/<sha>`; the reads are `…/commits/<ref>/status(es)`, with no slash after.

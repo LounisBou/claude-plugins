@@ -1,11 +1,11 @@
 // What the reconciler copies between the machine and the forge at a head: the newer side wins, for each record kind,
-// the check plan and the exemption, and only the operator's own statuses are read.
+// the check plan and the exemption, a record's status posted by its tool alone, and only the operator's own statuses are read.
 import { expect, test } from 'claude-code/testing'
 import type { ForgeStatus } from '../core/forge-status.ts'
 import { parsePrRecord, type PrRecord } from '../core/pr-record.ts'
 import { parsePlan, type CheckPlan } from './check-plan.ts'
 import { parseExemption, type Exemption } from './e2e-scope.ts'
-import { AHEAD_MS, exemptionBody, exemptionFromBody, forgeSync, planBody, planFromBody, SETTLE_MS, type ForgeSides } from './forge-sync.ts'
+import { AHEAD_MS, exemptionBody, exemptionFromBody, forgeSync, planBody, planFromBody, type ForgeSides } from './forge-sync.ts'
 
 const HEAD = 'a'.repeat(40)
 const T = '2026-11-19T10:00:00Z'
@@ -32,13 +32,12 @@ const sides = (over: Partial<ForgeSides> = {}): ForgeSides => ({
   repo: 'acme/app', statuses: [], viewer: 'operator', records: [], plan: undefined, exemption: undefined, listedAt: LISTED, ...over,
 })
 
-test('a record the forge holds newer than the machine is imported, one the machine holds newer is posted', () => {
+test('a record the forge holds newer than the machine is imported; one the machine holds newer is not posted, its tool posted it', () => {
   const fail = status('readiness/review', 'failure', 'v1 ' + LATER + ' fail orchestrator')
   expect(forgeSync(sides({ statuses: [fail], records: [record()] })).records).toEqual([{ kind: 'review', result: 'fail', producer: 'orchestrator', at: LATER }])
   const older = status('readiness/review', 'failure', 'v1 ' + T + ' fail orchestrator')
-  const synced = forgeSync(sides({ statuses: [older], records: [record({ at: LATER })] }))
-  expect(synced.records).toEqual([])
-  expect(synced.posts).toEqual([{ name: 'review', state: 'success', description: 'v1 ' + LATER + ' pass orchestrator' }])
+  expect(forgeSync(sides({ statuses: [older], records: [record({ at: LATER })] }))).toEqual({ records: [], posts: [], unposted: [] })
+  expect(forgeSync(sides({ records: [record()] }))).toEqual({ records: [], posts: [], unposted: [] })
 })
 
 test('the same record on both sides is neither imported nor posted, and the newest of a kind is the one compared', () => {
@@ -46,48 +45,25 @@ test('the same record on both sides is neither imported nor posted, and the newe
   expect(forgeSync(sides({ statuses: [same], records: [record({ at: LATER }), record({ result: 'fail' })] }))).toEqual({ records: [], posts: [], unposted: [] })
 })
 
-test('two records of one second with different results: the failure wins on both machines, so they end on the same one', () => {
-  // The machine holds a pass, the forge a fail: the fail is imported.
+test('two records of one second with different results: the forge\'s failure is imported over a pass, its pass never over a failure', () => {
   const fail = status('readiness/review', 'failure', 'v1 ' + T + ' fail orchestrator')
   expect(forgeSync(sides({ statuses: [fail], records: [record()] })).records).toEqual([{ kind: 'review', result: 'fail', producer: 'orchestrator', at: T }])
-  // The machine holds a fail, the forge a pass: the fail is posted over it.
   const pass = status('readiness/review', 'success', 'v1 ' + T + ' pass orchestrator')
-  const synced = forgeSync(sides({ statuses: [pass], records: [record({ result: 'fail' })] }))
-  expect([synced.records, synced.posts]).toEqual([[], [{ name: 'review', state: 'failure', description: 'v1 ' + T + ' fail orchestrator' }]])
-  // Once the forge holds the fail, neither side moves.
+  expect(forgeSync(sides({ statuses: [pass], records: [record({ result: 'fail' })] }))).toEqual({ records: [], posts: [], unposted: [] })
   expect(forgeSync(sides({ statuses: [fail], records: [record({ result: 'fail' })] }))).toEqual({ records: [], posts: [], unposted: [] })
 })
 
 test('of two local records of one second the failure is the one compared with the forge', () => {
-  const pass = status('readiness/review', 'success', 'v1 ' + T + ' pass orchestrator')
+  const fail = status('readiness/review', 'failure', 'v1 ' + T + ' fail orchestrator')
   const both = [record({ producer: 'one' }), record({ result: 'fail', producer: 'two' })]
-  const there = forgeSync(sides({ statuses: [pass], records: both })).posts
-  expect(there).toEqual([{ name: 'review', state: 'failure', description: 'v1 ' + T + ' fail two' }])
-  expect(forgeSync(sides({ statuses: [pass], records: both.reverse() })).posts).toEqual(there)
+  expect(forgeSync(sides({ statuses: [fail], records: both })).records).toEqual([])
+  expect(forgeSync(sides({ statuses: [fail], records: both.reverse() })).records).toEqual([])
 })
 
-test('a record the machine just wrote is left to its tool for a beat before the reconciler posts it', () => {
-  const fresh = new Date(LISTED - SETTLE_MS + 1000).toISOString().replace(/\.\d+Z$/, 'Z')
-  expect(forgeSync(sides({ records: [record({ at: fresh })] })).posts).toEqual([])
-  expect(forgeSync(sides({ records: [record()] })).posts.map((post) => post.name)).toEqual(['review'])
-})
-
-test('a copy left to its tool says so, that the reconciler reads the head again at the next beat', () => {
-  const fresh = new Date(LISTED - SETTLE_MS + 1000).toISOString().replace(/\.\d+Z$/, 'Z')
-  expect(forgeSync(sides({ records: [record({ at: fresh })] })).waiting).toBe(true)
-  expect(forgeSync(sides({ plan: plan(fresh) })).waiting).toBe(true)
-  expect(forgeSync(sides({ records: [record()] })).waiting).toBeUndefined()
-})
-
-test('a failure the machine just wrote is posted at once, never left to its tool; the passes left are named as deferred', () => {
-  const fresh = new Date(LISTED - SETTLE_MS + 1000).toISOString().replace(/\.\d+Z$/, 'Z')
-  const failed = forgeSync(sides({ records: [record({ at: fresh, result: 'fail' })] }))
-  expect([failed.posts.map((post) => post.state), failed.waiting, failed.deferred]).toEqual([['failure'], undefined, undefined])
-  const passed = forgeSync(sides({ records: [record({ at: fresh })], plan: plan(fresh) }))
-  expect([passed.posts, passed.deferred?.map((post) => post.name)]).toEqual([[], ['review', 'plan']])
-  const exempted = forgeSync(sides({ exemption: exemption({ at: fresh }) }))
-  expect([exempted.posts, exempted.deferred?.map((post) => post.name), exempted.waiting]).toEqual([[], ['exemption'], true])
-  expect(forgeSync(sides({ records: [record()] })).deferred).toBeUndefined()
+test('a plan or an exemption the machine just wrote is posted at once; a record, its status posted by its tool, never', () => {
+  const fresh = new Date(LISTED - 1000).toISOString().replace(/\.\d+Z$/, 'Z')
+  const sync = forgeSync(sides({ records: [record({ at: fresh }), record({ at: fresh, kind: 'norms', result: 'fail' })], plan: plan(fresh), exemption: exemption({ at: fresh }) }))
+  expect(sync.posts.map((post) => post.name)).toEqual(['plan', 'exemption'])
 })
 
 test('a status dated ahead of the listing is not imported, and said', () => {
@@ -109,8 +85,8 @@ test('a status another account posted, or none of the gate\'s, copies nothing; w
   expect(forgeSync(sides({ statuses: [forged] })).records).toEqual([])
   const mine = status('readiness/review', 'success', 'v1 ' + LATER + ' pass orchestrator')
   expect(forgeSync(sides({ statuses: [mine], viewer: '' })).records).toEqual([])
-  // Untrusted, the forge holds nothing: the machine's record is posted over it.
-  expect(forgeSync(sides({ statuses: [forged], records: [record()] })).posts.map((post) => post.name)).toEqual(['review'])
+  // Untrusted, the forge holds nothing to import over the machine's record, and nothing is posted over it.
+  expect(forgeSync(sides({ statuses: [forged], records: [record()] }))).toEqual({ records: [], posts: [], unposted: [] })
 })
 
 test('the plan travels as its needs, the reasons the forge does not keep read as a copy\'s', () => {

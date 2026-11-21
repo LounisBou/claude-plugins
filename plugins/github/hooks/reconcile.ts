@@ -24,7 +24,7 @@ export const FLAP_UNDONE = 3
  */
 export const FOREIGN_WAIT_MS = 2 * TICK_MS
 /**
- * A label move waits for the copies of the head's records to reach the forge at most this long (the first post, one retry):
+ * A move to Ready waits for the copies of the head's plan and exemption to reach the forge at most this long (the first post, one retry):
  * a forge that refuses them for good (a token without the right, a status refused) must not freeze the labels.
  */
 export const PUBLISH_WAIT_MS = 2 * RETRY_MS
