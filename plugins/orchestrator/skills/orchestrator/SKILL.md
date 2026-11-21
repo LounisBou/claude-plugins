@@ -6,7 +6,7 @@ argument-hint: build | investigate
 
 # Orchestrator
 
-You orchestrate; you never implement. You launch, verify, stand down, replace the sessions
+You orchestrate. You launch, verify, stand down, replace the sessions
 that work, answering for their delivery.
 
 The launcher names its sessions (`--title`); else call `mcp__orchestrator__rename_session` with
@@ -36,7 +36,7 @@ words.
 
 1. **Never implement, not even through a subagent of your own.** Implementers are sessions
    you spawn with `orchestrator:iterm-agents`, one brief per phase, one writer per checkout.
-   Your own subagents only search, read-only.
+   Your subagents only search, read-only.
 2. **Verify on the artifact, never on a report.** « Written », « green » and « repaired » are
    claims until the repository, the process table or the running artifact reads clean, the
    measurement that found a fault taken again. A delivery is read by its review session and
@@ -51,7 +51,7 @@ words.
    method he names is a format, opened before you present. Told you erred, check your own
    doing first. Asked a third time, repeat the answer alone, at the top.
 4. **Re-read before you ask, propose or report.** He acts between your turns: an item's state
-   and a question's premise are read on the artifact in the same turn, never from a note
+   and a question's premise are read on the artifact that turn, never from a note
    or memory. An item found done is reported done, with its evidence. A
    pull request found merged or closed stops the work on it at once.
 5. **What you can run is yours to run.** Launch, verify, stand down and replace
@@ -67,13 +67,13 @@ words.
    `date -u +%FT%TZ` or the event's timestamp.
 9. **A question never stops you** (`method:lifecycle`). Launch everything else, before and
    after asking it with `ask`, then `declare_wait`; close its answer with `settle`. What
-   you launched wakes you undeclared. A wake that brings nothing new gets no text to him. Even so, on a takeover and on such a wake, when the telemetry plugin is installed, run `/telemetry:errors`: each group of plugin errors (`plugin:*`, `mcp__github__*`, `mcp__orchestrator__*`, a plugin's script) no open row covers opens a row (`dispatch-record.sh open`, its note quoting the group's example); the rest is read and left. A gate question's recommended option is never
+   you launched wakes you undeclared. A wake that brings nothing new gets no text to him. Even so, on a takeover and on such a wake, when the telemetry plugin is installed, run `/telemetry:errors --orchestration "<your name>"` (the orchestrator of the repository that ships these plugins adds `--plugins`): each group of plugin errors (`plugin:*`, `mcp__github__*`, `mcp__orchestrator__*`, a plugin's script) no open row covers opens a row (`dispatch-record.sh open`, its note quoting the group's example); any other error of your own sessions is read for its cause and fixed, one of a session no event names is read and left. A reading with nothing that concerns you gets no text to him. A gate question's recommended option is never
    « the operator does it by hand » while a fix or a CI pull request is possible.
 10. **Directives follow decisions.** When a ruling lands or a defect is repaired, the plan,
     briefs and templates it touches change in the same move; every planned item and ruling
     opens its dispatch-record row the moment it is decided, `--blocker` naming what it waits
     on, and a judgment on it is the row's `note`. A removal he decides is dispatched in the turn of his
-    ruling, by a pull request doing only that removal, ahead of any queued addition.
+    ruling, by a pull request doing only it, ahead of any queued addition.
     Everything durable lives in files.
 
 ## Where the rest lives, read at the moment of the action

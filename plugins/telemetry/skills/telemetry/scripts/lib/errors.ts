@@ -6,15 +6,21 @@
 // and pull request, a sha, a path, a number) are normalised, so two refusals that differ by a PR
 // number are one line with a count. The reading keeps a cursor, one byte offset per day file, so
 // each call is read once however often the command runs; `--since` reads from a time instead and
-// leaves the cursor where it is.
+// leaves the cursor where it is. An orchestration's reading (`--orchestration <name>`) keeps only the
+// calls of its own sessions (the session itself, and the sessions that report to it), has a cursor of
+// its own, and with `--plugins` also the plugins' errors of every session.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { simpleCommands } from '../../../../core/shell.ts'
+import { currentSessionName, parseSessionName } from '../../../../core/names.ts'
 import { update } from '../../../../core/store.ts'
 import { dayFiles, eventsDir } from './store.ts'
 
 /** The reading's cursor file, in telemetry's state directory. */
 export const CURSOR_FILE = 'errors.json'
+/** An orchestration's cursor file: its name as a file name, case kept, so two names never share one. */
+export const cursorFileOf = (orchestration: string | undefined): string =>
+  orchestration === undefined ? CURSOR_FILE : `errors-${encodeURIComponent(baseName(orchestration))}.json`
 /** With no cursor and no `--since`, the reading starts this long before now. */
 export const FIRST_READ_MS = 24 * 3_600_000
 /** A section prints at most this many groups; the rest is counted on one line. */
@@ -44,6 +50,52 @@ export interface Failure {
   readonly id?: string | undefined
   /** A call that had a prompt: from the dialog to its end. */
   readonly askMs?: number | undefined
+}
+
+/** A session name without its reference (`Orch: x [a1b2c3]` is `Orch: x`), the former shape written the current way: what a successor shares with its predecessors. */
+export const baseName = (name: string): string => currentSessionName(name.trim()).replace(/\s*\[[^\]\s]+\]$/, '')
+
+/** What an orchestration's reading keeps: its own sessions' failures, and with `plugins` the plugins' of every session. */
+export interface Scope {
+  readonly orchestration: string
+  readonly plugins: boolean
+}
+
+/**
+ * What a reading knows of each session: true when its events name this orchestration (its own title, or
+ * a `parent` of that name), false only when they name another orchestration (an `Orch:` title or a
+ * `parent` that is not this one), nothing for a session no event has named as either. The first
+ * orchestration a session is named as is its verdict, kept: a verdict never turns, so a failure the
+ * cursor has passed is never one a later reading would have kept.
+ */
+export type Sessions = Map<string, boolean>
+
+/** Learns from one line of a day file which orchestration its session belongs to, if it names one. */
+export function learn(known: Sessions, line: string, scope: Scope): void {
+  if (!line.includes('"title"') && !line.includes('"parent"')) return
+  let e: Fields
+  try {
+    e = record(JSON.parse(line))
+  } catch {
+    return
+  }
+  const session = text(e['session'])
+  if (session === undefined || known.has(session)) return
+  const title = text(e['title'])
+  // A title names an orchestration only as `Orch: <subject>`; a parent is always an orchestrator's name.
+  const names = [title !== undefined && parseSessionName(baseName(title))?.role === 'orchestrator' ? title : undefined, text(e['parent'])].filter((name): name is string => name !== undefined)
+  if (names.length === 0) return
+  const mine = baseName(scope.orchestration)
+  known.set(session, names.some(name => baseName(name) === mine))
+}
+
+/**
+ * Whether a failure concerns the orchestration: its session is its own, or is not yet known as
+ * another's (a failure is never dropped before its session is named), or it is a plugin's error and
+ * the scope asks for them.
+ */
+export function concerns(f: Failure, scope: Scope, known: Sessions): boolean {
+  return (scope.plugins && f.plugin) || known.get(f.session) !== false
 }
 
 /** One line of a day file as a failure, or undefined for any other event. */
@@ -77,7 +129,7 @@ export function failureOf(line: string): Failure | undefined {
     ts, session: text(e['session']) ?? '?', outcome, by: decided ?? (server ?? tool),
     command: text(e['command']), message: text(e['error_message']),
     plugin: pluginRefusal || (outcome === 'error' && pluginTool),
-    id: text(e['tool_use_id']), askMs,
+    id: text(e['tool_use_id']), askMs
   }
 }
 
@@ -258,6 +310,8 @@ interface Cursor {
   readonly offsets: Readonly<Record<string, number>>
   /** When the previous reading ran, for the header. */
   readonly readAt: number | undefined
+  /** An orchestration's cursor also keeps what its readings learnt of each session. */
+  readonly sessions: Sessions
 }
 
 function parseCursor(raw: string | undefined): Cursor | undefined {
@@ -269,6 +323,7 @@ function parseCursor(raw: string | undefined): Cursor | undefined {
     return {
       offsets: Object.fromEntries(Object.entries(offsets).filter((entry): entry is [string, number] => typeof entry[1] === 'number' && entry[1] >= 0)),
       readAt: Number.isFinite(readAt) ? readAt : undefined,
+      sessions: new Map(Object.entries(record(parsed['sessions'])).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean')),
     }
   } catch {
     return undefined
@@ -288,10 +343,12 @@ export interface ErrorsInput {
   readonly now: number
   /** A time to read from instead of the cursor; the cursor then stays where it is. */
   readonly since?: number | undefined
+  /** An orchestration's reading: only what concerns it, and a cursor of its own. */
+  readonly scope?: Scope | undefined
 }
 
 /** The failures a day file holds from `from` on, and where its last complete line ends. */
-export function readDay(dir: string, name: string, from: number, collect: (f: Failure) => void): number {
+export function readDay(dir: string, name: string, from: number, collect: (f: Failure) => void, seen?: (line: string) => void): number {
   let buffer: Buffer
   try {
     buffer = readFileSync(join(dir, name))
@@ -302,16 +359,22 @@ export function readDay(dir: string, name: string, from: number, collect: (f: Fa
   }
   const { lines, end } = completeLines(buffer, from)
   for (const line of lines) {
+    seen?.(line)
     const f = failureOf(line)
     if (f !== undefined) collect(f)
   }
   return end
 }
 
+/** The sessions a cursor keeps: the most recent of them, so the file stays small. */
+export const SESSIONS_KEPT = 2000
+
 /**
  * The failed calls since the last reading (or since `since`), grouped. Without `since` the day
  * files are read from the cursor's offsets, the first time from 24 hours before `now`, and the
  * cursor moves to the end of what was read, under its lock, so two readers never share a call.
+ * A scoped reading learns from every line which orchestration each session belongs to, and
+ * drops only the failures of sessions known to belong to another.
  */
 export function errors(input: ErrorsInput): string[] {
   const dir = eventsDir(input.stateDir)
@@ -319,24 +382,30 @@ export function errors(input: ErrorsInput): string[] {
   const since = input.since ?? input.now - FIRST_READ_MS
   const sinceDay = new Date(since).toISOString().slice(0, 10)
   const failures: Failure[] = []
+  const known: Sessions = new Map()
+  const scope = input.scope
+  const seen = scope === undefined ? undefined : (line: string): void => learn(known, line, scope)
+  const kept = (): Failure[] => (scope === undefined ? failures : failures.filter(f => concerns(f, scope, known)))
   let from = since
   const fromSince = (f: Failure): void => {
     if (f.ts >= since) failures.push(f)
   }
   if (input.since !== undefined) {
-    for (const name of days.filter(day => day.slice(0, 10) >= sinceDay)) readDay(dir, name, 0, fromSince)
-    return render(failures, since)
+    for (const name of days.filter(day => day.slice(0, 10) >= sinceDay)) readDay(dir, name, 0, fromSince, seen)
+    return render(kept(), since)
   }
-  update(join(input.stateDir, CURSOR_FILE), current => {
+  update(join(input.stateDir, cursorFileOf(scope?.orchestration)), current => {
     const cursor = parseCursor(current)
     from = cursor?.readAt ?? since
+    for (const [session, mine] of cursor?.sessions ?? []) known.set(session, mine)
     const offsets: Record<string, number> = {}
     for (const name of days) {
-      if (cursor !== undefined) offsets[name] = readDay(dir, name, cursor.offsets[name] ?? 0, f => failures.push(f))
+      if (cursor !== undefined) offsets[name] = readDay(dir, name, cursor.offsets[name] ?? 0, f => failures.push(f), seen)
       // A first reading looks back a day; the files before that are passed without a read of their failures.
-      else offsets[name] = readDay(dir, name, 0, name.slice(0, 10) >= sinceDay ? fromSince : () => undefined)
+      else offsets[name] = readDay(dir, name, 0, name.slice(0, 10) >= sinceDay ? fromSince : () => undefined, seen)
     }
-    return `${JSON.stringify({ v: 1, offsets, read_at: new Date(input.now).toISOString() })}\n`
+    const sessions = scope === undefined ? {} : { sessions: Object.fromEntries([...known].slice(-SESSIONS_KEPT)) }
+    return `${JSON.stringify({ v: 1, offsets, read_at: new Date(input.now).toISOString(), ...sessions })}\n`
   })
-  return render(failures, from)
+  return render(kept(), from)
 }
