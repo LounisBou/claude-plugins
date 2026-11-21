@@ -129,6 +129,13 @@ export type Events = {
   'session.send': { readonly agentId?: string; readonly origin?: { readonly kind?: string }; readonly text?: string }
   // A call of a tool: its arguments are the input's own fields.
   'tool.call': { readonly agentId?: string; readonly [argument: string]: unknown }
+  // A call's permission decision, `next` resolving to the verdict (ToolCheckResult): the tool, its
+  // arguments, and on a real call its id and its loop (a `$.tool.check` query carries neither).
+  'tool.check': { readonly tool: string; readonly input: unknown; readonly tool_use_id?: string; readonly agentId?: string }
+  // The classic event raised as a permission dialog is about to be shown, its settings hook's fields
+  // as far as a module reads them: no call id, no reason. A `decision` on `next`'s result answers it,
+  // and then no dialog is shown.
+  'classic.PermissionRequest': { readonly tool_name?: string; readonly tool_input?: unknown; readonly agent_id?: string; readonly permission_mode?: string }
   'ui.close': { readonly id: string }
   // A skill's text as it loads: its name, and the text the handler may rewrite.
   'skill.prompt': { readonly skill?: string; readonly text?: string; readonly args?: string }

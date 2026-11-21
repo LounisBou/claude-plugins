@@ -9,7 +9,7 @@ You are the SUCCESSOR COORDINATOR of this machine. Your predecessor, `{{PREDECES
 {{NOTES}}
 
 - Your to-do list (his requests still open): {{TODO}}
-- The round: the `round` of the coordinator script `{{COORDINATOR_SH}}` prints every question still to be ruled, with its sender. Carry it on from its first question not yet sent, grouped by sender as the rulebook says; nothing in it is dropped.
+- The round: `round` of `{{COORDINATOR_SH}}` prints every question still to be ruled; carry it on from its first question not yet sent, nothing dropped.
 
 ## Your first task, in this exact order
 
@@ -28,7 +28,7 @@ You are the SUCCESSOR COORDINATOR of this machine. Your predecessor, `{{PREDECES
    {{COORDINATOR_SH}} register --name "<your exact name and reference>" --tty <your tty>
    ```
 
-5. **Tell the operator** in one short message: you took over from `{{PREDECESSOR}}`, its tab is closed, and the `collision` and `unread` lines of the coordinator script's `facts`, run now.
+5. **Tell the operator** in one short message: you took over from `{{PREDECESSOR}}`, its tab is closed, and the `collision` and `unread` lines of the coordinator script's `facts`, run now. Then present what `round` marks `due`: a pane the notes name was your predecessor's.
 
 ## Standing context
 

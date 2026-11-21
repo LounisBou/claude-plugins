@@ -189,6 +189,7 @@ start() {
     report) report_round "$now" ;;
     aged) questions_round "$(jq -nr 'now - 7200 | strftime("%Y-%m-%dT%H:%M:%S.000Z")')" ;;
     pair) pair_round "$now" ;;
+    one) asked s-alpha-q1 alpha "$now" "the release" "The tag is pushed." "Merge the release branch now?" '["merge it", "wait"]' "" "" "phase 3" ;;
     flow) : ;;
     *) questions_round "$now" ;;
   esac
@@ -205,6 +206,8 @@ start() {
     exit 1
   fi
   subscription_or_exit "$(screen)"
+  # A section whose coordinator opens no pane in its tab (START_PANE=none): one after a takeover.
+  [ "${START_PANE:-}" = none ] && return 0
   tm send-keys -t "$SESSION" '/orchestrator-supervision'
   sleep 1
   tm send-keys -t "$SESSION" Enter
@@ -658,6 +661,24 @@ tm send-keys -t "$SESSION" Enter
 wait_for 'Questions for you' 15
 record "the pane open again"
 check "reopened by the file's own prefixed name, the pane draws every pending question, those presented in the tab included" "1|1|open,open" "$(pane | grep -c '^Questions for you — 3 pending')|$(flat | grep -c 'Merge the release branch now?')|$(statuses)"
+
+# The operator's report of 2026-11-21: a coordinator that took over, its predecessor's pane gone
+# with its tab and none opened in its own, one question open, was not woken for twenty minutes.
+# The predecessor's record of its pane is left, its pid ended: no pane is open, so the question is
+# due at once, and the module wakes the coordinator within the round's 30 s, no word of his. On a
+# live host the name walk answers: what a walk too slow to answer does is the module's tests'.
+echo "== a successor coordinator with no pane in its tab (160x50)"
+START_PANE=none start 50 one
+( : ) & ended=$!
+wait "$ended"
+jq -n --arg pid "$ended" '{ session: "s-predecessor", pid: $pid, tty: "/dev/ttys999", at: "2026-11-21T11:30:00.000Z" }' > "$SANDBOX/state/pane.json"
+wait_for 'now due in this tab' 45
+wait_woken 10
+record "a successor coordinator with no pane in its tab"
+echo "  wake: $(tab | grep -o '\[module\] A question of the round is now due in this tab: .* Run coordinator.sh round' | head -1)"
+check "no pane in its tab: the coordinator is woken for its one open question, and no pane opens" "1|s-alpha-q1|0" \
+  "$([ "$(screen | grep -c 'now due in this tab')" -ge 1 ] && echo 1)|$(woken)|$(screen | grep -c 'Questions for you')"
+press Escape
 
 echo "== the short names as project commands (160x50)"
 start 50
