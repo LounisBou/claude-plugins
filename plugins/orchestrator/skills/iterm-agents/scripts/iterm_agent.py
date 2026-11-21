@@ -2305,7 +2305,7 @@ async def tty_of(tab, connection=None, tries=10):
         sess = tab.current_session
         if sess is not None:
             try:
-                tty = await sess.async_get_variable("tty")
+                tty = await session_tty(sess)
                 if tty:
                     return tty
             except Exception:
@@ -2360,12 +2360,18 @@ async def session_tty(sess):
 
 
 async def find_tab(app, tty):
-    """A session behind a maximized sibling is in all_sessions and not in sessions (§25)."""
+    """A session behind a maximized sibling is in all_sessions and not in sessions (§25).
+
+    A tty that no session carries may be the pane of window 0 of a home server: the tab that
+    shows that server is found instead, its tmux client being what iTerm2's session runs."""
     for w in app.windows:
         for t in w.tabs:
             for s in t.all_sessions:
                 if await session_tty(s) == tty:
                     return w, t, s
+    client = home_client_of_pane(tty)
+    if client and client != tty:
+        return await find_tab(app, client)
     return None, None, None
 
 
@@ -3797,6 +3803,34 @@ def home_of_tab(tty, strict=False):
         for i, word in enumerate(words[:-1]):
             if word == "-L" and words[i + 1].startswith(HOME_SOCKET_PREFIX):
                 return words[i + 1]
+    return ""
+
+
+def home_client_of_pane(tty):
+    """The tty of the tab that shows the home server whose window 0 runs on the pane `tty`, or
+    "" when `tty` is no such pane. A home session's tab is the tmux client of its server and
+    its host is the server's window 0: an operator or a brief that names the host's tty, the one
+    the process table shows it on, means that tab. Read from the servers' own files and panes, so
+    a tty that is a tab's own, or any other window's, maps to nothing."""
+    if not tty:
+        return ""
+    folder = os.path.dirname(home_socket_path(HOME_SOCKET_PREFIX))
+    try:
+        names = sorted(n for n in os.listdir(folder) if n.startswith(HOME_SOCKET_PREFIX))
+    except OSError:
+        return ""
+    for socket in names:
+        if not home_answers(socket):
+            continue
+        panes, _ = home_panes(socket)
+        if not any(index == "0" and pane == tty for index, pane in panes or []):
+            continue
+        try:
+            done = tmux_call(["-L", socket, "list-clients", "-F", "#{client_tty}"])
+        except TmuxError:
+            return ""
+        clients = done.stdout.split() if done.returncode == 0 else []
+        return clients[0] if clients else ""
     return ""
 
 
@@ -6157,6 +6191,13 @@ def cmd_close(args):
         print("close=%s expect_title=%s" % (args.tty, args.expect))
         return
 
+    # The host's own tty, the pane of window 0 of a home server, names the tab that shows it:
+    # the close is the home tab's, server and agents handled as for the tab's own tty.
+    client = "" if home_of_tab(args.tty) else home_client_of_pane(args.tty)
+    if client:
+        print("close: %s is window 0 of a home server: closing its tab, on %s" % (args.tty, client),
+              file=sys.stderr)
+        args.tty = client
     socket, listed, host_tty = close_host_tty(args.tty)
     # Read BEFORE the close: what the proof below is a proof ABOUT.
     was_running = host_cli_on(host_tty)

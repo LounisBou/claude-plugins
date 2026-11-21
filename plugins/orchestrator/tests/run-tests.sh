@@ -5383,6 +5383,47 @@ z=asyncio.run(ia.session_tty(P('Z',None,'48999','x')))
 ia.process_table = real
 a=asyncio.run(ia.session_tty(P('R',None,'48166','x')))
 print('%s|%s' % (z, a))" "$ROOT/skills/iterm-agents/scripts")"
+# The host of a home session runs in window 0 of its tmux server, on a pane tty no iTerm2
+# session carries; the tab that shows the server is the server's tmux client. A close that
+# names the pane (row 455: Coord's) means that tab.
+HOMEPANE='
+import asyncio, os, sys, tempfile, types
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+class S:
+    def __init__(s, sid, tty): s.session_id=sid; s.tty=tty
+    async def async_get_variable(s, k): return {"tty": s.tty}.get(k)
+class T:
+    def __init__(s, tid, sessions): s.tab_id=tid; s.sessions=sessions; s.all_sessions=sessions
+class W:
+    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
+class App:
+    def __init__(s, wins): s.windows=wins
+tmp = tempfile.mkdtemp()
+os.makedirs(os.path.join(tmp, "tmux-%d" % os.getuid()))
+open(os.path.join(tmp, "tmux-%d" % os.getuid(), "orch-abcdef12"), "w").close()
+os.environ["TMUX_TMPDIR"] = tmp
+ia.home_answers = lambda socket: True
+ia.home_panes = lambda socket: ([["0", "/dev/ttys950"], ["1", "/dev/ttys951"]], "")
+ia.tmux_call = lambda args, env=None: types.SimpleNamespace(returncode=0, stdout="/dev/ttys811\n", stderr="")
+app = App([W([T("1", [S("A", "/dev/ttys801")]), T("2", [S("C", "/dev/ttys811")])])])
+'
+check "the pane of window 0 of a home server finds the tab that shows the server" "C|C|None|None|None" \
+  "$("$py" -c "$HOMEPANE
+f = lambda tty: asyncio.run(ia.find_tab(app, tty))[2]
+print('%s|%s|%s|%s|%s' % (f('/dev/ttys950').session_id, f('/dev/ttys811').session_id, f('/dev/ttys951'), f('/dev/ttys999'), ia.home_client_of_pane('/dev/ttys801') or None))" "$ROOT/skills/iterm-agents/scripts")"
+check "close --tty the pane of window 0 of a home server goes on with the tab's own tty" "/dev/ttys811|/dev/ttys999" \
+  "$("$py" -c "$HOMEPANE
+class Stop(Exception): pass
+seen = []
+def host(tty, strict=False): seen.append(tty); raise Stop()
+ia.close_host_tty = host
+ia.DRY_RUN = False
+for t in ('/dev/ttys950', '/dev/ttys999'):
+    try: ia.cmd_close(types.SimpleNamespace(bench=False, socket=None, tty=t, expect=None))
+    except Stop: pass
+    ia.home_panes = lambda socket: ([['0', '/dev/ttys950']], '')
+print('|'.join(seen))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
 # The caller is not always IN the app. A session running in another terminal — a multiplexer,
 # a plain shell, a remote one — still has a tty, `self_tty` still resolves it, and the app has
 # no session on it. The chain is the app's and cannot be kept for a caller the app does not
@@ -6405,11 +6446,11 @@ reads = []
 class S:
     async def async_get_variable(self, name):
         reads.append(name)
-        return '/dev/ttys969' if len(reads) > 2 else None
+        return '/dev/ttys969' if name == 'tty' and reads.count('tty') > 2 else None
 class T:
     tab_id = 'NEW'
     current_session = S()
-print('%s|%d' % (asyncio.run(ia.tty_of(T())), len(reads)))")"
+print('%s|%d' % (asyncio.run(ia.tty_of(T())), reads.count('tty')))")"
 check "a tab whose tty never comes is given up after its tries, with no tty" "None|3" \
   "$(ipy "
 import asyncio
@@ -6421,7 +6462,7 @@ class S:
 class T:
     tab_id = 'NEW'
     current_session = S()
-print('%s|%d' % (asyncio.run(ia.tty_of(T(), None, 3)) or None, len(reads)))")"
+print('%s|%d' % (asyncio.run(ia.tty_of(T(), None, 3)) or None, reads.count('tty')))")"
 # tmux leaves its socket file behind when its server is killed (measured: tmux 3.8, every
 # kill-server). A home server the launcher ended takes its file with it; one tmux did not end
 # keeps it, since the server may still listen there.
