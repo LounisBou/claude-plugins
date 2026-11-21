@@ -465,6 +465,11 @@ export function stateRoot(env: Env): string {
   return orchestratorRoots(env, setting(env, 'HOME')).dataRoot
 }
 
+/** The protected root, what runs and is trusted: the one a brief prints as its state directory, `models.json` and `routing/` among its files. */
+export function protectedRoot(env: Env): string {
+  return orchestratorRoots(env, setting(env, 'HOME')).protectedRoot
+}
+
 async function open(ctx: Context, args: readonly string[]): Promise<void> {
   const found = options(ctx, 'open', args, ['--class', '--tier', '--model', '--effort', '--label', '--blocker'], ['--cascade', '--explore'])
   const klass = currentClass(last(found, '--class'))

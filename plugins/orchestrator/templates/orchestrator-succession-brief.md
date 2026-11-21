@@ -39,7 +39,7 @@ A judgment on a row is its note, his words in it named by their round entry or t
 
 ## Standing context
 
-- State directory: `{{STATE_DIR}}`. His answers are its `round/`, his requests the to-do list (`todo list`), read by the item at hand: `grep -rl '<keyword>' {{STATE_DIR}}/round`.
+- State directory: `{{STATE_DIR}}`; data directory: `{{DATA_DIR}}`. His answers are its `round/`, his requests the to-do list (`todo list`), read by the item at hand: `grep -rl '<keyword>' {{DATA_DIR}}/round`.
 - Dispatch record: `{{DISPATCH_RECORD}}`, read before routing (`orchestrator:model-routing`).
 
 # Expected result

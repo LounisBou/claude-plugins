@@ -480,7 +480,10 @@ test('on a data root placed apart, the deck, the chains, the round and the to-do
   assert.ok(!w.text().includes('/planted.md'))
   assert.match(w.text(), /Which schema\?/)
   assert.ok(w.text().includes('to-do 3 → row 9 missing'))
-  assert.match(w.text(), new RegExp(`State directory: \`${data.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\``))
+  // The brief names both roots: what runs on the protected one, the round the answers are read from on the data root.
+  const quoted = (path: string): string => path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  assert.match(w.text(), new RegExp(`State directory: \`${quoted(w.state)}\`; data directory: \`${quoted(data)}\``))
+  assert.ok(w.text().includes(`grep -rl '<keyword>' ${data}/round`))
 })
 
 test('rowOfBrief reads the row a brief was printed for: a phase brief\'s, a rotation brief\'s; none from free text', () => {

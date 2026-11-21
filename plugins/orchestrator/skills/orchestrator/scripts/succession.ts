@@ -53,7 +53,7 @@ import { parsePrFile, prFilePath, prsOfRepo } from '../../../hooks/pr-file-forma
 import { configDir, type Env } from '../../../core/paths.ts'
 import { orchestratorRoots } from '../../../core/roots.ts'
 import { setting } from '../../../core/env.ts'
-import { openLine, parseRecord, stateRoot, type Row } from './dispatch-record.ts'
+import { openLine, parseRecord, protectedRoot, stateRoot, type Row } from './dispatch-record.ts'
 import { orchForm } from '../../../core/names.ts'
 import { sessionOrchestration } from '../../../core/session-orchestration.ts'
 import { parseSessionName } from '../../../core/names.ts'
@@ -1084,7 +1084,8 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
     MODE: parsed.mode,
     PREDECESSOR_NAME_PATTERN: name,
     AGENT_NAME_PATTERN: 'Agent: <subject>',
-    STATE_DIR: stateRoot(env),
+    STATE_DIR: protectedRoot(env),
+    DATA_DIR: stateRoot(env),
     SCRIPTS: here,
     DISPATCH_RECORD: parsed.record,
     LAUNCHER: launcher,

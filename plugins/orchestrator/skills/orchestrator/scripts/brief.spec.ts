@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { lint } from './brief-lint.ts'
 import { rowOfBrief } from './succession.ts'
@@ -295,6 +295,20 @@ test('coordinator-takeover prints the capped notes and the to-do list, or none',
   assert.ok(!noted.includes('x'.repeat(NOTES_CAP)))
   assert.ok(!/\{\{[A-Z_]+\}\}/.test(noted))
   assert.equal(run(), noted, 'two runs on one state print the same takeover')
+})
+
+test('coordinator-takeover on a data root placed apart: the state directory is the protected root, the notes and the data directory the data root\'s', () => {
+  const w = world()
+  const data = join(dirname(w.state), 'shared')
+  mkdirSync(join(data, 'coordinator'), { recursive: true })
+  writeFileSync(join(data, 'coordinator', 'notes.md'), 'announced: Orch: apart')
+  mkdirSync(join(w.state, 'coordinator'), { recursive: true })
+  writeFileSync(join(w.state, 'coordinator', 'notes.md'), 'announced: Orch: protected')
+  writeFileSync(join(w.state, 'data-root.json'), JSON.stringify({ version: 1, dir: data }))
+  assert.equal(w.run('coordinator-takeover', '--name', 'Coord: machine', '--tty', '/dev/ttys002'), 0)
+  assert.ok(w.text().includes(`State directory: \`${w.state}\`; data directory: \`${data}\``))
+  assert.ok(w.text().includes('announced: Orch: apart'))
+  assert.ok(!w.text().includes('announced: Orch: protected'))
 })
 
 test('a template field this command does not fill, or a template missing, is refused', () => {

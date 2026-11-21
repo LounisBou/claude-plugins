@@ -51,7 +51,7 @@ subcommand prints is below, and its header is read only for a line this does not
 
 **Every answer you give rests on a reading made in that turn**, never on your memory of the
 last one. `/orchestrator:status` reads every live session, its role and its fill. Your only
-file is `<data>/coordinator/notes.md` (`<data>`: `dir` in `<state dir>/data-root.json`, else `<state dir>`): the pull requests
+file is `<data>/coordinator/notes.md` (`<data>`: `data=` of `coordinator.sh roots`): the pull requests
 each orchestrator holds — what `owners` attributed at your start, overridden by its
 correction — the flags you sent, and the sessions you have announced to; only what no
 command answers, under 4,000 characters, a line that no longer holds removed. After a
