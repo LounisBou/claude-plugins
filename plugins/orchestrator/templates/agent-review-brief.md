@@ -47,7 +47,7 @@ Verify every finding on the artifact, drop what it does not bear out, merge dupl
 - You write nothing and post nothing: no edit, no commit, no comment on the pull request, no reply to anyone but the orchestrator.
 - The worktree shares its source's `.git/config`, and a change there reaches the session that owns it too: no git configuration write of any kind, `-c` on the command line only, never `git config`.
 - No implementation delegates; sub-agents are readers only.
-- No re-run of the project's full test suite; a targeted command that decides a finding is allowed, wrapped in a timeout and piped to `tail` in the same call; pass `timeout: 600000` too, or the host backgrounds it at 120 s.
+- No re-run of the project's full test suite; a targeted command that decides a finding is allowed, wrapped in a timeout and piped to `tail` in the same call; pass `timeout: 600000` too.
 - If a finding needs something outside this list to be shown, say so in the report instead of doing it.
 
 ## 6. Communication
@@ -59,6 +59,7 @@ Verify every finding on the artifact, drop what it does not bear out, merge dupl
 
 ## 7. Resource envelope
 
-- Kill what you start. Delete nothing in your scratchpad; anything else you built is removed by its literal path, never through a shell variable (`rm $S/x` stops on the host's check).
-- Scratch (intermediate results, generated scripts, outputs that do not belong in the repository) lives in your own session's host scratchpad directory, which your system context names — never in a directory this brief or you invent. Do not delete it: the checkout it belongs to is deleted when your session is closed, and takes it along.
+- To wait for a lens or a run, run it with `run_in_background` and its exit wakes you, never a foreground `sleep`; load Monitor with `ToolSearch select:Monitor` first.
+- Kill what you start. Delete nothing in your scratchpad; other built files are removed by `rm` on their full absolute path, never through a shell variable or a glob.
+- Scratch lives in the host scratchpad your system context names, never in a directory you invent.
 {{RESOURCE_ENVELOPE}}
