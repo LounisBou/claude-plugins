@@ -599,6 +599,13 @@ describe('outcome evals: the command', () => {
     assert.equal(deckPath({ CLAUDE_CONFIG_DIR: '/config' }), '/config/claude-orchestrator/deck.json')
   })
 
+  it('finds the deck under the data root its state directory places', () => {
+    const state = mkdtempSync(join(tmpdir(), 'outcome-state-'))
+    writeFileSync(join(state, 'data-root.json'), JSON.stringify({ version: 1, dir: '/shared/claude-orchestrator' }))
+    assert.equal(deckPath({ ORCHESTRATOR_STATE_DIR: state }), '/shared/claude-orchestrator/deck.json')
+    rmSync(state, { recursive: true })
+  })
+
   it('refuses a bad command line with its usage', async () => {
     const io = recorder()
     assert.equal(await outcome(repository(), ['nope'], io, new AbortController().signal), 2)

@@ -39,6 +39,19 @@ describe('round-archive', () => {
     assert.deepEqual(readdirSync(join(f.state, 'round')).sort(), ['archive', 'dir.json', 'z-broken.json', 'z-open.json', 'z-shape.json'])
   })
 
+  it('archives the round of the data root the state directory places, none left on the state directory', () => {
+    const f = fixture()
+    const data = join(f.state, '..', 'shared')
+    mkdirSync(f.state, { recursive: true })
+    writeFileSync(join(f.state, 'data-root.json'), JSON.stringify({ version: 1, dir: data }))
+    put({ ...f, state: data }, 'z-closed', entry('z-closed', { status: 'closed', answer: { text: 'A', by: 'coordinator', at: OLD } }))
+    put(f, 'y-closed', entry('y-closed', { status: 'closed', answer: { text: 'A', by: 'coordinator', at: OLD } }))
+    assert.equal(main(f.ctx, ['round-archive']), 0)
+    assert.deepEqual(f.out, ['archived 1'])
+    assert.deepEqual(readdirSync(join(data, 'round', 'archive')), ['z-closed.json'])
+    assert.equal(existsSync(join(f.state, 'round', 'archive')), false)
+  })
+
   it('moves every settled entry settled over a day ago, delivered or never sent, the withdrawn apart', () => {
     const f = fixture()
     const settled = (status: string, at: string, more: Record<string, unknown> = {}) => ({ status, answer: { text: 'A', by: 'pane', at }, ...more })

@@ -123,6 +123,19 @@ test('a question answered in other words is `other`; one whose asker has no sess
   })
 })
 
+test('the round is read under the data root the orchestrator\'s directory places, never one left there', () => {
+  scratch(r => {
+    const data = join(r.config, '..', 'shared')
+    mkdirSync(join(data, 'round'), { recursive: true })
+    mkdirSync(join(r.module, 'round'), { recursive: true })
+    writeFileSync(join(r.module, 'data-root.json'), JSON.stringify({ version: 1, dir: data }))
+    writeFileSync(join(data, 'round', 'a.json'), JSON.stringify(asked('q-a')))
+    writeFileSync(join(r.module, 'round', 'b.json'), JSON.stringify(asked('q-b')))
+    assert.equal(r.run().questions, 1)
+    assert.deepEqual(r.stored().map(event => event['id']), ['q-a'])
+  })
+})
+
 test('a dispatch the orchestrator\'s journal holds is recorded once, with its row and pair; another kind, an old one and one with no session are not', () => {
   scratch(r => {
     const journal = join(r.config, 'orchestrator', 'journal')

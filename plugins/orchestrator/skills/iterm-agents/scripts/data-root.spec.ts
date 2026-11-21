@@ -51,11 +51,10 @@ describe('the launcher on a data root placed apart', () => {
     script(join(b.protectedRoot, 'venv', 'bin', 'python'), `#!/bin/sh\necho protected >> '${ran}'\nexec python3 "$@"\n`)
     writeFileSync(join(b.protectedRoot, 'mcp.json'), JSON.stringify({ servers: { a: { command: 'a-cmd' } }, default: ['a'] }))
     writeFileSync(join(b.protectedRoot, 'models.json'), JSON.stringify({ deep: '', standard: '', light: 'a-model/low' }))
-    // What a session could plant in the data root, under the names of what runs.
+    // What a session could plant in the data root, under the names of what the spawn runs or reads.
     script(join(b.data, 'venv', 'bin', 'python'), `#!/bin/sh\necho planted >> '${ran}'\nexit 1\n`)
     writeFileSync(join(b.data, 'mcp.json'), JSON.stringify({ servers: { evil: { command: 'evil-cmd' } }, default: ['evil'] }))
     writeFileSync(join(b.data, 'models.json'), JSON.stringify({ deep: '', standard: '', light: 'evil-model/max' }))
-    script(join(b.data, 'prompts', 'launch-Agent--a-1.sh'), `#!/bin/sh\necho planted >> '${ran}'\n`)
     // The chains are data: the anchor is read from the data root's, never from one left on the protected root.
     writeFileSync(join(b.data, 'chains', 'ttys900.jsonl'), '{"tab_id":"t-1","tty":"/dev/ttys901","owner":"S-ME"}\n{"tab_id":"t-2","tty":"/dev/ttys902","owner":"S-ME"}\n')
     mkdirSync(join(b.protectedRoot, 'chains'))
@@ -78,16 +77,24 @@ describe('the launcher on a data root placed apart', () => {
       'import json, iterm_agent as m',
       'm.chain_store("append", "/dev/ttys900", "t-9", "/dev/ttys909", "S-ME")',
       'm.close_log("probe", "a line", echo=False)',
-      'print(json.dumps({"data": m.DATA_DIR, "module": m.module_dir(), "prompts": m.PROMPTS_DIR, "catalogue": m.MCP_CATALOGUE}))',
+      'm.auditor_record_write("/dev/ttys901", "s-a", "L")',
+      // The quota readings are listed where quota_room looks for them.
+      'listed, listdir = [], m.os.listdir',
+      'm.os.listdir = lambda d: (listed.append(d), listdir(d))[1]',
+      'm.quota_room()',
+      'm.os.listdir = listdir',
+      'print(json.dumps({"data": m.DATA_DIR, "module": m.module_dir(), "prompts": m.PROMPTS_DIR, "catalogue": m.MCP_CATALOGUE, "ended": m.home_end_marker("sock"), "quota": listed}))',
     ].join('\n')
     const run = spawnSync('python3', ['-c', probe], { env: { ...b.env, PYTHONPATH: HERE, ORCHESTRATOR_ADAPTER_NODE: process.execPath }, encoding: 'utf8' })
     assert.equal(run.status, 0, run.stderr)
     assert.deepEqual(JSON.parse(run.stdout.trim().split('\n').at(-1) ?? ''), {
       data: b.data, module: join(b.work, 'module'), prompts: join(b.protectedRoot, 'prompts'), catalogue: join(b.protectedRoot, 'mcp.json'),
+      ended: join(b.data, 'home-ended', 'sock'), quota: [join(b.data, 'quota')],
     })
+    assert.ok(existsSync(join(b.data, 'auditors', 'ttys901.json')))
     assert.match(readFileSync(join(b.data, 'chains', 'ttys900.jsonl'), 'utf8'), /"tty": ?"\/dev\/ttys909"/)
     assert.match(readFileSync(join(b.data, 'close.log'), 'utf8'), /probe: a line\n$/)
-    assert.deepEqual([existsSync(join(b.protectedRoot, 'chains')), existsSync(join(b.protectedRoot, 'close.log'))], [false, false])
+    assert.deepEqual(['chains', 'close.log', 'auditors'].map(name => existsSync(join(b.protectedRoot, name))), [false, false, false])
   })
 
   it('keeps the data on the protected root when its data-root file names no absolute directory', () => {
