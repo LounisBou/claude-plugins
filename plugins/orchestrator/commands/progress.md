@@ -34,8 +34,8 @@ whatever this command printed.
    the routing corrections this build has earned, and a signal nobody reads is a
    measurement nobody took.
 4. Measure your own context: read
-   `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/measure/$CLAUDE_CODE_SESSION_ID.json`
-   — one JSON line the module writes on every gauge pass — and keep its
+   `<data>/measure/$CLAUDE_CODE_SESSION_ID.json` (`<data>`: `dir` in `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/data-root.json`, else that directory)
+   and keep its
    `context_percent`, `context_tokens` and `context_window`.
 5. Present, in this order and nothing else:
    - **Goals** — the goals line of `dispatch-record.sh goals <record> status`.

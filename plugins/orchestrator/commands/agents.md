@@ -19,7 +19,7 @@ the context alone.
 2. Message each one with `SendMessage`, one message (its reply wakes you), this exact ask: « Status in five lines: phase and step in progress;
    branch and head sha; last push and PR; what blocks you, if anything; your
    measured context — read
-   `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/measure/$CLAUDE_CODE_SESSION_ID.json`
+   `<data>/measure/$CLAUDE_CODE_SESSION_ID.json` (`<data>`: `dir` in `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/data-root.json`, else that directory)
    and paste its `context_percent`, `context_tokens` and `context_window`. »
    Do not wait on the
    answers in a loop: they arrive as messages; finish the report with what you
@@ -27,7 +27,7 @@ the context alone.
 3. While they answer, read what you can without them: for each agent's branch,
    `git log --oneline origin/main..origin/<branch> | wc -l`, the head sha, and
    `gh pr list --head <branch>`; and the measure files in
-   `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/measure/*.json`
+   `<data>/measure/*.json`
    (session id — the file's name — `context_percent`, `context_tokens`,
    `context_window`, `model`, `updated_at`). A claim in an answer that
    the artifact contradicts is reported as the artifact says, with the claim

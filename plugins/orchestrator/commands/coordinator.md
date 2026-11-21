@@ -35,7 +35,7 @@ Then:
    ```
 
    A refusal is told to the operator verbatim, and you stop. Then `lookup` prints your name.
-   `mkdir -p <state dir>/coordinator`; an existing `notes.md` there is read and kept, otherwise
+   `mkdir -p <data>/coordinator`; an existing `notes.md` there is read and kept, otherwise
    write an empty one.
 4. **Leftmost, then the pane.**
 

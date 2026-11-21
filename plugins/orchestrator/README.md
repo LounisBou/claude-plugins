@@ -78,8 +78,9 @@ briefs' registry, the to-do lists, the chains, the logs, the measure files, the 
 elsewhere, in a directory any session may write without a prompt: name it in
 `~/.claude/claude-orchestrator/data-root.json`, `{"version": 1, "dir": "<absolute path>"}`, and move
 the data there. Without that file, everything stays in the state directory. Nothing read from the
-data root decides what runs. `docs/state.md` lists each file and its root; an uninstall removes the
-state directory and leaves a data root placed elsewhere.
+data root decides what runs. `docs/state.md` lists each file and its root; an install names the data
+root it reads, or the file that names none, and an uninstall removes the state directory and leaves
+a data root placed elsewhere.
 
 ## Requirements
 

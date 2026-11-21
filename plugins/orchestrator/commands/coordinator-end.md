@@ -26,7 +26,7 @@ machine nor the coordinator's own context is the word to end: at its gate it suc
    ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh lookup
    ```
 
-   `lookup` printing nothing is the proof. Then `rm <state dir>/coordinator/notes.md <state dir>/coordinator-check.json` and
+   `lookup` printing nothing is the proof. Then `rm <data>/coordinator/notes.md <data>/coordinator-check.json` and
    `ls` the directory.
 4. **Tell the operator** in one line: the coordinator has ended, who was told, that the
    tab is his to close, and which orchestrators `coordinator.sh sleeping` still lists: the

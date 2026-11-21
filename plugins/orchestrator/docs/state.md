@@ -9,7 +9,12 @@ roots (core's `orchestration.ts` and `roots.ts`):
   `data-root.json`;
 - **data**: the directory the protected root's `data-root.json` names (`{"version": 1, "dir":
   "<absolute path>"}`), else the protected root. What any session writes. Nothing read there decides
-  what runs;
+  what runs. Every item not named protected above is data, the table's and these: the briefs and
+  dispatch records, `records/`, `todo/`, `coordinator/` and `coordinator-check.json`, `round/`,
+  `round-woken.json`, `round-listed.json`, `chains/`, `auditors/`, `quota/`, `ci-watch/`, `ci-gate/`,
+  `draft-guard/`, `stop-gate/`, `prs.json`, `prs.log`, `prs.wanted`, `sweep.stamp`, `deck.json`,
+  `pane.json`, `pane-open-*`, `close.log`, `home-ended/`, `home-release.log`, `audits/`, `builds/`,
+  `records-build/`, `methods/`;
 - **module**: the hooks module's own files, `ORCHESTRATOR_MODULE_DIR`, else the data root of
   `<config dir>/claude-orchestrator/`.
 

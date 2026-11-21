@@ -263,13 +263,21 @@ test('on a data root placed apart, the measure files go there, and an uninstall 
   writeFileSync(join(state, 'data-root.json'), JSON.stringify({ version: 1, dir: data }))
   const r = go(['install'])
   assert.equal(r.code, 0, r.err)
-  assert.ok(r.out.includes(`  measure directory ready: ${data}/measure\n`))
+  assert.ok(r.out.includes(`  measure directory ready: ${data}/measure\n  data root: ${data}\n`), r.out)
   assert.deepEqual([existsSync(join(data, 'measure')), existsSync(join(state, 'measure')), existsSync(join(state, 'models.json'))], [true, false, true])
   const dry = go(['uninstall', '--dry-run'])
   assert.ok(dry.out.includes(`  [dry-run] rm -rf ${state}\n  left ${data}, the data root ${state} placed: remove it by hand once no session writes there\n`), dry.out)
   const u = go(['uninstall'])
   assert.ok(u.out.includes(`  left ${data}, the data root ${state} placed: remove it by hand once no session writes there\n`), u.out)
   assert.deepEqual([existsSync(state), existsSync(join(data, 'measure'))], [false, true])
+})
+
+test('a data-root file that names no absolute directory is said, and the data stays on the state directory', () => {
+  mkdirSync(state, { recursive: true })
+  writeFileSync(join(state, 'data-root.json'), JSON.stringify({ version: 1, dir: '~/shared' }))
+  const r = go(['install'])
+  assert.equal(r.code, 0, r.err)
+  assert.ok(r.out.includes(`  measure directory ready: ${state}/measure\n  ${state}/data-root.json names no absolute data root: the data stays on ${state}\n`), r.out)
 })
 
 test('uninstall removes the state directory and the short commands, or says what it would', () => {

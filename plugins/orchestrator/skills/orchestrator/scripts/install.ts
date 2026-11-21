@@ -15,7 +15,7 @@
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { MEASURE_DIR } from '../../../core/orchestration.ts'
+import { dataRootFileOf, MEASURE_DIR, parseDataRoot } from '../../../core/orchestration.ts'
 import { configDir, setting, type Env } from '../../../core/paths.ts'
 import { orchestratorRoots } from '../../../core/roots.ts'
 import { writeAtomic } from '../../../core/store.ts'
@@ -217,6 +217,13 @@ export function main(argv: readonly string[], deps: Deps): number {
   const measure = join(roots.moduleDir, MEASURE_DIR)
   run(`mkdir -p '${measure}'`, () => mkdirSync(measure, { recursive: true }))
   say(`measure directory ready: ${measure}`)
+  // The data root the operator placed, or the file that places none: a refused file leaves the data on the protected root.
+  const rootFile = dataRootFileOf(state)
+  if (isFile(rootFile)) {
+    say(parseDataRoot(readFileSync(rootFile, 'utf8')) === null
+      ? `${rootFile} names no absolute data root: the data stays on ${state}`
+      : `data root: ${roots.dataRoot}`)
+  }
   // The tap's ctx/ directory: nothing reads it since the module measures the session itself.
   if (isDir(join(state, 'ctx'))) {
     remove(join(state, 'ctx'), '-rf')
