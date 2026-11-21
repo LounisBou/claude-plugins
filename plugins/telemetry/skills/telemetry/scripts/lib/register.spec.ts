@@ -70,6 +70,8 @@ function hooks(collector = new Collector()) {
 }
 
 const through = (answer: unknown) => async () => answer
+/** Lets the writes a hook started without awaiting them finish. */
+const written = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 5))
 
 test('register mounts the observers and the export command', () => {
   const names: string[] = []
@@ -353,7 +355,8 @@ test('a permission prompt: written at once, before the call ends, with the reaso
   assert.equal(runs.length, 0)
   const request = F('permission.request.write')
   assert.equal(await hook('classic.PermissionRequest')($, request, through(undefined)), undefined)
-  // The operator has not answered yet: the line is already written, alone.
+  // The operator has not answered yet: the line is written, alone, without the hook waiting for the writer.
+  await written()
   assert.equal(runs.length, 1)
   const [asked] = (runs[0]?.stdin ?? '').trim().split('\n').map(l => JSON.parse(l) as Record<string, unknown>)
   assert.deepEqual([asked?.['event'], asked?.['tool'], asked?.['tool_use_id'], asked?.['file'], asked?.['permission_mode']], ['permission_ask', 'Write', 'toolu_01Write', '/Users/me/dev/app/config.json', 'default'])
@@ -365,15 +368,18 @@ test('a permission prompt: written at once, before the call ends, with the reaso
   assert.deepEqual([call?.['outcome'], typeof call?.['ask_ms']], ['ok', 'number'])
 })
 
-test('a permission request a settings hook answered shows no dialog: nothing is written; a failing writer never fails the hook', async () => {
+test('a permission request a settings hook answered shows no dialog: nothing is written; a failing writer never fails or holds the hook', async () => {
   const quiet = host()
   const h = hooks()
-  const answered = { hookSpecificOutput: { decision: { behavior: 'allow' } }, decision: { behavior: 'allow' } }
+  // The host's result of an answered request carries the hook's `decision` (its `hookSpecificOutput.decision`) at the top.
+  const answered = { decision: { behavior: 'allow' } }
   assert.equal(await h.hook('classic.PermissionRequest')(quiet.$, F('permission.request.write'), through(answered)), answered)
+  await written()
   assert.equal(quiet.runs.length, 0)
   const broken = host({ exitCode: 1 })
   const result = await hooks().hook('classic.PermissionRequest')(broken.$, F('permission.request.write'), through({ passed: true }))
   assert.deepEqual(result, { passed: true })
+  await written()
   assert.equal(broken.runs.length, 1)
   assert.match(broken.logs.join('\n'), /permission request skipped: append exited 1/)
 })
@@ -381,6 +387,7 @@ test('a permission request a settings hook answered shows no dialog: nothing is 
 test('a prompt no announced ask matches is still written, without the call\'s id or the reason', async () => {
   const { $, runs } = host()
   await hooks().hook('classic.PermissionRequest')($, F('permission.request.write'), through(undefined))
+  await written()
   const asked = JSON.parse((runs[0]?.stdin ?? '').trim()) as Record<string, unknown>
   assert.deepEqual([asked['event'], asked['tool_use_id'], asked['ask_reason']], ['permission_ask', undefined, undefined])
 })

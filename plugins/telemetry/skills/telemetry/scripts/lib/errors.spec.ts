@@ -219,3 +219,17 @@ test('errors: the prompts of a day file are read from the cursor like the failur
     assert.deepEqual(errors({ stateDir, now: NOW + 1000 }), ['errors since 2026-11-20T12:00Z: 0 failed call(s)'])
   })
 })
+
+test('prompts: a tool that failed after the operator allowed it counts as allowed; an answer read in a later pass does not reach its prompt', () => {
+  const failed = parsed(
+    ask('2026-11-20T10:00:00Z', 'a', 'why'),
+    call('2026-11-20T10:00:04Z', { tool: 'Write', tool_use_id: 'a', outcome: 'error', ask_ms: 4000, error_message: 'File has not been read yet' }),
+  )
+  assert.deepEqual(promptGroups(failed).map(g => [g.allowed, g.denied, g.waitMs]), [[1, 0, 4000]])
+  scratch(({ stateDir, day, add }) => {
+    day('2026-11-20', [ask('2026-11-20T10:00:00Z', 'a', 'why')])
+    assert.match(errors({ stateDir, now: NOW })[2] ?? '', /\(allowed 0, denied 0, unanswered 1\)/)
+    add('2026-11-20', [call('2026-11-20T10:00:09Z', { tool: 'Write', tool_use_id: 'a', outcome: 'ok', ask_ms: 9000 })])
+    assert.deepEqual(errors({ stateDir, now: NOW + 1000 }), ['errors since 2026-11-20T12:00Z: 0 failed call(s)'])
+  })
+})

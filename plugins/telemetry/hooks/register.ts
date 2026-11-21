@@ -205,7 +205,8 @@ export function mount(on: On, collector: Collector): void {
 
   // The classic event the host raises as it is about to show a permission dialog. A settings hook that
   // answers the request (a decision on `next`'s result) shows none: nothing is written then. Written at
-  // once, not at the turn's end: a call still waiting on the operator has this line alone.
+  // once, not at the turn's end (a call still waiting on the operator has this line alone), but never
+  // awaited: the dialog is not held back by the writer's process.
   on('classic.PermissionRequest', async ($, e, next) => {
     const result = await next(e)
     await quietly($, 'permission request', async () => {
@@ -215,7 +216,11 @@ export function mount(on: On, collector: Collector): void {
       const agent = typeof e['agent_id'] === 'string' ? e['agent_id'] : undefined
       const ask = collector.takeAsk(tool, e['tool_input'], agent, at)
       collector.push(permissionAsk(at, await $.session.id(), e, ask))
-      await flush($, collector)
+      flush($, collector).catch(error => {
+        try {
+          $.ui.log(`telemetry: permission request skipped: ${error instanceof Error ? error.message : String(error)}`, { to: 'debug' })
+        } catch { /* the log itself never fails a hook */ }
+      })
     })
     return result
   })

@@ -528,7 +528,7 @@ test('permission_ask: a Bash line, an MCP call and a subagent\'s dialog; no matc
 
 test('permission_ask: a secret in the line or the path is redacted by the writer, and a long reason is cut', () => {
   const secret = ['gh', 'p_', 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gjabcd'].join('')
-  const event = permissionAsk(AT, S, { tool_name: 'Bash', tool_input: { command: `curl -H 'Authorization: Bearer ${secret}' https://x.example` } }, askOf({ tool: 'Bash', input: {} }, { decision: 'ask', reason: `why ${'r'.repeat(900)}` }))
+  const event = permissionAsk(AT, S, { tool_name: 'Bash', tool_input: { command: `curl -H 'Authorization: Bearer ${secret}' https://x.example` } }, askOf({ tool: 'Bash', input: {}, tool_use_id: 'toolu_01Long' }, { decision: 'ask', reason: `why ${'r'.repeat(900)}` }))
   const stored = cutFields(redactValue(event, new Map()).value) as Record<string, unknown>
   assert.equal(JSON.stringify(stored).includes(secret), false)
   assert.match(JSON.stringify(stored), /REDACTED/)
@@ -538,17 +538,19 @@ test('permission_ask: a secret in the line or the path is redacted by the writer
 test('askOf: only an ask verdict is an ask', () => {
   assert.equal(askOf({ tool: 'Bash', input: {} }, { decision: 'allow' }), undefined)
   assert.equal(askOf({ tool: 'Bash', input: {} }, { decision: 'deny', reason: 'x' }), undefined)
-  assert.equal(askOf({ input: {} }, { decision: 'ask' }), undefined)
+  assert.equal(askOf({ input: {}, tool_use_id: 'x' }, { decision: 'ask' }), undefined)
+  // A query or a call straight to its server names no call: no dialog is raised for it.
+  assert.equal(askOf({ tool: 'Bash', input: {} }, { decision: 'ask' }), undefined)
   assert.equal(writeAsk()?.reason?.startsWith('Claude requested'), true)
 })
 
-test('takeAsk: the dialog takes the latest ask of the same tool and arguments, once; the only ask of its tool stands in when arguments differ; another tool or loop never matches', () => {
+test('takeAsk: the dialogs of a burst take the asks of the same tool and arguments in their order, once; the only ask of its tool stands in when arguments differ; another tool or loop never matches', () => {
   const c = new Collector()
   const ask = (id: string, input: unknown, tool = 'Write', agent?: string) => askOf({ tool, input, tool_use_id: id, agentId: agent }, { decision: 'ask', reason: id })
   c.noteAsk(ask('one', { a: 1, b: 2 }))
   c.noteAsk(ask('two', { a: 1, b: 2 }))
-  assert.equal(c.takeAsk('Write', { b: 2, a: 1 }, undefined, AT)?.id, 'two')
-  assert.equal(c.takeAsk('Write', { a: 1, b: 2 }, undefined, AT + 1)?.id, 'one')
+  assert.equal(c.takeAsk('Write', { b: 2, a: 1 }, undefined, AT)?.id, 'one')
+  assert.equal(c.takeAsk('Write', { a: 1, b: 2 }, undefined, AT + 1)?.id, 'two')
   assert.equal(c.takeAsk('Write', { a: 1, b: 2 }, undefined, AT + 2), undefined)
   c.noteAsk(ask('three', { path: 'x' }))
   c.noteAsk(ask('bash', { command: 'ls' }, 'Bash'))
@@ -579,4 +581,25 @@ test('tool_call: a call whose dialog was shown carries the time from the dialog 
   assert.equal('ask_ms' in (toolEvents(AT, S, input, F('result.ok'), undefined, 100)[0] ?? {}), false)
   const denied = toolEvents(AT + 3000, S, input, F('result.user'), undefined, 3100, AT)[0]
   assert.deepEqual([denied?.['outcome'], denied?.['decided_by'], denied?.['ask_ms']], ['refused', 'user', 3000])
+})
+
+test('permission_ask: a secret in the path or the URL is redacted like the line\'s, and both are cut', () => {
+  const secret = ['gh', 'p_', 'q7Lm2Xp9Rz4Kw8Nv3Tb6Hc1Yd5Fs0Gjabcd'].join('')
+  const event = permissionAsk(AT, S, { tool_name: 'Write', tool_input: { file_path: `/work/${secret}/notes.txt` } }, undefined)
+  const fetched = permissionAsk(AT, S, { tool_name: 'WebFetch', tool_input: { url: `https://x.example/a?token=${secret}&${'q'.repeat(600)}` } }, undefined)
+  for (const e of [event, fetched]) assert.equal(JSON.stringify(cutFields(redactValue(e, new Map()).value)).includes(secret), false)
+  assert.equal(String((cutFields(redactValue(fetched, new Map()).value) as Record<string, unknown>)['url']).length <= LINE_MAX + 1, true)
+})
+
+test('takeAsk: several asks of a tool with other arguments than the dialog\'s match none; the shown dialogs are bounded too', () => {
+  const c = new Collector()
+  c.noteAsk(askOf({ tool: 'Write', input: { n: 1 }, tool_use_id: 'one' }, { decision: 'ask' }))
+  c.noteAsk(askOf({ tool: 'Write', input: { n: 2 }, tool_use_id: 'two' }, { decision: 'ask' }))
+  assert.equal(c.takeAsk('Write', { n: 3 }, undefined, AT), undefined)
+  for (let i = 0; i < 150; i++) {
+    c.noteAsk(askOf({ tool: 'Edit', input: { i }, tool_use_id: `e${i}` }, { decision: 'ask' }))
+    c.takeAsk('Edit', { i }, undefined, AT)
+  }
+  assert.equal(c.settleAsk('e0'), undefined)
+  assert.equal(c.settleAsk('e149'), AT)
 })

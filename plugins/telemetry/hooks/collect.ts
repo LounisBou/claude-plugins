@@ -607,7 +607,7 @@ export interface Ask {
   readonly tool: string
   /** The call's arguments as `tool.check` read them, in the stable form `sameInput` compares. */
   readonly input: string
-  readonly id: string | undefined
+  readonly id: string
   readonly agent: string | undefined
   readonly reason: string | undefined
   readonly check: Check | undefined
@@ -622,13 +622,14 @@ export function stableJson(value: unknown): string {
   return JSON.stringify(value) ?? 'null'
 }
 
-/** The ask a `tool.check` verdict is, or undefined for a verdict that is no ask. */
+/** The ask a `tool.check` verdict is, or undefined for a verdict that is no ask or names no call (a query, a call straight to its server: no dialog is raised for it). */
 export function askOf(input: unknown, result: unknown): Ask | undefined {
   const e = record(input)
   const check = checkOf(result)
   const tool = text(e['tool'])
-  if (check?.decision !== 'ask' || tool === undefined) return undefined
-  return { tool, input: stableJson(e['input']), id: text(e['tool_use_id']), agent: text(e['agentId']), reason: text(record(result)['reason']), check }
+  const id = text(e['tool_use_id'])
+  if (check?.decision !== 'ask' || tool === undefined || id === undefined) return undefined
+  return { tool, input: stableJson(e['input']), id, agent: text(e['agentId']), reason: text(record(result)['reason']), check }
 }
 
 /**
@@ -863,19 +864,18 @@ export class Collector {
   }
 
   /**
-   * The announced ask a dialog is for: the latest of the same tool and loop with the same arguments,
-   * else the only one of that tool and loop. Taken once; a call that has an id is marked shown at `at`.
+   * The announced ask a dialog is for: the oldest of the same tool and loop with the same arguments (the
+   * dialogs of a burst are raised in the order of its asks), else the only one of that tool and loop.
+   * Taken once, and marked shown at `at`.
    */
   takeAsk(tool: string, input: unknown, agent: string | undefined, at: number): Ask | undefined {
     const same = this.asks.filter(ask => ask.tool === tool && ask.agent === agent)
     const wanted = stableJson(input)
-    const found = [...same].reverse().find(ask => ask.input === wanted) ?? (same.length === 1 ? same[0] : undefined)
+    const found = same.find(ask => ask.input === wanted) ?? (same.length === 1 ? same[0] : undefined)
     if (found === undefined) return undefined
     this.asks = this.asks.filter(ask => ask !== found)
-    if (found.id !== undefined) {
-      this.shown.set(found.id, at)
-      if (this.shown.size > ASKS_KEPT) this.shown.delete([...this.shown.keys()][0] ?? '')
-    }
+    this.shown.set(found.id, at)
+    if (this.shown.size > ASKS_KEPT) this.shown.delete([...this.shown.keys()][0] ?? '')
     return found
   }
 
