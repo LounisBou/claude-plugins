@@ -620,10 +620,15 @@ export function onlyAbsentRecords(missing: readonly string[]): boolean {
 }
 
 // What a stacked pull request misses with neither a tests record nor its checks green: the light CI's run.
+const LIGHT_CI_STACKED = ' and its checks not green: stacked on '
 function lightCiMissing(gate: Gate): string {
-  return SCRIPTED.kind + ': no record at ' + head7(gate.head) + ' and its checks not green: stacked on ' + (gate.base || 'another pull request')
+  return SCRIPTED.kind + ': no record at ' + head7(gate.head) + LIGHT_CI_STACKED + (gate.base || 'another pull request')
     + ', run ' + SCRIPTED.tool + ' {"action": "run", "pr": ' + gate.pr + '} from a clean checkout of its head'
 }
+
+// That item of missingItems: the light CI has not run at the head. A head the walk of a stack moved by merging a member it gated
+// into it holds the reviewed head and that member, whose run proved them: the item is then an absent record, as the others are.
+export const LIGHT_CI_ABSENT = new RegExp('^' + SCRIPTED.kind + ': no record at [0-9a-f]+' + LIGHT_CI_STACKED)
 
 // The CI result of a repository with no CI configured (engine's gate_ci): no workflow, no required check, no check on
 // its default branch. It holds the place of green CI, named as such in the Ready line.

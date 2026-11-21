@@ -2,7 +2,8 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Found, NounEvents, TestOn } from 'claude-code/testing'
 import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, selfReviewRefusal, writeNetRefusal } from './register.js'
 import { touchesRecords } from './ready.js'
-import { mergeOrder, parseStackPlan } from './stack.js'
+import { mergeOrder, parseStackPlan, walkedHead } from './stack.js'
+import { SCRIPTED } from '../core/pr-record.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
 import { dialogOf, fieldsOf, listOf, type ProcessRunResult } from '../core/host.ts'
 
@@ -1756,7 +1757,7 @@ test('a failed guard refuses a deletion in the records, and lets a read or anoth
 
 // pr-merge asked for the stack answers this plan, merging nothing; any other call answers ok.
 const stackPlan = (order: 'bottom-up' | 'top-down', prs: number[]) => JSON.stringify({
-  stack: { order, why: 'a test says so', base: 'main', members: prs.map((pr, depth) => ({ pr, depth })) },
+  stack: { order, why: 'a test says so', base: 'main', members: prs.map((pr, depth) => ({ pr, depth, head: 'feat/' + pr, base: depth === 0 ? 'main' : 'feat/' + prs[depth - 1] })) },
 })
 const stackReply = (plan: string, fails: (run: GhRun) => string | undefined = () => undefined): Replier => (e) => {
   const run = runOf(e)
@@ -1867,7 +1868,7 @@ test('a merge the engine fails stops the walk; each member is pinned to the head
   expect(merges.every((r) => r.args['sha'] === headOf(Number(r.args['pr'])))).toBe(true)
 })
 
-test('outside auto-merge each member of the stack is asked once, the one the caller named included', async ($, on) => {
+test('outside auto-merge each merge of the stack is asked once, the named one included; a retarget an allow rule covers is not asked', async ($, on) => {
   const runs: GhRun[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], stackReply(stackPlan('bottom-up', [1, 2])), { decision: 'allow' }, stackGate)
@@ -1922,15 +1923,152 @@ test('what the engine said on stderr reading the stack reaches the answer of the
 })
 
 test('parseStackPlan reads what the engine answers for a stack, and nothing else', () => {
-  expect(parseStackPlan(stackPlan('top-down', [4, 5]))).toEqual({ order: 'top-down', why: 'a test says so', base: 'main', members: [{ pr: 4, depth: 0 }, { pr: 5, depth: 1 }] })
+  expect(parseStackPlan(stackPlan('top-down', [4, 5]))).toEqual({ order: 'top-down', why: 'a test says so', base: 'main', members: [{ pr: 4, depth: 0, head: 'feat/4', base: 'main' }, { pr: 5, depth: 1, head: 'feat/5', base: 'feat/4' }] })
   for (const text of ['{"merged":true}', 'ok', '', '{"stack":{"order":"sideways","base":"main","members":[]}}', stackPlan('bottom-up', [1]),
-    '{"stack":{"order":"bottom-up","base":"main","members":[{"pr":1,"depth":0},{"pr":"2","depth":1}]}}']) {
+    '{"stack":{"order":"bottom-up","base":"main","members":[{"pr":1,"depth":0,"head":"a","base":"main"},{"pr":"2","depth":1,"head":"b","base":"a"}]}}',
+    '{"stack":{"order":"bottom-up","base":"main","members":[{"pr":1,"depth":0},{"pr":2,"depth":1}]}}']) {
     expect(parseStackPlan(text)).toBeUndefined()
   }
 })
 
 test('the order of a merge: the bottom first bottom-up, the bottom last top-down, siblings by number', () => {
-  const members = [{ pr: 9, depth: 1 }, { pr: 7, depth: 0 }, { pr: 8, depth: 1 }, { pr: 10, depth: 2 }]
+  const members = [9, 7, 8, 10].map((pr) => ({ pr, depth: pr === 7 ? 0 : pr === 10 ? 2 : 1, head: 'h', base: 'b' }))
   expect(mergeOrder({ order: 'bottom-up', why: '', base: 'main', members })).toEqual([7, 8, 9, 10])
   expect(mergeOrder({ order: 'top-down', why: '', base: 'main', members })).toEqual([10, 8, 9, 7])
+})
+
+// ---- a top-down walk whose heads the merges above moved, through the real gate ----
+
+const sha40 = (n: number) => String(n).repeat(40).slice(0, 40)
+// The light CI's run at a head, and the other records, as the gate reads them under the records root.
+function stackedRecords(prs: number[], headOfPr: (pr: number) => string): Record<string, string> {
+  return Object.assign({}, ...prs.map((pr) => {
+    const head = headOfPr(pr)
+    const files = recordFiles('acme/thing', pr, head)
+    files[RECORDS_ROOT + '/acme/thing/' + head + '/tests.20261101T100000Z.' + SCRIPTED.producer + '.json'] = JSON.stringify({
+      v: 1, repo: 'acme/thing', pr, head, kind: SCRIPTED.kind, result: 'pass', producer: SCRIPTED.producer, detail: 'npm test', session: '', at: '2026-11-01T10:00:00Z',
+    })
+    return files
+  })) as Record<string, string>
+}
+const LIGHT_CI_FILE = { '/cfg/light-ci/acme-thing.json': '{"command": ["npm", "test"]}' }
+
+// Three stacked pull requests, 3 on 2 on 1, no CI on the stacked ones: the gate reads each at the head it holds now, and the
+// merge of 3 into 2's branch moves 2's head to a merge commit of 2's gated head and 3's, as the merge of 2 moves 1's.
+function movingStack(foreign = false) {
+  const start = (pr: number) => sha40(pr)
+  const moved = new Map<number, string>()
+  const headNow = (pr: number) => moved.get(pr) ?? start(pr)
+  const gate = (repo: string, pr: number) => JSON.stringify({
+    repo, pr, state: 'open', draft: false, head: headNow(pr), labels: ['Ready'], stacked: pr !== 1, base: pr === 1 ? 'main' : 'feat/' + (pr - 1),
+    ci: pr === 1 ? { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1 } : { result: 'PENDING', failed: [], running: 0, skipped: [], total: 0 },
+  })
+  const commits = (pr: number) => JSON.stringify([{ sha: moved.get(pr) ?? '', parents: [{ sha: start(pr) }, { sha: foreign && pr === 2 ? sha40(9) : moved.get(pr + 1) ?? start(pr + 1) }] }])
+  const reply: Replier = (e) => {
+    const run = runOf(e)
+    if (run.command === 'pr-merge' && run.args['stack'] === true) return { exitCode: 0, stdout: stackPlan('top-down', [1, 2, 3]), stderr: '' }
+    if (run.command === 'pr-commits') return { exitCode: 0, stdout: commits(Number(run.args['pr'])), stderr: '' }
+    if (run.command === 'pr-merge') {
+      const below = Number(run.args['pr']) - 1
+      if (below >= 1) moved.set(below, sha40(below + 4))
+    }
+    return { exitCode: 0, stdout: '{"merged":true}', stderr: '' }
+  }
+  return { gate, reply, records: stackedRecords([1, 2, 3], start), start }
+}
+
+test('a top-down walk gets past a member whose head the merge above moved, with the light CI configured', async ($, on) => {
+  const runs: GhRun[] = []
+  const world = movingStack()
+  await stubMod(on, runs, [], world.reply, undefined, world.gate)
+  stubAutoMerge(on, DATA, { ...LISTED, ...LIGHT_CI_FILE }, [], [], world.records)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.deny).toBeUndefined()
+  expect(out.isError).toBeUndefined()
+  expect(walked(runs)).toEqual(['merge 3', 'merge 2', 'merge 1'])
+  // Each member merged at the head its gate read when its turn came.
+  const shas = runs.filter((r) => r.command === 'pr-merge' && r.args['stack'] !== true).map((r) => r.args['sha'])
+  expect(shas).toEqual([sha40(3), sha40(6), sha40(5)])
+})
+
+test('a head the walk did not move alone is refused for the light CI, the members above merged', async ($, on) => {
+  const runs: GhRun[] = []
+  const world = movingStack(true)
+  await stubMod(on, runs, [], world.reply, undefined, world.gate)
+  stubAutoMerge(on, DATA, { ...LISTED, ...LIGHT_CI_FILE }, [], [], world.records)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.isError).toBe(true)
+  expect(String(out.result)).toContain('stopped at acme/thing#2')
+  expect(String(out.result)).toContain('tests: no record at')
+  expect(String(out.result)).toContain('merged so far: acme/thing#3')
+  expect(walked(runs)).toEqual(['merge 3'])
+})
+
+test('a top-down walk is refused before any merge when a member is not ready at the head it holds', async ($, on) => {
+  const runs: GhRun[] = []
+  const world = movingStack()
+  // 2 has no light CI record at its head: nothing is merged, 3 above it included.
+  const records = Object.fromEntries(Object.entries(world.records).filter(([path]) => !(path.includes(sha40(2)) && path.includes('/tests.'))))
+  await stubMod(on, runs, [], world.reply, undefined, world.gate)
+  stubAutoMerge(on, DATA, { ...LISTED, ...LIGHT_CI_FILE }, [], [], records)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.deny).toContain('stopped at acme/thing#2')
+  expect(walked(runs)).toEqual([])
+})
+
+test('the head the caller pinned for the named pull request is the one merged: a head that moved since is refused', async ($, on) => {
+  const runs: GhRun[] = []
+  let flipped = false
+  const gate = (repo: string, pr: number) => stackGate(repo, pr).replace(headOf(1), flipped && pr === 1 ? sha40(8) : headOf(1))
+  const reply: Replier = (e) => {
+    const run = runOf(e)
+    if (run.command === 'pr-merge' && run.args['stack'] === true) {
+      flipped = true
+      return { exitCode: 0, stdout: stackPlan('bottom-up', [1, 2]), stderr: '' }
+    }
+    return { exitCode: 0, stdout: '{"merged":true}', stderr: '' }
+  }
+  await stubMod(on, runs, [], reply, undefined, gate)
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1, sha: headOf(1) }, repo: 'acme/thing' })
+  expect(String(out.deny ?? out.result)).toContain('the head moved: ' + headOf(1) + ' given')
+  expect(walked(runs)).toEqual([])
+})
+
+test('an explicit ask rule on the retarget is asked, and the walk stops when it is refused', async ($, on) => {
+  const runs: GhRun[] = []
+  const asked: string[] = []
+  const askUpdate = (e: NounEvents['tool.check']): Verdict => (fieldsOf(e.input)?.['command'] === 'pr-update' ? { decision: 'ask', rule: 'mcp__github__gh' } : { decision: 'allow' })
+  await stubMod(on, runs, [], stackReply(stackPlan('bottom-up', [1, 2])), askUpdate, stackGate)
+  stubAsk(on, asked, 'Deny')
+  stubAutoMerge(on, DATA, LISTED, [], [], stackRecords)
+  await startSession($)
+
+  const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(asked.length).toBe(1)
+  expect(asked[0]).toContain('pr-update')
+  expect(String(out.result)).toContain('stopped at acme/thing#2: the user refused gh pr-update')
+  expect(walked(runs)).toEqual(['merge 1'])
+})
+
+test('walkedHead reads the head as the one gated plus the merges, from the commits, and nothing else', () => {
+  const commit = (sha: string, first: string, second: string) => ({ sha, parents: [{ sha: first }, { sha: second }] })
+  const commits = [commit('c3', 'c2', 'u2'), commit('c2', 'c1', 'u1'), { sha: 'c1', parents: [{ sha: 'c0' }] }]
+  expect(walkedHead(commits, 'c3', 'c1', ['u1', 'u2'])).toBe(true)
+  expect(walkedHead(commits, 'c2', 'c1', ['u1'])).toBe(true)
+  expect(walkedHead(commits, 'c3', 'c1', ['u2', 'u1'])).toBe(false)
+  expect(walkedHead(commits, 'c3', 'c0', ['u1', 'u2'])).toBe(false)
+  expect(walkedHead(commits, 'c3', 'c1', ['u1'])).toBe(false)
+  expect(walkedHead(commits, 'c9', 'c1', ['u1'])).toBe(false)
+  expect(walkedHead(commits, 'c1', 'c1', [])).toBe(false)
+  expect(walkedHead({}, 'c3', 'c1', ['u1', 'u2'])).toBe(false)
+  expect(walkedHead([{ sha: 'c3', parents: [{ sha: 'c2' }, { sha: 'u2' }, { sha: 'x' }] }], 'c3', 'c2', ['u2'])).toBe(false)
 })
