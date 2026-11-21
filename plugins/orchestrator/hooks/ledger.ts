@@ -171,6 +171,7 @@ export function mergeRelayLine(merged: { repo: string | null; pr: number }, rows
  * The pull requests this session's own `pr-merge` merged (`<session> <repo>#<n>`, the repository lower-cased), kept
  * until the tick that tells their end: the session knows of that merge, so the bare « merged. » line is not sent to it.
  * Held beside the tick's `told` keys, in memory as they are: a restart loses both, and the line is then sent as before.
+ * One a tick never reads ended (a pull request of no orchestration's ledger) stays: a few bytes per merge of the process.
  */
 const mergedHere = new Set<string>()
 
@@ -193,8 +194,13 @@ export function mergedByCall(e: Readonly<Record<string, unknown>>, result: unkno
 // The call goes through; its answer is read for a merge, remembered, and for a creation, the line written within the bound.
 async function afterCall($: Held, e: Call, next: Next<Call>, now: () => Date, bound: number): Promise<unknown> {
   const result = await next(e)
-  const merged = mergedByCall(e, result)
-  if (merged !== null) mergedHere.add(mergeKey(await $.session.id(), merged.repo, merged.pr))
+  // Bookkeeping only: it never touches the answer. A tick that reads the merge before the call returns sends the bare line, as before.
+  try {
+    const merged = mergedByCall(e, result)
+    if (merged !== null) mergedHere.add(mergeKey(await $.session.id(), merged.repo, merged.pr))
+  } catch (err) {
+    await logLine($, 'ledger', `a merge by this session not remembered: ${messageOf(err)}`)
+  }
   const created = createdPr(e, result)
   if (created === null) return result
   try {

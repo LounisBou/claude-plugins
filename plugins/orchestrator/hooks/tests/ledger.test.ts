@@ -1292,3 +1292,15 @@ test('the own merge is told apart once: the same pull request merged again elsew
   const again = mergedOnForge()
   expect((await prWake(again.dollar, new Set())).lines).toEqual([BARE_17])
 })
+
+test('the own merge is matched whatever the case of the repository the call names', async () => {
+  const world = mergedOnForge()
+  await call(mounted(), world.dollar, prMerge({ repo: 'Acme/App', args: { pr: '#17' } }), MERGED_ANSWER)
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([])
+})
+
+test('a failure of the bookkeeping leaves the tool answer as it came', async () => {
+  const world = mergedOnForge()
+  const broken = { ...world.dollar, session: { id: async () => { throw new Error('no session') } } } as unknown as World
+  expect(await call(mounted(), broken, prMerge(), MERGED_ANSWER)).toEqual(MERGED_ANSWER)
+})
