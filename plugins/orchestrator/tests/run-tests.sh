@@ -6795,15 +6795,27 @@ except SystemExit:
     pass" "$1" 2>&1 1>/dev/null; }
 msg_dialog=$(screen_refusal $'Do you want to use this API key?\n\n  1. Yes\n  2. No\n')
 check "a parked dialog is refused with what the screen shows" "1|1|1|0" \
-  "$(printf '%s' "$msg_dialog" | grep -c 'The tab shows: Do you want to use this API key? | 1. Yes | 2. No\.')|$(printf '%s' "$msg_dialog" | grep -c 'parked on a dialog or hung at start')|$(printf '%s' "$msg_dialog" | grep -c 'ORCHESTRATOR_MODE_TIMEOUT')|$(printf '%s' "$msg_dialog" | grep -c 'Read it next time')"
-check "a blank screen is said blank" "1" "$(screen_refusal $'\n\n' | grep -c 'The tab shows nothing')"
+  "$(printf '%s' "$msg_dialog" | grep -c 'The tab showed: Do you want to use this API key? | 1. Yes | 2. No\.')|$(printf '%s' "$msg_dialog" | grep -c 'parked on a dialog or hung at start')|$(printf '%s' "$msg_dialog" | grep -c 'ORCHESTRATOR_MODE_TIMEOUT')|$(printf '%s' "$msg_dialog" | grep -c 'Read it next time')"
+check "a blank screen is said blank" "1" "$(screen_refusal $'\n\n' | grep -c 'The tab showed nothing')"
 check "a screen that cannot be read is said so" "1" \
   "$("$py" -c "
 import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
 print(m.screen_clause(None))" | grep -c 'The screen could not be read')"
+# Escape sequences on a screen are not carried into the refusal, and a resumed session's refusal
+# says what its screen shows too.
+check "a screen's control characters are replaced, not quoted" "1|0" \
+  "$(screen_refusal $'\x1b[31mred\x07 text' | grep -c 'The tab showed: ?\[31mred? text\.')|$(screen_refusal $'\x1b[31mred' | grep -c $'\x1b')"
+check "a resumed session parked on a dialog is refused with what its screen shows" "1|0" \
+  "$("$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.close_made = lambda made: True
+m.transcript_of = lambda sid: (None, 0)
+m.tmux_on = lambda socket, args, what: 'Resume this session? 1. Yes'
+m.verify_resumed('s', 0, 'auto', 'a-model', dict(home='x', tty='/dev/ttys9'), timeout=1, sleep=lambda s: None, dir_='/checkout')" 2>&1 | tee "$WORK/resume-screen.txt" | grep -c 'The tab showed: Resume this session? 1. Yes\.')|$(grep -c 'workspace-trust dialog' "$WORK/resume-screen.txt")"
 check "a long screen is quoted by its last lines only" "1|0" \
-  "$(screen_refusal "$(seq 1 20)" | grep -c 'The tab shows: 15 | 16 | 17 | 18 | 19 | 20\.')|$(screen_refusal "$(seq 1 20)" | grep -c '| 14 |')"
+  "$(screen_refusal "$(seq 1 20)" | grep -c 'The tab showed: 15 | 16 | 17 | 18 | 19 | 20\.')|$(screen_refusal "$(seq 1 20)" | grep -c '| 14 |')"
 out_mismatch=$(verify_mode_run /checkout/t.jsonl default auto 2>/dev/null)
 check "a mismatch is still refused, the made tab still closed" "exit=1|True" \
   "$(printf '%s' "$out_mismatch" | sed -n '1p')|$(printf '%s' "$out_mismatch" | sed -n '2p' | sed 's/closed=//')"
