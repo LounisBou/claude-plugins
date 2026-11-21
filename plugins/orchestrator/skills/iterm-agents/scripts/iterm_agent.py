@@ -97,9 +97,16 @@ SPAWN_TIMEOUT = int(os.environ.get("ORCHESTRATOR_SPAWN_TIMEOUT", "30"))
 # and the two are not the same thing for every model (§43).
 PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or os.path.join(
     os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "projects")
-# A transcript appears about two seconds after the process starts; twenty is room for a
-# slow machine, and a reading that never comes is not a refusal (§29).
-MODE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_MODE_TIMEOUT", "20"))
+# The transcript appears when the session takes its first prompt: about three seconds after
+# the launch on a quiet machine. Measured on the 1 449 spawns of 2026-11-13 to 11-21 that were
+# not refused (a few read under a wait the caller had raised by hand, which is how starts of
+# 25 to 61 s were read at all): 22 s at the 99th percentile, 29 to 37 s on the loaded days
+# 11-20 and 11-21, 61 s at the slowest. Ninety seconds is that slowest with half again as much
+# room: a slow start is waited for, not refused with its tab closed (§29). A session truly
+# parked is told apart by its screen, read when the wait ends (`unread_refusal`). A refusal
+# comes after SPAWN_TIMEOUT + this wait + the screen read + the close, about 150 s: a caller's
+# deadline is core's SPAWN_TIMEOUT_MS (180 s), held above it by scripts/contracts.test.ts.
+MODE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_MODE_TIMEOUT", "90"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
 # The host's effort levels. A tier may bind one with its model: effort moves token spend
 # as much as the model family does.
@@ -367,12 +374,12 @@ def unread_refusal(dir_, timeout, made=None):
     the plugin already calls "not launched" (§43) — so the tab this spawn made is closed
     rather than left for the operator to find blank; whether that close happened is said
     after this text, by `refuse_made`. A dialog the screen shows is named, not guessed."""
-    if made is not None and trust_dialog_on(made):
+    screen = screen_text(made) if made is not None else None
+    if screen is not None and TRUST_DIALOG.search(screen):
         return trust_refusal("spawn", dir_, timeout)
     return ("spawn: refused: no transcript for %s carrying a mode after %ss: the session may "
-            "be parked on a dialog or hung at start. Read it next time with `screen` before "
-            "retrying, or raise ORCHESTRATOR_MODE_TIMEOUT if the machine is only slow"
-            % (dir_, timeout))
+            "be parked on a dialog or hung at start. %s"
+            % (dir_, timeout, screen_clause(screen)))
 
 
 def verify_mode(dir_, launch_epoch, asked_mode, model, made, timeout=None, sleep=time.sleep):
@@ -436,12 +443,13 @@ def verify_resumed(session_id, offset, asked_mode, model, made, timeout=None, sl
                 break
         sleep(1)
         waited += 1
-    if not mode and trust_dialog_on(made):
-        refuse_made(made, trust_refusal("spawn", dir_ or "the session's directory", timeout))
     if not mode:
+        screen = screen_text(made)
+        if TRUST_DIALOG.search(screen or ""):
+            refuse_made(made, trust_refusal("spawn", dir_ or "the session's directory", timeout))
         refuse_made(made, "spawn: refused: the transcript of session %s gained no entry carrying "
-                    "a mode after %ss: the resume may be parked on a dialog or hung at start"
-                    % (session_id, timeout))
+                    "a mode after %ss: the resume may be parked on a dialog or hung at start. %s"
+                    % (session_id, timeout, screen_clause(screen)))
     elif mode != asked_mode:
         refuse_made(made, mode_refusal(asked_mode, mode, model))
     return "spawn: mode %s read on the resumed transcript" % mode
@@ -4997,21 +5005,50 @@ def process_config(pid):
 TRUST_DIALOG = re.compile(r"Quick safety check|trust this folder|Do you trust the files")
 
 
-def trust_dialog_on(made):
-    """Whether the session a spawn just made is stopped on the host's workspace-trust dialog,
-    read on its screen (a home session's window 0, else its tab); False when it cannot be read."""
+def screen_text(made):
+    """What the session a spawn just made shows (a home session's window 0, else its tab), or
+    None when it cannot be read."""
     if not made.get("home") and not made.get("tty"):
-        return False
+        return None
     try:
         if made.get("home"):
-            text = tmux_on(made["home"], ["capture-pane", "-p", "-t", HOME_SESSION + ":0"],
+            return tmux_on(made["home"], ["capture-pane", "-p", "-t", HOME_SESSION + ":0"],
                            "screen")
-        else:
-            text = "\n".join(terminal_for(made.get("tty") or "").screen(made.get("tty"), 40)
-                             or [])
+        return "\n".join(terminal_for(made.get("tty") or "").screen(made.get("tty"), 40) or [])
     except (Exception, SystemExit):
-        return False
-    return bool(TRUST_DIALOG.search(text))
+        return None
+
+
+def trust_dialog_on(made):
+    """Whether the session a spawn just made is stopped on the host's workspace-trust dialog,
+    read on its screen; False when it cannot be read."""
+    return bool(TRUST_DIALOG.search(screen_text(made) or ""))
+
+
+# How much of a screen a refusal quotes: the last lines are where a dialog or a prompt sits.
+SCREEN_LINES = 6
+SCREEN_WIDTH = 160
+# What a quoted screen may not carry: escape sequences and other controls would reach the
+# reader's terminal and the logs that keep the refusal.
+UNPRINTABLE = re.compile(r"[^\x20-\x7e\u00a0-\uffff]")
+
+
+def screen_clause(screen):
+    """What a refused spawn's tab showed, said instead of advising a retry in the dark: the last
+    lines of its screen, or that it was blank, or that it could not be read, each with what
+    to do on the next spawn (the tab is closed by the refusal, so nothing is done on it)."""
+    if screen is None:
+        return ("The screen could not be read. Next time, raise ORCHESTRATOR_MODE_TIMEOUT if "
+                "the machine is only slow")
+    lines = [UNPRINTABLE.sub("?", ln.strip())[:SCREEN_WIDTH] for ln in screen.split("\n")
+             if ln.strip()]
+    if not lines:
+        return ("The tab showed nothing: the host had not drawn its screen, so it was hung at "
+                "start or the machine is slow. Next time, raise ORCHESTRATOR_MODE_TIMEOUT to "
+                "wait longer")
+    return ("The tab showed: %s. A dialog there is one this launch cannot answer; a start "
+            "banner or an empty prompt means the session was up and slow, so next time raise "
+            "ORCHESTRATOR_MODE_TIMEOUT" % " | ".join(lines[-SCREEN_LINES:]))
 
 
 def directory_is_trusted(path):
