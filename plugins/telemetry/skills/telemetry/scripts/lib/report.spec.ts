@@ -739,3 +739,43 @@ test('cold rewrites: a subagent\'s calls (`agent`) are its own loop, not its ses
     assert.match(find(lines(config), 'cold rewrites: '), /^cold rewrites: n\/a — /)
   })
 })
+
+test('unit costs per day: the section reads the price file, the merged pull requests and the dispatch record, after the cold rewrites and before the nine figures', () => {
+  const events = [
+    ev('2026-11-09T10:00:00Z', 'turn_end', S(1), { role: 'agent', launch_tier: 'deep', effort: 'xhigh', turn_cost_usd: 4 }),
+    ev('2026-11-09T10:05:00Z', 'agent_closed', S(2), { kind: 'subagent', child: 'r1', run: 1, lens: 'correctness', models: ['claude-sonnet-5-5'], effort: 'high', target: { repo: 'acme/tool', pr: 5 }, range: 'main..abc1234def56' }),
+    ev('2026-11-09T10:05:00Z', 'api_call', S(2), { agent: 'r1', message: 'm1', model: 'claude-sonnet-5-5', usage: { input_tokens: 1_000_000, output_tokens: 100_000 } }),
+    ev('2026-11-12T10:00:00Z', 'escape', S(3), { source: 'pull_request', names: ['acme/tool#5'] }),
+  ]
+  const closed = (id: number, at: string, rounds: number): string => JSON.stringify({ id, state: 'closed', opened: '2026-11-09T08:00:00Z', closed: at, rounds })
+  const record = [closed(1, '2026-11-09T12:00:00Z', 2), closed(2, '2026-11-09T13:00:00Z', 1)]
+  scratch({ events, record }, config => {
+    mkdirSync(join(config, 'claude-orchestrator', 'routing'), { recursive: true })
+    writeFileSync(join(config, 'claude-orchestrator', 'routing', 'prices.json'), JSON.stringify({ 'claude-sonnet-5-5': { input: 2, output: 10, cache_write_5m: 2.5, cache_write_1h: 4, cache_read: 0.2 } }))
+    const out = lines(config, { gh: ghFor({ prs: { 'acme/tool': merged([[5, '2026-11-08T09:00:00Z', '2026-11-09T11:00:00Z']]) }, runs: { 'acme/tool': '[]' } }) })
+    assert.ok(out.includes('  2026-11-09  deep/xhigh $4.00 (1 sessions)'), out.join('\n'))
+    assert.ok(out.includes('  2026-11-09  claude-sonnet-5-5/high $3.00 (1 readers)'), out.join('\n'))
+    assert.ok(out.includes('  2026-11-09  1 readers, 1 merged = 1.0 per pull request'), out.join('\n'))
+    assert.ok(out.includes('  2026-11-09  1 of 2 (50 %)'), out.join('\n'))
+    assert.ok(out.includes('      acme/tool#5: read at abc1234def56 by 1 reader(s) on claude-sonnet-5-5/high'), out.join('\n'))
+    assert.ok(out.indexOf('unit costs per day (API list prices, an equivalent and never a bill; Paris days)') > out.findIndex(l => l.startsWith('cold rewrites: ')))
+    assert.ok(out.findIndex(l => l.startsWith('unit cost moved')) < out.findIndex(l => l.startsWith('1 agents on every runnable line')))
+  })
+})
+
+test('unit costs per day: with no price file, no merged pull request listing and no dispatch record, each figure says n/a and why', () => {
+  scratch({}, config => {
+    const out = lines(config)
+    assert.match(find(out, '  review readers: '), /^ {2}review readers: n\/a — .*prices\.json is not readable \(ENOENT\)$/)
+    assert.match(find(out, '  2026-11-08  0 readers'), /merged pull requests: n\/a/)
+    assert.match(find(out, '  n/a — no closed row'), /any readable dispatch record/)
+  })
+})
+
+test('unit costs per day: the price file is read where ORCHESTRATOR_STATE_DIR names the protected root', () => {
+  scratch({ events: [ev('2026-11-09T10:05:00Z', 'agent_closed', S(2), { kind: 'subagent', child: 'r1', lens: 'tests', models: ['claude-sonnet-5-5'], effort: 'high' }), ev('2026-11-09T10:05:00Z', 'api_call', S(2), { agent: 'r1', message: 'm1', model: 'claude-sonnet-5-5', usage: { input_tokens: 1_000_000 } })] }, (config, dir) => {
+    mkdirSync(join(dir, 'state', 'routing'), { recursive: true })
+    writeFileSync(join(dir, 'state', 'routing', 'prices.json'), JSON.stringify({ 'claude-sonnet-5-5': { input: 2, output: 10, cache_write_5m: 2.5, cache_write_1h: 4, cache_read: 0.2 } }))
+    assert.ok(lines(config, { env: { ORCHESTRATOR_STATE_DIR: join(dir, 'state') } }).includes('  2026-11-09  claude-sonnet-5-5/high $2.00 (1 readers)'))
+  })
+})
