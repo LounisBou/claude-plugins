@@ -53,6 +53,11 @@ async function git($: Host<'process'>, cwd: string | undefined, argv: readonly s
   return line === '' ? null : line
 }
 
+/** The head (sha) the checkout `cwd` stands at, or null. */
+export function headOf($: Host<'process'>, cwd: string | undefined): Promise<string | null> {
+  return git($, cwd, ['rev-parse', 'HEAD'])
+}
+
 /** The repository `owner/name` the verdict is about: the one given, else the checkout's origin. */
 export async function repositoryOf($: Host<'process'>, given: string, cwd: string | undefined): Promise<string | null> {
   if (given !== '') return given

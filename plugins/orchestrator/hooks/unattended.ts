@@ -18,6 +18,7 @@ import { dataDir, logLine, storeIo } from './module-io.ts'
 import { fileWanted, readPrFile, refreshPrFile } from './pr-file.ts'
 import { prsOfRepo, type FilePr, type PrFile } from './pr-file-format.ts'
 import { readyHeadsOf } from './ready-agent.ts'
+import { hasOwed } from './review-close.ts'
 import type { RecordText } from './row-owner.ts'
 
 // The nouns a reading holds.
@@ -197,7 +198,8 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
     return seen
   }
   const named = new Set([...kept, ...ended.map(e => e.line)].flatMap(agentsOf))
-  const live = named.size > 0 ? await running() ?? named : named
+  // A close owed at a review's verdict (review-close.ts) reads the listing too: its tab is where the session is closed.
+  const live = named.size > 0 || hasOwed(sessionId) ? await running() ?? named : named
   // github's list is asked only when a pull request carries Ready: nothing else leaves the operator's line by it.
   const autoMerge = open.some(pr => (pr.labels ?? []).some(name => name.trim().toLowerCase() === READY_LABEL.toLowerCase())) ? await autoMergeOf($) : new Set<string>()
   const list = unattended({ open, lines: kept, live, now, autoMerge })

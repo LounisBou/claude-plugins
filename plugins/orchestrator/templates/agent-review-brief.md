@@ -54,7 +54,7 @@ Verify every finding on the artifact, drop what it does not bear out, merge dupl
 
 - Your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** — its exact `ListAgents` name and reference.
 - A question or a blocker: end your turn on it: write it, then one last line, plain text: `status: question|blocked|done — <one line>`. The hooks module sends it to the orchestrator. The orchestrator relays a question for the operator verbatim, and his answer back verbatim.
-- Your §4 line ends your turn, before its status line; then answer the orchestrator's questions until it stands you down.
+- Your §4 line ends your turn, before its status line; then answer the orchestrator's questions until its verdict closes you.
 - The hooks module reports your measured context to the orchestrator at the gate: never read or estimate it yourself.
 
 ## 7. Resource envelope

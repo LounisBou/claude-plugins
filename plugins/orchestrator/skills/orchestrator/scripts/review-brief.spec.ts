@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { main, parseArgs, placeholdersOf, TEMPLATE, USAGE } from './review-brief.ts'
 import { parseLensDescription } from '../../../core/lens.ts'
+import { isRound, readingOf } from '../../../hooks/review-reading.ts'
 
 let dir = ''
 const savedMap = process.env['ORCHESTRATOR_MODELS_MAP']
@@ -295,4 +296,14 @@ test('each lens\'s method is said in the brief: a toolkit angle by its agent, an
     if (saved === undefined) delete process.env['CLAUDE_CONFIG_DIR']
     else process.env['CLAUDE_CONFIG_DIR'] = saved
   }
+})
+
+test('the module reads the round off the real brief: its project, pull request and head, so the review session of a verdict is found (hooks/review-reading.ts)', () => {
+  assert.equal(run(FIELDS()).code, 0)
+  const text = readFileSync(join(dir, 'review-12.md'), 'utf8')
+  const read = readingOf(text)
+  assert.deepEqual(read, { project: 'app', pr: 12, head: '0123456789abcdef0123456789abcdef01234567' })
+  assert.equal(isRound(read!, { repo: 'acme/app', pr: 12, head: '0123456789abcdef0123456789abcdef01234567' }), true)
+  assert.equal(isRound(read!, { repo: 'acme/app', pr: 13, head: '0123456789abcdef0123456789abcdef01234567' }), false)
+  assert.equal(readingOf(text.replace('You are the REVIEW agent', 'You are the implementer')), null)
 })

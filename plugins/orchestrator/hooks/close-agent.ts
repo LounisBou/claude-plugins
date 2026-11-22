@@ -21,8 +21,9 @@ const READ_BOUND_MS = 10_000
 /**
  * The agent to close: its name, the tty the launcher lists it idle on, its session, and the row its cost goes to.
  * `ended`: the pull request it is closed for is merged or closed, so its last turn needs no `status: done`.
+ * `review`: a review session closed at its round's verdict (review-close.ts): its pin goes with it, no clone is kept.
  */
-export type ToClose = { agent: string; tty: string; session: string; cost?: { record: string; row: number } | undefined; ended?: boolean }
+export type ToClose = { agent: string; tty: string; session: string; cost?: { record: string; row: number } | undefined; ended?: boolean; review?: boolean }
 
 /** What the facts allow: `close` now, `refused` with the fact that keeps it open (told once), or `later` with why (tried again). */
 export type CloseFacts = { kind: 'close' } | { kind: 'refused'; why: string } | { kind: 'later'; why: string }
@@ -66,7 +67,7 @@ export async function closeFacts($: Held, a: ToClose): Promise<CloseFacts> {
 
 /** Closes the agent and records its cost; `why`, the fact that failed, null when both are done (an agent whose brief names no row is logged). */
 export async function closeAgent($: Held, a: ToClose): Promise<{ closed: boolean; why: string | null }> {
-  const closed = await $.process.run(['bash', launcherOf($.plugin.root), 'close', '--tty', a.tty, '--expect-title', a.agent, '--keep-checkout'], { timeoutMs: CLOSE_BOUND_MS })
+  const closed = await $.process.run(['bash', launcherOf($.plugin.root), 'close', '--tty', a.tty, '--expect-title', a.agent, ...(a.review === true ? [] : ['--keep-checkout'])], { timeoutMs: CLOSE_BOUND_MS })
     .catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: messageOf(err) }))
   if (closed.exitCode !== 0) return { closed: false, why: `the launcher's close failed: ${lastLine(closed) || `exit ${closed.exitCode}`}` }
   await logLine($, 'ledger', `closed ${a.agent} on ${a.tty} (session ${a.session})`)
