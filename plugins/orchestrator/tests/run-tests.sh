@@ -9346,6 +9346,190 @@ else
   skip_case "the home servers read a deploy's conf" "no tmux"
 fi
 
+echo "== iterm-agents: iTerm2 restarted with every session kept =="
+# Over a machine of the probe's own (tests/restart-probe.py): no process is signalled, no iTerm2 and
+# no tmux is run. Two home servers (orch-a, orch-b), the coordinator's and an auditor's plain tabs, a
+# tab with no session; the new app brings every tab back in one window, reversed, its titles lost.
+RSW="$WORK/restarted"
+restarted() { rm -rf "$RSW"; mkdir -p "$RSW"
+  env -u ORCHESTRATOR_PS_TABLE -u ORCHESTRATOR_BACKEND "$py" "$ROOT/tests/restart-probe.py" "$ROOT/skills/iterm-agents/scripts" "$RSW" "$@" 2>&1; }
+rsays() { sfield "$res" OUT | tr '~' '\n' | grep -c -- "$1"; }
+RALL='11 12 21 31 41'; RORDER='031 001 060/041 002 050'
+res=$(restarted ok)
+check "a restart disarms every home server before the stop, then puts the tabs back in order and arms them again" \
+  "0|disarm orch-a,disarm orch-b,kill 100 armed=,open,arm orch-a,arm orch-b|$RORDER|orch-a+orch-b|$RALL" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" tabs)|$(sfield "$res" armed)|$(sfield "$res" alive)"
+check "the titles the new app lost are back, a home's and a plain tab's, and a tab of no session keeps its own" \
+  "✳ Coord: c,✳ Orch: a,zsh,✳ Audit: d,✳ Orch: b,claude" "$(sfield "$res" titles)"
+check "the report proves each session, a nested host and one outside iTerm2 being none of them" "1|1|5" \
+  "$(rsays '^# iTerm2 restart: done, everything proved')|$(rsays '^- after: Agent: a1 .* alive, working')|$(rsays '^- after: ')"
+check "the state that holds the resume lines is its owner's alone to read" "600" \
+  "$(stat -c %a "$RSW"/state/iterm-restart/*/state.json 2>/dev/null || stat -f %Lp "$RSW"/state/iterm-restart/*/state.json)"
+res=$(restarted ok --check)
+check "--check reads and says what a restart would keep, and does nothing" "0||5|no" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(rsays '^session: ')|$([ -e "$RSW/state/iterm-restart" ] && echo yes || echo no)"
+for refusal in "stranger|only the registered coordinator" "no-restore|set not to restore" \
+               "own-child|88 on /dev/ttys088 is not held by iTermServer" "unreadable|Audit: d on /dev/ttys041 could not be proved or resumed"; do
+  res=$(restarted "${refusal%%|*}")
+  check "a restart is refused (${refusal%%|*}), and nothing is done" "1||orch-a+orch-b|1" \
+    "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" armed)|$(printf '%s' "$res" | tr '~' '\n' | grep -c "${refusal#*|}")"
+done
+res=$(restarted refused)
+check "a server that cannot be disarmed stops the run before the stop, the others armed again" "1|0|orch-a+orch-b|$RALL" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c kill)|$(sfield "$res" armed)|$(sfield "$res" alive)"
+res=$(restarted no-stop)
+check "an iTerm2 that does not stop is left running, its servers armed again" "1|0|orch-a+orch-b|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c open)|$(sfield "$res" armed)|$(rsays 'still runs 10s after SIGKILL')"
+res=$(restarted no-start)
+check "an iTerm2 that does not start leaves every server disarmed, so every session runs on, and is said" \
+  "1|disarm orch-a,disarm orch-b,kill 100 armed=,open,open,open,notify|" "$(sfield "$res" first)"
+check "the next restart finishes that run from the relaunch on, with no second stop" "0|open,arm orch-a,arm orch-b|$RORDER" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" tabs)"
+res=$(restarted deaf)
+check "an iTerm2 that starts and never answers leaves the servers disarmed, the session alive" "1||$RALL|2" \
+  "$(sfield "$res" exit)|$(sfield "$res" armed)|$(sfield "$res" alive)|$(rsays 'does not exit with its tab until the next')"
+res=$(restarted interrupted)
+check "a run whose process died after the stop is finished by the next restart" "0|disarm orch-a,disarm orch-b,kill 100 armed=,open,arm orch-a,arm orch-b|$RORDER" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" tabs)"
+res=$(restarted interrupted-kept)
+check "and one that had no server to arm again, which iTerm2 stopped alone says" "0|kill 100 armed=,open||$RALL" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" armed)|$(sfield "$res" alive)"
+res=$(restarted lost-client)
+check "a home server whose client did not come back gets a new tab at its place, then is armed" "0|1|031 001 060/041 090 050|orch-a+orch-b|$RALL" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'open,attach orch-b,arm')|$(sfield "$res" tabs)|$(sfield "$res" armed)|$(sfield "$res" alive)"
+res=$(restarted dead-tab)
+check "a plain tab's dead session is resumed at its place, with its role and not its first prompt, and is said" \
+  "1|1|031 001 060/091 002 050|1" \
+  "$(sfield "$res" exit)|$(printf '%s' "$res" | grep -c 'resume with its role')|$(sfield "$res" tabs)|$(rsays 'DEFECT Audit: d .* died and was resumed on /dev/ttys091')"
+res=$(restarted dead-agent)
+check "a home session that stopped is named, and never started again" "1|0|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c resume)|$(rsays 'DEFECT Agent: a1 .* STOPPED')"
+res=$(restarted no-work)
+check "a session that was working and shows no activity is named" "1|1" \
+  "$(sfield "$res" exit)|$(rsays 'DEFECT Agent: a1 was working')"
+res=$(restarted wedged)
+check "a wedged iTerm2 is restarted, its tabs' order said unknown and not proved" "1|1|orch-a+orch-b|$RALL|1" \
+  "$(sfield "$res" exit)|$(rsays '^order: unknown')|$(sfield "$res" armed)|$(sfield "$res" alive)|$(rsays 'DEFECT the tabs. order was not known')"
+res=$(restarted kept-disarmed)
+check "a server a close left disarmed is not armed by a restart" "0|orch-a" "$(sfield "$res" exit)|$(sfield "$res" armed)"
+RDIS='disarm orch-a,disarm orch-b'
+res=$(restarted unshown --check)
+check "--check names the server no tab shows and the tab that holds no session" "0|1|1" \
+  "$(sfield "$res" exit)|$(rsays '^server: orch-b is shown by no tab$')|$(rsays '^tab: /dev/ttys050 holds no session$')"
+res=$(restarted run-own)
+check "the process a restart starts does the run" "0|$RDIS,kill 100 armed=,open,arm orch-a,arm orch-b" "$(sfield "$res" exit)|$(sfield "$res" acts)"
+res=$(restarted run-stranger)
+check "--run is refused to a caller that is not the coordinator" "1||1" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" ERR | grep -c 'only the registered coordinator')"
+for foreign in "outside|a folder of elsewhere" "folder-link|a link to a folder of elsewhere" "link|a state that is a link" \
+               "shared|a state others read" "owner|a state another user owns" "typed|a run no restart of this instant started"; do
+  res=$(restarted "run-${foreign%%|*}")
+  check "--run on ${foreign#*|} is refused, and nothing is done" "1||orch-a+orch-b|1" \
+    "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" armed)|$(sfield "$res" ERR | grep -c 'on its own run')"
+done
+res=$(restarted stuck)
+check "a server that takes the disarm and stays armed stops the run before the stop" "1|0|orch-a+orch-b|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c kill)|$(sfield "$res" armed)|$(rsays 'DEFECT disarm: a home server is still told to exit')"
+res=$(restarted reused)
+check "an iTerm2 that is not the snapshot's is not stopped" "1|$RDIS|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(rsays 'the iTerm2 of the snapshot (pid 100) is not the one running')"
+res=$(restarted half)
+check "a run whose process died before the stop is not gone on with: its servers are armed again" "1|arm orch-a,arm orch-b|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(rsays 'the last run ended before it stopped iTerm2')"
+res=$(restarted no-stop-elsewhere)
+check "and one whose iTerm2 does not stop arms again what a tab of it shows, no other" "1|$RDIS,kill 100 armed=,arm orch-a|orch-a|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" armed)|$(rsays 'DEFECT orch-b stays told not to exit: no tab shows it')"
+res=$(restarted elsewhere)
+check "a server whose client is on no tab of the new app is not armed, and is said with the tab missing" "1|orch-a|1|1|1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" armed)|$(rsays 'DEFECT orch-b stays told not to exit')|$(rsays 'DEFECT no tab shows /dev/ttys002')|$(rsays 'DEFECT the home server orch-b runs and no tab shows it')|$(rsays '^- orch-b does not exit with its tab')"
+res=$(restarted arm-lost)
+check "a server that takes the arming and stays disarmed is said, and kept as the next restart's to arm" "1|orch-a|1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" armed)|$(rsays 'DEFECT orch-b could not be told again')|$(rsays '^- orch-b does not exit with its tab')"
+res=$(restarted stale)
+check "a run that is over is not done again: the next restart reads the machine anew and arms what it left" \
+  "1|$RDIS,kill 100 armed=,open,arm orch-a,arm orch-b|orch-a~0|disarm orch-a,kill 200 armed=,open,arm orch-a,arm orch-b|orch-a+orch-b" \
+  "$(sfield "$res" first)~$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" armed)"
+res=$(restarted no-start-gone)
+check "a run finished later resumes no session closed since: its line is printed" "1|0|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c resume)|$(rsays 'DEFECT Audit: d .* STOPPED.*--resume. sid-41')"
+res=$(restarted dead-agent)
+check "a home session that stopped is named with the line that resumes it" "1" "$(rsays 'DEFECT Agent: a1 .* STOPPED.*cd .*--resume. sid-12')"
+res=$(restarted unreadable-home)
+check "a home session whose launch cannot be read does not refuse a restart, which never starts it again" "0|$RALL" "$(sfield "$res" exit)|$(sfield "$res" alive)"
+check "the report, which prints such lines, is its owner's alone to read" "600" \
+  "$(perm_of "$(echo "$RSW"/state/iterm-restart/*/report.md)")"
+res=$(restarted untitled)
+check "a title that does not come back is named, a home's and a plain tab's" "1|1|1" \
+  "$(sfield "$res" exit)|$(rsays 'DEFECT the title of orch-b is not back')|$(rsays 'DEFECT the title of /dev/ttys041 is not back')"
+res=$(restarted interrupted-running)
+check "a restart under way refuses a second one, which does nothing" "1|$RDIS,kill 100 armed=|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" ERR | grep -c 'refused: a restart is under way')"
+res=$(restarted window)
+check "and does from before its process runs" "1|1|0|1" \
+  "$(sfield "$res" second | cut -d'|' -f1)|$(sfield "$res" second | grep -c 'a restart is under way')|$(sfield "$res" exit)|$(sfield "$res" acts | grep -o kill | grep -c .)"
+for other in raced locked; do
+  res=$(restarted $other)
+  check "a restart that another one overtook ($other) does nothing" "1||1" \
+    "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" ERR | grep -c 'under way, started since')"
+done
+# Real processes: the one that wrote the run starts its child, then a shell that starts another.
+RSP="$WORK/restart-parent"; mkdir -p "$RSP"; printf '{"tty": "/dev/ttys900", "name": "Coord: c"}' > "$RSP/coordinator.json"
+cat > "$RSP/child.py" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia, iterm_restart as r
+r.Run.work = lambda run: print("worked") or 0
+r.main(ia, ia.args_of("restart", {"run": sys.argv[2]}))
+PY
+cat > "$RSP/parent.py" <<'PY'
+import os, subprocess, sys; sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia, iterm_restart as r
+r.ia = ia; run = os.path.join(r.runs_root(), "RUN"); me = str(os.getpid())
+ia.write_json(os.path.join(run, "state.json"), {"step": "snapshot", "closed": False, "worker": [me, ia.process_state(me)[0]]})
+child = [sys.executable, os.path.join(sys.argv[2], "child.py"), sys.argv[1], run]
+for words in (child, ["/bin/sh", "-c", '"$@"; exit $?', "sh"] + child):
+    done = subprocess.run(words, start_new_session=True, capture_output=True, text=True)
+    print(done.returncode, done.stdout.strip() or done.stderr.strip()[-11:])
+PY
+check "a run's process is known by the one that started it, and no other process does the run" "0 worked|1 its own run" \
+  "$(ORCHESTRATOR_STATE_DIR="$RSP" ORCHESTRATOR_SELF_TTY=/dev/ttys900 "$py" "$RSP/parent.py" "$ROOT/skills/iterm-agents/scripts" "$RSP" 2>&1 | paste -sd'|' -)"
+check "the launcher's own line reaches the command: a caller that is no coordinator is refused" "1|1" \
+  "$(ORCHESTRATOR_STATE_DIR="$WORK/restart-none" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" restart --check >"$WORK/restart-line" 2>&1; echo $?)|$(grep -c 'only the registered coordinator' "$WORK/restart-line")"
+mkdir -p "$WORK/psbin"; printf '#!/bin/sh\necho "  77 /usr/bin/iTerm2-like"\necho "  88 /Applications/iTerm.app/Contents/MacOS/iTerm2"\n' > "$WORK/psbin/ps"; chmod +x "$WORK/psbin/ps"
+check "the app's pid is read from the process table, its own ancestors included" "88" "$(PATH="$WORK/psbin:$PATH" ipy "print(ia.app_pid())")"
+
+# The same on real servers, under a tmux directory of the suite's own: an outer server stands for
+# the terminal, its window running the client of the home server.
+if command -v tmux >/dev/null 2>&1 && RT=$(mktemp -d /tmp/or.XXXXXX 2>/dev/null); then
+  rt() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$RT" tmux "$@"; }
+  rhome() { # the home server orch-rs shown by a window of the outer one
+    rt -L orch-rs -f "$ROOT/skills/iterm-agents/tmux/home.conf" new-session -d -s home 'sleep 60'
+    rt -L outer -f /dev/null new-session -d -s o "env -u TMUX TMUX_TMPDIR=$RT tmux -L orch-rs attach -t home"
+    for _ in $(seq 50); do [ -n "$(rt -L orch-rs list-clients 2>/dev/null)" ] && break; sleep 0.1; done
+    rt -L orch-rs set-option -s exit-unattached on; }
+  rend() { rt -L outer kill-server 2>/dev/null; for _ in $(seq 20); do rt -L orch-rs ls >/dev/null 2>&1 || break; sleep 0.1; done
+    rt -L orch-rs ls >/dev/null 2>&1 && echo alive || echo ended; }
+  rhome
+  check "an armed home server ends with its last client" ended "$(rend)"
+  rhome
+  env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$RT" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia, iterm_restart as r
+r.ia = ia; run = r.Run.__new__(r.Run); run.s = {'servers': {}, 'disarmed': []}; run.save = lambda **v: run.s.update(v)
+run.disarm(); print(run.s['disarmed'])" > "$RT/disarmed" 2>&1
+  check "the one a restart disarmed outlives it" "['orch-rs']|alive" "$(cat "$RT/disarmed")|$(rend)"
+  rt -L orch-rs kill-server 2>/dev/null
+  rhome; rt -L orch-rs select-pane -t home: -T 'Orch: rs'; sleep 1
+  rt -L outer select-pane -t o: -T lost
+  res=$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$RT" "$py" "$ROOT/tests/restart-probe.py" "$ROOT/skills/iterm-agents/scripts" "$RT" titles \
+    orch-rs "$(rt -L orch-rs list-clients -F '#{client_tty}')" 2>&1)
+  check "a title the terminal lost is sent again, the string put back as it was" "before=lost after=Orch: rs defects=[]|#T" \
+    "$(printf '%s' "$res" | tr '\n' ' ' | sed 's/ $//')|$(rt -L orch-rs show-options -gv set-titles-string)"
+  rt -L outer kill-server 2>/dev/null; rt -L orch-rs kill-server 2>/dev/null
+  rm -rf "$RT"
+else
+  skip_case "a restart's home servers, on real ones" "no tmux"
+fi
+
 # The words of a launch, replayed: the conversation's own names dropped, the rest kept as typed.
 rw() { "$py" -c "
 import json, sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')

@@ -49,6 +49,8 @@ subcommand prints is below, and its header is read only for a line this does not
   collision, an unread source; nothing when nothing is.
 - `sleep`, `sleeping`, `wake-done`, `drop` — the sleeping orchestrators' record, below.
 
+Asked to restart iTerm2: `orchestrator:iterm-agents`, `references/commands.md`, « Restarting iTerm2 ».
+
 **Every answer you give rests on a reading made in that turn**, never on your memory of the
 last one. `/orchestrator:status` reads every live session, its role and its fill. Your only
 file is `<data>/coordinator/notes.md` (`<data>`: `data=` of `coordinator.sh roots`): the pull requests
