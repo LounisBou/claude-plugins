@@ -1,8 +1,8 @@
 # claude-plugins — objectives
 
 claude-plugins serves the other projects, not itself. The operator's principles, which hold for
-every project, are in his own configuration (`PRINCIPLES.md`, loaded in every session); these
-objectives are what is specific to this repository.
+every project, are in his own configuration (`PRINCIPLES.md`); these objectives are what is
+specific to this repository.
 
 1. **Never hinder a project.** No session of a project is blocked by a hook, a barrier or a guard
    of a plugin. An observed block is fixed first, preferably by removing the guard rather than
