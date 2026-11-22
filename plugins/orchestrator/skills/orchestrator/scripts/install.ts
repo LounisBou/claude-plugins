@@ -1,10 +1,7 @@
 // install — the orchestrator's install and uninstall of its state directory and short commands.
 //
-//   install.sh                install / update, and allow the launcher's opening of an
-//                             orchestrator (`spawn --open`) in settings.json
+//   install.sh                install / update
 //   install.sh --dry-run      print what would happen, change nothing
-//   install.sh --allow-open   accepted, and does nothing more than a plain install: earlier
-//                             versions' instructions on other machines still name it
 //   uninstall.sh [--dry-run]  take the tap off the status line, remove the state directory, the
 //                             short commands and the profile's line this plugin wrote
 //
@@ -15,7 +12,7 @@
 // tap is left alone, and settings.json and the profile are backed up before any change.
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { basename, join } from 'node:path'
 import { dataRootFileOf, MEASURE_DIR, parseDataRoot } from '../../../core/orchestration.ts'
 import { configDir, setting, type Env } from '../../../core/paths.ts'
 import { orchestratorRoots } from '../../../core/roots.ts'
@@ -25,7 +22,6 @@ import { copyDiffers, copyOf, earlierBlock, guarded, lineOf, MARKER, profileOf, 
 import { main as shortCommands } from './short-commands.ts'
 
 export const HOST_FLOOR = '2.1.287'
-const OPEN_SUFFIX = '/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)'
 const PRUNE_MS = 90 * 24 * 3600 * 1000
 
 type Json = Record<string, unknown>
@@ -35,7 +31,7 @@ type Unwrap = 'unwired' | 'none' | 'skipped'
 export interface Deps {
   readonly io: Io
   readonly env: Env
-  /** The plugin's root, as the launcher names it: the opening rule spells it. */
+  /** The plugin's root, as the launcher names it. */
   readonly root: string
   /** Runs a command without a shell; `status` is null when it could not start. */
   readonly exec: (argv: readonly [string, ...string[]]) => { readonly status: number | null; readonly stdout: string }
@@ -82,11 +78,6 @@ export function afterTap(stored: string, tap: string, home: string): string | un
   return undefined
 }
 
-/** A rule granted the launcher of another version of this plugin, beside this one under `prefix`. */
-const isEarlier = (rule: unknown, prefix: string): boolean =>
-  typeof rule === 'string' && rule.startsWith(prefix) && rule.endsWith(OPEN_SUFFIX)
-  && /^[^/ ]+$/.test(rule.slice(prefix.length, rule.length - OPEN_SUFFIX.length))
-
 const stamp = (d: Date): string => {
   const two = (n: number): string => String(n).padStart(2, '0')
   return `${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}`
@@ -106,8 +97,8 @@ export function main(argv: readonly string[], deps: Deps): number {
   const backup = join(config, 'backups', `claude-orchestrator-${stamp(deps.now())}`)
 
   for (const option of options) {
-    if (option !== '--dry-run' && option !== '--allow-open') {
-      io.err(`  unknown option: ${option} (expected --dry-run, --allow-open)\n`)
+    if (option !== '--dry-run') {
+      io.err(`  unknown option: ${option} (expected --dry-run)\n`)
       return 2
     }
   }
@@ -346,32 +337,6 @@ export function main(argv: readonly string[], deps: Deps): number {
 
   step('settings.json')
   const unwrapped = unwrap()
-
-  /*
-   * The one rule every install writes, once: this installed launcher's opening of an orchestrator,
-   * named by its own path with nothing before it, as the session that opens one types it. A rule
-   * written for an earlier version of this plugin, beside this one under the same cache
-   * directory, follows the plugin to this version, its reach unchanged.
-   */
-  const rule = `Bash(${deps.root}${OPEN_SUFFIX}`
-  const prefix = `Bash(${dirname(deps.root)}/`
-  const root = isFile(settings) ? parsed(settings) : {}
-  const permissions = isObject(root) ? root['permissions'] : undefined
-  const allow: unknown = (isObject(permissions) ? permissions['allow'] : undefined) ?? []
-  const add = (r: Json, keep: (existing: unknown) => boolean): void => {
-    const p = isObject(r['permissions']) ? r['permissions'] : {}
-    r['permissions'] = { ...p, allow: [...(Array.isArray(p['allow']) ? p['allow'].filter(keep) : []), rule] }
-  }
-  if (root === undefined || root === null || root === false) say('settings.json does not parse: the opening rule is not written')
-  else if (!isObject(root) || !Array.isArray(allow) || (permissions !== undefined && permissions !== null && !isObject(permissions))) {
-    say('permissions.allow in settings.json is not a list: the opening rule is not written')
-  } else if (allow.includes(rule)) say(`the opening of an orchestrator is already allowed: ${rule}`)
-  else if (allow.some(r => isEarlier(r, prefix))) {
-    apply(`the opening of an orchestrator, allowed for an earlier version, now names this one: ${rule}`, r => add(r, e => !isEarlier(e, prefix)))
-  } else {
-    if (!existsSync(settings)) run(`printf '{}\\n' > '${settings}'`, () => writeFileSync(settings, '{}\n'))
-    apply(`the opening of an orchestrator allowed: ${rule}`, r => add(r, () => true))
-  }
 
   /*
    * The tap's copy and saved object, the shell gates' logs and the heads they kept: inert once no

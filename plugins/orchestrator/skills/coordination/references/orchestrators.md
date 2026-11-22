@@ -71,8 +71,7 @@ On this machine, open it yourself, right of your tab, in no chain, under remote 
 ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --open --title "Orch: <subject>" --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>"
 ```
 
-Run it alone, never chained to another command and with nothing before it: that bare form,
-by the installed path, is the one every `install.sh` run allows in `settings.json`. `--plan 1|2|auto` routes it (`auto`: more room by the `quota` lines of `facts`, else yours); its agents follow its plan. Add `--model <id> --effort <level>` when he named them
+Run it alone, never chained to another command and with nothing before it, by the installed path. `--plan 1|2|auto` routes it (`auto`: more room by the `quota` lines of `facts`, else yours); its agents follow its plan. Add `--model <id> --effort <level>` when he named them
 (a model alone is refused), the host's default for the session applying otherwise — his to
 change, never yours — and `--trust` for a checkout prepared for it. The orchestrator
 opens without the tools no session has called; `--keep-tool <name>` and `--drop-tool <name>`
@@ -82,6 +81,5 @@ as to any newcomer.
 On another machine, send that machine's orchestrator (the one he named, else one that
 announced itself from there) ONE `SendMessage`: his order verbatim and dated, the brief's
 path and that same command. It opens the orchestrator there and replies with its name. A
-refusal from a permission goes to him in one line, with the one fix that ends it: the plugin
-there is updated and its `install.sh` run once on that machine, which writes the rule. Never ask a session to change
+refusal from the host's own review goes to him in one line, never worked round. Never ask a session to change
 its own permissions.
