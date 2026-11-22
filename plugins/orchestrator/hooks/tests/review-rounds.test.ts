@@ -4,6 +4,7 @@
 // repository or a failed write never blocks the verdict.
 import { expect, test } from 'claude-code/testing'
 import { register as registerReview } from '../review.ts'
+import { owedOf, settleOwed } from '../review-close.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hooksOn, hostOf } from '../../core/capture.ts'
 import type { Events, Host, Noun, ProcessRunInit } from '../../core/host.ts'
@@ -257,4 +258,26 @@ test('a named row whose write fails says so and raises no other row', async () =
   expect(out.result).toContain('rounds: none raised, ')
   expect(out.result).toContain('disk full')
   expect(fx.logged.length).toBe(1)
+})
+
+// The review session of acme/app#12 as the launcher leaves it: its session row, its launch script naming its brief, the brief.
+const REVIEW_BRIEF = [
+  '# app — review: the delivery', '', 'You are the REVIEW agent for this round. You read; you never implement.', '',
+  `4. The delivery: pull request 12 (the implementer's report, \`/b/report.md\`), branch \`fix/x\`, head \`${HEAD.slice(0, 8)}\`, base \`origin/main\``,
+].join('\n')
+
+// Mutation: `closeLine` (review.ts) takes no cost from the count when the verdict names no row; this test falls.
+test('a verdict that names no row owes the review session\'s close with its cost on the row the round counted', async () => {
+  owedOf('s-orch').forEach(settleOwed)
+  const fx = fake()
+  fx.files.set(`${STATE}/store/sessions/s-rev`, JSON.stringify({ role: 'agent', name: 'Agent: review 12 r1 [a1b2c3]', tty: '/dev/ttys007', updated_at: '2026-11-14T10:00:00.000Z' }) + '\n')
+  fx.files.set(`${STATE}/prompts/launch-Agent--review-12-r1-1795386718957.sh`, '#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=/briefs/review.md && exec claude\n')
+  fx.files.set('/briefs/review.md', REVIEW_BRIEF)
+  fx.dollar.fs.list = async (dir: string) => [...fx.files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
+    .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 0, isLink: false }))
+  const out = await handler()(fx.dollar, VERDICT)
+  expect(out.result).toContain('row 2 round 1')
+  expect(out.result.split('\n').at(-1)).toBe('review session of acme/app#12 0123456: Agent: review 12 r1 is closed by the module once its turn ends.')
+  expect(owedOf('s-orch').map(one => one.cost)).toEqual([{ record: RECORD, row: 2 }])
+  owedOf('s-orch').forEach(settleOwed)
 })
