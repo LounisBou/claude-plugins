@@ -228,6 +228,16 @@ test('an install leaves the permissions of settings.json byte-equal, the opening
   assert.deepEqual(json(settings), { other: 1 })
 })
 
+test('an install leaves a rule granted an earlier version byte-equal, with no current rule beside it', () => {
+  const earlier = `Bash(${dirname(root)}/0.0.1-old/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)`
+  const elsewhere = 'Bash(/elsewhere/x/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)'
+  const text = `{\n  "permissions": {\n    "allow": [\n      "Bash(ls)",\n      "${earlier}",\n      "${elsewhere}"\n    ]\n  }\n}\n`
+  put(settings, text)
+  go(['install'])
+  go(['install'])
+  assert.equal(readFileSync(settings, 'utf8'), text)
+})
+
 test('a measure file is pruned past 90 days unless a live session owns it; the old pipeline\'s files go', () => {
   const old = new Date(NOW.getTime() - 91 * 24 * 3600 * 1000)
   for (const id of ['s-gone', 's-dead', 's-live', 's-month', 's-fresh']) put(join(state, 'measure', `${id}.json`), {})

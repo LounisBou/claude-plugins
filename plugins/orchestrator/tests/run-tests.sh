@@ -10292,6 +10292,11 @@ check "an install, and a second one, leave settings.json and its opening rules b
   "$(inst "$HO" >/dev/null 2>&1; inst "$HO" >/dev/null 2>&1; cksum < "$HO/.claude/settings.json")"
 check "a dry run names no rule and writes nothing" "0|$HOSUM" \
   "$(inst "$HO" --dry-run 2>&1 | grep -c 'the opening of an orchestrator')|$(cksum < "$HO/.claude/settings.json")"
+HO3="$WORK/homeopen3"; mkdir -p "$HO3/.claude"; stub_venv "$HO3"
+jq -n --arg a "$OPOLD" --arg b "Bash(/elsewhere/x$OPSUFFIX" '{permissions: {allow: ["Bash(ls)", $a, $b]}}' > "$HO3/.claude/settings.json"
+HO3SUM="$(cksum < "$HO3/.claude/settings.json")"
+check "an install leaves a rule granted an earlier version byte-equal, with no current rule beside it" "$HO3SUM" \
+  "$(inst "$HO3" >/dev/null 2>&1; inst "$HO3" >/dev/null 2>&1; cksum < "$HO3/.claude/settings.json")"
 HO2="$WORK/homeopen2"; mkdir -p "$HO2/.claude"; stub_venv "$HO2"
 check "with no settings.json yet, an install creates none" "absent" \
   "$(inst "$HO2" >/dev/null 2>&1; [ -e "$HO2/.claude/settings.json" ] && echo present || echo absent)"
