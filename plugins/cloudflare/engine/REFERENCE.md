@@ -105,7 +105,7 @@ Prints `before` and `after` lines.
 
 ### `dns-delete <zone> <record> [--type T]` (write)
 
-Prints `deleted` and the record's columns. Asked every time.
+Prints `deleted` and the record's columns.
 
 ## Backups
 
@@ -129,7 +129,7 @@ created again under a new id. Records of other types are kept. It backs up
 first, so a restore can be restored. Lines: `deleted`, `restored`,
 `recreated`, `kept: <n> records of a type the backup does not hold` when some
 were kept, then `backup: <path>`; nothing differing, `nothing to restore: …`. It replays only where taken: the
-`<account>/<zone>/` it lies under. Asked every time.
+`<account>/<zone>/` it lies under.
 
 ## Zone settings and certificates
 
@@ -260,12 +260,12 @@ rules.
 
 ### `security-level <zone> essentially_off|low|medium|high` (write)
 
-`under_attack` is refused: it is `under-attack`, which is asked every time.
+`under_attack` is refused: it is `under-attack`.
 
 ### `under-attack <zone> on|off [--level L]` (write)
 
 `on` sets the security level to `under_attack`; `off` sets it back to `L`
-(default `medium`). Asked every time.
+(default `medium`).
 
 ### `bot-fight <zone> on|off` (write)
 
@@ -309,7 +309,6 @@ Nothing is saved: a purge changes no stored state.
 ### `purge-all <zone>` (write)
 
 Purges everything cached for the zone. Output: `purged<TAB>everything<TAB>zone`.
-Asked every time.
 
 ## Workers
 
@@ -342,7 +341,7 @@ replaces is saved first. Lines: `deployed<TAB>name<TAB>date`, then
 ### `worker-delete <name>` (write)
 
 Saves the script's content, then deletes it. Lines: `deleted<TAB>name`, then
-`backup: <path>`. `restore` uploads it again. Asked every time.
+`backup: <path>`. `restore` uploads it again.
 
 ### `worker-routes <zone>` (read)
 
@@ -604,5 +603,4 @@ the name; its other records (`MX`, `TXT`…) are kept. With no block, only the
 records go; with no record, only the block. Neither: exit 2. A cycle that
 fails stops it before the records. A deletion that fails puts the deleted
 records back and the block back (a second cycle), and exits 3 naming the
-record's backup and both copies of the Caddyfile. Always asked: no session
-grant covers it.
+record's backup and both copies of the Caddyfile.
