@@ -813,16 +813,18 @@ def osascript_run(script, timeout=None):
 
 
 def app_pid():
-    """The running app's pid as a string, or "". ORCHESTRATOR_APP_PID stands in for the
+    """The running app's pid as a string, or "". Read from `ps`: `pgrep` leaves its own ancestors
+    out, the app among them for a caller in a plain tab. ORCHESTRATOR_APP_PID stands in for the
     lookup where there is no app to find."""
     if APP_PID:
         return APP_PID
     try:
-        out = subprocess.run(["pgrep", "-x", "iTerm2"], capture_output=True,
-                             text=True, timeout=10).stdout.split()
+        out = subprocess.run(["ps", "-A", "-o", "pid=,comm="], capture_output=True,
+                             text=True, timeout=10).stdout
     except Exception:
         return ""
-    return out[0] if out else ""
+    rows = [l.split(None, 1) for l in out.splitlines()]
+    return next((r[0] for r in rows if len(r) == 2 and os.path.basename(r[1]) == "iTerm2"), "")
 
 
 def app_responsive(timeout=None):
@@ -2143,19 +2145,14 @@ def auditor_record_path(tty):
     return os.path.join(AUDITORS_DIR, os.path.basename(tty) + ".json")
 
 
-def auditor_record_write(tty, session, launcher):
-    """Remember that `launcher` placed the auditor whose app session is `session` on `tty`.
-
-    An auditor is in no chain, so nothing else says whose placement a tab is: the record is
-    what lets `move` repair the place of an auditor its own launcher made, and still refuse
-    a stranger's. The app's session id is the identity: a tty is recycled minutes after a
-    close, and the record of a closed auditor must not open a later session on it."""
-    os.makedirs(AUDITORS_DIR, exist_ok=True)
-    path = auditor_record_path(tty)
+def write_json(path, value):
+    """`value` written whole to `path` in one rename, readable by its owner alone; its directory
+    made when absent."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = "%s%s%d-%s" % (path, STORE["temporary_mark"], os.getpid(), uuid.uuid4().hex[:8])
     try:
-        with open(tmp, "x") as fh:
-            json.dump({"tty": tty, "session": session, "launcher": launcher}, fh)
+        with os.fdopen(os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "w") as fh:
+            json.dump(value, fh)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -2163,6 +2160,16 @@ def auditor_record_write(tty, session, launcher):
         except OSError:
             pass
         raise
+
+
+def auditor_record_write(tty, session, launcher):
+    """Remember that `launcher` placed the auditor whose app session is `session` on `tty`.
+
+    An auditor is in no chain, so nothing else says whose placement a tab is: the record is
+    what lets `move` repair the place of an auditor its own launcher made, and still refuse
+    a stranger's. The app's session id is the identity: a tty is recycled minutes after a
+    close, and the record of a closed auditor must not open a later session on it."""
+    write_json(auditor_record_path(tty), {"tty": tty, "session": session, "launcher": launcher})
 
 
 def auditor_placed_by(tty, session, launcher):
@@ -4526,19 +4533,21 @@ def cmd_home_release(args):
 # live home server reads the new conf, with no restart. No server is replaced and no agent moves.
 
 
+def live_homes():
+    """The socket names of the home servers that answer, in order."""
+    try:
+        names = os.listdir(os.path.dirname(home_socket_path(HOME_SOCKET_PREFIX)))
+    except OSError:
+        names = []
+    return sorted(n for n in names if n.startswith(HOME_SOCKET_PREFIX) and home_answers(n))
+
+
 def cmd_home_reload(_args):
     """Every live home server reads this commit's conf again, with no restart: run by the
     hooks module of a session that sees this commit installed over its own. One line per
     server; exit 1 when one was not reloaded."""
-    folder = os.path.dirname(home_socket_path(HOME_SOCKET_PREFIX))
-    try:
-        names = sorted(n for n in os.listdir(folder) if n.startswith(HOME_SOCKET_PREFIX))
-    except OSError:
-        names = []
     failed = 0
-    for socket in names:
-        if not home_answers(socket):
-            continue
+    for socket in live_homes():
         try:
             done = tmux_call(["-L", socket, "source-file", HOME_CONF])
         except TmuxError as exc:
@@ -7401,13 +7410,19 @@ def cmd_trust(args):
     print("trust: removed %d entries, %d kept" % (len(gone), len(projects)), file=sys.stderr)
 
 
+def cmd_restart(args):
+    """The restart of iTerm2, which is iterm_restart.py's."""
+    import iterm_restart
+    iterm_restart.main(sys.modules[__name__], args)
+
+
 COMMANDS = {
     "list": cmd_list, "spawn": cmd_spawn, "verify": cmd_verify, "close": cmd_close,
     "move": cmd_move, "rotate": cmd_rotate,
     "screen": cmd_screen, "trust": cmd_trust, "tools": cmd_tools,
     "home": cmd_home, "home-release": cmd_home_release, "takeover": cmd_takeover,
     "home-watch": cmd_home_watch, "pair": cmd_pair, "bench-open": cmd_bench_open,
-    "home-reload": cmd_home_reload,
+    "home-reload": cmd_home_reload, "restart": cmd_restart,
 }
 
 

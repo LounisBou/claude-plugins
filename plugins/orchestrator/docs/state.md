@@ -5,7 +5,7 @@ roots (core's `orchestration.ts` and `roots.ts`):
 
 - **protected**: `<config dir>/claude-orchestrator/`, or `ORCHESTRATOR_STATE_DIR`. What runs or is
   trusted: `venv/`, the launch files under `prompts/`, `mcp.json`, `models.json`, `routing/`,
-  `config.json`, `quota/` (a reading picks the configuration directory a `--plan auto` spawn runs on), `home-release.log` (the launch script's shell appends to it), the status line tap's files, `sleeping.json`, `coordinator.json` and its lock, and
+  `config.json`, `quota/` (a reading picks the configuration directory a `--plan auto` spawn runs on), `home-release.log` (the launch script's shell appends to it), the status line tap's files, `sleeping.json`, `coordinator.json` and its lock, `iterm-restart/`, and
   `data-root.json`;
 - **data**: the directory the protected root's `data-root.json` names (`{"version": 1, "dir":
   "<absolute path>"}`), else the protected root. What any session writes. Nothing read there decides
@@ -45,6 +45,7 @@ Python launcher.
 | `measure/<id>.json` | module | the session's own gauge | one writer, replaced whole in one rename, removed (never emptied) at compaction, kept at session end and pruned by `install.sh` past 90 days; read as unmeasured when empty or partial |
 | module log | module | every process | appends, refusing a link |
 | `close.log` | data | the launcher | appends, refusing a link |
+| `iterm-restart/<UTC time>/` (`state.json`, `report.md`, `log`) | protected | the coordinator's `restart`, then the process it starts | one writer at a time, `state.json` in one rename, its owner's alone to read (it holds the lines that resume a session) |
 | `home-release.log` | protected | the launch script of a home move | appends |
 | `sweep.stamp` | data | every session's stop gate | one rename, before the sweep runs |
 | `draft-guard/<kind>-<hash>.json` | data | `draft-guard.ts` | a unique temporary name, one rename (core's `writeAtomic`); a cache that cannot be written is no cache |

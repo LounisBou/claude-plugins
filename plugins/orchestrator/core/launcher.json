@@ -399,6 +399,21 @@
       "options": [],
       "unknown": "refuse"
     },
+    "restart": {
+      "options": [
+        {
+          "flag": "--check",
+          "dest": "check",
+          "kind": "flag"
+        },
+        {
+          "flag": "--run",
+          "dest": "run",
+          "kind": "value"
+        }
+      ],
+      "unknown": "refuse"
+    },
     "takeover": {
       "options": [
         {

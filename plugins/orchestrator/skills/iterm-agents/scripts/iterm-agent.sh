@@ -92,6 +92,12 @@
 #     predecessor's « handed over » on its transcript, or ORCHESTRATOR_TAKEOVER_IDLE seconds
 #     (300) of an idle transcript, and prints which; then the window 0 is killed and proved
 #     gone, and the successor's window moved to index 0
+#   iterm-agent.sh restart [--check]
+#     the registered coordinator's: iTerm2 stopped (SIGKILL) and started again, every session it
+#     shows kept (iterm_restart.py). Prints what it read, then the report's lines, « DEFECT » the
+#     ones to act on; exit 0 when everything is proved, 1 on a defect or a refusal. --check reads
+#     and refuses, and does nothing. A run left unfinished is finished by the next one. --run is
+#     the process the command starts, never typed
 #   iterm-agent.sh tools [--transcript <path>]
 #     what a session is given and what each item costs per call, from a transcript
 #   iterm-agent.sh verify --tty /dev/ttysNNN [--pid <pid>]
