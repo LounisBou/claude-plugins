@@ -5,13 +5,14 @@
 //   install.sh --dry-run      print what would happen, change nothing
 //   install.sh --allow-open   accepted, and does nothing more than a plain install: earlier
 //                             versions' instructions on other machines still name it
-//   uninstall.sh [--dry-run]  take the tap off the status line, remove the state directory and
-//                             the short commands this plugin wrote
+//   uninstall.sh [--dry-run]  take the tap off the status line, remove the state directory, the
+//                             short commands and the profile's line this plugin wrote
 //
 // The install creates the state directory, unwires the tap a previous install may have left in
-// front of the status line, and writes the short names as user commands. Idempotent: the tier
+// front of the status line, writes the short names as user commands, and sources the plugin's
+// shell file from the profile of the user's shell (shell-profile.ts). Idempotent: the tier
 // map and the server catalogue are created only when absent, a status line already free of the
-// tap is left alone, and settings.json is backed up before any change.
+// tap is left alone, and settings.json and the profile are backed up before any change.
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
@@ -20,6 +21,7 @@ import { configDir, setting, type Env } from '../../../core/paths.ts'
 import { orchestratorRoots } from '../../../core/roots.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { isEntry, processIo, resolvedPath, type Io } from './lib/process.ts'
+import { copyDiffers, copyOf, earlierBlock, guarded, lineOf, MARKER, profileOf, sourceOf, withLine, withoutLine, writeCopy, writeProfile } from './shell-profile.ts'
 import { main as shortCommands } from './short-commands.ts'
 
 export const HOST_FLOOR = '2.1.287'
@@ -169,10 +171,63 @@ export function main(argv: readonly string[], deps: Deps): number {
     return 'unwired'
   }
 
+  const shellCopy = copyOf(state)
+  const shellLine = lineOf(shellCopy, home)
+  const profile = profileOf(env, home)
+
+  /** The profile changed to `text`, saved first; the one write this installer makes outside the host's directory and its own. */
+  const rewrite = (path: string, text: string, message: string): void => {
+    if (dry) return say(`[dry-run] ${message}`)
+    if (existsSync(path)) {
+      mkdirSync(backup, { recursive: true })
+      copyFileSync(path, join(backup, `${basename(path)}.before`))
+    }
+    writeProfile(path, text)
+    say(message)
+  }
+
   const short = (which: 'install' | 'uninstall'): number =>
     shortCommands([which, ...(dry ? ['--dry-run'] : [])], { io, env, root: resolvedPath(deps.root) })
 
+  /*
+   * The plugin's shell file, copied beside the state it keeps, and the one line of the profile that
+   * sources it. A shell that is neither zsh nor bash gets the file and the line to add by hand.
+   */
+  const shellFile = (): number => {
+    const source = sourceOf(deps.root)
+    if (!isFile(source)) {
+      io.err(`  no shell file in the plugin: ${source}\n`)
+      return 1
+    }
+    const differs = copyDiffers(deps.root, state)
+    const present = isFile(shellCopy)
+    if (!differs) say(`shell file up to date: ${shellCopy}`)
+    else {
+      if (!dry) writeCopy(deps.root, state)
+      say(`${dry ? '[dry-run] ' : ''}shell file ${present ? 'rewritten' : 'written'}: ${shellCopy}`)
+    }
+    if (profile === undefined) {
+      say(`SHELL is ${setting(env, 'SHELL')}: only zsh and bash profiles are written, add this line to yours:`)
+      say(guarded(shellCopy, home))
+      return 0
+    }
+    const text = isFile(profile.path) ? readFileSync(profile.path, 'utf8') : ''
+    const next = withLine(text, shellLine)
+    if (next === undefined) say(`line already in ${profile.path}`)
+    else rewrite(profile.path, next, `line ${text.split('\n').some(l => l.endsWith(` ${MARKER}`)) ? 'replaced in' : 'added to'} ${profile.path}`)
+    // The earlier hand-written block does the same as the file: the user's to delete, never ours.
+    const earlier = earlierBlock(text)
+    if (earlier.length > 0) {
+      say(`${profile.path} still holds the earlier \`unset CLAUDECODE …\` block, line${earlier.length > 1 ? 's' : ''} ${earlier.join(', ')}: the file does the same now, delete that block by hand`)
+    }
+    return 0
+  }
+
   if (mode === 'uninstall') {
+    // The profile's line goes first: the copy it sources leaves with the state directory below.
+    const profiled = profile !== undefined && isFile(profile.path) ? readFileSync(profile.path, 'utf8') : undefined
+    const without = profiled === undefined ? undefined : withoutLine(profiled, shellLine)
+    if (profile !== undefined && without !== undefined) rewrite(profile.path, without, `line removed from ${profile.path}`)
     const unwrapped = unwrap()
     // While a status line may still run the tap, its copy and saved object stay.
     if (isDir(state) && unwrapped === 'skipped') {
@@ -337,6 +392,11 @@ export function main(argv: readonly string[], deps: Deps): number {
   step('Short commands')
   const code = short('install')
   if (code !== 0) return code
+  if (setting(env, 'SHELL') !== undefined) {
+    step('Shell file')
+    const code = shellFile()
+    if (code !== 0) return code
+  }
   step('Done.')
   say('Restart your session for the module to take effect.')
   return 0
