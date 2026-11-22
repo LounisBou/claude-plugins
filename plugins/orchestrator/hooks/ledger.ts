@@ -338,9 +338,9 @@ async function closeOf($: Held, agent: string, records: readonly RecordText[], t
   if (session === undefined) return { kind: 'later', why: `no session row of it on ${tty}` }
   const bound = await briefRowOf($, agent)
   const record = bound === undefined ? undefined : records.find(r => dirOf(r.path) === bound.dir && holdsRow(r.text, bound.row))
-  // A review session's cost goes on the row its verdict counted (review-close.ts), its pin goes with it; its brief names no row.
+  // A review session's cost goes on the row its verdict counted (review-close.ts); its brief names no row.
   const cost = review !== undefined ? review.cost : bound === undefined || record === undefined ? undefined : { record: record.path, row: bound.row }
-  const target = { agent, tty, session, ended, cost, ...(review === undefined ? {} : { review: true }) }
+  const target = { agent, tty, session, ended, cost }
   const facts = await closeFacts($, target)
   return facts.kind === 'close' ? { kind: 'close', session, target } : { ...facts, session }
 }

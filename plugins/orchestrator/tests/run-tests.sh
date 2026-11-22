@@ -6647,8 +6647,14 @@ CL=$(mkclone "$WCSRC" cl-ag feat/cl-ag); HCL=$(scratch "$CL"); printf '/dev/ttys
 res=$(cprobe close --expect-title 'Agent: cl-ag')
 check "a close of an agent leaves its clone and its host directory, and keeps its contract line" "exit=0|closed 1 session on /dev/ttys901|1|1" \
   "$(printf '%s\n' "$res" | head -1)|$(field "$res" OUT)|$(exists "$CL")|$(exists "$HCL")"
-check "and marks it kept for no sweep: the sweep that ends any clone ends it" "0" \
-  "$(grep -F "\"path\":\"$CL\"" "$WCR/.workspaces.jsonl" | grep -c '"kept":')"
+check "and its ledger line stays, unmarked: the sweep that ends any clone ends it" "1|0" \
+  "$(grep -cF "\"path\":\"$CL\"" "$WCR/.workspaces.jsonl")|$(grep -F "\"path\":\"$CL\"" "$WCR/.workspaces.jsonl" | grep -c '"kept":')"
+bash "$WS" delete "$CL" --discard >/dev/null 2>&1
+# The title is read as the close's guard reads it: the glyph `list` prints before it is no other title.
+CL=$(mkclone "$WCSRC" cl-agglyph feat/cl-agglyph); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
+res=$(cprobe close --expect-title '✳ Agent: cl-agglyph')
+check "a close naming the agent with its activity glyph leaves its clone too" "exit=0|1|1" \
+  "$(printf '%s\n' "$res" | head -1)|$(exists "$CL")|$(field "$res" ERR | grep -c "^close: left checkout $CL: ")"
 bash "$WS" delete "$CL" --discard >/dev/null 2>&1
 PN=$(wcpin "$WCSRC" cl-pin main --pr 7); printf '/dev/ttys901 %s\n' "$PN" > "$CT_TABLE"
 res=$(cprobe close --expect-title 'Agent: review cl-pin')
