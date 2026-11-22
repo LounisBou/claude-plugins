@@ -438,8 +438,10 @@ test('the sync refreshes the copy after an update, never makes one, and never to
 test('a shell started after the copy is gone, or the install, is not broken by the line', () => {
   go(['install'], ZSH)
   rmSync(copy())
-  for (const shell of ['bash', 'zsh']) {
-    const ran = spawnSync(shell, ['-c', `. '${home}/.zshrc'; echo ok`], { env: { PATH: '/usr/bin:/bin', HOME: home }, encoding: 'utf8' })
+  const env = { PATH: '/usr/bin:/bin', HOME: home }
+  // A shell this machine does not have is not run.
+  for (const shell of ['bash', 'zsh'].filter(s => spawnSync(s, ['-c', 'exit 0'], { env, stdio: 'ignore' }).status === 0)) {
+    const ran = spawnSync(shell, ['-c', `. '${home}/.zshrc'; echo ok`], { env, encoding: 'utf8' })
     assert.deepEqual([ran.stdout, ran.stderr], ['ok\n', ''], shell)
   }
 })
