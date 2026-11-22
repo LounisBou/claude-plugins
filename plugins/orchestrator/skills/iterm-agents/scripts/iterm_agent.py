@@ -1456,9 +1456,10 @@ def checkout_of(cwd):
 def keeps_clone(path, expect):
     """Whether a close leaves the checkout in place: an agent's own clone (a directory `.git`),
     which `spawn --resume` needs within the hour, left unmarked as a rotation leaves it so the
-    sweep ends it as it ends any. A review's pin (a worktree: `.git` is a file) and the checkout
+    sweep ends it as it ends any. The title is read as the close's guard reads it, its leading
+    activity glyph stripped. A review's pin (a worktree: `.git` is a file) and the checkout
     of any other session are deleted at the close."""
-    return expect.startswith(AGENT + ":") and os.path.isdir(os.path.join(path, ".git"))
+    return stable_title(expect).startswith(AGENT + ":") and os.path.isdir(os.path.join(path, ".git"))
 
 
 def delete_checkout(path):
