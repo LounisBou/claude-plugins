@@ -2699,6 +2699,8 @@ async function notDirectory($: Mod, path: string): Promise<string | undefined> {
 const OBSERVED_RUNS_MAX = 50
 // The words a line may start with and still not be one plain command: their exit code is not the command's.
 const SHELL_WORDS = new Set(['coproc', 'time', 'exec', 'eval', 'command', 'builtin', 'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', 'for', 'case', 'esac', 'function', 'select', 'in'])
+// Leading `NAME=value` words, set for the command after them: no expansion, quote, separator or space in the value.
+const LEADING_ASSIGNMENTS = /^(?:[A-Za-z_][A-Za-z0-9_]*=[^$`'"\\()\s;|&<>]*\s+)+/
 // `alone`: the line is one command, not a pipe, a chain or a second line; only such a run can be the one a `ran` names.
 const observedRuns: Array<{ line: string; cwd: string; ok: boolean; at: number; alone: boolean }> = []
 // A command line that starts in another directory: `cd <absolute path> && …`. The `;` form is not read: when its `cd`
@@ -2721,9 +2723,11 @@ async function noteRun($: Mod, line: string, started: number, result: unknown): 
     const command = cd ? line.slice(cd[0].length) : commandOf(line)
     // A backslash, or a quote left unbalanced once its pairs are removed, may hide a separator from this reading: not alone.
     const bare = command.replace(/'[^']*'|"[^"]*"/g, '')
-    // Only a plain command word first: `!`, `coproc`, `time`, `exec` and the like change what the exit code is, and a
-    // leading assignment is no command word.
-    const first = command.trim().split(/\s+/)[0] ?? ''
+    // Only a plain command word first, after any leading `NAME=value`: `!`, `coproc`, `time`, `exec` and the like change
+    // what the exit code is. An assignment alone, with no command after it, leaves no word: not alone.
+    const trimmed = command.trim()
+    const rest = trimmed.slice(LEADING_ASSIGNMENTS.exec(trimmed)?.[0].length ?? 0)
+    const first = rest.split(/\s+/)[0] ?? ''
     const plain = /^[A-Za-z0-9_./~+-]+$/.test(first) && !SHELL_WORDS.has(first)
     const alone = plain && !command.includes('\\') && !/['"|;&\n]/.test(bare)
     observedRuns.push({ line: command.trim(), cwd: cwd.replace(/\/+$/, ''), ok: !failed(result), at: started, alone })
