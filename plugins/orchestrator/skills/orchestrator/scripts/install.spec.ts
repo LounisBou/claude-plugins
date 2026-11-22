@@ -8,7 +8,6 @@ import { afterTap, HOST_FLOOR, main, olderThan, type Deps } from './install.ts'
 import { main as shortCommands } from './short-commands.ts'
 
 const NOW = new Date(2026, 10, 15, 9, 5, 7)
-const SUFFIX = '/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)'
 
 const SHELL_FILE_TEXT = '# the shell file, version one\nunset CLAUDECODE\n'
 
@@ -70,7 +69,6 @@ const put = (path: string, value: unknown): void => {
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, typeof value === 'string' ? value : `${JSON.stringify(value)}\n`)
 }
-const rule = (): string => `Bash(${root}${SUFFIX}`
 
 test('a version sorts below the floor component by component', () => {
   assert.equal(olderThan('2.1.100', HOST_FLOOR), true)
@@ -96,7 +94,7 @@ test('a host below the floor, or whose version cannot be read, is refused before
   })
   assert.equal(go(['install'], { version: 'a version I will not say\n' }).err, `  the host's version could not be read from 'host-cli --version'; this plugin needs ${HOST_FLOOR} or later.\n`)
   assert.equal(existsSync(state), false)
-  assert.deepEqual(go(['install', '--bogus']), { code: 2, out: '', err: '  unknown option: --bogus (expected --dry-run, --allow-open)\n', ran: [] })
+  assert.deepEqual(go(['install', '--bogus']), { code: 2, out: '', err: '  unknown option: --bogus (expected --dry-run)\n', ran: [] })
 })
 
 test('a fresh install: every line it prints, and what it leaves', () => {
@@ -114,26 +112,25 @@ test('a fresh install: every line it prints, and what it leaves', () => {
     '  elementary ones in default; an agent gets that set, plus what its spawn line adds.',
     '', 'Terminal tooling environment', '  not macOS: the tab tooling is skipped, the other skills work anywhere',
     '  iTerm2 must have its API enabled (Preferences > General > Magic > Enable Python API)',
-    '', 'settings.json', `  no ${settings}: nothing to unwire`, `  the opening of an orchestrator allowed: ${rule()}`,
+    '', 'settings.json', `  no ${settings}: nothing to unwire`,
     '', 'Old pipeline files', '  old pipeline files removed: 0',
     '', 'Short commands', `  short command written: ${home}/.claude/commands/orchestrator-status.md`,
     '', 'Done.', '  Restart your session for the module to take effect.', '',
   ].join('\n'))
   assert.equal(readFileSync(join(state, 'models.json'), 'utf8'), '{"deep": "", "standard": "", "light": ""}\n')
   assert.equal(readFileSync(join(state, 'mcp.json'), 'utf8'), '{"servers": {}, "default": []}\n')
-  assert.equal(readFileSync(settings, 'utf8'), `{\n  "permissions": {\n    "allow": [\n      "${rule()}"\n    ]\n  }\n}\n`)
-  assert.equal(statSync(settings).mode & 0o777, 0o600)
-  assert.equal(readFileSync(join(home, '.claude', 'backups', 'claude-orchestrator-20261115-090507', 'settings.json.before'), 'utf8'), '{}\n')
+  assert.equal(existsSync(settings), false)
+  assert.equal(existsSync(join(home, '.claude', 'backups')), false)
 })
 
 test('a second install changes nothing and says what it found', () => {
+  put(settings, { other: 1 })
   go(['install'])
   put(join(state, 'models.json'), '{"deep":"a-model"}\n')
   const before = readFileSync(settings, 'utf8')
-  const r = go(['install', '--allow-open'])
+  const r = go(['install'])
   assert.match(r.out, /tier map already present: .*\n/)
   assert.match(r.out, /server catalogue already present: .*\n/)
-  assert.ok(r.out.includes(`  the opening of an orchestrator is already allowed: ${rule()}\n`))
   assert.ok(r.out.includes('  no statusLine to unwire\n'))
   assert.equal(readFileSync(settings, 'utf8'), before)
   assert.equal(readFileSync(join(state, 'models.json'), 'utf8'), '{"deep":"a-model"}\n')
@@ -150,7 +147,7 @@ test('a dry run prints each command and changes nothing', () => {
   for (const line of [
     `  [dry-run] mkdir -p '${state}/measure'`, `  [dry-run] rm -rf '${state}/ctx'`, "  the tap's ctx/ removed", `  [dry-run] rm -f '${state}/measure/old.json'`,
     '  measure files pruned (past 90 days, no live session): 1', `  [dry-run] tier map created: ${state}/models.json`, `  [dry-run] server catalogue created: ${state}/mcp.json`,
-    `  [dry-run] python3 -m venv ${state}/venv && pip install iterm2`, `  [dry-run] printf '{}\\n' > '${settings}'`, `  [dry-run] the opening of an orchestrator allowed: ${rule()}`,
+    `  [dry-run] python3 -m venv ${state}/venv && pip install iterm2`,
     `  [dry-run] rm -f '${tap}'`, '  old pipeline files removed: 1', `  [dry-run] short command written: ${home}/.claude/commands/orchestrator-status.md`,
   ]) assert.ok(r.out.includes(`${line}\n`), line)
   assert.deepEqual([existsSync(settings), existsSync(join(state, 'ctx')), existsSync(tap), existsSync(join(state, 'models.json')), existsSync(join(home, '.claude', 'backups'))], [false, true, true, false, false])
@@ -161,7 +158,7 @@ test('the unwrap keeps the follower as written, and fills from the saved object 
   const line = (): unknown => (json(settings) as { statusLine?: unknown }).statusLine
   put(settings, { statusLine: { type: 'command', command: `${tap} /x/bar.sh`, padding: 0 }, other: 1 })
   assert.ok(go(['install']).out.includes('  statusLine.command → /x/bar.sh\n'))
-  assert.deepEqual(json(settings), { statusLine: { type: 'command', command: '/x/bar.sh', padding: 0 }, other: 1, permissions: { allow: [rule()] } })
+  assert.deepEqual(json(settings), { statusLine: { type: 'command', command: '/x/bar.sh', padding: 0 }, other: 1 })
 
   put(settings, { statusLine: { type: 'command', command: '$HOME/.claude/claude-orchestrator/statusline-tap.sh $HOME/bar.sh' } })
   put(join(state, 'statusline.previous.json'), { type: 'command', command: '/elsewhere/bar.sh', padding: 2 })
@@ -192,7 +189,6 @@ test('a settings file that does not parse is said and left; the tap\'s files sta
   const r = go(['install'])
   assert.equal(r.code, 0)
   assert.equal(r.err, `  ${settings} does not parse as JSON: the status line was not unwired — the tap's wiring, if it is in there, is left as it is; fix the file and run this again.\n`)
-  assert.ok(r.out.includes('  settings.json does not parse: the opening rule is not written\n'))
   assert.ok(r.out.includes('  the status line may still run the tap: its files are kept\n'))
   assert.equal(readFileSync(settings, 'utf8'), '{"statusLine": {"command": "not json')
   assert.deepEqual([existsSync(tap), existsSync(join(state, 'stop-gate.log'))], [true, true])
@@ -203,15 +199,14 @@ test('a settings file that does not parse is said and left; the tap\'s files sta
   assert.deepEqual(readdirSync(state), ['statusline-tap.sh'])
 })
 
-test('an empty settings file, and one whose allow list is no list, get no rule', () => {
+test('an empty settings file, and one whose allow list is no list, are left as they are', () => {
   put(settings, '')
   const empty = go(['install'])
-  assert.ok(empty.out.includes('  no statusLine to unwire\n') && empty.out.includes('  settings.json does not parse: the opening rule is not written\n'))
+  assert.ok(empty.out.includes('  no statusLine to unwire\n'))
   for (const content of [{ permissions: { allow: 'Bash(ls)' } }, { permissions: 'x' }, [1], 'null']) {
     put(settings, content)
     const r = go(['install'])
     assert.equal(r.code, 0)
-    assert.ok(r.out.includes(content === 'null' ? '  settings.json does not parse: the opening rule is not written\n' : '  permissions.allow in settings.json is not a list: the opening rule is not written\n'))
     assert.deepEqual(json(settings), content === 'null' ? null : content)
   }
   put(settings, { statusLine: { command: `${tap}  two-spaces` } })
@@ -220,16 +215,27 @@ test('an empty settings file, and one whose allow list is no list, get no rule',
   assert.equal(afterTap('~/x', tap, home), undefined)
 })
 
-test('a rule granted an earlier version names this one; a launcher elsewhere keeps its rule', () => {
-  const old = `Bash(${dirname(root)}/0.0.1-old${SUFFIX}`
-  const elsewhere = `Bash(/elsewhere/x${SUFFIX}`
-  put(settings, { permissions: { allow: ['Bash(ls)', old, elsewhere], deny: [] }, other: null })
-  const r = go(['install'])
-  assert.ok(r.out.includes(`  the opening of an orchestrator, allowed for an earlier version, now names this one: ${rule()}\n`))
-  assert.equal(JSON.stringify(json(settings)), JSON.stringify({ permissions: { allow: ['Bash(ls)', elsewhere, rule()], deny: [] }, other: null }))
-  put(settings, { permissions: null })
+test('an install leaves the permissions of settings.json byte-equal, the opening rules an operator holds included', () => {
+  const opening = `Bash(${root}/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)`
+  const earlier = `Bash(${dirname(root)}/0.0.1-old/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)`
+  const text = `{\n  "permissions": {\n    "allow": [\n      "Bash(ls)",\n      "${earlier}",\n      "${opening}"\n    ],\n    "deny": []\n  },\n  "other": null\n}\n`
+  put(settings, text)
   go(['install'])
-  assert.deepEqual(json(settings), { permissions: { allow: [rule()] } })
+  go(['install'])
+  assert.equal(readFileSync(settings, 'utf8'), text)
+  put(settings, { other: 1 })
+  go(['install'])
+  assert.deepEqual(json(settings), { other: 1 })
+})
+
+test('an install leaves a rule granted an earlier version byte-equal, with no current rule beside it', () => {
+  const earlier = `Bash(${dirname(root)}/0.0.1-old/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)`
+  const elsewhere = 'Bash(/elsewhere/x/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)'
+  const text = `{\n  "permissions": {\n    "allow": [\n      "Bash(ls)",\n      "${earlier}",\n      "${elsewhere}"\n    ]\n  }\n}\n`
+  put(settings, text)
+  go(['install'])
+  go(['install'])
+  assert.equal(readFileSync(settings, 'utf8'), text)
 })
 
 test('a measure file is pruned past 90 days unless a live session owns it; the old pipeline\'s files go', () => {
@@ -289,6 +295,7 @@ test('a data-root file that names no absolute directory is said, and the data st
 })
 
 test('uninstall removes the state directory and the short commands, or says what it would', () => {
+  put(settings, {})
   go(['install'])
   const copy = join(home, '.claude', 'commands', 'orchestrator-status.md')
   const dry = go(['uninstall', '--dry-run'])
