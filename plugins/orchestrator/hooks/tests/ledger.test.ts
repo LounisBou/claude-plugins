@@ -1279,7 +1279,7 @@ test('a pr-merge that failed or merged nothing, then a merge elsewhere, still se
 
 test('a pr-merge answered by its JSON then an error line still says its merge: the session knows', async () => {
   const world = mergedOnForge()
-  // The real answer on LounisBou/claude-code#53: the merge, then the forge's notice of a stacked base it could not read.
+  // The real answer of a merge on a private repository: the merge, then the forge's notice of a stacked base it could not read.
   const notice = 'error: cannot read whether fix/settings-lease-push is a stacked base: Upgrade to GitHub Pro'
   await call(mounted(), world.dollar, prMerge(), { result: `${MERGED_ANSWER.result}\n${notice}` })
   expect((await prWake(world.dollar, new Set())).lines).toEqual([])
