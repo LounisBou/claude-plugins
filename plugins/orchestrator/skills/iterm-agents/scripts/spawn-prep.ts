@@ -140,7 +140,7 @@ export async function prepareSpawn(given: Options, deps: PrepDeps): Promise<Opti
   const plan = text(o, 'plan')
   if (plan) {
     if (!['1', '2', 'auto'].includes(plan)) refuse(`spawn: refused: --plan is 1, 2 or auto, got '${plan}'`)
-    if (!(open || wake)) refuse("spawn: refused: --plan routes an orchestrator at its birth, with --open or --wake: an orchestrator's agents, its successor and an auditor run on the plan of the session that spawns them")
+    if (!(open || wake || (resume && title.startsWith('Agent:')))) refuse("spawn: refused: --plan routes an orchestrator at its birth, with --open or --wake, or a closed agent's resume: an orchestrator's agents, its successor and an auditor run on the plan of the session that spawns them")
   }
   if (resume && !wake && (!title.startsWith('Agent:') || successor || auditor || coordinator || open)) refuse("spawn: refused: --resume is a wake's or an agent's: it names the session a paused orchestrator or a closed agent of the same checkout resumes")
   if (resume && !/^[0-9A-Za-z-]+$/.test(resume)) refuse(`spawn: refused: --resume needs a session id, letters, digits and hyphens, got '${resume}'`)
@@ -216,7 +216,7 @@ export async function prepareSpawn(given: Options, deps: PrepDeps): Promise<Opti
   if (inherit && effort) refuse("spawn: --inherit-model reads the caller's effort with its model; drop --effort")
   if (effort && !(EFFORTS as readonly string[]).includes(effort)) refuse(`spawn: unknown effort: ${effort} (expected ${EFFORT_LIST})`)
   // The tier's binding, said once, read after every refusal of the line.
-  const bound = tier ? resolveTierPair(tier, modelsMapOf(deps.env, deps.home), deps) : null
+  const bound = tier && !(resume && !wake) ? resolveTierPair(tier, modelsMapOf(deps.env, deps.home), deps) : null
   o['tier_bound'] = bound === null ? null : [bound.model, bound.effort]
   o['brief_prompt'] = briefPrompt
   o['lint_verdict'] = lintVerdict

@@ -4254,6 +4254,60 @@ check "a closed agent whose last turn is past the hour is refused, a fresh agent
   "$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-cold >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-cold | grep -c 'a fresh agent from `brief.sh rotation`')|$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-cold | grep -c '^launch=')"
 check "a resume with no transcript is refused, and a resume of no agent or wake is refused" "1|1|1|1" \
   "$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-none >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent: x' --tier light --resume s-e7-none | grep -c 'no transcript for session s-e7-none')|$(e7 "$E7ORCH" --successor --resume s-e7-closed | grep -c "is a wake's or an agent's")|$(e7 "$E7ORCH" --title 'Audit: x' --auditor --resume s-e7-closed >/dev/null 2>&1; echo $?)"
+# A closed agent resumed reads its cache only on the account and the model it lived on (measured on
+# 11 resumes: 5 rewrote their context because the caller's plan was not the session's, 2 because
+# --tier changed the model). So a resume runs on the pair of its own transcript and on the plan its
+# last credential_org names, found by the organisation of the two plans' .claude.json; an explicit
+# --plan wins and says the cache is lost; an organisation of neither plan, or a plan with no room
+# left, is refused with the fresh agent named. A wake is unchanged.
+RSHOME="$WORK/rshome"; RSSTATE="$WORK/rsstate"; mkdir -p "$RSHOME/.claude-bis" "$RSSTATE/chains" "$RSSTATE/quota"
+printf '{"oauthAccount":{"organizationUuid":"org-one"}}' > "$RSHOME/.claude.json"
+printf '{"oauthAccount":{"organizationUuid":"org-two"}}' > "$RSHOME/.claude-bis/.claude.json"
+resume_transcript() { # <session> <model> <effort> [organisation]: its pair, and the account it ran on
+  pair_transcript "$1" "$2" "$3"
+  [ -n "${4:-}" ] && printf '{"type":"attachment","attachment":{"type":"credential_org","organizationUuid":"%s"}}\n' "$4" \
+    >> "$ORCHESTRATOR_PROJECTS_DIR/p/$1.jsonl"
+  return 0
+}
+rsm() { local cfg="$1"; shift # <the caller's configuration directory, "" for plan 1> <spawn words...>
+  ( if [ -n "$cfg" ]; then export CLAUDE_CONFIG_DIR="$cfg"; else unset CLAUDE_CONFIG_DIR; fi
+    HOME="$RSHOME" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$RSSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+    ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-e7 ORCHESTRATOR_PS_TABLE="$E7ORCH" ORCHESTRATOR_MODELS_MAP="$WORK/e7-no-map.json" \
+    bash "$AGENT" spawn --dir "$WORK" --prompt p --title 'Agent: x' "$@" 2>&1 ); }
+rsl() { rsm "$@" | sed -n 's/^launch=//p'; }
+resume_transcript s-rs-one r-model high org-one
+resume_transcript s-rs-two r-model high org-two
+BIS="$RSHOME/.claude-bis"
+check "an agent that lived on plan 1 is resumed on plan 1 from a caller on plan 2, the move said" "0|1|1" \
+  "$(rsl "$BIS" --resume s-rs-one --tier light | grep -cF 'export CLAUDE_CONFIG_DIR')|$(rsl "$BIS" --resume s-rs-one --tier light | grep -cE "'--resume' s-rs-one ")|$(rsm "$BIS" --resume s-rs-one --tier light | grep -c 'spawn: the resume runs on plan 1, the one session s-rs-one lived on')"
+check "an agent that lived on plan 2 is resumed on plan 2 from a caller on plan 1" "1|1" \
+  "$(rsl '' --resume s-rs-two --tier light | grep -cF "export CLAUDE_CONFIG_DIR=$BIS &&")|$(rsm '' --resume s-rs-two --tier light | grep -c 'spawn: the resume runs on plan 2, the one session s-rs-two lived on')"
+check "a resume on the plan it lived on says nothing of a move" "0|1" \
+  "$(rsm "$BIS" --resume s-rs-two --tier light | grep -c 'lived on')|$(rsl "$BIS" --resume s-rs-two --tier light | grep -cF "export CLAUDE_CONFIG_DIR=$BIS &&")"
+check "a resume runs on its transcript's pair with no --tier, and says where the pair came from" "1|0|0|transcript $ORCHESTRATOR_PROJECTS_DIR/p/s-rs-two.jsonl" \
+  "$(rsl "$BIS" --resume s-rs-two | grep -c -- '--model r-model --effort high')|$(rsm "$BIS" --resume s-rs-two >/dev/null 2>&1; echo $?)|$(rsm "$BIS" --resume s-rs-two | grep -c 'refused')|$(e7f "$(rsm "$BIS" --resume s-rs-two)" pair_source)"
+printf '{"deep":"deep-model/high","standard":"std-model","light":"light-model"}\n' > "$WORK/rs-map.json"
+check "a --tier given with a resume is not read: the pair is the transcript's, and it is said" "1|0|1" \
+  "$(ORCHESTRATOR_MODELS_MAP="$WORK/rs-map.json" rsl "$BIS" --resume s-rs-two --tier light | grep -c -- '--model r-model --effort high')|$(rsl "$BIS" --resume s-rs-two --tier light | grep -c 'light-model')|$(rsm "$BIS" --resume s-rs-two --tier light | grep -c 'spawn: --tier is not read for a resume')"
+resume_transcript s-rs-none r-model high org-stranger
+check "an organisation of neither plan is refused, the fresh agent named, nothing launched" "1|1|0" \
+  "$(rsm "$BIS" --resume s-rs-none >/dev/null 2>&1; echo $?)|$(rsm "$BIS" --resume s-rs-none | grep -c 'an account of neither plan.*a fresh agent from `brief.sh rotation`')|$(rsm "$BIS" --resume s-rs-none | grep -c '^launch=')"
+resume_transcript s-rs-bare r-model high
+check "a transcript that names no organisation keeps the caller's plan" "1|0" \
+  "$(rsl "$BIS" --resume s-rs-bare --tier light | grep -cF "export CLAUDE_CONFIG_DIR=$BIS &&")|$(rsm "$BIS" --resume s-rs-bare --tier light | grep -c 'lived on')"
+check "an explicit --plan wins and says the cache is lost" "0|1|1" \
+  "$(rsl "$BIS" --resume s-rs-two --tier light --plan 1 | grep -cF 'export CLAUDE_CONFIG_DIR')|$(rsm "$BIS" --resume s-rs-two --tier light --plan 1 | grep -c "spawn: --plan 1 is not the plan session s-rs-two lived on (2): its cache is lost")|$(rsl "$BIS" --resume s-rs-two --tier light --plan 1 | grep -cE "'--resume' s-rs-two ")"
+check "an explicit --plan that is the plan it lived on says nothing" "0" \
+  "$(rsm "$BIS" --resume s-rs-two --tier light --plan 2 | grep -c 'cache is lost')"
+plq acc2 "$BIS" 100 10 "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; cp "$PLST/quota/acc2.json" "$RSSTATE/quota/acc2.json"
+check "a plan with no room left is refused for a resume that would move to it, the fresh agent named" "1|1|0" \
+  "$(rsm '' --resume s-rs-two >/dev/null 2>&1; echo $?)|$(rsm '' --resume s-rs-two | grep -c 'plan 2, where session s-rs-two lived, has no room left.*a fresh agent from `brief.sh rotation`')|$(rsm '' --resume s-rs-two | grep -c '^launch=')"
+check "and --plan wins over it" "1" \
+  "$(rsl '' --resume s-rs-two --plan 2 | grep -cF "export CLAUDE_CONFIG_DIR=$BIS &&")"
+rm -f "$RSSTATE/quota/acc2.json"
+printf '%s\n' '{"type":"attachment","attachment":{"type":"credential_org","organizationUuid":"org-one"}}' > "$ORCHESTRATOR_PROJECTS_DIR/p/s-rs-nopair.jsonl"
+check "a resume whose transcript holds no pair is refused, the fresh agent named" "1|1" \
+  "$(rsm '' --resume s-rs-nopair >/dev/null 2>&1; echo $?)|$(rsm '' --resume s-rs-nopair | grep -c 'a fresh agent from `brief.sh rotation`')"
 # An agent's pair is its orchestrator's: a tier, or a model with its effort. The plugin ships
 # the tier efforts the map does not bind (deep medium, standard high, light medium), never the
 # calling orchestrator's own effort; an effort the map binds wins over them.

@@ -100,6 +100,10 @@ describe('a spawn prepared from its line', () => {
     assert.match(await refusal(['--open', '--title', 'Orch: o'], { env: { ORCHESTRATOR_SELF_TTY: '/dev/ttys1' } }), /--open reads its caller/)
     assert.equal(await refusal(['--title', 'Agent: a', '--tier', 'light', '--prompt', 'p', '--resume', 'abc-123']), 'prepared')
     assert.match(await refusal(['--title', 'Agent: a', '--prompt', 'p', '--resume', 'a b']), /--resume needs a session id/)
+    // A closed agent's resume may name its plan, and its tier is not bound: the transcript's pair is its own.
+    assert.equal(await refusal(['--title', 'Agent: a', '--prompt', 'p', '--resume', 'abc-123', '--plan', '2']), 'prepared')
+    assert.match(await refusal(['--title', 'Agent: a', '--prompt', 'p', '--plan', '2']), /--plan routes an orchestrator at its birth/)
+    assert.equal(await refusal(['--title', 'Agent: a', '--tier', 'deepest', '--prompt', 'p', '--resume', 'abc-123']), 'prepared')
     assert.match(await refusal(['--prompt', 'p'], { isDir: () => false }), /directory not found: \/w/)
     assert.equal(await refusal(['--prompt', 'p', '--tier', 'light']), 'prepared')
     assert.match(await refusal(['--prompt', 'p', '--tier', 'deepest']), /resolve-tier: unknown tier: deepest/)
