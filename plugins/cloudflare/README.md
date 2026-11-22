@@ -79,7 +79,7 @@ permission rule can tell a read from a write by the script it names.
 Calls follow the session's permission rules. A `deny` rule refuses. A read runs
 unless a rule asks. A write is asked unless a rule or the mode allows it: the
 dialog offers « Allow for this session », which covers that one command on
-that one account until the session ends. It is never offered for
+that one account and zone until the session ends. It is never offered for
 `dns-delete`, `restore`, `purge-all`, `under-attack`, `worker-delete` or
 `unpublish`, nor where an explicit rule asks. A command the mod does not list
 as a read is a write. Where nobody can answer (`claude -p`), a write is
