@@ -90,13 +90,15 @@ skills/orchestrator/scripts/lib/goals-file.ts  the goals file's format, for goal
 skills/orchestrator/scripts/workspace.sh    launches workspace.ts: a clone per phase, a pinned worktree per review round
 skills/orchestrator/scripts/rhythm.sh       an audit's net balance, from git alone
 skills/orchestrator/scripts/ci-watch.ts, skills/orchestrator/scripts/dispatch-record.ts, skills/orchestrator/scripts/rhythm.ts, skills/orchestrator/scripts/workspace.ts, skills/orchestrator/scripts/install.ts, skills/orchestrator/scripts/brief-lint.ts  what the shell launchers above run, each command documented in its launcher's header
+skills/orchestrator/scripts/shell-profile.ts  the shell file's copy and the one line of the profile that sources it, written by install.ts
+shell/profile.sh      the plugin's shell configuration, sourced from the user's profile: an interactive login shell on a terminal drops a session's nesting marks
 skills/orchestrator/scripts/node-ts.sh         sourced by every launcher of a .ts command: runs the first node able to run TypeScript, else says so
 skills/orchestrator/scripts/lib/process.ts  what the scripts reach outside themselves, passed in so a test stands in for it
 skills/orchestrator/scripts/lib/record-paths.ts  where a dispatch record, its owner and its goals live
 skills/orchestrator/scripts/lib/audit.ts  the audit trail the scripts write into the orchestrator's journal
 skills/orchestrator/scripts/lib/round-archive.ts  the round's old entries moved into its archive
 skills/orchestrator/scripts/lib/workspace-ledger.ts  the ledger of the checkouts, written by workspace.ts alone
-skills/orchestrator/scripts/ci-watch.spec.ts, skills/orchestrator/scripts/dispatch-record.spec.ts, skills/orchestrator/scripts/rhythm.spec.ts, skills/orchestrator/scripts/workspace.spec.ts, skills/orchestrator/scripts/install.spec.ts, skills/orchestrator/scripts/brief-lint.spec.ts, skills/orchestrator/scripts/short-commands.spec.ts, skills/orchestrator/scripts/lib/process.spec.ts, skills/orchestrator/scripts/lib/record-paths.spec.ts, skills/orchestrator/scripts/lib/audit.spec.ts  their node tests
+skills/orchestrator/scripts/ci-watch.spec.ts, skills/orchestrator/scripts/dispatch-record.spec.ts, skills/orchestrator/scripts/rhythm.spec.ts, skills/orchestrator/scripts/workspace.spec.ts, skills/orchestrator/scripts/install.spec.ts, skills/orchestrator/scripts/brief-lint.spec.ts, skills/orchestrator/scripts/short-commands.spec.ts, skills/orchestrator/scripts/shell-file.spec.ts, skills/orchestrator/scripts/lib/process.spec.ts, skills/orchestrator/scripts/lib/record-paths.spec.ts, skills/orchestrator/scripts/lib/audit.spec.ts  their node tests
 skills/orchestrator/scripts/succession.sh, skills/orchestrator/scripts/succession.ts, skills/orchestrator/scripts/succession.spec.ts  the takeover printed from the state
 skills/coordination/SKILL.md         the coordinator: answers from the facts, flags collisions, relays what is the operator's, its succession
 skills/coordination/references/orchestrators.md  pausing, waking and opening an orchestrator, read on his word

@@ -1,6 +1,6 @@
 // shell-profile — the shell file's copy and the one line that sources it from the profile.
 //
-// The plugin keeps one file of shell configuration (`shell/claude-plugins.sh` in its tree). The
+// The plugin keeps one file of shell configuration (`shell/profile.sh` in its tree). The
 // installer copies it into the state directory, where a deploy does not move it, and adds ONE line to
 // the profile of the user's shell that sources the copy; the session start's sync rewrites the copy
 // after an update, so the profile never changes again. Only the installer writes the profile, and
@@ -10,15 +10,17 @@ import { basename, join } from 'node:path'
 import { setting, type Env } from '../../../core/paths.ts'
 import { writeAtomic } from '../../../core/store.ts'
 
-export const SHELL_FILE = 'claude-plugins.sh'
+/** The plugin's file under `shell/`, and the name of its copy in the state directory. */
+export const SOURCE_NAME = 'profile.sh'
+export const COPY_NAME = 'orchestrator-profile.sh'
 /** What ends the line this plugin writes: the only thing that makes a line of a profile its own. */
-export const MARKER = '# claude-plugins shell file'
+export const MARKER = '# orchestrator shell file'
 
 /** The plugin's shell file, under its root. */
-export const sourceOf = (root: string): string => join(root, 'shell', SHELL_FILE)
+export const sourceOf = (root: string): string => join(root, 'shell', SOURCE_NAME)
 
 /** The copy the profile sources, under the state directory. */
-export const copyOf = (state: string): string => join(state, SHELL_FILE)
+export const copyOf = (state: string): string => join(state, COPY_NAME)
 
 /** The user's profile for the shell `$SHELL` names (ZDOTDIR honoured), or undefined for any other. */
 export function profileOf(env: Env, home: string): { readonly path: string; readonly shell: 'zsh' | 'bash' } | undefined {

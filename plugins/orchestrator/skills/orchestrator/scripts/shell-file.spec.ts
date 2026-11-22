@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 
 // The shell file as a real shell runs it: the profile sources it, the shell is interactive and a
 // login shell on a terminal (a pseudo-terminal stands in) or it is not.
-const FILE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'shell', 'claude-plugins.sh')
+const FILE = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'shell', 'profile.sh')
 const NAMES = (/^\s*unset ((?:[A-Z_]+ ?)+)$/m.exec(readFileSync(FILE, 'utf8'))?.[1] ?? '').trim().split(' ')
 const PROBE = 'echo "${CLAUDECODE-gone}|${CLAUDE_CODE_SESSION_ATTENDED-gone}|${CLAUDE_CONFIG_DIR-gone}"'
 const KEPT = '1|1|/acct'
@@ -79,7 +79,7 @@ for (const shell of SHELLS) {
 }
 
 test('the file is left sourced without leaving a variable or a function behind', { skip: !available('bash') && 'no bash' }, () => {
-  const ran = spawnSync('bash', ['-c', `. '${FILE}'; set | grep -c '[_]claude_plugins'`], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin' } })
+  const ran = spawnSync('bash', ['-c', `. '${FILE}'; set | grep -c '[_]orchestrator_'`], { encoding: 'utf8', env: { PATH: '/usr/bin:/bin' } })
   assert.equal(ran.stdout.trim(), '0')
   assert.equal(existsSync(FILE), true)
 })

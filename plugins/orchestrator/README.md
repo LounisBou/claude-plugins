@@ -72,16 +72,16 @@ makes it take effect.
 
 ## The shell file
 
-`shell/claude-plugins.sh` holds the plugin's own shell configuration, today one guard: an
+`shell/profile.sh` holds the plugin's own shell configuration, today one guard: an
 interactive login shell on a terminal drops the nine variables of a session's identity and nesting
-(a `claude` typed in a tab opened by hand, from an app a session started, would otherwise take
-itself for that session's child and keep no transcript); any other shell keeps them. The install
-copies the file to `~/.claude/claude-orchestrator/claude-plugins.sh` and adds one line to your
+(a host command typed in a tab opened by hand, from an app a session started, would otherwise
+take itself for that session's child and keep no transcript); any other shell keeps them. The install
+copies the file to `~/.claude/claude-orchestrator/orchestrator-profile.sh` and adds one line to your
 profile (`.zshrc` for zsh, `.bashrc` for bash, from `$SHELL`; `ZDOTDIR` honoured), the profile
 saved under `~/.claude/backups/` first:
 
 ```
-[ -r "$HOME/.claude/claude-orchestrator/claude-plugins.sh" ] && . "$HOME/.claude/claude-orchestrator/claude-plugins.sh" # claude-plugins shell file
+[ -r "$HOME/.claude/claude-orchestrator/orchestrator-profile.sh" ] && . "$HOME/.claude/claude-orchestrator/orchestrator-profile.sh" # orchestrator shell file
 ```
 
 The session start's sync rewrites the copy after an update, so the profile is written once and no

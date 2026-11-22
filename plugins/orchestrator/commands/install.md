@@ -25,7 +25,7 @@ The script is idempotent and does five things:
    followed it as written, else removing the `statusLine` key if the tap was
    all it held. `settings.json` is backed up under `~/.claude/backups/`; a
    status line carrying no tap is left untouched.
-5. **The shell file**, `shell/claude-plugins.sh`, copied to the state directory and sourced by
+5. **The shell file**, `shell/profile.sh`, copied to the state directory and sourced by
    ONE guarded line it adds to `.zshrc` or `.bashrc` (from `$SHELL`; the profile is backed up
    first): the sync at each session start keeps the copy current, so the profile changes once. No
    other line is touched; tell the user which earlier lines the output says they may delete.

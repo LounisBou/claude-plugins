@@ -26,7 +26,7 @@ test.beforeEach(() => {
   mkdirSync(join(root, 'commands'), { recursive: true })
   writeFileSync(join(root, 'short-names.tsv'), 'orchestrator-status\tstatus\n')
   mkdirSync(join(root, 'shell'))
-  writeFileSync(join(root, 'shell', 'claude-plugins.sh'), SHELL_FILE_TEXT)
+  writeFileSync(join(root, 'shell', 'profile.sh'), SHELL_FILE_TEXT)
   writeFileSync(join(root, 'commands', 'status.md'), '---\ndescription: s\n---\nstatus\n')
   mkdirSync(join(home, '.claude'))
 })
@@ -314,8 +314,8 @@ test('a short command that cannot be written ends the install with its exit code
 
 // The shell file: one line in the profile of the user's shell, a copy of the plugin's file in the
 // state directory that the line sources.
-const copy = (): string => join(state, 'claude-plugins.sh')
-const LINE = '[ -r "$HOME/.claude/claude-orchestrator/claude-plugins.sh" ] && . "$HOME/.claude/claude-orchestrator/claude-plugins.sh" # claude-plugins shell file'
+const copy = (): string => join(state, 'orchestrator-profile.sh')
+const LINE = '[ -r "$HOME/.claude/claude-orchestrator/orchestrator-profile.sh" ] && . "$HOME/.claude/claude-orchestrator/orchestrator-profile.sh" # orchestrator shell file'
 const ZSH = { env: { SHELL: '/bin/zsh' } }
 const BASH = { env: { SHELL: '/usr/local/bin/bash' } }
 const backups = (): string[] => {
@@ -346,9 +346,9 @@ test('ZDOTDIR places the zsh profile, and a config dir outside the home is spell
   assert.equal(existsSync(join(home, '.zshrc')), false)
   const other = mkdtempSync(join(tmpdir(), 'other config '))
   try {
-    const at = join(other, 'claude-orchestrator', 'claude-plugins.sh')
+    const at = join(other, 'claude-orchestrator', 'orchestrator-profile.sh')
     go(['install'], { env: { SHELL: '/bin/zsh', CLAUDE_CONFIG_DIR: other } })
-    assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), `[ -r '${at}' ] && . '${at}' # claude-plugins shell file\n`)
+    assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), `[ -r '${at}' ] && . '${at}' # orchestrator shell file\n`)
   } finally {
     rmSync(other, { recursive: true, force: true })
   }
@@ -367,18 +367,18 @@ test('installed twice, nothing changes: the profile, the copy and the backups st
 })
 
 test('a profile that already carries the earlier block keeps it: the install names its line and writes nothing else', () => {
-  const old = '# keep\nexport A=1\n# Un onglet\nif [[ -o interactive ]]; then\n  unset CLAUDECODE CLAUDE_PID \\\n    CLAUDE_CODE_SESSION_ID\nfi\nclaude-bis() { :; }\n'
+  const old = '# keep\nexport A=1\n# Un onglet\nif [[ -o interactive ]]; then\n  unset CLAUDECODE CLAUDE_PID \\\n    CLAUDE_CODE_SESSION_ID\nfi\nother-fn() { :; }\n'
   put(join(home, '.zshrc'), old)
   const r = go(['install'], ZSH)
   assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), `${old}${LINE}\n`)
   assert.ok(r.out.includes(`  ${home}/.zshrc still holds the earlier \`unset CLAUDECODE …\` block, line 5: the file does the same now, delete that block by hand\n`))
-  assert.equal(r.out.includes('claude-bis'), false)
+  assert.equal(r.out.includes('other-fn'), false)
 })
 
 test('a line of ours that names another file is replaced; a line of another shape is never touched', () => {
-  put(join(home, '.zshrc'), 'a\n[ -r /gone/x.sh ] && . /gone/x.sh # claude-plugins shell file\nb # claude-plugins\n')
+  put(join(home, '.zshrc'), 'a\n[ -r /gone/x.sh ] && . /gone/x.sh # orchestrator shell file\nb # not ours\n')
   go(['install'], ZSH)
-  assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), `a\n${LINE}\nb # claude-plugins\n`)
+  assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), `a\n${LINE}\nb # not ours\n`)
 })
 
 test('a profile that is a link is written through it, and keeps its mode', () => {
@@ -395,7 +395,7 @@ test('a profile that is a link is written through it, and keeps its mode', () =>
 test('a shell that is neither zsh nor bash, or none: the file and the profiles are left, the line is said', () => {
   const fish = go(['install'], { env: { SHELL: '/usr/bin/fish' } })
   assert.ok(fish.out.includes('SHELL is /usr/bin/fish: only zsh and bash profiles are written, add this line to yours:'))
-  assert.ok(fish.out.includes(`  [ -r "$HOME/.claude/claude-orchestrator/claude-plugins.sh" ] && . "$HOME/.claude/claude-orchestrator/claude-plugins.sh"\n`))
+  assert.ok(fish.out.includes(`  [ -r "$HOME/.claude/claude-orchestrator/orchestrator-profile.sh" ] && . "$HOME/.claude/claude-orchestrator/orchestrator-profile.sh"\n`))
   assert.deepEqual([existsSync(copy()), existsSync(join(home, '.zshrc')), existsSync(join(home, '.bashrc'))], [true, false, false])
   assert.equal(go(['install']).out.includes('Shell file'), false)
 })
@@ -411,13 +411,13 @@ test('a dry run says each change and writes neither the copy, the profile nor a 
 test('uninstall takes the line and the copy, and leaves every other line, a marked line of another file too', () => {
   put(join(home, '.zshrc'), 'a\nb\n')
   go(['install'], ZSH)
-  put(join(home, '.zshrc'), `a\n${LINE}\nb\n[ -r /else ] && . /else # claude-plugins shell file\n`)
+  put(join(home, '.zshrc'), `a\n${LINE}\nb\n[ -r /else ] && . /else # orchestrator shell file\n`)
   const dry = go(['uninstall', '--dry-run'], ZSH)
   assert.ok(dry.out.includes(`  [dry-run] line removed from ${home}/.zshrc\n`))
   assert.equal(readFileSync(join(home, '.zshrc'), 'utf8').includes(LINE), true)
   const r = go(['uninstall'], ZSH)
   assert.ok(r.out.includes(`  line removed from ${home}/.zshrc\n`))
-  assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), 'a\nb\n[ -r /else ] && . /else # claude-plugins shell file\n')
+  assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), 'a\nb\n[ -r /else ] && . /else # orchestrator shell file\n')
   assert.deepEqual([existsSync(copy()), existsSync(state)], [false, false])
   assert.equal(go(['uninstall'], ZSH).out.includes('line removed'), false)
   assert.equal(go(['uninstall'], { env: { SHELL: '/usr/bin/fish' } }).code, 0)
@@ -429,7 +429,7 @@ test('the sync refreshes the copy after an update, never makes one, and never to
   assert.equal(existsSync(copy()), false)
   put(join(home, '.zshrc'), 'export A=1\n')
   go(['install'], ZSH)
-  writeFileSync(join(root, 'shell', 'claude-plugins.sh'), '# the shell file, version two\n')
+  writeFileSync(join(root, 'shell', 'profile.sh'), '# the shell file, version two\n')
   assert.equal(sync(), 0)
   assert.equal(readFileSync(copy(), 'utf8'), '# the shell file, version two\n')
   assert.equal(readFileSync(join(home, '.zshrc'), 'utf8'), `export A=1\n${LINE}\n`)

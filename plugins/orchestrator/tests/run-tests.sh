@@ -10346,7 +10346,7 @@ for shsh in zsh bash; do
   sfinst >/dev/null 2>&1
   sfonce=$(cat "$SFP"); sfinst >/dev/null 2>&1
   check "$shsh: install adds one guarded line to the profile and a copy of the shell file, a second install adds none" "2|1|yes|yes" \
-    "$(wc -l < "$SFP" | tr -d ' ')|$(grep -c 'claude-plugins shell file$' "$SFP")|$([ "$sfonce" = "$(cat "$SFP")" ] && echo yes || echo no)|$(cmp -s "$ROOT/shell/claude-plugins.sh" "$SFH/.claude/claude-orchestrator/claude-plugins.sh" && echo yes || echo no)"
+    "$(wc -l < "$SFP" | tr -d ' ')|$(grep -c 'orchestrator shell file$' "$SFP")|$([ "$sfonce" = "$(cat "$SFP")" ] && echo yes || echo no)|$(cmp -s "$ROOT/shell/profile.sh" "$SFH/.claude/claude-orchestrator/orchestrator-profile.sh" && echo yes || echo no)"
   check "$shsh: a shell that sources the profile runs it clean" "ok" \
     "$(env -i PATH="$PATH" HOME="$SFH" "$shsh" -c ". '$SFP'; echo ok" 2>&1)"
   check "$shsh: the profile is saved before the first change" "export KEEP=1" \
