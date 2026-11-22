@@ -13,7 +13,7 @@ description: The development method every role follows - the lifecycle, definiti
    one commit.
 4. **Review on evidence.** By a session that did not write the code; a result without the
    command output that shows it is a claim.
-5. **Ready**, then **merge** (« Consent »).
+5. **Merge** (« Consent »).
 
 ## Self-review
 

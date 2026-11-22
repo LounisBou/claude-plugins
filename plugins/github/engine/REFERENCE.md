@@ -33,7 +33,7 @@ below, and the `args` object holds the subcommand's arguments.
 | `pr-files` | `<pr>` | Totals, a line per changed path (`files-summary`); `--json`: with the patches, paginated |
 | `pr-commits` | `<pr>` | A line per commit (`commits-summary`); `--json`: the commits, paginated |
 | `file-at-ref` | `<path> <ref>` | A file's contents at a ref |
-| `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, a draft by default. One line (`pr-created`): `owner/name#N`, URL, head, labels, then `related` and the PRs updated; `--json` the PR. It gets `Not Ready`; a label failure only prints `error:`. Each open PR its `Related PRs` section names gets the new PR added to its own `Related PRs`; one that cannot be updated only prints `error:` |
+| `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch. One line (`pr-created`): `owner/name#N`, URL, head, labels, then `related` and the PRs updated; `--json` the PR. It gets `Not Ready`; a label failure only prints `error:`. Each open PR its `Related PRs` section names gets the new PR added to its own `Related PRs`; one that cannot be updated only prints `error:` |
 | `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, or its whole stack; `--sha` pins the verified head; no `--method`: the first the repository allows |
 
 `pr-gate` is the one reading of CI, the ready guard's and the orchestrator's: it reads the PR, then at
@@ -295,7 +295,7 @@ PR of the pushed branch back to `Not Ready`.
 
 **Auto-merge split.** A merge runs only in a repository of `auto-merge.json`, the ready guard on
 top; elsewhere it is asked through the tool, refused in the shell. Outside auto-merge, leaving
-draft (CI undraft aside) meets the ready guard, then is asked. The engine's undraft is a CI one only with `--for-ci`, and names `--repo`.
+draft (CI undraft aside) meets the ready guard. The engine's undraft is a CI one only with `--for-ci`, and names `--repo`.
 
 An engine act whose PR number cannot be read (`pr-merge "$PR"`) is refused: write the number.
 
