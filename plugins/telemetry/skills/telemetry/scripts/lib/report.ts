@@ -11,6 +11,7 @@ import { ROLES } from '../../../../core/names.ts'
 import { MEASURE_DIR, MODULE_DIR, parseMeasure, RECORDS_DIR, ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
 import { setting } from '../../../../core/env.ts'
 import { moduleDirUnder } from '../../../../core/roots.ts'
+import { parseRoundQuestion } from '../../../../core/round-question.ts'
 import { num, record, text } from './manifest.ts'
 import { dayFiles, eventsDir } from './store.ts'
 import { readPrices, UnitCosts, type ClosedRow, type Merged } from './unitcosts.ts'
@@ -537,7 +538,9 @@ export function report(input: ReportInput): string[] {
   out.push(`  cost of sessions that name no pull request or several: ${usd(unnamed)}${prCost.size === 0 ? ' (no tool call of the week names its pull request: the per-pull-request cost is n/a)' : ''}`)
 
   // Questions and refusals per day.
-  const round = [...filesOf(join(module, ROUND_DIR), json, skipped), ...filesOf(join(module, ROUND_DIR, ROUND_ARCHIVE_DIR), json, skipped)].map(f => record(f.value)).filter(r => r['kind'] === 'operator' && inWindow(dayOf(text(r['since']))))
+  // Both forms of a round file, by core's reader: the one `ask` writes and the one the relay writes.
+  const round = [...filesOf(join(module, ROUND_DIR), json, skipped), ...filesOf(join(module, ROUND_DIR, ROUND_ARCHIVE_DIR), json, skipped)]
+    .flatMap(f => { const question = parseRoundQuestion(f.value); return question?.kind === 'operator' && inWindow(dayOf(question.at)) ? [{ at: question.at, blocks: text(record(f.value)['blocks']) }] : [] })
   const refusals = new Map<string, { all: number; plugin: number }>()
   /** The plugins the events name as having refused a call. */
   const deciders = new Set<string>()
@@ -556,7 +559,7 @@ export function report(input: ReportInput): string[] {
   }
   out.push('', 'day         questions  refusals  of them by a plugin')
   for (const day of days) {
-    const asked = round.filter(r => dayOf(text(r['since'])) === day).length + (questions.get(day) ?? 0)
+    const asked = round.filter(r => dayOf(r.at) === day).length + (questions.get(day) ?? 0)
     out.push(`${day}  ${String(asked).padStart(9)}  ${String(refusals.get(day)?.all ?? 0).padStart(8)}  ${String(refusals.get(day)?.plugin ?? 0).padStart(19)}`)
   }
 
@@ -601,7 +604,7 @@ export function report(input: ReportInput): string[] {
   }
   const firsts = orchestrators.flatMap(([id, s]) => { const f = starts.get(id) ?? (s.began ? s.firstContext : undefined); return f === undefined ? [] : [f] })
   const lines = closedRows.filter(l => inWindow(parisDay(l.closed))).map(l => l.closed - l.opened)
-  const asked = round.map(r => text(r['blocks'])).filter((b): b is string => b !== undefined)
+  const asked = round.flatMap(r => (r.blocks === undefined ? [] : [r.blocks]))
   const repeated = asked.filter((b, i) => asked.indexOf(b) < i).length
   const merged = median(delays)
   const lineMedian = median(lines)

@@ -162,8 +162,10 @@ test('with no call naming its pull request, the per-pull-request cost says it is
   })
 })
 
-test('questions come from the round files and their archive and the operator-asked ones; refusals from the live calls, else from the summary of a session that has none', () => {
-  const asked = (since: string, blocks: string, kind = 'operator'): Record<string, unknown> => ({ kind, since, blocks })
+test('questions come from the round files in both their forms and their archive and the operator-asked ones; refusals from the live calls, else from the summary of a session that has none', () => {
+  // The two forms of a round file: the relay's entry, dated by `since`, and the `v: 2` object `ask` writes, dated by `at`.
+  const asked = (since: string, blocks: string, kind = 'operator'): Record<string, unknown> => ({ id: `q-${since}-${blocks}`, session: S(1), from: 'Orch: x', kind, since, status: 'open', blocks })
+  const askedByTool = (at: string, blocks: string): Record<string, unknown> => ({ v: 2, id: `q-${at}-${blocks}`, sender: { session: S(1), name: 'Orch: x' }, at, status: 'open', blocks })
   const events = [
     ev('2026-11-10T10:00:00Z', 'question', S(1), { source: 'ask_user' }),
     ev('2026-11-10T10:00:00Z', 'question', S(1), { source: 'round' }),
@@ -174,7 +176,7 @@ test('questions come from the round files and their archive and the operator-ask
     ev('2026-11-11T12:00:00Z', 'session_summary', S(2), { refusals: { 'plugin:github': 2, user: 3 } }),
     ev('2026-11-11T12:00:00Z', 'session_summary', S(4), { refusals: { 'plugin:github': 2, user: 3 } }),
   ]
-  const round = [asked('2026-11-10T08:00:00Z', 'a'), asked('2026-11-11T08:00:00Z', 'a'), asked('2026-11-11T09:00:00Z', 'b'), asked('2026-11-11T09:00:00Z', 'c', 'done'), asked('2026-11-01T09:00:00Z', 'b')]
+  const round = [asked('2026-11-10T08:00:00Z', 'a'), askedByTool('2026-11-11T08:00:00Z', 'a'), askedByTool('2026-11-11T09:00:00Z', 'b'), asked('2026-11-11T09:00:00Z', 'c', 'done'), askedByTool('2026-11-01T09:00:00Z', 'b')]
   scratch({ events, round, archive: [asked('2026-11-10T08:30:00Z', 'd')] }, config => {
     const out = lines(config)
     assert.equal(find(out, '2026-11-10'), '2026-11-10          3         2                    1')
