@@ -1277,6 +1277,21 @@ test('a pr-merge that failed or merged nothing, then a merge elsewhere, still se
   expect((await prWake(world.dollar, new Set())).lines).toEqual([BARE_17])
 })
 
+test('a pr-merge answered by its JSON then an error line still says its merge: the session knows', async () => {
+  const world = mergedOnForge()
+  // The real answer of a merge on a private repository: the merge, then the forge's notice of a stacked base it could not read.
+  const notice = 'error: cannot read whether fix/settings-lease-push is a stacked base: Upgrade to GitHub Pro'
+  await call(mounted(), world.dollar, prMerge(), { result: `${MERGED_ANSWER.result}\n${notice}` })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([])
+})
+
+test('a pr-merge answered by merged: false then an error line says no merge: the bare line is sent', async () => {
+  const world = mergedOnForge()
+  const notice = 'error: cannot read whether fix/settings-lease-push is a stacked base: Upgrade to GitHub Pro'
+  await call(mounted(), world.dollar, prMerge(), { result: `${JSON.stringify({ merged: false, message: 'Head branch was modified' })}\n${notice}` })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([BARE_17])
+})
+
 test('a pull request closed unmerged is told as before, whatever this session merged', async () => {
   const handlers = mounted()
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_SESSION }, forge: { 'acme/app': '[]' }, closed: { 'acme/app': { 17: 'CLOSED' } }, launcher: '' })

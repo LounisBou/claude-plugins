@@ -184,8 +184,11 @@ export function mergedByCall(e: Readonly<Record<string, unknown>>, result: unkno
   const pr = Number(String(args['pr'] ?? '').replace('#', ''))
   const answer = answerText(result)
   if (answer === null || !Number.isInteger(pr) || pr < 1) return null
+  // The object is read up to its closing brace: the answer may carry a line after it (a notice of the forge).
+  const end = answer.indexOf('}')
+  if (!answer.trimStart().startsWith('{') || end < 0) return null
   try {
-    return (JSON.parse(answer) as { merged?: unknown } | null)?.merged === true ? { repo: e['repo'].trim(), pr } : null
+    return (JSON.parse(answer.slice(0, end + 1)) as { merged?: unknown } | null)?.merged === true ? { repo: e['repo'].trim(), pr } : null
   } catch {
     return null
   }

@@ -1721,6 +1721,37 @@ for (const line of ['! npm run e2e', 'cd /work && ! npm run e2e', 'coproc npm ru
   })
 }
 
+test('an E2E "ran" of "SDKROOT=/x npm run e2e" run in Bash is observed and computed: a leading assignment is no command word', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })
+  await $.tool.call({ tool: 'Bash', command: 'SDKROOT=/x npm run e2e' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'SDKROOT=/x npm run e2e' })
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)![9]).toBe('pass')
+  expect(recordRun(seen)![13]).toContain('observed `SDKROOT=/x npm run e2e` at 0123456, run by this session')
+})
+
+test('an E2E "ran" of "cd /work && SDKROOT=/x npm run e2e" is observed after the cd, as the line typed', async ($, on) => {
+  const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+  const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })
+  await $.tool.call({ tool: 'Bash', command: 'cd /work && SDKROOT=/x npm run e2e' })
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: 'cd /work && SDKROOT=/x npm run e2e' })
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)![9]).toBe('pass')
+  expect(recordRun(seen)![13]).toContain('observed `SDKROOT=/x npm run e2e` at 0123456, run by this session')
+})
+
+for (const line of ['FOO=1', 'FOO=1 time npm run e2e', 'FOO=1 ! npm run e2e', 'FOO=$(cmd) npm run e2e', 'FOO=1 coproc npm run e2e']) {
+  test('an E2E "ran" of "' + line + '" is not observed: no plain command word follows its assignments', async ($, on) => {
+    const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+    const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })
+    await $.tool.call({ tool: 'Bash', command: line })
+    const out = await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', ran: line })
+    expect(out.deny).toContain('this session ran no `')
+    expect(recordRun(seen)).toBeUndefined()
+  })
+}
+
 test('an E2E "ran" whose cd names another directory than the record\'s is refused, naming the directory', async ($, on) => {
   const moved = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
   const seen = await world($, on, { git: { ...CLEAN, ...moved }, tree: SESSION_DIR })

@@ -11,6 +11,7 @@ import { ROLES } from '../../../../core/names.ts'
 import { MEASURE_DIR, MODULE_DIR, parseMeasure, RECORDS_DIR, ROUND_ARCHIVE_DIR, ROUND_DIR } from '../../../../core/orchestration.ts'
 import { setting } from '../../../../core/env.ts'
 import { moduleDirUnder } from '../../../../core/roots.ts'
+import { parseRoundQuestion } from '../../../../core/round-question.ts'
 import { num, record, text } from './manifest.ts'
 import { dayFiles, eventsDir } from './store.ts'
 import { readPrices, UnitCosts, type ClosedRow, type Merged } from './unitcosts.ts'
@@ -184,7 +185,7 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       } else if (kind === 'tool_call') {
         if (e['outcome'] === 'refused') s.refused.push({ day, plugin: isPlugin(text(e['decided_by'])), by: text(e['decided_by']) })
         const target = record(e['target'])
-        if (text(target['repo']) !== undefined && num(target['pr']) !== undefined) s.targets.add(`${text(target['repo'])}#${num(target['pr'])}`)
+        if (text(target['repo']) !== undefined && num(target['pr']) !== undefined) s.targets.add(`${text(target['repo'])}#${num(target['pr'])}`.toLowerCase())
       } else if (kind === 'question' && e['source'] === 'ask_user') {
         questions.set(day, (questions.get(day) ?? 0) + 1)
       } else if (kind === 'session_end' || kind === 'session_summary') {
@@ -507,7 +508,12 @@ export function report(input: ReportInput): string[] {
   }
 
   // Pull requests merged in the week: delay from GitHub, cost from the sessions that name only that one.
-  const repos = [...new Set([...tools, ...[...groups.keys()].filter(r => r.includes('/')), ...[...prCost.keys()].map(k => k.split('#')[0] ?? '')])].filter(r => r !== '')
+  // GitHub names ignore case, and a pull request target is kept in lower case: a repository spelt two ways is listed once,
+  // as the first of the tools, the groups and the targets spells it.
+  const repos: string[] = []
+  for (const r of [...tools, ...[...groups.keys()].filter(g => g.includes('/')), ...[...prCost.keys()].map(k => k.split('#')[0] ?? '')]) {
+    if (r !== '' && !repos.some(known => known.toLowerCase() === r.toLowerCase())) repos.push(r)
+  }
   const delays: number[] = []
   const mergedByDay = new Map<string, number>()
   let unlisted = 0
@@ -524,7 +530,7 @@ export function report(input: ReportInput): string[] {
       if (Number.isFinite(delay)) delays.push(delay)
       const mergedDay = dayOf(text(row['mergedAt']))
       if (mergedDay !== undefined) mergedByDay.set(mergedDay, (mergedByDay.get(mergedDay) ?? 0) + 1)
-      const spent = prCost.get(`${repo}#${num(row['number'])}`)
+      const spent = prCost.get(`${repo}#${num(row['number'])}`.toLowerCase())
       out.push(`  ${repo}#${num(row['number'])}  ${(Number.isFinite(delay) ? span(delay) : 'n/a').padStart(8)}  ${spent === undefined ? 'cost n/a' : usd(spent)}`)
     }
   }
@@ -532,7 +538,9 @@ export function report(input: ReportInput): string[] {
   out.push(`  cost of sessions that name no pull request or several: ${usd(unnamed)}${prCost.size === 0 ? ' (no tool call of the week names its pull request: the per-pull-request cost is n/a)' : ''}`)
 
   // Questions and refusals per day.
-  const round = [...filesOf(join(module, ROUND_DIR), json, skipped), ...filesOf(join(module, ROUND_DIR, ROUND_ARCHIVE_DIR), json, skipped)].map(f => record(f.value)).filter(r => r['kind'] === 'operator' && inWindow(dayOf(text(r['since']))))
+  // Both forms of a round file, by core's reader: the one `ask` writes and the one the relay writes.
+  const round = [...filesOf(join(module, ROUND_DIR), json, skipped), ...filesOf(join(module, ROUND_DIR, ROUND_ARCHIVE_DIR), json, skipped)]
+    .flatMap(f => { const question = parseRoundQuestion(f.value); return question?.kind === 'operator' && inWindow(dayOf(question.at)) ? [{ at: question.at, blocks: text(record(f.value)['blocks']) }] : [] })
   const refusals = new Map<string, { all: number; plugin: number }>()
   /** The plugins the events name as having refused a call. */
   const deciders = new Set<string>()
@@ -551,7 +559,7 @@ export function report(input: ReportInput): string[] {
   }
   out.push('', 'day         questions  refusals  of them by a plugin')
   for (const day of days) {
-    const asked = round.filter(r => dayOf(text(r['since'])) === day).length + (questions.get(day) ?? 0)
+    const asked = round.filter(r => dayOf(r.at) === day).length + (questions.get(day) ?? 0)
     out.push(`${day}  ${String(asked).padStart(9)}  ${String(refusals.get(day)?.all ?? 0).padStart(8)}  ${String(refusals.get(day)?.plugin ?? 0).padStart(19)}`)
   }
 
@@ -596,7 +604,7 @@ export function report(input: ReportInput): string[] {
   }
   const firsts = orchestrators.flatMap(([id, s]) => { const f = starts.get(id) ?? (s.began ? s.firstContext : undefined); return f === undefined ? [] : [f] })
   const lines = closedRows.filter(l => inWindow(parisDay(l.closed))).map(l => l.closed - l.opened)
-  const asked = round.map(r => text(r['blocks'])).filter((b): b is string => b !== undefined)
+  const asked = round.flatMap(r => (r.blocks === undefined ? [] : [r.blocks]))
   const repeated = asked.filter((b, i) => asked.indexOf(b) < i).length
   const merged = median(delays)
   const lineMedian = median(lines)
@@ -604,17 +612,14 @@ export function report(input: ReportInput): string[] {
   const failed = runs.find(([, r]) => typeof r === 'string')
   const rows = runs.flatMap(([, r]) => (typeof r === 'string' ? [] : r.map(record).filter(x => inWindow(dayOf(text(x['createdAt']))))))
   const figures: string[] = [
-    NA('which lines can run and which agents are alive is host state (ListAgents), never recorded'),
-    NA('the time from a merge to its installation needs the plugin cache\'s install times, which nothing here records'),
     turns.length === 0 ? NA('no turn_end event with a context fill in the week') : `${high} of ${turns.length} turns above ${tok(TARGETS.contextTokens)} (${pct(high, turns.length)}), peak ${tok(turns.reduce((n, t) => Math.max(n, t.tokens), 0))}; ${[...roleTurns].map(([role, xs]) => `${role} ${xs.filter(x => x > TARGETS.contextTokens).length}/${xs.length}`).join(', ')}`,
     lives.length === 0 ? NA('no orchestrator session ended in the week') : `median ${span(median(lives) ?? 0)} over ${lives.length} orchestrator sessions (target ≥ ${span(TARGETS.generationMs)})`,
     firsts.length === 0 ? NA('no orchestrator start in a measure file and no turn_end of one') : `median ${tok(median(firsts) ?? 0)} over ${firsts.length} orchestrator sessions (target ≤ ${tok(TARGETS.firstTurnTokens)})`,
     merged === undefined && lineMedian === undefined ? NA('no pull request merged and no line closed in the week') : `pull request ${merged === undefined ? NA('none merged') : `median ${span(merged)} over ${delays.length}${unlisted > 0 ? `, ${unlisted} repository listing(s) n/a` : ''}`}; line ${lineMedian === undefined ? NA('none closed') : `median ${span(lineMedian)} over ${lines.length}`} (target ≤ ${span(TARGETS.lineToMergeMs)})`,
     round.length === 0 ? NA('no operator question in round/ for the week') : `${repeated} of ${round.length} questions repeat an earlier one's blocks line, exact match (a floor; target 0)`,
-    NA('the lines of code per release need the git history of each release, which no source here holds'),
     tools.length === 0 ? NA('no tool repository') : failed !== undefined && typeof failed[1] === 'string' ? NA(`${failed[0]}: ${failed[1]}`) : rows.length === 0 ? NA('no run of main in the week') : `${rows.filter(x => x['conclusion'] === 'success').length} green, ${rows.filter(x => x['conclusion'] === 'failure').length} red runs on main (target 0 red)`,
   ]
-  const names = ['agents on every runnable line', 'merge → in service', 'context height', 'life of an orchestrator session', 'first turn of a new session', 'delay line → merge', 'a question reaches him once', 'method code per release', 'main green']
+  const names = ['context height', 'life of an orchestrator session', 'first turn of a new session', 'delay line → merge', 'a question reaches him once', 'main green']
   out.push('', ...figures.map((f, i) => `${i + 1} ${names[i] ?? ''}: ${f}`))
   out.push('', ...checkLines(input))
   if (skipped.n > 0) out[0] += ` (${skipped.n} unreadable event lines or files left out)`

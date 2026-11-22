@@ -70,8 +70,8 @@ test('an empty store prints every figure it cannot compute as n/a with its reaso
   scratch({}, config => {
     const out = lines(config)
     assert.equal(out[0], 'weekly report 2026-11-08 → 2026-11-14 (Europe/Paris), tool: acme/tool')
-    for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) assert.match(find(out, `${n} `), /: n\/a — /)
-    assert.match(find(out, '9 '), /n\/a — acme\/tool: gh run list acme\/tool failed: no access to acme\/tool$/)
+    for (const n of [1, 2, 3, 4, 5]) assert.match(find(out, `${n} `), /: n\/a — /)
+    assert.match(find(out, '6 '), /n\/a — acme\/tool: gh run list acme\/tool failed: no access to acme\/tool$/)
     assert.match(find(out, '  acme/tool: '), /n\/a — gh pr list acme\/tool failed: no access/)
     assert.equal(out.filter(l => l.startsWith('20')).length, 7)
     assert.equal(find(out, '  cost '), '  cost    n/a — none known in the week')
@@ -120,6 +120,23 @@ test('a session whose directory names no repository, or that has none, is unattr
   })
 })
 
+test('a repository spelt in two cases is listed once, the tool first, and a session naming one pull request in both cases names only that one', () => {
+  const events = [
+    ev('2026-11-10T09:00:00Z', 'tool_call', S(1), { target: { repo: 'acme/product', pr: 3 }, project: 'acme/product' }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(1), { cost_usd: 2 }),
+    ev('2026-11-10T09:00:00Z', 'tool_call', S(2), { target: { repo: 'Acme/Tool', pr: 7 }, project: 'Acme/Tool' }),
+    ev('2026-11-10T09:30:00Z', 'tool_call', S(2), { target: { repo: 'acme/tool', pr: 7 } }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(2), { cost_usd: 1.25 }),
+  ]
+  const one = (n: number): string => merged([[n, '2026-11-10T09:00:00Z', '2026-11-10T09:22:00Z']])
+  scratch({ events }, config => {
+    const out = lines(config, { gh: ghFor({ prs: { 'acme/tool': one(7), 'acme/product': one(3) }, runs: { 'acme/tool': '[]' } }) })
+    assert.deepEqual(out.filter(l => /^ {2}acme\/(tool|product)[#:]/i.test(l)), ['  acme/tool#7    22 min  $1.25', '  acme/product#3    22 min  $2.00'])
+    assert.equal(find(out, '  cost of sessions that name'), '  cost of sessions that name no pull request or several: $0.00')
+    assert.match(find(out, '4 '), /pull request median 22 min over 2/)
+  })
+})
+
 test('a merged pull request lists its delay and the cost of the sessions that name only that one; the rest is counted apart', () => {
   const events = [
     ev('2026-11-10T09:00:00Z', 'tool_call', S(1), { target: { repo: 'acme/tool', pr: 7 }, project: 'acme/tool' }),
@@ -135,7 +152,7 @@ test('a merged pull request lists its delay and the cost of the sessions that na
     const out = lines(config, { gh: ghFor({ prs: { 'acme/tool': prs }, runs: { 'acme/tool': '[]' } }) })
     assert.deepEqual(out.filter(l => l.startsWith('  acme/tool#')), ['  acme/tool#7    22 min  $1.25', '  acme/tool#8     4.5 h  cost n/a'])
     assert.equal(find(out, '  cost of sessions that name'), '  cost of sessions that name no pull request or several: $4.00')
-    assert.match(find(out, '6 '), /pull request median 2\.4 h over 2/)
+    assert.match(find(out, '4 '), /pull request median 2\.4 h over 2/)
   })
 })
 
@@ -145,8 +162,10 @@ test('with no call naming its pull request, the per-pull-request cost says it is
   })
 })
 
-test('questions come from the round files and their archive and the operator-asked ones; refusals from the live calls, else from the summary of a session that has none', () => {
-  const asked = (since: string, blocks: string, kind = 'operator'): Record<string, unknown> => ({ kind, since, blocks })
+test('questions come from the round files in both their forms and their archive and the operator-asked ones; refusals from the live calls, else from the summary of a session that has none', () => {
+  // The two forms of a round file: the relay's entry, dated by `since`, and the `v: 2` object `ask` writes, dated by `at`.
+  const asked = (since: string, blocks: string, kind = 'operator'): Record<string, unknown> => ({ id: `q-${since}-${blocks}`, session: S(1), from: 'Orch: x', kind, since, status: 'open', blocks })
+  const askedByTool = (at: string, blocks: string): Record<string, unknown> => ({ v: 2, id: `q-${at}-${blocks}`, sender: { session: S(1), name: 'Orch: x' }, at, status: 'open', blocks })
   const events = [
     ev('2026-11-10T10:00:00Z', 'question', S(1), { source: 'ask_user' }),
     ev('2026-11-10T10:00:00Z', 'question', S(1), { source: 'round' }),
@@ -157,12 +176,12 @@ test('questions come from the round files and their archive and the operator-ask
     ev('2026-11-11T12:00:00Z', 'session_summary', S(2), { refusals: { 'plugin:github': 2, user: 3 } }),
     ev('2026-11-11T12:00:00Z', 'session_summary', S(4), { refusals: { 'plugin:github': 2, user: 3 } }),
   ]
-  const round = [asked('2026-11-10T08:00:00Z', 'a'), asked('2026-11-11T08:00:00Z', 'a'), asked('2026-11-11T09:00:00Z', 'b'), asked('2026-11-11T09:00:00Z', 'c', 'done'), asked('2026-11-01T09:00:00Z', 'b')]
+  const round = [asked('2026-11-10T08:00:00Z', 'a'), askedByTool('2026-11-11T08:00:00Z', 'a'), askedByTool('2026-11-11T09:00:00Z', 'b'), asked('2026-11-11T09:00:00Z', 'c', 'done'), askedByTool('2026-11-01T09:00:00Z', 'b')]
   scratch({ events, round, archive: [asked('2026-11-10T08:30:00Z', 'd')] }, config => {
     const out = lines(config)
     assert.equal(find(out, '2026-11-10'), '2026-11-10          3         2                    1')
     assert.equal(find(out, '2026-11-11'), '2026-11-11          2         6                    3')
-    assert.match(find(out, '7 '), /^7 a question reaches him once: 1 of 4 questions repeat an earlier one's blocks line/)
+    assert.match(find(out, '5 '), /^5 a question reaches him once: 1 of 4 questions repeat an earlier one's blocks line/)
   })
 })
 
@@ -190,10 +209,10 @@ test('context height by role, an orchestrator\'s life and first turn, and the li
   ]
   scratch({ events, measure, record }, config => {
     const out = lines(config)
-    assert.equal(find(out, '3 '), '3 context height: 1 of 4 turns above 200k (25 %), peak 250k; orchestrator 1/2, agent 0/1, other 0/1')
-    assert.equal(find(out, '4 '), '4 life of an orchestrator session: median 3.0 h over 2 orchestrator sessions (target ≥ 2.0 h)')
-    assert.equal(find(out, '5 '), '5 first turn of a new session: median 65k over 2 orchestrator sessions (target ≤ 60k)')
-    assert.match(find(out, '6 '), /line median 2\.0 h over 2 \(target ≤ 60 min\)$/)
+    assert.equal(find(out, '1 '), '1 context height: 1 of 4 turns above 200k (25 %), peak 250k; orchestrator 1/2, agent 0/1, other 0/1')
+    assert.equal(find(out, '2 '), '2 life of an orchestrator session: median 3.0 h over 2 orchestrator sessions (target ≥ 2.0 h)')
+    assert.equal(find(out, '3 '), '3 first turn of a new session: median 65k over 2 orchestrator sessions (target ≤ 60k)')
+    assert.match(find(out, '4 '), /line median 2\.0 h over 2 \(target ≤ 60 min\)$/)
   })
 })
 
@@ -206,9 +225,9 @@ test('main\'s runs of the week are counted green and red, those of other days an
     { conclusion: 'failure', createdAt: '2026-11-01T10:00:00Z' },
   ])
   scratch({}, config => {
-    assert.equal(find(lines(config, { gh: ghFor({ runs: { 'acme/tool': runs } }) }), '9 '), '9 main green: 2 green, 1 red runs on main (target 0 red)')
-    assert.match(find(lines(config, { gh: () => ({ status: 0, stdout: '{}', stderr: '' }) }), '9 '), /n\/a — acme\/tool: gh answered something else than a list/)
-    assert.match(find(lines(config, { gh: () => ({ status: 0, stdout: 'nope', stderr: '' }) }), '9 '), /n\/a — acme\/tool: gh answered no JSON/)
+    assert.equal(find(lines(config, { gh: ghFor({ runs: { 'acme/tool': runs } }) }), '6 '), '6 main green: 2 green, 1 red runs on main (target 0 red)')
+    assert.match(find(lines(config, { gh: () => ({ status: 0, stdout: '{}', stderr: '' }) }), '6 '), /n\/a — acme\/tool: gh answered something else than a list/)
+    assert.match(find(lines(config, { gh: () => ({ status: 0, stdout: 'nope', stderr: '' }) }), '6 '), /n\/a — acme\/tool: gh answered no JSON/)
   })
 })
 
@@ -217,7 +236,7 @@ test('without --tool the tool is the repository of the working directory; with n
     assert.match(lines(config, { tools: [], repositoryAt: dir => (dir === '/here' ? 'acme/here' : undefined), cwd: '/here', gh: ghFor({}) })[0] ?? '', /tool: acme\/here$/)
     const none = lines(config, { tools: [] })
     assert.match(none[0] ?? '', /tool: n\/a — not run in a repository and no --tool$/)
-    assert.equal(find(none, '9 '), '9 main green: n/a — no tool repository')
+    assert.equal(find(none, '6 '), '6 main green: n/a — no tool repository')
   })
 })
 
@@ -264,8 +283,8 @@ test('gh is asked for the week\'s merged pull requests and main\'s runs, and a l
     const out = lines(config, { gh })
     assert.deepEqual(asked.find(a => a[0] === 'pr' && a[3] === 'acme/tool'), ['pr', 'list', '-R', 'acme/tool', '--state', 'merged', '--search', 'merged:>=2026-11-07', '--json', 'number,createdAt,mergedAt', '--limit', '1000'])
     assert.deepEqual(asked.find(a => a[0] === 'run'), ['run', 'list', '-R', 'acme/tool', '--branch', 'main', '--created', '>=2026-11-07', '--json', 'conclusion,createdAt', '--limit', '500'])
-    assert.match(find(out, '9 '), /n\/a — acme\/tool: the listing reached its limit of 500/)
-    assert.match(find(out, '6 '), /median 60 min over 1, 1 repository listing\(s\) n\/a/)
+    assert.match(find(out, '6 '), /n\/a — acme\/tool: the listing reached its limit of 500/)
+    assert.match(find(out, '4 '), /median 60 min over 1, 1 repository listing\(s\) n\/a/)
   })
 })
 
@@ -282,10 +301,10 @@ test('a session seen before the week with no cost before it has an unknown cost,
   scratch({ events }, config => {
     const out = lines(config)
     assert.match(find(out, 'spend'), /cost known for 0 of 1 sessions/)
-    assert.equal(find(out, '5 '), '5 first turn of a new session: median 30k over 1 orchestrator sessions (target ≤ 60k)')
+    assert.equal(find(out, '3 '), '3 first turn of a new session: median 30k over 1 orchestrator sessions (target ≤ 60k)')
   })
   scratch({ events, measure }, config => {
-    assert.equal(find(lines(config), '5 '), '5 first turn of a new session: median 90k over 1 orchestrator sessions (target ≤ 60k)')
+    assert.equal(find(lines(config), '3 '), '3 first turn of a new session: median 90k over 1 orchestrator sessions (target ≤ 60k)')
   })
 })
 
@@ -454,9 +473,9 @@ test('the medians are of three or more unsorted values, the middle one and not t
   const prs = merged([[1, '2026-11-10T08:00:00Z', at(50)], [2, '2026-11-10T08:00:00Z', at(10)], [3, '2026-11-10T08:00:00Z', at(20)]])
   scratch({ events, record: [row(1, 90), row(2, 10), row(3, 20)] }, config => {
     const out = lines(config, { gh: ghFor({ prs: { 'acme/tool': prs }, runs: { 'acme/tool': '[]' } }) })
-    assert.equal(find(out, '4 '), '4 life of an orchestrator session: median 2.0 h over 3 orchestrator sessions (target ≥ 2.0 h)')
-    assert.equal(find(out, '5 '), '5 first turn of a new session: median 40k over 3 orchestrator sessions (target ≤ 60k)')
-    assert.equal(find(out, '6 '), '6 delay line → merge: pull request median 20 min over 3; line median 20 min over 3 (target ≤ 60 min)')
+    assert.equal(find(out, '2 '), '2 life of an orchestrator session: median 2.0 h over 3 orchestrator sessions (target ≥ 2.0 h)')
+    assert.equal(find(out, '3 '), '3 first turn of a new session: median 40k over 3 orchestrator sessions (target ≤ 60k)')
+    assert.equal(find(out, '4 '), '4 delay line → merge: pull request median 20 min over 3; line median 20 min over 3 (target ≤ 60 min)')
   })
 })
 
@@ -479,9 +498,9 @@ test('what happened before or after the week is read for the cost baseline only:
   const prs = merged([[7, '2026-11-10T09:00:00Z', '2026-11-10T09:30:00Z']])
   scratch({ events }, config => {
     const out = lines(config, { gh: ghFor({ prs: { 'acme/tool': prs }, runs: { 'acme/tool': '[]' } }) })
-    assert.equal(find(out, '3 '), '3 context height: 0 of 1 turns above 200k (0 %), peak 50k; orchestrator 0/1')
-    assert.equal(find(out, '4 '), '4 life of an orchestrator session: median 2.0 h over 1 orchestrator sessions (target ≥ 2.0 h)')
-    assert.equal(find(out, '5 '), '5 first turn of a new session: median 50k over 1 orchestrator sessions (target ≤ 60k)')
+    assert.equal(find(out, '1 '), '1 context height: 0 of 1 turns above 200k (0 %), peak 50k; orchestrator 0/1')
+    assert.equal(find(out, '2 '), '2 life of an orchestrator session: median 2.0 h over 1 orchestrator sessions (target ≥ 2.0 h)')
+    assert.equal(find(out, '3 '), '3 first turn of a new session: median 50k over 1 orchestrator sessions (target ≤ 60k)')
     assert.equal(find(out, '  acme/tool#7 '), '  acme/tool#7    30 min  $2.00')
     assert.match(find(out, '  acme/tool '), /^ {2}acme\/tool +tool +\$2\.00 +0k$/)
   })
@@ -655,14 +674,14 @@ test('rules held by prose alone: n/a with the reason when the script gave none o
   })
 })
 
-test('the three lines come after the nine figures, and the scripts run in the report\'s working directory', () => {
+test('the three lines come after the six figures, and the scripts run in the report\'s working directory', () => {
   scratch({}, config => {
     const asked: string[] = []
     const check: Check = (checkout, script) => { asked.push(`${script}@${checkout}`); return checkFor({ prompts: PROMPTS, rules: RULES })(checkout, script) }
     const out = lines(config, { check, cwd: '/checkout' })
     assert.deepEqual(asked, ['prompts@/checkout', 'rules@/checkout'])
     assert.deepEqual(out.slice(-4).map(l => l.split(':')[0]), ['', 'prompt budgets', 'duplicates', 'rules held by prose alone'])
-    assert.ok(out.findIndex(l => l.startsWith('9 main green')) < out.indexOf(lineOf(out, 'prompt budgets')))
+    assert.ok(out.findIndex(l => l.startsWith('6 main green')) < out.indexOf(lineOf(out, 'prompt budgets')))
   })
 })
 
@@ -726,7 +745,7 @@ test('api_call events enter no cost, context or token figure of the report', () 
     apiCall(S(1), '2026-11-09T09:30:00.000Z', 'p1', 'm1', usageOf(0, 30_000)),
   ]
   scratch({ events }, config => {
-    assert.match(find(lines(config), '3 context height'), /^3 context height: 1 of 1 turns above 200k/)
+    assert.match(find(lines(config), '1 context height'), /^1 context height: 1 of 1 turns above 200k/)
   })
 })
 
@@ -740,7 +759,7 @@ test('cold rewrites: a subagent\'s calls (`agent`) are its own loop, not its ses
   })
 })
 
-test('unit costs per day: the section reads the price file, the merged pull requests and the dispatch record, after the cold rewrites and before the nine figures', () => {
+test('unit costs per day: the section reads the price file, the merged pull requests and the dispatch record, after the cold rewrites and before the six figures', () => {
   const events = [
     ev('2026-11-09T10:00:00Z', 'turn_end', S(1), { role: 'agent', launch_tier: 'deep', effort: 'xhigh', turn_cost_usd: 4 }),
     ev('2026-11-09T10:05:00Z', 'agent_closed', S(2), { kind: 'subagent', child: 'r1', run: 1, lens: 'correctness', models: ['claude-sonnet-5-5'], effort: 'high', target: { repo: 'acme/tool', pr: 5 }, range: 'main..abc1234def56' }),
@@ -759,7 +778,7 @@ test('unit costs per day: the section reads the price file, the merged pull requ
     assert.ok(out.includes('  2026-11-09  1 of 2 (50 %)'), out.join('\n'))
     assert.ok(out.includes('      acme/tool#5: read at abc1234def56 by 1 reader(s) on claude-sonnet-5-5/high'), out.join('\n'))
     assert.ok(out.indexOf('unit costs per day (API list prices, an equivalent and never a bill; Paris days)') > out.findIndex(l => l.startsWith('cold rewrites: ')))
-    assert.ok(out.findIndex(l => l.startsWith('unit cost moved')) < out.findIndex(l => l.startsWith('1 agents on every runnable line')))
+    assert.ok(out.findIndex(l => l.startsWith('unit cost moved')) < out.findIndex(l => l.startsWith('1 context height')))
   })
 })
 
