@@ -7362,8 +7362,8 @@ def transcript_of_session(sid, any_plan=False):
         return None
     folders = [PROJECTS_DIR]
     if any_plan and not os.environ.get("ORCHESTRATOR_PROJECTS_DIR"):
-        folders += [os.path.join(config_of_plan(plan) or os.path.expanduser("~/.claude"),
-                                 "projects") for plan in ("1", "2")]
+        folders += [os.path.join(os.path.expanduser("~"), dirname, "projects")
+                    for dirname in (PLAN1_DIRNAME, PLAN2_DIRNAME)]
     dated = []
     for path in (found for folder in folders
                  for found in glob.glob(os.path.join(folder, "*", sid + ".jsonl"))):
