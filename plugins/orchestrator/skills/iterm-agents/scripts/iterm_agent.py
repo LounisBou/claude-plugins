@@ -1704,7 +1704,7 @@ class PairUnreadable(Exception):
     or where it was looked for, and what was missing."""
 
 
-def read_pair(session_id):
+def read_pair(session_id, any_plan=False):
     """`(model, effort, path)` of the session `session_id` NOW: the last main-thread request
     its transcript holds, its `params.model` and `params.output_config.effort`.
 
@@ -1719,7 +1719,7 @@ def read_pair(session_id):
         raise PairUnreadable("no session id to read a pair for (CLAUDE_CODE_SESSION_ID unset)")
     # The newest of its transcripts: a session resumed from another checkout has one under
     # each, and its requests go to the one written last.
-    path = transcript_of_session(session_id)
+    path = transcript_of_session(session_id, any_plan)
     if not path:
         raise PairUnreadable("no transcript for session %s under %s" % (session_id, PROJECTS_DIR))
     last = None
@@ -5370,8 +5370,23 @@ def pair_of_launch(args, auditor_successor, pair_from=""):
     if args.auditor and args.model:
         # An auditor given its pair runs on it; given none, on its caller's live pair below.
         return args.model, args.effort, pair_from or "flag"
-    succession = (args.successor or auditor_successor or args.auditor
-                  or args.coordinator_successor or args.inherit)
+    roles = (args.successor or auditor_successor or args.auditor or args.coordinator_successor)
+    if args.resume and not args.wake and not roles:
+        # A closed agent resumed reads its cache only on the model and effort it ran on: its
+        # transcript's pair, whatever a tier or a model would say.
+        given = [flag for flag, value in (("--tier", args.tier), ("--model", args.model),
+                                          ("--effort", args.effort),
+                                          ("--inherit-model", args.inherit)) if value]
+        if given:
+            print("spawn: %s is not read for a resume: it runs on its session's own model and "
+                  "effort" % "/".join(given), file=sys.stderr)
+        try:
+            model, effort, path = read_pair(args.resume, any_plan=True)
+        except PairUnreadable as exc:
+            die("spawn: refused: the pair of session %s cannot be read (%s): %s"
+                % (args.resume, exc, FRESH_AGENT))
+        return model, effort, "transcript %s" % path
+    succession = roles or args.inherit
     if succession:
         # A succession of any role runs on its caller's live pair, with or without the flag:
         # the successor of an orchestrator or of an auditor, an auditor, the coordinator's
@@ -5454,7 +5469,7 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
     # So is the caller's pair, for the launches that always read it there: an inheriting
     # agent, an auditor and the coordinator's successor.
     args.caller_pair = (own_pair("a successor, an auditor or an inheriting spawn")
-                        if args.inherit or (args.auditor and not args.model)
+                        if (args.inherit and not args.resume) or (args.auditor and not args.model)
                         or args.coordinator_successor
                         else None)
     # The anchor first, before a prompt file is written or a trust record changed: an
@@ -5591,6 +5606,9 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
             use_config(slept_on)
     elif routed is not None:
         use_config(routed)
+    if args.resume and not (args.wake or args.open_):
+        refuse_stale_resume(args.resume)
+        settle_resume_plan(args.resume, routed)
     model, effort, pair_source = pair_of_launch(args, auditor_successor, pair_from)
     if anchor == "self" and defaulted and not own and not DRY_RUN:
         # The default must not turn a spawn that worked into a refusal: a caller with no
@@ -5631,8 +5649,6 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
         anchor = ""
     if anchor and anchor not in ("self", "leftmost") and not DRY_RUN:
         anchor = anchor_after_probe(term.can_place(anchor, side), anchor, own)
-    if args.resume and not (args.wake or args.open_):
-        refuse_stale_resume(args.resume)
     # BEFORE the tab exists, and BEFORE the prompt file is written: a refusal on the trust
     # question must leave nothing behind — a prompt file written ahead of it survived every
     # refusal and piled up under the state directory's prompts/ for a directory that was
@@ -7254,7 +7270,7 @@ except ValueError:
 def refuse_stale_resume(session_id):
     """Die unless the conversation `session_id` spoke within RESUME_WITHIN seconds: past it, a
     fresh agent from `brief.sh rotation` costs no more and starts clean."""
-    path = transcript_of_session(session_id)
+    path = transcript_of_session(session_id, any_plan=True)
     if path is None:
         die("spawn: refused: no transcript for session %s under %s: nothing to resume, start a "
             "fresh agent from `brief.sh rotation`" % (session_id, PROJECTS_DIR))
@@ -7264,13 +7280,93 @@ def refuse_stale_resume(session_id):
             "lives: a fresh agent from `brief.sh rotation` costs no more" % (session_id, age // 60))
 
 
-def transcript_of_session(sid):
+# What a refused resume says it costs no more than: a fresh agent from the rotation brief.
+FRESH_AGENT = "start a fresh agent from `brief.sh rotation`"
+
+
+def organization_of_transcript(path):
+    """The organization of the account a session last ran on: the `organizationUuid` of the last
+    `credential_org` record its transcript holds, or None when it holds none."""
+    found = None
+    try:
+        with open(path, errors="replace") as fh:
+            for line in fh:
+                if '"credential_org"' not in line:
+                    continue
+                try:
+                    attachment = json.loads(line).get("attachment")
+                except (ValueError, AttributeError):
+                    continue
+                if isinstance(attachment, dict) and attachment.get("type") == "credential_org" \
+                        and isinstance(attachment.get("organizationUuid"), str):
+                    found = attachment["organizationUuid"]
+    except OSError:
+        return None
+    return found
+
+
+def organization_of_config(config):
+    """The organization the account of configuration directory `config` ("" is plan 1's, the
+    home's) belongs to, read in its `.claude.json`, or None."""
+    try:
+        with open(os.path.join(config or os.path.expanduser("~"), ".claude.json")) as fh:
+            organization = json.load(fh)["oauthAccount"]["organizationUuid"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return organization if isinstance(organization, str) and organization else None
+
+
+def plan_of_organization(organization):
+    """`1` or `2`, the plan whose account belongs to `organization`, or None."""
+    for plan in ("1", "2"):
+        if organization_of_config(config_of_plan(plan)) == organization:
+            return plan
+    return None
+
+
+def settle_resume_plan(session_id, explicit):
+    """Run the resume of `session_id` on the plan its conversation lived on: the host's prompt
+    cache belongs to the account's organization, and a session resumed on the caller's other
+    plan writes its whole context again. `explicit` is the configuration directory --plan
+    named, already applied: it wins, and the line says what that costs. A transcript that names
+    no organization leaves the caller's plan; one that names the organization of neither plan,
+    or a plan with no room left, is refused."""
+    organization = organization_of_transcript(transcript_of_session(session_id, any_plan=True))
+    lived = plan_of_organization(organization) if organization else None
+    if explicit is not None:
+        if lived and lived != plan_of_config(explicit):
+            print("spawn: --plan %s is not the plan session %s lived on (%s): its cache is "
+                  "lost, its whole context is written again"
+                  % (plan_of_config(explicit), session_id, lived), file=sys.stderr)
+        return
+    if organization is None:
+        return
+    if lived is None:
+        die("spawn: refused: session %s lived on an account of neither plan: a resume on "
+            "either writes its whole context again, so %s" % (session_id, FRESH_AGENT))
+    if plan_of_config(os.environ.get("CLAUDE_CONFIG_DIR", "")) == lived:
+        return
+    if quota_room().get(lived, 1) <= 0:
+        die("spawn: refused: plan %s, where session %s lived, has no room left: %s"
+            % (lived, session_id, FRESH_AGENT))
+    use_config(config_of_plan(lived))
+    print("spawn: the resume runs on plan %s, the one session %s lived on: its cache is per "
+          "account" % (lived, session_id), file=sys.stderr)
+
+
+def transcript_of_session(sid, any_plan=False):
     """The transcript the host keeps for a session id, or None: one directory per checkout,
-    and the file is named by the id, so the id alone finds it wherever the session ran."""
+    and the file is named by the id, so the id alone finds it wherever the session ran.
+    `any_plan` looks under both plans' folders too: a resume is found before its plan moves."""
     if not re.fullmatch(r"[0-9A-Za-z._-]+", sid):
         return None
+    folders = [PROJECTS_DIR]
+    if any_plan and not os.environ.get("ORCHESTRATOR_PROJECTS_DIR"):
+        folders += [os.path.join(os.path.expanduser("~"), dirname, "projects")
+                    for dirname in (PLAN1_DIRNAME, PLAN2_DIRNAME)]
     dated = []
-    for path in glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl")):
+    for path in (found for folder in folders
+                 for found in glob.glob(os.path.join(folder, "*", sid + ".jsonl"))):
         try:
             dated.append((os.path.getmtime(path), path))
         except OSError:
