@@ -16,7 +16,8 @@ import sys
 scripts, work, scenario = sys.argv[1:4]
 for key, value in (("ORCHESTRATOR_STATE_DIR", "state"), ("CLAUDE_CONFIG_DIR", "cfg")):
     os.environ[key] = os.path.join(work, value)
-os.environ["ORCHESTRATOR_HOST_ARGV"] = json.dumps(["claude", "--model", "m", "first prompt"])
+HOST = os.environ["ORCHESTRATOR_HOST_CLI"] = "claude"
+os.environ["ORCHESTRATOR_HOST_ARGV"] = json.dumps([HOST, "--model", "m", "first prompt"])
 os.environ["ORCHESTRATOR_HOST_ENV"] = json.dumps(
     ["CLAUDE_CONFIG_DIR=" + os.environ["CLAUDE_CONFIG_DIR"], "ORCHESTRATOR_AUDITOR=1", "SECRET=x"])
 sys.path.insert(0, scripts)
@@ -40,7 +41,10 @@ class Clock:
     now = 0.0
     def time(self): return Clock.now
     def sleep(self, seconds): Clock.now += max(seconds, 0.01)
-    def strftime(self, fmt, *_): return "STAMP"
+    stamps = 0
+    def strftime(self, fmt, *_):
+        Clock.stamps += 1
+        return "STAMP%d" % Clock.stamps
     def gmtime(self): return None
 
 
@@ -56,6 +60,10 @@ servers = {"orch-a": {"armed": "on", "clients": ["/dev/ttys001"], "hosts": ["11"
            "orch-b": {"armed": "on", "clients": ["/dev/ttys002"], "hosts": ["21"], "string": "#T"}}
 for kept in {"kept-disarmed": ["orch-b"], "interrupted-kept": ["orch-a", "orch-b"]}.get(scenario, []):
     servers[kept]["armed"] = "off"
+if scenario == "unshown":
+    servers["orch-b"].update(armed="off", clients=[])
+if scenario == "no-stop-elsewhere":
+    servers["orch-b"]["clients"] = ["/dev/ttys095"]
 os.makedirs(os.path.join(work, "cfg", "sessions"), exist_ok=True)
 os.makedirs(os.path.join(work, "cfg", "projects", "p"), exist_ok=True)
 os.environ["ORCHESTRATOR_PROJECTS_DIR"] = ""
@@ -125,7 +133,8 @@ def new_tab(command):
     socket = next((s for s in servers if " %s " % s in text), None)
     if socket:
         acts.append("attach " + socket)
-        servers[socket]["clients"].append("/dev/ttys090")
+        if scenario != "elsewhere":
+            servers[socket]["clients"].append("/dev/ttys090")
         return Tab("/dev/ttys090", "✳ " + title_of(socket))
     acts.append("resume " + ("with its role" if "ORCHESTRATOR_AUDITOR=1" in text and "SECRET" not in text
                              and "--resume sid-41" in text and "first prompt" not in text else text))
@@ -163,11 +172,13 @@ def drop_client(socket):
 
 def kill(pid, sig):
     acts.append("kill %s armed=%s" % (pid, "+".join(s for s in servers if servers[s]["armed"] == "on")))
-    if scenario == "no-stop":
+    if scenario.startswith("no-stop"):
         return
-    alive.pop(APP)
-    if scenario == "lost-client":
+    alive.pop(str(pid))
+    if scenario in ("lost-client", "elsewhere"):
         drop_client("orch-b")
+    if scenario == "elsewhere":
+        servers["orch-b"]["clients"] = ["/dev/ttys095"]
     if scenario == "dead-tab":
         alive.pop("41")
     if scenario == "dead-agent":
@@ -176,14 +187,14 @@ def kill(pid, sig):
 
 def open_app():
     acts.append("open")
-    if scenario == "no-start" and not os.path.exists(os.path.join(work, "start")):
+    if scenario.startswith("no-start"):
         return
-    alive[NEW_APP] = "new"
+    alive[NEW_APP] = "new%d" % len(acts)
     back = [t for w in windows for t in w.tabs]
-    back = [t for t in back if not (scenario == "lost-client" and t.tab_id == "tab/dev/ttys002"
+    back = [t for t in back if not (scenario in ("lost-client", "elsewhere") and t.tab_id == "tab/dev/ttys002"
                                     or scenario == "dead-tab" and t.tab_id == "tab/dev/ttys041")]
     for tab in back:
-        tab.sessions[0].title = "tmux" if tab.sessions[0].tty in ("/dev/ttys001", "/dev/ttys002") else "claude"
+        tab.sessions[0].title = "tmux" if tab.sessions[0].tty in ("/dev/ttys001", "/dev/ttys002") else HOST
     # One window, the tabs in another order, and one the app opened by itself.
     windows[:] = [Window(list(reversed(back)) + [Tab("/dev/ttys060", "zsh")])]
     if scenario != "no-work":
@@ -208,9 +219,11 @@ def tmux_call(args, env=None):
         out = "✳ " + title_of(socket)
     elif words[1] == "-s":
         acts.append("%s %s" % ("arm" if words[-1] == "on" else "disarm", socket))
-        server["armed"] = words[-1]
+        # Taken with no error and no effect.
+        if not (socket == "orch-b" and scenario in {"off": ("stuck",), "on": ("arm-lost", "stale")}[words[-1]]):
+            server["armed"] = words[-1]
     else:
-        if server["string"] != words[-1]:
+        if server["string"] != words[-1] and not (scenario == "untitled" and socket == "orch-b"):
             for s in (t.sessions[0] for w in windows for t in w.tabs):
                 if s.tty in server["clients"]:
                     s.title = "✳ " + title_of(socket)
@@ -224,12 +237,12 @@ def process_state(pid):
 
 def processes():
     rows = {"1": ("0", "", "/sbin/launchd"), APP: ("1", "", "/Applications/iTerm.app/Contents/MacOS/iTerm2"),
-            "900": ("1", "", "/Users/x/Library/Application Support/iTerm2/iTermServer-3.7.9 /x/iterm2-daemon-1.socket"),
-            "12001": ("12", "/dev/ttys012", "claude -p nested"), "77": ("1", "/dev/ttys077", "claude elsewhere")}
+            "900": ("1", "", "/x/Library/Application Support/iTerm2/iTermServer-3.7.9 /x/iterm2-daemon-1.socket"),
+            "12001": ("12", "/dev/ttys012", HOST + " -p nested"), "77": ("1", "/dev/ttys077", HOST + " elsewhere")}
     if scenario == "own-child":
         rows["88"] = (APP, "/dev/ttys088", "-zsh")
     for pid, tty in hosts.items():
-        rows[pid] = ("900" if pid in ("31", "41") else "1", tty, "claude --name x")
+        rows[pid] = ("900" if pid in ("31", "41") else "1", tty, HOST + " --name x")
     return rows
 
 
@@ -239,37 +252,52 @@ class Worker:
         self.request = json.loads(argv[-1])
         assert options["start_new_session"] and self.request["command"] == "restart"
     def wait(self):
-        if scenario.startswith("interrupted"):
-            state = os.path.join(self.request["options"]["run"], "state.json")
-            return Interrupted(state)()
-        return r.Run(self.request["options"]["run"]).work()
+        global scenario, second
+        folder = self.request["options"]["run"]
+        if scenario.startswith(("interrupted", "half")):
+            return Interrupted(os.path.join(folder, "state.json"))()
+        if scenario == "reused":
+            alive[APP] = "another"
+        if scenario == "window":
+            scenario = "ok"
+            second = restart()
+        return restart(run=folder)[0]
 
 
 class Interrupted:
     """The process ends once iTerm2 is stopped, with no word."""
     def __init__(self, state): self.folder = os.path.dirname(state)
     def __call__(self):
-        run = r.Run(self.folder)
-        run.save(worker=["77777", "s"], closed=False)
+        run = r.Run(self.folder, r.own_state(self.folder))
+        run.save(worker=["900" if scenario == "interrupted-running" else "77777", "s"], closed=False)
         run.disarm()
-        run.stop()
+        if scenario == "half":
+            run.save(step="stop")
+        else:
+            run.stop()
         return 1
 
 
 ia.run, ia.tmux_call, ia.process_state = run, tmux_call, process_state
 ia.live_homes = lambda: sorted(servers)
 ia.app_pid = lambda: next((p for p in (APP, NEW_APP) if p in alive), "")
-ia.kernel_procargs = lambda pid: (["claude"], json.loads(os.environ["ORCHESTRATOR_HOST_ENV"]))
-ia.self_tty = lambda: "/dev/ttys999" if scenario == "stranger" else "/dev/ttys031"
+ia.kernel_procargs = lambda pid: ([HOST], json.loads(os.environ["ORCHESTRATOR_HOST_ENV"]))
+ia.self_tty = lambda: "/dev/ttys999" if scenario in ("stranger", "run-stranger") else "/dev/ttys031"
 ia.registered_coord_on = lambda tty: "Coord: c" if tty == "/dev/ttys031" else None
 ia.host_cli_on = lambda tty: next((p for p, t in hosts.items() if t == tty and p in alive), None)
 ia.osascript_run = lambda script, timeout=None: acts.append("notify") or ("ok", "")
 ia.ps_rows = lambda tty, strict=False: []
 if scenario == "unreadable":
     ia.host_argv = lambda pid: None
+if scenario == "unreadable-home":
+    argv_of = ia.host_argv
+    ia.host_argv = lambda pid: None if pid == "12" else argv_of(pid)
 r.processes, r.open_app = processes, open_app
 r.output_of = lambda *words: "1" if scenario == "no-restore" and words[-1] == "OpenNoWindowsAtStartup" else ""
-r.os = type("Os", (), {"__getattr__": lambda self, key: kill if key == "kill" else getattr(os, key)})()
+own_os = {"kill": kill, "getppid": os.getpid}
+if scenario == "run-owner":
+    own_os["getuid"] = lambda: os.getuid() + 1
+r.os = type("Os", (), {"__getattr__": lambda self, key: own_os.get(key) or getattr(os, key)})()
 r.subprocess = type("Sub", (), {"__getattr__": lambda self, key: Worker if key == "Popen"
                                 else getattr(subprocess, key)})()
 written = []
@@ -284,7 +312,7 @@ def fake_open(path, *args, **options):
     class Tty(io.BytesIO):
         def write(self, data):
             for s in (t.sessions[0] for w in windows for t in w.tabs):
-                if s.tty == path:
+                if s.tty == path and scenario != "untitled":
                     s.title = data.decode().removeprefix("\033]0;").removesuffix("\007")
     return Tty()
 
@@ -292,26 +320,66 @@ def fake_open(path, *args, **options):
 r.open = fake_open
 
 
-def restart(*words):
+second = None
+taken = r.snapshot
+
+
+def restart(*words, run=""):
     out, err, code = io.StringIO(), io.StringIO(), 0
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            r.main(ia, ia.args_of("restart", {"check": "--check" in words, "run": ""}))
+            r.main(ia, ia.args_of("restart", {"check": "--check" in words, "run": run}))
     except SystemExit as exc:
         code = exc.code or 0
     return code, out.getvalue(), err.getvalue()
 
 
-code, out, err = restart(*sys.argv[4:])
-if scenario.startswith("interrupted"):
-    print("first=%s" % ",".join(acts))
+def placed():
+    """A run ready for its process, written where the scenario says; its folder."""
+    own, elsewhere = os.path.join(r.runs_root(), "RUN"), os.path.join(work, "elsewhere")
+    state, _ = taken(own)
+    state["worker"] = ["900", "s"] if scenario == "run-typed" else [str(os.getpid()), "me"]
+    at = elsewhere if scenario in ("run-outside", "run-link", "run-folder-link") else own
+    ia.write_json(os.path.join(at, "state.json"), state)
+    if scenario == "run-link":
+        os.makedirs(own)
+        os.symlink(os.path.join(elsewhere, "state.json"), os.path.join(own, "state.json"))
+    if scenario == "run-folder-link":
+        os.makedirs(os.path.dirname(own))
+        os.symlink(elsewhere, own)
+    if scenario == "run-shared":
+        os.chmod(os.path.join(own, "state.json"), 0o640)
+    return elsewhere if scenario == "run-outside" else own
+
+
+def raced(folder):
+    """Another `restart` writes its run while this one reads the machine."""
+    read = taken(folder)
+    ia.write_json(os.path.join(r.runs_root(), "OTHER", "state.json"),
+                  dict(read[0], step="relaunch", worker=["900", "s"]))
+    return read
+
+
+if scenario == "raced":
+    r.snapshot = raced
+if scenario == "locked":
+    os.makedirs(os.path.join(work, "state"))
+    real_open(r.runs_root() + ia.STORE["lock_suffix"], "w").close()
+code, out, err = restart(run=placed()) if scenario.startswith("run-") else restart(*sys.argv[4:])
+if scenario.startswith(("interrupted", "half", "no-start", "stale")):
+    print("first=%s|%s|%s" % (code, ",".join(acts), "+".join(s for s in sorted(servers) if servers[s]["armed"] == "on")))
+    if not scenario.startswith("interrupted"):
+        del acts[:]
+    if scenario in ("stale", "no-start-gone"):
+        # The auditor's session closed by its owner since, its tab with it.
+        del hosts["41"]
+        alive.pop("41")
+        for w in windows:
+            w.tabs = [t for t in w.tabs if t.sessions[0].tty != "/dev/ttys041"]
     scenario = "again"
     code, out, err = restart()
-if scenario == "no-start":
-    print("first=%s|%s|%s" % (code, ",".join(acts), "+".join(s for s in servers if servers[s]["armed"] == "on")))
-    real_open(os.path.join(work, "start"), "w").close()
-    del acts[:]
-    code, out, err = restart()
+if second:
+    print("second=%s|%s" % (second[0], " ".join(second[2].split())))
 print("exit=%s" % code)
 print("acts=%s" % ",".join(acts))
 print("tabs=%s" % "/".join(" ".join(t.sessions[0].tty[-3:] for t in w.tabs) for w in windows))

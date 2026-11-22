@@ -76,6 +76,7 @@ skills/iterm-agents/scripts/tier.ts, skills/iterm-agents/scripts/tier.spec.ts  a
 skills/iterm-agents/scripts/chains.ts, skills/iterm-agents/scripts/chains.spec.ts  the adapter's chain changes, through core's store
 skills/iterm-agents/scripts/data-root.spec.ts  the launcher on a data root placed apart: what it reads protected, what it writes as data
 skills/iterm-agents/scripts/iterm_agent.py   the adapter: the request performed, over the app API
+skills/iterm-agents/scripts/iterm_restart.py   `restart`: the app stopped and started again, every session kept
 skills/iterm-agents/scripts/conversation_tail.py   the end of a session's conversation, read from its transcript for a succession
 skills/iterm-agents/tmux/home.conf          a home server's tmux configuration, read through -f
 skills/orchestrator/scripts/brief-lint.sh   lints a brief before it is dispatched, warning on its findings
@@ -190,6 +191,7 @@ install.sh, uninstall.sh
 tests/run-tests.sh
 tests/e2e.sh                         one real round: a tab, a session, a close
 tests/conversation-tail-probe.py     the fixture transcripts of the conversation tail's cases
+tests/restart-probe.py               the machine stood in for by the cases of `restart`
 tests/e2e-data-root.sh              the two roots end to end under scratch directories: dispatch, brief, dry-run spawn, launch script, round entry and log, with files planted in the data root
 tests/e2e-host.sh                    the live host the pane's test starts
 tests/deck-e2e.ts                    the deck built once from this machine's real state, read-only

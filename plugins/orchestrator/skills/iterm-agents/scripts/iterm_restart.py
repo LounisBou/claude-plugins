@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -157,10 +158,11 @@ def read_sessions(table, servers, report, refused):
             try:
                 if not session["start"] or config is None:
                     raise ValueError("its process cannot be read")
-                if not session["socket"]:
-                    session["resume"] = resume_of(pid, config, record, report)
+                session["resume"] = resume_of(pid, config, record, report)
             except ValueError as exc:
-                refused.append("%s on %s could not be proved or resumed: %s" % (name, tty, exc))
+                # A home session is never started again by a restart: its line is only printed.
+                if not session["socket"] or not session["start"] or config is None:
+                    refused.append("%s on %s could not be proved or resumed: %s" % (name, tty, exc))
         sessions.append(session)
     return sessions
 
@@ -199,11 +201,31 @@ def snapshot(folder):
             "defects": []}, refused
 
 
+def own_state(folder):
+    """The state of a run under this machine's own root, None of anything else: its lines are run
+    and its pid is killed, so a folder or a file placed by another, or through a link, is not read."""
+    folder = os.path.realpath(folder)
+    if os.path.dirname(folder) != runs_root():
+        return None
+    with contextlib.suppress(OSError, ValueError):
+        fd = os.open(os.path.join(folder, "state.json"), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, encoding="utf-8") as fh:
+            there = os.fstat(fd)
+            if (stat.S_ISREG(there.st_mode) and not there.st_mode & 0o077
+                    and {there.st_uid, os.lstat(folder).st_uid} == {os.getuid()}):
+                return json.load(fh)
+    return None
+
+
+def runs_root():
+    return os.path.join(os.path.realpath(ia.STATE_DIR), "iterm-restart")
+
+
 class Run:
-    def __init__(self, folder):
-        self.folder = folder
-        with open(os.path.join(folder, "state.json"), encoding="utf-8") as fh:
-            self.s = json.load(fh)
+    def __init__(self, folder, state):
+        self.folder, self.s = folder, state
+        # A later process only finishes the run: a session ended by its owner since is not resumed.
+        self.first = state["step"] == "snapshot"
 
     def save(self, **values):
         self.s.update(values)
@@ -219,10 +241,9 @@ class Run:
     def work(self):
         """Every step after the snapshot, and the report whatever happened."""
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
-        first = self.s["step"] == "snapshot"
         self.save(worker=[str(os.getpid()), ia.process_state(os.getpid())[0]], closed=False, defects=[])
         try:
-            if first:
+            if self.first:
                 self.disarm()
                 self.stop()
             elif not ia.process_gone(*self.s["app"]):
@@ -234,8 +255,8 @@ class Run:
             self.bad("%s: %s" % (self.s["step"], exc if isinstance(exc, Stop) else "%r, see the log" % exc))
             # Once the app is gone the servers stay disarmed, which keeps every session.
             if not ia.process_gone(*self.s["app"]):
-                with contextlib.suppress(SystemExit):
-                    self.rearm({c for server in read_servers().values() for c in server["clients"]})
+                with contextlib.suppress(Exception, SystemExit):
+                    self.rearm()
         self.report()
         return 1 if self.s["defects"] else 0
 
@@ -289,7 +310,7 @@ class Run:
 
     def tabs(self):
         """Every tab back, or made again: a home server's, a dead plain session's by its resume line."""
-        wanted = set(shown(self.s["windows"])) | {s["tty"] for s in self.s["sessions"] if s["resume"]}
+        wanted = set(shown(self.s["windows"])) | {s["tty"] for s in self.s["sessions"] if not s["socket"]}
         wanted |= {c for server in self.s["servers"].values() for c in server["clients"]}
         until(lambda: {self.now(t) for t in wanted} <= set(shown(layout())), TABS_WAIT)
         for socket in ia.live_homes():
@@ -300,8 +321,8 @@ class Run:
                         self.bad("the home server %s runs and no tab shows it" % socket)
                     else:
                         self.s["moved"][tty] = new
-        for s in self.s["sessions"]:
-            if s["resume"] and s["tty"] not in self.s["moved"] and ia.process_gone(s["pid"], s["start"]):
+        for s in self.s["sessions"] if self.first else []:
+            if not s["socket"] and s["tty"] not in self.s["moved"] and ia.process_gone(s["pid"], s["start"]):
                 new = self.make_tab("%s -l %s" % (ia.LOGIN_SHELL, ia.write_launch_script(
                     s["resume"], s["name"], "resume")))
                 if new and until(lambda: ia.host_cli_on(new), ia.SPAWN_TIMEOUT):
@@ -332,7 +353,7 @@ class Run:
         seen, stable = shown(layout()), ia.stable_title
         return ([socket for socket in ia.live_homes() for c in read_server(socket)["clients"]
                  if c in seen and stable(seen[c]) != stable(tab_title(socket))],
-                [s["tty"] for s in self.s["sessions"] if s["resume"] and s["tty"] in seen
+                [s["tty"] for s in self.s["sessions"] if not s["socket"] and s["tty"] in seen
                  and s["name"] not in seen[s["tty"]]])
 
     def titles(self):
@@ -351,9 +372,9 @@ class Run:
         for what in sum(self.wrong_titles(), []):
             self.bad("the title of %s is not back" % what)
 
-    def rearm(self, seen=None):
-        """Each server this run disarmed, armed again once its client is on a tab of `seen` (the app's)."""
-        seen = set(shown(layout())) if seen is None else seen
+    def rearm(self):
+        """Each server a run disarmed, armed again once its client is on a tab of the app."""
+        seen = set(shown(layout()))
         for socket in [s for s in self.s["disarmed"] if s in ia.live_homes()]:
             if not set(read_server(socket)["clients"]) & seen:
                 self.bad("%s stays told not to exit: no tab shows it" % socket)
@@ -375,7 +396,8 @@ class Run:
             if ia.process_gone(s["pid"], s["start"]):
                 said = ("died and was resumed on %s" % self.now(s["tty"]) if s["tty"] in self.s["moved"]
                         else "STOPPED, its work with it")
-                self.bad("%s (pid %s, %s) %s" % (s["name"], s["pid"], s["tty"], said))
+                again = "" if s["tty"] in self.s["moved"] else "; resumed by: " + (s["resume"] or "no line could be read")
+                self.bad("%s (pid %s, %s) %s%s" % (s["name"], s["pid"], s["tty"], said, again))
             elif s in busy and not self.worked(s):
                 said = "alive, NO ACTIVITY seen in %ds" % WORK_WAIT
                 self.bad("%s was working, and no activity of it is seen" % s["name"])
@@ -396,50 +418,68 @@ class Run:
         lines += ["- DEFECT %s" % d for d in self.s["defects"]]
         lines += ["- %s does not exit with its tab until the next `restart`; see it: %s -L %s attach -t %s"
                   % (s, ia.TMUX_BIN, s, ia.HOME_SESSION) for s in self.s["disarmed"]]
-        with open(os.path.join(self.folder, "report.md"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(self.folder, "report.md"), "w", encoding="utf-8",
+                  opener=lambda path, flags: os.open(path, flags, 0o600)) as fh:
             fh.write("\n".join(lines + ["- " + line for line in self.s["lines"]]) + "\n")
         self.save(closed=True)
 
 
-def last_run(root):
+def last_run():
     """`(folder, state)` of the newest run, or ("", None)."""
-    for path in sorted(os.listdir(root), reverse=True) if os.path.isdir(root) else []:
-        with contextlib.suppress(OSError, ValueError), \
-                open(os.path.join(root, path, "state.json"), encoding="utf-8") as fh:
-            return os.path.join(root, path), json.load(fh)
+    root = runs_root()
+    for name in sorted(os.listdir(root), reverse=True) if os.path.isdir(root) else []:
+        state = own_state(os.path.join(root, name))
+        if state:
+            return os.path.join(root, name), state
     return "", None
 
 
 def unfinished(state):
-    """Whether the next `restart` finishes this run: a server still to arm, or no report."""
-    return any(s in ia.live_homes() and not read_server(s)["armed"] for s in state["disarmed"]) \
-        or (not state["closed"] and state["step"] != "snapshot")
+    """Whether the next `restart` finishes this run: its process died on the way, or iTerm2 did not
+    start again. Any other run is over, and a server it left disarmed is the next one's to arm."""
+    return state["step"] == "relaunch" if state["closed"] else state["step"] != "snapshot"
+
+
+def under_way(state):
+    return bool(state and not state["closed"] and state.get("worker") and not ia.process_gone(*state["worker"]))
 
 
 def main(launcher, args):
     global ia
     ia = launcher
-    if args.run:
-        sys.exit(Run(args.run).work())
     if not ia.registered_coord_on(ia.self_tty() or ""):
         ia.die("restart: refused: only the registered coordinator restarts iTerm2")
-    root = os.path.join(ia.STATE_DIR, "iterm-restart")
-    folder, state = last_run(root)
-    if state and not state["closed"] and state.get("worker") and not ia.process_gone(*state["worker"]):
+    if args.run:
+        state, parent = own_state(args.run), str(os.getppid())
+        if not state or state.get("worker") != [parent, (ia.process_state(parent) or [""])[0]]:
+            ia.die("restart: refused: --run is for the process a `restart` starts, on its own run")
+        sys.exit(Run(os.path.realpath(args.run), state).work())
+    last = folder, state = last_run()
+    if under_way(state):
         ia.die("restart: refused: a restart is under way (%s)" % folder)
     if state and unfinished(state):
         print("restart: finishes the run %s, left at the step %s" % (folder, state["step"]))
     else:
-        folder = os.path.join(root, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
+        left = state["disarmed"] if state else []
+        folder = os.path.join(runs_root(), time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
         state, refused = snapshot(folder)
         print("\n".join(state["lines"] + ["refused: " + r for r in refused]))
         if refused:
             ia.die("restart: refused: nothing was done")
-        if not args.check:
-            ia.write_json(os.path.join(folder, "state.json"), state)
+        servers = state["servers"]
+        state["disarmed"] = [s for s in left if s in servers and not servers[s]["armed"]]
     if args.check:
         return
     sys.stdout.flush()
+    # Under way from here on: the worker writes its own pid over this one's.
+    me, raced = str(os.getpid()), True
+    with contextlib.suppress(RuntimeError), ia.path_lock(runs_root()):
+        raced = last_run() != last
+        if not raced:
+            ia.write_json(os.path.join(folder, "state.json"),
+                          dict(state, closed=False, worker=[me, ia.process_state(me)[0]]))
+    if raced:
+        ia.die("restart: refused: a restart is under way, started since this one read the machine")
     with open(os.path.join(folder, "log"), "a") as log:
         request = json.dumps(ia.request_of("restart", run=folder))
         code = subprocess.Popen([sys.executable, os.path.abspath(ia.__file__), "--request", request],
