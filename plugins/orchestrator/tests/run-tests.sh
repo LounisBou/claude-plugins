@@ -6640,6 +6640,25 @@ check "--keep-checkout opts out: nothing deleted, nothing said about a checkout"
 check "and marks the checkout kept on its ledger line, which a sweep of its dead maker never ends" "1" \
   "$(grep -F "\"path\":\"$CL\"" "$WCR/.workspaces.jsonl" | grep -c '"kept":')"
 
+# A close of an agent leaves the writer's clone where it is, unmarked as a rotation leaves it, so
+# `spawn --resume` finds it within the hour and the sweep ends it as any (past its hour, once its
+# pull request is over); a review's pin, which no resume needs, is still deleted.
+CL=$(mkclone "$WCSRC" cl-ag feat/cl-ag); HCL=$(scratch "$CL"); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
+res=$(cprobe close --expect-title 'Agent: cl-ag')
+check "a close of an agent leaves its clone and its host directory, and keeps its contract line" "exit=0|closed 1 session on /dev/ttys901|1|1" \
+  "$(printf '%s\n' "$res" | head -1)|$(field "$res" OUT)|$(exists "$CL")|$(exists "$HCL")"
+check "and marks it kept for no sweep: the sweep that ends any clone ends it" "0" \
+  "$(grep -F "\"path\":\"$CL\"" "$WCR/.workspaces.jsonl" | grep -c '"kept":')"
+bash "$WS" delete "$CL" --discard >/dev/null 2>&1
+PN=$(wcpin "$WCSRC" cl-pin main --pr 7); printf '/dev/ttys901 %s\n' "$PN" > "$CT_TABLE"
+res=$(cprobe close --expect-title 'Agent: review cl-pin')
+check "a close of a review session deletes its pin" "exit=0|0|1" \
+  "$(printf '%s\n' "$res" | head -1)|$(exists "$PN")|$(field "$res" ERR | grep -c "^close: deleted checkout $PN\$")"
+CL=$(mkclone "$WCSRC" cl-agkeep feat/cl-agkeep); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
+res=$(cprobe close --expect-title 'Agent: cl-agkeep' --keep-checkout)
+check "--keep-checkout of an agent still marks its clone kept" "1|1" \
+  "$(exists "$CL")|$(grep -F "\"path\":\"$CL\"" "$WCR/.workspaces.jsonl" | grep -c '"kept":')"
+
 CVT_CLOSE="$WORK/conv-close-transcript.jsonl"
 printf '%s\n' '{"type":"user","timestamp":"2026-11-20T15:00:00.000Z","origin":{"kind":"human"},"message":{"content":"CONV-ASK"}}' \
   '{"type":"assistant","timestamp":"2026-11-20T15:00:05.000Z","message":{"model":"m","content":[{"type":"text","text":"CONV-ANSWER"}]}}' > "$CVT_CLOSE"

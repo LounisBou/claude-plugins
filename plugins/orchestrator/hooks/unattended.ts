@@ -91,11 +91,29 @@ export async function registered($: Host<'fs'>, state: string, sessionId: string
 // How many registries of other sessions one reading looks through.
 const REGISTRY_READ_CAP = 256
 
+// The path with its links resolved, or the path itself when it cannot be: two spellings of one file name one record.
+async function realOf($: Host<'fs'>, path: string): Promise<string> {
+  try {
+    return (await $.fs.stat(path, { resolve: true })).realPath ?? path
+  } catch {
+    return path
+  }
+}
+
 // The records of the session's orchestration: those the session registered, and those another session of this
 // machine registered that name the orchestration as their owner (`<record>.owner`). A successor that never read
-// or wrote the record has registered none, and still answers for its project's pull requests.
+// or wrote the record has registered none, and still answers for its project's pull requests. A record
+// registered under two spellings of its path (a directory reached through a link) is one, kept under the first.
 export async function projectRecords($: Host<'fs'>, state: string, sessionId: string, own: string | null): Promise<string[]> {
-  const found = await registered($, state, sessionId)
+  const found: string[] = []
+  const real = new Set<string>()
+  const add = async (path: string): Promise<void> => {
+    const at = await realOf($, path)
+    if (real.has(at)) return
+    real.add(at)
+    found.push(path)
+  }
+  for (const path of await registered($, state, sessionId)) await add(path)
   if (own === null) return found
   const mine = recordsRegistryPath(state, sessionId)
   const dir = `${state}/${RECORDS_DIR}`
@@ -103,7 +121,7 @@ export async function projectRecords($: Host<'fs'>, state: string, sessionId: st
   for (const entry of listed.filter(one => one.kind === 'file').slice(0, REGISTRY_READ_CAP)) {
     if (`${dir}/${entry.name}` === mine) continue
     for (const path of (await readOr($, `${dir}/${entry.name}`)).split('\n').map(line => line.trim()).filter(Boolean)) {
-      if (!found.includes(path) && ownerOf(await readOr($, `${path}.owner`)) === own) found.push(path)
+      if (!found.includes(path) && ownerOf(await readOr($, `${path}.owner`)) === own) await add(path)
     }
   }
   return found

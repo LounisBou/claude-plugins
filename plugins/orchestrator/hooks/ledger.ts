@@ -270,6 +270,12 @@ async function otherRowsOf($: Held, agent: string, records: readonly RecordText[
   return named.filter(row => !own.some(mine => mine.path === row.path && mine.id === row.id))
 }
 
+// What is told of a pull request's end to an agent of its line, once: a refusal to close it.
+const refusedKey = (pk: string, agent: string): string => `${pk} ended refused ${agent}`
+
+// What is told of a Ready head to an agent of its line, once.
+const readyKey = (pk: string, head: string, agent: string): string => `${pk} ready ${head} ${agent}`
+
 // How a held row is named in a line.
 const rowName = (row: HeldRow): string => `row ${row.id} (${dirOf(row.path).split('/').pop()})`
 
@@ -529,8 +535,15 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // still computing after its base moved, it is not told again without an agent, then again in conflict.
   const anomalyKeys = anomalies.flatMap(u => reading.forge.get(prKey(u.repo, u.pr))?.mergeable === 'MERGEABLE'
     ? [prKey(u.repo, u.pr)] : [prKey(u.repo, u.pr), `${prKey(u.repo, u.pr)} anomaly conflict`])
-  const current = new Set([...anomalyKeys, ...reading.ended.flatMap(e => [`${prKey(e.line.repo, e.line.pr)} ended`, `${prKey(e.line.repo, e.line.pr)} ended refused`]),
-    ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...unmergedKeys, ...open.flatMap(pr => [ciFailingKey(prKey(pr.repo, pr.pr), pr), ciGuardKey(prKey(pr.repo, pr.pr), pr)])])
+  // What was told of a Ready head to each agent of an open line stays while the pull request carries that head Ready.
+  const readyAgentKeys = reading.kept.flatMap(line => {
+    const key = prKey(line.repo, line.pr)
+    const head = reading.readyHeads.get(key)
+    return head === undefined ? [] : agentsOf(line).map(agent => readyKey(key, head, agent))
+  })
+  const current = new Set([...anomalyKeys, ...reading.ended.flatMap(e => [`${prKey(e.line.repo, e.line.pr)} ended`, ...agentsOf(e.line).map(agent => refusedKey(prKey(e.line.repo, e.line.pr), agent))]),
+    ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...readyAgentKeys,
+    ...unmergedKeys, ...open.flatMap(pr => [ciFailingKey(prKey(pr.repo, pr.pr), pr), ciGuardKey(prKey(pr.repo, pr.pr), pr)])])
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
@@ -566,53 +579,60 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     told.add(`${pk} ended`)
     const { repo, pr } = ended.line
     const what = ended.state === 'MERGED' ? 'merged' : 'closed unmerged'
-    // Its agent is named only while it runs (the launcher's listing, where a close ends it): the one put on it last,
-    // else one before it still running; closed by the module when it holds nothing else, told when it does.
-    const named = agentsOf(ended.line).find(name => reading.live.has(name))
-    const rows = named === undefined ? [] : await otherRowsOf($, named, reading.records)
-    const holds = named === undefined ? [] : [
-      ...new Set(rows.map(rowName)),
-      ...reading.kept.filter(line => agentsOf(line).includes(named)).map(line => prKey(line.repo, line.pr)),
-    ]
-    let said: string | null = null
-    if (named !== undefined && holds.length > 0) said = first ? agentLine({ key: pk, what, agent: named, holds }) : null
-    else if (named !== undefined) {
-      const { act, said: acted } = await actOn(named, pk, what, { ended: pk })
+    // Its agents are named only while they run (the launcher's listing, where a close ends them): the one put on it last
+    // and each one put on it before, each closed by the module when it holds nothing else, told when it does.
+    const said: string[] = []
+    for (const agent of agentsOf(ended.line).filter(name => reading.live.has(name))) {
+      const holds = [
+        ...new Set((await otherRowsOf($, agent, reading.records)).map(rowName)),
+        ...reading.kept.filter(line => agentsOf(line).includes(agent)).map(line => prKey(line.repo, line.pr)),
+      ]
+      if (holds.length > 0) {
+        if (first) said.push(agentLine({ key: pk, what, agent, holds }))
+        continue
+      }
+      const { act, said: acted } = await actOn(agent, pk, what, { ended: pk })
       if (act.kind === 'later') waiting.add(pk)
       // A refusal is told once; a close waiting on the agent is said with the merge itself.
-      const refusedKey = `${pk} ended refused`
-      said = act.kind === 'later' ? (first ? agentLine({ key: pk, what, agent: named, waits: act.why }) : null)
-        : act.kind === 'refused' && told.has(refusedKey) ? null : acted
-      if (act.kind === 'refused') told.add(refusedKey)
+      const refused = refusedKey(pk, agent)
+      const line = act.kind === 'later' ? (first ? agentLine({ key: pk, what, agent, waits: act.why }) : null)
+        : act.kind === 'refused' && told.has(refused) ? null : acted
+      if (act.kind === 'refused') told.add(refused)
+      if (line !== null) said.push(line)
     }
     // The bare line tells a session nothing of a merge it made itself through pr-merge: left out, the agent and relay lines stay.
     const own = mergedHere.delete(mergeKey(session, repo, pr)) && ended.state === 'MERGED'
-    if (said === null && first && !own) said = `[module] ${pk} ${what}.`
-    if (said !== null) lines.push(said)
+    lines.push(...said.length === 0 && first && !own ? [`[module] ${pk} ${what}.`] : said)
     const relay = first ? mergeRelayLine({ repo, pr }, waitingOn(ended)) : null
     if (relay !== null) lines.push(relay)
   }
-  // A Ready pull request's agent is done with it: acted on once per Ready head, so an agent resumed for a fix is closed again only at
-  // the next head; one not done yet is tried again at the next tick. One the forge reads conflicting is no longer ready to merge.
-  // It holds another pull request, or a row naming it in its `agent` field besides the row of its brief: told, not closed.
+  // A Ready pull request's agents are done with it: each acted on once per Ready head, so an agent resumed for a fix is closed again only
+  // at the next head; one not done yet is tried again at the next tick. One the forge reads conflicting is no longer ready to merge.
+  // An agent that holds another pull request, or a row naming it in its `agent` field besides the row of its brief, is told, not closed.
   // github's list is read with the pull requests; a Ready pull request told with that list empty (a file refresh that failed leaves
   // the readings behind its labels, a list that did not answer) asks it once more, here, before its line is said.
   let again: Promise<ReadonlySet<string>> | undefined
   for (const line of reading.atReady) {
     if (reading.forge.get(prKey(line.repo, line.pr))?.mergeable === 'CONFLICTING') continue
     const pk = prKey(line.repo, line.pr)
-    const key = `${pk} ready ${reading.readyHeads.get(pk) ?? ''}`
-    if (told.has(key)) continue
-    // The agent put on it last that still runs, else one put on it before, as a merge names it.
-    const agent = agentsOf(line).find(name => reading.live.has(name)) ?? line.agent ?? ''
-    const holds = [...(await otherRowsOf($, agent, reading.records)).map(rowName), ...holdsOf(reading.kept, other => other === agent, key => reading.readyHeads.has(key))]
-    const said = holds.length > 0 ? agentLine({ key: pk, what: 'is Ready', agent, holds }) : (await actOn(agent, pk, 'is Ready', { ready: key })).said
-    if (said === null) continue
-    told.add(key)
-    // In a repository github's auto-merge list names, the merge is this orchestrator's own: unless the operator holds it (On Hold is his pause).
-    const held = (reading.forge.get(pk)?.labels ?? []).some(name => name.trim().toLowerCase() === HOLD_LABEL.toLowerCase())
-    const autoMerge = held ? new Set<string>() : reading.autoMerge.size > 0 ? reading.autoMerge : await (again ??= autoMergeOf($))
-    lines.push(autoMerge.has(line.repo.toLowerCase()) ? `${said} ${mergeNowLine(pk)}` : said)
+    const head = reading.readyHeads.get(pk) ?? ''
+    // The agent put on it last that still runs, and each one put on it before, as a merge names them.
+    const agents = agentsOf(line).filter(name => reading.live.has(name))
+    for (const agent of agents.length > 0 ? agents : [line.agent ?? '']) {
+      const key = readyKey(pk, head, agent)
+      if (told.has(key)) continue
+      const holds = [...(await otherRowsOf($, agent, reading.records)).map(rowName), ...holdsOf(reading.kept, other => other === agent, key => reading.readyHeads.has(key))]
+      const said = holds.length > 0 ? agentLine({ key: pk, what: 'is Ready', agent, holds }) : (await actOn(agent, pk, 'is Ready', { ready: key })).said
+      if (said === null) continue
+      told.add(key)
+      // In a repository github's auto-merge list names, the merge is this orchestrator's own: unless the operator holds it (On Hold is his pause).
+      // Said with the first agent's line of this head, not again with the next.
+      const held = (reading.forge.get(pk)?.labels ?? []).some(name => name.trim().toLowerCase() === HOLD_LABEL.toLowerCase())
+      const merging = !told.has(`${pk} ready ${head}`) && !held
+      told.add(`${pk} ready ${head}`)
+      const autoMerge = !merging ? new Set<string>() : reading.autoMerge.size > 0 ? reading.autoMerge : await (again ??= autoMergeOf($))
+      lines.push(autoMerge.has(line.repo.toLowerCase()) ? `${said} ${mergeNowLine(pk)}` : said)
+    }
   }
   for (const [key, pr] of conflicts) {
     if (told.has(conflictKey(key, pr))) continue
