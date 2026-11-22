@@ -184,7 +184,7 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       } else if (kind === 'tool_call') {
         if (e['outcome'] === 'refused') s.refused.push({ day, plugin: isPlugin(text(e['decided_by'])), by: text(e['decided_by']) })
         const target = record(e['target'])
-        if (text(target['repo']) !== undefined && num(target['pr']) !== undefined) s.targets.add(`${text(target['repo'])}#${num(target['pr'])}`)
+        if (text(target['repo']) !== undefined && num(target['pr']) !== undefined) s.targets.add(`${text(target['repo'])}#${num(target['pr'])}`.toLowerCase())
       } else if (kind === 'question' && e['source'] === 'ask_user') {
         questions.set(day, (questions.get(day) ?? 0) + 1)
       } else if (kind === 'session_end' || kind === 'session_summary') {
@@ -475,7 +475,7 @@ export function report(input: ReportInput): string[] {
     groups.set(project ?? 'unattributed', { cost: g.cost + (cost ?? 0), tokens: g.tokens + s.tokens })
     const [only, ...more] = s.targets
     if (cost === undefined) continue
-    if (only !== undefined && more.length === 0) prCost.set(only.toLowerCase(), (prCost.get(only.toLowerCase()) ?? 0) + cost)
+    if (only !== undefined && more.length === 0) prCost.set(only, (prCost.get(only) ?? 0) + cost)
     else unnamed += cost
   }
   const active = kept.length
@@ -507,8 +507,12 @@ export function report(input: ReportInput): string[] {
   }
 
   // Pull requests merged in the week: delay from GitHub, cost from the sessions that name only that one.
-  // GitHub names ignore case: a repository spelt two ways is listed once, under its first spelling.
-  const repos = [...new Map([...tools, ...[...groups.keys()].filter(r => r.includes('/')), ...[...prCost.keys()].map(k => k.split('#')[0] ?? '')].filter(r => r !== '').reverse().map(r => [r.toLowerCase(), r])).values()].reverse()
+  // GitHub names ignore case, and a pull request target is kept in lower case: a repository spelt two ways is listed once,
+  // as the first of the tools, the groups and the targets spells it.
+  const repos: string[] = []
+  for (const r of [...tools, ...[...groups.keys()].filter(g => g.includes('/')), ...[...prCost.keys()].map(k => k.split('#')[0] ?? '')]) {
+    if (r !== '' && !repos.some(known => known.toLowerCase() === r.toLowerCase())) repos.push(r)
+  }
   const delays: number[] = []
   const mergedByDay = new Map<string, number>()
   let unlisted = 0

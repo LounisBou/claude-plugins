@@ -120,16 +120,20 @@ test('a session whose directory names no repository, or that has none, is unattr
   })
 })
 
-test('a repository spelt in two cases is listed once, and its pull request keeps the cost of the session that names it', () => {
+test('a repository spelt in two cases is listed once, the tool first, and a session naming one pull request in both cases names only that one', () => {
   const events = [
-    ev('2026-11-10T09:00:00Z', 'tool_call', S(1), { target: { repo: 'Acme/Tool', pr: 7 } }),
-    ev('2026-11-10T10:00:00Z', 'turn_end', S(1), { cost_usd: 1.25 }),
+    ev('2026-11-10T09:00:00Z', 'tool_call', S(1), { target: { repo: 'acme/product', pr: 3 }, project: 'acme/product' }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(1), { cost_usd: 2 }),
+    ev('2026-11-10T09:00:00Z', 'tool_call', S(2), { target: { repo: 'Acme/Tool', pr: 7 }, project: 'Acme/Tool' }),
+    ev('2026-11-10T09:30:00Z', 'tool_call', S(2), { target: { repo: 'acme/tool', pr: 7 } }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(2), { cost_usd: 1.25 }),
   ]
-  const prs = merged([[7, '2026-11-10T09:00:00Z', '2026-11-10T09:22:00Z']])
+  const one = (n: number): string => merged([[n, '2026-11-10T09:00:00Z', '2026-11-10T09:22:00Z']])
   scratch({ events }, config => {
-    const out = lines(config, { gh: ghFor({ prs: { 'acme/tool': prs }, runs: { 'acme/tool': '[]' } }) })
-    assert.deepEqual(out.filter(l => /^ {2}acme\/tool[#:]/i.test(l)), ['  acme/tool#7    22 min  $1.25'])
-    assert.match(find(out, '4 '), /pull request median 22 min over 1/)
+    const out = lines(config, { gh: ghFor({ prs: { 'acme/tool': one(7), 'acme/product': one(3) }, runs: { 'acme/tool': '[]' } }) })
+    assert.deepEqual(out.filter(l => /^ {2}acme\/(tool|product)[#:]/i.test(l)), ['  acme/tool#7    22 min  $1.25', '  acme/product#3    22 min  $2.00'])
+    assert.equal(find(out, '  cost of sessions that name'), '  cost of sessions that name no pull request or several: $0.00')
+    assert.match(find(out, '4 '), /pull request median 22 min over 2/)
   })
 })
 
