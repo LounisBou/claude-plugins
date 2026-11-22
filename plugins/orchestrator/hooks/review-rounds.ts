@@ -54,7 +54,7 @@ async function git($: Host<'process'>, cwd: string | undefined, argv: readonly s
 }
 
 /** The repository `owner/name` the verdict is about: the one given, else the checkout's origin. */
-async function repositoryOf($: Host<'process'>, given: string, cwd: string | undefined): Promise<string | null> {
+export async function repositoryOf($: Host<'process'>, given: string, cwd: string | undefined): Promise<string | null> {
   if (given !== '') return given
   return /[:/]([^/:]+\/[^/]+?)(?:\.git)?$/.exec((await git($, cwd, ['remote', 'get-url', 'origin'])) ?? '')?.[1] ?? null
 }

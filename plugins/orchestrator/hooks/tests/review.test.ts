@@ -23,7 +23,7 @@ const ROW = `${HOME}/.claude/claude-orchestrator/store/sessions/s-one`
 const WRITTEN = '/cfg/records/x/review.json\ngithub: Ready'
 
 // `more` adds environment variables and files: a launch's record of the orchestrator its session reports to.
-function fake(name: string, answer: unknown = { result: 'written' }, more: { env?: Record<string, string>; files?: Record<string, string> } = {}) {
+function fake(name: string, answer: unknown = { result: 'written' }, more: { env?: Record<string, string>; files?: Record<string, string>; origin?: string } = {}) {
   const calls: Record<string, unknown>[] = []
   const logged: string[] = []
   const files: Record<string, string> = {
@@ -42,6 +42,7 @@ function fake(name: string, answer: unknown = { result: 'written' }, more: { env
       run: async (argv: readonly string[]) => {
         const line = logLineOf([...argv])
         if (line !== null) logged.push(line)
+        if (argv.join(' ') === 'git remote get-url origin' && more.origin !== undefined) return { exitCode: 0, stdout: `${more.origin}\n`, stderr: '' }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
@@ -269,6 +270,25 @@ test('an orchestrator\'s check plan is written through github\'s record tool', a
   const out = await handler()(fx.dollar, PLANNED)
   expect(fx.calls).toEqual([{ tool: 'mcp__github__record', pr: 164, repo: 'acme/thing', plan: PLAN }])
   expect(out).toEqual({ result: 'github: check plan of acme/thing#164' })
+})
+
+test('a check plan with dir and no repo names the repository of dir\'s origin and carries dir', async () => {
+  const fx = fake('Orch: belt [a1b2c3]', { result: 'github: check plan of acme/thing#164' }, { origin: 'git@github.com:acme/thing.git' })
+  await handler()(fx.dollar, { pr: 164, dir: '/work/thing', plan: PLAN })
+  expect(fx.calls).toEqual([{ tool: 'mcp__github__record', pr: 164, repo: 'acme/thing', dir: '/work/thing', plan: PLAN }])
+})
+
+test('a check plan with a repo keeps it whatever the origin of dir', async () => {
+  const fx = fake('Orch: belt [a1b2c3]', { result: 'ok' }, { origin: 'git@github.com:other/place.git' })
+  await handler()(fx.dollar, { ...PLANNED, dir: '/work/thing' })
+  expect(fx.calls).toEqual([{ tool: 'mcp__github__record', pr: 164, repo: 'acme/thing', dir: '/work/thing', plan: PLAN }])
+})
+
+test('a check plan whose dir has no origin is refused and calls nothing', async () => {
+  const fx = fake('Orch: belt [a1b2c3]')
+  const out = await handler()(fx.dollar, { pr: 164, dir: '/work/thing', plan: PLAN })
+  expect(out.isError).toBe(true)
+  expect(fx.calls).toEqual([])
 })
 
 for (const name of ['Agent: md-s10', 'Coord: general', 'Audit: method']) {
