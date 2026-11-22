@@ -53,7 +53,8 @@ def _long_lived(owner, name, branch, default, reads):
 
 def members(owner, name, number):
     """The open pull requests of the stack of `number`, bottom first by depth: [{"pr", "head", "base", "depth"}].
-    One member when the pull request is in no stack."""
+    One member when the pull request is in no stack. A draft above is left out with all that stands on it;
+    a draft below stays, merging `number` needs it."""
     pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, number))
     if not isinstance(pull, dict) or pull.get("state") != "open":
         raise errors.UsageError("pull request %s is not open" % number)
@@ -85,6 +86,9 @@ def members(owner, name, number):
             if child.get("number") in seen:
                 continue
             seen.add(child.get("number"))
+            if child.get("draft") is True:
+                # Work stacked on a delivery is a draft on purpose: it is left out, and all that stands on it.
+                continue
             found.append((child, depth + 1))
             queue.append((child, depth + 1))
 
