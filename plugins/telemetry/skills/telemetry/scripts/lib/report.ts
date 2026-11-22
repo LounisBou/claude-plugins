@@ -4,7 +4,7 @@
 // `npm run prompts` and `npm run rules` (their `--json`); a figure none of them holds
 // prints `n/a` and says why, never an estimate. Days are Paris days (the operator's), the store's
 // are UTC. Time is injected.
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { journalDir, JOURNAL_FOLD_FILE, LEARNING_CONTRACT, parseJournalEvent } from '../../../../core/learning.ts'
 import { ROLES } from '../../../../core/names.ts'
@@ -316,11 +316,20 @@ function journalRefusals(config: string, skipped: { n: number }): { found: { plu
   return { found, journals }
 }
 
+/** A record's real path, so that a link to it is the same record; a path that does not resolve keeps its spelling, as a record that is gone holds no row. */
+function realPath(path: string): string {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
+
 /** The closed rows of every dispatch record the registry points at: `{opened, closed}` in ms, and the review rounds the row had. */
 function dispatchLines(module: string, skipped: { n: number }): (ClosedRow & { opened: number })[] {
   const paths = new Set<string>()
   for (const { value } of filesOf(join(module, RECORDS_DIR), body => body, skipped)) {
-    for (const path of value.split('\n')) if (path.trim() !== '') paths.add(path.trim())
+    for (const path of value.split('\n')) if (path.trim() !== '') paths.add(realPath(path.trim()))
   }
   const rows: (ClosedRow & { opened: number })[] = []
   for (const path of paths) {
