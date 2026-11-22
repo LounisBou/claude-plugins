@@ -17,8 +17,8 @@ session can read without depending on a particular status bar.
 | skill `coordination` | The coordinator's role, outside every orchestration on one machine: answers from the facts, flags collisions to both sides, gates nothing, relays to the operator what is his. The orchestrator's and the auditor's skills say nothing of it. |
 | `templates/` | Phase brief, rotation resume brief, orchestrator takeover text, review-agent brief, audit brief, with the sections the rulebook makes mandatory. |
 | script `rhythm.sh` | An audit's net balance read from git alone: merges per week by conventional-commit type, and lines added and removed under product globs against instrument globs. |
-| `/orchestrator:install` | Creates the state directory, unwires any tap a previous install left in front of your status line, prunes what the tap left behind, and writes the short names as user commands. Idempotent; refuses a host older than 2.1.287. |
-| `/orchestrator-uninstall` | Restores the previous status line, removes the state directory and the short names' user commands. |
+| `/orchestrator:install` | Creates the state directory, unwires any tap a previous install left in front of your status line, prunes what the tap left behind, and writes the short names as user commands, and sources the plugin's shell file from your `.zshrc` or `.bashrc` with one added line. Idempotent; refuses a host older than 2.1.287. |
+| `/orchestrator-uninstall` | Restores the previous status line, removes the state directory, the short names' user commands and the profile's line. |
 | `/orchestrator:status` | Live sessions and their context fill, the ones past the gate flagged. |
 | `/orchestrator-supervision` | Opens the supervision pane, kept on screen with each session's fill and redrawn every 20 seconds while open, and within 2 seconds of a change in the round: the orchestrators in a coordinator session (`Coord:`) — those on another machine too, labelled `remote <machine>`: their module sends the row silently, only when the wait or a 5 % band of the fill changes, and the coordinator's module stores it without a model turn — its own agents in an orchestrator session (`Orch:`). It opens when typed, or when the operator asks in plain words to open or close the supervision, through the module's `supervision` tool; the role keeps whether its pane is open, so a successor puts it as it was — open stays open, a pane he closed stays closed — and nothing else opens it. In a coordinator it shows under the rows the first open question of its round that carries choices (those without come after), with its lettered choices. Typed again, it closes it. |
 | `/orchestrator:succeed` | Runs the orchestrator succession. |
@@ -69,6 +69,25 @@ status line, writes the short names (`/coordinator`, `/orchestrator-sleeping` an
 user commands, and needs the host at 2.1.287 or later (the hooks module's events). The gauge
 itself needs no wiring: the module measures every session in-process, and a session restart
 makes it take effect.
+
+## The shell file
+
+`shell/profile.sh` holds the plugin's own shell configuration, today one guard: an
+interactive login shell on a terminal drops the nine variables of a session's identity and nesting
+(a host command typed in a tab opened by hand, from an app a session started, would otherwise
+take itself for that session's child and keep no transcript); any other shell keeps them. The install
+copies the file to `~/.claude/claude-orchestrator/orchestrator-profile.sh` and adds one line to your
+profile (`.zshrc` for zsh, `.bashrc` for bash, from `$SHELL`; `ZDOTDIR` honoured), the profile
+saved under `~/.claude/backups/` first:
+
+```
+[ -r "$HOME/.claude/claude-orchestrator/orchestrator-profile.sh" ] && . "$HOME/.claude/claude-orchestrator/orchestrator-profile.sh" # orchestrator shell file
+```
+
+The session start's sync rewrites the copy after an update, so the profile is written once and no
+other line of it is ever touched: an earlier hand-written block that does the same is named by the
+install, to delete by hand. A bash login shell reads `.bash_profile` first: have it source `.bashrc`.
+`/orchestrator-uninstall` removes the line.
 
 ## The state directory and the data root
 

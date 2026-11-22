@@ -4,7 +4,8 @@
 //
 //   short-commands.sh install   [--dry-run] [--dir <path>]   write the absent, rewrite its own
 //   short-commands.sh uninstall [--dry-run] [--dir <path>]   remove its own
-//   short-commands.sh sync      [--dir <path>]               rewrite its own that differ
+//   short-commands.sh sync      [--dir <path>]               rewrite its own that differ, and the
+//                                                            shell file's copy when it differs
 //
 // Each file is its plugin command copied whole, with the plugin root spelled out where the
 // plugin command says ${CLAUDE_PLUGIN_ROOT} (the host expands no plugin variable in a user
@@ -21,6 +22,7 @@ import { dirname, join, resolve } from 'node:path'
 import { isOwnCopy, SHORT_MARKER } from '../../../hooks/short-names.ts'
 import { configDir, setting, type Env } from '../../../core/paths.ts'
 import { writeAtomic } from '../../../core/store.ts'
+import { copyOf, syncCopy } from './shell-profile.ts'
 import { isEntry, processIo, resolvedPath, type Io } from './lib/process.ts'
 
 export const USAGE = 'usage: short-commands.sh install|uninstall|sync [--dry-run] [--dir <path>]'
@@ -106,6 +108,11 @@ export function main(argv: readonly string[], deps: Deps): number {
   }
   try {
     run(mode as Mode, dry, dest, deps)
+    // The session start's sync keeps the shell file's copy current too, with no new line in the profile.
+    if (mode === 'sync') {
+      const state = join(configDir(deps.env, setting(deps.env, 'HOME')), 'claude-orchestrator')
+      if (syncCopy(deps.root, state, dry)) deps.io.out(`  shell file rewritten: ${copyOf(state)}\n`)
+    }
   } catch (error) {
     deps.io.err(`short-commands: ${error instanceof Error ? error.message : String(error)}\n`)
     return 1

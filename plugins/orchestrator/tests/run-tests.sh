@@ -10034,9 +10034,9 @@ printf '#!/usr/bin/env bash\necho "a version I will not say"\n' > "$NBIN/claude"
 # Both scripts resolve CLAUDE_CONFIG_DIR before HOME: an operator's exported one would aim
 # every case below at his real configuration, and the uninstall at its removal. Each run
 # drops it, and the state override with it, so HOME alone decides where they act.
-inst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR HOME="$1" ORCHESTRATOR_HOST_CLI="$HBIN/claude" bash "$ROOT/install.sh" "${@:2}"; }
-uninst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR HOME="$1" bash "$ROOT/uninstall.sh" "${@:2}"; }
-instwith() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR HOME="$1" ORCHESTRATOR_HOST_CLI="$2" bash "$ROOT/install.sh"; }
+inst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR -u SHELL -u ZDOTDIR HOME="$1" ORCHESTRATOR_HOST_CLI="$HBIN/claude" bash "$ROOT/install.sh" "${@:2}"; }
+uninst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR -u SHELL -u ZDOTDIR HOME="$1" bash "$ROOT/uninstall.sh" "${@:2}"; }
+instwith() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR -u SHELL -u ZDOTDIR HOME="$1" ORCHESTRATOR_HOST_CLI="$2" bash "$ROOT/install.sh"; }
 # The tab tooling's environment is planted, not built: a real build is network work the
 # suite must not wait on. The stand-in python answers the probe the installer makes.
 stub_venv() {
@@ -10333,6 +10333,28 @@ stub_venv "$SNDRY"; inst "$SNDRY" >/dev/null 2>&1
 snout=$(uninst "$SNDRY" --dry-run 2>&1)
 check "an uninstall dry run lists the copies and removes none" "7|7" \
   "$(ls "$SNDRY/.claude/commands" | wc -l | tr -d ' ')|$(printf '%s\n' "$snout" | grep -c '\[dry-run\] short command removed: ')"
+# The shell file, through the real scripts under a fake HOME, once per shell: install adds the
+# one line to that shell's profile and a copy beside the state, a second install changes
+# nothing, the sourced profile runs, uninstall takes the line and the copy. The profile is the
+# fake HOME's: SHELL and ZDOTDIR are set here, never inherited.
+for shsh in zsh bash; do
+  command -v "$shsh" >/dev/null 2>&1 || continue
+  SFH="$WORK/home-shell-$shsh"; mkdir -p "$SFH/.claude"
+  case "$shsh" in zsh) SFP="$SFH/.zshrc";; *) SFP="$SFH/.bashrc";; esac
+  printf 'export KEEP=1\n' > "$SFP"
+  sfinst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR -u ZDOTDIR SHELL="/bin/$shsh" HOME="$SFH" ORCHESTRATOR_HOST_CLI="$HBIN/claude" bash "$ROOT/install.sh"; }
+  sfinst >/dev/null 2>&1
+  sfonce=$(cat "$SFP"); sfinst >/dev/null 2>&1
+  check "$shsh: install adds one guarded line to the profile and a copy of the shell file, a second install adds none" "2|1|yes|yes" \
+    "$(wc -l < "$SFP" | tr -d ' ')|$(grep -c 'orchestrator shell file$' "$SFP")|$([ "$sfonce" = "$(cat "$SFP")" ] && echo yes || echo no)|$(cmp -s "$ROOT/shell/profile.sh" "$SFH/.claude/claude-orchestrator/orchestrator-profile.sh" && echo yes || echo no)"
+  check "$shsh: a shell that sources the profile runs it clean" "ok" \
+    "$(env -i PATH="$PATH" HOME="$SFH" "$shsh" -c ". '$SFP'; echo ok" 2>&1)"
+  check "$shsh: the profile is saved before the first change" "export KEEP=1" \
+    "$(cat "$SFH"/.claude/backups/claude-orchestrator-*/"$(basename "$SFP")".before | head -1)"
+  env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR -u ZDOTDIR SHELL="/bin/$shsh" HOME="$SFH" bash "$ROOT/uninstall.sh" >/dev/null 2>&1
+  check "$shsh: uninstall takes the line and the copy and leaves the user's own" "export KEEP=1|none" \
+    "$(cat "$SFP")|$([ -e "$SFH/.claude/claude-orchestrator" ] && echo made || echo none)"
+done
 # The module's own pass at each session start, `short-commands.sh sync`: a copy whose root
 # differs is rewritten, a current one untouched, a foreign one untouched, a missing one left
 # missing (the operator removed it), and the directory the override names is the one written.
