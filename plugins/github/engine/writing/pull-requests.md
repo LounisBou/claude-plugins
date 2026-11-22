@@ -63,7 +63,6 @@ Every PR is opened as a draft and leaves
 draft only for its CI to run or to be merged. Outside auto-merge, a merge needs the operator's explicit word, given through this tool.
 A deployment needs its repository listed for its environment (`auto-deploy-set`).
 Reviewers are requested only when the operator asks, and never on a draft.
-The description of the operator's own draft PR is published and edited without asking.
 A colleague's PR and any review comment are proposed first.
 
 A paragraph stating the ship order is added to a description without asking, and only for

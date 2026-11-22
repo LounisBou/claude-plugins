@@ -66,13 +66,12 @@ it. `/github:doctor` then confirms everything is ready.
   (`pr-ready`) is asked as any write no rule allows, the readiness gate refusing a pull request
   whose CI is not green or whose record failed (« Ready pull requests »); a merge
   (`pr-merge`) is asked outside auto-merge, whatever the rules allow, and runs inside it once
-  the gate lets it. An existing
-  description is replaced without asking, under the writing rules.
+  the gate lets it.
 - **Ready and Not Ready labels** — `pr-readiness <pr> ready|not-ready` puts
   the `Ready` (`27e760`) or `Not Ready` (`8c1455`) label on a pull request and
   takes the other off, and `labels-ensure` creates both on a repository that
-  lacks them. `pr-create` labels the new pull request (`Not Ready` for a draft,
-  `Ready` otherwise) and `pr-ready` puts `Ready` on it. A label failure never fails the command it follows.
+  lacks them. `pr-create` labels the new pull request `Not Ready`.
+  A label failure never fails the command it follows.
   `Ready` is the gate's: put by the module once the pull request is ready (« Ready pull
   requests »). `pr-readiness <pr> ready` puts it only on a pull request the gate reads
   ready, through the check `pr-ready` and `pr-merge` run, and otherwise answers, with no error,
@@ -316,7 +315,7 @@ github: gh pr merge refused on <owner/name>: this repository is not in auto-merg
 
 A CI undraft, as above, is the exception, through the shell and the tool alike.
 
-**Records.** The records are written by their producers alone. A Write, an Edit,
+**Records.** A Write, an Edit,
 a MultiEdit or a NotebookEdit under the records root, and a shell command that names it,
 a `pr-records/` path or `engine/record.py`, go through; a shell command that deletes in them (`rm`, `unlink`, `find -delete`, a `mv` out
 of them, an interpreter's `os.remove`) stays refused, a deletion being irreversible:
