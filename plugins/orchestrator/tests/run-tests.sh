@@ -4308,6 +4308,23 @@ rm -f "$RSSTATE/quota/acc2.json"
 printf '%s\n' '{"type":"attachment","attachment":{"type":"credential_org","organizationUuid":"org-one"}}' > "$ORCHESTRATOR_PROJECTS_DIR/p/s-rs-nopair.jsonl"
 check "a resume whose transcript holds no pair is refused, the fresh agent named" "1|1" \
   "$(rsm '' --resume s-rs-nopair >/dev/null 2>&1; echo $?)|$(rsm '' --resume s-rs-nopair | grep -c 'a fresh agent from `brief.sh rotation`')"
+# --inherit-model reads the caller's pair (t-model xhigh here): a resume's is its transcript's, so
+# the flag is not read for it either, and says so.
+check "--inherit-model with a resume is not read: the pair is the transcript's, and it is said" "1|0|1" \
+  "$(rsl "$BIS" --resume s-rs-two --inherit-model | grep -c -- '--model r-model --effort high')|$(rsl "$BIS" --resume s-rs-two --inherit-model | grep -c 't-model')|$(rsm "$BIS" --resume s-rs-two --inherit-model | grep -c 'spawn: --inherit-model is not read for a resume')"
+# The two plans' transcripts are two directories (the suite's one flat directory hides it): a resume
+# from the other plan finds the transcript under the plan it lived on, and moves there.
+mkdir -p "$RSHOME/.claude/projects" "$RSHOME/.claude-bis/projects"
+ORCHESTRATOR_PROJECTS_DIR="$RSHOME/.claude/projects" resume_transcript s-rs-sep-one r-model high org-one
+ORCHESTRATOR_PROJECTS_DIR="$RSHOME/.claude-bis/projects" resume_transcript s-rs-sep-two r-model high org-two
+rsp() { ( unset ORCHESTRATOR_PROJECTS_DIR; rsm "$@" ); }
+rspl() { rsp "$@" | sed -n 's/^launch=//p'; }
+check "a resume from plan 2 finds the transcript of a plan 1 session in plan 1's folder and runs there" "0|1|1|0" \
+  "$(rspl "$BIS" --resume s-rs-sep-one | grep -cF 'export CLAUDE_CONFIG_DIR')|$(rspl "$BIS" --resume s-rs-sep-one | grep -c -- '--model r-model --effort high')|$(rsp "$BIS" --resume s-rs-sep-one | grep -c 'spawn: the resume runs on plan 1, the one session s-rs-sep-one lived on')|$(rsp "$BIS" --resume s-rs-sep-one | grep -c 'no transcript')"
+check "a resume from plan 1 finds the transcript of a plan 2 session in plan 2's folder and runs there" "1|1|0" \
+  "$(rspl '' --resume s-rs-sep-two | grep -cF "export CLAUDE_CONFIG_DIR=$BIS &&")|$(rspl '' --resume s-rs-sep-two | grep -c -- '--model r-model --effort high')|$(rsp '' --resume s-rs-sep-two | grep -c 'no transcript')"
+check "a session whose transcript is in neither plan's folder is still refused" "1|1" \
+  "$(rsp "$BIS" --resume s-rs-sep-none >/dev/null 2>&1; echo $?)|$(rsp "$BIS" --resume s-rs-sep-none | grep -c 'no transcript for session s-rs-sep-none')"
 # An agent's pair is its orchestrator's: a tier, or a model with its effort. The plugin ships
 # the tier efforts the map does not bind (deep medium, standard high, light medium), never the
 # calling orchestrator's own effort; an effort the map binds wins over them.

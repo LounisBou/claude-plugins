@@ -5369,8 +5369,23 @@ def pair_of_launch(args, auditor_successor, pair_from=""):
     if args.auditor and args.model:
         # An auditor given its pair runs on it; given none, on its caller's live pair below.
         return args.model, args.effort, pair_from or "flag"
-    succession = (args.successor or auditor_successor or args.auditor
-                  or args.coordinator_successor or args.inherit)
+    roles = (args.successor or auditor_successor or args.auditor or args.coordinator_successor)
+    if args.resume and not args.wake and not roles:
+        # A closed agent resumed reads its cache only on the model and effort it ran on: its
+        # transcript's pair, whatever a tier or a model would say.
+        given = [flag for flag, value in (("--tier", args.tier), ("--model", args.model),
+                                          ("--effort", args.effort),
+                                          ("--inherit-model", args.inherit)) if value]
+        if given:
+            print("spawn: %s is not read for a resume: it runs on its session's own model and "
+                  "effort" % "/".join(given), file=sys.stderr)
+        try:
+            model, effort, path = read_pair(args.resume)
+        except PairUnreadable as exc:
+            die("spawn: refused: the pair of session %s cannot be read (%s): %s"
+                % (args.resume, exc, FRESH_AGENT))
+        return model, effort, "transcript %s" % path
+    succession = roles or args.inherit
     if succession:
         # A succession of any role runs on its caller's live pair, with or without the flag:
         # the successor of an orchestrator or of an auditor, an auditor, the coordinator's
@@ -5389,20 +5404,6 @@ def pair_of_launch(args, auditor_successor, pair_from=""):
         if args.model:
             return args.model, args.effort, "record"
         return "", "", "host default"
-    if args.resume:
-        # A closed agent resumed reads its cache only on the model and effort it ran on: its
-        # transcript's pair, whatever a tier or a model would say.
-        given = [flag for flag, value in (("--tier", args.tier), ("--model", args.model),
-                                          ("--effort", args.effort)) if value]
-        if given:
-            print("spawn: %s is not read for a resume: it runs on its session's own model and "
-                  "effort" % "/".join(given), file=sys.stderr)
-        try:
-            model, effort, path = read_pair(args.resume)
-        except PairUnreadable as exc:
-            die("spawn: refused: the pair of session %s cannot be read (%s): %s"
-                % (args.resume, exc, FRESH_AGENT))
-        return model, effort, "transcript %s" % path
     if args.tier:
         return tier_pair(args.tier, args.effort, args.tier_bound)
     if args.model:
@@ -5467,7 +5468,7 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
     # So is the caller's pair, for the launches that always read it there: an inheriting
     # agent, an auditor and the coordinator's successor.
     args.caller_pair = (own_pair("a successor, an auditor or an inheriting spawn")
-                        if args.inherit or (args.auditor and not args.model)
+                        if (args.inherit and not args.resume) or (args.auditor and not args.model)
                         or args.coordinator_successor
                         else None)
     # The anchor first, before a prompt file is written or a trust record changed: an
@@ -7268,7 +7269,7 @@ except ValueError:
 def refuse_stale_resume(session_id):
     """Die unless the conversation `session_id` spoke within RESUME_WITHIN seconds: past it, a
     fresh agent from `brief.sh rotation` costs no more and starts clean."""
-    path = transcript_of_session(session_id)
+    path = transcript_of_session(session_id, any_plan=True)
     if path is None:
         die("spawn: refused: no transcript for session %s under %s: nothing to resume, start a "
             "fresh agent from `brief.sh rotation`" % (session_id, PROJECTS_DIR))
@@ -7329,7 +7330,7 @@ def settle_resume_plan(session_id, explicit):
     named, already applied: it wins, and the line says what that costs. A transcript that names
     no organization leaves the caller's plan; one that names the organization of neither plan,
     or a plan with no room left, is refused."""
-    organization = organization_of_transcript(transcript_of_session(session_id))
+    organization = organization_of_transcript(transcript_of_session(session_id, any_plan=True))
     lived = plan_of_organization(organization) if organization else None
     if explicit is not None:
         if lived and lived != plan_of_config(explicit):
@@ -7352,13 +7353,19 @@ def settle_resume_plan(session_id, explicit):
           "account" % (lived, session_id), file=sys.stderr)
 
 
-def transcript_of_session(sid):
+def transcript_of_session(sid, any_plan=False):
     """The transcript the host keeps for a session id, or None: one directory per checkout,
-    and the file is named by the id, so the id alone finds it wherever the session ran."""
+    and the file is named by the id, so the id alone finds it wherever the session ran.
+    `any_plan` looks under both plans' folders too: a resume is found before its plan moves."""
     if not re.fullmatch(r"[0-9A-Za-z._-]+", sid):
         return None
+    folders = [PROJECTS_DIR]
+    if any_plan and not os.environ.get("ORCHESTRATOR_PROJECTS_DIR"):
+        folders += [os.path.join(config_of_plan(plan) or os.path.expanduser("~/.claude"),
+                                 "projects") for plan in ("1", "2")]
     dated = []
-    for path in glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl")):
+    for path in (found for folder in folders
+                 for found in glob.glob(os.path.join(folder, "*", sid + ".jsonl"))):
         try:
             dated.append((os.path.getmtime(path), path))
         except OSError:
