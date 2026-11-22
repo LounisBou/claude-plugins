@@ -114,7 +114,7 @@ check "the export says what it archived, removed and kept" "export: archive: 1 f
 out=$(cd "$WORK" && cli report --week 2026-11-08); code=$?
 check "report prints its heading and seven day rows, exit 0" "0|weekly report 2026-11-08 → 2026-11-14 (Europe/Paris), tool: n/a — not run in a repository and no --tool|7" \
   "$code|$(printf '%s\n' "$out" | head -1)|$(printf '%s\n' "$out" | grep -c '^2026-11-')"
-check "report says a figure with no source is n/a, with why" "yes" "$(printf '%s\n' "$out" | grep -q '^1 agents on every runnable line: n/a — ' && echo yes || echo no)"
+check "report says a figure with no source is n/a, with why" "yes" "$(printf '%s\n' "$out" | grep -q '^1 context height: n/a — ' && echo yes || echo no)"
 
 [ "$fail" -eq 0 ] && echo "telemetry: all checks passed"
 exit "$fail"
