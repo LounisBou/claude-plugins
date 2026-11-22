@@ -704,7 +704,7 @@ async function oweReviewSession(): Promise<void> {
   const prompts = `${STATE}/prompts`
   const files: Record<string, string> = {
     [`${STATE}/store/sessions/s-rev`]: JSON.stringify({ role: 'agent', name: 'Agent: review 12 r1 [a1b2c3]', tty: '/dev/ttys007', updated_at: '2026-11-15T07:00:00.000Z' }) + '\n',
-    [`${prompts}/launch-Agent--review-12-r1-1795386718957.sh`]: '#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=/briefs/review.md && exec claude\n',
+    [`${prompts}/launch-Agent--review-12-r1-1795386718957.sh`]: '#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=/briefs/review.md && exec sh\n',
     '/briefs/review.md': [
       '# app — review: the delivery', '', 'You are the REVIEW agent for this round. You read; you never implement.', '',
       '4. The delivery: pull request 12 (the implementer\'s report, `/b/report.md`), branch `fix/x`, head `0123456789`, base `origin/main`',

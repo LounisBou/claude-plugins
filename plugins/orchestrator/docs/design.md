@@ -176,6 +176,8 @@ hooks/asked-key.ts                   what makes two questions one, pure: the key
 hooks/question.ts                    the `ask` and `settle` tools, and the one closure of a round entry
 hooks/review.ts                      the orchestrator's tool for its review verdict, written through github's record tool
 hooks/review-rounds.ts               the round a review verdict counts, raised on the dispatch-record row; never a refusal
+hooks/review-close.ts                the review sessions a recorded verdict owes a close, kept for the tick
+hooks/review-reading.ts              what a review brief says of its round, and whether a verdict is for it
 hooks/lens-ids.ts                    a review reader's answer with each finding line's stable id (`<lens>:<hash>`)
 hooks/lens-method.ts                 a review reader's method: the toolkit agent of its lens's angle, or the generic reader
 hooks/audit-events.ts                the audit trail's facts, pure: never a command line, a prompt or a finding's words

@@ -599,7 +599,7 @@ function reviewer(session: string, name: string, brief: string, launched = 17953
   const file = `/briefs/${session}.md`
   return {
     [`${STORE}/store/sessions/${session}`]: JSON.stringify({ role: 'agent', name: `${name} [a1b2c3]`, tty: '/dev/ttys007', updated_at: '2026-11-13T19:00:00.000Z' }) + '\n',
-    [`${STORE}/prompts/launch-${name.replace(/[^A-Za-z0-9._-]/g, '-')}-${launched}.sh`]: `#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=${file} && exec claude\n`,
+    [`${STORE}/prompts/launch-${name.replace(/[^A-Za-z0-9._-]/g, '-')}-${launched}.sh`]: `#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=${file} && exec sh\n`,
     [file]: brief,
   }
 }
@@ -640,9 +640,9 @@ test('a session that is not the round\'s review session is never owed a close: a
     ...reviewer('s-a', 'Agent: review 129 r1', briefOf('thing', 129, HEAD)),
     ...reviewer('s-b', 'Agent: review 128 r0', briefOf('thing', 128, 'fedcba9876')),
     ...reviewer('s-c', 'Agent: review 128 other', briefOf('other', 128, HEAD)),
-    ...reviewer('s-d', 'Agent: review close', '# claude-plugins — Phase 1b\n\nYou are the implementer of row 507 of the dispatch record.\nRow: 507\n'),
+    ...reviewer('s-d', 'Agent: review close', '# thing — Phase 1b\n\nYou are the implementer of row 507 of the dispatch record.\nRow: 507\n'),
     [`${STORE}/store/sessions/s-e`]: JSON.stringify({ role: 'agent', name: 'Agent: review 128 r2', tty: '/dev/ttys008', updated_at: '2026-11-13T19:00:00.000Z' }) + '\n',
-    [`${STORE}/store/sessions/s-f`]: JSON.stringify({ role: 'orchestrator', name: 'Orch: other [d4e5f6]', tty: '/dev/ttys009', updated_at: '2026-11-13T19:00:00.000Z' }) + '\n',
+    [`${STORE}/store/sessions/s-f`]: JSON.stringify({ role: 'orchestrator', name: 'Orch: other [a1b2c3]', tty: '/dev/ttys009', updated_at: '2026-11-13T19:00:00.000Z' }) + '\n',
   }
   const fx = fake('Orch: belt', { result: WRITTEN }, { ...ROUND_WORLD, files })
   const out = await handler()(fx.dollar, { pr: 128, repo: 'acme/thing', dir: '/work/thing', verdict: 'pass' })

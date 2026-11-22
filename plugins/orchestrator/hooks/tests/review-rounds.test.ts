@@ -271,7 +271,7 @@ test('a verdict that names no row owes the review session\'s close with its cost
   owedOf('s-orch').forEach(settleOwed)
   const fx = fake()
   fx.files.set(`${STATE}/store/sessions/s-rev`, JSON.stringify({ role: 'agent', name: 'Agent: review 12 r1 [a1b2c3]', tty: '/dev/ttys007', updated_at: '2026-11-14T10:00:00.000Z' }) + '\n')
-  fx.files.set(`${STATE}/prompts/launch-Agent--review-12-r1-1795386718957.sh`, '#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=/briefs/review.md && exec claude\n')
+  fx.files.set(`${STATE}/prompts/launch-Agent--review-12-r1-1795386718957.sh`, '#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=/briefs/review.md && exec sh\n')
   fx.files.set('/briefs/review.md', REVIEW_BRIEF)
   fx.dollar.fs.list = async (dir: string) => [...fx.files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
     .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 0, isLink: false }))
