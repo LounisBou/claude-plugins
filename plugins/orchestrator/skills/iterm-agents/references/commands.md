@@ -59,7 +59,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # a negative, a fraction or a non-number is refused before a tab exists. The launch then
     # exports ORCHESTRATOR_CONTEXT_GATE_TOKENS=<N> beside ORCHESTRATOR_SPAWNED=1, so the
     # module's context gate and its band, which both read it from their environment, use
-    # it. Absent, nothing is exported and the default (300,000 tokens) holds. The gate is the
+    # it. The gate is the
     # smaller of the option and the window's percentage gate. With --brief, the startup
     # prompt adds « Your context gate is the smaller of <N> tokens and the percentage of the
     # reported window » (a --prompt or --prompt-file spawn gets the export, not that line); a brief

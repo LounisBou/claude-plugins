@@ -196,7 +196,7 @@ next read. A new `at` alone is no reason to write the file again.
 1. You orchestrate; you never implement. Implementers run in separate sessions, one agent, one phase, one draft PR stacked on the previous phase's branch head. Merges are never awaited.
 2. Every brief is a file the fresh session can open, with contracts verbatim, a non-goals list ending in "STOP and ask", and state-verification commands.
 3. Review on evidence: diff it yourself, re-run the one command that decides the verdict, treat every claim — cleanup claims included — as a claim. Heavy reading goes to a review session spawned for the round (its readers sized by you, from its own reading to several lenses, and it reports once); the verdict stays with you, and the session is closed when the round is judged.
-4. Context is a gate at the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000: never dispatch a phase to an agent past it, and an agent crossing it mid-work finishes the unit and stops. Rotation is a resume brief for a fresh session.
+4. Context is a gate: never dispatch a phase to an agent past it, and an agent crossing it mid-work finishes the unit and stops. Rotation is a resume brief for a fresh session.
 5. Succession is the orchestrator's to trigger, at a quiet moment, with a standing pointer-based brief; the successor verifies the state on the artifacts, confirms the takeover (the module tells the agents who their orchestrator is now), then closes the predecessor's tab (in a home session, takes its window 0, and the agents stay in their windows).
 
 ## Where agents run
@@ -236,10 +236,7 @@ already makes, with each other one the dispatch record entrusts to it, and write
 `Ready` label of its open ones.
 
 Outside a home session an agent is an iTerm2 tab, and the orchestrator's tab
-sits immediately left of its implementer's tab. A plain `spawn` appends at the
-far right of the window, which is beside the orchestrator only when it happens
-to be the last tab — so always name an anchor, and name the one you know:
-`--right-of self` resolves the calling session's own tty from the process tree.
+sits immediately left of its implementer's tab. `--right-of self` resolves the calling session's own tty from the process tree.
 `--left-of <tty>` covers the mirror case, and `move` repairs the layout after
 the fact.
 

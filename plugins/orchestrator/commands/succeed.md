@@ -33,8 +33,7 @@ Then:
 3. Start nothing new. Wait for the successor's "takeover confirmed"; answer its questions about state only,
    and the operator's in one line naming the successor, who answers them.
    On the confirmation, send it « handed over » as your
-   LAST message, with `SendMessage` to the name it confirmed from:
-   a line written in your own tab reaches no one, and the successor waits on it.
+   LAST message, with `SendMessage` to the name it confirmed from.
    Nothing of yours is left to write; end the turn: that message is what it closes
    your tab on.
 
