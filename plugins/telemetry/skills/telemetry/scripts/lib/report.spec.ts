@@ -2,7 +2,7 @@
 // orchestrator's record registry, round and measure files, and a stand-in for `gh`.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parseOptions, report, type Check, type Gh, type ReportInput } from './report.ts'
@@ -213,6 +213,23 @@ test('context height by role, an orchestrator\'s life and first turn, and the li
     assert.equal(find(out, '2 '), '2 life of an orchestrator session: median 3.0 h over 2 orchestrator sessions (target ≥ 2.0 h)')
     assert.equal(find(out, '3 '), '3 first turn of a new session: median 65k over 2 orchestrator sessions (target ≤ 60k)')
     assert.match(find(out, '4 '), /line median 2\.0 h over 2 \(target ≤ 60 min\)$/)
+  })
+})
+
+test('a dispatch record named by its real path and through two links counts its rows once; a distinct record counts; a missing one is no error', () => {
+  const closed = (id: number, closedAt: string): string => JSON.stringify({ id, opened: '2026-11-10T08:00:00Z', closed: closedAt, state: 'closed' })
+  scratch({}, (config, dir) => {
+    const module = join(config, 'claude-orchestrator')
+    const real = join(dir, 'real.jsonl')
+    const other = join(dir, 'other.jsonl')
+    writeFileSync(real, `${closed(1, '2026-11-10T09:00:00Z')}\n${closed(2, '2026-11-10T11:00:00Z')}\n`)
+    writeFileSync(other, `${closed(3, '2026-11-10T10:00:00Z')}\n`)
+    symlinkSync(real, join(dir, 'link-a.jsonl'))
+    symlinkSync(real, join(dir, 'link-b.jsonl'))
+    mkdirSync(join(module, 'records'), { recursive: true })
+    writeFileSync(join(module, 'records', S(1)), [real, join(dir, 'link-a.jsonl'), join(dir, 'link-b.jsonl'), other, join(dir, 'gone.jsonl')].join('\n') + '\n')
+    const out = lines(config)
+    assert.match(find(out, '4 '), /line median .* over 3 /)
   })
 })
 
