@@ -164,7 +164,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     #   anchor, --title-free, --tier, --inherit-model, --resident and --no-remote-control.
     # --resume <session>: a closed agent resumed in its checkout (`--dir`, `--title "Agent: <subject>"`, a startup
     #   prompt, its next work): the same conversation, on the model, effort and plan its transcript
-    #   names, found under either plan (--tier, --model, --effort, --inherit-model not read; --plan wins, its cache
+    #   names (--tier, --model, --effort, --inherit-model not read; --plan wins, its cache
     #   lost). Refused past the hour its cache lives (`ORCHESTRATOR_RESUME_WITHIN`, in seconds), with no transcript or pair, an account of neither plan or no
     #   room left on its plan: a fresh agent from `brief.sh rotation` does the work.
     # --open: a new orchestrator opened on the operator's order, by the session that carries
