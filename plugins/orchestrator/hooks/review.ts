@@ -20,7 +20,7 @@ import { roleOf } from '../core/names.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
 import { wakeReconciler } from '../core/reconcile-wake.ts'
-import { countRound } from './review-rounds.ts'
+import { countRound, repositoryOf } from './review-rounds.ts'
 
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock'>
 
@@ -164,10 +164,11 @@ export function verdictCall(input: Record<string, unknown>): { tool: string } & 
   const pr = Number(String(input['pr'] ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return 'pr is the pull request number'
   const repo = text(input['repo']) ? { repo: text(input['repo']) } : {}
+  const dir = text(input['dir']) ? { dir: text(input['dir']) } : {}
   const plan = input['plan']
   if (plan !== undefined) {
     if (typeof plan !== 'object' || plan === null || Array.isArray(plan)) return 'plan is {"e2e": …, "norms": …, "review": …}'
-    return input['verdict'] === undefined ? { tool: RECORD_TOOL, pr, ...repo, plan } : 'a plan goes in place of the verdict'
+    return input['verdict'] === undefined ? { tool: RECORD_TOOL, pr, ...repo, ...dir, plan } : 'a plan goes in place of the verdict'
   }
   const verdict = text(input['verdict'])
   if (!VERDICTS.some((v) => v === verdict)) return 'verdict is pass, fail or ' + ACCEPTANCE.result
@@ -183,7 +184,6 @@ export function verdictCall(input: Record<string, unknown>): { tool: string } & 
   if (verdict !== 'fail' && input['kept'] !== undefined) return 'kept goes with the verdict fail only: the findings its correction round fixes'
   const set = setAsides.length > 0 ? acceptanceDetail(setAsides) : ''
   const detail = verdict === ACCEPTANCE.result ? set : [text(input['detail']), set].filter(Boolean).join('; ').slice(0, DETAIL_MAX)
-  const dir = text(input['dir']) ? { dir: text(input['dir']) } : {}
   return { tool: RECORD_TOOL, pr, ...repo, ...dir, kind: ACCEPTANCE.kind, result: verdict, detail }
 }
 
@@ -337,6 +337,12 @@ export function register(on: On<Held>): void {
       if (index === null) await logLine($, 'review', `findings index not read: ${target.findings}`)
       const missing = index === null ? null : importantUncovered(index, e)
       if (missing !== null) return { result: missing, isError: true }
+    }
+    // github's plan path reads no dir: the repository a plan names is given, else read here from dir's origin.
+    if ('plan' in call && call['repo'] === undefined && typeof call['dir'] === 'string') {
+      const repo = await repositoryOf($, '', call['dir'])
+      if (repo === null) return { result: `the repository of ${call['dir']} is not known (no origin): give repo`, isError: true }
+      call['repo'] = repo
     }
     const written = answerOf(await $.tool.call(call))
     // A verdict is a review round: the row of the pull request counts it, and the answer says which row, or that none matched.
