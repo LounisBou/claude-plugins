@@ -16,7 +16,7 @@ It fills branch, head, the commits landed since the base, what is uncommitted, t
 
 ## An agent the host stopped
 
-`[module] <agent> stopped: …` (the host's limit text, or an API error) means the host ended the agent's turn itself: it sits idle and answers nothing until the reset, whatever it had running. Do not wait on its reply: rotate it onto a fresh session from its pushed branch, on its own tier (never a lower one), its resume brief written by you from the branch, the pull request and the dispatch record, since it cannot write one. An API error that leaves its tab answering: send it one prompt to resume first.
+`[module] <agent> stopped: …` (the host's limit text, or an API error) means the host ended the agent's turn itself: it sits idle and answers nothing until the reset, whatever it had running. Do not wait on its reply: rotate it onto a fresh session from its pushed branch, on its own tier (never a lower one). An API error that leaves its tab answering: send it one prompt to resume first.
 
 ## Your own context (the orchestrator is not exempt)
 

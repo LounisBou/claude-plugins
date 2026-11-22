@@ -15,7 +15,7 @@ past the gate first. The steps below run only when that answer fails.
    `context_tokens`, `context_window`, `model`, `updated_at`.
 3. Keep the figures of your own, `<module>/measure/$CLAUDE_CODE_SESSION_ID.json`.
 4. Present one table: session, context %, tokens, window, model, updated. Mark
-   sessions past the gate — the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000 — with ⚠: that is the pre-dispatch and mid-work
+   sessions past their gate with ⚠: that is the pre-dispatch and mid-work
    gate.
 
 $ARGUMENTS

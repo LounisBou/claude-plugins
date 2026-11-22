@@ -32,8 +32,7 @@ steps below yourself (the ask, each branch and pull request, the table), as when
    beside it.
 4. Present one table: agent, phase and step, **the tier it was dispatched at**
    (from its brief or the dispatch record, not from the agent), branch and head, commits ahead of main, PR and CI state, blocker,
-   context % and tokens. Mark any agent past the gate —
-   the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000 — with ⚠ — the rotation gate — and
+   context % and tokens. Mark any agent past its gate with ⚠ — the rotation gate — and
    say for each what YOU owe it (a verdict, an answer).
 5. An agent silent fifteen minutes: « no answer, last artifact activity <time> ».
 6. An agent that reports the work needs more judgment than its brief anticipated
