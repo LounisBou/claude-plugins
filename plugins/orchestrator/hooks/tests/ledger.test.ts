@@ -7,6 +7,7 @@ import { expect, test } from 'claude-code/testing'
 import { ciFailingLine, createdPr, prWake, register } from '../ledger.ts'
 import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
 import { prWantedPath } from '../pr-file-format.ts'
+import { OWED_MS, oweRound, owedOf, settleOwed } from '../review-close.ts'
 import { capture, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
 import type { CatchHook, Events, Hook, Host, Noun } from '../../core/host.ts'
 
@@ -1458,4 +1459,102 @@ test('a failure of the bookkeeping leaves the tool answer as it came', async () 
   const world = mergedOnForge()
   const broken = { ...world.dollar, session: { id: async () => { throw new Error('no session') } } } as unknown as World
   expect(await call(mounted(), broken, prMerge(), MERGED_ANSWER)).toEqual(MERGED_ANSWER)
+})
+
+// The review session of acme/app#17 at 0123456, its round's verdict recorded: its launch names the review brief, its host idle in its pin.
+const reviewSession = (status: 'idle' | 'busy' = 'idle', tty = '/dev/ttys000'): Record<string, string> => ({
+  [`${STATE}/store/sessions/s-rev`]: row('agent', 'Agent: review 17 r1 [a1b2c3]', tty),
+  [`${HOME}/.claude/sessions/450.json`]: JSON.stringify({ pid: 450, sessionId: 's-rev', cwd: '/work/review-17-r1', status }),
+  [`${STATE}/prompts/launch-Agent--review-17-r1-1700000000000.sh`]: "export ORCHESTRATOR_BRIEF='/briefs/app/review-17-brief.md'\n",
+  '/briefs/app/review-17-brief.md': [
+    '# app — review: the delivery', '', 'You are the REVIEW agent for this round. You read; you never implement.', '',
+    "4. The delivery: pull request 17 (the implementer's report, `/b/report.md`), branch `fix/x`, head `0123456789`, base `origin/main`",
+  ].join('\n'),
+})
+const HEAD17 = '0123456789abcdef0123456789abcdef01234567'
+const REVIEW_TAB = running('Agent: review 17 r1')
+// The verdict recorded: the module owes the close (review-close.ts), its cost on row 4 of the record.
+const owe = (world: ReturnType<typeof fake>, session = 's-orch') => oweRound(world.dollar, { session, pr: 17, round: async () => ({ repo: 'acme/app', head: HEAD17 }), cost: { record: RECORD, row: 4 } })
+const reviewWorld = (over: Over = {}, status: 'idle' | 'busy' = 'idle') => fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(4, 'open', { label: 'P17 acme/app#17' })}\n`, ...reviewSession(status) }, forge: { 'acme/app': '[]' }, launcher: REVIEW_TAB, ...over })
+const drainOwed = (): void => ['s-orch', 's-other'].forEach(session => owedOf(session).forEach(settleOwed))
+
+test('a review session whose round\'s verdict is recorded is closed by the module once idle, its pin with it, its cost on the row of the verdict; the tick says nothing', async () => {
+  drainOwed()
+  const world = reviewWorld()
+  expect(await owe(world)).toBe('review session of acme/app#17 0123456: Agent: review 17 r1 is closed by the module once its turn ends.')
+  const woke = await prWake(world.dollar, new Set())
+  expect([woke.lines, woke.watching]).toEqual([[], true])
+  expect(closes(world.runs)).toEqual([])
+  await woke.settle()
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: review 17 r1'])
+  expect(world.runs.filter(argv => argv[2] === 'cost')).toEqual([['bash', '/plugins/orch/skills/orchestrator/scripts/dispatch-record.sh', 'cost', RECORD, '4', '--session', 's-rev']])
+  expect(owedOf('s-orch')).toEqual([])
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([])
+})
+
+test('a review session still busy when the verdict lands is closed at the end of its turn, never mid-turn: the owed close waits, silent, for the tick that finds it idle', async () => {
+  drainOwed()
+  const busy = reviewWorld({}, 'busy')
+  await owe(busy)
+  const first = await prWake(busy.dollar, new Set())
+  await first.settle()
+  expect([first.lines, first.watching, closes(busy.runs), owedOf('s-orch').length]).toEqual([[], true, [], 1])
+  const idle = reviewWorld()
+  const then = await prWake(idle.dollar, new Set())
+  await then.settle()
+  expect([then.lines, closes(idle.runs), owedOf('s-orch')]).toEqual([[], ['--tty /dev/ttys000 --expect-title Agent: review 17 r1'], []])
+})
+
+test('a review session whose pin has changes or unpushed commits is left open and told once, its close no longer owed', async () => {
+  drainOwed()
+  const world = reviewWorld({ dirty: ' M a.ts\n' })
+  await owe(world)
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual(['[module] Agent: review 17 r1 (acme/app#17 0123456): left open: tree not clean in /work/review-17-r1 (1 paths changed, 0 commits unpushed).'])
+  await woke.settle()
+  expect([closes(world.runs), owedOf('s-orch')]).toEqual([[], []])
+  expect((await prWake(world.dollar, new Set())).lines).toEqual([])
+})
+
+test('a review session of another orchestration is never closed: its tab is on no chain of this one, and what another session owes is that session\'s', async () => {
+  drainOwed()
+  const foreign = reviewWorld({ launcher: 'w2/t7 | /dev/ttys007 | ✳ Agent: review 17 r1 | Agent: review 17 r1' })
+  await owe(foreign)
+  const woke = await prWake(foreign.dollar, new Set())
+  await woke.settle()
+  expect(closes(foreign.runs)).toEqual([])
+  drainOwed()
+  const other = reviewWorld()
+  await owe(other, 's-other')
+  const idle = await prWake(other.dollar, new Set())
+  await idle.settle()
+  expect([closes(other.runs), owedOf('s-other').length]).toEqual([[], 1])
+  drainOwed()
+})
+
+test('a close owed for longer than an hour is given up, logged: a session gone or busy for good keeps nothing watched', async () => {
+  drainOwed()
+  const world = reviewWorld()
+  await owe(world)
+  const woke = await prWake(world.dollar, new Set(), Date.now() + OWED_MS + 1000)
+  await woke.settle()
+  expect([woke.lines, closes(world.runs), owedOf('s-orch')]).toEqual([[], [], []])
+  expect(world.logged.some(line => line.includes('given up'))).toBe(true)
+})
+
+test('a review session that took a message between the tick and the close is not closed mid-turn: nothing is said, the close stays owed and is made once it is idle again', async () => {
+  drainOwed()
+  const world = reviewWorld()
+  await owe(world)
+  const next = new Set<string>()
+  const woke = await prWake(world.dollar, next)
+  const host = `${HOME}/.claude/sessions/450.json`
+  world.files.set(host, world.files.get(host)!.replace('"idle"', '"busy"'))
+  await woke.settle()
+  expect([closes(world.runs), owedOf('s-orch').length]).toEqual([[], 1])
+  expect((await prWake(world.dollar, next)).lines).toEqual([])
+  world.files.set(host, world.files.get(host)!.replace('"busy"', '"idle"'))
+  const then = await prWake(world.dollar, next)
+  await then.settle()
+  expect([then.lines, closes(world.runs), owedOf('s-orch')]).toEqual([[], ['--tty /dev/ttys000 --expect-title Agent: review 17 r1'], []])
 })

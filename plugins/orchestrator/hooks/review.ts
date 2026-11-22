@@ -20,7 +20,8 @@ import { roleOf } from '../core/names.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { logLine } from './module-io.ts'
 import { wakeReconciler } from '../core/reconcile-wake.ts'
-import { countRound, repositoryOf } from './review-rounds.ts'
+import { countRound, headOf, repositoryOf } from './review-rounds.ts'
+import { oweRound } from './review-close.ts'
 
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock'>
 
@@ -273,6 +274,25 @@ function answerOf(written: unknown): { result: string; isError?: boolean } {
   return w.isError === true ? { result: text, isError: true } : { result: text }
 }
 
+// The row the count raised, from the line that says it (review-rounds.ts), or undefined when it raised none.
+export function countedRow(counted: string): { record: string; row: number } | undefined {
+  const raised = /^rounds: row (\d+) of (.+) raised to \d+$/.exec(counted)
+  return raised?.[1] === undefined || raised[2] === undefined ? undefined : { record: raised[2], row: Number(raised[1]) }
+}
+
+// The line that says the round's review session is closed by the module, and owes it that close: its repository and head
+// read where the verdict was recorded, its cost on the row the verdict names, else the row the round was counted on.
+async function closeLine($: Held, e: Record<string, unknown>, call: Record<string, unknown>, counted: string, target: RowTarget | null): Promise<string | null> {
+  const cwd = text(call['dir']) || text(e['cwd']) || undefined
+  const round = async () => {
+    const repo = await repositoryOf($, text(call['repo']), cwd)
+    const head = await headOf($, cwd)
+    return repo === null || head === null ? null : { repo, head }
+  }
+  const cost = target !== null ? { record: target.record, row: target.row } : countedRow(counted)
+  return oweRound($, { session: await $.session.id(), pr: Number(call['pr']), round, cost })
+}
+
 export function register(on: On<Held>): void {
   on('session.start', {}, async ($, e, next) => {
     try {
@@ -356,13 +376,16 @@ export function register(on: On<Held>): void {
     // A review session's verdict counts no round: no dispatch record is its own.
     if (!orchestrator) return { result: answerLines(answer.result, '', null) }
     const counted = await countRound($, { pr: Number(call['pr']), repo: text(call['repo']), ...(typeof call['dir'] === 'string' ? { dir: call['dir'] } : {}), ...(typeof e['cwd'] === 'string' ? { cwd: e['cwd'] } : {}), ...(target === null ? {} : { at: { record: target.record, row: target.row } }) })
-    if (target === null) return { result: answerLines(answer.result, counted, null) }
+    // The round's review session is closed by the module once its turn ends (review-close.ts): the line says it, last.
+    const closing = await closeLine($, e, call, counted, target)
+    const said = (answer: string): { result: string } => ({ result: closing === null ? answer : `${answer}\n${closing}` })
+    if (target === null) return said(answerLines(answer.result, counted, null))
     // Level 1 after the count, so its rounds include this one. The gate's record is written: a row that
     // fails is a warning on a success, never an error, so the audit trail keeps the verdict
     // (audit-events.ts answerText) and nobody writes the record twice.
     const row = await writeRow($, e, target).catch((err: unknown) => ({ line: messageOf(err), ok: false }))
-    if (row.ok) return { result: answerLines(answer.result, counted, row.line) }
-    return { result: `${answerLines(answer.result, counted, null)}\nWARNING: the gate's record is written, the row is not: write it with dispatch-record.sh verdict, never this tool again: ${row.line}` }
+    if (row.ok) return said(answerLines(answer.result, counted, row.line))
+    return said(`${answerLines(answer.result, counted, null)}\nWARNING: the gate's record is written, the row is not: write it with dispatch-record.sh verdict, never this tool again: ${row.line}`)
   }).catch(async ($, e, next) => {
     await logLine($, 'review', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the review verdict could not be recorded; the log says why', isError: true }

@@ -13,6 +13,7 @@ import {
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
+import { oweRound, owedOf, settleOwed } from '../review-close.ts'
 import { register as registerWait, ASK_FIRST, Declarations, parseDeclaration } from '../wait.ts'
 import { WAIT_TOOL } from '../../core/orchestration.ts'
 import { journalled, logLineOf, blockOf, prQueryRun } from './fakes.ts'
@@ -696,6 +697,50 @@ test('with no pull request of its own, the tick keeps the file current while a r
   expect(w.submitted).toEqual([])
   expect(w.ran.filter(l => l.startsWith('gh api graphql')).length).toBe(1)
   expect(w.timers.map(t => t.ms)).toEqual([60_000])
+})
+
+// The review session of acme/app#12 as the launcher leaves it, owed a close by the orchestrator session `a1b2c3`.
+async function oweReviewSession(): Promise<void> {
+  const prompts = `${STATE}/prompts`
+  const files: Record<string, string> = {
+    [`${STATE}/store/sessions/s-rev`]: JSON.stringify({ role: 'agent', name: 'Agent: review 12 r1 [a1b2c3]', tty: '/dev/ttys007', updated_at: '2026-11-15T07:00:00.000Z' }) + '\n',
+    [`${prompts}/launch-Agent--review-12-r1-1795386718957.sh`]: '#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=/briefs/review.md && exec sh\n',
+    '/briefs/review.md': [
+      '# app — review: the delivery', '', 'You are the REVIEW agent for this round. You read; you never implement.', '',
+      '4. The delivery: pull request 12 (the implementer\'s report, `/b/report.md`), branch `fix/x`, head `0123456789`, base `origin/main`',
+    ].join('\n'),
+  }
+  const $ = hostOf({
+    plugin: { root: '/plugins/orch-root' },
+    env: { get: async (name: string) => (name === 'HOME' ? HOME : undefined) },
+    fs: {
+      read: async (p: string) => { const text = files[p]; if (text !== undefined) return text; throw new Error(`ENOENT: ${p}`) },
+      list: async (dir: string) => Object.keys(files).filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
+        .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 0, isLink: false })),
+    },
+    process: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) },
+  })
+  const line = await oweRound($, { session: 'a1b2c3', pr: 12, round: async () => ({ repo: 'acme/app', head: '0123456789abcdef0123456789abcdef01234567' }) })
+  expect(line).not.toBeNull()
+}
+
+// Mutation: `|| hasOwed(sessionId)` removed from `tick.watch` (guards.ts): the first stop arms no tick and this test falls.
+test('the tick keeps running after the turn that recorded a verdict while a review session\'s close is owed, and stops once it is settled', async () => {
+  owedOf('a1b2c3').forEach(settleOwed)
+  const { handlers } = mounted()
+  // No ledger line, no reader of the pull request file: nothing else keeps the tick.
+  const none = prWorld([], 0, { records: [''] })
+  await stop(handlers['classic.Stop'], none.dollar, stopEvent({}))
+  expect(none.timers).toEqual([])
+  await oweReviewSession()
+  expect(owedOf('a1b2c3').length).toBe(1)
+  const owing = prWorld([], 0, { records: [''] })
+  await stop(handlers['classic.Stop'], owing.dollar, stopEvent({}))
+  expect(owing.timers.map(t => t.ms)).toEqual([0])
+  owedOf('a1b2c3').forEach(settleOwed)
+  const settled = prWorld([], 0, { records: [''] })
+  await stop(handlers['classic.Stop'], settled.dollar, stopEvent({}))
+  expect(settled.timers).toEqual([])
 })
 
 test('a pull request wake the host drops is tried again a minute later, told then, and its line archived only once told', async () => {

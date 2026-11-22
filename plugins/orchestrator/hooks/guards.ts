@@ -38,6 +38,7 @@ import { fieldsOf, messageOf, reasonOf, type Host, type On, type ProcessRunResul
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, bashWritesTheMap } from './models-guard.ts'
 import { configDir, dataDir, gateEnv, logLine, moduleDir, stateDir, writeAtomic } from './module-io.ts'
 import { prWake } from './ledger.ts'
+import { hasOwed } from './review-close.ts'
 import { projectRecords } from './unattended.ts'
 import { PR_FILE_INTERVAL_MS } from './pr-file-format.ts'
 import { fileWanted } from './pr-file.ts'
@@ -489,7 +490,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         tick.busy = busyNow
         tick.busyAt = 0
       }
-      tick.watch = (await ledgerOf()).length > 0 || await fileWanted($, state, Date.now())
+      tick.watch = (await ledgerOf()).length > 0 || await fileWanted($, state, Date.now()) || hasOwed(sessionId)
       if (busyNow.length > 0 || tick.watch) armTick($, tick, 0)
       // What the pull requests read of each idle agent say its window should show (over, or Ready: done).
       const read: { tty: string; pr: { state: string; ready?: boolean | undefined } }[] = []

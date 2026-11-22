@@ -5,9 +5,10 @@
 // it calls nothing.
 import { expect, test } from 'claude-code/testing'
 import { register } from '../register.ts'
-import { NOT_ORCHESTRATOR, answerLines, findingsOf, register as registerReview, rowWords, withIndexIds, wordsOf } from '../review.ts'
+import { NOT_ORCHESTRATOR, answerLines, countedRow, findingsOf, register as registerReview, rowWords, withIndexIds, wordsOf } from '../review.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../../core/readiness.ts'
 import { logLineOf } from './fakes.ts'
+import { owedOf, settleOwed } from '../review-close.ts'
 import { answerText } from '../audit-events.ts'
 import { capture, hooksOn, hostOf } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Host, type Noun, type ProcessRunInit, type ToolSpec } from '../../core/host.ts'
@@ -23,7 +24,7 @@ const ROW = `${HOME}/.claude/claude-orchestrator/store/sessions/s-one`
 const WRITTEN = '/cfg/records/x/review.json\ngithub: Ready'
 
 // `more` adds environment variables and files: a launch's record of the orchestrator its session reports to.
-function fake(name: string, answer: unknown = { result: 'written' }, more: { env?: Record<string, string>; files?: Record<string, string>; origin?: string } = {}) {
+function fake(name: string, answer: unknown = { result: 'written' }, more: { env?: Record<string, string>; files?: Record<string, string>; origin?: string; head?: string } = {}) {
   const calls: Record<string, unknown>[] = []
   const logged: string[] = []
   const files: Record<string, string> = {
@@ -42,6 +43,7 @@ function fake(name: string, answer: unknown = { result: 'written' }, more: { env
       run: async (argv: readonly string[]) => {
         const line = logLineOf([...argv])
         if (line !== null) logged.push(line)
+        if (argv.join(' ') === 'git rev-parse HEAD' && more.head !== undefined) return { exitCode: 0, stdout: `${more.head}\n`, stderr: '' }
         if (argv.join(' ') === 'git remote get-url origin' && more.origin !== undefined) return { exitCode: 0, stdout: `${more.origin}\n`, stderr: '' }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
@@ -165,6 +167,7 @@ test('a verdict written touches the reconciler\'s edge marker, so the readings a
 })
 
 test('a verdict github refuses touches no edge marker', async () => {
+  drain()
   const fx = fake('Orch: belt', { deny: 'github: refused' })
   const { written, dollar } = writesOf(fx.dollar)
   await handler()(dollar, { pr: 128, verdict: 'pass' })
@@ -582,4 +585,78 @@ test('an acceptance over an index with no important finding, or an index that ca
   const gone = rowFake({ exitCode: 0, stdout: 'row 4: accepted — 2 point(s) set aside — findings: /b/x.md\n', stderr: '' })
   await handler()(gone.dollar, { ...ACCEPTED, record: '/b/record.jsonl', row: 4, findings: '/b/x.md' })
   expect(gone.calls.length).toBe(1)
+})
+
+// The review session of a round, as the launcher leaves it: its session row, its launch script naming its brief, the brief
+// `review-brief.sh` filled (the three lines the module reads: the project, the REVIEW agent, the pull request and the head).
+const STORE = `${HOME}/.claude/claude-orchestrator`
+const HEAD = '0123456789abcdef0123456789abcdef01234567'
+const briefOf = (project: string, pr: number, head: string): string => [
+  `# ${project} — review: the delivery`, '', 'You are the REVIEW agent for this round. You read; you never implement.', '', '## 1. Required reading, in order', '',
+  `4. The delivery: pull request ${pr} (the implementer's report, \`/b/report.md\`), branch \`fix/x\`, head \`${head}\`, base \`origin/main\``,
+].join('\n')
+function reviewer(session: string, name: string, brief: string, launched = 1795386718957): Record<string, string> {
+  const file = `/briefs/${session}.md`
+  return {
+    [`${STORE}/store/sessions/${session}`]: JSON.stringify({ role: 'agent', name: `${name} [a1b2c3]`, tty: '/dev/ttys007', updated_at: '2026-11-13T19:00:00.000Z' }) + '\n',
+    [`${STORE}/prompts/launch-${name.replace(/[^A-Za-z0-9._-]/g, '-')}-${launched}.sh`]: `#!/bin/sh\ncd /w && export ORCHESTRATOR_BRIEF=${file} && exec sh\n`,
+    [file]: brief,
+  }
+}
+const ROUND_WORLD = { head: HEAD, origin: 'git@github.com:acme/thing.git' }
+const closing = (name = 'Agent: review 128 r1') => `review session of acme/thing#128 0123456: ${name} is closed by the module once its turn ends.`
+
+const drain = (): void => owedOf('s-one').forEach(settleOwed)
+
+test('a verdict recorded closes the round\'s review session: its brief names the project, the pull request and the head the verdict is at; the answer says it and the close is owed', async () => {
+  drain()
+  const fx = fake('Orch: belt [a1b2c3]', { result: WRITTEN }, { ...ROUND_WORLD, files: reviewer('s-rev', 'Agent: review 128 r1', briefOf('thing', 128, HEAD.slice(0, 8))) })
+  const out = await handler()(fx.dollar, { pr: 128, repo: 'acme/thing', dir: '/work/thing', verdict: 'pass' })
+  expect(out.result.split('\n').at(-1)).toBe(closing())
+  expect(owedOf('s-one').map(({ agent, round, cost }) => ({ agent, round, cost }))).toEqual([{ agent: 'Agent: review 128 r1', round: 'acme/thing#128 0123456', cost: undefined }])
+  owedOf('s-one').forEach(settleOwed)
+})
+
+test('each verdict closes it, a pass, a fail and an accepted; its cost goes on the row the verdict names, else on the row the round counted', async () => {
+  drain()
+  const files = reviewer('s-rev', 'Agent: review 128 r1', briefOf('thing', 128, HEAD))
+  const named = fake('Orch: belt', { result: WRITTEN }, { ...ROUND_WORLD, files })
+  const out = await handler()(named.dollar, { ...FAILED, dir: '/work/thing', record: '/b/record.jsonl', row: 4 })
+  expect(out.result.split('\n')).toContain(closing())
+  expect(owedOf('s-one').map(one => one.cost)).toEqual([{ record: '/b/record.jsonl', row: 4 }])
+  owedOf('s-one').forEach(settleOwed)
+  for (const verdict of [{ verdict: 'pass' }, ACCEPTED]) {
+    const fx = fake('Orch: belt', { result: WRITTEN }, { ...ROUND_WORLD, files })
+    expect((await handler()(fx.dollar, { pr: 128, repo: 'acme/thing', dir: '/work/thing', ...verdict })).result.split('\n').at(-1)).toBe(closing())
+    owedOf('s-one').forEach(settleOwed)
+  }
+  expect(countedRow('rounds: row 9 of /b/own.jsonl raised to 1')).toEqual({ record: '/b/own.jsonl', row: 9 })
+  expect(countedRow(ROUNDS)).toBeUndefined()
+})
+
+test('a session that is not the round\'s review session is never owed a close: another pull request, another head, another project, an implementer named review, a launch with no brief', async () => {
+  drain()
+  const files = {
+    ...reviewer('s-a', 'Agent: review 129 r1', briefOf('thing', 129, HEAD)),
+    ...reviewer('s-b', 'Agent: review 128 r0', briefOf('thing', 128, 'fedcba9876')),
+    ...reviewer('s-c', 'Agent: review 128 other', briefOf('other', 128, HEAD)),
+    ...reviewer('s-d', 'Agent: review close', '# thing — Phase 1b\n\nYou are the implementer of row 507 of the dispatch record.\nRow: 507\n'),
+    [`${STORE}/store/sessions/s-e`]: JSON.stringify({ role: 'agent', name: 'Agent: review 128 r2', tty: '/dev/ttys008', updated_at: '2026-11-13T19:00:00.000Z' }) + '\n',
+    [`${STORE}/store/sessions/s-f`]: JSON.stringify({ role: 'orchestrator', name: 'Orch: other [a1b2c3]', tty: '/dev/ttys009', updated_at: '2026-11-13T19:00:00.000Z' }) + '\n',
+  }
+  const fx = fake('Orch: belt', { result: WRITTEN }, { ...ROUND_WORLD, files })
+  const out = await handler()(fx.dollar, { pr: 128, repo: 'acme/thing', dir: '/work/thing', verdict: 'pass' })
+  expect(owedOf('s-one')).toEqual([])
+  expect(out.result).toBe(`${WRITTEN}\n${ROUNDS}`)
+})
+
+test('a verdict github refuses, a verdict a review session records, and a head that cannot be read owe no close', async () => {
+  const files = reviewer('s-rev', 'Agent: review 128 r1', briefOf('thing', 128, HEAD))
+  const refused = fake('Orch: belt', { deny: 'github: refused' }, { ...ROUND_WORLD, files })
+  await handler()(refused.dollar, { pr: 128, repo: 'acme/thing', dir: '/work/thing', verdict: 'pass' })
+  const own = fake('Agent: review 128 r1', { result: WRITTEN }, { ...ROUND_WORLD, files })
+  await handler()(own.dollar, { pr: 128, repo: 'acme/thing', dir: '/work/thing', verdict: 'pass' })
+  const blind = fake('Orch: belt', { result: WRITTEN }, { origin: 'git@github.com:acme/thing.git', files })
+  await handler()(blind.dollar, { pr: 128, repo: 'acme/thing', dir: '/work/thing', verdict: 'pass' })
+  expect(owedOf('s-one')).toEqual([])
 })

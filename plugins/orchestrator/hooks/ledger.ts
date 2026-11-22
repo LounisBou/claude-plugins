@@ -6,7 +6,7 @@
 // when it is an agent's (orchestratorOn, the one mapping the relay uses). No model, no refusal, no
 // gate: the call has already succeeded, so a write that fails is one log line and the answer goes on.
 // A pull request of the orchestration merged or closed, wherever it was (the machine's pull request
-// file, pr-file.ts), one that became Ready (the module closes its agent once done, close-agent.ts), one entering the anomaly, one its agent still holds turned conflicting with its base (its agent rebases), and one whose check failed at its head (its agent fixes it), wake the orchestrator once each: the module's tick
+// file, pr-file.ts), one that became Ready (the module closes its agent once done, close-agent.ts; a review session, once its round's verdict is recorded, review-close.ts), one entering the anomaly, one its agent still holds turned conflicting with its base (its agent rebases), and one whose check failed at its head (its agent fixes it), wake the orchestrator once each: the module's tick
 // (guards.ts) submits the lines prWake gives, the ended lines then archived.
 import { prRefsOf } from '../core/learning.ts'
 import { agentsOf, HOLD_LABEL, isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
@@ -20,6 +20,7 @@ import { configDir, dataDir, logLine, stateDir, storeIo, writeAtomic } from './m
 import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
 import { agentLine, closeFailedLine, holdsOf, mergeNowLine } from './ready-agent.ts'
 import { closeAgent, closeFacts, type CloseFacts as CloseNow, type ToClose } from './close-agent.ts'
+import { hasOwed, OWED_MS, owedOf, settleOwed, type Owed } from './review-close.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { draftGuardArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
 import { parseReconcile, reconcilePath } from '../core/pr-reconcile.ts'
@@ -324,7 +325,7 @@ async function chainTtys($: Held): Promise<Chain> {
  * idle, or with no session row on that tty, waits for a later tick; one with no tab on the chain is not this
  * orchestration's to close, told once.
  */
-async function closeOf($: Held, agent: string, records: readonly RecordText[], tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]>, chain: () => Promise<Chain>, ended: boolean): Promise<Act> {
+async function closeOf($: Held, agent: string, records: readonly RecordText[], tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]>, chain: () => Promise<Chain>, ended: boolean, review?: Owed): Promise<Act> {
   const listed = tabs.get(agent) ?? []
   if (listed.length === 0) return { kind: 'later', why: 'the launcher does not list it idle' }
   const own = await chain()
@@ -337,7 +338,9 @@ async function closeOf($: Held, agent: string, records: readonly RecordText[], t
   if (session === undefined) return { kind: 'later', why: `no session row of it on ${tty}` }
   const bound = await briefRowOf($, agent)
   const record = bound === undefined ? undefined : records.find(r => dirOf(r.path) === bound.dir && holdsRow(r.text, bound.row))
-  const target = { agent, tty, session, ended, cost: bound === undefined || record === undefined ? undefined : { record: record.path, row: bound.row } }
+  // A review session's cost goes on the row its verdict counted (review-close.ts); its brief names no row.
+  const cost = review !== undefined ? review.cost : bound === undefined || record === undefined ? undefined : { record: record.path, row: bound.row }
+  const target = { agent, tty, session, ended, cost }
   const facts = await closeFacts($, target)
   return facts.kind === 'close' ? { kind: 'close', session, target } : { ...facts, session }
 }
@@ -557,21 +560,36 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   // the wake that says them is delivered (`settle`), on facts read again then; one that fails then is told at the next
   // tick (`owed …` in `told`). Each close keeps what it was said for: the Ready keys and the ended lines to retry.
   const acts = new Map<string, Act>()
-  const closes = new Map<string, { agent: string; key: string; target: ToClose; ready: string[]; ended: string[] }>()
+  const closes = new Map<string, { agent: string; key: string; target: ToClose; ready: string[]; ended: string[]; reviews: Owed[] }>()
   let chain: Promise<Chain> | undefined
   const ownChain = (): Promise<Chain> => (chain ??= chainTtys($).catch((err: unknown): Chain => ({ kind: 'later', why: `the chain unread: ${messageOf(err)}` })))
-  const actOn = async (agent: string, key: string, what: string, at: { ready?: string; ended?: string }): Promise<{ act: Act; said: string | null }> => {
-    const act = acts.get(agent) ?? await closeOf($, agent, reading.records, reading.tabs, ownChain, at.ended !== undefined)
+  const actOn = async (agent: string, key: string, what: string, at: { ready?: string; ended?: string; review?: Owed }): Promise<{ act: Act; said: string | null }> => {
+    const act = acts.get(agent) ?? await closeOf($, agent, reading.records, reading.tabs, ownChain, at.ended !== undefined || at.review !== undefined, at.review)
     acts.set(agent, act)
     if (act.kind === 'close') {
-      const close = closes.get(agent) ?? { agent, key, target: act.target, ready: [], ended: [] }
+      const close = closes.get(agent) ?? { agent, key, target: act.target, ready: [], ended: [], reviews: [] }
       if (at.ready !== undefined) close.ready.push(at.ready)
       if (at.ended !== undefined) close.ended.push(at.ended)
+      if (at.review !== undefined) close.reviews.push(at.review)
       closes.set(agent, close)
     }
     const said = act.kind === 'close' ? agentLine({ key, what, agent, session: act.session })
       : act.kind === 'refused' ? agentLine({ key, what, agent, open: act.why }) : null
     return { act, said }
+  }
+  // The review sessions of a round whose verdict is recorded (review-close.ts) are closed like an agent at Ready, before the lines
+  // that name an agent: once, on the facts. The verdict's answer said it, so only a refusal or a failure is told, at its tick.
+  for (const one of owedOf(session)) {
+    if (now - one.at > OWED_MS) {
+      settleOwed(one)
+      await logLine($, 'ledger', `the close of ${one.agent} owed at the verdict of ${one.round} given up: its session stayed busy or was gone`)
+      continue
+    }
+    const { act } = await actOn(one.agent, one.round, 'verdict', { review: one })
+    if (act.kind === 'refused') {
+      settleOwed(one)
+      lines.push(closeFailedLine(one.agent, one.round, `left open: ${act.why}`))
+    }
   }
   for (const ended of reading.ended) {
     const pk = prKey(ended.line.repo, ended.line.pr)
@@ -663,15 +681,17 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
       // The facts read again: a message the agent took since the wake leaves it open, its pull requests acted on again later.
       const now = await closeFacts($, close.target).catch((err: unknown): CloseNow => ({ kind: 'later', why: `its facts unread: ${messageOf(err)}` }))
       if (now.kind !== 'close') {
-        told.add(`owed ${closeFailedLine(close.agent, close.key, `left open: ${now.why}`)}`)
+        // A review session still busy is closed at the end of its turn: tried again at the next tick, said by nothing.
+        if (close.reviews.length === 0 || now.kind !== 'later') told.add(`owed ${closeFailedLine(close.agent, close.key, `left open: ${now.why}`)}`)
         if (now.kind === 'later') {
           for (const key of close.ready) told.delete(key)
           for (const pk of close.ended) waiting.add(pk)
-        }
+        } else for (const one of close.reviews) settleOwed(one)
         continue
       }
       const done = await closeAgent($, close.target).catch((err: unknown) => ({ closed: false, why: `its close broke: ${messageOf(err)}` }))
       if (done.why !== null) told.add(`owed ${closeFailedLine(close.agent, close.key, done.why)}`)
+      for (const one of close.reviews) settleOwed(one)
     }
     const byRecord = new Map<string, LedgerLine[]>()
     for (const ended of reading.ended) {
@@ -685,5 +705,5 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
       }
     }
   }
-  return { lines, watching: reading.kept.length > 0 || reading.wanted || waiting.size > 0 || closes.size > 0, moved, settle }
+  return { lines, watching: reading.kept.length > 0 || reading.wanted || waiting.size > 0 || closes.size > 0 || hasOwed(session), moved, settle }
 }
