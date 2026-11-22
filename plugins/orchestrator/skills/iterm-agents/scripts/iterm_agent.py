@@ -1453,6 +1453,15 @@ def checkout_of(cwd):
     return path if os.path.exists(os.path.join(path, ".git")) else None
 
 
+def keeps_clone(path, expect):
+    """Whether a close leaves the checkout in place: an agent's own clone (a directory `.git`),
+    which `spawn --resume` needs within the hour, left unmarked as a rotation leaves it so the
+    sweep ends it as it ends any. The title is read as the close's guard reads it, its leading
+    activity glyph stripped. A review's pin (a worktree: `.git` is a file) and the checkout
+    of any other session are deleted at the close."""
+    return stable_title(expect).startswith(AGENT + ":") and os.path.isdir(os.path.join(path, ".git"))
+
+
 def delete_checkout(path):
     """Ask `workspace.sh delete` (never --discard) to remove a checkout and report it on
     stderr. A refusal is not an error of the close: it says why the checkout stays."""
@@ -6335,10 +6344,14 @@ def cmd_close(args):
         print(tail)
     name_lingering(recorded)
     # The session's purpose is over and its process is proved gone: its checkout goes with
-    # it, unless it holds work (`workspace.sh delete` refuses that, and says why).
+    # it, unless it holds work (`workspace.sh delete` refuses that, and says why), or is an
+    # agent's clone, which a resume within the hour needs (`keeps_clone`).
     if checkout:
         if marking:
             mark_kept(checkout)
+        elif keeps_clone(checkout, args.expect):
+            print("close: left checkout %s: a resume finds it within the hour, then the sweep ends it "
+                  "once its pull request is over" % checkout, file=sys.stderr)
         else:
             delete_checkout(checkout)
 

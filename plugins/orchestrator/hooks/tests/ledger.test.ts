@@ -30,6 +30,8 @@ type Over = {
   reportsTo?: string | null
   chain?: boolean
   rows?: Record<string, string>
+  // Paths that are another spelling of a file (a symlinked directory): reads, writes and `stat` go to the file, whose real path `stat` resolves.
+  links?: Record<string, string>
   readOnly?: boolean
   // A line another writer sets after the record was first read.
   race?: string
@@ -88,16 +90,21 @@ function fake(over: Over = {}) {
     clock: { sleep: async () => undefined },
     tool: over.autoMerge === undefined ? {} : { call: async (input: unknown) => { asked.push(input); return answers[Math.min(asked.length - 1, answers.length - 1)] } },
     fs: {
-      read: async (p: string) => {
+      read: async (path: string) => {
+        const p = over.links?.[path] ?? path
         if (over.chainFails && p.includes('/chains/')) throw new Error(`EACCES: ${p}`)
         if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
         const text = files.get(p)!
         if (over.race !== undefined && p === RECORD && !text.includes(over.race)) files.set(p, `${text}${over.race}\n`)
         return text
       },
-      write: async (p: string, text: string) => { if (over.readOnly && p.includes('dispatch-record')) throw new Error('disk full'); files.set(p, text) },
-      exists: async (p: string) => files.has(p),
-      stat: async (p: string) => { if (!files.has(p)) throw new Error(`ENOENT: ${p}`); return { kind: 'file' as const, size: files.get(p)!.length, mtimeMs: 1 } },
+      write: async (path: string, text: string) => { const p = over.links?.[path] ?? path; if (over.readOnly && p.includes('dispatch-record')) throw new Error('disk full'); files.set(p, text) },
+      exists: async (path: string) => files.has(over.links?.[path] ?? path),
+      stat: async (path: string) => {
+        const p = over.links?.[path] ?? path
+        if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
+        return { kind: 'file' as const, size: files.get(p)!.length, mtimeMs: 1, realPath: p }
+      },
       list: async (dir: string) => [...files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
         .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 1, isLink: false, mtimeMs: 0 })),
     },
@@ -422,7 +429,7 @@ test('a pull request merged outside the session closes its agent done with it an
   expect(woke.watching).toBe(true)
   expect(world.files.get(RECORD)).toContain('"pr":17')
   await woke.settle()
-  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
   expect(world.files.get(RECORD)).not.toContain('"pr":17')
   expect(world.files.get('/briefs/app/dispatch-record.archive.jsonl')).toContain('"pr":17')
   // Told and archived: the next tick has nothing to say.
@@ -466,7 +473,7 @@ for (const [label, agent] of [['asks', P17_ASKS], ['no status', P17_WORKING]] as
       const woke = await prWake(world.dollar, new Set())
       expect(woke.lines).toEqual([closedLine('acme/app#17', what)])
       await woke.settle()
-      expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
+      expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
       expect(world.files.get(RECORD)).not.toContain('"pr":17')
     })
   }
@@ -550,7 +557,7 @@ test('a pull request that becomes Ready closes its agent done with it, its check
   const woke = await prWake(world.dollar, told)
   expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
   await woke.settle()
-  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
   expect((await prWake(world.dollar, told)).lines).toEqual([])
   expect(closes(world.runs)).toHaveLength(1)
 })
@@ -649,7 +656,7 @@ test('an agent is closed on the tab of this orchestration\'s chain: another orch
   const woke = await prWake(both.dollar, new Set())
   expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
   await woke.settle()
-  expect(closes(both.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
+  expect(closes(both.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
   // Only the other orchestration's tab idle: nothing closed, told once.
   const alone = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: foreign })
   const told = new Set<string>()
@@ -671,7 +678,7 @@ test('an agent whose own tab is busy waits, whatever tab of the same name anothe
   const idle = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: `${running('Agent: p17')}\n${foreign}` })
   const then = await prWake(idle.dollar, told)
   await then.settle()
-  expect([then.lines, closes(idle.runs)]).toEqual([[closedLine('acme/app#17', 'is Ready')], ['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout']])
+  expect([then.lines, closes(idle.runs)]).toEqual([[closedLine('acme/app#17', 'is Ready')], ['--tty /dev/ttys000 --expect-title Agent: p17']])
 })
 
 test('a session with no chain owner closes nothing and says why once; a chain that cannot be read waits for a later tick, logged', async () => {
@@ -849,6 +856,139 @@ test('a pull request an agent still attends through its earlier list holds it: a
   const ready = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n${reviewedLine(21, 'acme/lib')}\n`, ...P17_SESSION },
     forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', labels: [{ name: 'Ready' }] }]), 'acme/lib': JSON.stringify([{ number: 21, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running('Agent: p17') })
   expect((await prWake(ready.dollar, new Set())).lines).toEqual(['[module] acme/app#17 is Ready: its agent Agent: p17 still holds acme/lib#21; tell it.'])
+})
+
+// A pull request worked by two agents still running: the line names the last one put on it and the one before.
+const twoAgentsLine = JSON.stringify({ v: 1, ledger: 'pr', repo: 'acme/app', pr: 17, status: 'working', agent: 'Agent: p17', earlier: ['Agent: p18'], since: '2026-11-14T09:00:00Z', updated: '2026-11-14T09:30:00Z' })
+const P18_DONE = doneAgent('s-p18', 'Agent: p18', 418, '/dev/ttys001')
+const P18_CLOSED = closedLine('acme/app#17', 'merged', 'Agent: p18', 's-p18')
+
+test('a merge closes every live agent of its line, each told once, not the first alone', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${twoAgentsLine}\n`, ...P17_DONE, ...P18_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17', 'Agent: p18') })
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'merged'), P18_CLOSED])
+  await woke.settle()
+  expect(closes(world.runs).sort()).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17', '--tty /dev/ttys001 --expect-title Agent: p18'])
+  expect(world.files.get(RECORD)).not.toContain('"pr":17')
+})
+
+test('a pull request closed unmerged closes every live agent of its line', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${twoAgentsLine}\n`, ...P17_DONE, ...P18_DONE }, forge: { 'acme/app': '[]' }, closed: { 'acme/app': { 17: 'CLOSED' } }, launcher: running('Agent: p17', 'Agent: p18') })
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'closed unmerged'), closedLine('acme/app#17', 'closed unmerged', 'Agent: p18', 's-p18')])
+  await woke.settle()
+  expect(closes(world.runs)).toHaveLength(2)
+})
+
+test('a merge judges each agent of its line alone: the one that holds another row is told, the other is closed', async () => {
+  const held = `${rowOf(8, 'open', { agent: 'Agent: p17' })}\n${rowOf(9, 'open', { agent: 'Agent: p17' })}`
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${held}\n${twoAgentsLine}\n`, ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE, ...P18_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17', 'Agent: p18') })
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 9 (app); tell it.', P18_CLOSED])
+  await woke.settle()
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys001 --expect-title Agent: p18'])
+})
+
+test('a merge closes the agent of its line that is idle and waits for the one that is busy: its line is kept, the busy one closed at the first tick it is idle', async () => {
+  const busyHost = { [`${HOME}/.claude/sessions/417.json`]: JSON.stringify({ pid: 417, sessionId: 's-p17', cwd: '/work/s-p17', status: 'busy' }) }
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${twoAgentsLine}\n`, ...P17_DONE, ...P18_DONE, ...busyHost }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17', 'Agent: p18') })
+  const told = new Set<string>()
+  const first = await prWake(world.dollar, told)
+  expect(first.lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 left open until it is done and idle (its host is busy).', P18_CLOSED])
+  expect(first.watching).toBe(true)
+  await first.settle()
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys001 --expect-title Agent: p18'])
+  expect(world.files.get(RECORD)).toContain('"pr":17')
+  world.files.set(`${HOME}/.claude/sessions/417.json`, JSON.stringify({ pid: 417, sessionId: 's-p17', cwd: '/work/s-p17', status: 'idle' }))
+  const then = await prWake(world.dollar, told)
+  expect(then.lines).toEqual([closedLine('acme/app#17', 'merged')])
+  await then.settle()
+  expect(closes(world.runs)).toHaveLength(2)
+  expect(world.files.get(RECORD)).not.toContain('"pr":17')
+})
+
+test('a Ready pull request closes every live agent of its line, each told once', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${twoAgentsLine}\n`, ...P17_DONE, ...P18_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17', 'Agent: p18') })
+  const told = new Set<string>()
+  const woke = await prWake(world.dollar, told)
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready'), closedLine('acme/app#17', 'is Ready', 'Agent: p18', 's-p18')])
+  await woke.settle()
+  expect(closes(world.runs)).toHaveLength(2)
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
+})
+
+test('a Ready pull request whose second agent is not done yet tells the first, and the second at the tick it is done, not before', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${twoAgentsLine}\n`, ...P17_DONE, ...P18_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17', 'Agent: p18') })
+  // The second agent took a message: its last turn is no longer a done.
+  world.files.delete(`${STATE}/store/waits/s-p18`)
+  const told = new Set<string>()
+  const first = await prWake(world.dollar, told)
+  expect(first.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  await first.settle()
+  world.files.set(`${STATE}/store/waits/s-p18`, P18_DONE[`${STATE}/store/waits/s-p18`]!)
+  const second = await prWake(world.dollar, told)
+  expect(second.lines).toEqual([closedLine('acme/app#17', 'is Ready', 'Agent: p18', 's-p18')])
+  await second.settle()
+  expect(closes(world.runs)).toHaveLength(2)
+})
+
+// The record of the orchestration registered under two spellings of one path (a symlinked directory): one record.
+const LINK = '/links/app/dispatch-record.jsonl'
+const spelled = (order: readonly string[]): Record<string, string> => ({ [`${STATE}/records/s-orch`]: `${order.join('\n')}\n`, [`${LINK}.owner`]: `${ORCH}\n` })
+
+test('a merge whose two agents the launcher refuses tells each refusal once, and the next tick says nothing more', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${twoAgentsLine}\n`, ...P17_DONE, ...P18_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17', 'Agent: p18'), dirty: ' M a.txt' })
+  const told = new Set<string>()
+  // No settle between the ticks: the ended line stays in its record, read again.
+  const first = await prWake(world.dollar, told)
+  const open = (agent: string) => `[module] acme/app#17 merged: its agent ${agent} left open: tree not clean in /work/${agent === 'Agent: p17' ? 's-p17' : 's-p18'} (1 paths changed, 0 commits unpushed).`
+  expect(first.lines).toEqual([open('Agent: p17'), open('Agent: p18')])
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
+})
+
+test('a Ready head of two agents in an auto-merge repository says to merge once, with the first agent\'s line', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${twoAgentsLine}\n`, ...P17_DONE, ...P18_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17', 'Agent: p18'), autoMerge: { result: 'acme/app' } })
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready') + MERGE_NOW, closedLine('acme/app#17', 'is Ready', 'Agent: p18', 's-p18')])
+})
+
+// A record of another session of the machine that names the orchestration as its owner, and the registry of the orchestrator's own.
+const registered = (own: string, other: string): Record<string, string> => ({
+  [`${STATE}/records/s-orch`]: `${own}\n`, [`${STATE}/records/s-other`]: `${other}\n`, [`${LINK}.owner`]: `${ORCH}\n`,
+})
+
+test('the one record the orchestrator\'s own registry and another session\'s registry name by its two spellings is read once, in either order', async () => {
+  for (const [own, other] of [[RECORD, LINK], [LINK, RECORD]] as const) {
+    const rows = `${rowOf(8, 'open', { agent: 'Agent: p17' })}\n${mergedLine}\n`
+    const world = fake({ session: 's-orch', reportsTo: null, links: { [LINK]: RECORD }, rows: { [RECORD]: rows, ...registered(own, other), ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+    expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'merged')])
+  }
+})
+
+test('the one record registered under two spellings of its path is read once: a merge is told once and the row of the agent\'s own brief holds nothing', async () => {
+  for (const order of [[RECORD, LINK], [LINK, RECORD]]) {
+    const rows = `${rowOf(8, 'open', { agent: 'Agent: p17' })}\n${mergedLine}\n`
+    const world = fake({ session: 's-orch', reportsTo: null, links: { [LINK]: RECORD }, rows: { [RECORD]: rows, ...spelled(order), ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+    const woke = await prWake(world.dollar, new Set())
+    expect(woke.lines).toEqual([closedLine('acme/app#17', 'merged')])
+    await woke.settle()
+    expect(closes(world.runs)).toHaveLength(1)
+  }
+})
+
+test('the one record registered under two spellings of its path is read once at Ready too: the agent\'s own row keeps it open no more, one line is told', async () => {
+  const rows = `${rowOf(8, 'open', { agent: 'Agent: p17' })}\n${P17_LINE}\n`
+  const world = fake({ session: 's-orch', reportsTo: null, links: { [LINK]: RECORD }, rows: { [RECORD]: rows, ...spelled([RECORD, LINK]), ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  await woke.settle()
+  expect(closes(world.runs)).toHaveLength(1)
+})
+
+test('another row of the record that names the agent still holds it, whatever the spellings the record is registered under', async () => {
+  const rows = `${rowOf(8, 'open', { agent: 'Agent: p17' })}\n${rowOf(9, 'open', { agent: 'Agent: p17' })}\n${mergedLine}\n`
+  const world = fake({ session: 's-orch', reportsTo: null, links: { [LINK]: RECORD }, rows: { [RECORD]: rows, ...spelled([RECORD, LINK]), ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  expect((await prWake(world.dollar, new Set())).lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 9 (app); tell it.'])
 })
 
 test('a mergeability the forge still computes (UNKNOWN) is no conflict: nothing is told', async () => {
