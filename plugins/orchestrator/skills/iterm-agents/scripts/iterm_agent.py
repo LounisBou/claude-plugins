@@ -1704,7 +1704,7 @@ class PairUnreadable(Exception):
     or where it was looked for, and what was missing."""
 
 
-def read_pair(session_id):
+def read_pair(session_id, any_plan=False):
     """`(model, effort, path)` of the session `session_id` NOW: the last main-thread request
     its transcript holds, its `params.model` and `params.output_config.effort`.
 
@@ -1719,7 +1719,7 @@ def read_pair(session_id):
         raise PairUnreadable("no session id to read a pair for (CLAUDE_CODE_SESSION_ID unset)")
     # The newest of its transcripts: a session resumed from another checkout has one under
     # each, and its requests go to the one written last.
-    path = transcript_of_session(session_id)
+    path = transcript_of_session(session_id, any_plan)
     if not path:
         raise PairUnreadable("no transcript for session %s under %s" % (session_id, PROJECTS_DIR))
     last = None
@@ -5381,7 +5381,7 @@ def pair_of_launch(args, auditor_successor, pair_from=""):
             print("spawn: %s is not read for a resume: it runs on its session's own model and "
                   "effort" % "/".join(given), file=sys.stderr)
         try:
-            model, effort, path = read_pair(args.resume)
+            model, effort, path = read_pair(args.resume, any_plan=True)
         except PairUnreadable as exc:
             die("spawn: refused: the pair of session %s cannot be read (%s): %s"
                 % (args.resume, exc, FRESH_AGENT))

@@ -4323,6 +4323,8 @@ check "a resume from plan 2 finds the transcript of a plan 1 session in plan 1's
   "$(rspl "$BIS" --resume s-rs-sep-one | grep -cF 'export CLAUDE_CONFIG_DIR')|$(rspl "$BIS" --resume s-rs-sep-one | grep -c -- '--model r-model --effort high')|$(rsp "$BIS" --resume s-rs-sep-one | grep -c 'spawn: the resume runs on plan 1, the one session s-rs-sep-one lived on')|$(rsp "$BIS" --resume s-rs-sep-one | grep -c 'no transcript')"
 check "a resume from plan 1 finds the transcript of a plan 2 session in plan 2's folder and runs there" "1|1|0" \
   "$(rspl '' --resume s-rs-sep-two | grep -cF "export CLAUDE_CONFIG_DIR=$BIS &&")|$(rspl '' --resume s-rs-sep-two | grep -c -- '--model r-model --effort high')|$(rsp '' --resume s-rs-sep-two | grep -c 'no transcript')"
+check "an explicit --plan of the other plan runs the resume there on the transcript's pair, found in the other folder, the cache lost said" "0|1|1|0" \
+  "$(rspl '' --resume s-rs-sep-two --plan 1 | grep -cF 'export CLAUDE_CONFIG_DIR')|$(rspl '' --resume s-rs-sep-two --plan 1 | grep -c -- '--model r-model --effort high')|$(rsp '' --resume s-rs-sep-two --plan 1 | grep -c 'spawn: --plan 1 is not the plan session s-rs-sep-two lived on (2): its cache is lost')|$(rsp '' --resume s-rs-sep-two --plan 1 | grep -c 'no transcript')"
 check "a session whose transcript is in neither plan's folder is still refused" "1|1" \
   "$(rsp "$BIS" --resume s-rs-sep-none >/dev/null 2>&1; echo $?)|$(rsp "$BIS" --resume s-rs-sep-none | grep -c 'no transcript for session s-rs-sep-none')"
 # An agent's pair is its orchestrator's: a tier, or a model with its effort. The plugin ships
