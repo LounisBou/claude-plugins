@@ -3610,6 +3610,41 @@ stackfix "$SF" main $'on: pull_request\n'
 printf '%s' '{"protected":true}' > "$SF/GET_repos_acme_thing_branches_feat%2Fa.json"
 check "a protected head is no stacked base: 10 is alone, 11 and 12 stack on it" "none|bottom-up feat/a 11 12" "$(plan 10)|$(plan 11)"
 
+# A draft above is left out of the stack with all that stands on it: work stacked on a delivery is opened as
+# a draft on purpose, and merges nothing. A draft below stays, the asked pull request needs it.
+# stackdraft <drafts> <sibling> : the stack above, the pull requests numbered <drafts> (space separated) drafts,
+# and with <sibling> 1 a pull request 13 (feat/d on feat/a, a sibling of 11).
+stackdraft() {
+  stackfix "$SF" main $'on: pull_request\n'
+  python3 - "$SF" "$1" "$2" <<'PY'
+import json, sys
+d, drafts, sibling = sys.argv[1], [int(n) for n in sys.argv[2].split()], sys.argv[3] == "1"
+listing = "%s/GET_repos_acme_thing_pulls__state=open&per_page=100.json" % d
+pulls = json.load(open(listing))
+if sibling:
+    pulls.append({"number": 13, "state": "open", "head": {"ref": "feat/d", "repo": {"full_name": "acme/thing"}},
+                  "base": {"ref": "feat/a", "repo": {"default_branch": "main"}}})
+for p in pulls:
+    p["draft"] = p["number"] in drafts
+    json.dump(p, open("%s/GET_repos_acme_thing_pulls_%d.json" % (d, p["number"]), "w"))
+json.dump(pulls, open(listing, "w"))
+PY
+}
+stackdraft "11" 0
+check "a draft above is left out with what stands on it: the bottom merges alone" "none" "$(plan 10)"
+stackdraft "11" 1
+check "a draft above is left out and its non-draft sibling stays" "bottom-up main 10 13" "$(plan 10)"
+stackdraft "12" 0
+check "a draft on top of the stack is left out, the rest stays" "bottom-up main 10 11" "$(plan 10)"
+stackdraft "11 12" 1
+check "a draft above and its draft descendant are left out together" "bottom-up main 10 13" "$(plan 10)"
+stackdraft "10" 0
+check "a draft below the asked pull request stays a member, the walk refuses on it" "bottom-up main 10 11 12" "$(plan 11)"
+stackdraft "11" 0
+check "the asked pull request itself a draft: the stack is as before" "bottom-up main 10 11 12" "$(plan 11)"
+stackdraft "" 0
+check "no draft: the whole stack" "bottom-up main 10 11 12" "$(plan 10)"
+
 # Without --stack the merge goes through whatever the stack, as it always did.
 stackfix "$SF" main $'on: pull_request\n'
 printf '%s' '{"merged":true,"message":"ok"}' > "$SF/PUT_repos_acme_thing_pulls_10_merge.json"
