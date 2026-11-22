@@ -3,7 +3,7 @@
 // never a line asking the orchestrator: read on facts alone, the agent's last turn ended on `status: done`
 // (its wait file `delivered`, cleared at its next turn's start) unless its pull request is merged or closed, which
 // ends its work whatever its last turn said, its host idle, its checkout clean with nothing unpushed (the facts its delivery line reads, relay.ts); then, once the wake that says it is delivered,
-// the launcher's `close`, its checkout kept so its session resumes with `spawn --resume` within the hour, and its
+// the launcher's `close`, its clone left in place, unmarked, so its session resumes with `spawn --resume` within the hour, and its
 // session's cost on its row (`dispatch-record.sh cost`). A close the facts do not allow yet is tried again at a
 // later tick; one they refuse is told once.
 import { launcherOf } from '../core/orchestration.ts'
@@ -66,7 +66,7 @@ export async function closeFacts($: Held, a: ToClose): Promise<CloseFacts> {
 
 /** Closes the agent and records its cost; `why`, the fact that failed, null when both are done (an agent whose brief names no row is logged). */
 export async function closeAgent($: Held, a: ToClose): Promise<{ closed: boolean; why: string | null }> {
-  const closed = await $.process.run(['bash', launcherOf($.plugin.root), 'close', '--tty', a.tty, '--expect-title', a.agent, '--keep-checkout'], { timeoutMs: CLOSE_BOUND_MS })
+  const closed = await $.process.run(['bash', launcherOf($.plugin.root), 'close', '--tty', a.tty, '--expect-title', a.agent], { timeoutMs: CLOSE_BOUND_MS })
     .catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: messageOf(err) }))
   if (closed.exitCode !== 0) return { closed: false, why: `the launcher's close failed: ${lastLine(closed) || `exit ${closed.exitCode}`}` }
   await logLine($, 'ledger', `closed ${a.agent} on ${a.tty} (session ${a.session})`)

@@ -193,7 +193,8 @@ $SCRIPT close --tty /dev/ttysNNN --expect-title <substring> [--keep-checkout] [-
     # waits for the host CLI to leave the tty, and fails loudly naming what survived.
     # Once the close is proved, the checkout (or pin) it worked in under the workspaces root
     # is deleted: `workspace.sh delete`, never --discard, its host temporary directory
-    # with it; an agent's clone (`--expect-title Agent: …`) stays, unmarked as `rotate` leaves it. The outcome is on stderr (`close: deleted checkout <path>` or `close: kept
+    # with it; an agent's clone (`--expect-title Agent: …`) stays, unmarked. The outcome
+    # is on stderr (`close: deleted checkout <path>`, `close: left checkout <path>` or `close: kept
     # checkout <path>: <reason>`); a refused delete never fails the close. --keep-checkout marks it kept:
     # with its owner gone only a `delete` ends it.
     # A host pid the hooks module's store records on the tty and the table still lists after

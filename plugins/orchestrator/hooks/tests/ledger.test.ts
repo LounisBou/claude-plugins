@@ -429,7 +429,7 @@ test('a pull request merged outside the session closes its agent done with it an
   expect(woke.watching).toBe(true)
   expect(world.files.get(RECORD)).toContain('"pr":17')
   await woke.settle()
-  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
   expect(world.files.get(RECORD)).not.toContain('"pr":17')
   expect(world.files.get('/briefs/app/dispatch-record.archive.jsonl')).toContain('"pr":17')
   // Told and archived: the next tick has nothing to say.
@@ -473,7 +473,7 @@ for (const [label, agent] of [['asks', P17_ASKS], ['no status', P17_WORKING]] as
       const woke = await prWake(world.dollar, new Set())
       expect(woke.lines).toEqual([closedLine('acme/app#17', what)])
       await woke.settle()
-      expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
+      expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
       expect(world.files.get(RECORD)).not.toContain('"pr":17')
     })
   }
@@ -557,7 +557,7 @@ test('a pull request that becomes Ready closes its agent done with it, its check
   const woke = await prWake(world.dollar, told)
   expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
   await woke.settle()
-  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
   expect((await prWake(world.dollar, told)).lines).toEqual([])
   expect(closes(world.runs)).toHaveLength(1)
 })
@@ -656,7 +656,7 @@ test('an agent is closed on the tab of this orchestration\'s chain: another orch
   const woke = await prWake(both.dollar, new Set())
   expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
   await woke.settle()
-  expect(closes(both.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout'])
+  expect(closes(both.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
   // Only the other orchestration's tab idle: nothing closed, told once.
   const alone = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: foreign })
   const told = new Set<string>()
@@ -678,7 +678,7 @@ test('an agent whose own tab is busy waits, whatever tab of the same name anothe
   const idle = fake({ session: 's-orch', reportsTo: null, rows, forge: { 'acme/app': READY_PR }, launcher: `${running('Agent: p17')}\n${foreign}` })
   const then = await prWake(idle.dollar, told)
   await then.settle()
-  expect([then.lines, closes(idle.runs)]).toEqual([[closedLine('acme/app#17', 'is Ready')], ['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout']])
+  expect([then.lines, closes(idle.runs)]).toEqual([[closedLine('acme/app#17', 'is Ready')], ['--tty /dev/ttys000 --expect-title Agent: p17']])
 })
 
 test('a session with no chain owner closes nothing and says why once; a chain that cannot be read waits for a later tick, logged', async () => {
@@ -868,7 +868,7 @@ test('a merge closes every live agent of its line, each told once, not the first
   const woke = await prWake(world.dollar, new Set())
   expect(woke.lines).toEqual([closedLine('acme/app#17', 'merged'), P18_CLOSED])
   await woke.settle()
-  expect(closes(world.runs).sort()).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17 --keep-checkout', '--tty /dev/ttys001 --expect-title Agent: p18 --keep-checkout'])
+  expect(closes(world.runs).sort()).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17', '--tty /dev/ttys001 --expect-title Agent: p18'])
   expect(world.files.get(RECORD)).not.toContain('"pr":17')
 })
 
@@ -886,7 +886,7 @@ test('a merge judges each agent of its line alone: the one that holds another ro
   const woke = await prWake(world.dollar, new Set())
   expect(woke.lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 still holds row 9 (app); tell it.', P18_CLOSED])
   await woke.settle()
-  expect(closes(world.runs)).toEqual(['--tty /dev/ttys001 --expect-title Agent: p18 --keep-checkout'])
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys001 --expect-title Agent: p18'])
 })
 
 test('a merge closes the agent of its line that is idle and waits for the one that is busy: its line is kept, the busy one closed at the first tick it is idle', async () => {
@@ -897,7 +897,7 @@ test('a merge closes the agent of its line that is idle and waits for the one th
   expect(first.lines).toEqual(['[module] acme/app#17 merged: its agent Agent: p17 left open until it is done and idle (its host is busy).', P18_CLOSED])
   expect(first.watching).toBe(true)
   await first.settle()
-  expect(closes(world.runs)).toEqual(['--tty /dev/ttys001 --expect-title Agent: p18 --keep-checkout'])
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys001 --expect-title Agent: p18'])
   expect(world.files.get(RECORD)).toContain('"pr":17')
   world.files.set(`${HOME}/.claude/sessions/417.json`, JSON.stringify({ pid: 417, sessionId: 's-p17', cwd: '/work/s-p17', status: 'idle' }))
   const then = await prWake(world.dollar, told)
@@ -935,6 +935,35 @@ test('a Ready pull request whose second agent is not done yet tells the first, a
 // The record of the orchestration registered under two spellings of one path (a symlinked directory): one record.
 const LINK = '/links/app/dispatch-record.jsonl'
 const spelled = (order: readonly string[]): Record<string, string> => ({ [`${STATE}/records/s-orch`]: `${order.join('\n')}\n`, [`${LINK}.owner`]: `${ORCH}\n` })
+
+test('a merge whose two agents the launcher refuses tells each refusal once, and the next tick says nothing more', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${twoAgentsLine}\n`, ...P17_DONE, ...P18_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17', 'Agent: p18'), dirty: ' M a.txt' })
+  const told = new Set<string>()
+  // No settle between the ticks: the ended line stays in its record, read again.
+  const first = await prWake(world.dollar, told)
+  const open = (agent: string) => `[module] acme/app#17 merged: its agent ${agent} left open: tree not clean in /work/${agent === 'Agent: p17' ? 's-p17' : 's-p18'} (1 paths changed, 0 commits unpushed).`
+  expect(first.lines).toEqual([open('Agent: p17'), open('Agent: p18')])
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
+})
+
+test('a Ready head of two agents in an auto-merge repository says to merge once, with the first agent\'s line', async () => {
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${twoAgentsLine}\n`, ...P17_DONE, ...P18_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17', 'Agent: p18'), autoMerge: { result: 'acme/app' } })
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready') + MERGE_NOW, closedLine('acme/app#17', 'is Ready', 'Agent: p18', 's-p18')])
+})
+
+// A record of another session of the machine that names the orchestration as its owner, and the registry of the orchestrator's own.
+const registered = (own: string, other: string): Record<string, string> => ({
+  [`${STATE}/records/s-orch`]: `${own}\n`, [`${STATE}/records/s-other`]: `${other}\n`, [`${LINK}.owner`]: `${ORCH}\n`,
+})
+
+test('the one record the orchestrator\'s own registry and another session\'s registry name by its two spellings is read once, in either order', async () => {
+  for (const [own, other] of [[RECORD, LINK], [LINK, RECORD]] as const) {
+    const rows = `${rowOf(8, 'open', { agent: 'Agent: p17' })}\n${mergedLine}\n`
+    const world = fake({ session: 's-orch', reportsTo: null, links: { [LINK]: RECORD }, rows: { [RECORD]: rows, ...registered(own, other), ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+    expect((await prWake(world.dollar, new Set())).lines).toEqual([closedLine('acme/app#17', 'merged')])
+  }
+})
 
 test('the one record registered under two spellings of its path is read once: a merge is told once and the row of the agent\'s own brief holds nothing', async () => {
   for (const order of [[RECORD, LINK], [LINK, RECORD]]) {
