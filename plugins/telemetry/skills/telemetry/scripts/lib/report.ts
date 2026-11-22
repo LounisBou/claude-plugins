@@ -475,7 +475,7 @@ export function report(input: ReportInput): string[] {
     groups.set(project ?? 'unattributed', { cost: g.cost + (cost ?? 0), tokens: g.tokens + s.tokens })
     const [only, ...more] = s.targets
     if (cost === undefined) continue
-    if (only !== undefined && more.length === 0) prCost.set(only, (prCost.get(only) ?? 0) + cost)
+    if (only !== undefined && more.length === 0) prCost.set(only.toLowerCase(), (prCost.get(only.toLowerCase()) ?? 0) + cost)
     else unnamed += cost
   }
   const active = kept.length
@@ -507,7 +507,8 @@ export function report(input: ReportInput): string[] {
   }
 
   // Pull requests merged in the week: delay from GitHub, cost from the sessions that name only that one.
-  const repos = [...new Set([...tools, ...[...groups.keys()].filter(r => r.includes('/')), ...[...prCost.keys()].map(k => k.split('#')[0] ?? '')])].filter(r => r !== '')
+  // GitHub names ignore case: a repository spelt two ways is listed once, under its first spelling.
+  const repos = [...new Map([...tools, ...[...groups.keys()].filter(r => r.includes('/')), ...[...prCost.keys()].map(k => k.split('#')[0] ?? '')].filter(r => r !== '').reverse().map(r => [r.toLowerCase(), r])).values()].reverse()
   const delays: number[] = []
   const mergedByDay = new Map<string, number>()
   let unlisted = 0
@@ -524,7 +525,7 @@ export function report(input: ReportInput): string[] {
       if (Number.isFinite(delay)) delays.push(delay)
       const mergedDay = dayOf(text(row['mergedAt']))
       if (mergedDay !== undefined) mergedByDay.set(mergedDay, (mergedByDay.get(mergedDay) ?? 0) + 1)
-      const spent = prCost.get(`${repo}#${num(row['number'])}`)
+      const spent = prCost.get(`${repo}#${num(row['number'])}`.toLowerCase())
       out.push(`  ${repo}#${num(row['number'])}  ${(Number.isFinite(delay) ? span(delay) : 'n/a').padStart(8)}  ${spent === undefined ? 'cost n/a' : usd(spent)}`)
     }
   }
@@ -604,17 +605,14 @@ export function report(input: ReportInput): string[] {
   const failed = runs.find(([, r]) => typeof r === 'string')
   const rows = runs.flatMap(([, r]) => (typeof r === 'string' ? [] : r.map(record).filter(x => inWindow(dayOf(text(x['createdAt']))))))
   const figures: string[] = [
-    NA('which lines can run and which agents are alive is host state (ListAgents), never recorded'),
-    NA('the time from a merge to its installation needs the plugin cache\'s install times, which nothing here records'),
     turns.length === 0 ? NA('no turn_end event with a context fill in the week') : `${high} of ${turns.length} turns above ${tok(TARGETS.contextTokens)} (${pct(high, turns.length)}), peak ${tok(turns.reduce((n, t) => Math.max(n, t.tokens), 0))}; ${[...roleTurns].map(([role, xs]) => `${role} ${xs.filter(x => x > TARGETS.contextTokens).length}/${xs.length}`).join(', ')}`,
     lives.length === 0 ? NA('no orchestrator session ended in the week') : `median ${span(median(lives) ?? 0)} over ${lives.length} orchestrator sessions (target ≥ ${span(TARGETS.generationMs)})`,
     firsts.length === 0 ? NA('no orchestrator start in a measure file and no turn_end of one') : `median ${tok(median(firsts) ?? 0)} over ${firsts.length} orchestrator sessions (target ≤ ${tok(TARGETS.firstTurnTokens)})`,
     merged === undefined && lineMedian === undefined ? NA('no pull request merged and no line closed in the week') : `pull request ${merged === undefined ? NA('none merged') : `median ${span(merged)} over ${delays.length}${unlisted > 0 ? `, ${unlisted} repository listing(s) n/a` : ''}`}; line ${lineMedian === undefined ? NA('none closed') : `median ${span(lineMedian)} over ${lines.length}`} (target ≤ ${span(TARGETS.lineToMergeMs)})`,
     round.length === 0 ? NA('no operator question in round/ for the week') : `${repeated} of ${round.length} questions repeat an earlier one's blocks line, exact match (a floor; target 0)`,
-    NA('the lines of code per release need the git history of each release, which no source here holds'),
     tools.length === 0 ? NA('no tool repository') : failed !== undefined && typeof failed[1] === 'string' ? NA(`${failed[0]}: ${failed[1]}`) : rows.length === 0 ? NA('no run of main in the week') : `${rows.filter(x => x['conclusion'] === 'success').length} green, ${rows.filter(x => x['conclusion'] === 'failure').length} red runs on main (target 0 red)`,
   ]
-  const names = ['agents on every runnable line', 'merge → in service', 'context height', 'life of an orchestrator session', 'first turn of a new session', 'delay line → merge', 'a question reaches him once', 'method code per release', 'main green']
+  const names = ['context height', 'life of an orchestrator session', 'first turn of a new session', 'delay line → merge', 'a question reaches him once', 'main green']
   out.push('', ...figures.map((f, i) => `${i + 1} ${names[i] ?? ''}: ${f}`))
   out.push('', ...checkLines(input))
   if (skipped.n > 0) out[0] += ` (${skipped.n} unreadable event lines or files left out)`
