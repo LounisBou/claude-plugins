@@ -110,9 +110,10 @@ test('a session\'s cost in the week is its cumulative cost at the week\'s end le
   })
 })
 
-test('the spend by plan: each session under the plan its events name last, one that names none unknown', () => {
+test('the spend by plan: a session resumed on the other plan splits its cost by the rises on each, one with no plan is unknown', () => {
   const events = [
-    ev('2026-11-10T10:00:00Z', 'turn_end', S(1), { cost_usd: 6, plan: 'plan1' }),
+    ev('2026-11-07T10:00:00Z', 'turn_end', S(1), { cost_usd: 2, plan: 'plan2' }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(1), { cost_usd: 8, plan: 'plan1' }),
     ev('2026-11-10T10:00:00Z', 'turn_end', S(2), { cost_usd: 3, plan: 'plan2' }),
     ev('2026-11-10T10:00:00Z', 'turn_end', S(3), { cost_usd: 1, plan: 'plan1' }),
     ev('2026-11-11T10:00:00Z', 'turn_end', S(3), { cost_usd: 2, plan: 'plan2' }),
@@ -120,10 +121,11 @@ test('the spend by plan: each session under the plan its events name last, one t
   ]
   scratch({ events }, config => {
     const out = lines(config)
-    const at = out.indexOf('  by plan (the account each session ran on)')
+    const at = out.indexOf('  by plan (the account each session ran on; a session that ran on two counts on both)')
     assert.notEqual(at, -1)
-    assert.match(out[at + 1] ?? '', /^ {2}plan1 +50 % +\$6\.00 +0k {2}1 session$/)
-    assert.match(out[at + 2] ?? '', /^ {2}plan2 +42 % +\$5\.00 +0k {2}2 sessions$/)
+    // S(1) spent $2 on plan2 before the week, $6 on plan1 inside it; S(3) $1 on plan1 then $1 on plan2.
+    assert.match(out[at + 1] ?? '', /^ {2}plan1 +58 % +\$7\.00 +0k {2}2 sessions$/)
+    assert.match(out[at + 2] ?? '', /^ {2}plan2 +33 % +\$4\.00 +0k {2}2 sessions$/)
     assert.match(out[at + 3] ?? '', /^ {2}unknown +8 % +\$1\.00 +0k {2}1 session$/)
   })
 })
