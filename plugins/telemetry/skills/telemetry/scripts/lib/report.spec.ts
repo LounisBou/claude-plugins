@@ -110,23 +110,27 @@ test('a session\'s cost in the week is its cumulative cost at the week\'s end le
   })
 })
 
-test('the spend by plan: a session resumed on the other plan splits its cost by the rises on each, one with no plan is unknown', () => {
+test('the spend by plan: a session resumed on the other plan splits its cost by its turns on each, a restart and the order of the lines included', () => {
+  const turn = (ts: string, session: string, plan: string | undefined, cost: number, turnCost: number): Record<string, unknown> => ev(ts, 'turn_end', session, { cost_usd: cost, turn_cost_usd: turnCost, ...(plan === undefined ? {} : { plan }) })
   const events = [
-    ev('2026-11-07T10:00:00Z', 'turn_end', S(1), { cost_usd: 2, plan: 'plan2' }),
-    ev('2026-11-10T10:00:00Z', 'turn_end', S(1), { cost_usd: 8, plan: 'plan1' }),
-    ev('2026-11-10T10:00:00Z', 'turn_end', S(2), { cost_usd: 3, plan: 'plan2' }),
-    ev('2026-11-10T10:00:00Z', 'turn_end', S(3), { cost_usd: 1, plan: 'plan1' }),
-    ev('2026-11-11T10:00:00Z', 'turn_end', S(3), { cost_usd: 2, plan: 'plan2' }),
-    ev('2026-11-10T10:00:00Z', 'turn_end', S(4), { cost_usd: 1 }),
+    turn('2026-11-07T10:00:00Z', S(1), 'plan2', 2, 2),
+    turn('2026-11-10T10:00:00Z', S(1), 'plan1', 8, 6),
+    turn('2026-11-10T10:00:00Z', S(2), 'plan2', 3, 3),
+    // Read out of order: the later, higher line first.
+    turn('2026-11-11T10:00:00Z', S(3), 'plan2', 2, 1),
+    turn('2026-11-10T10:00:00Z', S(3), 'plan1', 1, 1),
+    // Resumed on plan2, its cumulative figure restarted lower: summed from its turns, $6 on plan1 and $4 on plan2.
+    turn('2026-11-10T10:00:00Z', S(5), 'plan1', 6, 6),
+    turn('2026-11-11T10:00:00Z', S(5), 'plan2', 4, 4),
+    turn('2026-11-10T10:00:00Z', S(4), undefined, 1, 1),
   ]
   scratch({ events }, config => {
     const out = lines(config)
     const at = out.indexOf('  by plan (the account each session ran on; a session that ran on two counts on both)')
     assert.notEqual(at, -1)
-    // S(1) spent $2 on plan2 before the week, $6 on plan1 inside it; S(3) $1 on plan1 then $1 on plan2.
-    assert.match(out[at + 1] ?? '', /^ {2}plan1 +58 % +\$7\.00 +0k {2}2 sessions$/)
-    assert.match(out[at + 2] ?? '', /^ {2}plan2 +33 % +\$4\.00 +0k {2}2 sessions$/)
-    assert.match(out[at + 3] ?? '', /^ {2}unknown +8 % +\$1\.00 +0k {2}1 session$/)
+    assert.match(out[at + 1] ?? '', /^ {2}plan1 +59 % +\$13\.00 +0k {2}3 sessions$/)
+    assert.match(out[at + 2] ?? '', /^ {2}plan2 +36 % +\$8\.00 +0k {2}3 sessions$/)
+    assert.match(out[at + 3] ?? '', /^ {2}unknown +5 % +\$1\.00 +0k {2}1 session$/)
   })
 })
 

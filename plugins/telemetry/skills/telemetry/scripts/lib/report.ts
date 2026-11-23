@@ -92,8 +92,8 @@ interface Session {
   role: string | undefined
   /** The plan whose account the session ran on, the last its events name. */
   plan: string | undefined
-  /** The rises of the cumulative cost inside the window, by the plan the session ran on when each came. */
-  planRise: Map<string, number>
+  /** The window's per-turn costs, by the plan the session ran on at each turn. */
+  planTurns: Map<string, number>
   /** The highest cumulative cost seen before the window, and up to its end. */
   before: number
   upTo: number | undefined
@@ -145,7 +145,7 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       const day = dayOf(text(e['ts']))
       if (kind === undefined || id === undefined || day === undefined) continue
       unit.add(e, day)
-      const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, plan: undefined, planRise: new Map<string, number>(), before: 0, upTo: undefined, peak: undefined, restarted: false, turnCost: 0, turnCosted: 0, turnUncosted: false, inside: false, tokens: 0, life: undefined, firstContext: undefined, began: false, seenBefore: false, live: false, targets: new Set<string>(), refused: [], summarized: undefined }
+      const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, plan: undefined, planTurns: new Map<string, number>(), before: 0, upTo: undefined, peak: undefined, restarted: false, turnCost: 0, turnCosted: 0, turnUncosted: false, inside: false, tokens: 0, life: undefined, firstContext: undefined, began: false, seenBefore: false, live: false, targets: new Set<string>(), refused: [], summarized: undefined }
       sessions.set(id, s)
       s.cwd = text(e['cwd']) ?? s.cwd
       s.project = text(e['project']) ?? s.project
@@ -171,8 +171,6 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
         if (s.peak !== undefined && cost < s.peak.cost && at > s.peak.at) s.restarted = true
         if (s.peak === undefined || cost >= s.peak.cost) s.peak = { cost, at }
         if (day < start) s.before = Math.max(s.before, cost)
-        // A rise inside the window is spent on the plan the session runs on then: a session resumed on the other plan splits.
-        else if (cost > (s.upTo ?? 0)) s.planRise.set(s.plan ?? 'unknown', (s.planRise.get(s.plan ?? 'unknown') ?? 0) + cost - Math.max(s.upTo ?? 0, s.before))
         s.upTo = Math.max(s.upTo ?? 0, cost)
       }
       if (!inWindow) continue
@@ -185,6 +183,8 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
         else {
           s.turnCost += turnCost
           s.turnCosted++
+          // A turn is spent on the plan the session runs on then: a session resumed on the other plan splits.
+          s.planTurns.set(s.plan ?? 'unknown', (s.planTurns.get(s.plan ?? 'unknown') ?? 0) + turnCost)
         }
         const context = num(e['context_tokens'])
         if (context !== undefined) turns.push({ session: id, tokens: context })
@@ -411,13 +411,13 @@ function checkLines(input: ReportInput): string[] {
 
 /**
  * The week's spend by the plan whose account each session ran on: a session's cost is split over the
- * plans in proportion to the rises of its cumulative cost on each, so the plans add up to the spend; a
- * session with no rise in the window counts under its last plan, one whose events name none `unknown`.
+ * plans in proportion to its per-turn costs on each, so the plans add up to the spend; a session with no
+ * costed turn in the window counts under its last plan, one whose events name none `unknown`.
  */
-export function planLines(kept: readonly { s: { plan: string | undefined; planRise: ReadonlyMap<string, number>; tokens: number }; cost: number | undefined }[]): string[] {
+export function planLines(kept: readonly { s: { plan: string | undefined; planTurns: ReadonlyMap<string, number>; tokens: number }; cost: number | undefined }[]): string[] {
   const plans = new Map<string, { cost: number; tokens: number; sessions: number }>()
   for (const { s, cost } of kept) {
-    const rises = [...s.planRise].filter(([, rise]) => rise > 0)
+    const rises = [...s.planTurns].filter(([, spent]) => spent > 0)
     const risen = rises.reduce((n, [, rise]) => n + rise, 0)
     const shares: [string, number][] = risen > 0 ? rises.map(([plan, rise]) => [plan, rise / risen]) : [[s.plan ?? 'unknown', 1]]
     for (const [name, part] of shares) {
