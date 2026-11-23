@@ -99,11 +99,11 @@ head; the request carries no `event`, which keeps the review pending.
 
 | Subcommand | Arguments | Description |
 |---|---|---|
-| `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields. `pr-create` and `pr-update` refuse a title or body breaking a rule of `writing/`, naming it, and send nothing |
+| `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields; answers `pr-lines`, `--json` the PR. Like `pr-create`, refuses a title or body breaking a `writing/` rule, naming it |
 | `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready, its labels untouched (« Guards »). `--for-ci`: out of draft only for its CI, with `Not Ready` put on it |
 | `pr-draft` | `<pr>` | Back to draft, its labels untouched |
 | `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` and take the other off, creating the labels when missing (a PR already carrying the label reads nothing); prints the state, `(unchanged)` when nothing changed. `ready` only when the gate reads it ready, else the label carried and `Missing: …` |
-| `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, any case. One line per label, `created <name>` or `present <name>`, with ` #<colour>` when not the house colour |
+| `labels-ensure` | | Create `Ready` and `Not Ready` when missing, any case. One line per label, `created <name>` or `present <name>`, with ` #<colour>` when not the house colour |
 | `label-add` | `<pr> <label>...` | Add labels |
 | `label-remove` | `<pr> <label>` | Remove one label — GitHub deletes one per call |
 | `reviewer-add` / `reviewer-remove` | `<pr> <user>...` | Request or drop reviewers |

@@ -632,6 +632,7 @@ _FORMATTERS = {
 DEFAULT_FORMATS = {
     "pr-get": "pr-lines",
     "pr-list": "pr-lines",
+    "pr-update": "pr-lines",
     "pr-checks": "checks-summary",
     "pr-threads": "thread-summary",
     "pr-comments": "review-comments",
