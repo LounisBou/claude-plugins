@@ -1,8 +1,8 @@
 // A plan's quota as a file: `<orchestrator state>/quota/<accountUuid>.json`. The status line of any
 // session writes it from the `rate_limits` of its payload, the only place the host shows the 5-hour
 // and 7-day figures; a reader (the coordinator's `facts`) parses it here, never the writer's
-// internals. A change of the format raises QUOTA_VERSION.
-import { join } from 'node:path'
+// internals. A change of the format raises QUOTA_VERSION. It imports no node module: a hooks module
+// (telemetry's, which names each event's plan) may import it.
 
 export const QUOTA_VERSION = 1
 
@@ -45,7 +45,7 @@ export interface Quota {
 }
 
 export function quotaFilePath(state: string, account: string): string {
-  return join(state, QUOTA_DIR, `${account}.json`)
+  return `${state.replace(/\/+$/, '')}/${QUOTA_DIR}/${account}.json`
 }
 
 type Fields = Record<string, unknown>

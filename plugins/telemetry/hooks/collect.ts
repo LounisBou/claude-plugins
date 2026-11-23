@@ -5,6 +5,7 @@
 import { currentSessionName, parseSessionName } from '../core/names.ts'
 import { WAIT_KINDS, WAIT_TOOL } from '../core/orchestration.ts'
 import { askOfDialog, stableJson, type AskKey } from '../core/permission-ask.ts'
+import { planOfConfig } from '../core/quota.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { EVENTS, type EventName } from './schema.ts'
 
@@ -729,16 +730,22 @@ export interface Run {
   readonly since?: number
 }
 
-/** What the launcher's environment says of a session it spawned: the orchestrator it reports to and its tier. */
+/** Where a session comes from: the orchestrator it reports to and its tier, as the launcher's environment says, and the plan whose account it runs on. */
 export interface Origin {
   readonly parent?: string
   readonly tier?: string
+  readonly plan?: string
 }
 
-/** The origin two values of the environment give (core's `ENV.reportsTo` and `ENV.tier`); a tier that is no plain word is left out. */
-export function originOf(reportsTo: string | undefined, tier: string | undefined): Origin {
+/**
+ * The origin the environment gives: core's `ENV.reportsTo` and `ENV.tier`, a tier that is no plain
+ * word left out; and the plan of the configuration directory the session runs on (core's
+ * `planOfConfig`), when `account` names one.
+ */
+export function originOf(reportsTo: string | undefined, tier: string | undefined, account?: { config: string; home: string }): Origin {
   const word = tier?.trim().toLowerCase()
-  return compact({ parent: titleText(reportsTo), tier: word !== undefined && /^[a-z][a-z0-9-]{0,30}$/.test(word) ? word : undefined }) as Origin
+  const plan = account === undefined || account.config === '' ? undefined : planOfConfig(account.config, account.home)
+  return compact({ parent: titleText(reportsTo), tier: word !== undefined && /^[a-z][a-z0-9-]{0,30}$/.test(word) ? word : undefined, plan }) as Origin
 }
 
 /**
@@ -793,17 +800,17 @@ export class Collector {
     return true
   }
 
-  /** Says where the session comes from: each event buffered from now on carries its parent orchestrator and its launch tier. */
+  /** Says where the session comes from: each event buffered from now on carries its parent orchestrator, its launch tier and its plan. */
   setOrigin(origin: Origin): void {
     this.origin = origin
   }
 
   /**
    * `event` with the session's title and role, but for those its kind carries of its own, and with
-   * the orchestrator it reports to and the tier it was launched on.
+   * the orchestrator it reports to, the tier it was launched on and the plan it runs on.
    */
   private stamped(event: Event): Event {
-    const from = compact({ parent: this.origin.parent, launch_tier: this.origin.tier })
+    const from = compact({ parent: this.origin.parent, launch_tier: this.origin.tier, plan: this.origin.plan })
     if (this.actor === undefined) return { ...event, ...from }
     const own = text(event['title'])
     return { ...event, title: own ?? this.actor.title, role: event['role'] ?? (own === undefined ? this.actor.role : roleOf(own)), ...from }

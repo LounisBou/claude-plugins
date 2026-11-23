@@ -90,6 +90,10 @@ interface Session {
   cwd: string | undefined
   project: string | undefined
   role: string | undefined
+  /** The plan whose account the session ran on, the last its events name. */
+  plan: string | undefined
+  /** The window's per-turn costs, by the plan the session ran on at each turn. */
+  planTurns: Map<string, number>
   /** The highest cumulative cost seen before the window, and up to its end. */
   before: number
   upTo: number | undefined
@@ -141,11 +145,12 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
       const day = dayOf(text(e['ts']))
       if (kind === undefined || id === undefined || day === undefined) continue
       unit.add(e, day)
-      const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, before: 0, upTo: undefined, peak: undefined, restarted: false, turnCost: 0, turnCosted: 0, turnUncosted: false, inside: false, tokens: 0, life: undefined, firstContext: undefined, began: false, seenBefore: false, live: false, targets: new Set<string>(), refused: [], summarized: undefined }
+      const s = sessions.get(id) ?? { cwd: undefined, project: undefined, role: undefined, plan: undefined, planTurns: new Map<string, number>(), before: 0, upTo: undefined, peak: undefined, restarted: false, turnCost: 0, turnCosted: 0, turnUncosted: false, inside: false, tokens: 0, life: undefined, firstContext: undefined, began: false, seenBefore: false, live: false, targets: new Set<string>(), refused: [], summarized: undefined }
       sessions.set(id, s)
       s.cwd = text(e['cwd']) ?? s.cwd
       s.project = text(e['project']) ?? s.project
       s.role = text(e['role']) ?? s.role
+      s.plan = text(e['plan']) ?? s.plan
       if (kind === 'api_call') {
         // A subagent's call is its own loop's: it makes no turn of the session.
         if (e['agent'] !== undefined) continue
@@ -178,6 +183,8 @@ function gather(input: ReportInput, start: string, end: string, skipped: { n: nu
         else {
           s.turnCost += turnCost
           s.turnCosted++
+          // A turn is spent on the plan the session runs on then: a session resumed on the other plan splits.
+          s.planTurns.set(s.plan ?? 'unknown', (s.planTurns.get(s.plan ?? 'unknown') ?? 0) + turnCost)
         }
         const context = num(e['context_tokens'])
         if (context !== undefined) turns.push({ session: id, tokens: context })
@@ -402,6 +409,27 @@ function checkLines(input: ReportInput): string[] {
   return lines
 }
 
+/**
+ * The week's spend by the plan whose account each session ran on: a session's cost is split over the
+ * plans in proportion to its per-turn costs on each, so the plans add up to the spend; a session with no
+ * costed turn in the window counts under its last plan, one whose events name none `unknown`.
+ */
+export function planLines(kept: readonly { s: { plan: string | undefined; planTurns: ReadonlyMap<string, number>; tokens: number }; cost: number | undefined }[]): string[] {
+  const plans = new Map<string, { cost: number; tokens: number; sessions: number }>()
+  for (const { s, cost } of kept) {
+    const rises = [...s.planTurns].filter(([, spent]) => spent > 0)
+    const risen = rises.reduce((n, [, rise]) => n + rise, 0)
+    const shares: [string, number][] = risen > 0 ? rises.map(([plan, rise]) => [plan, rise / risen]) : [[s.plan ?? 'unknown', 1]]
+    for (const [name, part] of shares) {
+      const p = plans.get(name) ?? { cost: 0, tokens: 0, sessions: 0 }
+      plans.set(name, { cost: p.cost + (cost ?? 0) * part, tokens: p.tokens + s.tokens * part, sessions: p.sessions + 1 })
+    }
+  }
+  const all = [...plans.values()].reduce((n, p) => n + p.cost, 0)
+  return ['  by plan (the account each session ran on; a session that ran on two counts on both)', ...[...plans].sort(([, a], [, b]) => b.cost - a.cost || b.sessions - a.sessions)
+    .map(([name, p]) => `  ${name.padEnd(36)} ${pct(p.cost, all).padEnd(12)} ${usd(p.cost).padStart(9)} ${tok(p.tokens).padStart(7)}  ${p.sessions} ${p.sessions === 1 ? 'session' : 'sessions'}`)]
+}
+
 export function report(input: ReportInput): string[] {
   const start = input.week ?? addDays(parisDay(input.now), -6)
   const end = addDays(start, 6)
@@ -515,6 +543,7 @@ export function report(input: ReportInput): string[] {
   for (const [name, g] of [...groups].sort(([, a], [, b]) => b.cost - a.cost || b.tokens - a.tokens)) {
     out.push(`  ${name.padEnd(36)} ${(isTool(name) ? 'tool' : name === 'unattributed' ? 'unattributed' : 'product').padEnd(12)} ${usd(g.cost).padStart(9)} ${tok(g.tokens).padStart(7)}`)
   }
+  out.push(...planLines(kept))
 
   // Pull requests merged in the week: delay from GitHub, cost from the sessions that name only that one.
   // GitHub names ignore case, and a pull request target is kept in lower case: a repository spelt two ways is listed once,

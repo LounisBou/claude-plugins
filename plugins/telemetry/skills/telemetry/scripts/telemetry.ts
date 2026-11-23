@@ -102,8 +102,8 @@ export function enrich(line: string, config: string): string {
   }
 }
 
-/** The session's title, role and origin, as the event that names the session carries them: what an `api_call` line takes from the `turn_end` it follows. */
-const STAMPS = ['title', 'role', 'parent', 'launch_tier'] as const
+/** The session's title, role, origin and plan, as the event that names the session carries them: what an `api_call` line takes from the `turn_end` it follows. */
+const STAMPS = ['title', 'role', 'parent', 'launch_tier', 'plan'] as const
 
 /** A turn_end, with the reasoning effort of the transcript's last turn, followed by that turn's api_call lines, when it ended where the event says; as it came when the transcript cannot say. */
 function enrichTurn(line: string, event: Event, config: string): string {

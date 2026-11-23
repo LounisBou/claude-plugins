@@ -128,7 +128,9 @@ export function mount(on: On, collector: Collector): void {
       collector.setTitle(sessionTitleOf(e))
       const spawned = Boolean(await $.env.get('ORCHESTRATOR_SPAWNED'))
       // The launcher's own words on a session it spawned (core's ENV.reportsTo and ENV.tier); neither is set in the operator's own.
-      collector.setOrigin(originOf(await $.env.get('ORCHESTRATOR_REPORTS_TO'), await $.env.get('ORCHESTRATOR_TIER')))
+      // The configuration directory names the plan, so each event says which account spent it.
+      const account = { config: await configDir($), home: (await $.env.get('HOME')) ?? '' }
+      collector.setOrigin(originOf(await $.env.get('ORCHESTRATOR_REPORTS_TO'), await $.env.get('ORCHESTRATOR_TIER'), account))
       await add($, collector, [sessionStart(at, await $.session.id(), e, { model: await $.session.model(), startedAt: usage.startedAt, spawned, repository: await readRepository($) })])
     })
     // A resumed session, or a reloaded module, holds calls an earlier run already wrote: they are not written again.

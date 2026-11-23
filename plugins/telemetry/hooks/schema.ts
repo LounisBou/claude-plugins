@@ -35,6 +35,7 @@ export const COMMON_FIELDS: readonly FieldSpec[] = [
   { name: 'role', type: 'string', description: 'The role that title gives: `orchestrator`, `coordinator`, `agent`, `auditor`, `reviewer` or `other`; absent with the title.' },
   { name: 'parent', type: 'string', description: 'The name of the orchestrator the session reports to, as its launcher gave it (`ORCHESTRATOR_REPORTS_TO`), cut to 80 characters; absent in a session launched without one.' },
   { name: 'launch_tier', type: 'string', description: 'The capability tier the session was launched on, as its launcher gave it (`ORCHESTRATOR_TIER`); absent in a session launched by a model\'s name or by the operator.' },
+  { name: 'plan', type: 'string', description: 'The plan whose account the session runs on, from its configuration directory (`CLAUDE_CONFIG_DIR`, else `~/.claude`): `plan1` for `~/.claude`, `plan2` for `~/.claude-bis`, any other by its path; absent on the lines a script writes and on those of a session whose module did not see its start.' },
 ]
 
 const field = (name: string, type: string, description: string, unit?: string): FieldSpec => (unit === undefined ? { name, type, description } : { name, type, unit, description })
