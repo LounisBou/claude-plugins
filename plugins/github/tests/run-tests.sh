@@ -704,7 +704,7 @@ check "pr-diff dict response has no traceback" "0" "$(printf '%s' "$out" | grep 
 
 echo "== metadata and issues =="
 
-printf '%s' '{"number":7,"title":"New"}' > "$F3/PATCH_repos_acme_thing_pulls_7.json"
+printf '%s' '{"number":7,"title":"New","state":"open","html_url":"https://github.com/acme/thing/pull/7","head":{"ref":"fix/x"},"base":{"ref":"main"},"user":{"login":"bot"},"body":"long body"}' > "$F3/PATCH_repos_acme_thing_pulls_7.json"
 gh3 pr-update 7 --title "New" >/dev/null
 title=$(python3 -c "
 import json
@@ -714,6 +714,10 @@ for line in open('$F3/sent.jsonl'):
         print(row['body']['title'])
 ")
 check "pr-update sends only the given fields" "New" "$title"
+out=$(gh3 pr-update 7 --title "New")
+check "pr-update answers the line of the pull request" "1 pull request
+acme/thing#7: New [open] fix/x -> main | bot" "$out"
+check "pr-update --json answers the pull request" "7" "$(gh3 pr-update 7 --title "New" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["number"])')"
 
 check_status "pr-update with no field exits 1" 1 gh3 pr-update 7
 
