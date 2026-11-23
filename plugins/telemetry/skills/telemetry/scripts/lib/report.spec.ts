@@ -110,6 +110,24 @@ test('a session\'s cost in the week is its cumulative cost at the week\'s end le
   })
 })
 
+test('the spend by plan: each session under the plan its events name last, one that names none unknown', () => {
+  const events = [
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(1), { cost_usd: 6, plan: 'plan1' }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(2), { cost_usd: 3, plan: 'plan2' }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(3), { cost_usd: 1, plan: 'plan1' }),
+    ev('2026-11-11T10:00:00Z', 'turn_end', S(3), { cost_usd: 2, plan: 'plan2' }),
+    ev('2026-11-10T10:00:00Z', 'turn_end', S(4), { cost_usd: 1 }),
+  ]
+  scratch({ events }, config => {
+    const out = lines(config)
+    const at = out.indexOf('  by plan (the account each session ran on)')
+    assert.notEqual(at, -1)
+    assert.match(out[at + 1] ?? '', /^ {2}plan1 +50 % +\$6\.00 +0k {2}1 session$/)
+    assert.match(out[at + 2] ?? '', /^ {2}plan2 +42 % +\$5\.00 +0k {2}2 sessions$/)
+    assert.match(out[at + 3] ?? '', /^ {2}unknown +8 % +\$1\.00 +0k {2}1 session$/)
+  })
+})
+
 test('a session whose directory names no repository, or that has none, is unattributed, never product', () => {
   const events = [ev('2026-11-10T11:00:00Z', 'session_summary', S(1), { cwd: '/w/gone', totals: { in: 0, out: 0, cache_read: 50, cache_write: 0 } }), ev('2026-11-10T11:00:00Z', 'session_summary', S(2), { totals: { in: 0, out: 0, cache_read: 50, cache_write: 0 } })]
   scratch({ events }, config => {

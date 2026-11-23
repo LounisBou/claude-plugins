@@ -122,6 +122,18 @@ test('a spawned session: every event carries the orchestrator it reports to and 
   assert.equal((own.runs[0]?.stdin ?? '').includes('parent') || (own.runs[0]?.stdin ?? '').includes('launch_tier'), false)
 })
 
+test('every event names the plan of the configuration directory the session runs on, plan 1 when none is set', async () => {
+  const planOf = async (env: Record<string, string>): Promise<unknown[]> => {
+    const { $, runs } = host({ env })
+    const { hook } = hooks()
+    await hook('session.start')($, F('session.start'), through({}))
+    await hook('turn.complete')($, F('turn.complete'), through({ text: '' }))
+    return (runs[0]?.stdin ?? '').trim().split('\n').map(l => (JSON.parse(l) as Record<string, unknown>)['plan'])
+  }
+  assert.deepEqual(await planOf({ HOME: '/home/u', CLAUDE_CONFIG_DIR: '/home/u/.claude-bis' }), ['plan2', 'plan2'])
+  assert.deepEqual(await planOf({ HOME: '/home/u' }), ['plan1', 'plan1'])
+})
+
 test('a subagent sent a message runs again: each run\'s end is a close, ranked, the later one timed from its own start', async () => {
   const { $, runs } = host()
   const { hook } = hooks()

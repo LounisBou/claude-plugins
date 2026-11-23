@@ -229,6 +229,18 @@ test('agent_closed: a later run is counted from its own start, or by the host\'s
   assert.deepEqual(['run' in unknown, unknown['duration_ms']], [false, 70])
 })
 
+test('origin: the plan of the configuration directory, on every event the collector buffers', () => {
+  const home = '/home/u'
+  assert.deepEqual(originOf(undefined, undefined, { config: '/home/u/.claude', home }), { plan: 'plan1' })
+  assert.deepEqual(originOf(undefined, 'deep', { config: '/home/u/.claude-bis/', home }), { tier: 'deep', plan: 'plan2' })
+  assert.deepEqual(originOf(undefined, undefined, { config: '/srv/other', home }), { plan: '/srv/other' })
+  assert.deepEqual(originOf(undefined, undefined, { config: '', home }), {})
+  const c = new Collector()
+  c.setOrigin(originOf(undefined, undefined, { config: '/home/u/.claude-bis', home }))
+  c.push(firstTurn(AT, S, undefined, undefined))
+  assert.equal((JSON.parse(c.drain()) as Record<string, unknown>)['plan'], 'plan2')
+})
+
 test('origin: the launcher\'s orchestrator and tier, on every event the collector buffers', () => {
   assert.deepEqual(originOf('Orch: billing [a1b2c3]', 'Deep'), { parent: 'Orch: billing [a1b2c3]', tier: 'deep' })
   assert.deepEqual(originOf(undefined, undefined), {})

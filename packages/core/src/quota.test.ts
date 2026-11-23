@@ -27,6 +27,7 @@ describe('a quota file', () => {
 
   it('lies under the quota directory of the state, by account', () => {
     assert.equal(quotaFilePath('/s', 'abc-1'), '/s/quota/abc-1.json')
+    assert.equal(quotaFilePath('/s/', 'abc-1'), '/s/quota/abc-1.json')
   })
 })
 
