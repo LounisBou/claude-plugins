@@ -3809,7 +3809,7 @@ test('a plan that requires a review of two rounds stays Not Ready with no review
 for (const [label, w] of [
   ['a plan that requires E2E', { records: TWO, plan: planOf({ need: 'required' }) }],
   ['a failed run under a plan that needs no E2E', { records: { ...TWO, ...Object.fromEntries([record('e2e', 'fail')]) }, plan: planOf({ need: 'none', reason: 'docs only' }) }],
-  ['a plan that does not parse', { records: TWO, plan: planOf({ need: 'none', reason: '' }) }],
+  ['a plan that does not parse', { records: TWO, plan: planOf({ need: 'maybe' }) }],
 ] as const) {
   test('with ' + label + ' a pull request with no passed E2E stays Not Ready', async ($, on) => {
     const seen = await world($, on, w)
@@ -3841,7 +3841,7 @@ test('pr-plan answers the pull request\'s check plan as it stands, its number wi
 })
 
 test('pr-plan says when the pull request has no check plan, or one that does not parse', async ($, on) => {
-  await world($, on, { plan: planOf({ need: 'none', reason: '' }) })
+  await world($, on, { plan: planOf({ need: 'maybe' }) })
   expect(((await $.tool.call(gh('pr-plan', { pr: 12 })))).result).toBe('no check plan for acme/thing#12')
   expect(((await $.tool.call(gh('pr-plan', { pr: 13 })))).result).toBe('no check plan for acme/thing#13')
   expect(((await $.tool.call(gh('pr-plan', {})))).isError).toBe(true)
@@ -3852,12 +3852,14 @@ test('pr-plan reads a former full plan file as a required review of the cap\'s r
   expect(JSON.parse(String(((await $.tool.call(gh('pr-plan', { pr: 12 })))).result)).review).toEqual({ need: 'required', reason: '', max: 3 })
 })
 
-test('a plan is refused when a need other than required gives no reason, or a need is unknown', reviewing('orchestrator'), async ($, on) => {
+test('a plan is refused when a need is unknown, and taken without reasons', reviewing('orchestrator'), async ($, on) => {
   const seen = await world($, on)
-  for (const plan of [{ e2e: 'none', norms: 'required' }, { e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'maybe' }, []]) {
+  for (const plan of [{ e2e: 'required', norms: 'screenshots: x' }, { e2e: 'maybe' }, { review: 'maybe' }, []]) {
     expect((await planned($, plan)).deny).toContain('github: a check plan is')
   }
   expect(seen.files[PLAN]).toBeUndefined()
+  expect((await planned($, { e2e: 'none', norms: 'none' })).deny).toBeUndefined()
+  expect(JSON.parse(String(seen.files[PLAN])).e2e).toEqual({ need: 'none', reason: '' })
 })
 
 test('a new plan replaces the previous one, whatever it requires', reviewing('orchestrator'), async ($, on) => {
