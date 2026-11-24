@@ -1353,6 +1353,15 @@ test('a pin is taken as orphan only once its clone is shown removed by workspace
   const done = (await bare(w, 'sweep')).out.split('\n')
   assert.ok(done.includes(`deleted ${b}`), done.join('\n'))
   assert.ok(existsSync(a) && existsSync(unknown))
+  // A clone workspace.sh ended (the archive says discarded), its path taken again before the sweep: what is there now is no proof of anything.
+  const reborn = await clone(w, src, 'reborn', 'feat/reborn')
+  assert.equal((await bare(w, 'pin', reborn, 'd', 'feat/reborn')).code, 0)
+  assert.equal((await bare(w, 'delete', reborn, '--discard')).code, 0)
+  mkdirSync(reborn)
+  const d = join(root, 'reborn', 'd')
+  const again = (await bare(w, 'sweep')).out.split('\n')
+  assert.ok(again.some(l => l.startsWith(`kept ${d}: its source worktree entry is gone, but its clone ${reborn} is still there or out of reach`)), again.join('\n'))
+  assert.ok(existsSync(d))
   // A link to a directory outside the root, its `.git` naming a clone that workspace.sh removed: never taken, the target untouched.
   const outside = join(dir, 'outside')
   const lost = join(dir, 'lost-clone')
