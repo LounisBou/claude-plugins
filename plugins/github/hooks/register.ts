@@ -3134,10 +3134,6 @@ export function register(on: On<Mod>): void {
     } catch {
       // A line the reader cannot read: the ready guard below reads it again and refuses it.
     }
-    try {
-    } catch {
-      // A line the reader cannot read: the ready guard below reads it again and refuses it.
-    }
     const undeployed = await bashDeployRefusal($, line)
     if (undeployed) return await refuse($, REFUSED.deploy, undeployed)
     const after: Array<(result: unknown) => Promise<void>> = []

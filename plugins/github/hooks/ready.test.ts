@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashPushes, ciOnlyMissing, ciUndraft, gateUndraft, createdPr, gateReadyLine, missingItems, namesHead, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, onlyReads,
+  bashActs, bashPushes, ciOnlyMissing, ciUndraft, gateUndraft, createdPr, gateReadyLine, missingItems, namesHead, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct,
   recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove, stackedCi, supersedes,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -434,25 +434,6 @@ test('the pull request gh pr create printed is read from its URL', () => {
   expect(createdPr('https://github.com/o/r/pull/7\n')).toEqual({ repo: 'o/r', pr: 7 })
   expect(createdPr('Creating pull request\nhttps://github.com/o/r/pull/7')).toEqual({ repo: 'o/r', pr: 7 })
   expect(createdPr('nothing')).toBeUndefined()
-})
-
-test('a line of read-only commands without a redirection only reads', () => {
-  for (const line of ['ls /d', 'cat /d/x | jq . | wc -l', 'grep -rn a /d', 'find /d -name "*.json"', 'pwd && ls', 'echo x', 'ls /d | xargs cat']) {
-    expect(onlyReads(line), line).toBe(true)
-  }
-  for (const line of [
-    'rm /d/x', 'cat /d/x > /tmp/y', 'cat /d/x >> /tmp/y', 'tee /d/x', 'sed -i s/a/b/ /d/x', 'cp a /d/x', 'mv a /d/x', 'touch /d/x',
-    'find /d -delete', 'find /d -exec rm {} +', 'find /d -fprint /d/x', 'ls /d | xargs rm', 'cd /d && rm x', 'cd /d', 'bash -c "ls /d"',
-    'ls /d >&/d/x', 'ls /d 1>&/d/x', 'ls /d 2>/dev/null', 'echo "$(echo x > /d/x)"', 'echo "`echo x > /d/x`"', "echo $'a\\'' > /d/x",
-    '/tmp/x/cat /d/x', './ls /d', '/bin/ls /d',
-    'python3 w.py', 'ls /d; rm x', 'echo $(rm /d/x)',
-  ]) {
-    expect(onlyReads(line), line).toBe(false)
-  }
-})
-
-test('a line the shell reader cannot read is no read', () => {
-  expect(onlyReads('ls {1..9}{1..9}{1..9}{1..9}')).toBe(false)
 })
 
 test('each producer plugin writes only its own kind, every other caller E2E', () => {
