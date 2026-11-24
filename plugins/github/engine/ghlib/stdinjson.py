@@ -6,7 +6,8 @@ parser it reads, and nothing outside the engine keeps a second copy of it.
 
 Every value lands either as a positional after "--" or glued to its flag as
 "--name=value", so no value can be read as an option. Text bodies and JSON
-arrays are written to files in a private directory the caller removes.
+arrays are written to files in a private directory the caller removes. A body or
+comments file the caller wrote itself passes as its path, once checked.
 """
 
 import argparse
@@ -22,8 +23,15 @@ _ALIASES = {
     "term": ("terms",),
 }
 
-# Keys that name a file the engine reads: only this module writes them.
-_MANAGED = ("body-file", "body_file", "comments-file", "comments_file", "json_file", "json-file")
+# Keys that name a file the engine reads and only this module writes.
+_MANAGED = ("json_file", "json-file")
+
+# A file key and the inline key that says the same thing: one of the two, never both.
+_FILES = {"body-file": "body", "comments-file": "comments"}
+
+# The tool posts what it reads and its permission dialog shows the path, not the content: a file
+# key names only a file of a temp directory, where a session writes what it posts.
+_TEMP_ROOTS = ("/tmp", "/private/tmp")
 
 
 def _scalar(key, value):
@@ -38,6 +46,15 @@ def _write(tmpdir, name, text):
     with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
     return path
+
+
+def _temp_file(key, value):
+    """The resolved path of a regular file under a temp directory, or a usage error."""
+    roots = [os.path.realpath(r) for r in _TEMP_ROOTS + (os.environ.get("TMPDIR") or "/tmp",)]
+    real = os.path.realpath(value) if isinstance(value, str) and os.path.isabs(value) else None
+    if real is None or not os.path.isfile(real) or not any(real.startswith(r + os.sep) for r in roots):
+        raise errors.UsageError("%s must be a file in the session scratchpad (a temp directory)" % key)
+    return real
 
 
 def _positional(sub, key):
@@ -77,8 +94,12 @@ def build_argv(parser, request, tmpdir):
         if value is None:
             continue
         if key in _MANAGED:
-            raise errors.UsageError('"%s" is managed by the engine; pass body, comments or nodes' % key)
-        if key == "body":
+            raise errors.UsageError('"%s" is managed by the engine; pass nodes' % key)
+        if key in _FILES and _option(sub, key) is not None:
+            if args.get(_FILES[key]) is not None:
+                raise errors.UsageError('pass "%s" or "%s", not both' % (_FILES[key], key))
+            flags.append("--%s=%s" % (key, _temp_file(key, value)))
+        elif key == "body":
             if not isinstance(value, str):
                 raise errors.UsageError("body must be a string")
             if _option(sub, "body-file") is None:

@@ -1959,9 +1959,34 @@ check "stdin json sets store_true flags" \
   "$(argv6 '{"command":"pr-create","args":{"title":"T","draft":true}}')"
 check "stdin json leaves out -- when there are no positionals" \
   "pr-list" "$(argv6 '{"command":"pr-list"}')"
-check "stdin json refuses body-file" \
-  'error: "body-file" is managed by the engine; pass body, comments or nodes' \
-  "$(argv6 '{"command":"pr-comment","args":{"pr":7,"body-file":"/etc/hosts"}}')"
+printf 'A body.\n' > "$WORK/given-body.md"
+printf '[]' > "$WORK/given-comments.json"
+ln -sf /etc/hosts "$WORK/hosts-link.md"
+REALWORK=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$WORK")
+SCRATCH='error: body-file must be a file in the session scratchpad (a temp directory)'
+check "stdin json passes a scratchpad body-file as its resolved path" \
+  "pr-comment --body-file=$REALWORK/given-body.md -- 7" \
+  "$(argv6 '{"command":"pr-comment","args":{"pr":7,"body-file":"'"$WORK"'/given-body.md"}}')"
+check "stdin json passes a scratchpad comments-file as its resolved path" \
+  "review-submit --event=COMMENT --comments-file=$REALWORK/given-comments.json -- 7" \
+  "$(argv6 '{"command":"review-submit","args":{"pr":7,"event":"COMMENT","comments-file":"'"$WORK"'/given-comments.json"}}')"
+check "stdin json refuses body and body-file together" \
+  'error: pass "body" or "body-file", not both' \
+  "$(argv6 '{"command":"pr-comment","args":{"pr":7,"body":"x","body-file":"'"$WORK"'/given-body.md"}}')"
+check "stdin json refuses a body-file outside a temp directory" \
+  "$SCRATCH" "$(argv6 '{"command":"pr-comment","args":{"pr":7,"body-file":"/etc/hosts"}}')"
+check "stdin json refuses a relative body-file" \
+  "$SCRATCH" "$(argv6 '{"command":"pr-comment","args":{"pr":7,"body-file":"given-body.md"}}')"
+check "stdin json refuses a temp link to a file outside" \
+  "$SCRATCH" "$(argv6 '{"command":"pr-comment","args":{"pr":7,"body-file":"'"$WORK"'/hosts-link.md"}}')"
+check "stdin json refuses a body-file that does not exist" \
+  "$SCRATCH" "$(argv6 '{"command":"pr-comment","args":{"pr":7,"body-file":"'"$WORK"'/nope.md"}}')"
+check "stdin json refuses a comments-file outside a temp directory" \
+  'error: comments-file must be a file in the session scratchpad (a temp directory)' \
+  "$(argv6 '{"command":"review-submit","args":{"pr":7,"event":"COMMENT","comments-file":"/etc/hosts"}}')"
+check "stdin json refuses json_file" \
+  'error: "json_file" is managed by the engine; pass nodes' \
+  "$(argv6 '{"command":"comments-resolved-batch","args":{"json_file":"/etc/hosts"}}')"
 check "stdin json refuses an abbreviated flag" \
   'error: unknown argument "body-f" for pr-comment' \
   "$(argv6 '{"command":"pr-comment","args":{"pr":7,"body-f":"/etc/hosts"}}')"

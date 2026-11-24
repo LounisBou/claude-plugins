@@ -10,9 +10,9 @@ below, and the `args` object holds the subcommand's arguments.
   (`label...`, `user...`, `term...`, `file...`) take an array.
 - Other keys are the subcommand's `--flag`s, spelled whole: `{"branch": "x"}` → `--branch x`,
   `{"draft": true}` → `--draft`.
-- Text bodies go in `"body"`, a plain string. Inline-comment arrays go in `"comments"`, and
-  `comments-resolved-batch` takes `"nodes"` (an array of node ids). `body-file`,
-  `comments-file` and `json_file` are refused.
+- A text body goes in `"body"` (a string) or `"body-file"` (a temp path), inline-comment arrays
+  in `"comments"` or `"comments-file"`, never both. `comments-resolved-batch` takes `"nodes"`
+  (an array of node ids).
 
 `repo` overrides the `origin` remote.
 

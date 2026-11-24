@@ -36,7 +36,10 @@ it. `/github:doctor` then confirms everything is ready.
   CRLF) arrive byte-identical: the mod hands the request to `gh.py
   --stdin-json`, which maps it onto its own parser, refuses any argument that
   parser does not declare, and passes each body as a private temporary file it
-  removes afterwards. Failures come back as `isError` with the
+  removes afterwards. A body or comments file the session wrote passes as its
+  resolved path (`body-file`, `comments-file`), never with `body` or
+  `comments`, and only from a temp directory (`/tmp`, `$TMPDIR`): the dialog
+  shows the path, not the content. Failures come back as `isError` with the
   engine's `error:` line; exit codes 1–5 are documented in
   `engine/REFERENCE.md`. Calls follow the session's permission rules: a
   `deny` rule refuses, reads run unless a rule asks, and every write asks
