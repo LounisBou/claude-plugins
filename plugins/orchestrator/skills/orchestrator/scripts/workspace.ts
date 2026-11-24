@@ -75,7 +75,7 @@ import { readText, update } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted, type FilePr, type PrFile } from '../../../hooks/pr-file-format.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import {
-  adoptEntry, callerOf, changeEntry, closeEntry, GRACE_MS, liveSessions, makerOf, pidAlive, putEntry, readLedger, RESAY_MS,
+  adoptEntry, callerOf, changeEntry, closeEntry, endOf, GRACE_MS, liveSessions, makerOf, pidAlive, putEntry, readLedger, RESAY_MS,
   type LiveSession, type WorkspaceEntry,
 } from './lib/workspace-ledger.ts'
 
@@ -346,21 +346,43 @@ async function openPin(ctx: Context, real: string): Promise<string | { readonly 
   return ''
 }
 
+/** How a checkout's end, by `workspace.sh`, shows its clone gone and not merely out of reach. */
+const REMOVED_ENDS: readonly string[] = ['removed', 'pushed and removed', 'discarded']
+
+/** Whether nothing is at `path` for a plain reason: the system says it is not there, not that it cannot say. */
+function absent(path: string): boolean {
+  try {
+    lstatSync(path)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+  }
+}
+
 /**
- * Whether `real` is a pin whose source no longer holds its worktree: its `.git` names a directory
- * that is gone (the clone it was made from was removed). Nothing git can read is left of it. False
- * for a pin that reads, a clone, or a `.git` file that says nothing.
+ * A pin whose source no longer holds its worktree: its `.git` names a directory that is gone.
+ * `proven` when its clone is shown removed (absent, and the archive says
+ * `workspace.sh` removed it); otherwise `why` it is not (moved, on a volume out of reach, removed by
+ * hand). Undefined for a pin that reads, a clone, or a `.git` file that says nothing.
  */
-function isOrphanPin(real: string): boolean {
+function orphanPin(ctx: Context, real: string): { readonly proven: true } | { readonly proven: false; readonly why: string } | undefined {
   const file = join(real, '.git')
-  if (!isFile(file)) return false
+  if (!isFile(file)) return undefined
   let named: string | undefined
   try {
     named = /^gitdir: (.+)$/m.exec(readFileSync(file, 'utf8'))?.[1]
   } catch {
-    return false
+    return undefined
   }
-  return named !== undefined && !present(resolve(real, named.trim()))
+  if (named === undefined) return undefined
+  const gitdir = resolve(real, named.trim())
+  if (present(gitdir)) return undefined
+  const clone = /^(.+)\/\.git\/worktrees\/[^/]+$/.exec(gitdir)?.[1]
+  const unproven = (why: string): { readonly proven: false; readonly why: string } => ({ proven: false, why: `its source worktree entry is gone, but ${why}` })
+  if (clone === undefined) return unproven('its clone cannot be named')
+  if (!absent(clone)) return unproven(`its clone ${clone} is still there or out of reach`)
+  const end = endOf(ctx.root, clone)
+  return end !== undefined && REMOVED_ENDS.includes(end) ? { proven: true } : unproven(`its clone ${clone} was not removed by workspace.sh (moved, or removed by hand)`)
 }
 
 // --- the ledger: one line per checkout, its owners, and why it stays ----------------------------
@@ -1272,11 +1294,18 @@ async function sweepOne(s: Sweep, d: string): Promise<void> {
     if (!s.dry && entry.agent !== agent.name) ledgerWrite(ctx, `the agent of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, agent: agent.name })))
     return keep(ctx, real, `agent ${agent.name} works in it`)
   }
-  // A pin whose clone is gone reads as no checkout at all and has no purpose left, whoever owns it.
-  if (isOrphanPin(real)) return sweepOrphanPin(s, real)
   // A date that does not read keeps the grace: the safe side.
   const born = Date.parse(entry.created)
   const young = Number.isNaN(born) || ctx.deps.now() - born < GRACE_MS
+  // A pin whose clone is gone reads as no checkout at all and has no purpose left, its orchestrator
+  // alive or not. Only a clone shown removed counts as gone, and its first hour and its agent hold it.
+  const orphan = orphanPin(ctx, real)
+  if (orphan !== undefined) {
+    if (!orphan.proven) return keep(ctx, real, orphan.why)
+    if (young) return keep(ctx, real, 'its clone is gone, kept within its first hour')
+    if (namedLive(ctx, entry.agent)) return keep(ctx, real, `its clone is gone, kept while its agent ${entry.agent ?? ''} lives`)
+    return sweepOrphanPin(s, d, real)
+  }
   if (young || namedLive(ctx, entry.orchestrator) || namedLive(ctx, entry.agent)) {
     if (!s.dry && entry.reason !== undefined) {
       ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, ({ reason: _r, reason_at: _a, said: _s, ...e }) => e))
@@ -1295,8 +1324,10 @@ async function sweepOne(s: Sweep, d: string): Promise<void> {
  * with it, and `delete` cannot take it (it reads the source). Removed, its line closed, its host
  * directory taken; kept only while a live process works in it.
  */
-async function sweepOrphanPin(s: Sweep, real: string): Promise<void> {
+async function sweepOrphanPin(s: Sweep, d: string, real: string): Promise<void> {
   const ctx = s.ctx
+  // `delete` never leaves the root, and neither does this: a link to a directory outside it is no checkout of it.
+  if (isSymlink(d) || !underRoot(real, realOf(ctx.root))) return keep(ctx, real, 'its clone is gone, but it is a link or lies outside the root: left alone')
   const held = await liveHold(ctx, real)
   if (held !== '') return keep(ctx, real, held)
   if (s.dry) return out(ctx, `would delete ${real}: its clone is gone`)
@@ -1416,6 +1447,7 @@ function sweepEmptyDirs(s: Sweep): boolean {
     const at = `${realOf(ctx.root)}/${basename(d)}`
     if (s.dry) out(ctx, `would delete ${at}: empty`)
     else if (removeEmptyDir(d)) out(ctx, `deleted ${at}`)
+    else keep(ctx, at, 'empty, and it could not be removed')
   }
   return true
 }

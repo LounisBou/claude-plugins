@@ -146,6 +146,24 @@ export function closeEntry(root: string, path: string, end: string, at: string, 
   }, { waitMs: 2000 })
 }
 
+/** How the checkout at `path` last ended, by the archive's lines; undefined when it never did. */
+export function endOf(root: string, path: string): string | undefined {
+  let end: string | undefined
+  for (const line of (readText(archivePath(root)) ?? '').split('\n')) {
+    if (line.trim() === '') continue
+    let read: unknown
+    try {
+      read = JSON.parse(line)
+    } catch {
+      continue
+    }
+    if (typeof read !== 'object' || read === null) continue
+    const r = read as Record<string, unknown>
+    if (r['path'] === path && isText(r['end'])) end = r['end']
+  }
+  return end
+}
+
 /** A session name without the ` [ref]` a listing of the agents appends to it, in core's one form. */
 export function bareName(name: string): string {
   return orchForm(name)
