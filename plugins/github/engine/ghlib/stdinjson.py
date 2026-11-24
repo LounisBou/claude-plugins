@@ -6,7 +6,8 @@ parser it reads, and nothing outside the engine keeps a second copy of it.
 
 Every value lands either as a positional after "--" or glued to its flag as
 "--name=value", so no value can be read as an option. Text bodies and JSON
-arrays are written to files in a private directory the caller removes.
+arrays are written to files in a private directory the caller removes. A body or
+comments file the caller wrote itself passes as its path, once checked.
 """
 
 import argparse
@@ -22,8 +23,16 @@ _ALIASES = {
     "term": ("terms",),
 }
 
-# Keys that name a file the engine reads: only this module writes them.
-_MANAGED = ("body-file", "body_file", "comments-file", "comments_file", "json_file", "json-file")
+# Keys that name a file the engine reads and only this module writes.
+_MANAGED = ("json_file", "json-file")
+
+# A file key and the inline key that says the same thing: one of the two, never both.
+_FILES = {"body-file": "body", "comments-file": "comments"}
+
+# Credential stores a body file may not name: the tool posts what it reads, and the permission
+# dialog shows the path, not the content.
+_SECRET_DIRS = (".ssh", ".aws", ".gnupg")
+_SECRET_NAMES = (".netrc", ".git-credentials", "auth.json")
 
 
 def _scalar(key, value):
@@ -38,6 +47,15 @@ def _write(tmpdir, name, text):
     with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
     return path
+
+
+def _file(key, value):
+    if not isinstance(value, str) or not os.path.isfile(value):
+        raise errors.UsageError('"%s" takes the path of an existing file' % key)
+    parts = os.path.realpath(value).split(os.sep)
+    name = parts[-1]
+    if set(parts) & set(_SECRET_DIRS) or name in _SECRET_NAMES or name.endswith(".env"):
+        raise errors.UsageError('"%s" names a credential store: %s' % (key, value))
 
 
 def _positional(sub, key):
@@ -77,7 +95,11 @@ def build_argv(parser, request, tmpdir):
         if value is None:
             continue
         if key in _MANAGED:
-            raise errors.UsageError('"%s" is managed by the engine; pass body, comments or nodes' % key)
+            raise errors.UsageError('"%s" is managed by the engine; pass nodes' % key)
+        if key in _FILES:
+            if args.get(_FILES[key]) is not None:
+                raise errors.UsageError('pass "%s" or "%s", not both' % (_FILES[key], key))
+            _file(key, value)
         if key == "body":
             if not isinstance(value, str):
                 raise errors.UsageError("body must be a string")

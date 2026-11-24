@@ -3036,7 +3036,7 @@ export function register(on: On<Mod>): void {
         + 'PR title, body, comment, review or commit message, Read its rules in ' + root + '/engine/writing/: '
         + 'commits.md (commit), pull-requests.md (PR title or body, with security-updates.md for advisories), '
         + 'comments.md (comment, review, reply), each with references.md. Pass positionals by their documented name '
-        + '(pr-checks: {"pr": 12}); other keys become --flags; text bodies go in "body".',
+        + '(pr-checks: {"pr": 12}); other keys become --flags; text bodies go in "body", or a file path in "body-file".',
       inputSchema: {
         type: 'object',
         properties: {
