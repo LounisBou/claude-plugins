@@ -173,8 +173,8 @@ says so in one transcript line.
 The list changes only through the tool, on the operator's word:
 `auto-merge-set {"repo": "owner/name", "on": true|false, "words": "« <his words> », <their date>"}`
 adds or removes a repository, under a lock on the file, when `words` quote the operator with their
-date, as a waiver's `detail` does, and `auto-merge-list` prints it. A Write, an Edit or a shell command
-on the file is refused.
+date, as a waiver's `detail` does, and `auto-merge-list` prints it. A Write or an Edit of the file is
+refused.
 
 ## Repositories in auto-deploy
 
@@ -317,17 +317,8 @@ github: gh pr merge refused on <owner/name>: this repository is not in auto-merg
 
 A CI undraft, as above, is the exception, through the shell and the tool alike.
 
-**Records.** A Write, an Edit,
-a MultiEdit or a NotebookEdit under the records root, and a shell command that names it,
-a `pr-records/` path or `engine/record.py`, go through; a shell command that deletes in them (`rm`, `unlink`, `find -delete`, a `mv` out
-of them, an interpreter's `os.remove`) stays refused, a deletion being irreversible:
-
-```
-github: records are written by their producers' tools, and E2E by mcp__github__record, never by hand.
-```
-
-The command is read as text and word by word with the shell's quotes removed (so
-`rec""ord.py` is `record.py`).
+**Records.** No guard reads the records' path: a Write, an Edit, a MultiEdit, a NotebookEdit or a
+shell command under the records root goes through.
 `mcp__github__record` writes at the head the
 checkout and the pull request share, on a clean tree, one kind per caller: E2E
 for a session, each other kind for the plugin the record contract names its
@@ -337,8 +328,8 @@ record is older than 90 days.
 
 ## Observed guards
 
-The guards of this module refuse only what cannot be taken back: a merge, the auto-merge and deploy
-lists, a deploy, a deletion of the records, of the E2E exemptions or of the check plans, a pull request
+The guards of this module refuse only what cannot be taken back: a merge, a Write or an Edit of the auto-merge
+and deploy lists, a shell command naming the deploy list, a deploy, a pull request
 whose CI is not green or whose record failed (the gate every merge and undraft meets), a readiness that cannot be read. Every other guard observes: the call goes through and one refusal
 event is written into the module's journal (`<config dir>/github/journal/`, core's learning
 contract, under the guard's stable code), with no command or text in it. A journal that cannot be
@@ -346,13 +337,13 @@ written is one line in the transcript, and the call still goes through.
 
 | Code | A call that |
 |---|---|
-| `github.exemption.write` | writes an E2E exemption or a check plan by hand |
+| `github.exemption.write` | writes an E2E exemption or a check plan with Write or Edit |
 | `github.record.e2e-stated` | records an E2E pass or fail with no run the tool performed or observed |
 
 A refusal that protects something writes one refusal event too, under its own code (`REFUSED` in
 `hooks/observe.ts`): `github.ready.held` (the Ready gate), `github.auto-merge.*` and `github.auto-deploy.*`
-(the lists and their tools), `github.deploy.unlisted`, `github.records.delete`, `github.exemption.delete`,
-`github.net.blocked`, and `github.record.*` for each refusal of `mcp__github__record`. A refusal that only
+(the lists and their tools), `github.deploy.unlisted`, `github.net.blocked`, and `github.record.*` for each
+refusal of `mcp__github__record`. A refusal that only
 asks for a missing or malformed argument writes none.
 
 ## Tests

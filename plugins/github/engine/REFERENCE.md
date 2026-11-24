@@ -303,10 +303,8 @@ Not read on that route: an engine script run through a variable, `eval`, `uv run
 `${CLAUDE_PLUGIN_ROOT}/engine/gh.py` (run `python3 "<root>/engine/gh.py" …`), a `gh alias`, a
 script or subprocess running `gh` or the engine, `curl` on the API.
 
-**Records.** Writing under the records root, the E2E exemptions or the check plans (Write, Edit,
-MultiEdit, NotebookEdit, or a shell command naming the root, `pr-records/` or `engine/record.py`)
-goes through; a write to the exemptions or the plans is observed (`github.exemption.write`), a write to the
-records is not. Deleting in them (`rm`, `unlink`, `find -delete`, a `mv` out) is refused: README « Observed guards ».
+**Records.** Writing under the records root, the E2E exemptions or the check plans goes through, from a
+tool or the shell. A Write or an Edit of the exemptions or the plans is observed (`github.exemption.write`).
 
 `mcp__github__record {pr, repo?, result?, ran?, detail, kind?, dir?}` writes one record
 through `record.py` when the `HEAD` of `dir` (default: the session's directory) is the head `pr-gate`
@@ -315,8 +313,8 @@ norms) and `exempt` rest on his words quoted in `detail` with their date (`YYYY-
 optional), from any channel: « « <his words> », 2026-11-15T08:50Z », and so do `auto-merge-set` and `auto-deploy-set` in `words`.
 
 **Auto-merge and deploy lists.** Writing `auto-merge.json` or `auto-deploy.json` in a plugin's
-data directory, by a tool or a shell command naming one there, is refused: use `auto-merge-set`
-or `auto-deploy-set`.
+data directory with a tool, or a shell command naming `auto-deploy.json` there, is refused: use
+`auto-merge-set` or `auto-deploy-set`.
 
 ### Auto-deploy
 

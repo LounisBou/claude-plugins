@@ -2,7 +2,7 @@
 // which branch, and what a pull request misses at its head.
 import { expect, test } from 'claude-code/testing'
 import {
-  bashActs, bashPushes, ciOnlyMissing, ciUndraft, gateUndraft, createdPr, gateReadyLine, missingItems, namesHead, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, touchesRecords, onlyReads, deletes, deletesRecords,
+  bashActs, bashPushes, ciOnlyMissing, ciUndraft, gateUndraft, createdPr, gateReadyLine, missingItems, namesHead, onlyAbsentRecords, parseGate, parseHeadRead, reviewAccepted, pushOf, toolAct, onlyReads,
   recordKindFor, producerSlug, kindRefusal, autoMergeRefusal, notReadyRefusal, labelMove, stackedCi, supersedes,
   type Gate, type RecordFile,
 } from './ready.ts'
@@ -436,14 +436,6 @@ test('the pull request gh pr create printed is read from its URL', () => {
   expect(createdPr('nothing')).toBeUndefined()
 })
 
-test('a command naming the records or their writer is caught', () => {
-  expect(touchesRecords('echo x > ~/.claude/pr-records/o/r/x.json')).toBe(true)
-  expect(touchesRecords('python3 /p/engine/record.py --repo o/r')).toBe(true)
-  expect(touchesRecords('ls ~/.claude/pr-records')).toBe(true)
-  expect(touchesRecords('cat /cfg/records/x', '/cfg/records')).toBe(true)
-  expect(touchesRecords('git status')).toBe(false)
-})
-
 test('a line of read-only commands without a redirection only reads', () => {
   for (const line of ['ls /d', 'cat /d/x | jq . | wc -l', 'grep -rn a /d', 'find /d -name "*.json"', 'pwd && ls', 'echo x', 'ls /d | xargs cat']) {
     expect(onlyReads(line), line).toBe(true)
@@ -461,32 +453,6 @@ test('a line of read-only commands without a redirection only reads', () => {
 
 test('a line the shell reader cannot read is no read', () => {
   expect(onlyReads('ls {1..9}{1..9}{1..9}{1..9}')).toBe(false)
-})
-
-test('a deletion is a line that is no read and deletes: rm, unlink, find -delete, a move out, an interpreter\'s call', () => {
-  const names = (text: string) => text.includes('/d/')
-  for (const line of [
-    'rm /d/x', '/bin/rm /d/x', 'r""m /d/x', 'unlink /d/x', 'shred /d/x', 'find /d -delete', 'find /d -exec rm {} +', 'ls /d | xargs rm',
-    'cd /d && rm x', 'bash -c "rm /d/x"', 'mv /d/x /tmp/y', 'python3 -c "import os; os.remove(1)"', 'node -e "fs.rmSync(1)"',
-    'rm /d/x $(', 'rm${IFS}/d/x', 'mv -t /tmp /d/x', 'mv --target-directory=/tmp /d/x', 'find /d/x -exec mv {} /tmp \\;', 'ls /d | xargs mv -t /tmp',
-    'python3 -c "from pathlib import Path; Path(1).unlink()"', 'python3 -c "import os; os.rename(1, 2)"', 'ruby -e "FileUtils.rm_rf(1)"',
-    'git clean -fdx /d', 'rsync --remove-source-files /d/x /tmp', 'rsync -a --delete /tmp/e/ /d/', 'sh -c "bash -c \'rm /d/x\'"',
-    'ls {1..9}{1..9}{1..9}{1..9}; mv /d/x /tmp', 'ls {1..9}{1..9}{1..9}{1..9}; rm /d/x',
-    'git -C /d/x clean -fdx', 'git -c a=b clean -fdx /d/x', 'git --git-dir=/d/.git rm x', 'git clean -fdx /d/x', 'ls {1..9}{1..9}{1..9}{1..9}; git -C /d/x clean -fdx',
-    'rsync -a --delete-after /e/ /d/x/', 'rsync -a --del /e/ /d/x/', 'rsync -a --delete-excluded /e/ /d/x/', 'tar --remove-files -cf /tmp/a.tar /d/x',
-  ]) {
-    expect(deletes(line, names), line).toBe(true)
-  }
-  for (const line of [
-    'ls /d', 'cat /d/x | jq .', 'grep -rn rm /d', 'echo rm', 'echo x > /d/x', 'cp a /d/x', 'mv a /d/x', 'touch /d/x', 'sed -i s/a/b/ /d/x',
-    'git commit -m "docs: form the term"', 'find /d -name x', 'truncate -s0 /d/x', 'cp /dev/null /d/x', 'git status /d/x', 'git -C /d/x log', 'rsync -a /e/ /d/x/', 'tar -cf /tmp/a.tar /d/x', ': > /d/x', 'ls {1..9}{1..9}{1..9}{1..9}',
-  ]) {
-    expect(deletes(line, names), line).toBe(false)
-  }
-  expect(deletesRecords('rm ~/.claude/pr-records/x')).toBe(true)
-  expect(deletesRecords('rm /tmp/x')).toBe(false)
-  expect(deletesRecords('echo x > ~/.claude/pr-records/x')).toBe(false)
-  expect(deletesRecords('ls ~/.claude/pr-records')).toBe(false)
 })
 
 test('each producer plugin writes only its own kind, every other caller E2E', () => {

@@ -28,8 +28,6 @@ export const REFUSED = {
   autoMergeSet: 'github.auto-merge.unproven',
   autoDeploySet: 'github.auto-deploy.unproven',
   deploy: 'github.deploy.unlisted',
-  recordsDelete: 'github.records.delete',
-  exemptionDelete: 'github.exemption.delete',
   net: 'github.net.blocked',
   // The record tool's refusals.
   recordKind: 'github.record.kind',
