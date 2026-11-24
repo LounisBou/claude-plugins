@@ -37,7 +37,7 @@ import {
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
-  COMPUTING_ITEM, LIGHT_CI_ABSENT, RECORDS_REFUSAL, deletes, deletesRecords, postsStatus, STATUS_REFUSAL,
+  COMPUTING_ITEM, LIGHT_CI_ABSENT, RECORDS_REFUSAL, deletes, deletesRecords,
   type Act, type Carried, type Gate, type HeadRead, type RecordFile,
 } from './ready.ts'
 
@@ -290,7 +290,7 @@ export function quotedWordsRefusal(what: string, detail: string, field = 'detail
 }
 
 // What a guard's net refuses when the guard itself failed: only what the guard still refuses (a merge, the
-// auto-merge and deploy lists, a deletion of the records, the exemptions or the plans, a commit status), judged from the call alone (no state can be read once the hook has
+// auto-merge and deploy lists, a deletion of the records, the exemptions or the plans), judged from the call alone (no state can be read once the hook has
 // thrown); the rest, observed guards included, goes through.
 export const NET_REFUSAL = 'github: its guard failed on this call, which it protects; nothing was run. Try again, or run /github:doctor.'
 
@@ -299,7 +299,7 @@ const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create', 'create-draft', 'r
 
 export function bashNetRefusal(command: string): string | null {
   try {
-    if (command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE) || deletesRecords(command) || postsStatus(command)) return NET_REFUSAL
+    if (command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE) || deletesRecords(command)) return NET_REFUSAL
     if (namesExemptions(command) && deletes(command, namesExemptions)) return NET_REFUSAL
     return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
   } catch {
@@ -2657,7 +2657,7 @@ async function showPlan($: Mod, raw: GhRequest): Promise<{ result: string; isErr
 async function setPlan($: Mod, e: ToolInput): Promise<Answer> {
   const checks = planInput(e['plan'])
   if (typeof checks === 'string') {
-    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "required[: max <n>]|one-pass"}, each "<need>: <reason>" but the first: ' + checks }
+    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "required[: max <n>]|one-pass"}: ' + checks }
   }
   const pr = Number(String(e['pr'] ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
@@ -2842,7 +2842,7 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   const waived = result === 'waived' ? WAIVED.find((k) => k === kind) : undefined
   const planned = waived ? (await readPlan($, repo, pr))?.[waived] : undefined
   if (waived && planned && planned.need !== 'required') {
-    return await refuse($, REFUSED.recordUnplanned, 'github: the check plan of ' + repo + '#' + pr + ' needs no ' + (waived === 'e2e' ? 'E2E' : 'norms check') + ' (' + planned.need + ': ' + planned.reason + '): a waiver lifts only a check the plan requires.')
+    return await refuse($, REFUSED.recordUnplanned, 'github: the check plan of ' + repo + '#' + pr + ' needs no ' + (waived === 'e2e' ? 'E2E' : 'norms check') + ' (' + planned.need + (planned.reason ? ': ' + planned.reason : '') + '): a waiver lifts only a check the plan requires.')
   }
   const unquoted = waived ? quotedWordsRefusal(waived === 'e2e' ? 'an E2E waiver' : 'a norms waiver', detail) : undefined
   if (unquoted) return await refuse($, REFUSED.recordUnquoted, unquoted)
@@ -3076,7 +3076,7 @@ export function register(on: On<Mod>): void {
             until: { type: 'string', description: 'the exemption ends at this instant, ISO UTC to the second (2026-11-15T22:00:00Z)' },
             plan: {
               type: 'object',
-              description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,
+              description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>"; one left out needs the first; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,
               // The needs each check may be given are core's readiness contract's alone.
               properties: Object.fromEntries(
                 Object.entries(PLAN_NEEDS).map(([check, needs]) => [check, { type: 'string', description: needs.join(', ') }]),
@@ -3154,7 +3154,6 @@ export function register(on: On<Mod>): void {
       // The records and the exemptions are refused a deletion (irreversible); any other write to the exemptions is observed.
       const root = await recordsRoot($)
       if (deletesRecords(line, root)) return await refuse($, REFUSED.recordsDelete, RECORDS_REFUSAL)
-      if (postsStatus(line)) return await refuse($, REFUSED.statusWrite, STATUS_REFUSAL)
       const exempt = await touchesExemptions($, line)
       if (exempt && deletes(line, namesExemptions)) return await refuse($, REFUSED.exemptionDelete, EXEMPT_REFUSAL)
       if (exempt && !onlyReads(line)) observations.push(OBSERVED.exemption)

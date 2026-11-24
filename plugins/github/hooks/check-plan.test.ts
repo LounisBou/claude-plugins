@@ -7,13 +7,14 @@ const plan = (e2e: string | undefined, norms: string | undefined, review?: strin
   return { v: 1, repo: 'acme/thing', pr: 12, ...checks, at: '2026-11-14T09:00:00Z' }
 }
 
-test('a plan gives each need, and a reason for any need but required', () => {
+test('a plan gives each need, with or without a reason', () => {
   expect(planInput({ e2e: 'Screenshots: a colour', norms: 'required: kept', review: 'one-pass: a typo' })).toEqual({
     e2e: { need: 'screenshots', reason: 'a colour' }, norms: { need: 'required', reason: '' }, review: { need: 'required', reason: '', max: 1 },
   })
   expect(planInput({})).toEqual({ e2e: { need: 'none', reason: 'not in the plan' }, norms: { need: 'none', reason: 'not in the plan' }, review: { need: 'required', reason: '', max: 3 } })
   expect(planInput({ review: 'maybe' })).toBe('review is one of required, one-pass, got: maybe')
-  expect(planInput({ e2e: 'none', norms: 'required' })).toBe('e2e none gives its reason: "none: <why>"')
+  expect(planInput({ e2e: 'none', norms: 'screenshots' })).toContain('norms is one of required, none')
+  expect(planInput({ e2e: 'none', norms: 'none' })).toMatchObject({ e2e: { need: 'none', reason: '' }, norms: { need: 'none', reason: '' } })
   expect(planInput({ e2e: 'required', norms: 'screenshots: x' })).toContain('norms is one of required, none')
   expect(planInput({ e2e: 'none: ' + 'x'.repeat(501), norms: 'required' })).toContain('at most 500')
   expect(planInput(null)).toBe('a plan is an object')
@@ -23,7 +24,8 @@ test('a plan gives each need, and a reason for any need but required', () => {
 test('a plan file parses back, and one of another shape is none', () => {
   const written = plan('none: docs only', 'required')
   expect(parsePlan(JSON.parse(JSON.stringify(written)))).toEqual(written)
-  for (const bad of [null, [], { ...written, v: 2 }, { ...written, repo: '../x' }, { ...written, pr: 0 }, { ...written, e2e: { need: 'none', reason: '' } }, { ...written, norms: undefined }]) {
+  expect(parsePlan({ ...written, e2e: { need: 'none', reason: '' } })?.e2e).toEqual({ need: 'none', reason: '' })
+  for (const bad of [null, [], { ...written, v: 2 }, { ...written, repo: '../x' }, { ...written, pr: 0 }, { ...written, e2e: { need: 'maybe', reason: '' } }, { ...written, norms: undefined }]) {
     expect(parsePlan(bad)).toBeUndefined()
   }
 })
@@ -33,6 +35,8 @@ test('the plan excuses the kinds it does not require, with its date and reason',
   expect(planExcuses(plan('required', 'required'))).toEqual({ required: ['e2e', 'norms'] })
   expect(planExcuses(plan('none: docs', 'none: tiny'))).toEqual({ required: [], e2e: 'check plan, 2026-11-14: docs', norms: 'check plan, 2026-11-14: tiny' })
   expect(planExcuses(plan('screenshots: colour', 'required')).e2e).toBe('check plan, 2026-11-14: desktop and mobile screenshots in its place, colour')
+  expect(planExcuses(plan('none', 'none'))).toEqual({ required: [], e2e: 'check plan, 2026-11-14', norms: 'check plan, 2026-11-14' })
+  expect(planExcuses(plan('screenshots', 'required')).e2e).toBe('check plan, 2026-11-14: desktop and mobile screenshots in its place')
 })
 
 test('the plan file sits under the data directory by repository and number, and its text lists each check', () => {
