@@ -1,8 +1,8 @@
 // The check plan of a pull request: which proofs it owes, decided once when the work is scoped by
-// its orchestrator, each one it does not owe with its reason. One file per pull request under the
-// plugin's data directory, kept across its heads. The needs a plan may give and what one left out
-// means are core's readiness contract (readiness.ts). Pure functions only: register.ts reads and
-// writes the file, and posts the plan on the pull request.
+// its orchestrator. One file per pull request under the plugin's data directory, kept across its
+// heads. The needs a plan may give and what one left out means are core's readiness contract
+// (readiness.ts). Pure functions only: register.ts reads and writes the file, and posts the plan on
+// the pull request.
 
 import { DETAIL_MAX, RECORD_VERSION, type Kind } from '../core/pr-record.ts'
 import { PLAN_NEEDS, PLAN_OMITTED, reviewNeed, WAIVABLE, type Planned, type Waivable } from '../core/readiness.ts'
@@ -27,8 +27,7 @@ export type Excused = Partial<Record<Kind, string>> & { required?: readonly Kind
 const fieldOf = (value: unknown, name: string): unknown =>
   typeof value === 'object' && value !== null ? (value as Record<string, unknown>)[name] : undefined
 
-// `<need>` or `<need>: <reason>`; a need other than the strictest carries its reason, a required
-// review its rounds in its place.
+// `<need>` or `<need>: <reason>`; a required review carries its rounds in place of a reason.
 function checkOf(kind: Planned, value: unknown): Check | string {
   const text = value === undefined ? PLAN_OMITTED[kind] : typeof value === 'string' ? value.trim() : ''
   const at = text.indexOf(':')
@@ -41,7 +40,6 @@ function checkOf(kind: Planned, value: unknown): Check | string {
   const needs: readonly string[] = PLAN_NEEDS[kind]
   if (!needs.includes(need)) return kind + ' is one of ' + PLAN_NEEDS[kind].join(', ') + ', got: ' + (text || 'nothing')
   const strictest = need === PLAN_NEEDS[kind][0]
-  if (!strictest && reason === '') return kind + ' ' + need + ' gives its reason: "' + need + ': <why>"'
   if (reason.length > DETAIL_MAX) return kind + '\'s reason is at most ' + DETAIL_MAX + ' characters'
   return { need, reason: strictest ? '' : reason }
 }
@@ -77,14 +75,15 @@ export function planPath(dataDir: string, repo: string, pr: number): string {
   return dataDir + '/' + PLAN_DIR + '/' + repo.toLowerCase() + '/' + pr + '.json'
 }
 
-/** The kinds the plan excuses, each named with the plan's date and reason. */
+/** The kinds the plan excuses, each named with the plan's date and its reason if any. */
 export function planExcuses(plan: CheckPlan | undefined): Excused {
   if (!plan) return {}
   const excused: Excused = { required: WAIVABLE.filter((kind) => plan[kind].need === 'required') }
-  const by = 'check plan, ' + plan.at.slice(0, 10) + ': '
-  if (plan.e2e.need === 'none') excused.e2e = by + plan.e2e.reason
-  if (plan.e2e.need === 'screenshots') excused.e2e = by + 'desktop and mobile screenshots in its place, ' + plan.e2e.reason
-  if (plan.norms.need === 'none') excused.norms = by + plan.norms.reason
+  const by = 'check plan, ' + plan.at.slice(0, 10)
+  const why = (check: Check, lead: string) => by + (lead || check.reason ? ': ' : '') + [lead, check.reason].filter(Boolean).join(', ')
+  if (plan.e2e.need === 'none') excused.e2e = why(plan.e2e, '')
+  if (plan.e2e.need === 'screenshots') excused.e2e = why(plan.e2e, 'desktop and mobile screenshots in its place')
+  if (plan.norms.need === 'none') excused.norms = why(plan.norms, '')
   return excused
 }
 

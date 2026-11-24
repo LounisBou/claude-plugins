@@ -2657,7 +2657,7 @@ async function showPlan($: Mod, raw: GhRequest): Promise<{ result: string; isErr
 async function setPlan($: Mod, e: ToolInput): Promise<Answer> {
   const checks = planInput(e['plan'])
   if (typeof checks === 'string') {
-    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "required[: max <n>]|one-pass"}, each "<need>: <reason>" but the first: ' + checks }
+    return { deny: 'github: a check plan is {"e2e": "required|none|screenshots", "norms": "required|none", "review": "required[: max <n>]|one-pass"}: ' + checks }
   }
   const pr = Number(String(e['pr'] ?? '').replace('#', ''))
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
@@ -2842,7 +2842,7 @@ async function writeRecord($: Mod, e: ToolInput, origin: string): Promise<Answer
   const waived = result === 'waived' ? WAIVED.find((k) => k === kind) : undefined
   const planned = waived ? (await readPlan($, repo, pr))?.[waived] : undefined
   if (waived && planned && planned.need !== 'required') {
-    return await refuse($, REFUSED.recordUnplanned, 'github: the check plan of ' + repo + '#' + pr + ' needs no ' + (waived === 'e2e' ? 'E2E' : 'norms check') + ' (' + planned.need + ': ' + planned.reason + '): a waiver lifts only a check the plan requires.')
+    return await refuse($, REFUSED.recordUnplanned, 'github: the check plan of ' + repo + '#' + pr + ' needs no ' + (waived === 'e2e' ? 'E2E' : 'norms check') + ' (' + planned.need + (planned.reason ? ': ' + planned.reason : '') + '): a waiver lifts only a check the plan requires.')
   }
   const unquoted = waived ? quotedWordsRefusal(waived === 'e2e' ? 'an E2E waiver' : 'a norms waiver', detail) : undefined
   if (unquoted) return await refuse($, REFUSED.recordUnquoted, unquoted)
@@ -3076,7 +3076,7 @@ export function register(on: On<Mod>): void {
             until: { type: 'string', description: 'the exemption ends at this instant, ISO UTC to the second (2026-11-15T22:00:00Z)' },
             plan: {
               type: 'object',
-              description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>", a reason for any need but the first; one left out needs the first; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,
+              description: 'the check plan, from ' + PLAN_WRITER.tool + ' only: each "<need>" or "<need>: <reason>"; one left out needs the first; a required review "required: max <n>", its rounds from 1 to ' + REVIEW_ROUNDS.cap,
               // The needs each check may be given are core's readiness contract's alone.
               properties: Object.fromEntries(
                 Object.entries(PLAN_NEEDS).map(([check, needs]) => [check, { type: 'string', description: needs.join(', ') }]),
