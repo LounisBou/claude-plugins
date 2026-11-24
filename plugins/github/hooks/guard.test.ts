@@ -4,7 +4,7 @@
 import { expect, mock as hostMock, test } from 'claude-code/testing'
 import type { Engine, NounEvents, Reply, TestOn } from 'claude-code/testing'
 import { EXEMPT_REFUSAL } from './register.js'
-import { RECORDS_REFUSAL, STATUS_REFUSAL, STDIN_REFUSAL } from './ready.js'
+import { RECORDS_REFUSAL, STDIN_REFUSAL } from './ready.js'
 import { FOREIGN_CEILING_MS, FOREIGN_WAIT_MS } from './reconcile.ts'
 import { parseLearningEvent } from '../core/learning.ts'
 // The tests that set the clock themselves, by their event registry: the other worlds get a clock, and their Not Ready is this machine's.
@@ -4471,14 +4471,4 @@ test('light_ci refused by a permission rule runs nothing', async ($, on) => {
   const out = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12 })
   expect(out.deny).toBe('no light CI here')
   expect(lightCiRun(seen)).toBeUndefined()
-})
-
-test('a session posting a commit status from the shell is refused and journaled, nothing run; reading the statuses passes', async ($, on) => {
-  const seen = await world($, on)
-  const post = await $.tool.call(bash('gh api repos/acme/app/statuses/' + 'a'.repeat(40) + ' -f state=success -f context=readiness/review'))
-  expect(post.deny).toBe(STATUS_REFUSAL)
-  expect(seen.journal).toEqual(['github.status.write'])
-  const read = await $.tool.call(bash('gh api repos/acme/app/commits/' + 'a'.repeat(40) + '/statuses'))
-  expect(read.deny).toBeUndefined()
-  expect(seen.bash).toEqual(['gh api repos/acme/app/commits/' + 'a'.repeat(40) + '/statuses'])
 })

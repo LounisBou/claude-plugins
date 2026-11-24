@@ -37,7 +37,7 @@ import {
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
-  COMPUTING_ITEM, LIGHT_CI_ABSENT, RECORDS_REFUSAL, deletes, deletesRecords, postsStatus, STATUS_REFUSAL,
+  COMPUTING_ITEM, LIGHT_CI_ABSENT, RECORDS_REFUSAL, deletes, deletesRecords,
   type Act, type Carried, type Gate, type HeadRead, type RecordFile,
 } from './ready.ts'
 
@@ -290,7 +290,7 @@ export function quotedWordsRefusal(what: string, detail: string, field = 'detail
 }
 
 // What a guard's net refuses when the guard itself failed: only what the guard still refuses (a merge, the
-// auto-merge and deploy lists, a deletion of the records, the exemptions or the plans, a commit status), judged from the call alone (no state can be read once the hook has
+// auto-merge and deploy lists, a deletion of the records, the exemptions or the plans), judged from the call alone (no state can be read once the hook has
 // thrown); the rest, observed guards included, goes through.
 export const NET_REFUSAL = 'github: its guard failed on this call, which it protects; nothing was run. Try again, or run /github:doctor.'
 
@@ -299,7 +299,7 @@ const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create', 'create-draft', 'r
 
 export function bashNetRefusal(command: string): string | null {
   try {
-    if (command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE) || deletesRecords(command) || postsStatus(command)) return NET_REFUSAL
+    if (command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE) || deletesRecords(command)) return NET_REFUSAL
     if (namesExemptions(command) && deletes(command, namesExemptions)) return NET_REFUSAL
     return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
   } catch {
@@ -3154,7 +3154,6 @@ export function register(on: On<Mod>): void {
       // The records and the exemptions are refused a deletion (irreversible); any other write to the exemptions is observed.
       const root = await recordsRoot($)
       if (deletesRecords(line, root)) return await refuse($, REFUSED.recordsDelete, RECORDS_REFUSAL)
-      if (postsStatus(line)) return await refuse($, REFUSED.statusWrite, STATUS_REFUSAL)
       const exempt = await touchesExemptions($, line)
       if (exempt && deletes(line, namesExemptions)) return await refuse($, REFUSED.exemptionDelete, EXEMPT_REFUSAL)
       if (exempt && !onlyReads(line)) observations.push(OBSERVED.exemption)

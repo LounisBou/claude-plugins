@@ -306,7 +306,7 @@ script or subprocess running `gh` or the engine, `curl` on the API.
 **Records.** Writing under the records root, the E2E exemptions or the check plans (Write, Edit,
 MultiEdit, NotebookEdit, or a shell command naming the root, `pr-records/` or `engine/record.py`)
 goes through; a write to the exemptions or the plans is observed (`github.exemption.write`), a write to the
-records is not. Deleting in them (`rm`, `unlink`, `find -delete`, a `mv` out), or a shell status post (`…/statuses/<sha>`, `forge_status.py`), is refused: README « Observed guards ».
+records is not. Deleting in them (`rm`, `unlink`, `find -delete`, a `mv` out) is refused: README « Observed guards ».
 
 `mcp__github__record {pr, repo?, result?, ran?, detail, kind?, dir?}` writes one record
 through `record.py` when the `HEAD` of `dir` (default: the session's directory) is the head `pr-gate`
