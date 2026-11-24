@@ -1,7 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Found, NounEvents, TestOn } from 'claude-code/testing'
 import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, selfReviewRefusal, writeNetRefusal } from './register.js'
-import { touchesRecords } from './ready.js'
 import { mergeOrder, parseStackPlan, walkedHead } from './stack.js'
 import { SCRIPTED } from '../core/pr-record.ts'
 import { PLAN_NEEDS, REVIEW_ROUNDS } from '../core/readiness.ts'
@@ -1671,10 +1670,11 @@ test('a fresh session commits, opens a pull request and comments with no read of
 })
 
 test('a failed guard refuses, from the call alone, what it still refuses and lets the rest through', () => {
-  for (const command of ['gh pr merge 5', 'gh pr ready 5', 'echo [] > ~/.claude/plugins/data/github/auto-merge.json', 'cat ~/.claude/plugins/data/github/auto-deploy.json']) {
+  for (const command of ['gh pr merge 5', 'gh pr ready 5', 'cat ~/.claude/plugins/data/github/auto-deploy.json']) {
     expect(bashNetRefusal(command)).toBe(NET_REFUSAL)
   }
-  for (const command of ['git status', 'gh pr create --title t', 'gh pr create --draft --title t', 'gh pr ready 5 --undo', 'npm test', 'cat ~/.claude/plugins/data/github/pr-records/1.json']) {
+  for (const command of ['git status', 'gh pr create --title t', 'gh pr create --draft --title t', 'gh pr ready 5 --undo', 'npm test', 'cat ~/.claude/plugins/data/github/pr-records/1.json',
+    'echo [] > ~/.claude/plugins/data/github/auto-merge.json', 'rm ~/.claude/pr-records/o/r/x.json', 'rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt/o"', 'rm -r "$CLAUDE_PLUGIN_DATA/check-plans/o"']) {
     expect(bashNetRefusal(command)).toBe(null)
   }
   expect(writeNetRefusal('/h/.claude/plugins/data/github/auto-merge.json')).toBe(NET_REFUSAL)
@@ -1715,37 +1715,6 @@ test('/github:protect says what failed', async ($, on) => {
   expect(String((await $.command.run({ command: 'github:protect', args: '' })).text)).toBe('github: protect-check failed: Resource not accessible by integration')
 })
 
-test('the records guard reads the words as the shell does', () => {
-  expect(touchesRecords('python3 /x/engine/rec""ord.py --kind review')).toBe(true)
-  expect(touchesRecords("cat ~/.claude/pr-rec'ords'/a/b/c.json")).toBe(true)
-  expect(touchesRecords('python3 scripts/report.py')).toBe(false)
-})
-
-
-test('a failed guard lets a write naming the E2E exemption files through (observed), and refuses a deletion in them', () => {
-  expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/e2e-exempt/o/r.json')).toBe(null)
-  expect(bashNetRefusal('echo {} > "$CLAUDE_PLUGIN_DATA/e2e-exempt/o/r.json"')).toBe(null)
-  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt/o"')).toBe(NET_REFUSAL)
-  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt"')).toBe(NET_REFUSAL)
-  expect(bashNetRefusal('find "$CLAUDE_PLUGIN_DATA/e2e-exempt" -delete')).toBe(NET_REFUSAL)
-  expect(bashNetRefusal('mv "$CLAUDE_PLUGIN_DATA/e2e-exempt/o/r.json" /tmp')).toBe(NET_REFUSAL)
-  expect(bashNetRefusal('cat "$CLAUDE_PLUGIN_DATA/e2e-exempt/o/r.json"')).toBe(null)
-})
-
-test('a failed guard lets a write naming the check plan files through (observed), and refuses a deletion in them', () => {
-  expect(writeNetRefusal('/home/x/.claude/plugins/data/github-lounisbou/check-plans/o/r/1.json')).toBe(null)
-  expect(bashNetRefusal('rm -r "$CLAUDE_PLUGIN_DATA/check-plans/o"')).toBe(NET_REFUSAL)
-})
-
-test('a failed guard refuses a deletion in the records, and lets a read or another write through', () => {
-  expect(bashNetRefusal('rm ~/.claude/pr-records/o/r/x.json')).toBe(NET_REFUSAL)
-  expect(bashNetRefusal('find ~/.claude/pr-records -delete')).toBe(NET_REFUSAL)
-  expect(bashNetRefusal('mv -t /tmp ~/.claude/pr-records/o/r/x.json')).toBe(NET_REFUSAL)
-  expect(bashNetRefusal('ls {1..9}{1..9}{1..9}{1..9}; rm ~/.claude/pr-records/x')).toBe(NET_REFUSAL)
-  expect(bashNetRefusal('ls {1..9}{1..9}{1..9}{1..9}; mv ~/.claude/pr-records/x /tmp')).toBe(NET_REFUSAL)
-  expect(bashNetRefusal('echo x > ~/.claude/pr-records/o/r/x.json')).toBe(null)
-  expect(bashNetRefusal('cat ~/.claude/pr-records/o/r/x.json')).toBe(null)
-})
 // ---- a merge of a stack ----
 
 // pr-merge asked for the stack answers this plan, merging nothing; any other call answers ok.

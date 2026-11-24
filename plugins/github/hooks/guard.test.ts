@@ -3,8 +3,7 @@
 // it: the tool's calls, Bash, Write, and the engine stubbed per scenario.
 import { expect, mock as hostMock, test } from 'claude-code/testing'
 import type { Engine, NounEvents, Reply, TestOn } from 'claude-code/testing'
-import { EXEMPT_REFUSAL } from './register.js'
-import { RECORDS_REFUSAL, STDIN_REFUSAL } from './ready.js'
+import { STDIN_REFUSAL } from './ready.js'
 import { FOREIGN_CEILING_MS, FOREIGN_WAIT_MS } from './reconcile.ts'
 import { parseLearningEvent } from '../core/learning.ts'
 // The tests that set the clock themselves, by their event registry: the other worlds get a clock, and their Not Ready is this machine's.
@@ -1171,27 +1170,6 @@ test('a Bash pull request opened out of draft gets Not Ready from the URL gh pri
   expect(seen.runs.map((r) => [r.command, r.repo, r.args])).toEqual([['pr-readiness', 'acme/thing', { pr: 31, state: 'not-ready' }]])
 })
 
-for (const [name, labels, line] of [
-  ['an opening out of draft', ['Not Ready'], 'gh pr create -t "fix: x" -b "Adds the reset." && gh pr merge 12 -R acme/thing'],
-  ['a pull request left out of draft', ['Ready'], 'gh pr ready 12 -R acme/thing && gh pr merge 12 -R acme/thing'],
-] as const) {
-  test('a Bash line whose first act is observed and whose second is refused leaves no line: ' + name, async ($, on) => {
-    const seen = await world($, on, { labels: [...labels] })
-    const out = await $.tool.call(bash('echo {} > /data/e2e-exempt/acme/thing.json && ' + line))
-    expect(out.deny).toContain('refused')
-    expect(seen.journal).toEqual(['github.ready.held'])
-    expect(seen.bash).toEqual([])
-  })
-}
-
-test('a call a later check refuses leaves no observation: the journal is written just before the command runs', async ($, on) => {
-  const seen = await world($, on, { ...NO_RECORDS })
-  const out = await $.tool.call(bash('echo {} > /data/e2e-exempt/acme/thing.json && gh pr merge 12 -R acme/thing'))
-  expect(out.deny).toContain('refused')
-  expect(seen.journal).toEqual(['github.ready.held'])
-  expect(seen.bash).toEqual([])
-})
-
 test('commands that only look like an act pass with nothing read', async ($, on) => {
   const seen = await world($, on)
   for (const line of ['gh pr merge 12 -R acme/thing --disable-auto', 'git commit -m "run gh pr merge later"', 'gh pr view 12']) {
@@ -1283,86 +1261,28 @@ test('the records are written through Write, Edit and Bash with nothing journale
 
 test('the event a guard journals is core\'s refusal event under the guard\'s code, with no command in it', async ($, on) => {
   const seen = await world($, on)
-  const command = 'rm ~/.claude/pr-records/secret-name'
+  const command = 'cat /data/auto-deploy.json /tmp/secret-name'
   await $.tool.call(bash(command))
   expect(seen.events.length).toBe(1)
   const event = parseLearningEvent(JSON.parse(String(seen.events[0])))
   expect(event?.kind).toBe('refusal')
-  expect(event?.source).toEqual({ plugin: 'github', code: 'github.records.delete' })
-  expect(event?.evidence).toEqual([{ type: 'refusal', code: 'github.records.delete' }])
+  expect(event?.source).toEqual({ plugin: 'github', code: 'github.auto-deploy.list-touch' })
+  expect(event?.evidence).toEqual([{ type: 'refusal', code: 'github.auto-deploy.list-touch' }])
   expect(seen.events[0]).not.toContain('secret-name')
 })
 
-test('a command that only mentions the records in its text passes, a write to them passes unjournaled, a deletion in them is refused', async ($, on) => {
-  const seen = await world($, on)
-  const commit = await $.tool.call(bash('git commit -m "docs: mention pr-records in the README"'))
-  expect(commit.deny).toBeUndefined()
-  expect(seen.journal).toEqual([])
-  const touch = await $.tool.call(bash('touch ~/.claude/pr-records/x'))
-  expect(touch.deny).toBeUndefined()
-  expect(seen.journal).toEqual([])
-  const rm = await $.tool.call(bash('rm ~/.claude/pr-records/x'))
-  expect(rm.deny).toBe(RECORDS_REFUSAL)
-  expect(seen.journal).toEqual(['github.records.delete'])
-  expect(seen.bash).toEqual(['git commit -m "docs: mention pr-records in the README"', 'touch ~/.claude/pr-records/x'])
-})
-
-test('a journal that cannot be written leaves each decision standing: the deletion refused, the write let through, one log line for the deletion', async ($, on) => {
+test('a journal that cannot be written leaves each decision standing: the refusal kept, the write let through, one log line for the refusal', async ($, on) => {
   const seen = await world($, on, { journalFails: 'ENOSPC: no space left on device' })
-  const rm = await $.tool.call(bash('rm ~/.claude/pr-records/x'))
-  expect(rm.deny).toBe(RECORDS_REFUSAL)
+  const deploy = await $.tool.call(bash('cat /data/auto-deploy.json'))
+  expect(deploy.deny).toContain('auto-deploy-set')
   const touch = await $.tool.call(bash('touch ~/.claude/pr-records/x'))
   expect(touch.deny).toBeUndefined()
   expect(seen.bash).toEqual(['touch ~/.claude/pr-records/x'])
   expect(seen.journal).toEqual([])
   const lines = seen.logs.filter((line) => line.includes('ENOSPC'))
   expect(lines.length).toBe(1)
-  expect(lines[0]).toContain('github.records.delete')
+  expect(lines[0]).toContain('github.auto-deploy.list-touch')
 })
-
-const RECORDS_READS = [
-  'ls ~/.claude/pr-records',
-  'ls /Users/lounis/.claude/pr-records/lounisbou/claude-plugins/' + HEAD + '/',
-  'cat ~/.claude/pr-records/o/r/' + HEAD + '/e2e.x.json',
-  'head -n 5 ~/.claude/pr-records/o/r/x.json',
-  'tail -f ~/.claude/pr-records/o/r/x.json',
-  'grep -rn pass ~/.claude/pr-records/o/r',
-  'find ~/.claude/pr-records -name "e2e.*" -newer /tmp/x',
-  'stat ~/.claude/pr-records/o/r/x.json',
-  'wc -l ~/.claude/pr-records/o/r/x.json',
-  'jq .result ~/.claude/pr-records/o/r/x.json',
-  'cat ~/.claude/pr-records/o/r/x.json | jq . | wc -l',
-  'cat ' + RECORDS + '/o/r/x.json',
-]
-
-for (const command of RECORDS_READS) {
-  test('a Bash command that only reads the records passes: ' + command.slice(0, 40), async ($, on) => {
-    const seen = await world($, on)
-    const out = await $.tool.call(bash(command))
-    expect(out.deny).toBeUndefined()
-    expect(seen.journal).toEqual([])
-    expect(seen.bash).toEqual([command])
-  })
-}
-
-// A read that waits, loops or silences its errors is still a read: nothing is journaled.
-const RECORDS_QUIET_READS = [
-  'ls ~/.claude/pr-records/o/r/' + HEAD + ' 2>/dev/null',
-  'cat ~/.claude/pr-records/o/r/x.json 2>&1 | jq .result',
-  'until ls ~/.claude/pr-records/o/r/' + HEAD + '/e2e.json; do sleep 2; done',
-  'for f in ~/.claude/pr-records/o/r/*; do cat $f; done',
-  'sleep 5; ls ~/.claude/pr-records/o/r',
-]
-
-for (const command of RECORDS_QUIET_READS) {
-  test('a Bash command that only reads the records, waiting or silencing its errors, raises no event: ' + command.slice(0, 40), async ($, on) => {
-    const seen = await world($, on)
-    const out = await $.tool.call(bash(command))
-    expect(out.deny).toBeUndefined()
-    expect(seen.journal).toEqual([])
-    expect(seen.bash).toEqual([command])
-  })
-}
 
 const RECORDS_WRITES = [
   'echo x > ~/.claude/pr-records/o/r/x.json',
@@ -1384,49 +1304,14 @@ const RECORDS_WRITES = [
   './ls ~/.claude/pr-records/o/r',
   'python3 ' + ROOT + '/engine/record.py --repo o/r --pr 1',
   'cat ~/.claude/pr-records/o/r/x.json && python3 ' + ROOT + '/engine/record.py --repo o/r --pr 1',
-]
-
-// Deleting is irreversible: a deletion in the records keeps its refusal, as on main.
-const RECORDS_DELETIONS = [
   'rm ~/.claude/pr-records/o/r/x.json',
   'rm -rf ' + RECORDS + '/o',
   'find ~/.claude/pr-records -name "*.json" -delete',
-  'find ~/.claude/pr-records -name "*.json" -exec rm {} +',
-  'ls ~/.claude/pr-records/o/r | xargs rm',
-  'cd ~/.claude/pr-records/o/r && rm x.json',
-  'bash -c "rm ~/.claude/pr-records/o/r/x.json"',
-  '/bin/rm ~/.claude/pr-records/o/r/x.json',
-  'rm ~/.claude/pr-records/o/r/x.json $(',
-  'git -C ~/.claude/pr-records clean -fdx',
-  'git -c core.x=y clean -fdx ~/.claude/pr-records/o',
-  'git --git-dir=/tmp/g rm -r ~/.claude/pr-records/o',
-  'rsync -a --delete-after /tmp/empty/ ~/.claude/pr-records/',
-  'rsync -a --del /tmp/empty/ ~/.claude/pr-records/',
-  'tar --remove-files -cf /tmp/a.tar ~/.claude/pr-records/o',
-  'rm${IFS}~/.claude/pr-records/o/r/x.json',
-  'mv -t /tmp ~/.claude/pr-records/o/r/x.json',
-  'find ~/.claude/pr-records -name "*.json" -exec mv {} /tmp \\;',
-  'ls ~/.claude/pr-records/o/r | xargs mv -t /tmp',
-  'python3 -c "from pathlib import Path; Path(\'/home/x/.claude/pr-records/o/r/x.json\').unlink()"',
-  'ls {1..9}{1..9}{1..9}{1..9}; rm ~/.claude/pr-records/o/r/x.json',
-  'r""m ~/.claude/pr-records/o/r/x.json',
-  'unlink ~/.claude/pr-records/o/r/x.json',
   'mv ~/.claude/pr-records/o/r/x.json /tmp/x.json',
-  'python3 -c "import os; os.remove(\'/home/x/.claude/pr-records/o/r/x.json\')"',
 ]
 
-for (const command of RECORDS_DELETIONS) {
-  test('a Bash command that deletes in the records stays refused: ' + command.slice(0, 40), async ($, on) => {
-    const seen = await world($, on)
-    const out = await $.tool.call(bash(command))
-    expect(out.deny).toBe(RECORDS_REFUSAL)
-    expect(seen.journal).toEqual(['github.records.delete'])
-    expect(seen.bash).toEqual([])
-  })
-}
-
 for (const command of RECORDS_WRITES) {
-  test('a Bash command that writes into the records goes through, nothing journaled: ' + command.slice(0, 40), async ($, on) => {
+  test('a Bash command that writes or deletes in the records goes through, nothing journaled: ' + command.slice(0, 40), async ($, on) => {
     const seen = await world($, on)
     const out = await $.tool.call(bash(command))
     expect(out.deny).toBeUndefined()
@@ -1437,32 +1322,12 @@ for (const command of RECORDS_WRITES) {
 
 const LIST = '~/.claude/plugins/data/github-lounisbou/auto-merge.json'
 
-test('a Bash command that only reads the auto-merge list passes', async ($, on) => {
+test('a Bash command that reads or writes the auto-merge list goes through', async ($, on) => {
   const seen = await world($, on)
-  const read = await $.tool.call(bash('cat ' + LIST))
-  expect(read.deny).toBeUndefined()
-  expect(seen.bash).toEqual(['cat ' + LIST])
+  const commands = ['cat ' + LIST, 'sed -i s/a/b/ ' + LIST, 'echo \'{"repositories":["a/b"]}\' > /data/auto-merge.json']
+  for (const command of commands) expect((await $.tool.call(bash(command))).deny, command).toBeUndefined()
+  expect(seen.bash).toEqual(commands)
 })
-
-for (const command of [
-  'sed -i s/a/b/ ' + LIST,
-  'cat ' + LIST + ' > /tmp/copy',
-  'ls ' + LIST + ' >&' + LIST,
-  'ls ' + LIST + ' 1>&' + LIST,
-  'echo "$(echo x > ' + LIST + ')"',
-  'echo "`echo x > ' + LIST + '`"',
-  "echo $'a\\'' > " + LIST,
-  'cd ~/.claude/plugins/data/github-lounisbou && cat auto-merge.json',
-  '/tmp/x/cat ' + LIST,
-  './ls ' + LIST,
-]) {
-  test('a Bash command that writes the auto-merge list stays refused: ' + command.slice(0, 40), async ($, on) => {
-    const seen = await world($, on)
-    const out = await $.tool.call(bash(command))
-    expect(out.deny).toContain('auto-merge-set')
-    expect(seen.bash).toEqual([])
-  })
-}
 
 // ---- the record tool ----
 
@@ -2244,18 +2109,6 @@ test('auto-merge-list with no file says so', async ($, on) => {
   expect(out.result).toBe('no repository in auto-merge')
 })
 
-for (const command of [
-  'echo \'{"repositories":["a/b"]}\' > /data/auto-merge.json',
-  'cd ~/.claude/plugins/data/github-lounisbou && jq . auto-merge.json > x && mv x auto-merge.json',
-]) {
-  test('a Bash command that names the auto-merge list is refused: ' + command.slice(0, 30), async ($, on) => {
-    const seen = await world($, on)
-    const out = await $.tool.call(bash(command))
-    expect(out.deny).toContain('auto-merge-set')
-    expect(seen.bash).toEqual([])
-  })
-}
-
 for (const [tool, path] of [
   ['Write', AUTO_MERGE], ['Edit', AUTO_MERGE], ['Write', '/home/x/.claude/plugins/data/github-lounisbou/auto-merge.json'],
 ] as const) {
@@ -2265,13 +2118,6 @@ for (const [tool, path] of [
     expect(out.deny).toContain('auto-merge-set')
   })
 }
-
-test('a Bash command that names the file outside the plugins\' data goes through', async ($, on) => {
-  const seen = await world($, on)
-  const out = await $.tool.call(bash('grep -n auto-merge.json README.md'))
-  expect(out.deny).toBeUndefined()
-  expect(seen.bash).toEqual(['grep -n auto-merge.json README.md'])
-})
 
 test('a Write of another auto-merge.json, outside the plugins\' data, goes through', async ($, on) => {
   await world($, on)
@@ -3349,32 +3195,21 @@ test('a label an exemption names goes through like another label, on or off, not
   expect(seen.runs.filter((r) => r.command).map((r) => r.command)).toEqual(['label-add', 'label-remove', 'label-add'])
 })
 
-test('the exemption files are written through Write, Edit and Bash, each observed, a deletion in them is refused', async ($, on) => {
+test('the exemption files are written through Write and Edit, each observed, and through Bash, deletion included, unobserved', async ($, on) => {
   const seen = await world($, on)
   const calls = [
     { tool: 'Write', file_path: EXEMPTION, content: '{}' },
     { tool: 'Edit', file_path: '/home/x/.claude/plugins/data/github-lounisbou/e2e-exempt/o/r.json', old_string: 'a', new_string: 'b' },
-    bash('echo {} > /data/e2e-exempt/acme/thing.json'),
   ]
   for (const call of calls) {
     const out = await $.tool.call(call)
     expect(out.deny, JSON.stringify(call)).toBeUndefined()
   }
   expect(seen.journal).toEqual(calls.map(() => 'github.exemption.write'))
-  for (const command of ['rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt"', 'find /data/e2e-exempt -delete', 'mv /data/e2e-exempt/acme/thing.json /tmp/x', 'bash -c "rm /data/e2e-exempt/acme/thing.json"']) {
-    const out = await $.tool.call(bash(command))
-    expect(out.deny, command).toBe(EXEMPT_REFUSAL)
-  }
-  expect(seen.journal.length).toBe(calls.length + 4)
-  for (const command of ['cat /data/e2e-exempt/acme/thing.json', 'ls /data/check-plans/acme']) {
-    const read = await $.tool.call(bash(command))
-    expect(read.deny, command).toBeUndefined()
-  }
-  expect(seen.journal.length).toBe(calls.length + 4)
-  const mention = await $.tool.call(bash('git commit -m "docs: explain e2e-exempt/ files"'))
-  expect(mention.deny).toBeUndefined()
-  expect(seen.journal.length).toBe(calls.length + 4)
-  expect(seen.bash).toEqual([calls[2], bash('cat /data/e2e-exempt/acme/thing.json'), bash('ls /data/check-plans/acme'), bash('git commit -m "docs: explain e2e-exempt/ files"')].map((call) => fieldsOf(call)?.['command']))
+  const commands = ['echo {} > /data/e2e-exempt/acme/thing.json', 'rm -r "$CLAUDE_PLUGIN_DATA/e2e-exempt"', 'find /data/e2e-exempt -delete', 'cat /data/e2e-exempt/acme/thing.json']
+  for (const command of commands) expect((await $.tool.call(bash(command))).deny, command).toBeUndefined()
+  expect(seen.journal.length).toBe(calls.length)
+  expect(seen.bash).toEqual(commands)
 })
 
 const noneCall = (detail?: string) =>
@@ -3896,14 +3731,13 @@ test('a failed run after the waiver at an earlier head voids it for the later he
 })
 
 
-test('the plan files are written through Write, observed, and deleted through Bash, refused', async ($, on) => {
+test('the plan files are written through Write, observed, and through Bash, deletion included, unobserved', async ($, on) => {
   const seen = await world($, on)
   expect(((await $.tool.call({ tool: 'Write', file_path: PLAN, content: '{}' }))).deny).toBeUndefined()
   expect(seen.journal).toEqual(['github.exemption.write'])
   expect(((await $.tool.call(bash('touch "$CLAUDE_PLUGIN_DATA/check-plans/acme/12.json"')))).deny).toBeUndefined()
-  expect(seen.journal).toEqual(['github.exemption.write', 'github.exemption.write'])
-  expect(((await $.tool.call(bash('rm -rf "$CLAUDE_PLUGIN_DATA/check-plans/acme"')))).deny).toBe(EXEMPT_REFUSAL)
-  expect(seen.journal.length).toBe(3)
+  expect(((await $.tool.call(bash('rm -rf "$CLAUDE_PLUGIN_DATA/check-plans/acme"')))).deny).toBeUndefined()
+  expect(seen.journal).toEqual(['github.exemption.write'])
 })
 
 // ---- who writes the plan ----

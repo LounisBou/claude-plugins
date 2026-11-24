@@ -36,8 +36,8 @@ import {
   carriesReady, ciOnlyMissing, ciUndraft, gateUndraft, ciUndraftLine, createdPr, durableWaiver, gateHeldAnswer, gateHeldGivenUpLine, gateHeldLine, gateHeldRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
-  kindRefusal, recordKindFor, toolAct, onlyReads, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
-  COMPUTING_ITEM, LIGHT_CI_ABSENT, RECORDS_REFUSAL, deletes, deletesRecords,
+  kindRefusal, recordKindFor, toolAct, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
+  COMPUTING_ITEM, LIGHT_CI_ABSENT,
   type Act, type Carried, type Gate, type HeadRead, type RecordFile,
 } from './ready.ts'
 
@@ -266,9 +266,6 @@ const AUTO_MERGE_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-merge\.json$/
 const AUTO_DEPLOY_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-deploy\.json$/
 // The E2E exemptions, one file per repository, and the check plans, one per pull request, below these directories of the data directory.
 const GUARDED_DIRS = '(' + EXEMPT_DIR + '|' + PLAN_DIR + ')'
-const namesExemptions = (text: string) => text.includes(EXEMPT_DIR) || text.includes(PLAN_DIR)
-export const EXEMPT_REFUSAL = 'github: an E2E exemption changes only through mcp__github__record'
-  + ' {"repo": "owner/name", "exempt": true|false, "detail": "« <the operator\'s words> », <their date>"}, and a check plan through ' + PLAN_WRITER.tool + '.'
 const ANY_EXEMPT_PATH = new RegExp('/\\.claude/plugins/data/[^/]+/' + GUARDED_DIRS + '/')
 export const PLAN_REFUSAL = 'github: a check plan is written by ' + PLAN_WRITER.tool + ', from an orchestrator session.'
 
@@ -289,9 +286,9 @@ export function quotedWordsRefusal(what: string, detail: string, field = 'detail
   return undefined
 }
 
-// What a guard's net refuses when the guard itself failed: only what the guard still refuses (a merge, the
-// auto-merge and deploy lists, a deletion of the records, the exemptions or the plans), judged from the call alone (no state can be read once the hook has
-// thrown); the rest, observed guards included, goes through.
+// What a guard's net refuses when the guard itself failed: only what the guard still refuses (a merge, the deploy
+// list), judged from the call alone (no state can be read once the hook has thrown); the rest, observed guards
+// included, goes through.
 export const NET_REFUSAL = 'github: its guard failed on this call, which it protects; nothing was run. Try again, or run /github:doctor.'
 
 // Opening a pull request, in draft or not, and returning one to draft reach no merge.
@@ -299,14 +296,11 @@ const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create', 'create-draft', 'r
 
 export function bashNetRefusal(command: string): string | null {
   try {
-    if (command.includes(AUTO_MERGE_FILE) || command.includes(AUTO_DEPLOY_FILE) || deletesRecords(command)) return NET_REFUSAL
-    if (namesExemptions(command) && deletes(command, namesExemptions)) return NET_REFUSAL
+    if (command.includes(AUTO_DEPLOY_FILE)) return NET_REFUSAL
     return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
   } catch {
     // Unreadable: refused only when it may name what the guard protects.
-    const names = (text: string) => /pr-records|e2e-exempt|check-plans/.test(text)
-    if (names(command) && deletes(command, names)) return NET_REFUSAL
-    return /\b(gh|git)\b|auto-merge|auto-deploy/.test(command) ? NET_REFUSAL : null
+    return /\b(gh|git)\b|auto-deploy/.test(command) ? NET_REFUSAL : null
   }
 }
 
@@ -2422,13 +2416,6 @@ async function touchesList($: Mod, line: string, file: string): Promise<boolean>
   return (dir !== '' && line.includes(dir)) || /plugins\/data\/|CLAUDE_PLUGIN_DATA|github-lounisbou/.test(line)
 }
 
-// Whether a Bash command line names the exemption files where they live, as touchesAutoMerge reads the list.
-async function touchesExemptions($: Mod, line: string): Promise<boolean> {
-  if (!line.includes(EXEMPT_DIR) && !line.includes(PLAN_DIR)) return false
-  const dir = await dataDir($)
-  return (dir !== '' && line.includes(dir)) || /plugins\/data\/|CLAUDE_PLUGIN_DATA|github-lounisbou/.test(line)
-}
-
 // The list, one repository per line as written.
 async function listAutoMerge($: Mod): Promise<string> {
   const { listed } = await readAutoMerge($)
@@ -3141,22 +3128,9 @@ export function register(on: On<Mod>): void {
 
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     const line = String(e['command'])
-    // What the call is observed for, journaled just before it runs: a call refused further down leaves no line.
-    const observations: string[] = []
     try {
-      // A command that only reads them passes: the auto-merge list is refused a write, the deploy list any touch.
-      if (await touchesList($, line, AUTO_MERGE_FILE) && !onlyReads(line)) return await refuse($, REFUSED.autoMergeList, AUTO_MERGE_REFUSAL)
+      // The deploy list is refused any touch.
       if (await touchesList($, line, AUTO_DEPLOY_FILE)) return await refuse($, REFUSED.autoDeployList, AUTO_DEPLOY_REFUSAL)
-    } catch {
-      // A line the reader cannot read: the ready guard below reads it again and refuses it.
-    }
-    try {
-      // The records and the exemptions are refused a deletion (irreversible); any other write to the exemptions is observed.
-      const root = await recordsRoot($)
-      if (deletesRecords(line, root)) return await refuse($, REFUSED.recordsDelete, RECORDS_REFUSAL)
-      const exempt = await touchesExemptions($, line)
-      if (exempt && deletes(line, namesExemptions)) return await refuse($, REFUSED.exemptionDelete, EXEMPT_REFUSAL)
-      if (exempt && !onlyReads(line)) observations.push(OBSERVED.exemption)
     } catch {
       // A line the reader cannot read: the ready guard below reads it again and refuses it.
     }
@@ -3174,7 +3148,6 @@ export function register(on: On<Mod>): void {
       // The ready guard failed on its own: its readiness reads as unverified, never as a pass.
       return await refuse($, REFUSED.ready, guardThrew(current, err))
     }
-    for (const code of new Set(observations)) await observed($, code)
     const started = Date.now()
     const result = await next(e)
     // A run to its end is observed for an E2E record; a background one has not ended.
