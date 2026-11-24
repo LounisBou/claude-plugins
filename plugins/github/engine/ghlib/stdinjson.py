@@ -29,10 +29,9 @@ _MANAGED = ("json_file", "json-file")
 # A file key and the inline key that says the same thing: one of the two, never both.
 _FILES = {"body-file": "body", "comments-file": "comments"}
 
-# Credential stores a body file may not name: the tool posts what it reads, and the permission
-# dialog shows the path, not the content.
-_SECRET_DIRS = (".ssh", ".aws", ".gnupg")
-_SECRET_NAMES = (".netrc", ".git-credentials", "auth.json")
+# The tool posts what it reads and its permission dialog shows the path, not the content: a file
+# key names only a file of a temp directory, where a session writes what it posts.
+_TEMP_ROOTS = ("/tmp", "/private/tmp")
 
 
 def _scalar(key, value):
@@ -49,13 +48,13 @@ def _write(tmpdir, name, text):
     return path
 
 
-def _file(key, value):
-    if not isinstance(value, str) or not os.path.isfile(value):
-        raise errors.UsageError('"%s" takes the path of an existing file' % key)
-    parts = os.path.realpath(value).split(os.sep)
-    name = parts[-1]
-    if set(parts) & set(_SECRET_DIRS) or name in _SECRET_NAMES or name.endswith(".env"):
-        raise errors.UsageError('"%s" names a credential store: %s' % (key, value))
+def _temp_file(key, value):
+    """The resolved path of a regular file under a temp directory, or a usage error."""
+    roots = [os.path.realpath(r) for r in _TEMP_ROOTS + (os.environ.get("TMPDIR") or "/tmp",)]
+    real = os.path.realpath(value) if isinstance(value, str) and os.path.isabs(value) else None
+    if real is None or not os.path.isfile(real) or not any(real.startswith(r + os.sep) for r in roots):
+        raise errors.UsageError("%s must be a file in the session scratchpad (a temp directory)" % key)
+    return real
 
 
 def _positional(sub, key):
@@ -96,11 +95,11 @@ def build_argv(parser, request, tmpdir):
             continue
         if key in _MANAGED:
             raise errors.UsageError('"%s" is managed by the engine; pass nodes' % key)
-        if key in _FILES:
+        if key in _FILES and _option(sub, key) is not None:
             if args.get(_FILES[key]) is not None:
                 raise errors.UsageError('pass "%s" or "%s", not both' % (_FILES[key], key))
-            _file(key, value)
-        if key == "body":
+            flags.append("--%s=%s" % (key, _temp_file(key, value)))
+        elif key == "body":
             if not isinstance(value, str):
                 raise errors.UsageError("body must be a string")
             if _option(sub, "body-file") is None:
