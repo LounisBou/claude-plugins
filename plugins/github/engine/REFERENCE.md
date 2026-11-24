@@ -10,7 +10,7 @@ below, and the `args` object holds the subcommand's arguments.
   (`label...`, `user...`, `term...`, `file...`) take an array.
 - Other keys are the subcommand's `--flag`s, spelled whole: `{"branch": "x"}` → `--branch x`,
   `{"draft": true}` → `--draft`.
-- A text body goes in `"body"` (a string) or `"body-file"` (a temp file's path), inline-comment arrays
+- A text body goes in `"body"` (a string) or `"body-file"` (a temp path), inline-comment arrays
   in `"comments"` or `"comments-file"`, never both. `comments-resolved-batch` takes `"nodes"`
   (an array of node ids).
 

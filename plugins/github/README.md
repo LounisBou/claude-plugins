@@ -38,8 +38,8 @@ it. `/github:doctor` then confirms everything is ready.
   parser does not declare, and passes each body as a private temporary file it
   removes afterwards. A body or comments file the session wrote passes as its
   resolved path (`body-file`, `comments-file`), never with `body` or
-  `comments`, and only from a temp directory (`/tmp`, `$TMPDIR`, the session
-  scratchpad), since the dialog shows the path, not the content. Failures come back as `isError` with the
+  `comments`, and only from a temp directory (`/tmp`, `$TMPDIR`): the dialog
+  shows the path, not the content. Failures come back as `isError` with the
   engine's `error:` line; exit codes 1–5 are documented in
   `engine/REFERENCE.md`. Calls follow the session's permission rules: a
   `deny` rule refuses, reads run unless a rule asks, and every write asks
