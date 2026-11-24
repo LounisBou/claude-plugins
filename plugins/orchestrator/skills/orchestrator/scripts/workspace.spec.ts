@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -1236,4 +1236,240 @@ test('keep: a checkout closed with --keep-checkout is never ended by the sweep o
   assert.match((await bare(w, 'keep')).err, /keep: usage/)
   assert.match((await bare(w, 'delete', closed, '--by', 'me')).err, /--by names close, sweep or delete/)
   assert.equal(parseEntry(JSON.stringify({ v: 1, path: '/r/p/a', kind: 'clone', repo: '', branch: '', orchestrator: null, agent: null, created: '', kept: 3 })), null)
+})
+
+test('a clone with a pin open on it is kept by delete and by the sweep, whoever owns it; the pin is ended, then the clone at the next sweep', async () => {
+  // The clone's directory sorts before its pin's: the sweep meets the clone first.
+  const src = pushed('aproj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41' })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const root = join(dir, 'root')
+  const c = await clone(w, src, 'c', 'feat/c')
+  assert.equal((await bare(w, 'pin', c, 'p', 'feat/c')).code, 0)
+  const p = join(root, 'c', 'p')
+  assert.equal((await bare(w, 'delete', c)).err, `workspace: delete: a pin is open on it: ${p} (pass --discard to remove it anyway): ${c}\n`)
+  assert.ok(existsSync(c) && existsSync(p))
+  // Its owners gone, an agent still working in the pin: the pin stays, so does the clone, and the clone says why.
+  w.clock += 2 * HOUR
+  w.cwds = lsofOf('/elsewhere')
+  registry(w, [{ pid: 51, name: 'Agent: reader', cwd: p }], new Set([51]))
+  const held = await bare(w, 'sweep')
+  assert.deepEqual(held.out.split('\n').filter(l => l !== '' && !l.startsWith(`deleted ${join(dir, 'host')}`)), [
+    `kept ${c}: a pin is open on it: ${p} (no live orchestrator or agent)`,
+    `kept ${p}: agent Agent: reader works in it`,
+  ])
+  assert.equal(lineOf(w, c)?.reason, `a pin is open on it: ${p}`)
+  assert.ok(existsSync(c) && existsSync(p))
+  // The reader gone: the pin goes, the clone it held follows at the next sweep.
+  registry(w, [], new Set())
+  const pinGone = await bare(w, 'sweep')
+  assert.deepEqual(pinGone.out.split('\n').filter(l => l !== '' && !l.startsWith(`deleted ${join(dir, 'host')}`)), [
+    `kept ${c}: a pin is open on it: ${p} (no live orchestrator or agent)`,
+    `deleted ${p}`,
+  ])
+  const done = await bare(w, 'sweep')
+  assert.deepEqual(done.out.split('\n').filter(l => l !== '' && !l.startsWith(`deleted ${join(dir, 'host')}`)), [`deleted ${c}`])
+  assert.deepEqual(archived().map(a => [a['path'], a['end'], a['by']]), [[p, 'removed', 'sweep'], [c, 'removed', 'sweep']])
+  assert.deepEqual(readdirSync(root).filter(n => !n.startsWith('.')), [], 'neither parent directory is left')
+})
+
+test('a pin whose clone is gone is ended whoever owns it: directory removed, line closed; what works in it keeps it', async () => {
+  const src = pushed('proj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41' })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const root = join(dir, 'root')
+  const c = await clone(w, src, 'c', 'feat/c')
+  const [p, q, r, h] = ['p', 'q', 'r', 'h'].map(n => join(root, 'c', n)) as [string, string, string, string]
+  for (const n of ['p', 'q', 'r', 'h']) assert.equal((await bare(w, 'pin', c, n, 'feat/c')).code, 0)
+  // What the sweep once did to a clone with pins open on it (and what a hand does still with --discard).
+  assert.equal((await bare(w, 'delete', c, '--discard')).code, 0)
+  assert.ok(lineOf(w, p) !== undefined)
+  // The orchestrator lives: the clone the pins hang from is gone all the same.
+  w.clock += 2 * HOUR
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }, { pid: 52, name: 'Agent: reader', cwd: q }], new Set([41, 52]))
+  w.cwds = lsofOf(r)
+  const files = (): string => readdirSync(join(root, 'c')).sort().join()
+  const dry = await bare(w, 'sweep', '--dry-run')
+  assert.deepEqual(dry.out.split('\n').filter(l => l !== '' && !l.startsWith('would delete ' + join(dir, 'host')) && !l.endsWith(': empty')), [
+    `would delete ${h}: its clone is gone`,
+    `would delete ${p}: its clone is gone`,
+    `kept ${q}: agent Agent: reader works in it`,
+    `kept ${r}: a live process has its working directory inside`,
+  ])
+  assert.equal(files(), 'h,p,q,r')
+  const swept = await bare(w, 'sweep')
+  assert.equal(swept.code, 0, swept.err)
+  assert.deepEqual(swept.out.split('\n').filter(l => l !== '' && !l.startsWith(`deleted ${join(dir, 'host')}`)), [
+    `deleted ${h}`,
+    `deleted ${p}`,
+    `kept ${q}: agent Agent: reader works in it`,
+    `kept ${r}: a live process has its working directory inside`,
+  ])
+  assert.equal(files(), 'q,r')
+  assert.deepEqual(archived().map(a => [a['path'], a['end'], a['by']]), [[c, 'discarded', 'delete'], [h, 'removed', 'sweep'], [p, 'removed', 'sweep']])
+  assert.deepEqual(lines(w).map(e => e.path), [q, r])
+  // Nothing works in them any more: the sweep ends both, and the parent goes with the last.
+  registry(w, [], new Set())
+  w.cwds = lsofOf('/elsewhere')
+  const rest = await bare(w, 'sweep')
+  assert.deepEqual(rest.out.split('\n').filter(l => l !== '' && !l.startsWith(`deleted ${join(dir, 'host')}`)), [`deleted ${q}`, `deleted ${r}`])
+  assert.deepEqual(readdirSync(root).filter(n => !n.startsWith('.')), [])
+  assert.deepEqual(archived().map(a => [a['end'], a['by']]), [['discarded', 'delete'], ['removed', 'sweep'], ['removed', 'sweep'], ['removed', 'sweep'], ['removed', 'sweep']])
+})
+
+test('a pin is taken as orphan only once its clone is shown removed by workspace.sh, past its first hour and with no live agent; a link out of the root is never taken', async () => {
+  const src = pushed('proj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41' })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const root = join(dir, 'root')
+  // A clone moved, not removed: its pin reads as orphan to git, and nothing shows the clone gone.
+  const moved = await clone(w, src, 'moved', 'feat/moved')
+  assert.equal((await bare(w, 'pin', moved, 'a', 'feat/moved')).code, 0)
+  renameSync(moved, `${moved}-away`)
+  // A clone removed by workspace.sh, its pin young, then with a live agent by name.
+  const gone = await clone(w, src, 'gone', 'feat/gone')
+  assert.equal((await bare(w, 'pin', gone, 'b', 'feat/gone')).code, 0)
+  assert.equal((await bare(w, 'delete', gone, '--discard')).code, 0)
+  // A pin naming a clone no ledger line ever held.
+  assert.equal((await bare(w, 'pin', src, 'c', 'main')).code, 0)
+  const unknown = join(root, 'proj', 'c')
+  writeFileSync(join(unknown, '.git'), `gitdir: ${join(dir, 'unmounted', 'clone', '.git', 'worktrees', 'c')}\n`)
+  const a = join(root, 'moved', 'a')
+  const b = join(root, 'gone', 'b')
+  w.cwds = lsofOf('/elsewhere')
+  // Within its first hour a pin is left alone, whatever it is.
+  const first = await bare(w, 'sweep')
+  assert.ok(first.out.includes(`kept ${b}: its clone is gone, kept within its first hour\n`), first.out)
+  w.clock += 2 * HOUR
+  changeEntryOf(b, e => ({ ...e, agent: 'Agent: elsewhere' }))
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }, { pid: 71, name: 'Agent: elsewhere', cwd: '/elsewhere' }], new Set([41, 71]))
+  const held = (await bare(w, 'sweep')).out.split('\n')
+  assert.ok(held.includes(`kept ${b}: its clone is gone, kept while its agent Agent: elsewhere lives`), held.join('\n'))
+  assert.ok(held.some(l => l.startsWith(`kept ${a}: its source worktree entry is gone, but its clone ${moved} was not removed by workspace.sh`)), held.join('\n'))
+  assert.ok(held.some(l => l.startsWith(`kept ${unknown}: its source worktree entry is gone, but its clone ${join(dir, 'unmounted', 'clone')} was not removed by workspace.sh`)), held.join('\n'))
+  assert.ok(existsSync(a) && existsSync(b) && existsSync(unknown))
+  // Its agent gone, the proven one goes; the others stay, and stay said.
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const done = (await bare(w, 'sweep')).out.split('\n')
+  assert.ok(done.includes(`deleted ${b}`), done.join('\n'))
+  assert.ok(existsSync(a) && existsSync(unknown))
+  // A clone workspace.sh ended (the archive says discarded), its path taken again before the sweep: what is there now is no proof of anything.
+  const reborn = await clone(w, src, 'reborn', 'feat/reborn')
+  assert.equal((await bare(w, 'pin', reborn, 'd', 'feat/reborn')).code, 0)
+  assert.equal((await bare(w, 'delete', reborn, '--discard')).code, 0)
+  mkdirSync(reborn)
+  const d = join(root, 'reborn', 'd')
+  const again = (await bare(w, 'sweep')).out.split('\n')
+  assert.ok(again.some(l => l.startsWith(`kept ${d}: its source worktree entry is gone, but its clone ${reborn} is still there or out of reach`)), again.join('\n'))
+  assert.ok(existsSync(d))
+  // A link to a directory outside the root, its `.git` naming a clone that workspace.sh removed: never taken, the target untouched.
+  const outside = join(dir, 'outside')
+  const lost = join(dir, 'lost-clone')
+  mkdirSync(outside)
+  writeFileSync(join(outside, '.git'), `gitdir: ${join(lost, '.git', 'worktrees', 'x')}\n`)
+  writeFileSync(join(outside, 'precious.txt'), 'mine')
+  appendFileSync(archivePath(root), `${JSON.stringify({ v: 1, path: lost, kind: 'clone', repo: '', branch: '', orchestrator: null, agent: null, created: '', closed: '', end: 'removed', by: 'sweep' })}\n`)
+  symlinkSync(outside, join(root, 'proj', 'link'))
+  const linked = await bare(w, 'sweep')
+  assert.match(linked.out, new RegExp(`^kept ${outside}: its clone is gone, but it is a link or lies outside the root: left alone$`, 'm'))
+  assert.ok(existsSync(join(outside, 'precious.txt')) && existsSync(join(root, 'proj', 'link')))
+  assert.ok(!existsSync(join(root, '.trash')) || readdirSync(join(root, '.trash')).length === 0)
+})
+
+test('delete, close and sweep remove the parent directories they leave empty, never the root nor a directory that holds anything', async () => {
+  const src = pushed('proj')
+  const w = world()
+  const root = join(dir, 'root')
+  const names = (): string[] => readdirSync(root).filter(n => !n.startsWith('.')).sort()
+  const a = await clone(w, src, 'a', 'feat/a')
+  const b = await clone(w, src, 'b', 'feat/b')
+  assert.equal((await bare(w, 'delete', a)).code, 0)
+  assert.deepEqual(names(), ['proj'], 'a sibling is still there')
+  assert.equal((await bare(w, 'delete', b, '--by', 'close')).code, 0)
+  assert.deepEqual(names(), [], 'the last one takes its parent with it')
+  assert.ok(existsSync(root) && existsSync(ledgerPath(root)), 'never the root')
+  // A parent holding anything else stays: a loose file, a directory that is no checkout.
+  const c = await clone(w, src, 'c', 'feat/c')
+  writeFileSync(join(root, 'proj', 'notes.txt'), 'mine')
+  assert.equal((await bare(w, 'delete', c)).code, 0)
+  assert.deepEqual(readdirSync(join(root, 'proj')), ['notes.txt'])
+  rmSync(join(root, 'proj'), { recursive: true })
+  // The sweep takes the empty directories already there, and only those.
+  mkdirSync(join(root, 'empty'))
+  mkdirSync(join(root, 'finder'))
+  writeFileSync(join(root, 'finder', '.DS_Store'), '')
+  mkdirSync(join(root, 'full'))
+  writeFileSync(join(root, 'full', 'x'), '')
+  mkdirSync(join(root, '.hidden'))
+  mkdirSync(join(dir, 'elsewhere'))
+  symlinkSync(join(dir, 'elsewhere'), join(root, 'link'))
+  // Within the hour an empty directory may be a `create` under way.
+  assert.deepEqual((await bare(w, 'sweep')).out, '')
+  w.clock += 2 * HOUR
+  const dry = await bare(w, 'sweep', '--dry-run')
+  assert.deepEqual(dry.out.split('\n').filter(l => l !== ''), [`would delete ${join(root, 'empty')}: empty`, `would delete ${join(root, 'finder')}: empty`])
+  assert.deepEqual(names(), ['empty', 'finder', 'full', 'link'])
+  const swept = await bare(w, 'sweep')
+  assert.deepEqual(swept.out.split('\n').filter(l => l !== ''), [`deleted ${join(root, 'empty')}`, `deleted ${join(root, 'finder')}`])
+  assert.deepEqual(names(), ['full', 'link'])
+  assert.ok(existsSync(join(root, '.hidden')) && existsSync(join(dir, 'elsewhere')))
+  // A checkout the sweep ends takes its parent too.
+  const d = await clone(w, src, 'd', 'feat/d')
+  w.clock += 2 * HOUR
+  w.cwds = lsofOf('/elsewhere')
+  registry(w, [], new Set())
+  assert.match((await bare(w, 'sweep')).out, new RegExp(`^deleted ${d}$`, 'm'))
+  assert.deepEqual(names(), ['full', 'link'])
+  // A directory the sweep cannot remove is said on its line, not passed over.
+  mkdirSync(join(root, 'stuck'))
+  w.clock += 2 * HOUR
+  chmodSync(root, 0o555)
+  const stuck = await bare(w, 'sweep')
+  chmodSync(root, 0o755)
+  assert.ok(stuck.out.split('\n').includes(`kept ${join(root, 'stuck')}: empty, and it could not be removed`), stuck.out)
+})
+
+test('a checkout kept for lack of an owner is said again each day, with the date it began to stay; never more often', async () => {
+  const src = pushed('proj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41' })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const dirty = await clone(w, src, 'dirty', 'feat/dirty', 'dirty')
+  registry(w, [], new Set())
+  w.cwds = lsofOf('/elsewhere')
+  w.clock += 2 * HOUR
+  const first = await bare(w, 'sweep')
+  const at = lineOf(w, dirty)?.reason_at
+  assert.ok(first.err.includes(`workspace: ledger: ${dirty} stays: the tree is dirty (orchestrator Orch: Maker, agent none)\n`), first.err)
+  w.clock += HOUR
+  assert.ok(!(await bare(w, 'sweep')).err.includes('ledger:'), 'said once a day')
+  w.clock += 24 * HOUR
+  const again = await bare(w, 'sweep')
+  assert.ok(again.err.includes(`workspace: ledger: ${dirty} still stays since ${at}: the tree is dirty (orchestrator Orch: Maker, agent none)\n`), again.err)
+  assert.equal(lineOf(w, dirty)?.reason_at, at)
+  assert.ok(!(await bare(w, 'sweep')).err.includes('ledger:'))
+  // A dry run says nothing and writes nothing; a date that does not read is said and mended.
+  w.clock += 24 * HOUR
+  const before = readFileSync(ledgerPath(join(dir, 'root')), 'utf8')
+  assert.ok(!(await bare(w, 'sweep', '--dry-run')).err.includes('ledger:'))
+  assert.equal(readFileSync(ledgerPath(join(dir, 'root')), 'utf8'), before)
+  changeEntryOf(dirty, e => ({ ...e, said: 'not a date' }))
+  assert.ok((await bare(w, 'sweep')).err.includes('still stays since'))
+  assert.equal(parseEntry(JSON.stringify({ v: 1, path: '/r/p/a', kind: 'clone', repo: '', branch: '', orchestrator: null, agent: null, created: '', said: 3 })), null)
+  // A line from before `said` stands on its reason_at: two days old, it is said at once, then every 24 h to the millisecond.
+  changeEntryOf(dirty, ({ said: _s, ...e }) => ({ ...e, reason_at: new Date(w.clock - 48 * HOUR).toISOString() }))
+  assert.ok((await bare(w, 'sweep')).err.includes(`still stays since ${new Date(w.clock - 48 * HOUR).toISOString()}`))
+  assert.equal(lineOf(w, dirty)?.said, new Date(w.clock).toISOString())
+  w.clock += 24 * HOUR - 1
+  assert.ok(!(await bare(w, 'sweep')).err.includes('ledger:'), 'not before 24 h')
+  w.clock += 1
+  assert.ok((await bare(w, 'sweep')).err.includes('still stays since'), 'at 24 h')
+  // Its reason_at alone, no said: young at 23 h 59 min, due at 24 h.
+  changeEntryOf(dirty, ({ said: _s, ...e }) => ({ ...e, reason_at: new Date(w.clock - 24 * HOUR + 1).toISOString() }))
+  assert.ok(!(await bare(w, 'sweep')).err.includes('ledger:'))
+  w.clock += 1
+  assert.ok((await bare(w, 'sweep')).err.includes('still stays since'))
+  // A checkout that turns owned again is owed no reason, and no date it was said.
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  await bare(w, 'sweep')
+  assert.deepEqual([lineOf(w, dirty)?.reason, lineOf(w, dirty)?.reason_at, lineOf(w, dirty)?.said], [undefined, undefined, undefined])
 })
