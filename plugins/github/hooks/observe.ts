@@ -30,8 +30,6 @@ export const REFUSED = {
   deploy: 'github.deploy.unlisted',
   recordsDelete: 'github.records.delete',
   exemptionDelete: 'github.exemption.delete',
-  // A commit status posted from a session: the readiness/ copies are the module's (engine/forge_status.py).
-  statusWrite: 'github.status.write',
   net: 'github.net.blocked',
   // The record tool's refusals.
   recordKind: 'github.record.kind',
