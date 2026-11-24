@@ -20,7 +20,12 @@
 // orchestrator and its agent; `create` and `pin` open it, `delete` closes it into the archive
 // beside it, the sweep adopts a checkout it does not name. A checkout past its first hour whose
 // orchestrator and agent no longer live is ended by the sweep: its branches pushed, then removed;
-// what cannot be is kept with its reason written on its line.
+// what cannot be is kept with its reason written on its line, and said again once a day.
+//
+// What a removal leaves behind goes with it: `delete` (so `close` and the sweep) takes the parent
+// directories it leaves empty, never the root nor a directory holding anything; the sweep takes the
+// empty directories already at the top of the root (past their first hour). A clone is never removed
+// while a pin hangs from it (`git worktree list`); a pin whose clone is gone is ended by the sweep.
 //
 // Root: ORCHESTRATOR_WORKSPACES, else ~/dev/workspaces. A checkout lives at
 // <root>/<basename of the source>/<name>.
@@ -70,7 +75,7 @@ import { readText, update } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted, type FilePr, type PrFile } from '../../../hooks/pr-file-format.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import {
-  adoptEntry, callerOf, changeEntry, closeEntry, GRACE_MS, liveSessions, makerOf, pidAlive, putEntry, readLedger,
+  adoptEntry, callerOf, changeEntry, closeEntry, GRACE_MS, liveSessions, makerOf, pidAlive, putEntry, readLedger, RESAY_MS,
   type LiveSession, type WorkspaceEntry,
 } from './lib/workspace-ledger.ts'
 
@@ -313,10 +318,49 @@ export async function refusal(ctx: Context, real: string, pushable = false): Pro
     const stash = await read(['for-each-ref', '--count=1', 'refs/stash'])
     if (typeof stash !== 'string') return stash.why
     if (stash !== '') return 'a stash is held'
+    // A clone is the source of its pins' worktree metadata: without it they read as no checkout at all.
+    const pin = await openPin(ctx, real)
+    if (typeof pin !== 'string') return pin.why
+    if (pin !== '') return `a pin is open on it: ${pin}`
   }
+  return liveHold(ctx, real)
+}
+
+/** Why a live process holds the directory, or '' when none does. */
+async function liveHold(ctx: Context, real: string): Promise<string> {
   const inside = await liveInside(ctx, real)
   if (inside === null) return 'the process table cannot be read'
   return inside ? 'a live process has its working directory inside' : ''
+}
+
+/** The first worktree still on disk that hangs from the clone at `real`, '' when none, or why git cannot say. */
+async function openPin(ctx: Context, real: string): Promise<string | { readonly why: string }> {
+  const r = await gitRead(ctx, real, ['worktree', 'list', '--porcelain'])
+  if (r.status !== 0) return { why: `git cannot read the checkout: ${r.stderr.split('\n')[0] ?? 'git worktree failed'}` }
+  // The first block is the clone itself; a block marked prunable is a worktree whose directory is gone.
+  const pins = r.stdout.split('\n\n').slice(1).filter(b => !/^prunable/m.test(b))
+  for (const block of pins) {
+    const path = /^worktree (.+)$/m.exec(block)?.[1]
+    if (path !== undefined && isDir(path)) return path
+  }
+  return ''
+}
+
+/**
+ * Whether `real` is a pin whose source no longer holds its worktree: its `.git` names a directory
+ * that is gone (the clone it was made from was removed). Nothing git can read is left of it. False
+ * for a pin that reads, a clone, or a `.git` file that says nothing.
+ */
+function isOrphanPin(real: string): boolean {
+  const file = join(real, '.git')
+  if (!isFile(file)) return false
+  let named: string | undefined
+  try {
+    named = /^gitdir: (.+)$/m.exec(readFileSync(file, 'utf8'))?.[1]
+  } catch {
+    return false
+  }
+  return named !== undefined && !present(resolve(real, named.trim()))
 }
 
 // --- the ledger: one line per checkout, its owners, and why it stays ----------------------------
@@ -469,6 +513,42 @@ export function trashRemove(ctx: Context, dir: string, trash: string): boolean {
   rmTree(t)
   if (present(t)) say(ctx, `the trash keeps ${t}: the next sweep empties it`)
   return true
+}
+
+/** Whether a directory holds nothing but the file Finder leaves in it. */
+function holdsNothing(dir: string): boolean {
+  try {
+    return readdirSync(dir).every(n => n === '.DS_Store')
+  } catch {
+    return false
+  }
+}
+
+/** How long ago the directory last changed; zero when it cannot be read, so it counts as young. */
+function ageOf(path: string, now: number): number {
+  try {
+    return now - statSync(path).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
+/** Removes an empty directory (Finder's own file aside); false when it holds anything else. */
+function removeEmptyDir(dir: string): boolean {
+  if (isSymlink(dir) || !isDir(dir) || !holdsNothing(dir)) return false
+  try {
+    rmSync(join(dir, '.DS_Store'), { force: true })
+    rmdirSync(dir)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The directories a removal left empty above it, up to but never the root: each is taken only while it holds nothing. */
+function pruneParents(root: string, from: string): void {
+  let dir = from
+  while (dir.startsWith(`${root}/`) && removeEmptyDir(dir)) dir = dirname(dir)
 }
 
 /** The host's temporary directory of each spelling of a deleted checkout, unless a live process uses it. */
@@ -942,6 +1022,7 @@ export async function remove(ctx: Context, argv: readonly string[]): Promise<voi
     say(ctx, `the source still lists the worktree ${real}; \`git worktree prune\` in it drops it`)
   }
   if (present(real)) throw new Refused(`delete: still there after the removal: ${real}`)
+  pruneParents(root, dirname(real))
   const end = opts.has('--discard') ? 'discarded' : pushed.length > 0 ? 'pushed and removed' : 'removed'
   ledgerWrite(ctx, `the close of ${real}`, () => closeEntry(ctx.root, real, end, iso(ctx.deps.now()), by))
   out(ctx, `deleted ${real}`)
@@ -1191,12 +1272,14 @@ async function sweepOne(s: Sweep, d: string): Promise<void> {
     if (!s.dry && entry.agent !== agent.name) ledgerWrite(ctx, `the agent of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, agent: agent.name })))
     return keep(ctx, real, `agent ${agent.name} works in it`)
   }
+  // A pin whose clone is gone reads as no checkout at all and has no purpose left, whoever owns it.
+  if (isOrphanPin(real)) return sweepOrphanPin(s, real)
   // A date that does not read keeps the grace: the safe side.
   const born = Date.parse(entry.created)
   const young = Number.isNaN(born) || ctx.deps.now() - born < GRACE_MS
   if (young || namedLive(ctx, entry.orchestrator) || namedLive(ctx, entry.agent)) {
     if (!s.dry && entry.reason !== undefined) {
-      ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, ({ reason: _r, reason_at: _a, ...e }) => e))
+      ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, ({ reason: _r, reason_at: _a, said: _s, ...e }) => e))
     }
     return sweepOwned(s, real)
   }
@@ -1205,6 +1288,23 @@ async function sweepOne(s: Sweep, d: string): Promise<void> {
   // pull request's end take the checkout (the path above), which the hooks module's routine closes rely on.
   if (entry.kept !== undefined) return keep(ctx, real, `kept since ${entry.kept} by close --keep-checkout: only delete ends it`)
   return sweepEnded(s, real, entry)
+}
+
+/**
+ * A pin whose clone is gone: nothing git can read is left of it, so no commit or stash can be lost
+ * with it, and `delete` cannot take it (it reads the source). Removed, its line closed, its host
+ * directory taken; kept only while a live process works in it.
+ */
+async function sweepOrphanPin(s: Sweep, real: string): Promise<void> {
+  const ctx = s.ctx
+  const held = await liveHold(ctx, real)
+  if (held !== '') return keep(ctx, real, held)
+  if (s.dry) return out(ctx, `would delete ${real}: its clone is gone`)
+  if (!trashRemove(ctx, real, rootTrash(ctx)) || present(real)) return keep(ctx, real, 'its clone is gone, and the removal did not complete')
+  ledgerWrite(ctx, `the close of ${real}`, () => closeEntry(ctx.root, real, 'removed', iso(ctx.deps.now()), 'sweep'))
+  pruneParents(realOf(ctx.root), dirname(real))
+  out(ctx, `deleted ${real}`)
+  await removeHostTmp(ctx, [real])
 }
 
 /** A checkout its orchestrator still holds, or in its first hour: it goes once its pull request is over. */
@@ -1228,11 +1328,17 @@ async function sweepOwned(s: Sweep, real: string): Promise<void> {
 async function sweepEnded(s: Sweep, real: string, entry: WorkspaceEntry): Promise<void> {
   const ctx = s.ctx
   const stays = (reason: string): void => {
+    const now = ctx.deps.now()
+    const at = iso(now)
+    const owners = `(orchestrator ${entry.orchestrator ?? 'unknown'}, agent ${entry.agent ?? 'none'})`
     if (!s.dry && entry.reason !== reason) {
-      const at = iso(ctx.deps.now())
-      ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, reason, reason_at: at })))
-      // Said once, when first recorded: the stop gate logs it for whoever reads the module's log.
-      say(ctx, `ledger: ${real} stays: ${reason} (orchestrator ${entry.orchestrator ?? 'unknown'}, agent ${entry.agent ?? 'none'})`)
+      ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, reason, reason_at: at, said: at })))
+      // Said when first recorded: the stop gate logs it for whoever reads the module's log.
+      say(ctx, `ledger: ${real} stays: ${reason} ${owners}`)
+    } else if (!s.dry && !(now - Date.parse(entry.said ?? entry.reason_at ?? '') < RESAY_MS)) {
+      // And once a day after, so a checkout kept for lack of an owner is never kept in silence.
+      ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, said: at })))
+      say(ctx, `ledger: ${real} still stays since ${entry.reason_at ?? 'an unknown date'}: ${reason} ${owners}`)
     }
     keep(ctx, real, `${reason} (no live orchestrator or agent)`)
   }
@@ -1290,6 +1396,26 @@ async function sweepOrphans(s: Sweep, root: string): Promise<boolean> {
     trashRemove(ctx, t, hostTrash(ctx))
     if (present(t)) keep(ctx, t, 'it could not be removed')
     else out(ctx, `deleted ${t}`)
+  }
+  return true
+}
+
+/**
+ * The empty directories already at the top of the root, left by checkouts removed before their
+ * parents went with them. One made within the hour is a `create` under way, and stays. False when
+ * the deadline cut it.
+ */
+function sweepEmptyDirs(s: Sweep): boolean {
+  const ctx = s.ctx
+  for (const d of subdirs(ctx.root)) {
+    if (isSymlink(d) || !holdsNothing(d) || ageOf(d, ctx.deps.now()) < GRACE_MS) continue
+    if (spent(s)) {
+      sayDeadline(s)
+      return false
+    }
+    const at = `${realOf(ctx.root)}/${basename(d)}`
+    if (s.dry) out(ctx, `would delete ${at}: empty`)
+    else if (removeEmptyDir(d)) out(ctx, `deleted ${at}`)
   }
   return true
 }
@@ -1366,6 +1492,7 @@ export async function sweep(ctx: Context, argv: readonly string[]): Promise<void
     // requests: a sweep cut by its deadline has done the cheap part first.
     if (!(await sweepTrash(s))) return
     if (!(await sweepOrphans(s, root))) return
+    if (!sweepEmptyDirs(s)) return
     // A line whose checkout is no longer there (removed by hand) is closed: the ledger names what exists.
     if (!dry) {
       for (const e of s.ledger.values()) {

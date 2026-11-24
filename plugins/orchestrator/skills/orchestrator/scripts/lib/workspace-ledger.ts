@@ -25,6 +25,9 @@ export const WORKSPACE_LEDGER = {
  */
 export const GRACE_MS = 60 * 60 * 1000
 
+/** How often the sweep says again why a checkout of no live owner stays. */
+export const RESAY_MS = 24 * 60 * 60 * 1000
+
 export interface WorkspaceEntry {
   readonly v: number
   /** The checkout's real path. */
@@ -44,6 +47,8 @@ export interface WorkspaceEntry {
   /** Why it is still there while no orchestrator and no agent of it lives. */
   readonly reason?: string
   readonly reason_at?: string
+  /** When the reason was last said by the sweep: it is said again once a day (`RESAY_MS`), so a checkout never stays silently. */
+  readonly said?: string
   /**
    * When `close --keep-checkout` asked for the checkout to stay (`workspace.sh keep`): once its orchestrator and
    * agent are gone the sweep never ends it, whoever made it, and only a `delete` does.
@@ -78,6 +83,7 @@ export function parseEntry(line: string): WorkspaceEntry | null {
   if (!isTextOrNull(r['orchestrator']) || !isTextOrNull(r['agent'])) return null
   if (r['reason'] !== undefined && !isText(r['reason'])) return null
   if (r['reason_at'] !== undefined && !isText(r['reason_at'])) return null
+  if (r['said'] !== undefined && !isText(r['said'])) return null
   if (r['kept'] !== undefined && !isText(r['kept'])) return null
   if (r['adopted'] !== undefined && r['adopted'] !== true) return null
   return read as WorkspaceEntry
