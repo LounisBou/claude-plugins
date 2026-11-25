@@ -105,12 +105,6 @@ function isRepo(value: unknown): value is string {
 const isStatus = (value: unknown): value is LedgerStatus => PR_LEDGER_CONTRACT.statuses.some(status => status === value)
 const filled = (value: unknown): value is string => typeof value === 'string' && value.trim() !== ''
 
-/** Whether a text names a pull request, as `<name>#<n>` or `<owner/name>#<n>`, its case apart. */
-export function namesPr(text: string, named: { readonly repo: string; readonly pr: number }): boolean {
-  const name = (named.repo.split('/')[1] ?? '').replace(/\./g, '\\.')
-  return new RegExp(`(?<![a-z0-9._-])${name}#${named.pr}(?![0-9])`, 'i').test(text)
-}
-
 /** `<owner/name>#<n>`, the name a pull request goes by in every reading. */
 export function prKey(repo: string, pr: number): string {
   return `${repo}#${pr}`
@@ -513,10 +507,10 @@ export function readyRows(input: {
       if (putOff && (typeof blocker !== 'string' || untilOf(blocker) === undefined)) continue
       const words = typeof label === 'string' ? label.trim() : ''
       const keyword = /^[^\s:]+/u.exec(words)?.[0] ?? ''
-      const held = typeof note === 'string' ? note : ''
+      const held = (typeof note === 'string' ? note : '').toLowerCase()
       const agent = agentSubject(typeof row['agent'] === 'string' ? row['agent'] : undefined)
       if (agent !== null && alive.includes(agent)) continue
-      if (input.lines.some(line => (agent !== null && agentsOf(line).some(name => agentSubject(name) === agent)) || namesPr(held, line))) continue
+      if (input.lines.some(line => (agent !== null && agentsOf(line).some(name => agentSubject(name) === agent)) || new RegExp(`(?<![a-z0-9._-])${(line.repo.split('/')[1] ?? '').replace(/\./g, '\\.')}#${line.pr}(?![0-9])`, 'i').test(held))) continue
       ready.push({ id, keyword: keyword === '' ? 'no keyword' : keyword, subject: subjectOf(words), ...(putOff ? { deferred: true as const } : {}) })
     }
   }

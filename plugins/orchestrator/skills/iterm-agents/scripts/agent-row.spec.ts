@@ -206,15 +206,17 @@ describe('an agent attached to its pull request\'s ledger line by the launcher',
     return path
   }
 
-  it('attaches a CI fix spawned on a new row under a new name to the line its row\'s label names, not to one it cites or waits on', async () => {
-    const fix = JSON.stringify({ id: 91, state: 'open', label: 'CI FIX acme/app#86 (red since acme/app#87)', blocker: 'PR acme/app#88 merged', note: 'after acme/app#89' })
-    const others = [87, 88, 89, 860].map(pr => line(pr, 'waiting', { on: 'the CI' }))
-    writeFileSync(record, `${fix}\n${line(86, 'waiting', { on: 'CI red', worked: ['Agent: radio'] })}\n${others.join('\n')}\n`)
-    const logged: string[] = []
-    await recordAgent(spawned('Agent: ci fix 86', briefOf('91.md', 'Row: 91 CI FIX acme/app#86\n')), real(logged, []))
-    assert.deepEqual([lineOf(86)?.status, lineOf(86)?.agent, lineOf(86)?.worked], ['working', 'Agent: ci fix 86', ['Agent: radio']])
-    assert.deepEqual(ledgerText().slice(0, others.length), others)
-    assert.deepEqual(logged, [`acme/app#86 attached to Agent: ci fix 86, spawned for row 91 of ${record}`])
+  it('takes no line for a pull request the row\'s label cites: it stays another row\'s, and an anomaly once its agent is gone', async () => {
+    const cites = JSON.stringify({ id: 71, state: 'open', label: 'phone simulator: first touch-strip separator missing at 895 px captures, seen on D3vDeck#72 shots, not in a goal' })
+    for (const before of [line(72, 'working', { agent: 'Agent: w29' }, 'acme/D3vDeck'), line(72, 'waiting', { on: 'the CI', worked: ['Agent: w29'] }, 'acme/D3vDeck')]) {
+      writeFileSync(record, `${cites}\n${row(29, 'Agent: w29')}\n${before}\n`)
+      const logged: string[] = []
+      await recordAgent(spawned('Agent: sim sep', briefOf('71.md', 'Row: 71 phone simulator\n')), real(logged, []))
+      assert.deepEqual(ledgerText(), [before])
+      assert.deepEqual(logged, [])
+      const left = unattended({ open: [{ repo: 'acme/D3vDeck', pr: 72 }], lines: ledgerLines(readFileSync(record, 'utf8')), live: new Set(['Agent: sim sep']), now: HOUR_LATER })
+      assert.deepEqual(left.map(found => found.pr), [72])
+    }
   })
 
   it('keeps the implementer attending a waiting line a review is spawned for: no anomaly once the reviewer is gone', async () => {

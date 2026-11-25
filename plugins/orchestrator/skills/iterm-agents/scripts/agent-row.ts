@@ -6,17 +6,16 @@
 // brief first. A successor orchestrator registered none: the brief's own directory finds the record for it.
 //
 // The pull request's ledger line follows the agent (`dispatch-record.sh pr`, said in the hooks module's log):
-// for a row's brief (`--working`), each line of that record whose pull request the row's label names before its
-// detail (` (`, where it cites others), or that names the row's agent before this spawn when no other open row
-// names it; for a review brief (hooks/review-reading.ts, `--review`), the line of the pull request it reads. A
-// line parked, or waiting on the operator, is his, left as it is.
+// for a row's brief (`--working`), each line of that record naming the row's agent before this spawn when no
+// other open row names it; for a review brief (hooks/review-reading.ts, `--review`), the line of the pull request
+// it reads. A line parked, or waiting on the operator, is his, left as it is.
 //
 // The agent is already running when this is said: a record that cannot be written, or a brief that cannot
 // be read, is told on stderr and the launch stays what it was.
 import { dirname, join } from 'node:path'
 import type { LauncherRequest } from '../../../core/launcher.ts'
 import { recordsRegistryPath } from '../../../core/orchestration.ts'
-import { agentsOf, everyAgentOf, ledgerLines, namesPr, prKey, waitsOnOperator, type LedgerLine } from '../../../core/pr-ledger.ts'
+import { agentsOf, everyAgentOf, ledgerLines, prKey, waitsOnOperator, type LedgerLine } from '../../../core/pr-ledger.ts'
 import { setting, type Env } from '../../../core/paths.ts'
 import { readingOf, type Reading } from '../../../hooks/review-reading.ts'
 import { isAgent, rowOfBrief } from '../../../hooks/row-owner.ts'
@@ -133,8 +132,6 @@ export async function recordAgent(request: LauncherRequest, deps: RowDeps): Prom
     deps.warn(`spawn: warning: ${title} was not put on row ${row} of ${record}: ${(said.stderr || said.stdout).trim()}`)
     return
   }
-  const label = openRow(before, Number(row))?.['label']
-  const named = typeof label === 'string' ? label.split(/\s\(/u)[0] ?? '' : ''
-  const ofRow = (line: LedgerLine): boolean => namesPr(named, line) || (former !== undefined && everyAgentOf(line).some(name => isAgent(name, former)))
+  const ofRow = (line: LedgerLine): boolean => former !== undefined && everyAgentOf(line).some(name => isAgent(name, former))
   await attach(title, '--working', record, before, ofRow, `spawned for row ${row} of`, deps)
 }
