@@ -1509,6 +1509,26 @@ const reviewSession = (status: 'idle' | 'busy' = 'idle', tty = '/dev/ttys000'): 
 })
 const HEAD17 = '0123456789abcdef0123456789abcdef01234567'
 const REVIEW_TAB = running('Agent: review 17 r1')
+// acme/app#17 under review, its line as the reviewer's spawn leaves it (agent-row.ts): the reviewer on it, its implementer before it.
+const REVIEWED_17 = `${ledgerLine(17, 'working', { agent: 'Agent: review 17 r1', earlier: ['Agent: p17'] } as never)}\n`
+const underReview = (implementer: boolean, forge: object) => {
+  const tabs = [REVIEW_TAB, ...(implementer ? [running('Agent: p17')] : [])].join('\n')
+  return fake({
+    session: 's-orch', reportsTo: null, gate: { 17: gateJson('FAILURE', AT_A, ['lint']) }, launcher: tabs,
+    rows: { [RECORD]: REVIEWED_17, ...P17_SESSION, ...reviewSession() },
+    forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', sha: AT_A, draft: false, ...forge }]) },
+  })
+}
+
+test('while a review runs, a failed check and a conflict name the implementer, never the review session', async () => {
+  expect((await prWake(underReview(true, { mergeable: 'MERGEABLE' }).dollar, new Set(), T0)).lines)
+    .toEqual(['[module] acme/app#17 CI en échec à aaaaaaa : lint ; dis-le à son agent Agent: p17 (session s-p17).'])
+  expect((await prWake(underReview(true, { mergeable: 'CONFLICTING', baseSha: 'c'.repeat(40) }).dollar, new Set(), T0)).lines).toContain(CONFLICT_LINE)
+  // The implementer gone, nobody works on it: the reviewer reads only.
+  expect((await prWake(underReview(false, { mergeable: 'MERGEABLE' }).dollar, new Set(), T0)).lines[0])
+    .toEqual("[module] acme/app#17 CI en échec à aaaaaaa : lint ; personne n'y travaille, mets-y un agent.")
+})
+
 // The verdict recorded: the module owes the close (review-close.ts), its cost on row 4 of the record.
 const owe = (world: ReturnType<typeof fake>, session = 's-orch') => oweRound(world.dollar, { session, pr: 17, round: async () => ({ repo: 'acme/app', head: HEAD17 }), cost: { record: RECORD, row: 4 } })
 const reviewWorld = (over: Over = {}, status: 'idle' | 'busy' = 'idle') => fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(4, 'open', { label: 'P17 acme/app#17' })}\n`, ...reviewSession(status) }, forge: { 'acme/app': '[]' }, launcher: REVIEW_TAB, ...over })

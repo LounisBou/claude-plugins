@@ -125,6 +125,17 @@ describe('an agent attached to its pull request\'s ledger line by the launcher',
   const row = (id: number, agent?: string): string => JSON.stringify({ id, state: 'open', label: 'X', ...(agent === undefined ? {} : { agent }) })
   const line = (pr: number, status: string, over: Record<string, unknown>, repo = 'acme/app'): string =>
     JSON.stringify({ v: 1, ledger: 'pr', repo, pr, status, ...over, since: AT, updated: AT })
+  const reviewBriefOf = (pr: number): string => {
+    const brief = join(dir, 'briefs', `review-${pr}.md`)
+    const head = '0123456789abcdef0123456789abcdef01234567'
+    process.env['ORCHESTRATOR_MODELS_MAP'] = join(dir, 'models.json')
+    const code = reviewBrief(['--out', brief, '--repo', 'acme/app', '--pr', String(pr), '--title', 'the radio', '--spec', '/b/spec.md', '--index', join(dir, 'index.md'),
+      '--delivery-report', '/b/report.md', '--branch', 'build/radio', '--head', head, '--worktree', '/w/review', '--orchestrator', 'Orch: acme', '--reason', 'one fix'],
+    { out: () => undefined, err: () => undefined })
+    delete process.env['ORCHESTRATOR_MODELS_MAP']
+    assert.equal(code, 0)
+    return brief
+  }
   const lineOf = (pr: number): LedgerLine | undefined => ledgerLines(readFileSync(record, 'utf8')).find(found => found.pr === pr)
   const rotationBrief = (id: number): string => {
     const path = join(dir, 'briefs', `${id}-r3.md`)
@@ -167,14 +178,7 @@ describe('an agent attached to its pull request\'s ledger line by the launcher',
   })
 
   it('attaches a review session to the line its brief reads, the implementer kept on it', async () => {
-    const brief = join(dir, 'briefs', 'review-86.md')
-    const head = '0123456789abcdef0123456789abcdef01234567'
-    process.env['ORCHESTRATOR_MODELS_MAP'] = join(dir, 'models.json')
-    const code = reviewBrief(['--out', brief, '--repo', 'acme/app', '--pr', '86', '--title', 'the radio', '--spec', '/b/spec.md', '--index', join(dir, 'index.md'),
-      '--delivery-report', '/b/report.md', '--branch', 'build/radio', '--head', head, '--worktree', '/w/review', '--orchestrator', 'Orch: acme', '--reason', 'one fix'],
-    { out: () => undefined, err: () => undefined })
-    delete process.env['ORCHESTRATOR_MODELS_MAP']
-    assert.equal(code, 0)
+    const brief = reviewBriefOf(86)
     writeFileSync(record, `${row(76, 'Agent: radio')}\n${line(86, 'working', { agent: 'Agent: radio' })}\n${line(86, 'working', { agent: 'Agent: other' }, 'acme/lib')}\n`)
     const logged: string[] = []
     await recordAgent(spawned('Agent: review pr86', brief), real(logged, []))
@@ -193,6 +197,50 @@ describe('an agent attached to its pull request\'s ledger line by the launcher',
     assert.deepEqual(readFileSync(record, 'utf8').split('\n').filter(said => said.includes('"ledger"')), before)
     assert.deepEqual(logged, [])
     assert.deepEqual(anomalies(['Agent: radio'], [87]), [87])
+  })
+
+  const ledgerText = (): string[] => readFileSync(record, 'utf8').split('\n').filter(said => said.includes('"ledger"'))
+  const briefOf = (name: string, text: string): string => {
+    const path = join(dir, 'briefs', name)
+    writeFileSync(path, text)
+    return path
+  }
+
+  it('attaches a CI fix spawned on a new row under a new name to the line its row\'s label names, not to one it cites or waits on', async () => {
+    const fix = JSON.stringify({ id: 91, state: 'open', label: 'CI FIX acme/app#86 (red since acme/app#87)', blocker: 'PR acme/app#88 merged', note: 'after acme/app#89' })
+    const others = [87, 88, 89, 860].map(pr => line(pr, 'waiting', { on: 'the CI' }))
+    writeFileSync(record, `${fix}\n${line(86, 'waiting', { on: 'CI red', worked: ['Agent: radio'] })}\n${others.join('\n')}\n`)
+    const logged: string[] = []
+    await recordAgent(spawned('Agent: ci fix 86', briefOf('91.md', 'Row: 91 CI FIX acme/app#86\n')), real(logged, []))
+    assert.deepEqual([lineOf(86)?.status, lineOf(86)?.agent, lineOf(86)?.worked], ['working', 'Agent: ci fix 86', ['Agent: radio']])
+    assert.deepEqual(ledgerText().slice(0, others.length), others)
+    assert.deepEqual(logged, [`acme/app#86 attached to Agent: ci fix 86, spawned for row 91 of ${record}`])
+  })
+
+  it('keeps the implementer attending a waiting line a review is spawned for: no anomaly once the reviewer is gone', async () => {
+    writeFileSync(record, `${row(76, 'Agent: radio')}\n${line(86, 'waiting', { on: 'review round', worked: ['Agent: radio'] })}\n`)
+    await recordAgent(spawned('Agent: review pr86', reviewBriefOf(86)), real([], []))
+    assert.deepEqual([lineOf(86)?.status, lineOf(86)?.agent, lineOf(86)?.earlier], ['working', 'Agent: review pr86', ['Agent: radio']])
+    assert.deepEqual(anomalies(['Agent: radio'], [86]), [])
+    // The implementer gone too, nothing holds it.
+    assert.deepEqual(anomalies([], [86]), [86])
+  })
+
+  it('leaves a line that waits on the operator to his wait, for a row\'s agent as for a review', async () => {
+    const before = line(86, 'waiting', { on: 'operator merge', worked: ['Agent: radio'] })
+    writeFileSync(record, `${JSON.stringify({ id: 76, state: 'closed' })}\n${row(77, 'Agent: radio')}\n${before}\n`)
+    const logged: string[] = []
+    await recordAgent(spawned('Agent: radio fix', rotationBrief(77)), real(logged, []))
+    await recordAgent(spawned('Agent: review pr86', reviewBriefOf(86)), real(logged, []))
+    assert.deepEqual(ledgerText(), [before])
+    assert.deepEqual(logged, [])
+  })
+
+  it('takes no other row\'s line for the name alone: a rotation under the name of an agent that holds two open rows', async () => {
+    const before = line(86, 'waiting', { on: 'the CI', worked: ['Agent: radio'] })
+    writeFileSync(record, `${row(76, 'Agent: radio')}\n${row(77, 'Agent: radio')}\n${before}\n`)
+    await recordAgent(spawned('Agent: radio', rotationBrief(77)), real([], []))
+    assert.deepEqual(ledgerText(), [before])
   })
 
   it('leaves the pull requests of a row\'s former agent that holds another open row: they are that row\'s', async () => {

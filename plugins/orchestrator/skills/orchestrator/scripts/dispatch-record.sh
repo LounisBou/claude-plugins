@@ -22,12 +22,13 @@
 #   dispatch-record.sh goals   <record> status | plan <G> --phase "<text>" | met <G> --evidence "<token>"...
 #   dispatch-record.sh goals   <record> rule-out <G> --ruling "<his words>" | defer <G> --ruling "<his words, dated>"
 #   dispatch-record.sh goals   <record> reopen <G> | check [--json]
-#   dispatch-record.sh pr      <record> <owner/name>#<n> (--working "<agent>" | --waiting "<what>" | --parked "<his words, dated>")
+#   dispatch-record.sh pr      <record> <owner/name>#<n> (--working "<agent>" | --review "<agent>" | --waiting "<what>" | --parked "<his words, dated>")
 #   dispatch-record.sh pr-archive <record> <owner/name>#<n>
 #
 # `pr` sets the pull request's one line in the ledger the record carries beside its rows, and
 # prints it in the operator's words; `pr-archive` moves the line to the archive beside the record.
-# The line's shape, its statuses and what « unattended » means are core's (`pr-ledger.ts`,
+# `--review` is a review session's `--working` (the launcher's, at its spawn): a line gone to a wait takes
+# back the agents it kept. The line's shape, its statuses and what « unattended » means are core's (`pr-ledger.ts`,
 # docs/contracts.md); the hooks module archives on its own the line of a pull request the forge no
 # longer lists open.
 #
