@@ -1583,10 +1583,10 @@ test('an agent of an orchestration that writes no line says why in the log: no r
   const unregistered = fake({ rows: { [`${STATE}/records/s-orch`]: '' } })
   await call(mounted(), unregistered.dollar, github(), created('https://github.com/acme/app/pull/22'))
   expect(unregistered.logged.some(line => line.includes('no line for acme/app#22: Orch: app has registered no record it owns'))).toBe(true)
-  const orphan = fake({ reportsTo: 'Orch: gone [ffffff]' })
+  const orphan = fake({ reportsTo: 'Orch: gone [a1b2c3]' })
   await call(mounted(), orphan.dollar, github(), created('https://github.com/acme/app/pull/23'))
   expect(orphan.files.get(RECORD)).toBe(ROWS)
-  expect(orphan.logged.some(line => line.includes('no line for acme/app#23: Agent: ledger was launched for Orch: gone [ffffff], and no orchestrator answers for it'))).toBe(true)
+  expect(orphan.logged.some(line => line.includes('no line for acme/app#23: Agent: ledger was launched for Orch: gone [a1b2c3], and no orchestrator answers for it'))).toBe(true)
 })
 
 // A line set in turn, as dispatch-record.sh pr sets it.
