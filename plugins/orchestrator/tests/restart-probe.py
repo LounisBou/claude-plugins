@@ -166,6 +166,7 @@ KEPT = {"frozen-kept": WHOLE,
         "frozen-login": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys002")], [TAB("/dev/ttys050")]]],
         "frozen-client": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys050")]]],
         "frozen-dead": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys002")], [TAB("/dev/ttys050")], [TAB("/dev/ttys880")]]],
+        "frozen-plain": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys002")], [TAB("/dev/ttys050")]]],
         "frozen-empty": [],
         "frozen-stale": [[[TAB("/dev/ttys880")], [TAB("/dev/ttys881")]]]}
 FROZEN = ("wedged",) + tuple(KEPT)
@@ -304,6 +305,7 @@ class Interrupted:
         return 1
 
 
+real_run = ia.run
 ia.run, ia.tmux_call, ia.process_state = run, tmux_call, process_state
 ia.live_homes = lambda: sorted(servers)
 ia.app_pid = lambda: next((p for p in (APP, NEW_APP) if p in alive), "")
@@ -401,6 +403,34 @@ if scenario == "mute":
     ia.keep_order()
     print("mute=%s" % ("present" if os.path.exists(ia.ORDER_FILE) else "absent"))
     sys.exit()
+if scenario == "real-run":
+    # The launcher's own run(), over a library that answers, then one that raises: the order is kept
+    # only after a call the app answered.
+    class FakeIterm(Api):
+        def run_until_complete(self, main): asyncio.run(main(None))
+    class FailingIterm(Api):
+        def run_until_complete(self, main): raise RuntimeError("iTerm2 does not answer")
+    ia.run, ia.LAYOUT_WAIT = real_run, 5
+    ia.api_ready = lambda: FakeIterm()
+    ia.app_layout()
+    ia.keep_order()
+    answered = "present" if os.path.exists(ia.ORDER_FILE) else "absent"
+    if os.path.exists(ia.ORDER_FILE):
+        os.remove(ia.ORDER_FILE)
+    ia.ANSWERED, ia.api_ready = False, lambda: FailingIterm()
+    with contextlib.suppress(RuntimeError):
+        ia.app_layout()
+    ia.keep_order()
+    print("real=%s,%s" % (answered, "present" if os.path.exists(ia.ORDER_FILE) else "absent"))
+    sys.exit()
+if scenario == "empty-keep":
+    # A read with no tab replaces no order kept, in either form of empty read.
+    ia.write_json(ia.ORDER_FILE, {"version": 1, "at": 0, "windows": KEPT["frozen-kept"]})
+    before = real_open(ia.ORDER_FILE).read()
+    ia.keep_order([])
+    ia.keep_order([[]])
+    print("empty=%s" % ("kept" if real_open(ia.ORDER_FILE).read() == before else "overwritten"))
+    sys.exit()
 if scenario == "dispatch":
     # Which commands keep the order, on what evidence: each step starts with no kept order and no
     # earlier call of the app in this process.
@@ -416,7 +446,9 @@ if scenario == "dispatch":
             pass
         ia.DRY_RUN = False
         return "present" if os.path.exists(ia.ORDER_FILE) else "absent"
-    print("dispatch=" + ",".join([step("rotate", False), step("list", True), step("home-release", True),
+    print("dispatch=" + ",".join([step("spawn", True), step("close", True), step("move", True),
+                                  step("rotate", True), step("home", True), step("list", True),
+                                  step("home-release", True), step("verify", True),
                                   step("spawn", False), step("close", True, dry=True)]))
     sys.exit()
 code, out, err = restart(run=placed()) if scenario.startswith("run-") else restart(*sys.argv[4:])
