@@ -4,7 +4,8 @@
 // orchestration the creating session belongs to — an agent's, its orchestrator's — once; a session of
 // no orchestration writes nothing, and a write that fails changes nothing of the tool's answer.
 import { expect, test } from 'claude-code/testing'
-import { ciFailingLine, createdPr, prWake, register } from '../ledger.ts'
+import { ciFailingLine, createdPr, prWake, register, STUCK_TICKS, stuckLine } from '../ledger.ts'
+import { ledgerLineOf } from '../../core/pr-ledger.ts'
 import { logLineOf, lockRun, prQueryRun } from './fakes.ts'
 import { prWantedPath } from '../pr-file-format.ts'
 import { OWED_MS, oweRound, owedOf, settleOwed } from '../review-close.ts'
@@ -33,6 +34,9 @@ type Over = {
   rows?: Record<string, string>
   // Paths that are another spelling of a file (a symlinked directory): reads, writes and `stat` go to the file, whose real path `stat` resolves.
   links?: Record<string, string>
+  // Directories that are links to another: reads, writes and `stat` of a path below go below the other, and `stat` resolves the
+  // directory alone, a file below it given as spelled.
+  dirLinks?: Record<string, string>
   readOnly?: boolean
   // A line another writer sets after the record was first read.
   race?: string
@@ -84,6 +88,10 @@ function fake(over: Over = {}) {
   const answers = [over.autoMerge].flat()
   const reportsTo = over.reportsTo === undefined ? `${ORCH} [a1b2c3]` : over.reportsTo
   let listed = over.launcher
+  const below = (path: string): string => {
+    for (const [from, to] of Object.entries(over.dirLinks ?? {})) if (path.startsWith(`${from}/`)) return `${to}${path.slice(from.length)}`
+    return path
+  }
   const dollar = hostOf({
     plugin: { root: '/plugins/orch' },
     env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'ORCHESTRATOR_REPORTS_TO' ? reportsTo ?? undefined : name === 'ITERM_SESSION_ID' ? (over.owner === undefined ? 'w0t0p0:own' : over.owner === null ? undefined : `w0t0p0:${over.owner}`) : undefined) },
@@ -92,19 +100,21 @@ function fake(over: Over = {}) {
     tool: over.autoMerge === undefined ? {} : { call: async (input: unknown) => { asked.push(input); return answers[Math.min(asked.length - 1, answers.length - 1)] } },
     fs: {
       read: async (path: string) => {
-        const p = over.links?.[path] ?? path
+        const p = over.links?.[path] ?? below(path)
         if (over.chainFails && p.includes('/chains/')) throw new Error(`EACCES: ${p}`)
         if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
         const text = files.get(p)!
         if (over.race !== undefined && p === RECORD && !text.includes(over.race)) files.set(p, `${text}${over.race}\n`)
         return text
       },
-      write: async (path: string, text: string) => { const p = over.links?.[path] ?? path; if (over.readOnly && p.includes('dispatch-record')) throw new Error('disk full'); files.set(p, text) },
-      exists: async (path: string) => files.has(over.links?.[path] ?? path),
+      write: async (path: string, text: string) => { const p = over.links?.[path] ?? below(path); if (over.readOnly && p.includes('dispatch-record')) throw new Error('disk full'); files.set(p, text) },
+      exists: async (path: string) => files.has(over.links?.[path] ?? below(path)),
       stat: async (path: string) => {
-        const p = over.links?.[path] ?? path
+        const dir = over.dirLinks?.[path]
+        if (dir !== undefined) return { kind: 'dir' as const, size: 0, mtimeMs: 1, realPath: dir }
+        const p = over.links?.[path] ?? below(path)
         if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
-        return { kind: 'file' as const, size: files.get(p)!.length, mtimeMs: 1, realPath: p }
+        return { kind: 'file' as const, size: files.get(p)!.length, mtimeMs: 1, realPath: over.links?.[path] ?? path }
       },
       list: async (dir: string) => [...files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
         .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 1, isLink: false, mtimeMs: 0 })),
@@ -1557,4 +1567,114 @@ test('a review session that took a message between the tick and the close is not
   const then = await prWake(world.dollar, next)
   await then.settle()
   expect([then.lines, closes(world.runs), owedOf('s-orch')]).toEqual([[], ['--tty /dev/ttys000 --expect-title Agent: review 17 r1'], []])
+})
+
+// --- the agents no close may miss: a first-turn creation, a wait, a re-point, a spelling, a busy host, a gone session, a closed row ---
+
+test('a pull request an agent creates in its first turn, before its session row is written, takes its line: the host\'s record of the session names it, its launch record its orchestrator', async () => {
+  const world = fake({ rows: { [`${HOME}/.claude/sessions/405.json`]: JSON.stringify({ pid: 405, sessionId: 's-agent', name: AGENT, startedAt: 2 }) } })
+  world.files.delete(`${STATE}/store/sessions/s-agent`)
+  await call(mounted(), world.dollar, github(), created('https://github.com/acme/app/pull/21'))
+  expect(ledgerOf(world.files).filter(l => l.pr === 21).map(l => [l.status, l.agent])).toEqual([['working', AGENT]])
+  expect(world.logged.some(line => line.includes(`the line of acme/app#21 written in ${RECORD}`))).toBe(true)
+})
+
+test('an agent of an orchestration that writes no line says why in the log: no record registered, or no orchestrator answering its launch record', async () => {
+  const unregistered = fake({ rows: { [`${STATE}/records/s-orch`]: '' } })
+  await call(mounted(), unregistered.dollar, github(), created('https://github.com/acme/app/pull/22'))
+  expect(unregistered.logged.some(line => line.includes('no line for acme/app#22: Orch: app has registered no record it owns'))).toBe(true)
+  const orphan = fake({ reportsTo: 'Orch: gone [ffffff]' })
+  await call(mounted(), orphan.dollar, github(), created('https://github.com/acme/app/pull/23'))
+  expect(orphan.files.get(RECORD)).toBe(ROWS)
+  expect(orphan.logged.some(line => line.includes('no line for acme/app#23: Agent: ledger was launched for Orch: gone [ffffff], and no orchestrator answers for it'))).toBe(true)
+})
+
+// A line set in turn, as dispatch-record.sh pr sets it.
+const settings = (...sets: ({ status: 'working'; agent: string } | { status: 'waiting'; on: string })[]): string =>
+  JSON.stringify(sets.reduce<ReturnType<typeof ledgerLineOf> | undefined>((line, set) => ledgerLineOf({ repo: 'acme/app', pr: 17, ...set }, new Date(AT), line), undefined))
+
+test('a line that went from working to waiting still closes its agent at the merge and at the Ready: a wait drops no agent', async () => {
+  const waits = settings({ status: 'working', agent: 'Agent: p17' }, { status: 'waiting', on: 'CI at 0123456' })
+  for (const [forge, what] of [['[]', 'merged'], [READY_PR, 'is Ready']] as const) {
+    const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${waits}\n`, ...P17_DONE }, forge: { 'acme/app': forge }, launcher: running('Agent: p17') })
+    const woke = await prWake(world.dollar, new Set())
+    expect(woke.lines).toEqual([closedLine('acme/app#17', what)])
+    await woke.settle()
+    expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
+  }
+})
+
+test('a line re-pointed to a review session after a wait still closes the agent that created it at the merge', async () => {
+  const reviewed = settings({ status: 'working', agent: 'Agent: p17' }, { status: 'waiting', on: 'a review' }, { status: 'working', agent: 'Agent: review 17 r1' })
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${reviewed}\n`, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17') })
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'merged')])
+  await woke.settle()
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
+})
+
+test('a record registered through a linked directory, which stat resolves at the directory alone, is the agent\'s own record: its own row holds nothing at Ready, in either order', async () => {
+  for (const order of [[RECORD, LINK], [LINK, RECORD]]) {
+    const rows = `${rowOf(8, 'open', { agent: 'Agent: p17' })}\n${P17_LINE}\n`
+    const world = fake({ session: 's-orch', reportsTo: null, dirLinks: { '/links/app': '/briefs/app' }, rows: { [RECORD]: rows, ...spelled(order), ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
+    const woke = await prWake(world.dollar, new Set())
+    expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+    await woke.settle()
+    expect(closes(world.runs)).toHaveLength(1)
+  }
+})
+
+test('a close that waits on a busy host while its tab is idle is retried, and at STUCK_TICKS ticks the orchestrator is told once, by name, with the session to close', async () => {
+  const p27 = doneAgent('s-p27', 'Agent: p27', 427)
+  p27[`${HOME}/.claude/sessions/427.json`] = JSON.stringify({ pid: 427, sessionId: 's-p27', cwd: '/work/s-p27', status: 'busy', name: 'Agent: p27' })
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'working', { agent: 'Agent: p27' })}\n`, ...p27 }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p27') })
+  const told = new Set<string>()
+  const said: string[][] = []
+  for (let tick = 0; tick <= STUCK_TICKS; tick++) {
+    const woke = await prWake(world.dollar, told)
+    await woke.settle()
+    said.push(woke.lines)
+  }
+  const stuck = stuckLine('Agent: p27', 's-p27', 'its host is busy')
+  expect(stuck).toBe(`[module] Agent: p27 still open after ${STUCK_TICKS} ticks (its host is busy): close it yourself (session s-p27, resumable within the hour).`)
+  expect([said[STUCK_TICKS - 2]?.includes(stuck), said[STUCK_TICKS - 1]?.includes(stuck), said.flat().filter(line => line === stuck).length]).toEqual([false, true, 1])
+  expect(closes(world.runs)).toEqual([])
+})
+
+test('a close owed to a review session already gone is counted closed at once: nothing closed, nothing told, no « given up » an hour later', async () => {
+  drainOwed()
+  const world = reviewWorld({ launcher: '' })
+  await owe(world)
+  const woke = await prWake(world.dollar, new Set())
+  await woke.settle()
+  expect([woke.lines, closes(world.runs), owedOf('s-orch')]).toEqual([[], [], []])
+  expect(world.logged.some(line => line.includes('its session is gone already, counted closed'))).toBe(true)
+  expect(world.logged.some(line => line.includes('given up'))).toBe(false)
+})
+
+// An agent of this orchestration's chain whose row is closed, and no ledger line names it.
+const closedRow = (over: Over = {}, extra: Record<string, string> = {}) => fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'closed', { agent: 'Agent: p17' })}\n`, ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE, ...extra }, launcher: running('Agent: p17'), ...over })
+
+test('the backstop: an idle agent of this orchestration whose row is closed is closed once done, though no ledger line names it', async () => {
+  const world = closedRow()
+  const woke = await prWake(world.dollar, new Set())
+  expect(woke.lines).toEqual([closedLine('row 8 (app)', 'is closed')])
+  await woke.settle()
+  expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
+})
+
+test('the backstop closes no agent whose row is open, that is not done, that holds another open row, or that is on another orchestration\'s chain; a refusal is told once', async () => {
+  const open = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'open', { agent: 'Agent: p17' })}\n`, ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE }, launcher: running('Agent: p17') })
+  const working = closedRow({}, { [`${STATE}/store/waits/s-p17`]: '' })
+  const holding = closedRow({}, { [RECORD]: `${rowOf(8, 'closed', { agent: 'Agent: p17' })}\n${rowOf(9, 'open', { agent: 'Agent: p17' })}\n` })
+  const foreign = closedRow({ launcher: 'w2/t7 | /dev/ttys007 | ✳ Agent: p17 | Agent: p17' })
+  for (const world of [open, working, holding, foreign]) {
+    const woke = await prWake(world.dollar, new Set())
+    await woke.settle()
+    expect([woke.lines, closes(world.runs)]).toEqual([[], []])
+  }
+  const dirty = closedRow({ dirty: ' M a.ts\n' })
+  const told = new Set<string>()
+  expect((await prWake(dirty.dollar, told)).lines).toEqual(['[module] row 8 (app) is closed: its agent Agent: p17 left open: tree not clean in /work/s-p17 (1 paths changed, 0 commits unpushed).'])
+  expect((await prWake(dirty.dollar, told)).lines).toEqual([])
 })

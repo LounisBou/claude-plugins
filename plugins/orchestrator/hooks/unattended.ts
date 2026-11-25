@@ -6,7 +6,7 @@
 // the orchestrator on a pull request merged, closed or entering the anomaly. Every read is bounded;
 // one that fails is said, never a refusal.
 import {
-  agentsOf, archiveOf, ledgerLines, prKey, READY_LABEL, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
+  archiveOf, everyAgentOf, isLedgerMarked, ledgerLines, prKey, READY_LABEL, readyRows, readyRowsLine, unattended, unattendedLine, withArchived, withoutLines,
   type LedgerLine, type OpenPr, type ReadyRow, type Unattended,
 } from '../core/pr-ledger.ts'
 import { updateOver } from '../core/store-io.ts'
@@ -34,14 +34,15 @@ export const AUTO_MERGE_BOUND_MS = 5_000
 // `ready`: the open rows whose blocker has fallen (`none`, or an `until` past) that no live agent and no open pull request holds; `readyLine` says them.
 // `ended`: the session's own lines whose pull request the file reads merged or closed, each with its record; `kept`: its lines still open; `records`: its records, each with its path and its text.
 // `live`: the names of the agents the launcher lists running, among those a line names (every one when its listing could not be read);
-// `tabs`: the tabs it lists running, by name, on the whole machine, each with its tty and whether it is idle (none when its listing was not read or could not be).
+// `tabs`: the tabs it lists running, by name, on the whole machine, each with its tty and whether it is idle (none when its listing was not read or could not be);
+// `listed`: whether that listing was read, so an agent it does not list is gone.
 // `wanted`: whether the sweep asks the file to hold a repository (`prs.wanted`).
 // `openKeys`: the session's lines still open on the forge as `owner/name#n`, attended or not: the deck lists them.
 // `atReady`: the lines still open whose pull request carries Ready and whose agent, put on it last or before, the launcher lists running: the module closes that agent once it is done (close-agent.ts). `readyHeads`: the head each open pull request carries Ready at.
 // `forge`: the file's current reading of each of the session's lines still open, by `owner/name#n`: its head, its base and its `mergeable`.
 export type Reading = {
   list: Unattended[]; toMerge: Unattended[]; autoMerge: ReadonlySet<string>; unread: string[]; line: string | null; ready: ReadyRow[]; readyLine: string | null
-  ended: Ended[]; kept: LedgerLine[]; atReady: LedgerLine[]; readyHeads: ReadonlyMap<string, string>; records: RecordText[]; live: ReadonlySet<string>; tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]>; wanted: boolean
+  ended: Ended[]; kept: LedgerLine[]; atReady: LedgerLine[]; readyHeads: ReadonlyMap<string, string>; records: RecordText[]; live: ReadonlySet<string>; tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]>; listed?: boolean; wanted: boolean
   openKeys: string[]; forge: ReadonlyMap<string, FilePr>
 }
 export type Ended = { line: LedgerLine; state: 'MERGED' | 'CLOSED'; path: string }
@@ -92,13 +93,34 @@ export async function registered($: Host<'fs'>, state: string, sessionId: string
 // How many registries of other sessions one reading looks through.
 const REGISTRY_READ_CAP = 256
 
-// The path with its links resolved, or the path itself when it cannot be: two spellings of one file name one record.
-async function realOf($: Host<'fs'>, path: string): Promise<string> {
+// How many links one path is resolved through: a cycle of links ends here.
+const LINKS_FOLLOWED = 8
+
+// The real path `stat` gives of a path, or null: none given, or the path unread.
+async function statReal($: Host<'fs'>, path: string): Promise<string | null> {
   try {
-    return (await $.fs.stat(path, { resolve: true })).realPath ?? path
+    return (await $.fs.stat(path, { resolve: true })).realPath ?? null
   } catch {
-    return path
+    return null
   }
+}
+
+/*
+ * The path with its links resolved, or the path itself when it cannot be: two spellings of one file name one record. A link
+ * in a directory above the file is resolved too, each directory from the root down, for a `stat` that resolves only a path
+ * that is itself a link.
+ */
+export async function realOf($: Host<'fs'>, path: string, depth: number = 0): Promise<string> {
+  const whole = await statReal($, path)
+  if (whole !== null && whole !== path) return whole
+  if (depth >= LINKS_FOLLOWED) return path
+  const parts = path.split('/')
+  for (let k = 2; k < parts.length; k++) {
+    const dir = parts.slice(0, k).join('/')
+    const real = await statReal($, dir)
+    if (real !== null && real !== dir) return realOf($, `${real}/${parts.slice(k).join('/')}`, depth + 1)
+  }
+  return path
 }
 
 // The records of the session's orchestration: those the session registered, and those another session of this
@@ -188,18 +210,22 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   // request is called unattended on a read that failed, and names no row ready.
   let seen: ReadonlySet<string> | null | undefined
   let tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]> = new Map()
+  let listed = false
   const running = async (): Promise<ReadonlySet<string> | null> => {
     if (seen !== undefined) return seen
     const launched = await $.process.run(['bash', launcherOf($.plugin.root), 'list'], { timeoutMs: UNATTENDED_BOUND_MS }).catch(() => null)
     const rows = launched && launched.exitCode === 0 ? listing(String(launched.stdout ?? '')) : null
     seen = rows === null ? null : liveNames(rows)
     if (rows !== null) tabs = tabsOf(rows)
+    listed = rows !== null
     if (seen === null) await logLine($, 'unattended', "the launcher's listing unread: every agent a line names is taken for running, no row is named ready")
     return seen
   }
-  const named = new Set([...kept, ...ended.map(e => e.line)].flatMap(agentsOf))
-  // A close owed at a review's verdict (review-close.ts) reads the listing too: its tab is where the session is closed.
+  const named = new Set([...kept, ...ended.map(e => e.line)].flatMap(everyAgentOf))
+  // A close owed at a review's verdict (review-close.ts) reads the listing too: its tab is where the session is closed; and so does
+  // a closed row that names an agent, which the module closes once idle (ledger.ts, the backstop).
   const live = named.size > 0 || hasOwed(sessionId) ? await running() ?? named : named
+  if (own.some(record => namesClosedAgent(record.text))) await running()
   // github's list is asked only when a pull request carries Ready: nothing else leaves the operator's line by it.
   const autoMerge = open.some(pr => (pr.labels ?? []).some(name => name.trim().toLowerCase() === READY_LABEL.toLowerCase())) ? await autoMergeOf($) : new Set<string>()
   const list = unattended({ open, lines: kept, live, now, autoMerge })
@@ -215,14 +241,28 @@ export async function readUnattended($: Held, sessionId: string, now: number = D
   // listing only: one that failed names no agent to close.
   const readyHeads = readyHeadsOf(file?.prs ?? [])
   const agents = kept.some(line => readyHeads.has(prKey(line.repo, line.pr))) ? await running() : null
-  const atReady = kept.filter(line => agentsOf(line).some(name => agents?.has(name) === true) && readyHeads.has(prKey(line.repo, line.pr)))
+  const atReady = kept.filter(line => everyAgentOf(line).some(name => agents?.has(name) === true) && readyHeads.has(prKey(line.repo, line.pr)))
   // A repository the forge did not list is unknown, not closed: its lines stay listed until the file reads them merged or closed.
   const openNow = new Set(open.map(pr => prKey(pr.repo, pr.pr)))
   const openKeys = kept.filter(line => unread.includes(line.repo) || openNow.has(prKey(line.repo, line.pr))).map(line => prKey(line.repo, line.pr))
   const keptKeys = new Set(kept.map(line => prKey(line.repo, line.pr)))
   const forge = new Map(repos.filter(repo => !unread.includes(repo)).flatMap(repo => prsOfRepo(file, repo, now) ?? [])
     .filter(pr => pr.state === 'OPEN' && keptKeys.has(prKey(pr.repo, pr.pr))).map(pr => [prKey(pr.repo, pr.pr), pr] as const))
-  return { list, toMerge, autoMerge, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, tabs, wanted, openKeys, forge }
+  return { list, toMerge, autoMerge, unread, line: unattendedLine(list, unread), ready, readyLine: readyRowsLine(ready), ended, kept, atReady, readyHeads, records: own, live, tabs, listed, wanted, openKeys, forge }
+}
+
+// Whether a record's text holds a closed row whose `agent` field names an agent.
+function namesClosedAgent(text: string): boolean {
+  return text.split('\n').some(raw => {
+    try {
+      const row: unknown = JSON.parse(raw)
+      if (typeof row !== 'object' || row === null || Array.isArray(row) || isLedgerMarked(row)) return false
+      const { state, agent } = row as Record<string, unknown>
+      return state === 'closed' && typeof agent === 'string' && agent.trim() !== ''
+    } catch {
+      return false
+    }
+  })
 }
 
 // The reading within its bound; null when it ran out or broke, said in the log.
