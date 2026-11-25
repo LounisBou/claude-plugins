@@ -98,6 +98,10 @@
 #     ones to act on; exit 0 when everything is proved, 1 on a defect or a refusal. --check reads
 #     and refuses, and does nothing. A run left unfinished is finished by the next one. --run is
 #     the process the command starts, never typed
+#   iterm-agent.sh resume-line --pid <pid>
+#     prints the line that resumes that running session once it has ended, built as a restart's:
+#     its directory, plan, kept ORCHESTRATOR_* variables, options and name; read while it runs.
+#     coordinator.sh facts and check put it on a module-lost line
 #   iterm-agent.sh tools [--transcript <path>]
 #     what a session is given and what each item costs per call, from a transcript
 #   iterm-agent.sh verify --tty /dev/ttysNNN [--pid <pid>]

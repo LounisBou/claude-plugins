@@ -10,6 +10,7 @@ import { parseQuota, planOfConfig, QUOTA_DIR, quotaLine, type Quota } from '../.
 import { writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, repoOfOrigin } from '../../../hooks/pr-file-format.ts'
 import { dataOf, die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
+import { lostModuleLines } from './module-lost.ts'
 import { fieldsOf, readSleeping } from './sleeping.ts'
 
 /** A remote row is kept for a day after its updated_at (REMOTE_STALE_AFTER_MS in hooks/remote-row.ts). */
@@ -32,6 +33,8 @@ export interface Session {
   readonly why: string
   /** The plan the session runs on (`plan1`, `plan2`, else its configuration directory), « - » when its environment was not read. */
   readonly plan: string
+  /** The `CLAUDE_CONFIG_DIR` of the session's environment; empty or absent: the default directory. */
+  readonly config?: string
 }
 
 export interface Place {
@@ -475,7 +478,7 @@ export function readFacts(ctx: Context): Facts {
       : briefOrchestrator(proc.command, cwd, unread)
     const config = configs.get(proc.pid)
     const plan = config === undefined ? '-' : config === '' ? 'plan1' : planOfConfig(config, home)
-    facts.sessions.push({ pid: proc.pid, tty: proc.tty, title: title === '' ? '-' : title, orch: named.orch, repo, branch, top, why: named.why, plan })
+    facts.sessions.push({ pid: proc.pid, tty: proc.tty, title: title === '' ? '-' : title, orch: named.orch, repo, branch, top, why: named.why, plan, config: config ?? '' })
     if (branch !== '-') places.push({ top, repo, branch })
   }
 
@@ -752,6 +755,7 @@ export function factsCommand(ctx: Context, args: readonly string[]): number {
   for (const line of unattendedLines(ctx, facts.table)) ctx.out(line)
   for (const line of quotaLines(ctx)) ctx.out(line)
   for (const row of facts.remote) ctx.out(remoteLine(row))
+  for (const line of lostModuleLines(ctx, facts.sessions, facts.unread)) ctx.out(line)
   const found = collisions(facts)
   for (const line of found) ctx.out(line)
   return finish(ctx, facts, found.length > 0 ? 1 : 0)
@@ -769,19 +773,24 @@ export function rootsCommand(ctx: Context, args: readonly string[]): number {
   return 0
 }
 
-/** What a check reports: each orchestrator's name (a successor under it is no newcomer), each collision and each source not read, one line each. */
-export function findings(facts: Facts): string[] {
-  return [
+/** What a check reports: each orchestrator's name (a successor under it is no newcomer), each session whose module is lost, each collision and each source not read, one line each. */
+function findings(ctx: Context, facts: Facts): { lost: string[]; all: string[] } {
+  // Read first: what it could not read is among the unread lines below.
+  const lost = lostModuleLines(ctx, facts.sessions, facts.unread)
+  const all = [
     ...new Set(facts.sessions.filter(s => s.title.startsWith(`${ORCH}:`)).map(s => `newcomer ${s.title}`)),
+    ...lost,
     ...collisions(facts),
     ...facts.unread.map(line => `unread ${line}`),
   ]
+  return { lost, all }
 }
 
 /**
  * The findings not reported at the last check, kept in <state>/coordinator-check.json; the first
- * check reports none. With --every <seconds> it reads again at that pace until it has one: run in
- * the background, it wakes its session only on a finding.
+ * check reports the lost modules alone, which nothing else would ever say. With --every <seconds>
+ * it reads again at that pace until it has one: run in the background, it wakes its session only
+ * on a finding.
  */
 export function checkCommand(ctx: Context, args: readonly string[]): number {
   const every = args[0] === '--every' && args.length === 2 ? Number(args[1]) : args.length === 0 ? 0 : NaN
@@ -789,13 +798,13 @@ export function checkCommand(ctx: Context, args: readonly string[]): number {
   const path = join(dataOf(ctx.env), 'coordinator-check.json')
   for (;;) {
     const was = parseJson(readFile(path) ?? '')
-    const now = findings(readFacts(ctx))
+    const { lost, all: now } = findings(ctx, readFacts(ctx))
     try {
       writeAtomic(path, `${JSON.stringify(now)}\n`)
     } catch {
       say(ctx, `check: cannot record the findings in ${path}`)
     }
-    const fresh = Array.isArray(was) ? now.filter(line => !was.includes(line)) : []
+    const fresh = Array.isArray(was) ? now.filter(line => !was.includes(line)) : lost
     for (const line of fresh) ctx.out(line)
     if (fresh.length > 0 || every === 0) return 0
     ctx.sleep(every * 1000)
