@@ -102,8 +102,9 @@ def age_of(seconds):
 
 def kept_windows(table, sessions, servers, lines):
     """The order the launcher kept, when the app does not answer, or None. A tab whose tty no process
-    runs on is one closed since, and is dropped; a plain tab or a home server's client opened by hand
-    since is put after the known ones, and named."""
+    runs on is one closed since, and is dropped; when none is left, no order is known. A plain tab, a
+    home server's client, or a shell of iTermServer's opened by hand since is put after the known ones,
+    named once."""
     found = ia.kept_order()
     if found is None:
         return None
@@ -112,19 +113,25 @@ def kept_windows(table, sessions, servers, lines):
     windows = [[tab for tab in ([s for s in tab if s["tty"] in alive] for tab in tabs) if tab]
                for tabs in windows]
     windows = [tabs for tabs in windows if tabs]
+    if not windows:
+        return None
     known = set(shown(windows))
     homes = {t for server in servers.values() for t in server["panes"] + server["clients"]}
-    opened = [(s["tty"], s["name"]) for s in sessions if not s["socket"] and s["tty"] not in known]
-    opened += [(c, "") for server in servers.values() for c in server["clients"] if c not in known]
-    # A shell tab of no session: its tty is the one of a shell's process that is no pane of a home server.
-    opened += [(tty, "") for tty in sorted({tty for _, tty, cmd in table.values() if tty and tty not in homes
-                                            and tty not in known and shell_name(cmd) in SHELLS})]
-    for tty, _ in opened:
+    opened = {}
+    for s in sessions:
+        if not s["socket"] and s["tty"] not in known:
+            opened.setdefault(s["tty"], s["name"])
+    for server in servers.values():
+        for c in server["clients"]:
+            if c not in known:
+                opened.setdefault(c, "")
+    for pid, (_, tty, command) in sorted(table.items(), key=lambda item: item[1][1]):
+        if tty and tty not in homes and tty not in known and shell_name(command) in SHELLS \
+                and any(SERVER_COMMAND.match(table[a][2]) for a in ancestors(table, pid)):
+            opened.setdefault(tty, "")
+    for tty in opened:
         lines.append("kept order: %s opened since it, put after the known ones" % tty)
-    if opened and windows:
-        windows[-1] += [[{"tty": tty, "title": title}] for tty, title in opened]
-    elif opened:
-        windows = [[[{"tty": tty, "title": title}] for tty, title in opened]]
+    windows[-1] += [[{"tty": tty, "title": title}] for tty, title in opened.items()]
     lines.append("order: kept order of %s, iTerm2 does not answer" % age_of(time.time() - at))
     return windows
 
@@ -200,7 +207,7 @@ def read_sessions(table, servers, report, refused):
     return sessions
 
 
-def snapshot(folder):
+def snapshot(folder, keep):
     """`(state, refusals)`: what iTerm2 and the home servers show, and why it must not restart."""
     refused, lines = [], []
     pid = ia.app_pid()
@@ -216,7 +223,8 @@ def snapshot(folder):
     sessions = read_sessions(table, servers, os.path.join(folder, "report.md"), refused)
     try:
         windows = layout()
-        ia.keep_order(windows)
+        if keep:
+            ia.keep_order(windows)
         lines.append("order: live, read now")
     except (Exception, SystemExit) as exc:
         # The live read is the freshest; the order the launcher kept stands in when iTerm2 does not answer.
@@ -288,6 +296,9 @@ class Run:
             for step in (self.relaunch, self.tabs, self.order, self.titles, self.rearm, self.prove):
                 self.save(step=step.__name__)
                 step()
+            # The order restored is the one the next restart keeps, when it is whole.
+            if not self.s["defects"]:
+                ia.keep_order()
         except (Exception, SystemExit) as exc:
             self.bad("%s: %s" % (self.s["step"], exc if isinstance(exc, Stop) else "%r, see the log" % exc))
             # Once the app is gone the servers stay disarmed, which keeps every session.
@@ -499,7 +510,7 @@ def main(launcher, args):
     else:
         left = state["disarmed"] if state else []
         folder = os.path.join(runs_root(), time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
-        state, refused = snapshot(folder)
+        state, refused = snapshot(folder, keep=not args.check)
         print("\n".join(state["lines"] + ["refused: " + r for r in refused]))
         if refused:
             ia.die("restart: refused: nothing was done")

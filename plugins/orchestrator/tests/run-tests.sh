@@ -9514,6 +9514,32 @@ check "a frozen iTerm2 is restarted in the order the launcher kept, its age said
 res=$(restarted frozen-hand)
 check "a tab opened by hand since the kept order is put after the known ones, and named" "0|$RORDER|1|1" \
   "$(sfield "$res" exit)|$(sfield "$res" tabs)|$(rsays '^- kept order: /dev/ttys050 opened since it')|$(rsays '^# iTerm2 restart: done, everything proved')"
+res=$(restarted frozen-kept)
+check "a shell outside iTerm2 is no tab of the restart: named nowhere, and no tab of its tty wanted" "0|0|$RORDER" \
+  "$(sfield "$res" exit)|$(rsays 'ttys099')|$(sfield "$res" tabs)"
+res=$(restarted frozen-login)
+check "a plain tab opened by hand, with its shell and its host, is named once and put once, after the known ones" "0|1|031 001 060/002 050 041" \
+  "$(sfield "$res" exit)|$(rsays '^- kept order: /dev/ttys041 opened since it')|$(sfield "$res" tabs)"
+res=$(restarted frozen-client)
+check "a home client opened by hand since the kept order is put after the known ones, and named once" "0|1|031 001 060/041 050 002" \
+  "$(sfield "$res" exit)|$(rsays '^- kept order: /dev/ttys002 opened since it')|$(sfield "$res" tabs)"
+res=$(restarted frozen-dead)
+check "a tab closed since the kept order is dropped, its tty named by no line, and the restart proved" "0|0|1|$RORDER" \
+  "$(sfield "$res" exit)|$(rsays 'ttys880')|$(rsays '^# iTerm2 restart: done, everything proved')|$(sfield "$res" tabs)"
+res=$(restarted frozen-empty)
+check "a kept order with no tab left is no order: its defect said, the tabs not proved" "1|1|1" \
+  "$(sfield "$res" exit)|$(rsays '^order: unknown')|$(rsays 'DEFECT the tabs. order was not known before the stop')"
+res=$(restarted frozen-stale)
+check "a kept order whose tabs all closed is no order either: the defect said, never an invented order" "1|1|1" \
+  "$(sfield "$res" exit)|$(rsays '^order: unknown')|$(rsays 'DEFECT the tabs. order was not known before the stop')"
+res=$(restarted dispatch)
+check "a command keeps the order only when it reached the app: list and home-release keep it, a command that never reached it or a dry run keeps nothing" \
+  "absent,present,present,absent,absent" "$(sfield "$res" dispatch)"
+res=$(restarted mute)
+check "a read the app never answers is cut at its deadline, and keeps no order" "absent" "$(sfield "$res" mute)"
+res=$(restarted ok)
+check "a restart keeps the order it reads, live, for the next restart when iTerm2 does not answer" "1" \
+  "$([ -e "$RSW/state/iterm-order.json" ] && echo 1 || echo 0)"
 res=$(restarted kept-disarmed)
 check "a server a close left disarmed is not armed by a restart" "0|orch-a" "$(sfield "$res" exit)|$(sfield "$res" armed)"
 RDIS='disarm orch-a,disarm orch-b'

@@ -10,6 +10,7 @@ import contextlib
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 
@@ -155,18 +156,28 @@ class Api:
     async def async_get_app(self, connection): return App()
 
 
-FROZEN = ("wedged", "frozen-kept", "frozen-hand")
-# What the launcher kept: the tabs of the probe's app, and one of them opened by hand since (frozen-hand).
 TAB = lambda tty: {"tty": tty, "title": ""}
-KEPT = {"frozen-kept": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]],
-                        [[TAB("/dev/ttys041")], [TAB("/dev/ttys002")], [TAB("/dev/ttys050")]]],
-        "frozen-hand": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys002")]]]}
+# What the launcher kept, per scenario: the probe's tabs in their order, less those opened by hand since
+# (frozen-hand: a shell tab; frozen-login: a plain tab with its shell; frozen-client: a home client), or
+# with a tab closed since (frozen-dead: a tty no process runs on), or with no tab alive (the others).
+WHOLE = [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys002")], [TAB("/dev/ttys050")]]]
+KEPT = {"frozen-kept": WHOLE,
+        "frozen-hand": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys002")]]],
+        "frozen-login": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys002")], [TAB("/dev/ttys050")]]],
+        "frozen-client": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys050")]]],
+        "frozen-dead": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys002")], [TAB("/dev/ttys050")], [TAB("/dev/ttys880")]]],
+        "frozen-empty": [],
+        "frozen-stale": [[[TAB("/dev/ttys880")], [TAB("/dev/ttys881")]]]}
+FROZEN = ("wedged",) + tuple(KEPT)
 
 
 def run(coro):
+    if scenario == "mute":
+        signal.pause()
     if APP not in alive and NEW_APP not in alive or scenario in FROZEN and APP in alive \
             or scenario == "deaf" and NEW_APP in alive:
         raise RuntimeError("iTerm2 does not answer")
+    ia.ANSWERED = True
     return asyncio.run(coro(Api(), None))
 
 
@@ -249,7 +260,11 @@ def processes():
             "12001": ("12", "/dev/ttys012", HOST + " -p nested"), "77": ("1", "/dev/ttys077", HOST + " elsewhere"),
             # The clients of the home servers and the plain shell, each a process on its tty.
             "1001": ("1", "/dev/ttys001", "tmux -L orch-a attach"), "1002": ("1", "/dev/ttys002", "tmux -L orch-b attach"),
-            "1050": ("1", "/dev/ttys050", "-zsh")}
+            # A plain tab's shell under iTermServer, and a shell of no iTerm2 at all.
+            "1050": ("900", "/dev/ttys050", "-zsh"), "1099": ("1", "/dev/ttys099", "-zsh")}
+    if scenario == "frozen-login":
+        # The plain tab Audit: d, its shell and its host, both on its tty.
+        rows["1041"] = ("900", "/dev/ttys041", "-zsh")
     if scenario == "own-child":
         rows["88"] = (APP, "/dev/ttys088", "-zsh")
     for pid, tty in hosts.items():
@@ -332,7 +347,8 @@ r.open = fake_open
 
 
 second = None
-taken = r.snapshot
+real_snapshot = r.snapshot
+taken = lambda folder: real_snapshot(folder, keep=False)
 
 
 def restart(*words, run=""):
@@ -363,7 +379,7 @@ def placed():
     return elsewhere if scenario == "run-outside" else own
 
 
-def raced(folder):
+def raced(folder, keep):
     """Another `restart` writes its run while this one reads the machine."""
     read = taken(folder)
     ia.write_json(os.path.join(r.runs_root(), "OTHER", "state.json"),
@@ -379,6 +395,30 @@ if scenario == "locked":
 if scenario in KEPT:
     # The order the launcher kept at its last read, 95 seconds before the stop.
     ia.write_json(ia.ORDER_FILE, {"version": 1, "at": -95, "windows": KEPT[scenario]})
+if scenario == "mute":
+    # A read the app never answers is cut at its deadline: nothing kept, the call returns.
+    ia.LAYOUT_WAIT, ia.ANSWERED = 1, True
+    ia.keep_order()
+    print("mute=%s" % ("present" if os.path.exists(ia.ORDER_FILE) else "absent"))
+    sys.exit()
+if scenario == "dispatch":
+    # Which commands keep the order, on what evidence: each step starts with no kept order and no
+    # earlier call of the app in this process.
+    def step(command, reads, dry=False):
+        if os.path.exists(ia.ORDER_FILE):
+            os.remove(ia.ORDER_FILE)
+        ia.ANSWERED, ia.DRY_RUN = False, dry
+        ia.COMMANDS[command] = (lambda args: ia.app_layout()) if reads else (lambda args: None)
+        sys.argv = ["iterm_agent.py", "--request", json.dumps({"version": ia.LAUNCHER_ARGS["version"], "command": command, "options": {}})]
+        try:
+            ia.main()
+        except SystemExit:
+            pass
+        ia.DRY_RUN = False
+        return "present" if os.path.exists(ia.ORDER_FILE) else "absent"
+    print("dispatch=" + ",".join([step("rotate", False), step("list", True), step("home-release", True),
+                                  step("spawn", False), step("close", True, dry=True)]))
+    sys.exit()
 code, out, err = restart(run=placed()) if scenario.startswith("run-") else restart(*sys.argv[4:])
 if scenario.startswith(("interrupted", "half", "no-start", "stale")):
     print("first=%s|%s|%s" % (code, ",".join(acts), "+".join(s for s in sorted(servers) if servers[s]["armed"] == "on")))

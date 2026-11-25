@@ -117,8 +117,11 @@ def open_data_file(path, flags, mode=0o600):
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
 # The tabs' order of the app as the last read of it found it: what a restart keeps when iTerm2 does not answer.
 ORDER_FILE = os.path.join(STATE_DIR, "iterm-order.json")
-# The commands that move, open or close a tab: each keeps the order after it.
-ORDER_CHANGERS = ("spawn", "close", "move", "rotate")
+# The commands that move, open, close or list a tab: each keeps the order after it, when it reached the app.
+ORDER_CHANGERS = ("spawn", "close", "move", "rotate", "home", "home-release", "list")
+# The most a read of the app's order may take, and whether this process's API calls have answered.
+LAYOUT_WAIT = 15
+ANSWERED = False
 CHAINS_DIR = os.path.join(DATA_DIR, "chains")
 AUDITORS_DIR = os.path.join(DATA_DIR, "auditors")
 SELF_TTY = os.environ.get("ORCHESTRATOR_SELF_TTY", "")
@@ -2213,6 +2216,24 @@ def coord_name_on(tty):
     return None
 
 
+class Overdue(Exception):
+    """A call to the app that did not answer within its deadline."""
+
+
+@contextlib.contextmanager
+def deadline(seconds):
+    """The block cut at `seconds`: a call the library waits on for ever raises Overdue instead."""
+    def late(signum, frame):
+        raise Overdue("iTerm2 did not answer in %ds" % seconds)
+    previous = signal.signal(signal.SIGALRM, late)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def app_layout():
     """The app's windows, each its tabs in order, each its sessions' ttys and titles."""
     async def go(iterm2, connection):
@@ -2223,15 +2244,20 @@ def app_layout():
                 windows[-1].append([{"tty": await session_tty(s), "title": await s.async_get_variable(
                     "autoName") or ""} for s in tab.all_sessions])
         return windows
-    return run(go)
+    with deadline(LAYOUT_WAIT):
+        return run(go)
 
 
 def keep_order(windows=None):
-    """The app's order of tabs, kept for a restart whose iTerm2 does not answer: read now unless
-    `windows` is given. Never raises: an app that does not answer keeps the order of its last read."""
+    """The app's order of tabs, kept for a restart whose iTerm2 does not answer. `windows` is a read
+    just made; without it, the order is read now, and only when this process's calls reached the app
+    (a dry run keeps nothing). An empty order is not kept over one. Never raises."""
+    if DRY_RUN or windows is None and not ANSWERED:
+        return
     with contextlib.suppress(Exception, SystemExit):
-        write_json(ORDER_FILE, {"version": 1, "at": time.time(),
-                                "windows": app_layout() if windows is None else windows})
+        windows = app_layout() if windows is None else windows
+        if any(windows):
+            write_json(ORDER_FILE, {"version": 1, "at": time.time(), "windows": windows})
 
 
 def kept_order():
@@ -2394,6 +2420,8 @@ def run(coro_fn):
         result["value"] = await coro_fn(iterm2, connection)
 
     iterm2.run_until_complete(main)
+    global ANSWERED
+    ANSWERED = True
     return result.get("value")
 
 
