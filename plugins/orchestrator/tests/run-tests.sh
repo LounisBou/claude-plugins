@@ -6714,8 +6714,8 @@ check "and marks the checkout kept on its ledger line, which a sweep of its dead
   "$(grep -F "\"path\":\"$CL\"" "$WCR/.workspaces.jsonl" | grep -c '"kept":')"
 
 # A close of an agent leaves the writer's clone where it is, unmarked as a rotation leaves it, so
-# `spawn --resume` finds it within the hour and the sweep ends it as any (past its hour, once its
-# pull request is over); a review's pin, which no resume needs, is still deleted.
+# `spawn --resume` finds it within the hour and the sweep ends it as any (past the resume window
+# once its agent is gone); a review's pin, which no resume needs, is still deleted.
 CL=$(mkclone "$WCSRC" cl-ag feat/cl-ag); HCL=$(scratch "$CL"); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
 res=$(cprobe close --expect-title 'Agent: cl-ag')
 check "a close of an agent leaves its clone and its host directory, and keeps its contract line" "exit=0|closed 1 session on /dev/ttys901|1|1" \

@@ -1,11 +1,12 @@
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { run, type Ran, type Run, type RunOptions } from './lib/process.ts'
 import type { FilePr } from '../../../hooks/pr-file-format.ts'
+import { main as brief } from './brief.ts'
 import {
   archivePath, bareName, callerOf, ledgerPath, ledgerText, liveSessions, makerOf, parseEntry, parseLedger, type WorkspaceEntry,
 } from './lib/workspace-ledger.ts'
@@ -1472,4 +1473,179 @@ test('a checkout kept for lack of an owner is said again each day, with the date
   registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
   await bare(w, 'sweep')
   assert.deepEqual([lineOf(w, dirty)?.reason, lineOf(w, dirty)?.reason_at, lineOf(w, dirty)?.said], [undefined, undefined, undefined])
+})
+
+// --- the resume window: a closed agent's checkout ends once it can no longer be resumed -----------
+
+const MINUTE = 60 * 1000
+
+/** A transcript of a session that ran in `checkout`, its last turn at `at`, in a projects folder of the host. */
+function spoke(checkout: string, at: number, projects = join(dir, 'home', '.claude', 'projects'), session = 's-agent'): void {
+  const folder = join(projects, encode(checkout))
+  mkdirSync(folder, { recursive: true })
+  const file = join(folder, `${session}.jsonl`)
+  writeFileSync(file, '{}\n')
+  utimesSync(file, new Date(at), new Date(at))
+}
+
+/** What a sweep says of the checkouts, its host directories and empty parents aside. */
+const said = (out: string): string[] => out.split('\n').filter(l => l !== '' && !l.startsWith(`deleted ${join(dir, 'host')}`))
+
+/** An orchestrator that stays alive, three hours after its checkouts were made. */
+async function longLived(names: readonly (readonly [string, 'pushed' | 'unpushed' | 'dirty'])[], env: Record<string, string> = {}): Promise<{ w: World; src: string; made: string[] }> {
+  const src = pushed('proj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41', ...env })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const made: string[] = []
+  for (const [name, how] of names) made.push(await clone(w, src, name, `feat/${name}`, how))
+  w.clock += 3 * HOUR
+  w.cwds = lsofOf('/elsewhere')
+  return { w, src, made }
+}
+
+test('sweep: while its orchestrator lives, a checkout whose agent spoke last over an hour ago is pushed and removed; within the hour it stays for `spawn --resume`', async () => {
+  const { w, made } = await longLived([['ahead', 'unpushed'], ['done', 'pushed'], ['fresh', 'pushed']])
+  const [ahead, done, fresh] = made as [string, string, string]
+  spoke(ahead, w.clock - 61 * MINUTE)
+  spoke(done, w.clock - HOUR)
+  spoke(fresh, w.clock - HOUR + 1000)
+  const window = `kept ${fresh}: resume window: its agent spoke last 59 min ago, \`spawn --resume\` takes it until 60 min`
+  const dry = await bare(w, 'sweep', '--dry-run')
+  assert.deepEqual(said(dry.out), [
+    `would delete ${ahead}: its agent gone past the resume window, after pushing feat/ahead`,
+    `would delete ${done}: its agent gone past the resume window`,
+    window,
+  ], dry.err)
+  assert.ok(existsSync(ahead) && existsSync(done))
+  const tip = g(ahead, 'rev-parse', 'HEAD')
+  const swept = await bare(w, 'sweep')
+  assert.equal(swept.code, 0, swept.err)
+  assert.deepEqual(said(swept.out), [`pushed feat/ahead of ${ahead}`, `deleted ${ahead}`, `deleted ${done}`, window])
+  assert.equal(g(join(dir, 'proj.git'), 'rev-parse', 'refs/heads/feat/ahead'), tip)
+  assert.ok(!existsSync(ahead) && !existsSync(done) && existsSync(fresh))
+  assert.deepEqual(archived().map(a => [a['path'], a['end'], a['by']]), [[ahead, 'pushed and removed', 'sweep'], [done, 'removed', 'sweep']])
+})
+
+test('sweep: past the resume window every safety rule still holds, and the kept checkout says why', async () => {
+  const { w, made } = await longLived([['dirty', 'dirty'], ['held', 'pushed'], ['local', 'unpushed'], ['moved', 'pushed'], ['stashed', 'pushed']])
+  const [dirty, held, local, moved, stashed] = made as [string, string, string, string, string]
+  g(local, 'remote', 'remove', 'origin')
+  g(moved, 'commit', '-q', '--allow-empty', '-m', 'Past the pushed head')
+  writeFileSync(join(stashed, 'README.md'), 'aside\n')
+  g(stashed, 'stash', '-q')
+  for (const c of made) spoke(c, w.clock - 2 * HOUR)
+  w.cwds = lsofOf(join(held, 'sub'))
+  const why = '(its agent gone past the resume window)'
+  const swept = await bare(w, 'sweep')
+  assert.deepEqual(said(swept.out), [
+    `kept ${dirty}: the tree is dirty ${why}`,
+    `kept ${held}: a live process has its working directory inside ${why}`,
+    `kept ${local}: commits on no remote branch, and no origin to push them to ${why}`,
+    `kept ${moved}: commits past origin/feat/moved, a branch the origin holds: only its agent moves it ${why}`,
+    `kept ${stashed}: a stash is held ${why}`,
+  ], swept.err)
+  assert.ok(made.every(c => existsSync(c)))
+  assert.equal(lineOf(w, dirty)?.reason, 'the tree is dirty')
+  assert.ok(swept.err.includes(`workspace: ledger: ${dirty} stays: the tree is dirty (orchestrator Orch: Maker, agent none)\n`), swept.err)
+  // A registry that cannot be read ends nothing.
+  rmSync(join(dir, 'home', '.claude', 'sessions'), { recursive: true, force: true })
+  assert.ok((await bare(w, 'sweep')).out.includes(`kept ${dirty}: the session registry cannot be read\n`))
+})
+
+test('sweep: a live agent keeps its checkout whatever its last turn; one no session ever ran in, and one marked kept, stay while their orchestrator lives', async () => {
+  const { w, src, made } = await longLived([['here', 'pushed'], ['marked', 'pushed'], ['named', 'pushed'], ['never', 'pushed'], ['reused', 'pushed']])
+  const [here, marked, named, never, reused] = made as [string, string, string, string, string]
+  for (const c of [here, marked, named]) spoke(c, w.clock - 2 * HOUR)
+  // A transcript older than the checkout is of an earlier one at the same path: no session ran in this one.
+  spoke(reused, w.clock - 4 * HOUR)
+  assert.equal((await bare(w, 'keep', marked)).code, 0)
+  changeEntryOf(named, e => ({ ...e, agent: 'Agent: named' }))
+  registry(w, [
+    { pid: 41, name: 'Orch: Maker', cwd: src }, { pid: 7, name: 'Agent: here', cwd: here },
+    { pid: 8, name: 'Agent: named', cwd: '/elsewhere' },
+  ], new Set([41, 7, 8]))
+  const swept = await bare(w, 'sweep')
+  const lines_ = said(swept.out)
+  assert.equal(lines_[0], `kept ${here}: agent Agent: here works in it`)
+  for (const [k, c] of [marked, named, never, reused].entries()) assert.match(lines_[k + 1] ?? '', new RegExp(`^kept ${c}: pull requests unreadable`))
+  assert.ok(made.every(c => existsSync(c)))
+  // Their orchestrator gone too, the marked one is still the mark's to keep.
+  registry(w, [], new Set())
+  const gone = await bare(w, 'sweep')
+  assert.match(gone.out, new RegExp(`^kept ${marked}: kept since \\S+ by close --keep-checkout: only delete ends it$`, 'm'))
+  assert.ok(existsSync(marked) && !existsSync(here) && !existsSync(never) && !existsSync(reused))
+})
+
+test('sweep: the resume window holds a checkout whoever else is gone, its pull request over or within its first hour', async () => {
+  const src = pushed('proj')
+  const w = world({ CLAUDE_CODE_SESSION_ID: 's41' })
+  registry(w, [{ pid: 41, name: 'Orch: Maker', cwd: src }], new Set([41]))
+  const c = await clone(w, src, 'c', 'feat/c')
+  w.cwds = lsofOf('/elsewhere')
+  w.prs[join(dir, 'proj.git')] = ok(JSON.stringify([{ number: 1, headRefName: 'feat/c', headRefOid: g(c, 'rev-parse', 'HEAD'), state: 'MERGED' }]))
+  w.clock += 10 * MINUTE
+  spoke(c, w.clock)
+  const young = await ws(w, 'sweep')
+  assert.deepEqual(said(young.out), [`kept ${c}: resume window: its agent spoke last 0 min ago, \`spawn --resume\` takes it until 60 min`], young.err)
+  registry(w, [], new Set())
+  w.clock += 59 * MINUTE
+  assert.match((await ws(w, 'sweep')).out, new RegExp(`^kept ${c}: resume window: its agent spoke last 59 min ago`, 'm'))
+  w.clock += MINUTE
+  assert.deepEqual(said((await ws(w, 'sweep', '--dry-run')).out), [`would delete ${c}: no live orchestrator or agent`])
+})
+
+test('sweep: the last turn is the newest the host keeps on either plan, read as the launcher reads it; the window follows ORCHESTRATOR_RESUME_WITHIN', async () => {
+  const { w, made } = await longLived([['a', 'pushed']])
+  const a = made[0] as string
+  const dry = async (): Promise<string> => said((await bare(w, 'sweep', '--dry-run')).out)[0] ?? ''
+  const gone = `would delete ${a}: its agent gone past the resume window`
+  spoke(a, w.clock - 2 * HOUR)
+  assert.equal(await dry(), gone)
+  // A resume on the second plan, or under the caller's own configuration directory, spoke since.
+  const bis = join(dir, 'home', '.claude-bis', 'projects') // the second plan's CLAUDE_CONFIG_DIR
+  spoke(a, w.clock - 5 * MINUTE, bis, 's-bis')
+  assert.match(await dry(), new RegExp(`^kept ${a}: resume window: its agent spoke last 5 min ago`))
+  rmSync(bis, { recursive: true })
+  w.deps = { ...w.deps, env: { ...w.deps.env, CLAUDE_CONFIG_DIR: join(dir, 'config') } }
+  registry(w, [], new Set())
+  mkdirSync(join(dir, 'config', 'sessions'), { recursive: true })
+  spoke(a, w.clock - 7 * MINUTE, join(dir, 'config', 'projects'), 's-config')
+  assert.match(await dry(), /resume window: its agent spoke last 7 min ago/)
+  // The override of the projects folder is the only one read, and the window's is the launcher's.
+  const only = join(dir, 'only')
+  spoke(a, w.clock - 20 * MINUTE, only)
+  w.deps = { ...w.deps, env: { ...w.deps.env, ORCHESTRATOR_PROJECTS_DIR: only, ORCHESTRATOR_RESUME_WITHIN: '600' } }
+  assert.equal(await dry(), `would delete ${a}: no live orchestrator or agent`)
+  w.deps = { ...w.deps, env: { ...w.deps.env, ORCHESTRATOR_RESUME_WITHIN: '1800' } }
+  assert.match(await dry(), /resume window: its agent spoke last 20 min ago, `spawn --resume` takes it until 30 min$/)
+  w.deps = { ...w.deps, env: { ...w.deps.env, ORCHESTRATOR_RESUME_WITHIN: 'an hour' } }
+  assert.match(await dry(), /takes it until 60 min$/)
+})
+
+test('past the hour, a correction\'s checkout is made again from the pushed branch, and the resume brief prints from it', async () => {
+  const { w, src, made } = await longLived([['fix', 'unpushed']])
+  const old = made[0] as string
+  const tip = g(old, 'rev-parse', 'HEAD')
+  spoke(old, w.clock - 2 * HOUR)
+  assert.equal((await bare(w, 'sweep')).code, 0)
+  assert.ok(!existsSync(old))
+  const again = await bare(w, 'create', src, 'fix', '--base', 'feat/fix')
+  assert.deepEqual([again.code, again.out], [0, `${old}\n`], again.err)
+  assert.deepEqual([g(old, 'rev-parse', '--abbrev-ref', 'HEAD'), g(old, 'rev-parse', 'HEAD')], ['feat/fix', tip])
+  // The resume brief reads the new checkout, and its line spawns the replacement there.
+  const record = join(dir, 'dispatch-record.jsonl')
+  writeFileSync(record, `${JSON.stringify({ id: 1, label: 'FIX', state: 'open', tier: 'standard' })}\n`)
+  const phaseBrief = join(dir, 'phase.md')
+  writeFileSync(phaseBrief, '# phase\n')
+  const out: string[] = []
+  const code = brief(['rotation', '--record', record, '--row', '1', '--phase-brief', phaseBrief, '--worktree', old, '--orchestrator', 'Orch: Maker [a1b2c3]',
+    '--tty', 'none', '--title', 'Agent: fix', '--out', join(dir, 'fix-r1.md')],
+  { out: t => out.push(t), err: t => out.push(t) }, { env: w.deps.env, now: () => new Date(w.clock), git: (at, args) => g(at, ...args) })
+  assert.equal(code, 0, out.join(''))
+  assert.match(out.join(''), /^spawn: \S+iterm-agent\.sh spawn --dir /m)
+  assert.ok(readFileSync(join(dir, 'fix-r1.md'), 'utf8').includes(tip.slice(0, 12)))
+  // The earlier agent's transcript is older than this checkout: it waits for its agent.
+  w.clock += 2 * HOUR
+  assert.match((await bare(w, 'sweep')).out, new RegExp(`^kept ${old}: pull requests unreadable`, 'm'))
+  assert.ok(existsSync(old))
 })

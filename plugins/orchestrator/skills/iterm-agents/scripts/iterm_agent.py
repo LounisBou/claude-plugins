@@ -179,6 +179,10 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "
 ROLE_WORDS = tuple(NAMES["roles"])
 _WORD = {role: word for word, role in NAMES["roles"].items()}
 ORCH, COORD, AUDIT, AGENT = (_WORD[role] for role in ("orchestrator", "coordinator", "auditor", "agent"))
+# The resume window and the plans' directories, data the checkouts' sweep (workspace.ts) reads too.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "orchestrator",
+                       "scripts", "lib", "resume-window.json")) as _fh:
+    RESUME = json.load(_fh)
 # The launcher's argument set is core's (launcher.ts), read here as the generated `launcher.json`:
 # the request's version, and each option's default for a request that leaves it out.
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "core", "launcher.json"),
@@ -5076,9 +5080,9 @@ def sleeper_config(title):
     return None
 
 
-# The plans: plan 1 is the host's default configuration directory, plan 2 the second account's.
-PLAN1_DIRNAME = ".claude"  # the CLAUDE_CONFIG_DIR the host defaults to, under the home
-PLAN2_DIRNAME = ".claude-bis"  # the CLAUDE_CONFIG_DIR of plan 2, under the home
+# The plans: plan 1 is the host's default configuration directory, plan 2 the second account's,
+# both under the home (`resume-window.json`).
+PLAN1_DIRNAME, PLAN2_DIRNAME = RESUME["CLAUDE_CONFIG_DIR_of_plans"]
 # A quota reading older than this is no reading (core's QUOTA_STALE_AFTER_MS).
 QUOTA_STALE_AFTER = 30 * 60
 
@@ -6322,8 +6326,7 @@ def cmd_close(args):
     # Read BEFORE the close: what the proof below is a proof ABOUT.
     was_running = host_cli_on(host_tty)
     # And the same for the checkout the session works in: once it is gone nothing says where.
-    # A rotation keeps it without marking it: its replacement works there, and the sweep ends
-    # the checkout once the replacement's pull request is over.
+    # A rotation keeps it without marking it: its replacement works there, and the sweep ends it as any.
     checkout = None
     marking = bool(args.keep_checkout) and not getattr(args, "rotating", False)
     if not args.keep_checkout or marking:
@@ -6366,8 +6369,8 @@ def cmd_close(args):
         if marking:
             mark_kept(checkout)
         elif keeps_clone(checkout, args.expect):
-            print("close: left checkout %s: a resume finds it within the hour, then the sweep ends it "
-                  "once its pull request is over" % checkout, file=sys.stderr)
+            print("close: left checkout %s: a resume finds it within the hour, then the sweep ends it"
+                  % checkout, file=sys.stderr)
         else:
             delete_checkout(checkout)
 
@@ -7260,11 +7263,12 @@ def old_host(old):
 
 # How long after its last turn a closed agent is resumed: the host's prompt cache lives an hour
 # from the last turn, so a resume within it reads the cache and one past it pays the whole
-# context again, no less than a fresh agent from the resume brief does.
+# context again, no less than a fresh agent from the resume brief does. The bound is
+# `resume-window.json`'s, which the checkouts' sweep reads too.
 try:
-    RESUME_WITHIN = float(os.environ.get("ORCHESTRATOR_RESUME_WITHIN", "3600"))
+    RESUME_WITHIN = float(os.environ.get(RESUME["env"], RESUME["within_seconds"]))
 except ValueError:
-    RESUME_WITHIN = 3600.0
+    RESUME_WITHIN = float(RESUME["within_seconds"])
 
 
 def refuse_stale_resume(session_id):
