@@ -36,7 +36,9 @@
 #     A spawn or a rotation given --brief whose title is `Agent: <subject>` and whose brief names a row
 #     (`Row: <id>`, or a rotation brief's « resume brief for row <id> ») writes the agent's name on that row
 #     of the dispatch record, once the agent is verified running (`dispatch-record.sh agent`): the row's
-#     fact of who holds it. A record that cannot be found or written is said on stderr; the launch stands.
+#     fact of who holds it. The row's pull requests follow it: their ledger lines are set `working` with it
+#     (a review brief's: the line of the pull request it reads), each said in the hooks module's log.
+#     A record that cannot be found or written is said on stderr; the launch stands.
 #     --tier also exports the tier's name, ORCHESTRATOR_TIER, for what records the session's
 #     events; a launch by --model, or on the caller's own pair, exports none.
 #   iterm-agent.sh spawn --dir <path> --auditor [--of <tty> | --of self] --title "Audit: <subject>" [--model <id> --effort <level>] (--prompt <text> | --prompt-file <path>)

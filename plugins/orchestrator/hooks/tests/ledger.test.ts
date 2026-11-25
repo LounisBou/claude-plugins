@@ -1069,6 +1069,32 @@ test('a pull request told in anomaly without an agent that then turns conflictin
   expect((await prWake(conflicting('CONFLICTING', 'a'.repeat(40), 'd'.repeat(40), '').dollar, told)).lines).toEqual([])
 })
 
+// acme/app#17 open, its line working the agent named, the launcher listing the agents given.
+const held = (agent: string, ...live: string[]) => fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'working', { agent })}\n` },
+  forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running(...live) })
+const NO_AGENT_17 = '[module] acme/app#17 en anomalie (sans agent depuis 2026-11-14T09:30Z) — reattach an agent, refresh its wait, or ask'
+
+test('a line whose agent the tick saw running and finds gone is told at the next tick only: a successor put on it meanwhile is never told', async () => {
+  const gone = new Set<string>()
+  expect((await prWake(held('Agent: p17', 'Agent: p17').dollar, gone)).lines).toEqual([])
+  const first = await prWake(held('Agent: p17').dollar, gone)
+  expect(first.lines).toEqual([])
+  expect(first.watching).toBe(true)
+  expect((await prWake(held('Agent: p17').dollar, gone)).lines).toEqual([NO_AGENT_17])
+  expect((await prWake(held('Agent: p17').dollar, gone)).lines).toEqual([])
+  const succeeded = new Set<string>()
+  await prWake(held('Agent: p17', 'Agent: p17').dollar, succeeded)
+  expect((await prWake(held('Agent: p17').dollar, succeeded)).lines).toEqual([])
+  expect((await prWake(held('Agent: p17 bis', 'Agent: p17 bis').dollar, succeeded)).lines).toEqual([])
+  // The successor gone in its turn is given its own tick.
+  expect((await prWake(held('Agent: p17 bis').dollar, succeeded)).lines).toEqual([])
+  expect((await prWake(held('Agent: p17 bis').dollar, succeeded)).lines).toEqual([NO_AGENT_17])
+})
+
+test('a line no tick ever saw an agent running on is told at once', async () => {
+  expect((await prWake(held('Agent: p17').dollar, new Set())).lines).toEqual([NO_AGENT_17])
+})
+
 // An agent's launch, as the launcher writes it: the script naming its brief, the brief naming its row.
 const launched = (dir: string, agent: string, row: number): Record<string, string> => ({
   [`${STATE}/prompts/launch-${agent.replace(/[^A-Za-z0-9._-]/g, '-')}-1700000000000.sh`]: `export ORCHESTRATOR_BRIEF='${dir}/${agent.slice(7)}-brief.md'\n`,
