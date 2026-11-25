@@ -94,6 +94,7 @@ export const LAUNCHER_COMMANDS = {
   'home-watch': { options: [value('--socket', 'socket'), value('--tty', 'tty')], unknown: 'ignore' },
   'home-reload': { options: [], unknown: 'refuse' },
   'restart': { options: [flag('--check', 'check'), value('--run', 'run')], unknown: 'refuse' },
+  'resume-line': { options: [{ flag: '--pid', dest: 'pid', kind: 'int', default: null }], unknown: 'refuse' },
   'takeover': { options: [value('--tty', 'tty'), value('--expect-title', 'expect')], unknown: 'refuse' },
   'bench-open': {
     options: [value('--bench', 'bench'), value('--dir', 'dir'), value('--title', 'title'), list('--plugin-dir', 'plugin_dir'),

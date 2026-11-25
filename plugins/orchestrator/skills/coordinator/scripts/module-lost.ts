@@ -3,12 +3,15 @@
 // plugin, which stays unloaded for the rest of the session while the others come back, and only
 // that session's own tab says so. Its transcript keeps what the host announced at each model call:
 // `mcp_instructions_delta`, the plugins whose tools the session gained and lost, and
-// `deferred_tools_delta`, those still connecting. A session not announced since then reads as before.
+// `deferred_tools_delta`, those still connecting. A session not announced since then reads as before,
+// so a loss counts only once the running process has called the model: a resumed one keeps the
+// old announcements until its first call.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { currentSessionName, roleOf } from '../../../core/names.ts'
 import type { Context } from './context.ts'
 import type { Session } from './facts.ts'
+import { launcherPath } from './liveness.ts'
 
 const MODULE = 'orchestrator'
 
@@ -45,6 +48,32 @@ export function moduleLost(transcript: string): boolean {
     } else if (said['type'] === 'deferred_tools_delta') connecting = names(said['pendingMcpServers'])
   }
   return announced && !held.has(MODULE) && !connecting.includes(MODULE)
+}
+
+/** Whether the main thread's latest model call is dated after `startedAt` (ms); a `<synthetic>` row is the host's own, no call. */
+function calledSince(transcript: string, startedAt: number): boolean {
+  const rows = transcript.split('\n')
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i] ?? ''
+    if (!row.includes('"assistant"')) continue
+    const entry = objectOf(row)
+    const message = entry?.['message']
+    if (entry?.['type'] !== 'assistant' || entry['isSidechain'] === true || (isObject(message) && message['model'] === '<synthetic>')) continue
+    return Date.parse(String(entry['timestamp'])) > startedAt
+  }
+  return false
+}
+
+/*
+ * The launcher builds the line from the running process, so it is read before the operator ends
+ * it: a bare resume would drop a spawned session's options, plan, directory and kill-guard mark.
+ */
+function cureOf(ctx: Context, pid: string, id: string): string {
+  const built = ctx.run('bash', [launcherPath(ctx.here), 'resume-line', '--pid', pid])
+  const line = built.stdout.trim()
+  if (built.status === 0 && line !== '') return `end it, then run: ${line}`
+  const why = built.stderr.trim().replace(/^ERROR: /, '') || `exit ${built.status}`
+  return `end it, then resume it from its directory with --resume ${id} and the options it was started with (its launch line cannot be read: ${why})`
 }
 
 /** The transcript of a session under a configuration directory; undefined before the host wrote one. */
@@ -90,8 +119,9 @@ export function lostModuleLines(ctx: Context, sessions: readonly Session[], unre
       unread.push(`module of session ${session.pid}: ${path} cannot be read`)
       continue
     }
-    if (moduleLost(text)) {
-      lines.push(`module-lost ${name} | session ${id} | pid ${session.pid} | ${session.tty} | its orchestrator module is not loaded: tell the operator; cure: end it, then resume it in place with --resume ${id}`)
+    const startedAt = record?.['startedAt']
+    if (moduleLost(text) && (typeof startedAt !== 'number' || calledSince(text, startedAt))) {
+      lines.push(`module-lost ${name} | session ${id} | pid ${session.pid} | ${session.tty} | its orchestrator module is not loaded: tell the operator; cure: ${cureOf(ctx, session.pid, id)}`)
     }
   }
   return lines

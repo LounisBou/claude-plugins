@@ -74,7 +74,8 @@
 #     (a remote row listing the pull request counts as one more orchestrator on it)
 #   module-lost <name> | session <id> | pid <pid> | <tty> | <what to do>
 #     (a live Coord, Orch or Audit session whose transcript says its orchestrator module is not
-#     loaded; facts and check print it)
+#     loaded, once its running process has called the model; the cure carries the line
+#     iterm-agent.sh resume-line prints, or why there is none; facts and check print it)
 #   unread <source>: <why>     a source not read: the process table, the host's name, lsof,
 #                              a pid's directory, a tree git failed on, a brief, the checkouts,
 #                              the forge, a remote row that is no JSON row

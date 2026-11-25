@@ -119,21 +119,38 @@ def written(sid):
     return sum(map(os.path.getsize, ia.glob.glob(os.path.join(ia.PROJECTS_DIR, "*", "%s.jsonl" % sid))))
 
 
-def resume_of(pid, config, record, report):
-    """The line that starts the session again, on its own process's plan and plugin variables."""
-    words, environment = ia.host_argv(pid), ia.kernel_procargs(pid)[1]
+def resume_of(pid, config, record, prompt):
+    """The line that starts the session again with `prompt`, on its own process's plan and
+    plugin variables."""
+    words, environment = ia.host_argv(pid), ia.host_environment(pid)
     sid, cwd = record.get("sessionId") or "", record.get("cwd") or ""
     if not words or environment is None or not sid or not os.path.isdir(cwd):
         raise ValueError("its launch, environment, session id or directory cannot be read")
-    resume = ia.resume_words(words[1:], sid, record.get("name") or sid,
-                             "iTerm2 was restarted and your process ended with it: this is your "
-                             "conversation resumed. Read %s, then go on." % report)
+    resume = ia.resume_words(words[1:], sid, record.get("name") or sid, prompt)
     with contextlib.suppress(ia.PairUnreadable):
         resume = ia.with_pair(resume, *ia.caller_pair(sid))
     kept = [e for e in environment if e.startswith("ORCHESTRATOR_") and e.split("=")[0] not in ia.HOME_ENV_DROPPED]
     line = (["env"] + (["CLAUDE_CONFIG_DIR=" + config] if config else ["-u", "CLAUDE_CONFIG_DIR"])
             + kept + [shutil.which(ia.HOST_CLI) or ia.HOST_CLI] + resume)
     return "cd %s && exec %s" % (ia.shq(cwd), " ".join(ia.shq(w) for w in line))
+
+
+def resume_line(launcher, pid):
+    """`resume-line`: prints the line that resumes the running session `pid`, for one whose
+    orchestrator module is not loaded: its prompt has it call the model at once, which is when
+    its transcript says whether the module came back."""
+    global ia
+    ia = launcher
+    config = ia.process_config(pid) if pid else None
+    if config is None:
+        ia.die("resume-line: pid %s: its process cannot be read" % pid)
+    with plan(config):
+        try:
+            print(resume_of(pid, config, ia.host_registry(pid) or {},
+                            "Your process was ended because its orchestrator module was not "
+                            "loaded: this is your conversation resumed. Go on."))
+        except ValueError as exc:
+            ia.die("resume-line: pid %s: %s" % (pid, exc))
 
 
 def read_sessions(table, servers, report, refused):
@@ -158,7 +175,10 @@ def read_sessions(table, servers, report, refused):
             try:
                 if not session["start"] or config is None:
                     raise ValueError("its process cannot be read")
-                session["resume"] = resume_of(pid, config, record, report)
+                session["resume"] = resume_of(pid, config, record,
+                                              "iTerm2 was restarted and your process ended with "
+                                              "it: this is your conversation resumed. Read %s, "
+                                              "then go on." % report)
             except ValueError as exc:
                 # A home session is never started again by a restart: its line is only printed.
                 if not session["socket"] or not session["start"] or config is None:

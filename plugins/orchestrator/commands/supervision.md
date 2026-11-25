@@ -3,8 +3,9 @@ description: Open or close the supervision pane
 disable-model-invocation: true
 ---
 
-The plugin's hook opens the pane with no model turn, so reading this most likely means
-this session's orchestrator module is not loaded. Tell the operator that in one line, with
-the cure: end it, then resume it with `--resume` and the id in `$CLAUDE_CODE_SESSION_ID`.
+A hook opens this pane: the session's orchestrator module is likely unloaded. Say so
+in one line, cure: the `module-lost` line naming `$CLAUDE_CODE_SESSION_ID` in
+`${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh facts`; none (opened by
+hand): end it, `--resume` that id.
 
 $ARGUMENTS

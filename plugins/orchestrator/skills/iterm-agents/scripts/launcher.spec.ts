@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { parseLauncherArgs } from '../../../core/launcher.ts'
 import type { RowDeps } from './agent-row.ts'
 import { main, prepDeps, requestOf, rowDeps, runAdapter } from './launcher.ts'
@@ -83,5 +85,46 @@ describe('the launcher entry', () => {
     assert.equal(await main(line, env, io().io, prepDeps(env, io().io), async () => 3, row), 3)
     assert.equal(await main(line, { ...env, ORCHESTRATOR_DRY_RUN: '1' }, io().io, prepDeps(env, io().io), ok, row), 0)
     assert.deepEqual(said, [])
+  })
+})
+
+describe('resume-line', () => {
+  /** A live session as the launcher spawned it: the host's record of it, its words and its environment. */
+  function spawned(cwd?: string): { work: string; env: NodeJS.ProcessEnv } {
+    const work = realpathSync(mkdtempSync(join(tmpdir(), 'resume-line-')))
+    const config = join(work, 'config')
+    mkdirSync(join(config, 'sessions'), { recursive: true })
+    writeFileSync(join(config, 'sessions', '4242.json'), JSON.stringify({ pid: 4242, sessionId: 'sid-9', cwd: cwd ?? work, name: 'Orch: b' }))
+    const words = ['/bin/hostcli', '--model', 'm', '--effort', 'low', '--disallowedTools', 'A', 'B', '--strict-mcp-config',
+      '--mcp-config', '/m.json', '--permission-mode', 'auto', '--session-id', 'old-id', '--settings', '{"a":1}',
+      'the first prompt', '--name', 'Orch: before', '--remote-control', 'Orch: b']
+    return {
+      work,
+      env: {
+        PATH: process.env['PATH'], HOME: work, ORCHESTRATOR_STATE_DIR: join(work, 'state'), ORCHESTRATOR_HOST_CLI: 'hostcli',
+        ORCHESTRATOR_HOST_ARGV: JSON.stringify(words),
+        ORCHESTRATOR_HOST_ENV: JSON.stringify([`CLAUDE_CONFIG_DIR=${config}`, 'ORCHESTRATOR_SPAWNED=1', 'SECRET=x']),
+      },
+    }
+  }
+  const resumeLine = (env: NodeJS.ProcessEnv) =>
+    spawnSync('bash', [fileURLToPath(new URL('./iterm-agent.sh', import.meta.url)), 'resume-line', '--pid', '4242'], { env, encoding: 'utf8' })
+
+  it("prints the line that resumes a spawned session with its directory, plan, marks, options and name", () => {
+    const b = spawned()
+    const done = resumeLine(b.env)
+    assert.equal(done.status, 0, done.stderr)
+    const line = done.stdout.trimEnd()
+    assert.ok(line.startsWith(`cd ${b.work} && exec env CLAUDE_CONFIG_DIR=${b.work}/config ORCHESTRATOR_SPAWNED=1 hostcli '--model' m '--effort' low `), line)
+    assert.ok(line.includes(` '--disallowedTools' A B '--strict-mcp-config' '--mcp-config' /m.json '--permission-mode' auto '--settings' '{"a":1}' '--remote-control' 'Orch: b' '--resume' sid-9 '`), line)
+    assert.ok(line.endsWith(` '--name' 'Orch: b'`), line)
+    assert.doesNotMatch(line, /SECRET|old-id|the first prompt|Orch: before|iTerm/)
+  })
+
+  it('refuses a session whose launch cannot be read, and says why', () => {
+    const done = resumeLine(spawned('/no/such/directory').env)
+    assert.equal(done.status, 1)
+    assert.equal(done.stdout, '')
+    assert.match(done.stderr, /^ERROR: resume-line: pid 4242: its launch, environment, session id or directory cannot be read/)
   })
 })

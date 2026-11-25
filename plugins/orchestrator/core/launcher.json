@@ -414,6 +414,17 @@
       ],
       "unknown": "refuse"
     },
+    "resume-line": {
+      "options": [
+        {
+          "flag": "--pid",
+          "dest": "pid",
+          "kind": "int",
+          "default": null
+        }
+      ],
+      "unknown": "refuse"
+    },
     "takeover": {
       "options": [
         {

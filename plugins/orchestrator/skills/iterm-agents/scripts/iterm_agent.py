@@ -3592,6 +3592,15 @@ def kernel_procargs(pid):
     return (words, environment) if len(words) == argc else (None, None)
 
 
+def host_environment(pid):
+    """The environment of the process `pid`, a list of `NAME=value`, or None where it cannot be
+    read. ORCHESTRATOR_HOST_ENV, a JSON list, stands in for the suite."""
+    stand_in = os.environ.get("ORCHESTRATOR_HOST_ENV")
+    if stand_in is not None:
+        return json.loads(stand_in)
+    return kernel_procargs(pid)[1]
+
+
 def session_record(session_id):
     """`(pid, record)` of the running process the host registered for `session_id`, or
     (None, None)."""
@@ -5175,13 +5184,9 @@ def route_plan(choice):
 def process_config(pid):
     """The CLAUDE_CONFIG_DIR in the environment of process `pid`, "" when it has none (plan 1),
     None when it cannot be read: the plan a session runs on is a fact of its own process, whoever
-    asks. ORCHESTRATOR_HOST_ENV, a JSON list of NAME=value, stands in for the suite. Read from the kernel's own record, which tells the words from the environment; `ps`,
+    asks. Read from the kernel's own record, which tells the words from the environment; `ps`,
     which joins them, is the fallback and takes the last assignment."""
-    stand_in = os.environ.get("ORCHESTRATOR_HOST_ENV")
-    if stand_in is not None:
-        environment = json.loads(stand_in)
-    else:
-        _, environment = kernel_procargs(pid)
+    environment = host_environment(pid)
     if environment is not None:
         found = [e.partition("=")[2] for e in environment if e.startswith("CLAUDE_CONFIG_DIR=")]
         return found[-1] if found else ""
@@ -7529,13 +7534,20 @@ def cmd_restart(args):
     iterm_restart.main(sys.modules[__name__], args)
 
 
+def cmd_resume_line(args):
+    """`resume-line --pid <pid>`: the line that starts a running session again once it has
+    ended, as a restart builds it."""
+    import iterm_restart
+    iterm_restart.resume_line(sys.modules[__name__], args.pid)
+
+
 COMMANDS = {
     "list": cmd_list, "spawn": cmd_spawn, "verify": cmd_verify, "close": cmd_close,
     "move": cmd_move, "rotate": cmd_rotate,
     "screen": cmd_screen, "trust": cmd_trust, "tools": cmd_tools,
     "home": cmd_home, "home-release": cmd_home_release, "takeover": cmd_takeover,
     "home-watch": cmd_home_watch, "pair": cmd_pair, "bench-open": cmd_bench_open,
-    "home-reload": cmd_home_reload, "restart": cmd_restart,
+    "home-reload": cmd_home_reload, "restart": cmd_restart, "resume-line": cmd_resume_line,
 }
 
 
