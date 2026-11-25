@@ -39,6 +39,11 @@ export interface LedgerLine {
    * the pull request is attended.
    */
   readonly earlier?: readonly string[]
+  /**
+   * Any status: the agents put to work on it before that `agent` and `earlier` no longer name, the newest first,
+   * each once (a wait drops the agents that attend it, never the ones its Ready or its end closes).
+   */
+  readonly worked?: readonly string[]
   /** waiting: what it waits on. */
   readonly on?: string
   /** parked: the operator's words, dated. */
@@ -124,7 +129,8 @@ export function parseLedgerLine(raw: unknown): LedgerLine | undefined {
   const detail = r[key]
   if (!filled(detail)) return undefined
   const earlier = status === 'working' && Array.isArray(r['earlier']) ? r['earlier'].filter(filled) : []
-  return { v, ledger: 'pr', repo, pr, status, [key]: detail, ...(earlier.length > 0 ? { earlier } : {}), since, updated }
+  const worked = Array.isArray(r['worked']) ? r['worked'].filter(filled) : []
+  return { v, ledger: 'pr', repo, pr, status, [key]: detail, ...(earlier.length > 0 ? { earlier } : {}), ...(worked.length > 0 ? { worked } : {}), since, updated }
 }
 
 /** The ledger lines of a record's text, the last one of each pull request standing; rows and broken lines left out. */
@@ -158,9 +164,12 @@ export function ledgerLineOf(set: LedgerSet, now: Date, previous?: LedgerLine): 
   // A working line put on another agent keeps the one before it, and those it kept, the new one left out.
   const before = previous?.status === 'working' && set.status === 'working' ? [previous.agent ?? '', ...(previous.earlier ?? [])] : []
   const earlier = [...new Set(before.filter(agent => agent !== '' && agent !== detail))].slice(0, LEDGER_EARLIER_KEPT)
+  // Every agent the line named before that the new one no longer names, whatever the status: kept until the pull request ends.
+  const named = new Set([set.status === 'working' ? detail : '', ...earlier])
+  const worked = [...new Set(previous === undefined ? [] : everyAgentOf(previous))].filter(agent => !named.has(agent)).slice(0, LEDGER_EARLIER_KEPT)
   return {
     v: LEDGER_VERSION, ledger: 'pr', repo: set.repo, pr: set.pr, status: set.status, [key]: detail, ...(earlier.length > 0 ? { earlier } : {}),
-    since: same ? previous.since : at, updated: at,
+    ...(worked.length > 0 ? { worked } : {}), since: same ? previous.since : at, updated: at,
   }
 }
 
@@ -187,7 +196,7 @@ export function withLine(text: string, line: LedgerLine): string {
 }
 
 /*
- * The text with `agent` taken out of every line's earlier list: put to work by the orchestrator on a
+ * The text with `agent` taken out of every line's earlier and worked lists: put to work by the orchestrator on a
  * pull request, it no longer works on the others. Every line keeps its place and its other fields; a
  * list left empty goes.
  */
@@ -195,12 +204,16 @@ export function withoutEarlier(text: string, agent: string): string {
   return text.split('\n').map(raw => {
     if (keyOfText(raw) === undefined) return raw
     const line = JSON.parse(raw) as Record<string, unknown>
-    const earlier = line['earlier']
-    if (!Array.isArray(earlier) || !earlier.includes(agent)) return raw
-    const kept = earlier.filter(other => other !== agent)
-    if (kept.length > 0) line['earlier'] = kept
-    else delete line['earlier']
-    return JSON.stringify(line)
+    let changed = false
+    for (const field of ['earlier', 'worked']) {
+      const list = line[field]
+      if (!Array.isArray(list) || !list.includes(agent)) continue
+      changed = true
+      const kept = list.filter(other => other !== agent)
+      if (kept.length > 0) line[field] = kept
+      else delete line[field]
+    }
+    return changed ? JSON.stringify(line) : raw
   }).join('\n')
 }
 
@@ -238,6 +251,11 @@ const hasLabel = (open: OpenPr, label: string): boolean => (open.labels ?? []).s
 /** The agents a working line names: its agent, then those put to work on it before; none for any other status. */
 export function agentsOf(line: LedgerLine): string[] {
   return line.status === 'working' ? [line.agent ?? '', ...(line.earlier ?? [])].filter(agent => agent !== '') : []
+}
+
+/** Every agent a line names, whatever its status: a working line's agent, those put to work on it before; the ones its Ready or its end closes. */
+export function everyAgentOf(line: LedgerLine): string[] {
+  return [...new Set([line.status === 'working' ? line.agent ?? '' : '', ...(line.earlier ?? []), ...(line.worked ?? [])])].filter(agent => agent !== '')
 }
 
 /** Whether a wait's words name the operator: his merge, his gesture, his ruling. */

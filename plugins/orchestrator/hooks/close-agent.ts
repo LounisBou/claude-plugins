@@ -24,8 +24,11 @@ const READ_BOUND_MS = 10_000
  */
 export type ToClose = { agent: string; tty: string; session: string; cost?: { record: string; row: number } | undefined; ended?: boolean }
 
-/** What the facts allow: `close` now, `refused` with the fact that keeps it open (told once), or `later` with why (tried again). */
-export type CloseFacts = { kind: 'close' } | { kind: 'refused'; why: string } | { kind: 'later'; why: string }
+/**
+ * What the facts allow: `close` now, `refused` with the fact that keeps it open (told once), or `later` with why (tried again);
+ * `stuck`, a later that is no work of the agent's (its host busy or unread while its tab is idle), which the module bounds.
+ */
+export type CloseFacts = { kind: 'close' } | { kind: 'refused'; why: string } | { kind: 'later'; why: string; stuck?: true }
 
 // The host's record of a session (`<config>/sessions/<pid>.json`): its status and the directory it runs in.
 async function hostOf($: Held, session: string): Promise<{ status: unknown; cwd: unknown } | null> {
@@ -53,11 +56,11 @@ export async function closeFacts($: Held, a: ToClose): Promise<CloseFacts> {
   const wait = parseWaitRecord(await readOr($, `${await storeOf($)}/${waitKey(a.session)}`))
   if (a.ended !== true && wait?.waiting !== 'delivered') return { kind: 'later', why: `its last turn did not end on done: ${wait?.waiting ?? 'no status'}` }
   const host = await hostOf($, a.session)
-  if (host === null || typeof host.cwd !== 'string' || host.cwd === '') return { kind: 'later', why: 'no host record of its session read' }
-  if (host.status === 'busy') return { kind: 'later', why: 'its host is busy' }
+  if (host === null || typeof host.cwd !== 'string' || host.cwd === '') return { kind: 'later', why: 'no host record of its session read', stuck: true }
+  if (host.status === 'busy') return { kind: 'later', why: 'its host is busy', stuck: true }
   const run = (argv: string[]) => $.process.run(argv, { timeoutMs: READ_BOUND_MS, cwd: host.cwd as string }).catch(() => null)
   const [status, unpushed] = await Promise.all([run(['git', 'status', '--porcelain']), run(['git', 'rev-list', '--count', 'HEAD', '--not', '--remotes'])])
-  if (status?.exitCode !== 0 || unpushed?.exitCode !== 0) return { kind: 'later', why: `its checkout ${host.cwd} unread` }
+  if (status?.exitCode !== 0 || unpushed?.exitCode !== 0) return { kind: 'later', why: `its checkout ${host.cwd} unread`, stuck: true }
   const dirty = String(status.stdout ?? '').split('\n').filter(line => line.trim() !== '').length
   const ahead = Number(String(unpushed.stdout ?? '').trim())
   if (dirty === 0 && ahead === 0) return { kind: 'close' }

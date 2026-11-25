@@ -9,7 +9,8 @@
 // file, pr-file.ts), one that became Ready (the module closes its agent once done, close-agent.ts; a review session, once its round's verdict is recorded, review-close.ts), one entering the anomaly, one its agent still holds turned conflicting with its base (its agent rebases), and one whose check failed at its head (its agent fixes it), wake the orchestrator once each: the module's tick
 // (guards.ts) submits the lines prWake gives, the ended lines then archived.
 import { prRefsOf } from '../core/learning.ts'
-import { agentsOf, HOLD_LABEL, isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
+import { roleOf } from '../core/names.ts'
+import { agentsOf, everyAgentOf, HOLD_LABEL, isLedgerMarked, ledgerLineOf, ledgerLines, minuteOf, prKey, withLine, type LedgerLine, type Unattended } from '../core/pr-ledger.ts'
 import { simpleCommands, unwrapPath } from '../core/shell.ts'
 import { updateOver } from '../core/store-io.ts'
 import { answerText, PULL_URL } from './audit-events.ts'
@@ -17,7 +18,7 @@ import { chainOwner, isDegradedPass, orchestrationOf, ownerOf, withDeadline } fr
 import { orchestratorOn, parseSessionRow, REFERENCED, sessionKey, storeOf } from './supervision.ts'
 import { messageOf, type CatchHook, type Events, type FsEntry, type Host, type Next, type On } from './host.ts'
 import { configDir, dataDir, logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
-import { briefOfLaunch, dirOf, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
+import { briefOfLaunch, dirOf, isAgent, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
 import { agentLine, closeFailedLine, holdsOf, mergeNowLine } from './ready-agent.ts'
 import { closeAgent, closeFacts, type CloseFacts as CloseNow, type ToClose } from './close-agent.ts'
 import { hasOwed, OWED_MS, owedOf, settleOwed, type Owed } from './review-close.ts'
@@ -26,7 +27,7 @@ import { draftGuardArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
 import { parseReconcile, reconcilePath } from '../core/pr-reconcile.ts'
 import { ciGatePath } from '../core/orchestration.ts'
 import { GATE_CI } from './relay.ts'
-import { archive, autoMergeOf, boundedReading, readOr, registered, republish } from './unattended.ts'
+import { archive, autoMergeOf, boundedReading, readOr, realOf, registered, republish } from './unattended.ts'
 import type { FilePr } from './pr-file-format.ts'
 
 // The nouns a write holds.
@@ -111,23 +112,63 @@ export async function ownRecords($: Host<'fs'>, state: string, id: string, name:
   return found
 }
 
-// The line of the pull request, written once into the first record the orchestration owns; none when
-// any of its records already holds one.
+/*
+ * The row of a session the module's store holds none of yet: one that creates its pull request in its first turn, before the
+ * first measure writes its row. Its name is the host's record of the session (`<config>/sessions/<pid>.json`, the name it was
+ * launched with), its role that name's; its tty unknown, so its orchestrator is found by its launch record.
+ */
+async function launchedRow($: Held, sessionId: string): Promise<{ role: string | null; name: string; tty: null } | null> {
+  const dir = `${await configDir($)}/sessions`
+  for (const entry of await $.fs.list(dir).catch((): FsEntry[] => [])) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
+    try {
+      const read: unknown = JSON.parse(await readOr($, `${dir}/${entry.name}`))
+      if (typeof read !== 'object' || read === null) continue
+      const { sessionId: id, name } = read as Record<string, unknown>
+      if (id === sessionId && typeof name === 'string' && name.trim() !== '') return { role: roleOf(name), name, tty: null }
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+/*
+ * The line of the pull request, written once into the first record the orchestration owns; none when any of its records
+ * already holds one. A session of an orchestration that writes no line says why in the log; any other session (no row and
+ * no host record, or of no orchestration and launched for none) is no orchestration's, and says nothing.
+ */
 export async function writeLine($: Held, pr: { repo: string; pr: number }, now: Date, signal: AbortSignal): Promise<void> {
+  const key = prKey(pr.repo, pr.pr)
   const sessionId = await $.session.id()
-  const row = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`))
+  const row = parseSessionRow(await readOr($, `${await storeOf($)}/${sessionKey(sessionId)}`)) ?? await launchedRow($, sessionId)
   if (row === null) return
   const belongs = await orchestrationOfSession($, sessionId, row)
-  if (belongs === null) return
+  if (belongs === null) {
+    const launched = String((await $.env.get('ORCHESTRATOR_REPORTS_TO')) ?? '').trim()
+    if (row.role === 'agent' && launched !== '') await logLine($, 'ledger', `no line for ${key}: ${row.name ?? sessionId} was launched for ${launched}, and no orchestrator answers for it`)
+    return
+  }
   const records = await ownRecords($, await dataDir($), belongs.id, belongs.name)
   const held = (text: string) => ledgerLines(text).some(line => line.repo === pr.repo && line.pr === pr.pr)
   const first = records[0]
-  if (first === undefined) return
-  for (const path of records) if (held(await readOr($, path))) return
+  if (first === undefined) {
+    await logLine($, 'ledger', `no line for ${key}: ${belongs.name ?? belongs.id} has registered no record it owns`)
+    return
+  }
+  for (const path of records) {
+    if (!held(await readOr($, path))) continue
+    await logLine($, 'ledger', `no line for ${key}: ${path} already holds one`)
+    return
+  }
   const agent = (row.name ?? '').replace(REFERENCED, '').trim()
-  if (agent === '' || signal.aborted) return
-  await updateOver(storeIo($), first, current =>
+  if (agent === '' || signal.aborted) {
+    await logLine($, 'ledger', `no line for ${key}: ${agent === '' ? `session ${sessionId} has no name` : 'its bound was reached'}`)
+    return
+  }
+  const wrote = await updateOver(storeIo($), first, current =>
     current === undefined || held(current) ? undefined : withLine(current, ledgerLineOf({ repo: pr.repo, pr: pr.pr, status: 'working', agent }, now)))
+  await logLine($, 'ledger', wrote === undefined ? `no line for ${key}: ${first} gone or given one meanwhile` : `the line of ${key} written in ${first}, its agent ${agent}`)
 }
 
 // Whether a reference (`name#7`, `owner/name#7`) names the merged pull request; with no repository
@@ -232,7 +273,20 @@ export async function briefRowOf($: Held, agent: string): Promise<{ row: number;
   const launch = newestLaunch((await $.fs.list(dir).catch((): FsEntry[] => [])).map(entry => entry.name), agent)
   const brief = launch === undefined ? undefined : briefOfLaunch(await readOr($, `${dir}/${launch}`))
   const row = brief === undefined ? undefined : rowOfBrief(await readOr($, brief))
-  return brief === undefined || row === undefined ? undefined : { row: Number(row), dir: dirOf(brief) }
+  return brief === undefined || row === undefined ? undefined : { row: Number(row), dir: dirOf(await realOf($, brief)) }
+}
+
+/*
+ * The records by their real paths, each once: the brief's directory and a record registered under another spelling of it
+ * (a directory reached through a link) are compared on the same side.
+ */
+async function realRecords($: Held, records: readonly RecordText[]): Promise<RecordText[]> {
+  const found: RecordText[] = []
+  for (const record of records) {
+    const path = await realOf($, record.path)
+    if (!found.some(one => one.path === path)) found.push({ path, text: record.text })
+  }
+  return found
 }
 
 // Whether a row waits on a blocker (none but `none`): a follow-up put on the agent, never the row it is working.
@@ -271,6 +325,74 @@ async function otherRowsOf($: Held, agent: string, records: readonly RecordText[
   return named.filter(row => !own.some(mine => mine.path === row.path && mine.id === row.id))
 }
 
+/*
+ * How many ticks in a row a close may wait on a fact that is no work of the agent's (its host busy or unread while its tab is
+ * idle, `stuck`) before the orchestrator is told, once, to close it itself: a quarter of an hour at one tick a minute
+ * (PR_FILE_INTERVAL_MS). Counted by orchestrator session and agent, in memory as the merges this session made are.
+ */
+export const STUCK_TICKS = 15
+const stuckTicks = new Map<string, number>()
+
+// The line that tells the orchestrator a close the module could not make within STUCK_TICKS.
+export function stuckLine(agent: string, session: string | undefined, why: string): string {
+  return `[module] ${agent} still open after ${STUCK_TICKS} ticks (${why}): close it yourself (session ${session ?? '?'}, resumable within the hour).`
+}
+
+// The agents of a closed row the backstop told left open, once each, by orchestrator session, agent and row.
+const toldClosedRows = new Set<string>()
+
+// The state of the row of that id in a record's text, or undefined when it holds none.
+const rowState = (text: string, id: number): unknown => {
+  let state: unknown
+  for (const line of text.split('\n')) {
+    try {
+      const row: unknown = JSON.parse(line)
+      if (typeof row === 'object' && row !== null && !isLedgerMarked(row) && (row as Record<string, unknown>)['id'] === id) state = (row as Record<string, unknown>)['state']
+    } catch {
+      continue
+    }
+  }
+  return state
+}
+
+/*
+ * The closed row an agent was put on, when its work there is over: the row its brief was printed for, in the record beside
+ * that brief (else that id in the records of the orchestration), closed; for an agent whose brief names no row, the rows that
+ * name it in their `agent` field, all closed. Undefined while any of them is open, or when none is found.
+ */
+async function closedRowOf($: Held, agent: string, records: readonly RecordText[]): Promise<HeldRow | undefined> {
+  const bound = await briefRowOf($, agent)
+  if (bound !== undefined) {
+    const beside = records.filter(record => dirOf(record.path) === bound.dir && rowState(record.text, bound.row) !== undefined)
+    const found = beside.length > 0 ? beside : records.filter(record => rowState(record.text, bound.row) !== undefined)
+    const closed = found.filter(record => rowState(record.text, bound.row) === 'closed')
+    return found.length > 0 && closed.length === found.length ? { path: closed[0]!.path, id: bound.row } : undefined
+  }
+  const named: HeldRow[] = []
+  for (const record of records) {
+    for (const line of record.text.split('\n')) {
+      try {
+        const row: unknown = JSON.parse(line)
+        if (typeof row !== 'object' || row === null || isLedgerMarked(row)) continue
+        const { id, state, agent: held } = row as Record<string, unknown>
+        if (typeof id !== 'number' || !isAgent(held, agent)) continue
+        if (state !== 'closed') return undefined
+        named.push({ path: record.path, id })
+      } catch {
+        continue
+      }
+    }
+  }
+  return named[0]
+}
+
+// Whether one of these agents stands on a closed row (closedRowOf): the backstop's need, which arms the tick at the turn end with no line.
+export async function onClosedRow($: Held, agents: readonly string[], records: readonly RecordText[]): Promise<boolean> {
+  const real = await realRecords($, records)
+  for (const agent of agents) if (await closedRowOf($, agent, real) !== undefined) return true
+  return false
+}
+
 // What is told of a pull request's end to an agent of its line, once: a refusal to close it.
 const refusedKey = (pk: string, agent: string): string => `${pk} ended refused ${agent}`
 
@@ -281,7 +403,7 @@ const readyKey = (pk: string, head: string, agent: string): string => `${pk} rea
 const rowName = (row: HeldRow): string => `row ${row.id} (${dirOf(row.path).split('/').pop()})`
 
 /** What the module does with an agent done with a pull request that holds nothing else, read on facts (close-agent.ts). */
-type Act = { kind: 'close'; session: string; target: ToClose } | { kind: 'refused' | 'later'; why: string; session?: string | undefined }
+type Act = { kind: 'close'; session: string; target: ToClose } | { kind: 'refused' | 'later'; why: string; session?: string | undefined; stuck?: true } | { kind: 'gone' }
 
 // A tty as the chains and the listing may spell it, `/dev/ttys001` or `ttys001`.
 const bareTty = (tty: string): string => tty.replace(/^\/dev\//, '')
@@ -325,9 +447,10 @@ async function chainTtys($: Held): Promise<Chain> {
  * idle, or with no session row on that tty, waits for a later tick; one with no tab on the chain is not this
  * orchestration's to close, told once.
  */
-async function closeOf($: Held, agent: string, records: readonly RecordText[], tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]>, chain: () => Promise<Chain>, ended: boolean, review?: Owed): Promise<Act> {
+async function closeOf($: Held, agent: string, records: readonly RecordText[], tabs: ReadonlyMap<string, readonly { tty: string; idle: boolean }[]>, chain: () => Promise<Chain>, ended: boolean, review?: Owed, read = false): Promise<Act> {
   const listed = tabs.get(agent) ?? []
-  if (listed.length === 0) return { kind: 'later', why: 'the launcher does not list it idle' }
+  // A session the launcher's listing, read, no longer shows is gone: closed already, by hand or otherwise.
+  if (listed.length === 0) return read ? { kind: 'gone' } : { kind: 'later', why: 'the launcher does not list it idle' }
   const own = await chain()
   if (!('ttys' in own)) return own
   const ours = listed.filter(tab => own.ttys.has(bareTty(tab.tty)))
@@ -335,7 +458,7 @@ async function closeOf($: Held, agent: string, records: readonly RecordText[], t
   const tty = ours.find(tab => tab.idle)?.tty
   if (tty === undefined) return { kind: 'later', why: 'the launcher does not list it idle' }
   const session = await sessionOf($, agent, tty)
-  if (session === undefined) return { kind: 'later', why: `no session row of it on ${tty}` }
+  if (session === undefined) return { kind: 'later', why: `no session row of it on ${tty}`, stuck: true }
   const bound = await briefRowOf($, agent)
   const record = bound === undefined ? undefined : records.find(r => dirOf(r.path) === bound.dir && holdsRow(r.text, bound.row))
   // A review session's cost goes on the row its verdict counted (review-close.ts); its brief names no row.
@@ -496,6 +619,7 @@ export function anomalyLine(u: Unattended): string {
 export async function prWake($: Held, told: Set<string>, now: number = Date.now()): Promise<{ lines: string[]; watching: boolean; moved: boolean; settle: () => Promise<void> }> {
   const reading = await boundedReading($, await $.session.id(), now)
   if (reading === null) return { lines: [], watching: true, moved: false, settle: async () => undefined }
+  const records = await realRecords($, reading.records)
   // The row's pull requests follow the forge between turn ends: a session waiting on the operator's merge takes no turn.
   const moved = await republish($, await $.session.id(), reading).catch(async err => { await logLine($, 'ledger', `row not republished: ${messageOf(err)}`); return false })
   const lines: string[] = []
@@ -542,9 +666,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   const readyAgentKeys = reading.kept.flatMap(line => {
     const key = prKey(line.repo, line.pr)
     const head = reading.readyHeads.get(key)
-    return head === undefined ? [] : agentsOf(line).map(agent => readyKey(key, head, agent))
+    return head === undefined ? [] : everyAgentOf(line).map(agent => readyKey(key, head, agent))
   })
-  const current = new Set([...anomalyKeys, ...reading.ended.flatMap(e => [`${prKey(e.line.repo, e.line.pr)} ended`, ...agentsOf(e.line).map(agent => refusedKey(prKey(e.line.repo, e.line.pr), agent))]),
+  const current = new Set([...anomalyKeys, ...reading.ended.flatMap(e => [`${prKey(e.line.repo, e.line.pr)} ended`, ...everyAgentOf(e.line).map(agent => refusedKey(prKey(e.line.repo, e.line.pr), agent))]),
     ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...readyAgentKeys,
     ...unmergedKeys, ...open.flatMap(pr => [ciFailingKey(prKey(pr.repo, pr.pr), pr), ciGuardKey(prKey(pr.repo, pr.pr), pr)])])
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
@@ -564,8 +688,19 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   let chain: Promise<Chain> | undefined
   const ownChain = (): Promise<Chain> => (chain ??= chainTtys($).catch((err: unknown): Chain => ({ kind: 'later', why: `the chain unread: ${messageOf(err)}` })))
   const actOn = async (agent: string, key: string, what: string, at: { ready?: string; ended?: string; review?: Owed }): Promise<{ act: Act; said: string | null }> => {
-    const act = acts.get(agent) ?? await closeOf($, agent, reading.records, reading.tabs, ownChain, at.ended !== undefined || at.review !== undefined, at.review)
+    const fresh = !acts.has(agent)
+    const act = acts.get(agent) ?? await closeOf($, agent, records, reading.tabs, ownChain, at.ended !== undefined || at.review !== undefined, at.review, reading.listed === true)
     acts.set(agent, act)
+    // A close that waits on what is no work of the agent's, tick after tick, is told once at the bound, by name and session.
+    const stuckKey = `${session} ${agent}`
+    if (fresh && act.kind === 'later' && act.stuck === true) {
+      const ticks = (stuckTicks.get(stuckKey) ?? 0) + 1
+      stuckTicks.set(stuckKey, ticks)
+      if (ticks === STUCK_TICKS) {
+        lines.push(stuckLine(agent, act.session, act.why))
+        await logLine($, 'ledger', `the close of ${agent} waited ${STUCK_TICKS} ticks (${act.why}): the orchestrator told`)
+      }
+    } else if (fresh) stuckTicks.delete(stuckKey)
     if (act.kind === 'close') {
       const close = closes.get(agent) ?? { agent, key, target: act.target, ready: [], ended: [], reviews: [] }
       if (at.ready !== undefined) close.ready.push(at.ready)
@@ -586,7 +721,10 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
       continue
     }
     const { act } = await actOn(one.agent, one.round, 'verdict', { review: one })
-    if (act.kind === 'refused') {
+    if (act.kind === 'gone') {
+      settleOwed(one)
+      await logLine($, 'ledger', `the close of ${one.agent} owed at the verdict of ${one.round}: its session is gone already, counted closed`)
+    } else if (act.kind === 'refused') {
       settleOwed(one)
       lines.push(closeFailedLine(one.agent, one.round, `left open: ${act.why}`))
     }
@@ -600,9 +738,9 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     // Its agents are named only while they run (the launcher's listing, where a close ends them): the one put on it last
     // and each one put on it before, each closed by the module when it holds nothing else, told when it does.
     const said: string[] = []
-    for (const agent of agentsOf(ended.line).filter(name => reading.live.has(name))) {
+    for (const agent of everyAgentOf(ended.line).filter(name => reading.live.has(name))) {
       const holds = [
-        ...new Set((await otherRowsOf($, agent, reading.records)).map(rowName)),
+        ...new Set((await otherRowsOf($, agent, records)).map(rowName)),
         ...reading.kept.filter(line => agentsOf(line).includes(agent)).map(line => prKey(line.repo, line.pr)),
       ]
       if (holds.length > 0) {
@@ -635,11 +773,11 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     const pk = prKey(line.repo, line.pr)
     const head = reading.readyHeads.get(pk) ?? ''
     // The agent put on it last that still runs, and each one put on it before, as a merge names them.
-    const agents = agentsOf(line).filter(name => reading.live.has(name))
+    const agents = everyAgentOf(line).filter(name => reading.live.has(name))
     for (const agent of agents.length > 0 ? agents : [line.agent ?? '']) {
       const key = readyKey(pk, head, agent)
       if (told.has(key)) continue
-      const holds = [...(await otherRowsOf($, agent, reading.records)).map(rowName), ...holdsOf(reading.kept, other => other === agent, key => reading.readyHeads.has(key))]
+      const holds = [...new Set((await otherRowsOf($, agent, records)).map(rowName)), ...holdsOf(reading.kept, other => other === agent, key => reading.readyHeads.has(key))]
       const said = holds.length > 0 ? agentLine({ key: pk, what: 'is Ready', agent, holds }) : (await actOn(agent, pk, 'is Ready', { ready: key })).said
       if (said === null) continue
       told.add(key)
@@ -651,6 +789,30 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
       const autoMerge = !merging ? new Set<string>() : reading.autoMerge.size > 0 ? reading.autoMerge : await (again ??= autoMergeOf($))
       lines.push(autoMerge.has(line.repo.toLowerCase()) ? `${said} ${mergeNowLine(pk)}` : said)
     }
+  }
+  /*
+   * The backstop, whatever the ledger says: an agent of this orchestration's chain, idle, whose row is closed (closedRowOf) and that
+   * holds no other row and no working line, is closed as at Ready, once done. One left open is told once.
+   */
+  const chained = reading.listed === true && reading.tabs.size > 0 ? await ownChain() : undefined
+  const ttys = chained !== undefined && 'ttys' in chained ? chained.ttys : new Set<string>()
+  // What keeps the tick for the backstop, no line needed: a chain read later, or an agent of it on a closed row not yet closed nor refused.
+  let backstop = chained !== undefined && 'kind' in chained && chained.kind === 'later'
+  for (const [agent, tabs] of reading.tabs) {
+    const ours = tabs.filter(tab => ttys.has(bareTty(tab.tty)))
+    if (acts.has(agent) || ours.length === 0) continue
+    const row = await closedRowOf($, agent, records)
+    if (row === undefined) continue
+    if (!ours.some(tab => tab.idle) || (await otherRowsOf($, agent, records)).length > 0 || reading.kept.some(line => agentsOf(line).includes(agent))) {
+      backstop = true
+      continue
+    }
+    const toldKey = `${session} ${agent} ${row.path} ${row.id}`
+    const { act, said } = await actOn(agent, rowName(row), 'is closed', {})
+    if (act.kind === 'later') backstop = true
+    if (said === null || toldClosedRows.has(toldKey)) continue
+    if (act.kind === 'refused') toldClosedRows.add(toldKey)
+    lines.push(said)
   }
   for (const [key, pr] of conflicts) {
     if (told.has(conflictKey(key, pr))) continue
@@ -705,5 +867,5 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
       }
     }
   }
-  return { lines, watching: reading.kept.length > 0 || reading.wanted || waiting.size > 0 || closes.size > 0 || hasOwed(session), moved, settle }
+  return { lines, watching: reading.kept.length > 0 || reading.wanted || waiting.size > 0 || closes.size > 0 || backstop || hasOwed(session), moved, settle }
 }

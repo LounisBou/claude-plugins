@@ -37,7 +37,8 @@ import { pullRequestsRead } from './tab-state.ts'
 import { fieldsOf, messageOf, reasonOf, type Host, type On, type ProcessRunResult } from './host.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, bashWritesTheMap } from './models-guard.ts'
 import { configDir, dataDir, gateEnv, logLine, moduleDir, stateDir, writeAtomic } from './module-io.ts'
-import { prWake } from './ledger.ts'
+import { onClosedRow, prWake } from './ledger.ts'
+import type { RecordText } from './row-owner.ts'
 import { hasOwed } from './review-close.ts'
 import { projectRecords } from './unattended.ts'
 import { PR_FILE_INTERVAL_MS } from './pr-file-format.ts'
@@ -467,19 +468,22 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       }
       const entries = parseChain(String(chain))
       // The ledger lines of this orchestration's records, read once whichever act needs them first.
-      let ledgerOnce: ReturnType<typeof ledgerLines> | undefined
-      const ledgerOf = async () => {
-        if (ledgerOnce !== undefined) return ledgerOnce
+      let recordsOnce: RecordText[] | undefined
+      const recordsOf = async (): Promise<RecordText[]> => {
+        if (recordsOnce !== undefined) return recordsOnce
         try {
           const own = orchestrationOf(name)
           const records = await ownRecords($, await registeredRecords($, state, sessionId, own, until), own, until)
-          ledgerOnce = (await readRecords($, records, until)).flatMap(text => ledgerLines(text))
+          const texts = await readRecords($, records, until)
+          recordsOnce = records.map((path, n) => ({ path, text: texts[n] ?? '' }))
         } catch (err) {
           await logLine($, 'guards', `stop gate: ledger unread: ${reasonOf(err)}`)
-          ledgerOnce = []
+          recordsOnce = []
         }
-        return ledgerOnce
+        return recordsOnce
       }
+      let ledgerOnce: ReturnType<typeof ledgerLines> | undefined
+      const ledgerOf = async () => (ledgerOnce ??= (await recordsOf()).flatMap(record => ledgerLines(record.text)))
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const agents = ownAgents(rows, entries, owner, hostStatus)
       // Past its bound in one turn, a busy agent wakes the session at the tick, as a pull request
@@ -490,7 +494,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         tick.busy = busyNow
         tick.busyAt = 0
       }
+      // An agent of its own on a closed row arms it too, for the backstop (ledger.ts), with no line.
       tick.watch = (await ledgerOf()).length > 0 || await fileWanted($, state, Date.now()) || hasOwed(sessionId)
+        || await quietly($, async () => onClosedRow($, agents.map(agent => agent.label), await recordsOf()), until, false)
       if (busyNow.length > 0 || tick.watch) armTick($, tick, 0)
       // What the pull requests read of each idle agent say its window should show (over, or Ready: done).
       const read: { tty: string; pr: { state: string; ready?: boolean | undefined } }[] = []
