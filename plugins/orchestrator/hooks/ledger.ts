@@ -21,7 +21,7 @@ import { configDir, dataDir, logLine, stateDir, storeIo, writeAtomic } from './m
 import { briefOfLaunch, dirOf, isAgent, newestLaunch, rowOfBrief, rowsOwnedBy, type HeldRow, type RecordText } from './row-owner.ts'
 import { agentLine, closeFailedLine, holdsOf, mergeNowLine } from './ready-agent.ts'
 import { closeAgent, closeFacts, type CloseFacts as CloseNow, type ToClose } from './close-agent.ts'
-import { hasOwed, OWED_MS, owedOf, settleOwed, type Owed } from './review-close.ts'
+import { hasOwed, OWED_MS, owedOf, reviewersOf, settleOwed, type Owed } from './review-close.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
 import { draftGuardArgv, parseGate, type GateCi } from '../core/ci-gate.ts'
 import { parseReconcile, reconcilePath } from '../core/pr-reconcile.ts'
@@ -396,6 +396,9 @@ export async function onClosedRow($: Held, agents: readonly string[], records: r
 // What is told of a pull request's end to an agent of its line, once: a refusal to close it.
 const refusedKey = (pk: string, agent: string): string => `${pk} ended refused ${agent}`
 
+// That a tick saw an agent of the line running: the line it then finds with none is told at the tick after, if still so.
+const attendedKey = (pk: string): string => `${pk} attended`
+
 // What is told of a Ready head to an agent of its line, once.
 const readyKey = (pk: string, head: string, agent: string): string => `${pk} ready ${head} ${agent}`
 
@@ -605,7 +608,8 @@ export function anomalyLine(u: Unattended): string {
 /*
  * The orchestrator's wake on its pull requests, read in the machine's file (no forge call of its own
  * beyond the file's refresh): a line for each pull request merged or closed, with the open rows waiting
- * on a merged one (mergeRelayLine), one for each entering the anomaly, and one for each turned conflicting
+ * on a merged one (mergeRelayLine), one for each entering the anomaly (one whose agent a tick saw running, at the
+ * tick after), and one for each turned conflicting
  * with its base that the anomaly does not say (conflictLine, once per head and base head), and one for each whose check failed
  * at its head (ciFailingLine, once per head; its CI gate reading refreshed here, refreshGates), each once (`told`, what
  * was told, updated here: one that leaves the anomaly is dropped, so a re-entry is told again). The agent of a
@@ -670,7 +674,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   })
   const current = new Set([...anomalyKeys, ...reading.ended.flatMap(e => [`${prKey(e.line.repo, e.line.pr)} ended`, ...everyAgentOf(e.line).map(agent => refusedKey(prKey(e.line.repo, e.line.pr), agent))]),
     ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...readyAgentKeys,
-    ...unmergedKeys, ...open.flatMap(pr => [ciFailingKey(prKey(pr.repo, pr.pr), pr), ciGuardKey(prKey(pr.repo, pr.pr), pr)])])
+    ...unmergedKeys, ...open.flatMap(pr => [ciFailingKey(prKey(pr.repo, pr.pr), pr), ciGuardKey(prKey(pr.repo, pr.pr), pr)]),
+    ...reading.kept.map(line => attendedKey(prKey(line.repo, line.pr)))])
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
@@ -814,12 +819,19 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     if (act.kind === 'refused') toldClosedRows.add(toldKey)
     lines.push(said)
   }
+  // The agent a red or a conflict is for: one of the line still running, the one put on it last first, never a review session, which reads only.
+  const workerOf = async (line: LedgerLine | undefined, pr: number): Promise<string | undefined> => {
+    const running = line === undefined ? [] : agentsOf(line).filter(name => reading.live.has(name))
+    if (running.length === 0) return undefined
+    const reviewers = new Set((await reviewersOf($, pr)).map(one => one.agent))
+    return running.find(name => !reviewers.has(name))
+  }
   for (const [key, pr] of conflicts) {
     if (told.has(conflictKey(key, pr))) continue
     told.add(conflictKey(key, pr))
     const line = reading.kept.find(kept => prKey(kept.repo, kept.pr) === key)
-    // Its agent is named only while the launcher lists it running, as a merge names it: the last one put on it, else one before it still running.
-    const agent = line === undefined ? undefined : agentsOf(line).find(name => reading.live.has(name))
+    // Its agent is named only while the launcher lists it running, as a merge names it.
+    const agent = await workerOf(line, pr.pr)
     lines.push(conflictLine({ repo: pr.repo, pr: pr.pr, base: pr.base ?? '', agent, session: agent === undefined ? undefined : await sessionOf($, agent) }))
   }
   for (const { pr, names } of failing) {
@@ -827,12 +839,17 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
     if (told.has(ciFailingKey(key, pr))) continue
     told.add(ciFailingKey(key, pr))
     const line = reading.kept.find(kept => prKey(kept.repo, kept.pr) === key)
-    const agent = line === undefined ? undefined : agentsOf(line).find(name => reading.live.has(name))
+    const agent = await workerOf(line, pr.pr)
     // A line waiting on something, with no agent on it, names that wait.
     const waits = line?.status === 'waiting' ? line.on : undefined
     lines.push(ciFailingLine({ repo: pr.repo, pr: pr.pr, head: pr.sha, failed: names, agent, session: agent === undefined ? undefined : await sessionOf($, agent), waits }))
   }
+  for (const line of reading.kept) {
+    if (agentsOf(line).some(agent => reading.live.has(agent))) told.add(attendedKey(prKey(line.repo, line.pr)))
+  }
   for (const u of anomalies) {
+    // An agent just gone is given one tick: its successor may be launching, and takes the line at its spawn (agent-row.ts).
+    if (told.delete(attendedKey(prKey(u.repo, u.pr))) && !u.conflict) continue
     if (told.has(anomalyKey(u))) continue
     told.add(anomalyKey(u))
     told.add(prKey(u.repo, u.pr))

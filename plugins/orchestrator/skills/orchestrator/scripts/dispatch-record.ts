@@ -884,13 +884,13 @@ function prOf(ctx: Context, sub: string, ref: string): { repo: string; pr: numbe
 /** `pr`: sets the pull request's one line in the ledger, its start kept while its status holds. */
 function setPr(ctx: Context, args: readonly string[]): void {
   const { repo, pr } = prOf(ctx, 'pr', args[0] ?? '')
-  const found = options(ctx, 'pr', args.slice(1), ['--working', '--waiting', '--parked'])
+  const found = options(ctx, 'pr', args.slice(1), ['--working', '--review', '--waiting', '--parked'])
   const only = found.length === 1 ? found[0] : undefined
   if (only === undefined) die(ctx, 'pr: give one of --working "<agent>", --waiting "<what>" or --parked "<the operator\'s words, dated>"')
   const [flag, value] = only
   if (value.trim() === '') die(ctx, `pr: ${flag} needs its text`)
   const detail = value.trim()
-  const set: LedgerSet = flag === '--working' ? { repo, pr, status: 'working', agent: detail }
+  const set: LedgerSet = flag === '--working' || flag === '--review' ? { repo, pr, status: 'working', agent: detail, ...(flag === '--review' ? { review: true as const } : {}) }
     : flag === '--waiting' ? { repo, pr, status: 'waiting', on: detail } : { repo, pr, status: 'parked', ruling: detail }
   let written = ''
   try {

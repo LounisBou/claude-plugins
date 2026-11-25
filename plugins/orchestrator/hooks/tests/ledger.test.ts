@@ -1069,6 +1069,32 @@ test('a pull request told in anomaly without an agent that then turns conflictin
   expect((await prWake(conflicting('CONFLICTING', 'a'.repeat(40), 'd'.repeat(40), '').dollar, told)).lines).toEqual([])
 })
 
+// acme/app#17 open, its line working the agent named, the launcher listing the agents given.
+const held = (agent: string, ...live: string[]) => fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${ledgerLine(17, 'working', { agent })}\n` },
+  forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z' }]) }, launcher: running(...live) })
+const NO_AGENT_17 = '[module] acme/app#17 en anomalie (sans agent depuis 2026-11-14T09:30Z) — reattach an agent, refresh its wait, or ask'
+
+test('a line whose agent the tick saw running and finds gone is told at the next tick only: a successor put on it meanwhile is never told', async () => {
+  const gone = new Set<string>()
+  expect((await prWake(held('Agent: p17', 'Agent: p17').dollar, gone)).lines).toEqual([])
+  const first = await prWake(held('Agent: p17').dollar, gone)
+  expect(first.lines).toEqual([])
+  expect(first.watching).toBe(true)
+  expect((await prWake(held('Agent: p17').dollar, gone)).lines).toEqual([NO_AGENT_17])
+  expect((await prWake(held('Agent: p17').dollar, gone)).lines).toEqual([])
+  const succeeded = new Set<string>()
+  await prWake(held('Agent: p17', 'Agent: p17').dollar, succeeded)
+  expect((await prWake(held('Agent: p17').dollar, succeeded)).lines).toEqual([])
+  expect((await prWake(held('Agent: p17 bis', 'Agent: p17 bis').dollar, succeeded)).lines).toEqual([])
+  // The successor gone in its turn is given its own tick.
+  expect((await prWake(held('Agent: p17 bis').dollar, succeeded)).lines).toEqual([])
+  expect((await prWake(held('Agent: p17 bis').dollar, succeeded)).lines).toEqual([NO_AGENT_17])
+})
+
+test('a line no tick ever saw an agent running on is told at once', async () => {
+  expect((await prWake(held('Agent: p17').dollar, new Set())).lines).toEqual([NO_AGENT_17])
+})
+
 // An agent's launch, as the launcher writes it: the script naming its brief, the brief naming its row.
 const launched = (dir: string, agent: string, row: number): Record<string, string> => ({
   [`${STATE}/prompts/launch-${agent.replace(/[^A-Za-z0-9._-]/g, '-')}-1700000000000.sh`]: `export ORCHESTRATOR_BRIEF='${dir}/${agent.slice(7)}-brief.md'\n`,
@@ -1483,6 +1509,26 @@ const reviewSession = (status: 'idle' | 'busy' = 'idle', tty = '/dev/ttys000'): 
 })
 const HEAD17 = '0123456789abcdef0123456789abcdef01234567'
 const REVIEW_TAB = running('Agent: review 17 r1')
+// acme/app#17 under review, its line as the reviewer's spawn leaves it (agent-row.ts): the reviewer on it, its implementer before it.
+const REVIEWED_17 = `${ledgerLine(17, 'working', { agent: 'Agent: review 17 r1', earlier: ['Agent: p17'] } as never)}\n`
+const underReview = (implementer: boolean, forge: object) => {
+  const tabs = [REVIEW_TAB, ...(implementer ? [running('Agent: p17')] : [])].join('\n')
+  return fake({
+    session: 's-orch', reportsTo: null, gate: { 17: gateJson('FAILURE', AT_A, ['lint']) }, launcher: tabs,
+    rows: { [RECORD]: REVIEWED_17, ...P17_SESSION, ...reviewSession() },
+    forge: { 'acme/app': JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', sha: AT_A, draft: false, ...forge }]) },
+  })
+}
+
+test('while a review runs, a failed check and a conflict name the implementer, never the review session', async () => {
+  expect((await prWake(underReview(true, { mergeable: 'MERGEABLE' }).dollar, new Set(), T0)).lines)
+    .toEqual(['[module] acme/app#17 CI en échec à aaaaaaa : lint ; dis-le à son agent Agent: p17 (session s-p17).'])
+  expect((await prWake(underReview(true, { mergeable: 'CONFLICTING', baseSha: 'c'.repeat(40) }).dollar, new Set(), T0)).lines).toContain(CONFLICT_LINE)
+  // The implementer gone, nobody works on it: the reviewer reads only.
+  expect((await prWake(underReview(false, { mergeable: 'MERGEABLE' }).dollar, new Set(), T0)).lines[0])
+    .toEqual("[module] acme/app#17 CI en échec à aaaaaaa : lint ; personne n'y travaille, mets-y un agent.")
+})
+
 // The verdict recorded: the module owes the close (review-close.ts), its cost on row 4 of the record.
 const owe = (world: ReturnType<typeof fake>, session = 's-orch') => oweRound(world.dollar, { session, pr: 17, round: async () => ({ repo: 'acme/app', head: HEAD17 }), cost: { record: RECORD, row: 4 } })
 const reviewWorld = (over: Over = {}, status: 'idle' | 'busy' = 'idle') => fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(4, 'open', { label: 'P17 acme/app#17' })}\n`, ...reviewSession(status) }, forge: { 'acme/app': '[]' }, launcher: REVIEW_TAB, ...over })

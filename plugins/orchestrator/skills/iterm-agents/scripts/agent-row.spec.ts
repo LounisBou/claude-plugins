@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
-import { describe, it } from 'node:test'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { afterEach, beforeEach, describe, it } from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { parseLauncherArgs } from '../../../core/launcher.ts'
+import { ledgerLines, unattended, type LedgerLine } from '../../../core/pr-ledger.ts'
+import { main as reviewBrief } from '../../orchestrator/scripts/review-brief.ts'
+import { run } from '../../orchestrator/scripts/lib/process.ts'
 import { recordAgent, type RowDeps } from './agent-row.ts'
 
 const STATE = '/s/claude-orchestrator'
@@ -21,6 +28,7 @@ const deps = (files: Record<string, string>, over: Partial<RowDeps> = {}): RowDe
       return { status: 0, stdout: '', stderr: '' }
     },
     warn: line => warned.push(line),
+    log: async () => undefined,
     ...over,
   }
 }
@@ -95,5 +103,163 @@ describe('an agent put on its row by the launcher', () => {
       await recordAgent(request, d)
       assert.deepEqual([d.ran, d.warned], [[], []])
     }
+  })
+})
+
+// The rows and the ledger lines on real files, written by the real dispatch-record.sh: what the spawn leaves in the record.
+describe('an agent attached to its pull request\'s ledger line by the launcher', () => {
+  const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'orchestrator', 'scripts', 'dispatch-record.sh')
+  const AT = '2026-11-25T14:52:11Z'
+  const HOUR_LATER = Date.parse(AT) + 60 * 60 * 1000
+  let dir = ''
+  let record = ''
+  beforeEach(() => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'agent-row-')))
+    record = join(dir, 'record.jsonl')
+    mkdirSync(join(dir, 'state', 'records'), { recursive: true })
+    mkdirSync(join(dir, 'briefs'), { recursive: true })
+    writeFileSync(join(dir, 'state', 'records', 'sess-1'), `${record}\n`)
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  const row = (id: number, agent?: string): string => JSON.stringify({ id, state: 'open', label: 'X', ...(agent === undefined ? {} : { agent }) })
+  const line = (pr: number, status: string, over: Record<string, unknown>, repo = 'acme/app'): string =>
+    JSON.stringify({ v: 1, ledger: 'pr', repo, pr, status, ...over, since: AT, updated: AT })
+  const reviewBriefOf = (pr: number): string => {
+    const brief = join(dir, 'briefs', `review-${pr}.md`)
+    const head = '0123456789abcdef0123456789abcdef01234567'
+    process.env['ORCHESTRATOR_MODELS_MAP'] = join(dir, 'models.json')
+    const code = reviewBrief(['--out', brief, '--repo', 'acme/app', '--pr', String(pr), '--title', 'the radio', '--spec', '/b/spec.md', '--index', join(dir, 'index.md'),
+      '--delivery-report', '/b/report.md', '--branch', 'build/radio', '--head', head, '--worktree', '/w/review', '--orchestrator', 'Orch: acme', '--reason', 'one fix'],
+    { out: () => undefined, err: () => undefined })
+    delete process.env['ORCHESTRATOR_MODELS_MAP']
+    assert.equal(code, 0)
+    return brief
+  }
+  const lineOf = (pr: number): LedgerLine | undefined => ledgerLines(readFileSync(record, 'utf8')).find(found => found.pr === pr)
+  const rotationBrief = (id: number): string => {
+    const path = join(dir, 'briefs', `${id}-r3.md`)
+    writeFileSync(path, `# app — resume brief for row ${id}: t\n`)
+    return path
+  }
+  const real = (logged: string[], warned: string[]): RowDeps => ({
+    env: { HOME: dir, CLAUDE_CODE_SESSION_ID: 'sess-1', ORCHESTRATOR_STATE_DIR: join(dir, 'state') }, script: SCRIPT,
+    read: path => {
+      try {
+        return readFileSync(path, 'utf8')
+      } catch {
+        return null
+      }
+    },
+    list: path => readdirSync(path),
+    run: (argv, options) => run(argv, { ...options, env: { HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config'), CLAUDE_CODE_SESSION_ID: 'sess-1', ORCHESTRATOR_STATE_DIR: join(dir, 'state') } }),
+    warn: said => warned.push(said),
+    log: async said => { logged.push(said) },
+  })
+  const anomalies = (live: readonly string[], prs: readonly number[]): number[] =>
+    unattended({ open: prs.map(pr => ({ repo: 'acme/app', pr })), lines: ledgerLines(readFileSync(record, 'utf8')), live: new Set(live), now: HOUR_LATER }).map(found => found.pr)
+
+  it('attaches a rotation\'s replacement to the line of the agent it replaces, which the line keeps among those that worked it', async () => {
+    writeFileSync(record, `${row(76, 'Agent: radio')}\n${line(86, 'waiting', { on: 'a free agent slot', worked: ['Agent: radio'] })}\n`)
+    const logged: string[] = []
+    const warned: string[] = []
+    await recordAgent(spawned('Agent: radio fix', rotationBrief(76)), real(logged, warned))
+    assert.deepEqual([lineOf(86)?.status, lineOf(86)?.agent, lineOf(86)?.worked], ['working', 'Agent: radio fix', ['Agent: radio']])
+    assert.deepEqual(logged, [`acme/app#86 attached to Agent: radio fix, spawned for row 76 of ${record}`])
+    assert.deepEqual(warned, [])
+  })
+
+  it('attaches a fresh agent spawned under the same name to a line gone to a wait: no anomaly once the wait is stale', async () => {
+    writeFileSync(record, `${row(76, 'Agent: radio')}\n${line(86, 'waiting', { on: 'CI red, rotate at the next slot', worked: ['Agent: radio'] })}\n`)
+    assert.deepEqual(anomalies(['Agent: radio'], [86]), [86])
+    await recordAgent(spawned('Agent: radio', rotationBrief(76)), real([], []))
+    assert.deepEqual([lineOf(86)?.status, lineOf(86)?.agent], ['working', 'Agent: radio'])
+    assert.deepEqual(anomalies(['Agent: radio'], [86]), [])
+  })
+
+  it('attaches a review session to the line its brief reads, the implementer kept on it', async () => {
+    const brief = reviewBriefOf(86)
+    writeFileSync(record, `${row(76, 'Agent: radio')}\n${line(86, 'working', { agent: 'Agent: radio' })}\n${line(86, 'working', { agent: 'Agent: other' }, 'acme/lib')}\n`)
+    const logged: string[] = []
+    await recordAgent(spawned('Agent: review pr86', brief), real(logged, []))
+    const lines = ledgerLines(readFileSync(record, 'utf8'))
+    assert.deepEqual(lines.map(found => [found.repo, found.agent, found.earlier]), [['acme/lib', 'Agent: other', undefined], ['acme/app', 'Agent: review pr86', ['Agent: radio']]])
+    assert.deepEqual(logged, [`acme/app#86 attached to Agent: review pr86, spawned for its review in ${record}`])
+    // The review session puts itself on no row.
+    assert.match(readFileSync(record, 'utf8'), /"id":76,"state":"open","label":"X","agent":"Agent: radio"/)
+  })
+
+  it('leaves a line no agent of the row ever worked, which stays an anomaly, and a line the operator parked', async () => {
+    const before = [line(87, 'waiting', { on: 'the CI' }), line(88, 'parked', { ruling: 'later, 2026-11-25', worked: ['Agent: radio'] })]
+    writeFileSync(record, `${row(76, 'Agent: radio')}\n${before.join('\n')}\n`)
+    const logged: string[] = []
+    await recordAgent(spawned('Agent: radio', rotationBrief(76)), real(logged, []))
+    assert.deepEqual(readFileSync(record, 'utf8').split('\n').filter(said => said.includes('"ledger"')), before)
+    assert.deepEqual(logged, [])
+    assert.deepEqual(anomalies(['Agent: radio'], [87]), [87])
+  })
+
+  const ledgerText = (): string[] => readFileSync(record, 'utf8').split('\n').filter(said => said.includes('"ledger"'))
+  const briefOf = (name: string, text: string): string => {
+    const path = join(dir, 'briefs', name)
+    writeFileSync(path, text)
+    return path
+  }
+
+  it('takes no line for a pull request the row\'s label cites: it stays another row\'s, and an anomaly once its agent is gone', async () => {
+    const cites = JSON.stringify({ id: 71, state: 'open', label: 'phone simulator: first touch-strip separator missing at 895 px captures, seen on D3vDeck#72 shots, not in a goal' })
+    for (const before of [line(72, 'working', { agent: 'Agent: w29' }, 'acme/D3vDeck'), line(72, 'waiting', { on: 'the CI', worked: ['Agent: w29'] }, 'acme/D3vDeck')]) {
+      writeFileSync(record, `${cites}\n${row(29, 'Agent: w29')}\n${before}\n`)
+      const logged: string[] = []
+      await recordAgent(spawned('Agent: sim sep', briefOf('71.md', 'Row: 71 phone simulator\n')), real(logged, []))
+      assert.deepEqual(ledgerText(), [before])
+      assert.deepEqual(logged, [])
+      const left = unattended({ open: [{ repo: 'acme/D3vDeck', pr: 72 }], lines: ledgerLines(readFileSync(record, 'utf8')), live: new Set(['Agent: sim sep']), now: HOUR_LATER })
+      assert.deepEqual(left.map(found => found.pr), [72])
+    }
+  })
+
+  it('keeps the implementer attending a waiting line a review is spawned for: no anomaly once the reviewer is gone', async () => {
+    writeFileSync(record, `${row(76, 'Agent: radio')}\n${line(86, 'waiting', { on: 'review round', worked: ['Agent: radio'] })}\n`)
+    await recordAgent(spawned('Agent: review pr86', reviewBriefOf(86)), real([], []))
+    assert.deepEqual([lineOf(86)?.status, lineOf(86)?.agent, lineOf(86)?.earlier], ['working', 'Agent: review pr86', ['Agent: radio']])
+    assert.deepEqual(anomalies(['Agent: radio'], [86]), [])
+    // The implementer gone too, nothing holds it.
+    assert.deepEqual(anomalies([], [86]), [86])
+  })
+
+  it('leaves a line that waits on the operator to his wait, for a row\'s agent as for a review', async () => {
+    const before = line(86, 'waiting', { on: 'operator merge', worked: ['Agent: radio'] })
+    writeFileSync(record, `${JSON.stringify({ id: 76, state: 'closed' })}\n${row(77, 'Agent: radio')}\n${before}\n`)
+    const logged: string[] = []
+    await recordAgent(spawned('Agent: radio fix', rotationBrief(77)), real(logged, []))
+    await recordAgent(spawned('Agent: review pr86', reviewBriefOf(86)), real(logged, []))
+    assert.deepEqual(ledgerText(), [before])
+    assert.deepEqual(logged, [])
+  })
+
+  it('takes no other row\'s line for the name alone: a rotation under the name of an agent that holds two open rows', async () => {
+    const before = line(86, 'waiting', { on: 'the CI', worked: ['Agent: radio'] })
+    writeFileSync(record, `${row(76, 'Agent: radio')}\n${row(77, 'Agent: radio')}\n${before}\n`)
+    await recordAgent(spawned('Agent: radio', rotationBrief(77)), real([], []))
+    assert.deepEqual(ledgerText(), [before])
+  })
+
+  it('leaves the pull requests of a row\'s former agent that holds another open row: they are that row\'s', async () => {
+    const before = line(86, 'working', { agent: 'Agent: radio' })
+    writeFileSync(record, `${row(76, 'Agent: radio')}\n${row(77, 'Agent: radio')}\n${before}\n`)
+    const follow = join(dir, 'briefs', '77.md')
+    writeFileSync(follow, 'Row: 77 FOLLOW: up\n')
+    await recordAgent(spawned('Agent: follow up', follow), real([], []))
+    assert.equal(readFileSync(record, 'utf8').split('\n').find(said => said.includes('"ledger"')), before)
+  })
+
+  it('says a line it could not attach', async () => {
+    const files = { [BRIEF]: '# p — resume brief for row 355: t\n', [REGISTRY]: '/b/record.jsonl\n', '/b/record.jsonl': `${row(355, 'Agent: a')}\n${line(86, 'waiting', { on: 'x', worked: ['Agent: a'] })}\n` }
+    const logged: string[] = []
+    const d = deps(files, { run: async argv => ({ status: argv[2] === 'pr' ? 1 : 0, stdout: '', stderr: 'ERROR: could not update\n' }), log: async said => { logged.push(said) } })
+    await recordAgent(spawned('Agent: a'), d)
+    assert.deepEqual(d.warned, ['spawn: warning: Agent: a was not attached to acme/app#86 of /b/record.jsonl: ERROR: could not update'])
+    assert.deepEqual(logged, [])
   })
 })

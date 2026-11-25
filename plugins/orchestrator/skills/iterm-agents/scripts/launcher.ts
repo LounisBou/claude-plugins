@@ -21,7 +21,10 @@ import { homedir } from 'node:os'
 import { constants } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { configDirOf } from '../../../core/env.ts'
 import { LauncherArgsError, parseLauncherArgs, type LauncherRequest } from '../../../core/launcher.ts'
+import { dataRootFileOf, dataRootOf, moduleDirOf } from '../../../core/orchestration.ts'
+import { logArgv } from '../../../hooks/module-log.ts'
 import { isEntry, processIo, run, type Io } from '../../orchestrator/scripts/lib/process.ts'
 import { recordAgent, type RowDeps } from './agent-row.ts'
 import { prepared, type PrepDeps } from './spawn-prep.ts'
@@ -54,10 +57,20 @@ export function prepDeps(env: NodeJS.ProcessEnv, io: Io): PrepDeps {
   }
 }
 
+/** One `ledger` line in the hooks module's log, where the module itself writes it (module-io.ts `moduleDir`). */
+async function moduleLog(env: NodeJS.ProcessEnv, line: string): Promise<void> {
+  const config = configDirOf(env, homedir())
+  const base = moduleDirOf(config)
+  const file = dataRootFileOf(base)
+  const dir = env['ORCHESTRATOR_MODULE_DIR'] || dataRootOf(base, kindOf(file) === 'file' ? readFileSync(file, 'utf8') : null)
+  const [command = 'sh', ...args] = logArgv(join(HERE, '..', '..', '..'), config, 'ledger', line, new Date(), dir)
+  await run([command, ...args])
+}
+
 /** What putting an agent on its row reads, from this process. */
 export function rowDeps(env: NodeJS.ProcessEnv, io: Io): RowDeps {
   return {
-    env, run, script: DISPATCH_RECORD, warn: line => io.err(`${line}\n`),
+    env, run, script: DISPATCH_RECORD, warn: line => io.err(`${line}\n`), log: line => moduleLog(env, line),
     read: path => (kindOf(path) === 'file' ? readFileSync(path, 'utf8') : null),
     list: dir => {
       try {

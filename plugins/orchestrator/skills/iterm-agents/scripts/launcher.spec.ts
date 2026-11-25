@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { parseLauncherArgs } from '../../../core/launcher.ts'
+import { DATA_ROOT_FILE, DATA_ROOT_VERSION } from '../../../core/orchestration.ts'
 import type { RowDeps } from './agent-row.ts'
 import { main, prepDeps, requestOf, rowDeps, runAdapter } from './launcher.ts'
 
@@ -85,6 +86,17 @@ describe('the launcher entry', () => {
     assert.equal(await main(line, env, io().io, prepDeps(env, io().io), async () => 3, row), 3)
     assert.equal(await main(line, { ...env, ORCHESTRATOR_DRY_RUN: '1' }, io().io, prepDeps(env, io().io), ok, row), 0)
     assert.deepEqual(said, [])
+  })
+
+  it('writes the launcher\'s ledger lines in the hooks module\'s own log, in the data root', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'launcher-'))
+    const config = join(dir, 'config')
+    mkdirSync(join(config, 'claude-orchestrator'), { recursive: true })
+    writeFileSync(join(config, 'claude-orchestrator', DATA_ROOT_FILE), JSON.stringify({ version: DATA_ROOT_VERSION, dir: join(dir, 'data') }))
+    await rowDeps({ CLAUDE_CONFIG_DIR: config }, io().io).log('acme/app#86 attached to Agent: a')
+    await rowDeps({ CLAUDE_CONFIG_DIR: config, ORCHESTRATOR_MODULE_DIR: join(dir, 'module') }, io().io).log('elsewhere')
+    assert.match(readFileSync(join(dir, 'data', 'hooks-module.log'), 'utf8'), /^\S+Z \| ledger \| acme\/app#86 attached to Agent: a\n$/)
+    assert.match(readFileSync(join(dir, 'module', 'hooks-module.log'), 'utf8'), / \| ledger \| elsewhere\n$/)
   })
 })
 
