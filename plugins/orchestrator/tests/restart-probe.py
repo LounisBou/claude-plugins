@@ -155,8 +155,16 @@ class Api:
     async def async_get_app(self, connection): return App()
 
 
+FROZEN = ("wedged", "frozen-kept", "frozen-hand")
+# What the launcher kept: the tabs of the probe's app, and one of them opened by hand since (frozen-hand).
+TAB = lambda tty: {"tty": tty, "title": ""}
+KEPT = {"frozen-kept": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]],
+                        [[TAB("/dev/ttys041")], [TAB("/dev/ttys002")], [TAB("/dev/ttys050")]]],
+        "frozen-hand": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys002")]]]}
+
+
 def run(coro):
-    if APP not in alive and NEW_APP not in alive or scenario == "wedged" and APP in alive \
+    if APP not in alive and NEW_APP not in alive or scenario in FROZEN and APP in alive \
             or scenario == "deaf" and NEW_APP in alive:
         raise RuntimeError("iTerm2 does not answer")
     return asyncio.run(coro(Api(), None))
@@ -238,7 +246,10 @@ def process_state(pid):
 def processes():
     rows = {"1": ("0", "", "/sbin/launchd"), APP: ("1", "", "/Applications/iTerm.app/Contents/MacOS/iTerm2"),
             "900": ("1", "", "/x/Library/Application Support/iTerm2/iTermServer-3.7.9 /x/iterm2-daemon-1.socket"),
-            "12001": ("12", "/dev/ttys012", HOST + " -p nested"), "77": ("1", "/dev/ttys077", HOST + " elsewhere")}
+            "12001": ("12", "/dev/ttys012", HOST + " -p nested"), "77": ("1", "/dev/ttys077", HOST + " elsewhere"),
+            # The clients of the home servers and the plain shell, each a process on its tty.
+            "1001": ("1", "/dev/ttys001", "tmux -L orch-a attach"), "1002": ("1", "/dev/ttys002", "tmux -L orch-b attach"),
+            "1050": ("1", "/dev/ttys050", "-zsh")}
     if scenario == "own-child":
         rows["88"] = (APP, "/dev/ttys088", "-zsh")
     for pid, tty in hosts.items():
@@ -365,6 +376,9 @@ if scenario == "raced":
 if scenario == "locked":
     os.makedirs(os.path.join(work, "state"))
     real_open(r.runs_root() + ia.STORE["lock_suffix"], "w").close()
+if scenario in KEPT:
+    # The order the launcher kept at its last read, 95 seconds before the stop.
+    ia.write_json(ia.ORDER_FILE, {"version": 1, "at": -95, "windows": KEPT[scenario]})
 code, out, err = restart(run=placed()) if scenario.startswith("run-") else restart(*sys.argv[4:])
 if scenario.startswith(("interrupted", "half", "no-start", "stale")):
     print("first=%s|%s|%s" % (code, ",".join(acts), "+".join(s for s in sorted(servers) if servers[s]["armed"] == "on")))

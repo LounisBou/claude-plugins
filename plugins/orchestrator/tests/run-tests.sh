@@ -9508,6 +9508,12 @@ check "a session that was working and shows no activity is named" "1|1" \
 res=$(restarted wedged)
 check "a wedged iTerm2 is restarted, its tabs' order said unknown and not proved" "1|1|orch-a+orch-b|$RALL|1" \
   "$(sfield "$res" exit)|$(rsays '^order: unknown')|$(sfield "$res" armed)|$(sfield "$res" alive)|$(rsays 'DEFECT the tabs. order was not known')"
+res=$(restarted frozen-kept)
+check "a frozen iTerm2 is restarted in the order the launcher kept, its age said and proved" "0|1|$RORDER|1" \
+  "$(sfield "$res" exit)|$(rsays '^- order: kept order of 1m35s, iTerm2 does not answer$')|$(sfield "$res" tabs)|$(rsays '^# iTerm2 restart: done, everything proved')"
+res=$(restarted frozen-hand)
+check "a tab opened by hand since the kept order is put after the known ones, and named" "0|$RORDER|1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" tabs)|$(rsays '^- kept order: /dev/ttys050 opened since it')|$(rsays '^# iTerm2 restart: done, everything proved')"
 res=$(restarted kept-disarmed)
 check "a server a close left disarmed is not armed by a restart" "0|orch-a" "$(sfield "$res" exit)|$(sfield "$res" armed)"
 RDIS='disarm orch-a,disarm orch-b'

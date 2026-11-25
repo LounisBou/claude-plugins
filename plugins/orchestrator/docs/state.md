@@ -5,7 +5,7 @@ roots (core's `orchestration.ts` and `roots.ts`):
 
 - **protected**: `<config dir>/claude-orchestrator/`, or `ORCHESTRATOR_STATE_DIR`. What runs or is
   trusted: `venv/`, the launch files under `prompts/`, `mcp.json`, `models.json`, `routing/`,
-  `config.json`, `quota/` (a reading picks the configuration directory a `--plan auto` spawn runs on), `home-release.log` (the launch script's shell appends to it), the status line tap's files, `sleeping.json`, `coordinator.json` and its lock, `iterm-restart/`, and
+  `config.json`, `quota/` (a reading picks the configuration directory a `--plan auto` spawn runs on), `home-release.log` (the launch script's shell appends to it), the status line tap's files, `sleeping.json`, `coordinator.json` and its lock, `iterm-restart/`, `iterm-order.json`, and
   `data-root.json`;
 - **data**: the directory the protected root's `data-root.json` names (`{"version": 1, "dir":
   "<absolute path>"}`), else the protected root. What any session writes. Nothing read there decides
@@ -46,6 +46,7 @@ Python launcher.
 | module log | module | every process | appends, refusing a link |
 | `close.log` | data | the launcher | appends, refusing a link |
 | `iterm-restart/<UTC time>/` (`state.json`, `report.md`, `log`) | protected | the coordinator's `restart`, then the process it starts | one writer at a time, `state.json` in one rename, it and `report.md` their owner's alone to read (they hold the lines that resume a session); a state that is not the user's own, under this root, is not read |
+| `iterm-order.json` | protected | the launcher, after each `spawn`, `close`, `move` or `rotate`, and each read of the restart | one rename; the tabs' order of the app as its last read found it, what a restart keeps when iTerm2 does not answer |
 | `home-release.log` | protected | the launch script of a home move | appends |
 | `sweep.stamp` | data | every session's stop gate | one rename, before the sweep runs |
 | `draft-guard/<kind>-<hash>.json` | data | `draft-guard.ts` | a unique temporary name, one rename (core's `writeAtomic`); a cache that cannot be written is no cache |
