@@ -1663,6 +1663,26 @@ test('the backstop: an idle agent of this orchestration whose row is closed is c
   expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
 })
 
+// Mutation: `|| backstop` removed from prWake's `watching` (ledger.ts): the busy and the holding worlds stop the tick and this test falls.
+test('the backstop keeps the tick with no ledger line while an agent of the chain on a closed row is open, and lets it go once the agent is closed or its row open', async () => {
+  const busy = closedRow({ launcher: 'w1/t0 | /dev/ttys000 | ⠋ Agent: p17 | Agent: p17' })
+  const holding = closedRow({}, { [RECORD]: `${rowOf(8, 'closed', { agent: 'Agent: p17' })}\n${rowOf(9, 'open', { agent: 'Agent: p17' })}\n` })
+  const later = closedRow({}, { [`${HOME}/.claude/sessions/417.json`]: JSON.stringify({ pid: 417, sessionId: 's-p17', cwd: '/work/s-p17', status: 'busy', name: 'Agent: p17' }) })
+  for (const world of [busy, holding, later]) {
+    const woke = await prWake(world.dollar, new Set())
+    await woke.settle()
+    expect([woke.lines, woke.watching, closes(world.runs)]).toEqual([[], true, []])
+  }
+  const open = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'open', { agent: 'Agent: p17' })}\n`, ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE }, launcher: running('Agent: p17') })
+  expect((await prWake(open.dollar, new Set())).watching).toBe(false)
+  const done = closedRow()
+  const told = new Set<string>()
+  const first = await prWake(done.dollar, told)
+  await first.settle()
+  expect([first.watching, closes(done.runs).length]).toEqual([true, 1])
+  expect((await prWake(done.dollar, told)).watching).toBe(false)
+})
+
 test('the backstop closes no agent whose row is open, that is not done, that holds another open row, or that is on another orchestration\'s chain; a refusal is told once', async () => {
   const open = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(8, 'open', { agent: 'Agent: p17' })}\n`, ...launched('/briefs/app', 'Agent: p17', 8), ...P17_DONE }, launcher: running('Agent: p17') })
   const working = closedRow({}, { [`${STATE}/store/waits/s-p17`]: '' })

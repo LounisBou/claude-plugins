@@ -386,6 +386,13 @@ async function closedRowOf($: Held, agent: string, records: readonly RecordText[
   return named[0]
 }
 
+// Whether one of these agents stands on a closed row (closedRowOf): the backstop's need, which arms the tick at the turn end with no line.
+export async function onClosedRow($: Held, agents: readonly string[], records: readonly RecordText[]): Promise<boolean> {
+  const real = await realRecords($, records)
+  for (const agent of agents) if (await closedRowOf($, agent, real) !== undefined) return true
+  return false
+}
+
 // What is told of a pull request's end to an agent of its line, once: a refusal to close it.
 const refusedKey = (pk: string, agent: string): string => `${pk} ended refused ${agent}`
 
@@ -789,12 +796,20 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
    */
   const chained = reading.listed === true && reading.tabs.size > 0 ? await ownChain() : undefined
   const ttys = chained !== undefined && 'ttys' in chained ? chained.ttys : new Set<string>()
+  // What keeps the tick for the backstop, no line needed: a chain read later, or an agent of it on a closed row not yet closed nor refused.
+  let backstop = chained !== undefined && 'kind' in chained && chained.kind === 'later'
   for (const [agent, tabs] of reading.tabs) {
-    if (acts.has(agent) || !tabs.some(tab => tab.idle && ttys.has(bareTty(tab.tty)))) continue
+    const ours = tabs.filter(tab => ttys.has(bareTty(tab.tty)))
+    if (acts.has(agent) || ours.length === 0) continue
     const row = await closedRowOf($, agent, records)
-    if (row === undefined || (await otherRowsOf($, agent, records)).length > 0 || reading.kept.some(line => agentsOf(line).includes(agent))) continue
+    if (row === undefined) continue
+    if (!ours.some(tab => tab.idle) || (await otherRowsOf($, agent, records)).length > 0 || reading.kept.some(line => agentsOf(line).includes(agent))) {
+      backstop = true
+      continue
+    }
     const toldKey = `${session} ${agent} ${row.path} ${row.id}`
     const { act, said } = await actOn(agent, rowName(row), 'is closed', {})
+    if (act.kind === 'later') backstop = true
     if (said === null || toldClosedRows.has(toldKey)) continue
     if (act.kind === 'refused') toldClosedRows.add(toldKey)
     lines.push(said)
@@ -852,5 +867,5 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
       }
     }
   }
-  return { lines, watching: reading.kept.length > 0 || reading.wanted || waiting.size > 0 || closes.size > 0 || hasOwed(session), moved, settle }
+  return { lines, watching: reading.kept.length > 0 || reading.wanted || waiting.size > 0 || closes.size > 0 || backstop || hasOwed(session), moved, settle }
 }

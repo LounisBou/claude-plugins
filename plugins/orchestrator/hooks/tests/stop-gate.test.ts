@@ -334,6 +334,7 @@ function fakeDollar(setup: Setup): { dollar: World; written: string[]; ran: stri
         if (p === `${S.root}/records` && (setup.forge !== undefined || setup.predecessor !== undefined)) {
           return [...(setup.forge !== undefined ? ['a1b2c3'] : []), ...(setup.predecessor ? ['p9z8'] : [])].map(name => ({ name, kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }))
         }
+        if (p === `${HOME}/.claude/sessions` && setup.hostRecord !== undefined) return [{ name: '77.json', kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }]
         if (p === `${S.root}/store/sessions`) return Object.keys(setup.sessions ?? {}).map(name => ({ name, kind: 'file' as const, size: 0, mtimeMs: 0, isLink: false }))
         if (p === `${S.root}/round`) {
           if (setup.roundHang === 'list') return new Promise(() => undefined)
@@ -741,6 +742,30 @@ test('the tick keeps running after the turn that recorded a verdict while a revi
   const settled = prWorld([], 0, { records: [''] })
   await stop(handlers['classic.Stop'], settled.dollar, stopEvent({}))
   expect(settled.timers).toEqual([])
+})
+
+// Mutation: `onClosedRow` removed from `tick.watch` (guards.ts): the first stop arms no tick and this test falls.
+test('with no ledger line, an idle agent of its own done on a closed row arms the tick, which closes it, then stops', async () => {
+  const { handlers } = mounted()
+  const world = (state: string) => prWorld([], 0, {
+    records: [`${JSON.stringify({ id: 8, state, label: 'row 8', agent: 'Agent: idle-p3' })}\n`],
+    listing: IDLE_ROW, chain: IDLE_OWNED,
+    sessions: {
+      a1b2c3: JSON.stringify({ role: 'orchestrator', name: 'Orch: belt', tty: '/dev/ttys001', updated_at: new Date().toISOString() }),
+      's-idle': JSON.stringify({ role: 'agent', name: 'Agent: idle-p3 [a1b2c3]', tty: '/dev/ttys003', updated_at: new Date().toISOString() }),
+    },
+    hostRecord: JSON.stringify({ pid: 77, sessionId: 's-idle', cwd: '/tmp/h/work/belt', status: 'idle', name: 'Agent: idle-p3' }),
+    files: { [`${STATE}/store/waits/s-idle`]: JSON.stringify({ waiting: 'delivered', blocks: 'row 8', waiting_since: '2026-11-15T07:00:00Z', name: 'Agent: idle-p3', pid: '77' }) },
+  })
+  const open = world('open')
+  await stop(handlers['classic.Stop'], open.dollar, stopEvent({}))
+  expect(open.timers).toEqual([])
+  const closed = world('closed')
+  await stop(handlers['classic.Stop'], closed.dollar, stopEvent({}))
+  expect(closed.timers.map(t => t.ms)).toEqual([0])
+  await closed.timers.shift()!.fire()
+  expect(closed.submitted).toEqual(['[module] row 8 (rec) is closed: its agent Agent: idle-p3 is done: the module closes it now (session s-idle, resumable within the hour).'])
+  expect(closed.ran.filter(l => l.startsWith(`bash ${LAUNCHER} close`))).toEqual([`bash ${LAUNCHER} close --tty /dev/ttys003 --expect-title Agent: idle-p3`])
 })
 
 test('a pull request wake the host drops is tried again a minute later, told then, and its line archived only once told', async () => {
