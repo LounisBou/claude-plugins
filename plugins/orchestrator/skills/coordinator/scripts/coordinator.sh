@@ -8,9 +8,9 @@
 #                            works in, then the collisions among them
 #   coordinator.sh owners    each open pull request of those repositories, traced to its orchestrator
 #   coordinator.sh check [--every <seconds>]   what is new since the last check, one line each:
-#                            « newcomer <Orch: title> », a collision line, an unread
-#                            line; nothing on the first check (<state>/coordinator-check.json keeps
-#                            the last). --every reads again at that pace until a line is new: run in
+#                            « newcomer <Orch: title> », a module-lost line, a collision line, an
+#                            unread line; nothing but the module-lost lines on the first
+#                            check (<state>/coordinator-check.json keeps the last). --every reads again at that pace until a line is new: run in
 #                            the background, it wakes its session only on a finding
 #   coordinator.sh roots     the roots, one line each by core's rule: protected=<what runs>, data=<what
 #                            any session writes>, module=<the hooks module's own files, measure/ among them>
@@ -72,6 +72,9 @@
 #   collision heavy | <pid>, <pid>...
 #   collision pr | <repository>#<n> | <branch> | <orchestrator>, <orchestrator>...
 #     (a remote row listing the pull request counts as one more orchestrator on it)
+#   module-lost <name> | session <id> | pid <pid> | <tty> | <what to do>
+#     (a live Coord, Orch or Audit session whose transcript says its orchestrator module is not
+#     loaded; facts and check print it)
 #   unread <source>: <why>     a source not read: the process table, the host's name, lsof,
 #                              a pid's directory, a tree git failed on, a brief, the checkouts,
 #                              the forge, a remote row that is no JSON row

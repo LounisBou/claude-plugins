@@ -3,8 +3,8 @@ description: Open or close the supervision pane
 disable-model-invocation: true
 ---
 
-The supervision pane is opened by the plugin's own hook, without a model turn. If you are
-reading this, the hook did not answer: tell the operator in one line that the supervision
-pane could not open, and that `/orchestrator:status` lists the live sessions meanwhile.
+The plugin's hook opens the pane with no model turn, so reading this most likely means
+this session's orchestrator module is not loaded. Tell the operator that in one line, with
+the cure: end the session, then `claude --resume ${CLAUDE_SESSION_ID}`.
 
 $ARGUMENTS

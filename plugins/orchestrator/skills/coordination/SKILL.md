@@ -45,8 +45,8 @@ subcommand prints is below, and its header is read only for a line this does not
   two answers; an « unknown » one a remote row lists is that row's orchestrator, « remote on
   <machine> »; one in a repository this machine does not read says « not read on the forge
   here »; and « sleeping since » for one a sleeping orchestrator's record lists.
-- `check [--every <seconds>]` — what is new since the last check: a newcomer `Orch:` session, a
-  collision, an unread source; nothing when nothing is.
+- `check [--every <seconds>]` — what is new since the last check: a newcomer `Orch:`, a
+  collision, an unread source, a lost module.
 - `sleep`, `sleeping`, `wake-done`, `drop` — the sleeping orchestrators' record, below.
 
 Asked to restart iTerm2: `orchestrator:iterm-agents`, `references/commands.md`, « Restarting iTerm2 ».
