@@ -112,6 +112,16 @@ export interface Deps {
   readonly paneWindow?: (tty: string) => number | undefined
 }
 
+/**
+ * The refusal when the report a brief names is taken: an existing file (the new agent would overwrite it), or the
+ * replaced agent's own report. Undefined when the path is free. `flag` is the one the operator passes to choose another.
+ */
+function reportTaken(path: string, flag: string, replaced?: string): string | undefined {
+  if (path === replaced) return `${path} is the report of the agent replaced: pass ${flag} <a new path>`
+  if (existsSync(path)) return `${path} already exists, and the agent would overwrite it: pass ${flag} <a new path>`
+  return undefined
+}
+
 /** The command's values, or the reason it cannot fill them. */
 type Values = Record<string, string> | { readonly error: string }
 
@@ -200,6 +210,8 @@ function phaseValues(f: Fields, deps: Deps): Values {
   const note = typeof row['note'] === 'string' && row['note'] !== '' ? ` — note: ${row['note']}` : ''
   const out = f['out'] ?? ''
   const report = f['report'] ?? join(dirname(out), `report-${basename(out)}`)
+  const taken = reportTaken(report, '--report')
+  if (taken !== undefined) return { error: taken }
   const title = section?.heading.replace(HEADING, '$2') ?? /^# +(.+)$/m.exec(plan)?.[1]?.trim() ?? (label || basename(f['plan'] ?? ''))
   // The phase's section and the spec's sections it cites are named, so the agent reads those and not both files whole.
   const cited = section === undefined ? [] : citedSections(section.text, readText(spec) ?? '')
@@ -263,6 +275,9 @@ function rotationValues(f: Fields, deps: Deps): Values {
   const report = f['report'] ?? ''
   const out = f['out'] ?? ''
   const label = typeof row['label'] === 'string' ? row['label'] : ''
+  const newReport = f['new-report'] ?? join(dirname(out), `report-${basename(out)}`)
+  const taken = reportTaken(newReport, '--new-report', f['report'])
+  if (taken !== undefined) return { error: taken }
   return {
     PROJECT: (f['repo'] ?? projectOf(worktree, f['record'] ?? '')).split('/').at(-1) ?? '',
     TITLE: label || (f['title'] ?? ''),
@@ -282,7 +297,7 @@ function rotationValues(f: Fields, deps: Deps): Values {
     DECISIONS: f['decisions'] ?? 'none beyond the phase brief',
     TIER: tierOf(row),
     ORCHESTRATOR: f['orchestrator'] ?? '',
-    REPORT_PATH: f['new-report'] ?? join(dirname(out), `report-${basename(out)}`),
+    REPORT_PATH: newReport,
   }
 }
 

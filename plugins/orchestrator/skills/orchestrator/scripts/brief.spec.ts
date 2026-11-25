@@ -369,3 +369,36 @@ test('rotation on a checkout that is gone: the refusal names how to make it agai
     `brief: rotation: no checkout at ${gone}: make it again from the pushed branch, \`workspace.sh create <the app repository> routes --base feat/routes\`, then print this brief again\n`)
   assert.match(refused('# app\nno branch line\n'), /`workspace\.sh create <the app repository> routes --base <the pushed branch>`/)
 })
+
+test('rotation: a report derived from --out that already exists is refused, naming the file and --new-report; the call with --new-report goes on', () => {
+  const w = world()
+  const taken = join(w.briefs, 'report-routes-r1.md')
+  writeFileSync(taken, 'report of an older round')
+  assert.equal(rotation(w), 2)
+  assert.equal(w.err.join(''), `brief: rotation: ${taken} already exists, and the agent would overwrite it: pass --new-report <a new path>\n`)
+  assert.equal(readFileSync(taken, 'utf8'), 'report of an older round')
+  const fresh = join(w.briefs, 'report-routes-r2.md')
+  assert.equal(rotation(w, '--new-report', fresh), 0)
+  assert.match(w.text(), new RegExp(`report: ${fresh.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\n`))
+})
+
+test('rotation: a --new-report equal to the replaced agent\'s --report is refused, and one that exists too', () => {
+  const w = world()
+  const old = join(w.briefs, 'report-routes.md')
+  writeFileSync(old, 'old report')
+  assert.equal(rotation(w, '--report', old, '--new-report', old), 2)
+  assert.equal(w.err.join(''), `brief: rotation: ${old} is the report of the agent replaced: pass --new-report <a new path>\n`)
+  writeFileSync(join(w.briefs, 'taken.md'), 'taken')
+  assert.equal(rotation(w, '--report', old, '--new-report', join(w.briefs, 'taken.md')), 2)
+  assert.match(w.err.join(''), /taken\.md already exists/)
+})
+
+test('phase: a report derived from --out that already exists is refused, naming --report; an explicit free --report goes on', () => {
+  const w = world()
+  const taken = join(w.briefs, 'report-routes.md')
+  writeFileSync(taken, 'report of an older round')
+  assert.equal(w.phase(), 2)
+  assert.equal(w.err.join(''), `brief: phase: ${taken} already exists, and the agent would overwrite it: pass --report <a new path>\n`)
+  assert.equal(readFileSync(taken, 'utf8'), 'report of an older round')
+  assert.equal(w.phase('--report', join(w.briefs, 'report-routes-2.md')), 0)
+})
