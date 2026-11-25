@@ -1602,7 +1602,7 @@ test('sweep: the last turn is the newest the host keeps on either plan, read as 
   spoke(a, w.clock - 2 * HOUR)
   assert.equal(await dry(), gone)
   // A resume on the second plan, or under the caller's own configuration directory, spoke since.
-  const bis = join(dir, 'home', '.claude-bis', 'projects')
+  const bis = join(dir, 'home', '.claude-bis', 'projects') // the second plan's CLAUDE_CONFIG_DIR
   spoke(a, w.clock - 5 * MINUTE, bis, 's-bis')
   assert.match(await dry(), new RegExp(`^kept ${a}: resume window: its agent spoke last 5 min ago`))
   rmSync(bis, { recursive: true })

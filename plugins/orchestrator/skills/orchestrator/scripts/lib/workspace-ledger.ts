@@ -32,16 +32,17 @@ const isText = (v: unknown): v is string => typeof v === 'string'
 interface ResumeWindow {
   readonly within_seconds: number
   readonly env: string
-  readonly plan_dirs: readonly string[]
+  /** Each plan's configuration directory, under the home. */
+  readonly CLAUDE_CONFIG_DIR_of_plans: readonly string[]
 }
 
 /** The resume window's data, the launcher's too (`resume-window.json`), or an error naming the file. */
 function resumeData(text: string): ResumeWindow {
   const read: unknown = JSON.parse(text)
   const r = (typeof read === 'object' && read !== null ? read : {}) as Record<string, unknown>
-  const dirs = r['plan_dirs']
+  const dirs = r['CLAUDE_CONFIG_DIR_of_plans']
   if (typeof r['within_seconds'] !== 'number' || !isText(r['env']) || !Array.isArray(dirs) || !dirs.every(isText)) throw new Error('resume-window.json is not the resume window\'s data')
-  return { within_seconds: r['within_seconds'], env: r['env'], plan_dirs: dirs }
+  return { within_seconds: r['within_seconds'], env: r['env'], CLAUDE_CONFIG_DIR_of_plans: dirs }
 }
 
 const RESUME = resumeData(readFileSync(new URL('./resume-window.json', import.meta.url), 'utf8'))
@@ -57,7 +58,7 @@ function transcriptFolders(env: Env): string[] {
   const only = setting(env, 'ORCHESTRATOR_PROJECTS_DIR')
   if (only !== undefined) return [only]
   const home = setting(env, 'HOME') ?? ''
-  return [...new Set([configDir(env, home), ...RESUME.plan_dirs.map(d => join(home, d))])].map(d => join(d, 'projects'))
+  return [...new Set([configDir(env, home), ...RESUME.CLAUDE_CONFIG_DIR_of_plans.map(d => join(home, d))])].map(d => join(d, 'projects'))
 }
 
 /**

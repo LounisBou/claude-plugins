@@ -5082,7 +5082,7 @@ def sleeper_config(title):
 
 # The plans: plan 1 is the host's default configuration directory, plan 2 the second account's,
 # both under the home (`resume-window.json`).
-PLAN1_DIRNAME, PLAN2_DIRNAME = RESUME["plan_dirs"]
+PLAN1_DIRNAME, PLAN2_DIRNAME = RESUME["CLAUDE_CONFIG_DIR_of_plans"]
 # A quota reading older than this is no reading (core's QUOTA_STALE_AFTER_MS).
 QUOTA_STALE_AFTER = 30 * 60
 

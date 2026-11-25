@@ -99,6 +99,7 @@ skills/orchestrator/scripts/lib/record-paths.ts  where a dispatch record, its ow
 skills/orchestrator/scripts/lib/audit.ts  the audit trail the scripts write into the orchestrator's journal
 skills/orchestrator/scripts/lib/round-archive.ts  the round's old entries moved into its archive
 skills/orchestrator/scripts/lib/workspace-ledger.ts  the ledger of the checkouts, written by workspace.ts alone
+skills/orchestrator/scripts/lib/resume-window.json  the resume window and the plans' directories, read by the launcher and by workspace-ledger.ts
 skills/orchestrator/scripts/ci-watch.spec.ts, skills/orchestrator/scripts/dispatch-record.spec.ts, skills/orchestrator/scripts/rhythm.spec.ts, skills/orchestrator/scripts/workspace.spec.ts, skills/orchestrator/scripts/install.spec.ts, skills/orchestrator/scripts/brief-lint.spec.ts, skills/orchestrator/scripts/short-commands.spec.ts, skills/orchestrator/scripts/shell-file.spec.ts, skills/orchestrator/scripts/lib/process.spec.ts, skills/orchestrator/scripts/lib/record-paths.spec.ts, skills/orchestrator/scripts/lib/audit.spec.ts  their node tests
 skills/orchestrator/scripts/succession.sh, skills/orchestrator/scripts/succession.ts, skills/orchestrator/scripts/succession.spec.ts  the takeover printed from the state
 skills/coordination/SKILL.md         the coordinator: answers from the facts, flags collisions, relays what is the operator's, its succession
