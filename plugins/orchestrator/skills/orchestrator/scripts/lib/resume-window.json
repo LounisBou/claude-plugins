@@ -1,0 +1,6 @@
+{
+  "$comment": "How long after its last turn a closed agent is resumed (the host's prompt cache lives an hour from that turn), the variable that changes it, and the configuration directories under the home whose transcripts are searched for that turn. Read by the launcher (iterm_agent.py, refuse_stale_resume) and by the sweep of the checkouts (workspace-ledger.ts).",
+  "within_seconds": 3600,
+  "env": "ORCHESTRATOR_RESUME_WITHIN",
+  "plan_dirs": [".claude", ".claude-bis"]
+}

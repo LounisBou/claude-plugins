@@ -6,8 +6,8 @@
 //                                                              first; also removes the host's temporary directory of the
 //                                                              path when no live process uses it; the archive line names
 //                                                              the command or sweep that made the deletion (`by`)
-//   workspace.sh keep <path>                                   the sweep never ends this checkout of a dead orchestrator and agent
-//                                                              (`close --keep-checkout` says so); once its orchestrator and agent are gone only a `delete` does
+//   workspace.sh keep <path>                                   marks the checkout kept (`close --keep-checkout` says so): the
+//                                                              resume window never ends it, and once its orchestrator and agent are gone only a `delete` does
 //   workspace.sh sweep [--deadline <seconds>] [--dry-run]      the leftovers, decided on facts: one line per item,
 //                                                              "deleted <path>" | "kept <path>: <reason>" (a dry run says "would delete"),
 //                                                              "pushed <branch> of <path>" before a checkout no one lives in goes
@@ -18,9 +18,15 @@
 //
 // Ledger: <root>/.workspaces.jsonl (lib/workspace-ledger.ts), one line per checkout, its
 // orchestrator and its agent; `create` and `pin` open it, `delete` closes it into the archive
-// beside it, the sweep adopts a checkout it does not name. A checkout past its first hour whose
-// orchestrator and agent no longer live is ended by the sweep: its branches pushed, then removed;
-// what cannot be is kept with its reason written on its line, and said again once a day.
+// beside it, the sweep adopts a checkout it does not name. The sweep ends a checkout whose use is
+// over, its branches pushed, then removed; what cannot be is kept with its reason written on its
+// line, and said again once a day. Its use is over once its agent is gone and the resume window
+// since that agent's last turn has passed (`lib/resume-window.json`, the bound past which the
+// launcher refuses `spawn --resume`), its orchestrator alive or not; within the window it stays.
+// The last turn is read on the transcripts of the sessions that ran in it. A checkout no session
+// ever ran in is its orchestrator's while it lives, and its use is over past its first hour once
+// it does not. While it is held (its first hour, a live agent, no session ever, a mark with a live
+// orchestrator) the sweep ends it only once its pull request is over.
 //
 // What a removal leaves behind goes with it: `delete` (so `close` and the sweep) takes the parent
 // directories it leaves empty, never the root nor a directory holding anything; the sweep takes the
@@ -75,7 +81,7 @@ import { readText, update } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, prWantedPath, repoOfOrigin, withWanted, type FilePr, type PrFile } from '../../../hooks/pr-file-format.ts'
 import { isEntry, processIo, run, type Io, type Ran, type Run } from './lib/process.ts'
 import {
-  adoptEntry, callerOf, changeEntry, closeEntry, endOf, GRACE_MS, liveSessions, makerOf, pidAlive, putEntry, readLedger, RESAY_MS,
+  adoptEntry, callerOf, changeEntry, closeEntry, endOf, GRACE_MS, lastTurnIn, liveSessions, makerOf, pidAlive, putEntry, readLedger, RESAY_MS, resumeWindowMs,
   type LiveSession, type WorkspaceEntry,
 } from './lib/workspace-ledger.ts'
 
@@ -1306,17 +1312,34 @@ async function sweepOne(s: Sweep, d: string): Promise<void> {
     if (namedLive(ctx, entry.agent)) return keep(ctx, real, `its clone is gone, kept while its agent ${entry.agent ?? ''} lives`)
     return sweepOrphanPin(s, d, real)
   }
-  if (young || namedLive(ctx, entry.orchestrator) || namedLive(ctx, entry.agent)) {
-    if (!s.dry && entry.reason !== undefined) {
+  const agentLives = namedLive(ctx, entry.agent)
+  // The last turn of the agent that ran in it and is gone; undefined when none did, or its agent lives.
+  const spoke = agentLives ? undefined : lastTurnIn(ctx.deps.env, encode(real), born)
+  const quiet = spoke === undefined ? undefined : ctx.deps.now() - spoke
+  const window = resumeWindowMs(ctx.deps.env)
+  // A checkout that is held, or may still be resumed, is owed no reason for staying.
+  const owed = !s.dry && entry.reason !== undefined
+  const forget = (): void => {
+    if (owed) {
       ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, ({ reason: _r, reason_at: _a, said: _s, ...e }) => e))
     }
+  }
+  if (quiet !== undefined && quiet < window) {
+    forget()
+    const minutes = (ms: number): number => Math.floor(ms / 60_000)
+    return keep(ctx, real, `resume window: its agent spoke last ${minutes(quiet)} min ago, \`spawn --resume\` takes it until ${minutes(window)} min`)
+  }
+  const orchestratorLives = namedLive(ctx, entry.orchestrator)
+  // A live orchestrator holds a checkout no agent ran in yet (it may spawn into it) and one marked kept.
+  if (young || agentLives || (orchestratorLives && (spoke === undefined || entry.kept !== undefined))) {
+    forget()
     return sweepOwned(s, real)
   }
   // A checkout kept by `close --keep-checkout` stays whoever made it: a sweep once ended one its dead
   // maker left, minutes after the close that said to keep it. An orchestrator that lives still lets its
-  // pull request's end take the checkout (the path above), which the hooks module's routine closes rely on.
+  // pull request's end take the checkout (the path above).
   if (entry.kept !== undefined) return keep(ctx, real, `kept since ${entry.kept} by close --keep-checkout: only delete ends it`)
-  return sweepEnded(s, real, entry)
+  return sweepEnded(s, real, entry, orchestratorLives ? 'its agent gone past the resume window' : 'no live orchestrator or agent')
 }
 
 /**
@@ -1338,7 +1361,7 @@ async function sweepOrphanPin(s: Sweep, d: string, real: string): Promise<void> 
   await removeHostTmp(ctx, [real])
 }
 
-/** A checkout its orchestrator still holds, or in its first hour: it goes once its pull request is over. */
+/** A checkout still held (its first hour, a live agent, a live orchestrator and no agent gone): it goes once its pull request is over. */
 async function sweepOwned(s: Sweep, real: string): Promise<void> {
   const ctx = s.ctx
   const verdict = await decide(s, real)
@@ -1352,11 +1375,11 @@ async function sweepOwned(s: Sweep, real: string): Promise<void> {
 }
 
 /**
- * A checkout whose orchestrator and agent no longer live: its use is over. Its work goes to the
- * origin, then the checkout goes; the next session recreates it from git. What holds it — work
- * that cannot be pushed, uncommitted changes, a live process — is its line's reason, said.
+ * A checkout whose use is over, `over` saying why. Its work goes to the origin, then the checkout
+ * goes; the next session recreates it from git. What holds it — work that cannot be pushed,
+ * uncommitted changes, a live process — is its line's reason, said.
  */
-async function sweepEnded(s: Sweep, real: string, entry: WorkspaceEntry): Promise<void> {
+async function sweepEnded(s: Sweep, real: string, entry: WorkspaceEntry, over: string): Promise<void> {
   const ctx = s.ctx
   const stays = (reason: string): void => {
     const now = ctx.deps.now()
@@ -1371,7 +1394,7 @@ async function sweepEnded(s: Sweep, real: string, entry: WorkspaceEntry): Promis
       ledgerWrite(ctx, `the reason of ${real}`, () => changeEntry(ctx.root, real, e => ({ ...e, said: at })))
       say(ctx, `ledger: ${real} still stays since ${entry.reason_at ?? 'an unknown date'}: ${reason} ${owners}`)
     }
-    keep(ctx, real, `${reason} (no live orchestrator or agent)`)
+    keep(ctx, real, `${reason} (${over})`)
   }
   // Who lives is read in the registry: one that cannot be read ends nothing.
   if (sessionsOf(ctx) === null) return keep(ctx, real, 'the session registry cannot be read')
@@ -1381,7 +1404,7 @@ async function sweepEnded(s: Sweep, real: string, entry: WorkspaceEntry): Promis
     const reason = await refusal(ctx, real, work.pushed.length > 0)
     if (reason !== '') return stays(reason)
     const push = work.pushed.length > 0 ? `, after pushing ${work.pushed.join(' ')}` : ''
-    return out(ctx, `would delete ${real}: no live orchestrator or agent${push}`)
+    return out(ctx, `would delete ${real}: ${over}${push}`)
   }
   // `delete --push`: what it pushed is said whether the removal completes or not.
   const removed = await removeInSweep(s, real, ['--push'])

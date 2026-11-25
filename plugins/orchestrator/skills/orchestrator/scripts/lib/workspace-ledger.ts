@@ -6,9 +6,11 @@
 // archive beside it, with how it ended), the sweep adopts a checkout no line names and writes the
 // reason one stays. It lives in the root itself, beside what it describes, a dot file no loop over
 // the root reads as a checkout. Read and written by `workspace.ts` alone.
-import { appendFileSync, readdirSync } from 'node:fs'
+// It reads who lives in the host's registry, and when an agent last spoke on the host's transcripts.
+import { appendFileSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { orchForm, roleOf } from '../../../../core/names.ts'
+import { configDir, setting, type Env } from '../../../../core/paths.ts'
 import { HOST_SESSIONS_DIR } from '../../../../core/session-orchestration.ts'
 import { readText, update } from '../../../../core/store.ts'
 
@@ -24,6 +26,65 @@ export const WORKSPACE_LEDGER = {
  * name (a shell, an older script) is given before it is judged on its owners.
  */
 export const GRACE_MS = 60 * 60 * 1000
+
+const isText = (v: unknown): v is string => typeof v === 'string'
+
+interface ResumeWindow {
+  readonly within_seconds: number
+  readonly env: string
+  readonly plan_dirs: readonly string[]
+}
+
+/** The resume window's data, the launcher's too (`resume-window.json`), or an error naming the file. */
+function resumeData(text: string): ResumeWindow {
+  const read: unknown = JSON.parse(text)
+  const r = (typeof read === 'object' && read !== null ? read : {}) as Record<string, unknown>
+  const dirs = r['plan_dirs']
+  if (typeof r['within_seconds'] !== 'number' || !isText(r['env']) || !Array.isArray(dirs) || !dirs.every(isText)) throw new Error('resume-window.json is not the resume window\'s data')
+  return { within_seconds: r['within_seconds'], env: r['env'], plan_dirs: dirs }
+}
+
+const RESUME = resumeData(readFileSync(new URL('./resume-window.json', import.meta.url), 'utf8'))
+
+/** How long after its last turn a closed agent is resumed: past it, `spawn --resume` is refused and its checkout's use is over. */
+export function resumeWindowMs(env: Env): number {
+  const set = Number(setting(env, RESUME.env) ?? Number.NaN)
+  return (Number.isFinite(set) ? set : RESUME.within_seconds) * 1000
+}
+
+/** The folders the host keeps transcripts in, the ones the launcher searches for the session it resumes. */
+function transcriptFolders(env: Env): string[] {
+  const only = setting(env, 'ORCHESTRATOR_PROJECTS_DIR')
+  if (only !== undefined) return [only]
+  const home = setting(env, 'HOME') ?? ''
+  return [...new Set([configDir(env, home), ...RESUME.plan_dirs.map(d => join(home, d))])].map(d => join(d, 'projects'))
+}
+
+/**
+ * When a session that ran in a checkout last spoke: the newest transcript, not older than `since` (an
+ * earlier checkout at the same path left its own), in the host's folder named `name` after the directory
+ * the session started in. Undefined when none did.
+ */
+export function lastTurnIn(env: Env, name: string, since: number): number | undefined {
+  let last: number | undefined
+  for (const folder of transcriptFolders(env)) {
+    let files: string[]
+    try {
+      files = readdirSync(join(folder, name)).filter(f => f.endsWith('.jsonl'))
+    } catch {
+      continue
+    }
+    for (const f of files) {
+      try {
+        const at = statSync(join(folder, name, f)).mtimeMs
+        if (at >= since && (last === undefined || at > last)) last = at
+      } catch {
+        // Removed between the listing and the read of its time: no transcript any more.
+      }
+    }
+  }
+  return last
+}
 
 /** How often the sweep says again why a checkout of no live owner stays. */
 export const RESAY_MS = 24 * 60 * 60 * 1000
@@ -44,7 +105,7 @@ export interface WorkspaceEntry {
   readonly created: string
   /** True when the sweep found the checkout with no line and wrote one. */
   readonly adopted?: boolean
-  /** Why it is still there while no orchestrator and no agent of it lives. */
+  /** Why it is still there once its use is over: no live agent past the resume window, or no live owner at all. */
   readonly reason?: string
   readonly reason_at?: string
   /** When the reason was last said by the sweep: it is said again once a day (`RESAY_MS`), so a checkout never stays silently. */
@@ -64,7 +125,6 @@ export interface ClosedEntry extends WorkspaceEntry {
   readonly by?: string
 }
 
-const isText = (v: unknown): v is string => typeof v === 'string'
 const isTextOrNull = (v: unknown): v is string | null => v === null || typeof v === 'string'
 
 /** One line, or null when it is no entry of this version. */
