@@ -115,6 +115,13 @@ def open_data_file(path, flags, mode=0o600):
 
 
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
+# The tabs' order of the app as the last read of it found it: what a restart keeps when iTerm2 does not answer.
+ORDER_FILE = os.path.join(STATE_DIR, "iterm-order.json")
+# The commands that move, open, close or list a tab: each keeps the order after it, when it reached the app.
+ORDER_CHANGERS = ("spawn", "close", "move", "rotate", "home", "home-release", "list")
+# The most a read of the app's order may take, and whether this process's API calls have answered.
+LAYOUT_WAIT = 15
+ANSWERED = False
 CHAINS_DIR = os.path.join(DATA_DIR, "chains")
 AUDITORS_DIR = os.path.join(DATA_DIR, "auditors")
 SELF_TTY = os.environ.get("ORCHESTRATOR_SELF_TTY", "")
@@ -2209,6 +2216,71 @@ def coord_name_on(tty):
     return None
 
 
+class Overdue(Exception):
+    """A call to the app that did not answer within its deadline."""
+
+
+@contextlib.contextmanager
+def deadline(seconds):
+    """The block cut at `seconds`: a call the library waits on for ever raises Overdue instead."""
+    def late(signum, frame):
+        raise Overdue("iTerm2 did not answer in %ds" % seconds)
+    previous = signal.signal(signal.SIGALRM, late)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def app_layout():
+    """The app's windows, each its tabs in order, each its sessions' ttys and titles."""
+    async def go(iterm2, connection):
+        app, windows = await iterm2.async_get_app(connection), []
+        for window in app.windows:
+            windows.append([])
+            for tab in window.tabs:
+                windows[-1].append([{"tty": await session_tty(s), "title": await s.async_get_variable(
+                    "autoName") or ""} for s in tab.all_sessions])
+        return windows
+    with deadline(LAYOUT_WAIT):
+        return run(go)
+
+
+def keep_order(windows=None):
+    """The app's order of tabs, kept for a restart whose iTerm2 does not answer. `windows` is a read
+    just made; without it, the order is read now, and only when this process's calls reached the app
+    (a dry run keeps nothing). An empty order is not kept over one. Never raises."""
+    if DRY_RUN or windows is None and not ANSWERED:
+        return
+    with contextlib.suppress(Exception, SystemExit):
+        windows = app_layout() if windows is None else windows
+        if any(windows):
+            write_json(ORDER_FILE, {"version": 1, "at": time.time(), "windows": windows})
+
+
+def kept_order():
+    """`(windows, at)` of the order kept, or None: a file of this launcher's, read through a validator."""
+    try:
+        with open(ORDER_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("version") != 1 or type(data.get("at")) not in (int, float):
+        return None
+    windows = data.get("windows")
+    if not isinstance(windows, list) or not all(
+            isinstance(tabs, list) and all(
+                isinstance(tab, list) and all(
+                    isinstance(s, dict) and isinstance(s.get("tty"), str) and isinstance(s.get("title"), str)
+                    for s in tab)
+                for tab in tabs)
+            for tabs in windows):
+        return None
+    return windows, data["at"]
+
+
 def registered_coord_on(tty):
     """The coordinator's name when the coordinator's own record places it on this tty, None
     otherwise.
@@ -2348,6 +2420,8 @@ def run(coro_fn):
         result["value"] = await coro_fn(iterm2, connection)
 
     iterm2.run_until_complete(main)
+    global ANSWERED
+    ANSWERED = True
     return result.get("value")
 
 
@@ -7568,13 +7642,15 @@ def main():
         die(LAUNCHER_ARGS["usage"])
     if "words" in request:
         COMMANDS[command](request["words"])
-        return
-    args = args_of(command, request.get("options") or {})
-    rest = request.get("rest")
-    if rest:
-        args.spawn = args_of(rest["command"], rest.get("options") or {},
-                             unknown=rest.get("unknown") or [])
-    COMMANDS[command](args)
+    else:
+        args = args_of(command, request.get("options") or {})
+        rest = request.get("rest")
+        if rest:
+            args.spawn = args_of(rest["command"], rest.get("options") or {},
+                                 unknown=rest.get("unknown") or [])
+        COMMANDS[command](args)
+    if command in ORDER_CHANGERS:
+        keep_order()
 
 
 if __name__ == "__main__":

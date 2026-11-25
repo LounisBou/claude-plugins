@@ -9508,6 +9508,57 @@ check "a session that was working and shows no activity is named" "1|1" \
 res=$(restarted wedged)
 check "a wedged iTerm2 is restarted, its tabs' order said unknown and not proved" "1|1|orch-a+orch-b|$RALL|1" \
   "$(sfield "$res" exit)|$(rsays '^order: unknown')|$(sfield "$res" armed)|$(sfield "$res" alive)|$(rsays 'DEFECT the tabs. order was not known')"
+res=$(restarted frozen-kept)
+check "a frozen iTerm2 is restarted in the order the launcher kept, its age said and proved" "0|1|$RORDER|1" \
+  "$(sfield "$res" exit)|$(rsays '^- order: kept order of 1m35s, iTerm2 does not answer$')|$(sfield "$res" tabs)|$(rsays '^# iTerm2 restart: done, everything proved')"
+res=$(restarted frozen-hand)
+check "a tab opened by hand since the kept order is put after the known ones, and named" "0|$RORDER|1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" tabs)|$(rsays '^- kept order: /dev/ttys050 opened since it')|$(rsays '^# iTerm2 restart: done, everything proved')"
+res=$(restarted frozen-kept)
+check "a shell outside iTerm2 is no tab of the restart: named nowhere, and no tab of its tty wanted" "0|0|$RORDER" \
+  "$(sfield "$res" exit)|$(rsays 'ttys099')|$(sfield "$res" tabs)"
+res=$(restarted frozen-login)
+check "a plain tab opened by hand, with its shell and its host, is named once and put once, after the known ones" "0|1|031 001 060/002 050 041" \
+  "$(sfield "$res" exit)|$(rsays '^- kept order: /dev/ttys041 opened since it')|$(sfield "$res" tabs)"
+res=$(restarted frozen-client)
+check "a home client opened by hand since the kept order is put after the known ones, and named once" "0|1|031 001 060/041 050 002" \
+  "$(sfield "$res" exit)|$(rsays '^- kept order: /dev/ttys002 opened since it')|$(sfield "$res" tabs)"
+res=$(restarted frozen-dead)
+check "a tab closed since the kept order is dropped, its tty named by no line, and the restart proved" "0|0|1|$RORDER" \
+  "$(sfield "$res" exit)|$(rsays 'ttys880')|$(rsays '^# iTerm2 restart: done, everything proved')|$(sfield "$res" tabs)"
+res=$(restarted frozen-empty)
+check "a kept order with no tab left is no order: its defect said, the tabs not proved" "1|1|1" \
+  "$(sfield "$res" exit)|$(rsays '^order: unknown')|$(rsays 'DEFECT the tabs. order was not known before the stop')"
+res=$(restarted frozen-stale)
+check "a kept order whose tabs all closed is no order either: the defect said, never an invented order" "1|1|1" \
+  "$(sfield "$res" exit)|$(rsays '^order: unknown')|$(rsays 'DEFECT the tabs. order was not known before the stop')"
+res=$(restarted dispatch)
+check "each command of the launcher that reads the app keeps the order, a command that reads nothing, that is not listed, or that runs in a dry run keeps none" \
+  "present,present,present,present,present,present,present,absent,absent,absent" "$(sfield "$res" dispatch)"
+res=$(restarted real-run)
+check "the launcher's own call keeps the order only once the app has answered it: a call that raises keeps none" "present,absent" \
+  "$(sfield "$res" real)"
+res=$(restarted empty-keep)
+check "an empty read never replaces the order kept" "kept" "$(sfield "$res" empty)"
+res=$(restarted frozen-plain)
+check "a plain tab of no session and no shell, opened by hand since the kept order, is named and put after the known ones" "0|1|031 001 060/002 050 041" \
+  "$(sfield "$res" exit)|$(rsays '^- kept order: /dev/ttys041 opened since it')|$(sfield "$res" tabs)"
+res=$(restarted mute)
+check "a read the app never answers is cut at its deadline, and keeps no order" "absent" "$(sfield "$res" mute)"
+res=$(restarted ok)
+check "a restart keeps the order it reads, live, for the next restart when iTerm2 does not answer" "1" \
+  "$([ -e "$RSW/state/iterm-order.json" ] && echo 1 || echo 0)"
+res=$(restarted deaf)
+check "a restart that stops before its tabs are back keeps the order it read before the stop, not the new one" "1|0" \
+  "$(sfield "$res" exit)|$(grep -c '/dev/ttys060' "$RSW/state/iterm-order.json")"
+res=$(restarted lost-client)
+check "a restart whose tabs are back and proved keeps the order they are in" "1|0" \
+  "$(grep -c '/dev/ttys090' "$RSW/state/iterm-order.json")|$(grep -c '/dev/ttys002' "$RSW/state/iterm-order.json")"
+res=$(restarted no-work)
+check "a restart with a defect keeps no new order: the one read before the stop stands" "0" \
+  "$(grep -c '/dev/ttys060' "$RSW/state/iterm-order.json")"
+res=$(restarted ok --check)
+check "a check of a restart keeps no order" "0" "$([ -e "$RSW/state/iterm-order.json" ] && echo 1 || echo 0)"
 res=$(restarted kept-disarmed)
 check "a server a close left disarmed is not armed by a restart" "0|orch-a" "$(sfield "$res" exit)|$(sfield "$res" armed)"
 RDIS='disarm orch-a,disarm orch-b'
