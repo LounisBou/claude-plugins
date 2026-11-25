@@ -354,3 +354,18 @@ test('to-do lines: none, or each open item with its words, its date and its defe
   const item = JSON.stringify({ v: 1, id: 4, opened: 'x', label: 'l', state: 'open', deferred: 'later', verdict: '', words: 'w', said_at: 'd', from: 'f' })
   assert.equal(todoLines(item), '\n  - [4] l: « w » (d) deferred: later')
 })
+
+test('rotation on a checkout that is gone: the refusal names how to make it again, with the name, the project and the branch it knows', () => {
+  const w = world()
+  const gone = join(dir, 'root', 'app', 'routes')
+  const phaseBrief = join(dir, 'phase.md')
+  const refused = (text: string): string => {
+    writeFileSync(phaseBrief, text)
+    w.err.length = 0
+    assert.equal(w.run('rotation', '--record', w.record, '--row', '2', '--phase-brief', phaseBrief, '--worktree', gone, '--orchestrator', ORCH, '--tty', 'none', '--title', 'x', '--out', join(dir, 'o.md')), 2)
+    return w.err.join('')
+  }
+  assert.equal(refused('# app\nBranch: `feat/routes`, from `main`, which stood at abc123\n'),
+    `brief: rotation: no checkout at ${gone}: make it again from the pushed branch, \`workspace.sh create <the app repository> routes --base feat/routes\`, then print this brief again\n`)
+  assert.match(refused('# app\nno branch line\n'), /`workspace\.sh create <the app repository> routes --base <the pushed branch>`/)
+})

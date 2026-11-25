@@ -6326,8 +6326,7 @@ def cmd_close(args):
     # Read BEFORE the close: what the proof below is a proof ABOUT.
     was_running = host_cli_on(host_tty)
     # And the same for the checkout the session works in: once it is gone nothing says where.
-    # A rotation keeps it without marking it: its replacement works there, and the sweep ends
-    # the checkout once the replacement's pull request is over.
+    # A rotation keeps it without marking it: its replacement works there, and the sweep ends it as any.
     checkout = None
     marking = bool(args.keep_checkout) and not getattr(args, "rotating", False)
     if not args.keep_checkout or marking:

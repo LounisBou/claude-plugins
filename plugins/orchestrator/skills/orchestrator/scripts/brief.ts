@@ -244,8 +244,13 @@ function rotationValues(f: Fields, deps: Deps): Values {
   if ('error' in found) return found
   const row = found.row
   const worktree = f['worktree'] ?? ''
-  if (!existsSync(worktree)) return { error: `no checkout at ${worktree}` }
-  if (readText(f['phase-brief'] ?? '') === undefined) return { error: `no phase brief at ${f['phase-brief']}` }
+  const phaseBrief = readText(f['phase-brief'] ?? '')
+  // A closed agent's checkout is swept once its resume window has passed: the refusal says how to make it again.
+  if (!existsSync(worktree)) {
+    const pushed = /^Branch: `?([^`,\s]+)/m.exec(phaseBrief ?? '')?.[1] ?? '<the pushed branch>'
+    return { error: `no checkout at ${worktree}: make it again from the pushed branch, \`workspace.sh create <the ${basename(dirname(worktree))} repository> ${basename(worktree)} --base ${pushed}\`, then print this brief again` }
+  }
+  if (phaseBrief === undefined) return { error: `no phase brief at ${f['phase-brief']}` }
   const base = f['base'] ?? 'origin/main'
   const branch = deps.git(worktree, ['rev-parse', '--abbrev-ref', 'HEAD']) ?? 'a branch this command could not read'
   const plan = f['plan'] === undefined ? undefined : readText(f['plan'])
