@@ -91,7 +91,7 @@ export function lostModuleLines(ctx: Context, sessions: readonly Session[], unre
       continue
     }
     if (moduleLost(text)) {
-      lines.push(`module-lost ${name} | session ${id} | pid ${session.pid} | ${session.tty} | its orchestrator module is not loaded: tell the operator; cure: end it, then resume it in place: claude --resume ${id}`)
+      lines.push(`module-lost ${name} | session ${id} | pid ${session.pid} | ${session.tty} | its orchestrator module is not loaded: tell the operator; cure: end it, then resume it in place with --resume ${id}`)
     }
   }
   return lines

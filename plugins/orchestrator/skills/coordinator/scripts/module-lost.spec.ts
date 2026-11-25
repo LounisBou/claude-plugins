@@ -65,7 +65,7 @@ function home(): { f: Fixture; config: string } {
 
 const lost = transcript(born, dropped, back)
 const said = (pid: string, name: string): string =>
-  `module-lost ${name} | session id-${pid} | pid ${pid} | ttys${pid} | its orchestrator module is not loaded: tell the operator; cure: end it, then resume it in place: claude --resume id-${pid}`
+  `module-lost ${name} | session id-${pid} | pid ${pid} | ttys${pid} | its orchestrator module is not loaded: tell the operator; cure: end it, then resume it in place with --resume id-${pid}`
 
 describe('lostModuleLines', () => {
   it('names a live Coord, Orch or Audit session whose module is absent, and no other', () => {

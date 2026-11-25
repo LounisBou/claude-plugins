@@ -5,6 +5,6 @@ disable-model-invocation: true
 
 The plugin's hook opens the pane with no model turn, so reading this most likely means
 this session's orchestrator module is not loaded. Tell the operator that in one line, with
-the cure: end the session, then `claude --resume ${CLAUDE_SESSION_ID}`.
+the cure: end it, then resume it with `--resume` and the id in `$CLAUDE_CODE_SESSION_ID`.
 
 $ARGUMENTS

@@ -107,8 +107,8 @@ skills/coordination/references/orchestrators.md  pausing, waking and opening an 
 skills/coordination/references/succession.md  the coordinator's own succession, read at its gate
 skills/coordinator/scripts/coordinator.sh  the coordinator's record and facts, the sleeping orchestrators, the round
 skills/coordinator/scripts/coordinator.ts  the coordinator's commands, run by coordinator.sh
-skills/coordinator/scripts/context.ts, skills/coordinator/scripts/facts.ts, skills/coordinator/scripts/liveness.ts, skills/coordinator/scripts/lock.ts, skills/coordinator/scripts/record.ts, skills/coordinator/scripts/round.ts, skills/coordinator/scripts/sleeping.ts  what those commands read from their process, one file per concern
-skills/coordinator/scripts/fixture.ts, skills/coordinator/scripts/decide.spec.ts, skills/coordinator/scripts/facts.spec.ts, skills/coordinator/scripts/lock.spec.ts, skills/coordinator/scripts/record.spec.ts, skills/coordinator/scripts/round.spec.ts, skills/coordinator/scripts/sleeping.spec.ts  their node tests, on a context of their own
+skills/coordinator/scripts/context.ts, skills/coordinator/scripts/facts.ts, skills/coordinator/scripts/liveness.ts, skills/coordinator/scripts/lock.ts, skills/coordinator/scripts/module-lost.ts, skills/coordinator/scripts/record.ts, skills/coordinator/scripts/round.ts, skills/coordinator/scripts/sleeping.ts  what those commands read from their process, one file per concern
+skills/coordinator/scripts/fixture.ts, skills/coordinator/scripts/decide.spec.ts, skills/coordinator/scripts/facts.spec.ts, skills/coordinator/scripts/lock.spec.ts, skills/coordinator/scripts/module-lost.spec.ts, skills/coordinator/scripts/record.spec.ts, skills/coordinator/scripts/round.spec.ts, skills/coordinator/scripts/sleeping.spec.ts  their node tests, on a context of their own
 skills/model-routing/SKILL.md        which model/effort pair a dispatch gets
 skills/model-routing/scripts/routing.py  the entry point of every routing subcommand: cost, profile, pick
 skills/model-routing/defaults/README.md  what the shipped tier/effort tables are and how they are made
