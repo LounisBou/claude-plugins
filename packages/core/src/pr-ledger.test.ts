@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  archiveOf, endedLines, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_EARLIER_KEPT, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
+  agentsOf, archiveOf, endedLines, everyAgentOf, isLedgerMarked, ledgerLineOf, ledgerLines, LEDGER_EARLIER_KEPT, LEDGER_VERSION, parseLedgerLine, parsePrRef, prKey,
   blockerFallen, isFreshWait, readyRows, readyRowsLine, statusText, subjectOf, atWord, unattended, unattendedLine, unattendedPaneLines, unattendedParts, UNATTENDED_AFTER_MS, waitsOnOperator, untilOf, withArchived, withLine, withoutEarlier, withoutLines, type LedgerLine,
 } from './pr-ledger.ts'
 
@@ -86,6 +86,24 @@ describe('the pull request ledger', () => {
     assert.deepEqual(parseLedgerLine(JSON.parse(JSON.stringify(fix))), JSON.parse(JSON.stringify(fix)))
     assert.deepEqual(parseLedgerLine({ ...fix, earlier: 'Agent: author' })?.earlier, undefined)
     assert.deepEqual(parseLedgerLine({ ...fix, earlier: ['Agent: author', ' ', 3] })?.earlier, ['Agent: author'])
+  })
+
+  it('keeps every agent that worked on it through a wait, a parking and a review put on it, until its end: the ones its Ready or its end closes', () => {
+    const author = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: author' }, new Date(AT))
+    const waits = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'waiting', on: 'CI' }, new Date(AT), author)
+    // A wait attends nothing (agentsOf), and still names the agent to close.
+    assert.deepEqual([agentsOf(waits), everyAgentOf(waits)], [[], ['Agent: author']])
+    const review = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: review r1' }, new Date(AT), waits)
+    assert.deepEqual(everyAgentOf(review), ['Agent: review r1', 'Agent: author'])
+    const parked = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'parked', ruling: 'his words' }, new Date(AT), review)
+    assert.deepEqual(everyAgentOf(parked), ['Agent: review r1', 'Agent: author'])
+    // The author put back on it is named once, as its agent.
+    const back = ledgerLineOf({ repo: 'acme/app', pr: 7, status: 'working', agent: 'Agent: author' }, new Date(AT), parked)
+    assert.deepEqual([back.agent, everyAgentOf(back)], ['Agent: author', ['Agent: author', 'Agent: review r1']])
+    // Read back from the record; and an agent put to work elsewhere leaves it.
+    assert.deepEqual(parseLedgerLine(JSON.parse(JSON.stringify(parked))), JSON.parse(JSON.stringify(parked)))
+    const moved = JSON.parse(withoutEarlier(`${JSON.stringify(parked)}\n`, 'Agent: author').trim()) as LedgerLine
+    assert.deepEqual(everyAgentOf(moved), ['Agent: review r1'])
   })
 
   it('an agent the orchestrator puts to work on a pull request leaves the earlier list of every other line: it no longer works there', () => {
