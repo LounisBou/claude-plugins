@@ -10584,7 +10584,7 @@ check "every copy keeps its plugin command's description" "" \
 check "every copy is its plugin command with the root spelled out and the marker after the opening line" "" \
   "$(while IFS=$'\t' read -r short file; do diff <(sed "s#\${CLAUDE_PLUGIN_ROOT}#$ROOT#g" "$ROOT/commands/$file.md" | awk -v m="$SNMARK" 'NR == 2 { print m } { print }') "$SND/$short.md" >/dev/null || echo "differs:$short"; done < "$ROOT/short-names.tsv")"
 check "the pane's short name carries the file's own body, and no coordinator copy is written" "|no" \
-  "$(diff <(sed 1,2d "$SND/orchestrator-supervision.md") <(sed 1d "$ROOT/commands/supervision.md"))|$([ -e "$SND/coordinator-supervision.md" ] && echo yes || echo no)"
+  "$(diff <(sed 1,2d "$SND/orchestrator-supervision.md") <(sed -e 1d -e "s#\${CLAUDE_PLUGIN_ROOT}#$ROOT#g" "$ROOT/commands/supervision.md"))|$([ -e "$SND/coordinator-supervision.md" ] && echo yes || echo no)"
 # An update: a copy written by an earlier version names that version's root; it is rewritten.
 sed -i.bak "s#$ROOT#/old/plugin/root#g" "$SND/coordinator.md"; rm -f "$SND"/*.bak
 snout=$(inst "$SNH" 2>&1)
