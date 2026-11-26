@@ -434,6 +434,65 @@ test('create: a nested worktree or repository in the source is skipped from the 
   assert.equal(copyFiles(dir, join(dir, 'into'), []), undefined)
 })
 
+/** Whether this machine can run an LFS filter. */
+const lfs = ((): boolean => {
+  try {
+    execFileSync('git-lfs', ['version'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+})()
+
+test('create --base: the checkout takes the LFS objects the source holds, and names what git said of one nobody holds', { skip: !lfs && 'git-lfs is not installed' }, async () => {
+  const config = join(dir, 'lfs-gitconfig')
+  writeFileSync(config, '[filter "lfs"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n')
+  process.env['GIT_CONFIG_GLOBAL'] = config
+  try {
+    const src = pushed('large')
+    writeFileSync(join(src, '.gitattributes'), '*.bin filter=lfs diff=lfs merge=lfs -text\n')
+    writeFileSync(join(src, 'big.bin'), 'large content\n')
+    g(src, 'add', '-A')
+    g(src, 'commit', '-q', '-m', 'Large')
+    g(src, 'push', '-q', 'origin', 'main')
+    // The origin serves no LFS object from here on: a download from it fails, as a network's does.
+    rmSync(join(dir, 'large.git', 'lfs'), { recursive: true, force: true })
+    const w = world()
+    const r = await ws(w, 'create', src, 'held', '--base', 'main')
+    assert.equal(r.code, 0, r.err)
+    assert.equal(readFileSync(join(r.out.trim(), 'big.bin'), 'utf8'), 'large content\n')
+    assert.equal(g(r.out.trim(), 'status', '--porcelain'), '')
+
+    rmSync(join(src, '.git', 'lfs'), { recursive: true, force: true })
+    const refused = await ws(w, 'create', src, 'lost', '--base', 'main')
+    assert.equal(refused.code, 1)
+    assert.match(refused.err, /^workspace: create: cannot check out main from origin\/main: Error downloading object: big\.bin .*\n$/)
+    assert.ok(!existsSync(join(dir, 'root', 'large', 'lost')))
+  } finally {
+    process.env['GIT_CONFIG_GLOBAL'] = '/nonexistent/gitconfig'
+  }
+})
+
+test("create: every git step that fails carries git's first stderr line, or its status when it said nothing", async () => {
+  const src = pushed('said')
+  const w = world()
+  const real = w.deps.run
+  const failing = (verb: string, ran: Ran): World => ({ ...w, deps: { ...w.deps, run: async (argv, options) => argv.includes(verb) ? ran : real(argv, options) } })
+  const ran: Ran = { status: 128, stdout: '', stderr: 'fatal: the reason\nand more\n' }
+  const url = join(dir, 'said.git')
+  for (const [verb, what] of [
+    ['clone', `clone failed from ${src}`], ['set-url', `cannot point origin at ${url}`],
+    ['fetch', `cannot fetch main from ${url}`], ['checkout', 'cannot check out main from origin/main'],
+  ] as const) {
+    const r = await ws(failing(verb, ran), 'create', src, verb, '--base', 'main')
+    assert.deepEqual([r.code, r.err.split('\n').at(-2)], [1, `workspace: create: ${what}: fatal: the reason`])
+  }
+  const mute = await ws(failing('checkout', { status: 1, stdout: '', stderr: '' }), 'create', src, 'mute', '--base', 'main')
+  assert.equal(mute.err.split('\n').at(-2), 'workspace: create: cannot check out main from origin/main: git exited 1')
+  const killed = await ws(failing('clone', { status: null, stdout: '', stderr: '' }), 'create', src, 'killed')
+  assert.equal(killed.err, `workspace: create: clone failed from ${src}: git gave no exit status\n`)
+})
+
 test('create: a copy that fails removes the checkout and names the step', async () => {
   const src = repo(join(dir, 'src', 'few'))
   writeFileSync(join(src, 'locked.txt'), 'x')

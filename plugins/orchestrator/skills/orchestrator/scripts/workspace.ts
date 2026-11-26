@@ -1,6 +1,7 @@
 // workspace — a checkout per phase, with the project's local material.
 //
-//   workspace.sh create <source-repo> <name> [--base <branch|origin/branch>]   prints the checkout's path; --base <branch> starts from origin/<branch>, the local branch only when origin has none
+//   workspace.sh create <source-repo> <name> [--base <branch|origin/branch>]   prints the checkout's path; --base <branch> starts from origin/<branch>, the local branch only when origin has none;
+//                                                              the source's LFS objects go with it, so only those it lacks are downloaded
 //   workspace.sh pin <source-repo> <name> <ref> [--pr <n>]     a detached worktree at that commit, of the local material only the global excludes' files; prints its path
 //   workspace.sh delete <path> [--discard] [--push] [--by <close|sweep|delete>]   refuses unpushed work unless told; --push pushes its branches
 //                                                              first; also removes the host's temporary directory of the
@@ -70,7 +71,7 @@
 // launches anything, and never touches the source. A pin writes nothing into the source
 // but its worktree metadata.
 import {
-  chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync,
+  chmodSync, constants, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync,
   readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, appendFileSync, writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -754,6 +755,29 @@ function copyOrFail(ctx: Context, from: string, to: string, paths: readonly stri
   fail(what)
 }
 
+/** git's own account of a failure: its first stderr line, an LFS download's progress apart. */
+function gitSaid(ran: Ran): string {
+  const line = ran.stderr.split('\n').find(l => l.trim() !== '' && !l.startsWith('Downloading '))
+  return line ?? (ran.status === null ? 'git gave no exit status' : `git exited ${ran.status}`)
+}
+
+/*
+ * A local clone carries no LFS object, and once origin is the real remote a checkout downloads
+ * each one from it, a single failed download failing the whole checkout. So the source's own go
+ * with the clone (copy-on-write where the filesystem can); one it lacks is still downloaded.
+ */
+async function carryLfsObjects(ctx: Context, src: string, target: string): Promise<void> {
+  const common = await gitOut(ctx, src, ['rev-parse', '--git-common-dir'])
+  if (common === undefined) return
+  const objects = join(resolve(src, common), 'lfs', 'objects')
+  if (!isDir(objects)) return
+  try {
+    cpSync(objects, join(target, '.git', 'lfs', 'objects'), { recursive: true, mode: constants.COPYFILE_FICLONE })
+  } catch (e) {
+    say(ctx, `the source's LFS objects were not all copied, the checkout downloads the rest: ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
 async function topLevel(ctx: Context, cmd: string, src: string): Promise<string> {
   const top = await gitOut(ctx, src, ['rev-parse', '--show-toplevel'])
   if (top === undefined) throw new Refused(`${cmd}: not a git repository: ${src}`)
@@ -816,16 +840,18 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
     rmTree(target)
     throw new Refused(`create: ${text}`)
   }
-  const cloned = remoteBranch !== ''
-    ? await ctx.deps.run(['git', 'clone', '--quiet', '--no-checkout', src, target])
-    : await ctx.deps.run(['git', 'clone', '--quiet', '--branch', base, src, target])
-  if (cloned.status !== 0) fail(`clone failed from ${src}`)
+  const must = async (step: Promise<Ran>, what: string): Promise<void> => {
+    const ran = await step
+    if (ran.status !== 0) fail(`${what}: ${gitSaid(ran)}`)
+  }
+  const how = remoteBranch !== '' ? ['--no-checkout'] : ['--branch', base]
+  await must(ctx.deps.run(['git', 'clone', '--quiet', ...how, src, target], { stderr: 'pipe' }), `clone failed from ${src}`)
 
   // origin is the real remote, so the implementer's push reaches it; a source without one
   // yields a checkout without one, and says so.
   const url = origin
   if (url !== '') {
-    if ((await git(ctx, target, ['remote', 'set-url', 'origin', url])).status !== 0) fail(`cannot point origin at ${url}`)
+    await must(git(ctx, target, ['remote', 'set-url', 'origin', url]), `cannot point origin at ${url}`)
   } else {
     await git(ctx, target, ['remote', 'remove', 'origin'])
     say(ctx, 'the source has no origin; the checkout has none either')
@@ -833,12 +859,11 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
 
   if (remoteBranch !== '') {
     if (url === '') fail(`--base ${base} needs the source to have an origin`)
-    if ((await git(ctx, target, ['fetch', '--quiet', 'origin', remoteBranch])).status !== 0) fail(`cannot fetch ${remoteBranch} from ${url}`)
+    await must(git(ctx, target, ['fetch', '--quiet', 'origin', remoteBranch]), `cannot fetch ${remoteBranch} from ${url}`)
+    await carryLfsObjects(ctx, src, target)
     // -B, not -b: a --no-checkout clone already made the local branch the source's HEAD names,
     // and -b would refuse it.
-    if ((await git(ctx, target, ['checkout', '--quiet', '-B', remoteBranch, `origin/${remoteBranch}`])).status !== 0) {
-      fail(`cannot check out ${remoteBranch} from origin/${remoteBranch}`)
-    }
+    await must(git(ctx, target, ['checkout', '--quiet', '-B', remoteBranch, `origin/${remoteBranch}`]), `cannot check out ${remoteBranch} from origin/${remoteBranch}`)
   }
   if (explicit) {
     const sha = (await gitOut(ctx, target, ['rev-parse', 'HEAD'])) ?? ''
