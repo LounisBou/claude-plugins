@@ -71,7 +71,7 @@
 // launches anything, and never touches the source. A pin writes nothing into the source
 // but its worktree metadata.
 import {
-  chmodSync, constants, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync,
+  chmodSync, copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync,
   readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, appendFileSync, writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -762,9 +762,33 @@ function gitSaid(ran: Ran): string {
 }
 
 /*
+ * Every file of the LFS store `from` at the same place under `to`, in directories of its own:
+ * links are followed at every depth, so nothing under `to` leads back into the source, where an
+ * LFS command of the checkout would write. Each object is a hard link: it is named after its
+ * content and never rewritten in place, so sharing it costs no byte. Where the filesystem
+ * refuses the link (another volume), it is copied.
+ */
+export function carryStore(from: string, to: string, link: (existing: string, path: string) => void = linkSync): void {
+  mkdirSync(to, { recursive: true })
+  for (const name of readdirSync(from).sort()) {
+    const real = realpathSync(join(from, name))
+    const own = join(to, name)
+    if (statSync(real).isDirectory()) {
+      carryStore(real, own, link)
+      continue
+    }
+    try {
+      link(real, own)
+    } catch {
+      copyFileSync(real, own)
+    }
+  }
+}
+
+/*
  * A local clone carries no LFS object, and once origin is the real remote a checkout downloads
  * each one from it, a single failed download failing the whole checkout. So the source's own go
- * with the clone (copy-on-write where the filesystem can); one it lacks is still downloaded.
+ * with the clone; one it lacks is still downloaded.
  */
 async function carryLfsObjects(ctx: Context, src: string, target: string): Promise<void> {
   const common = await gitOut(ctx, src, ['rev-parse', '--git-common-dir'])
@@ -772,9 +796,9 @@ async function carryLfsObjects(ctx: Context, src: string, target: string): Promi
   const objects = join(resolve(src, common), 'lfs', 'objects')
   if (!isDir(objects)) return
   try {
-    cpSync(objects, join(target, '.git', 'lfs', 'objects'), { recursive: true, mode: constants.COPYFILE_FICLONE })
+    carryStore(objects, join(target, '.git', 'lfs', 'objects'))
   } catch (e) {
-    say(ctx, `the source's LFS objects were not all copied, the checkout downloads the rest: ${e instanceof Error ? e.message : String(e)}`)
+    say(ctx, `the source's LFS objects were not all carried, the checkout downloads the rest: ${e instanceof Error ? e.message : String(e)}`)
   }
 }
 
