@@ -34,7 +34,7 @@ below, and the `args` object holds the subcommand's arguments.
 | `pr-commits` | `<pr>` | A line per commit (`commits-summary`); `--json`: the commits, paginated |
 | `file-at-ref` | `<path> <ref>` | A file's contents at a ref |
 | `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch. One line (`pr-created`): `owner/name#N`, URL, head, labels, then `related` and the PRs updated; `--json` the PR. It gets `Not Ready`; a label failure only prints `error:`. Each open PR its `Related PRs` section names gets the new PR added to its own `Related PRs`; one that cannot be updated only prints `error:` |
-| `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, or its whole stack, a draft above it left out with all on it; no `--method`: the first the repository allows |
+| `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, or its whole stack, a draft above it left out with all on it; no `--method`: first allowed, next if refused |
 
 `pr-gate` is the one reading of CI, the ready guard's and the orchestrator's: it reads the PR, then at
 its head the statuses, check runs and Actions runs, and the base's required checks. `state` is `open`,
