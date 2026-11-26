@@ -2208,6 +2208,29 @@ POST /repos/acme/thing/labels {"color": "8c1455", "name": "Not Ready"}
 POST /repos/acme/thing/issues/7/labels {"labels": ["Not Ready"]}
 DELETE /repos/acme/thing/issues/7/labels/Ready null' "$(sent7)"
 
+# offfails7 <scenario> <label carried> <its path> <status> <message>: both labels exist, the pull
+# request is read with the one to take off, and GitHub refuses the DELETE.
+offfails7() {
+  new7 "$1"
+  printf '%s' '[{"name":"Ready","color":"27e760"},{"name":"Not Ready","color":"8c1455"}]' \
+    > "$F7/GET_repos_acme_thing_labels__per_page=100.json"
+  printf '[{"name":"%s"}]' "$2" > "$F7/GET_repos_acme_thing_issues_7_labels__per_page=100.json"
+  printf '{"__status":%s,"message":"%s"}' "$4" "$5" > "$F7/DELETE_repos_acme_thing_issues_7_labels_$3.json"
+}
+offfails7 notready-gone "Not Ready" Not%20Ready 404 "Label does not exist"
+out=$(gh7 pr-readiness 7 ready 2>&1)
+check "pr-readiness ready succeeds when another writer took Not Ready off since the read" "0 ready" "$? $out"
+offfails7 ready-gone "Ready" Ready 404 "Label does not exist"
+out=$(gh7 pr-readiness 7 not-ready 2>&1)
+check "pr-readiness not-ready succeeds when another writer took Ready off since the read" "0 not-ready" "$? $out"
+offfails7 off-forbidden "Not Ready" Not%20Ready 403 "Resource not accessible by personal access token"
+out=$(gh7 pr-readiness 7 ready 2>&1)
+check "a forbidden removal still fails pr-readiness with GitHub's message" \
+  "2 error: Resource not accessible by personal access token" "$? $out"
+offfails7 off-notfound "Not Ready" Not%20Ready 404 "Not Found"
+out=$(gh7 pr-readiness 7 ready 2>&1)
+check "another 404 on the removal still fails pr-readiness" "4 error: Not Found" "$? $out"
+
 check_status "pr-readiness refuses an unknown state" 1 gh7 pr-readiness 7 maybe
 
 new7 create-draft

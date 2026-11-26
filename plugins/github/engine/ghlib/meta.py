@@ -26,6 +26,8 @@ READY = "Ready"
 NOT_READY = "Not Ready"
 _HOUSE_LABELS = ((READY, "27e760"), (NOT_READY, "8c1455"))
 _STATES = {"ready": (READY, NOT_READY), "not-ready": (NOT_READY, READY)}
+# GitHub's 404 message when the label to take off is not on the pull request.
+_ALREADY_OFF = "Label does not exist"
 
 
 def pr_update(args):
@@ -136,11 +138,16 @@ def _set_readiness(owner, name, pr, state):
         http.rest("POST", "/repos/%s/%s/issues/%s/labels" % (owner, name, pr), {"labels": [names[wanted]]})
         changed = True
     if names[other].lower() in carried:
-        http.rest(
-            "DELETE",
-            "/repos/%s/%s/issues/%s/labels/%s" % (owner, name, pr, quote(carried[names[other].lower()], safe="")),
-        )
-        changed = True
+        try:
+            http.rest(
+                "DELETE",
+                "/repos/%s/%s/issues/%s/labels/%s" % (owner, name, pr, quote(carried[names[other].lower()], safe="")),
+            )
+            changed = True
+        except errors.NotFound as exc:
+            # Another writer took it off since the read above: it is off, as asked.
+            if exc.message != _ALREADY_OFF:
+                raise
     return created, changed, names[wanted]
 
 
