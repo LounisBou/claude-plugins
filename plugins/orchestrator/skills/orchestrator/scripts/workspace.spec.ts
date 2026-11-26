@@ -532,16 +532,58 @@ test('create --base: a source whose LFS store is reached through links gains not
   })
 })
 
-test('create --base: an LFS object git-lfs discards in the checkout is unlinked there, never rewritten in the source', lfsSkip, async () => {
+/** A source of two LFS files whose own objects of them are short, and the paths of those objects. */
+function pushedShort(name: string): { readonly src: string; readonly files: Readonly<Record<string, string>>; readonly held: readonly string[] } {
+  const files = { 'big.bin': 'large content\n', 'other.bin': 'other content\n' }
+  const src = pushedLfs(name, files)
+  const held = Object.values(files).map((content, k) => {
+    const object = objectOf(join(src, '.git', 'lfs', 'objects'), content)
+    // A new inode of the source's own: the push had linked the origin's to the first.
+    renameSync(object, join(dir, `${name}-whole-${k}`))
+    writeFileSync(object, 'short')
+    return object
+  })
+  return { src, files, held }
+}
+
+/** The world, counting its checkouts. */
+function countingCheckouts(): { readonly w: World; readonly count: () => number } {
+  const w = world()
+  const real = w.deps.run
+  let n = 0
+  w.deps = { ...w.deps, run: async (argv, options) => {
+    if (argv.includes('checkout')) n++
+    return real(argv, options)
+  } }
+  return { w, count: () => n }
+}
+
+test('create --base: wrong-size LFS objects in the source fail no create, and are never rewritten there', lfsSkip, async () => {
   await withLfs(async () => {
-    const src = pushedLfs('short', { 'big.bin': 'large content\n' })
-    const held = objectOf(join(src, '.git', 'lfs', 'objects'), 'large content\n')
-    // A short object under a new inode of the source's own: the push had linked the origin's to the first.
-    renameSync(held, join(dir, 'whole-object'))
-    writeFileSync(held, 'short')
-    // Whether that create succeeds is git-lfs's own affair: only the shared file is read here.
-    await ws(world(), 'create', src, 'co', '--base', 'main')
-    assert.equal(readFileSync(held, 'utf8'), 'short')
+    const { src, files, held } = pushedShort('short')
+    const { w, count } = countingCheckouts()
+    const r = await ws(w, 'create', src, 'co', '--base', 'main')
+    assert.equal(r.code, 0, r.err)
+    const c = r.out.trim()
+    for (const [file, content] of Object.entries(files)) assert.equal(readFileSync(join(c, file), 'utf8'), content)
+    assert.equal(g(c, 'status', '--porcelain'), '')
+    assert.equal(g(c, 'rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main')
+    assert.deepEqual(held.map(object => readFileSync(object, 'utf8')), ['short', 'short'], "the source's objects are as they were")
+    assert.equal(count(), 2)
+    assert.match(r.err, /^workspace: the checkout failed with the source's LFS objects, run again without them: .*big\.bin.*$/m)
+  })
+})
+
+test("create --base: the checkout run again fails once for all, its message carrying git's cause", lfsSkip, async () => {
+  await withLfs(async () => {
+    const { src } = pushedShort('both')
+    renameSync(join(dir, 'both.git', 'lfs'), join(dir, 'both-origin-lfs'))
+    const { w, count } = countingCheckouts()
+    const r = await ws(w, 'create', src, 'co', '--base', 'main')
+    assert.equal(r.code, 1)
+    assert.match(r.err.split('\n').at(-2) ?? '', /^workspace: create: cannot check out main from origin\/main: Error downloading object: \S+\.bin /)
+    assert.equal(count(), 2)
+    assert.ok(!existsSync(join(dir, 'root', 'both', 'co')))
   })
 })
 

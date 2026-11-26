@@ -1,7 +1,8 @@
 // workspace — a checkout per phase, with the project's local material.
 //
 //   workspace.sh create <source-repo> <name> [--base <branch|origin/branch>]   prints the checkout's path; --base <branch> starts from origin/<branch>, the local branch only when origin has none;
-//                                                              the source's LFS objects go with it, so only those it lacks are downloaded
+//                                                              the source's LFS objects go with it, so only those it lacks are downloaded (a checkout
+//                                                              that fails with them is run once more without them)
 //   workspace.sh pin <source-repo> <name> <ref> [--pr <n>]     a detached worktree at that commit, of the local material only the global excludes' files; prints its path
 //   workspace.sh delete <path> [--discard] [--push] [--by <close|sweep|delete>]   refuses unpushed work unless told; --push pushes its branches
 //                                                              first; also removes the host's temporary directory of the
@@ -72,7 +73,7 @@
 // but its worktree metadata.
 import {
   chmodSync, copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync,
-  readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, appendFileSync, writeFileSync,
+  readlinkSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, appendFileSync, unlinkSync, writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { ENV } from '../../../core/env.ts'
@@ -766,17 +767,18 @@ function gitSaid(ran: Ran): string {
  * links are followed at every depth, so nothing under `to` leads back into the source, where an
  * LFS command of the checkout would write. Each object is a hard link: it is named after its
  * content and never rewritten in place, so sharing it costs no byte. Where the filesystem
- * refuses the link (another volume), it is copied.
+ * refuses the link (another volume), it is copied. Each file's path under `to` joins `carried`.
  */
-export function carryStore(from: string, to: string, link: (existing: string, path: string) => void = linkSync): void {
+export function carryStore(from: string, to: string, link: (existing: string, path: string) => void = linkSync, carried: string[] = []): void {
   mkdirSync(to, { recursive: true })
   for (const name of readdirSync(from).sort()) {
     const real = realpathSync(join(from, name))
     const own = join(to, name)
     if (statSync(real).isDirectory()) {
-      carryStore(real, own, link)
+      carryStore(real, own, link, carried)
       continue
     }
+    carried.push(own)
     try {
       link(real, own)
     } catch {
@@ -788,17 +790,30 @@ export function carryStore(from: string, to: string, link: (existing: string, pa
 /*
  * A local clone carries no LFS object, and once origin is the real remote a checkout downloads
  * each one from it, a single failed download failing the whole checkout. So the source's own go
- * with the clone; one it lacks is still downloaded.
+ * with the clone; one it lacks is still downloaded. Answers the paths it put in the checkout.
  */
-async function carryLfsObjects(ctx: Context, src: string, target: string): Promise<void> {
+async function carryLfsObjects(ctx: Context, src: string, target: string): Promise<readonly string[]> {
+  const carried: string[] = []
   const common = await gitOut(ctx, src, ['rev-parse', '--git-common-dir'])
-  if (common === undefined) return
+  if (common === undefined) return carried
   const objects = join(resolve(src, common), 'lfs', 'objects')
-  if (!isDir(objects)) return
+  if (!isDir(objects)) return carried
   try {
-    carryStore(objects, join(target, '.git', 'lfs', 'objects'))
+    carryStore(objects, join(target, '.git', 'lfs', 'objects'), linkSync, carried)
   } catch (e) {
     say(ctx, `the source's LFS objects were not all carried, the checkout downloads the rest: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  return carried
+}
+
+/** Takes back from the checkout what was carried into it, path by path; the source keeps its own. */
+function dropCarried(carried: readonly string[]): void {
+  for (const path of carried) {
+    try {
+      unlinkSync(path)
+    } catch {
+      // git-lfs took it first; whatever stays, the next checkout judges.
+    }
   }
 }
 
@@ -864,7 +879,7 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
     rmTree(target)
     throw new Refused(`create: ${text}`)
   }
-  const must = async (step: Promise<Ran>, what: string): Promise<void> => {
+  const must = async (step: Ran | Promise<Ran>, what: string): Promise<void> => {
     const ran = await step
     if (ran.status !== 0) fail(`${what}: ${gitSaid(ran)}`)
   }
@@ -884,10 +899,19 @@ export async function create(ctx: Context, argv: readonly string[]): Promise<voi
   if (remoteBranch !== '') {
     if (url === '') fail(`--base ${base} needs the source to have an origin`)
     await must(git(ctx, target, ['fetch', '--quiet', 'origin', remoteBranch]), `cannot fetch ${remoteBranch} from ${url}`)
-    await carryLfsObjects(ctx, src, target)
+    const carried = await carryLfsObjects(ctx, src, target)
     // -B, not -b: a --no-checkout clone already made the local branch the source's HEAD names,
     // and -b would refuse it.
-    await must(git(ctx, target, ['checkout', '--quiet', '-B', remoteBranch, `origin/${remoteBranch}`]), `cannot check out ${remoteBranch} from origin/${remoteBranch}`)
+    const checkout = (...force: string[]): Promise<Ran> => git(ctx, target, ['checkout', '--quiet', ...force, '-B', remoteBranch, `origin/${remoteBranch}`])
+    let checkedOut = await checkout()
+    // A carried object may be what failed it: git-lfs fails on one of the wrong size. Without
+    // them it is the checkout done by hand; -f, over the files the failed one left in the tree.
+    if (checkedOut.status !== 0 && carried.length > 0) {
+      say(ctx, `the checkout failed with the source's LFS objects, run again without them: ${gitSaid(checkedOut)}`)
+      dropCarried(carried)
+      checkedOut = await checkout('-f')
+    }
+    await must(checkedOut, `cannot check out ${remoteBranch} from origin/${remoteBranch}`)
   }
   if (explicit) {
     const sha = (await gitOut(ctx, target, ['rev-parse', 'HEAD'])) ?? ''
