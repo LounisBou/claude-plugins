@@ -816,22 +816,41 @@ def pr_merge(args):
         if not _MERGE_SHA.fullmatch(args.sha):
             raise errors.UsageError("--sha must be the full 40-character head sha")
     method = args.method or _repo_method(owner, name)
-    payload = {"merge_method": method}
-    if args.sha:
-        payload["sha"] = args.sha
+    methods = [method]
+    if not args.method:
+        # The flags do not say all GitHub refuses (a branch rule narrows them, a read may lack them):
+        # without --method, each other method is tried once while GitHub refuses the one sent.
+        methods += [other for other, _ in _METHOD_FLAGS if other != method]
+    for method in methods:
+        payload = {"merge_method": method}
+        if args.sha:
+            payload["sha"] = args.sha
+        try:
+            result = _merge(owner, name, args.pr, payload)
+            break
+        except errors.ApiError as exc:
+            if method == methods[-1] or not _is_method_refusal(exc):
+                raise
+    # The method used travels in the output, whether the caller chose it or the repository did.
+    if isinstance(result, dict):
+        result["merge_method"] = method
+    return result
+
+
+def _merge(owner, name, number, payload):
     try:
-        result = http.rest("PUT", "/repos/%s/%s/pulls/%s/merge" % (owner, name, args.pr), payload)
+        return http.rest("PUT", "/repos/%s/%s/pulls/%s/merge" % (owner, name, number), payload)
     except errors.AuthError as exc:
         # GitHub answers 403 for a PR that is part of a stack and names the
         # asynchronous endpoint. That refusal is the only one followed: any
         # other 403 is a real refusal and surfaces as it is.
         if not _is_stacked_refusal(exc):
             raise
-        result = _merge_async(owner, name, args.pr, payload)
-    # The method used travels in the output, whether the caller chose it or the repository did.
-    if isinstance(result, dict):
-        result["merge_method"] = method
-    return result
+        return _merge_async(owner, name, number, payload)
+
+
+def _is_method_refusal(exc):
+    return exc.status == 405 and "not allowed on this repository" in exc.message.lower()
 
 
 def _is_stacked_refusal(exc):

@@ -1267,6 +1267,63 @@ check "pr-merge --method merge on a squash-only repository sends merge" "merge m
 check "pr-merge keeps merge when the repository read fails" "merge merge" \
   "$(printf '%s\n' "$method_out" | sed -n 5p)"
 
+# GitHub can refuse the method pr-merge chose: the read lacks the flags, or a branch rule allows fewer
+# methods than they say. Each line: the methods sent with their sha, then the method reported or the refusal.
+refused_out=$(GHDIR="$GHDIR" python3 - <<'PY'
+import os, sys, types
+sys.path.insert(0, os.environ['GHDIR'])
+from unittest.mock import patch
+from ghlib import http, pr
+
+NAMES = {'merge': 'Merge commits', 'squash': 'Squash merges', 'rebase': 'Rebase merges'}
+HEAD = 'a' * 40
+
+def run(info, accepted, method=None, other=None):
+    sent = []
+    def fake_rest(verb, path, body=None, **kw):
+        if verb == 'GET' and path == '/repos/acme/thing':
+            return info
+        if verb == 'PUT':
+            tried = body['merge_method']
+            sent.append(tried if body.get('sha') == HEAD else tried + ':unpinned')
+            if tried not in accepted:
+                refusal = other or '%s are not allowed on this repository.' % NAMES[tried]
+                http._raise_for(405, {'message': refusal})
+            return {'merged': True, 'sha': 'abc'}
+        raise AssertionError(path)
+    args = types.SimpleNamespace(pr=7, method=method, sha=HEAD)
+    with patch.object(http, 'rest', fake_rest), \
+            patch.object(pr.repo, 'owner_repo', lambda: ('acme', 'thing')):
+        try:
+            outcome = pr.pr_merge(args)['merge_method']
+        except Exception as exc:
+            outcome = str(exc)
+    return '%s %s' % (','.join(sent), outcome)
+
+all_allowed = {'allow_merge_commit': True, 'allow_squash_merge': True, 'allow_rebase_merge': True}
+print(run({}, ['squash']))
+print(run({}, ['rebase']))
+print(run(all_allowed, ['squash']))
+print(run({}, ['squash'], method='merge'))
+print(run({}, [], other='Pull Request is not mergeable'))
+print(run({}, []))
+PY
+)
+check "pr-merge on a squash-only repository whose read lacks the flags merges with squash" "merge,squash squash" \
+  "$(printf '%s\n' "$refused_out" | sed -n 1p)"
+check "pr-merge on a rebase-only repository whose read lacks the flags merges with rebase" "merge,squash,rebase rebase" \
+  "$(printf '%s\n' "$refused_out" | sed -n 2p)"
+check "pr-merge merges with squash when a rule refuses the merge the flags allow" "merge,squash squash" \
+  "$(printf '%s\n' "$refused_out" | sed -n 3p)"
+check "pr-merge --method merge refused is not retried" \
+  "merge Merge commits are not allowed on this repository. (HTTP 405)" \
+  "$(printf '%s\n' "$refused_out" | sed -n 4p)"
+check "pr-merge retries no other 405" "merge Pull Request is not mergeable (HTTP 405)" \
+  "$(printf '%s\n' "$refused_out" | sed -n 5p)"
+check "pr-merge tries each method once, then reports the last refusal" \
+  "merge,squash,rebase Rebase merges are not allowed on this repository. (HTTP 405)" \
+  "$(printf '%s\n' "$refused_out" | sed -n 6p)"
+
 
 echo "== skill documents =="
 
