@@ -9487,8 +9487,9 @@ check "a window still in the server after its process is gone is a close that di
   "$(printf '%s' "$out" | grep -c 'ERROR: close: the request was accepted but tmux:.*:@1 is still there')|$(printf '%s' "$out" | grep -c '^closed')"
 
 # An agent and an orchestrator's successor are windows: the successor takes the predecessor's
-# window 0 in the same session, where the agents are. An auditor, the coordinator's successor,
-# a woken or an opened orchestrator are made as tabs, as they always were.
+# window 0 in the same session, where the agents are. So are the successors of a coordinator and of
+# an auditor in their own home session (below). An auditor, a woken or an opened orchestrator start
+# in a home server of their own, shown by a tab.
 reset_home; rm -f "$TR/iterm-asked"
 ORCHESTRATOR_PROJECTS_DIR="$TR/projects" pair_transcript s-suite s-model high
 out=$(home spawn --dir "$WORK" --successor --prompt p 2>"$WORK/tsucc.err")
@@ -9498,6 +9499,40 @@ check "a successor spawned from a home session is a window of that session under
 check "the chain is handed over keyed on the successor's pane: its tty's file, the successor's tmux owner, never an app id" \
   "{\"tab_id\": \"tmux:$TSOCK:@1\", \"tty\": \"/dev/ttys901\", \"owner\": \"tmux:$TSOCK:%4\"}|{\"tab_id\": \"tmux:$TSOCK:@2\", \"tty\": \"/dev/ttys902\", \"owner\": \"tmux:$TSOCK:%4\"}|0|1" \
   "$(paste -sd'|' "$TSTATE/chains/ttys903.jsonl")|$(chainf | grep -c .)|$(grep -c 'chain of 2 agent(s) handed to the successor on /dev/ttys903' "$WORK/tsucc.err")"
+rm -f "$TR/iterm-asked"
+
+# The coordinator and an auditor run in a home server of their own, like an orchestrator (the
+# operator's order, 2026-11-27): from window 0 there, the successor of each is a window of the same
+# session, never an iTerm2 tab, and its takeover takes window 0, guarded by the role's name.
+role_home() { # <window 0's name>: the home session of a coordinator or an auditor, an agent beside it
+  reset_home
+  printf '%s\n' "\$1	0	@0	%0	/dev/ttys900	$1	✳ $1" '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' > "$TR/panes"
+  printf '%s\n' "/dev/ttys900 claude --name $1" '/dev/ttys901 claude --name Agent: one' > "$TR/ps"
+  rm -f "$TR/iterm-asked"; }
+ORCHESTRATOR_PROJECTS_DIR="$TR/projects" pair_transcript s-suite s-model high
+role_home "Coord: machine"
+out=$(home spawn --dir "$WORK" --coordinator-successor --title "Coord: machine" --prompt p --no-verify 2>"$WORK/trole.err")
+check "a coordinator's successor spawned from its home session is a window of it under its name, iTerm2 never asked" \
+  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Coord: machine][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Coord--machine-@TIME@.sh]|none|0" \
+  "$out|$(calls | grep -F '[new-window]')|$(asked)|$(grep -c 'is not placed first' "$WORK/trole.err")"
+role_home "Audit: tm"
+out=$(home spawn --dir "$WORK" --successor --prompt p --no-verify 2>&1 | tail -1)
+check "an auditor's successor spawned from its home session is a window of it under the auditor's name, iTerm2 never asked" \
+  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Audit: tm][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Audit--tm-@TIME@.sh]|none" \
+  "$out|$(calls | grep -F '[new-window]')|$(asked)"
+for who in "Coord: machine|Coord:" "Audit: tm|Audit: tm"; do
+  name=${who%%|*}; expect=${who#*|}
+  role_home "$name"
+  printf '%s\n' "\$1	9	@4	%4	/dev/ttys903	$name	✳ $name" >> "$TR/panes"
+  printf '/dev/ttys903 claude --name %s\n' "$name" >> "$TR/ps"
+  rm -f "$TR/calls"
+  out=$(TMUX="$TSOCK,4242,1" TMUX_PANE=%4 ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_OSASCRIPT="$TR/osascript" ORCHESTRATOR_SAMPLE=/usr/bin/false \
+    ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
+    bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" takeover --tty /dev/ttys900 --expect-title "$expect" 2>&1)
+  check "the takeover of the ${name%%:*} successor kills window 0, its name checked, and moves the successor to index 0" \
+    "1|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0" \
+    "$(printf '%s' "$out" | grep -c '^took window 0: the predecessor.s window @0 on /dev/ttys900 was closed')|$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')|$(grep -c ttys900 "$TR/ps")"
+done
 rm -f "$TR/iterm-asked"
 
 # The successor's takeover, from its own window: the predecessor's window 0 killed, guarded by
