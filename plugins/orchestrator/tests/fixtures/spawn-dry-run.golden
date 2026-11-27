@@ -658,7 +658,7 @@ program=/bin/sh -l <launch-file>
 home_server=orch-<new>
 home_conf=skills/iterm-agents/tmux/home.conf
 home_window0=Audit: tm
-home_tab=right of self
+home_tab=left of self
 exit=0
 ### auditor, derived successor
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
