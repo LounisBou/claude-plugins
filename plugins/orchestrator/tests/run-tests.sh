@@ -9695,6 +9695,27 @@ check "an option of many values keeps them all, an optional value is kept when g
   "$(rw '["--disallowedTools","A","B","--remote-control","Orch: r","--effort=high"]')"
 check "an option that takes a value and has none is refused" "refused: --model has no value" "$(rw '["--model"]')"
 
+echo "== iterm-agents: the tabs keep the order the operator sees =="
+# Over an app of the probe's own (tests/order-probe.py): no iTerm2, no tmux, no process.
+tabs_order() { rm -rf "$WORK/taborder"; mkdir -p "$WORK/taborder"
+  env -u ORCHESTRATOR_PS_TABLE -u ORCHESTRATOR_BACKEND "$py" "$ROOT/tests/order-probe.py" "$ROOT/skills/iterm-agents/scripts" "$WORK/taborder" "$1" 2>&1; }
+ordered() { res=$(tabs_order "$1"); printf '%s|%s' "$(sfield "$res" before)" "$(sfield "$res" after)"; }
+check "a tab replaced while it runs: the new one takes its place" "A B C D|A B C D" "$(ordered replaced-live)"
+check "the operator's own order holds through a batch of two moves, each closed then woken" "D A C B|D A C B" "$(ordered batch)"
+check "a paused orchestrator is woken where it was" "A B C|A B C" "$(ordered paused)"
+check "an order recorded, all closed, the app started again: reopened in any order it reads the same" "c A B C|c A B C" "$(ordered all-closed)"
+check "a tab the operator moved by hand after the close keeps its newer place" "c C A|c C A B" "$(ordered hand-move)"
+res=$(tabs_order repaired)
+check "a placement the app did not make is read back and repaired once" "c A B C|2|" "$(sfield "$res" after)|$(sfield "$res" moves)|$(sfield "$res" said)"
+res=$(tabs_order unrepaired)
+check "one that stays wrong after the repair is said" "2|1" "$(sfield "$res" moves)|$(sfield "$res" said | grep -c 'could not be put right of the tab')"
+check "a coordinator's successor, wherever it was opened, takes its predecessor's place on closing it" "t1 t2 t3 t4|t4 t2 t3" "$(ordered coordinator)"
+check "so does an auditor's" "t1 t2 t3 t4|t4 t2 t3" "$(ordered auditor)"
+check "a coordinator that closes a duplicate keeps its own place" "t1 t2 t3 t4|t1 t2 t3" "$(ordered duplicate)"
+check "a rotation's replacement takes the old agent's place" "c a b c a2|c a2 b c" "$(ordered rotate)"
+check "a home tab is known by its server and its window 0's name, not by the title it follows" "Orch: h|orch-abc" \
+  "$(sfield "$(tabs_order home-identity)" entry)"
+
 echo "== iterm-agents: the coordinator opens, pauses and wakes an orchestrator in its home session =="
 # Each from the coordinator's own tab: an opened or woken orchestrator starts in window 0 of a
 # home session of its own, shown by a tab right of the caller's; a pause ends the whole server,
