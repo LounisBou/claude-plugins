@@ -41,11 +41,11 @@
 #     A record that cannot be found or written is said on stderr; the launch stands.
 #     --tier also exports the tier's name, ORCHESTRATOR_TIER, for what records the session's
 #     events; a launch by --model, or on the caller's own pair, exports none.
-#   iterm-agent.sh spawn --dir <path> --auditor [--of <tty> | --of self] --title "Audit: <subject>" [--model <id> --effort <level>] (--prompt <text> | --prompt-file <path>)
+#   iterm-agent.sh spawn --dir <path> --auditor [--of <tty> | --of self] --title "Audit: <subject>" [--model <id> --effort <level>] [--plan 1|2|auto] (--prompt <text> | --prompt-file <path>)
 #     an auditor: immediately left of the orchestrator it audits (the caller, else the one --of
 #     names; a coordinator names it), its model and effort (the pair given, else the caller's),
 #     remote control on, no chain; `move` places an auditor its own launcher made without --force
-#   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord: <subject>" (--prompt <text> | --prompt-file <path>)
+#   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord: <subject>" [--plan 1|2|auto] (--prompt <text> | --prompt-file <path>)
 #     the coordinator's own successor: first place of the caller's window, its model and effort,
 #     remote control on, no chain
 #   iterm-agent.sh spawn --dir <path> --wake --title "Orch: <subject>" [--model <id> --effort <level>] [--resume <session id>] [--plan 1|2|auto] (--prompt <text> | --prompt-file <path>)

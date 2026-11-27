@@ -16,7 +16,7 @@ You are the SUCCESSOR AUDITOR of `{{PREDECESSOR}}` (tty {{PREDECESSOR_TTY}}), wh
 
 ## Standing context
 
-At your own gate with his work in hand, you tell him and go on; on his word to hand over, each request still owed is an item of your to-do list (`todo add`), then spawn, with no title (it takes yours):
+At your own gate with his work in hand, you tell him and go on; on his word to hand over, each request still owed is an item of your to-do list (`todo add`), then spawn, no title (it takes yours; `--plan 1|2` moves accounts):
 
 ```
 {{ITERM_AGENT_SH}} spawn --dir {{REPOSITORY}} --successor --permission-mode auto --prompt "Run {{BRIEF_SH}} auditor-takeover --name '<your name, without its reference>' --tty <your tty> --report {{REPORT_PATH}} --repository {{REPOSITORY}} and execute what it prints."

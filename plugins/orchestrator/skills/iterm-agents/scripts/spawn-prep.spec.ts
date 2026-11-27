@@ -113,6 +113,17 @@ describe('a spawn prepared from its line', () => {
     assert.equal((await prepareSpawn(spawnOf('--prompt', 'p'), d))['tier_bound'], null)
   })
 
+  it('lets --plan route an auditor, the coordinator\'s successor and an auditor\'s own', async () => {
+    const moved = (words: string[], env: Record<string, string> = {}): Promise<string> =>
+      refusal([...words, '--prompt', 'p', '--plan', '2'], { env })
+    const marked = { ORCHESTRATOR_AUDITOR: '1' }
+    assert.equal(await moved(['--auditor', '--title', 'Audit: a']), 'prepared')
+    assert.equal(await moved(['--coordinator-successor', '--title', 'Coord: c']), 'prepared')
+    assert.equal(await moved(['--successor'], marked), 'prepared')
+    assert.match(await moved(['--successor', '--title', 'Orch: o'], marked), /--plan routes an orchestrator at its birth/)
+    assert.match(await moved(['--title', 'Agent: a'], marked), /--plan routes an orchestrator at its birth/)
+  })
+
   it('holds a title to the shape core names, and a read auditor\'s name to its qualified form', () => {
     assert.equal(TITLE_SHAPE.test('Agent: a'), true)
     assert.equal(TITLE_SHAPE.test('Audit: a'), false)

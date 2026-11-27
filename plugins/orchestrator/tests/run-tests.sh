@@ -3377,8 +3377,8 @@ check "an orchestrator opens one too, and a model it names wins over the tier" "
 check "an agent, an auditor or a session with no name never opens one" "1|1|1|1" \
   "$(opn 'Agent: x' --open --title 'Orch: x' >/dev/null 2>&1; echo $?)|$(opn 'Agent: x' --open --title 'Orch: x' | grep -c 'an agent never opens an orchestrator')|$(opn 'Audit: x' --open --title 'Orch: x' | grep -c 'an agent never opens an orchestrator')|$(opn - --open --title 'Orch: x' | grep -c "this session reads 'no name'")"
 # A new orchestrator is born on the plan asked with --plan: 1, 2, or auto by the quota files of
-# the state directory; the caller's own plan when auto has no fresh reading of both. Only a
-# birth is routed: an agent, a successor and an auditor take no --plan.
+# the state directory; the caller's own plan when auto has no fresh reading of both. An agent and
+# an orchestrator's successor take no --plan; an auditor, its successor and the coordinator's do.
 PLHOME="$WORK/plhome"; PLST="$WORK/plstate"; mkdir -p "$PLHOME" "$PLST/quota"
 plq() { printf '{"version":1,"account":"%s","config":"%s","five_hour":{"used_percentage":%s,"resets_at":1},"seven_day":{"used_percentage":%s,"resets_at":2},"at":"%s"}' "$1" "$2" "$3" "$4" "$5" > "$PLST/quota/$1.json"; }
 plopn() { HOME="$PLHOME" OPST="$PLST" opn 'Coord: ops' --open --title 'Orch: routed' "$@"; }
@@ -3400,8 +3400,15 @@ check "--plan auto with a stale reading keeps the caller's plan" "1" \
 rm -f "$PLST/quota/acc1.json"
 check "--plan auto with a plan unread keeps the caller's plan" "1" \
   "$(plopn --plan auto | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")"
-check "--plan 3 is refused, and so is --plan on an agent, a successor and an auditor" "1|1|1|1|1" \
-  "$(plopn --plan 3 | grep -c -- '--plan is 1, 2 or auto')|$(opn 'Orch: gateway' --title 'Agent: a' --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --successor --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --auditor --title 'Audit: a' --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --title 'Agent: a' --plan 2 >/dev/null 2>&1; echo $?)"
+check "--plan 3 is refused, and so is --plan on an agent and an orchestrator's successor" "1|1|1|1" \
+  "$(plopn --plan 3 | grep -c -- '--plan is 1, 2 or auto')|$(opn 'Orch: gateway' --title 'Agent: a' --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --successor --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --title 'Agent: a' --plan 2 >/dev/null 2>&1; echo $?)"
+plrole() { HOME="$PLHOME" OPST="$PLST" opn "$@" --plan 2; }
+plon() { sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$PLHOME/.claude-bis &&"; }
+check "--plan 2 routes an auditor, still left of its orchestrator, the coordinator's successor and an auditor's own" \
+  "1|left|1|1" \
+  "$(plrole 'Orch: gateway' --auditor --title 'Audit: a' | plon)|$(plrole 'Orch: gateway' --auditor --title 'Audit: a' | sed -n 's/^side=//p')|$(plrole 'Coord: ops' --coordinator-successor --title 'Coord: ops' | plon)|$(ORCHESTRATOR_AUDITOR=1 plrole 'Audit: a' --successor | plon)"
+check "an auditor's marker routes no other successor: the caller's name is read" "1|0" \
+  "$(ORCHESTRATOR_AUDITOR=1 plrole 'Orch: gateway' --successor | grep -c -- "--plan is not an orchestrator's successor's")|$(ORCHESTRATOR_AUDITOR=1 plrole 'Orch: gateway' --successor | grep -c '^launch=')"
 # A move across plans is a wake with --plan: the sleeper's record names the plan it slept on, --plan
 # the one it wakes on, and the conversation of the former, which lives in that plan's directory, is
 # not resumed on the latter.
@@ -9620,7 +9627,47 @@ for who in "Coord: machine|--coordinator-successor --title Coord:\ machine|coord
     "1|[-u][killw][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0" \
     "$(printf '%s' "$out" | grep -c '^took window 0: the predecessor.s window @0 on /dev/ttys900 was closed')|$(calls | grep -E "\[($KILLS)\]")|$(calls | grep -F '[move-window]')|$(grep -c ttys900 "$TR/ps")"
 done
+# Their account move is the same succession with --plan: the window runs on the plan asked.
+MVHOME="$WORK/mvhome"; mkdir -p "$MVHOME/.claude-bis"
+moved_launch() { cat "$TSTATE"/prompts/launch-*.sh | grep '^cd '; }
+for who in "Coord: machine||--coordinator-successor --title Coord:\ machine" "Audit: tm|1|--successor"; do
+  name=${who%%|*}; rest=${who#*|}; marker=${rest%%|*}; succ=${rest#*|}
+  role_home "$name"
+  out=$(eval "HOME=\"\$MVHOME\" ORCHESTRATOR_AUDITOR=$marker home spawn --dir \"\$WORK\" $succ --plan 2 --prompt p --no-verify" 2>/dev/null | tail -1)
+  check "the ${name%%:*} successor moved to plan 2 from its home session is a window of it on that plan, iTerm2 never asked" \
+    "/dev/ttys903|1|1|none" \
+    "$out|$(calls | grep -cF "[new-window][-d][-a][-t][\$1:{end}][-n][$name]")|$(moved_launch | grep -cF "export CLAUDE_CONFIG_DIR=$MVHOME/.claude-bis &&")|$(asked)"
+  rm -f "$TR/calls"
+  out=$(TMUX="$TSOCK,4242,1" TMUX_PANE=%4 ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_OSASCRIPT="$TR/osascript" ORCHESTRATOR_SAMPLE=/usr/bin/false \
+    ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
+    bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" takeover --tty /dev/ttys900 --expect-title "$name" 2>&1)
+  check "and its takeover gives it window 0, the predecessor's place" "[-u][killw][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]" \
+    "$(calls | grep -E "\[($KILLS)\]")|$(calls | grep -F '[move-window]')"
+  # Back to plan 1: the window inherits its server's plan 2, so the launch itself unsets it. The
+  # launch is run up to the host, as a window of that server would run it.
+  role_home "$name"
+  eval "HOME=\"\$MVHOME\" CLAUDE_CONFIG_DIR=\"\$MVHOME/.claude-bis\" ORCHESTRATOR_AUDITOR=$marker home spawn --dir \"\$WORK\" $succ --plan 1 --prompt p --no-verify" >/dev/null 2>&1
+  check "the ${name%%:*} successor moved back to plan 1 runs on it, in a window of a server started on plan 2" "config=unset" \
+    "$(env CLAUDE_CONFIG_DIR=/plan/two bash -c "$(moved_launch | sed 's/ && exec .*$/ \&\& echo "config=${CLAUDE_CONFIG_DIR-unset}"/')" 2>/dev/null | grep -o 'config=.*')"
+done
 rm -f "$TR/iterm-asked"
+# The takeover waits for the predecessor's « handed over » where the predecessor's plan keeps its
+# session and its transcript, and prints the end of that conversation.
+mkdir -p "$WORK/hand/.claude/sessions" "$WORK/hand/.claude/projects/p" "$WORK/hand/.claude-bis"
+printf '{"sessionId":"s-old","name":"Coord: machine"}' > "$WORK/hand/.claude/sessions/4000001.json"
+printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"handed over"}]}}' \
+  > "$WORK/hand/.claude/projects/p/s-old.jsonl"
+check "a takeover reads the « handed over » of a predecessor on the other plan, on that plan" "1|s-old" \
+  "$(env -u ORCHESTRATOR_PROJECTS_DIR HOME="$WORK/hand" CLAUDE_CONFIG_DIR="$WORK/hand/.claude-bis" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+ia.host_cli_on = lambda tty: '4000001'
+ia.process_config = lambda pid: ''
+read = []
+ia.conversation_tail.section = lambda path, now: read.append(path) or 'tail'
+print(ia.await_handover('/dev/ttys900', idle=3600, sleep=lambda s: sys.exit('waited')).count('« handed over » read'))
+ia.conversation_of('/dev/ttys900')
+print(''.join(p.rsplit('/', 1)[1][:-6] for p in read))" 2>&1 | paste -sd'|' -)"
 
 # The successor's takeover, from its own window: the predecessor's window 0 killed, guarded by
 # its name, proved gone, then the successor moved to index 0 without taking the operator's view.
@@ -10893,6 +10940,12 @@ check "one that stays wrong after the repair is said" "2|1" "$(sfield "$res" mov
 check "a coordinator's successor, wherever it was opened, takes its predecessor's place on closing it" "t1 t2 t3 t4|t4 t2 t3" "$(ordered coordinator)"
 check "so does an auditor's" "t1 t2 t3 t4|t4 t2 t3" "$(ordered auditor)"
 check "a coordinator that closes a duplicate keeps its own place" "t1 t2 t3 t4|t1 t2 t3" "$(ordered duplicate)"
+res=$(tabs_order moved-coordinator)
+check "a coordinator's successor launched on plan 2 from a tab takes its predecessor's place" "A g B|A g B|2|same" \
+  "$(sfield "$res" before)|$(sfield "$res" after)|$(sfield "$res" successor)"
+res=$(tabs_order moved-auditor)
+check "so does an auditor's, left of its orchestrator" "c x A|c x A|2|same" \
+  "$(sfield "$res" before)|$(sfield "$res" after)|$(sfield "$res" successor)"
 check "a rotation's replacement takes the old agent's place" "c a b c a2|c a2 b c" "$(ordered rotate)"
 check "a home tab is known by its server and its window 0's name, not by the title it follows" "Orch: h|orch-abc" \
   "$(sfield "$(tabs_order home-identity)" entry)"

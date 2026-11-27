@@ -4698,13 +4698,21 @@ def handed_over(path):
     return seen
 
 
+def transcript_on(tty):
+    """The transcript of the session on `tty`, or None, its registry and its folder read under
+    that process's own plan, which a successor moved to another one is not on."""
+    pid = host_cli_on(tty)
+    with on_plan(process_config(pid) if str(pid).isdigit() else None):
+        sid = rotated_session(tty)
+        return transcript_of_session(sid) if sid else None
+
+
 def await_handover(tty, idle=None, sleep=time.sleep, clock=time.time):
     """Wait, before a takeover's kill, for the predecessor's « handed over » on its transcript
     (the session its host on `tty` registered), or for that transcript to stay untouched `idle`
     seconds. Answers the line that says which: a hand-over is said only where it was read."""
     idle = TAKEOVER_IDLE if idle is None else idle
-    sid = rotated_session(tty)
-    path = transcript_of_session(sid) if sid else None
+    path = transcript_on(tty)
     if not path:
         return ("takeover: no transcript of the session on %s was found: no « handed over » read"
                 % tty)
@@ -4727,8 +4735,7 @@ def conversation_of(tty):
     cannot be read (said on stderr): read before a kill, printed by the caller, and never a
     reason to refuse one."""
     try:
-        sid = rotated_session(tty)
-        path = transcript_of_session(sid) if sid else None
+        path = transcript_on(tty)
         if path:
             return conversation_tail.section(path, datetime.datetime.now(datetime.timezone.utc))
     except Exception as exc:
@@ -5384,11 +5391,11 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
              "export ORCHESTRATOR_SPAWNED=1",
              "printf '\\033]0;%%s\\007' %s" % shq(title),
              None]
-    # The plan the session runs on is its caller's: a tab's login shell, or a home server
-    # started before, would otherwise give it the default one.
+    # The plan the session runs on is the command's: a tab's login shell, or a home server
+    # started before, would otherwise give it another one. Plan 1 is the variable unset.
     config = os.environ.get("CLAUDE_CONFIG_DIR", "")
-    if config:
-        parts.insert(2, "export CLAUDE_CONFIG_DIR=%s" % shq(config))
+    parts.insert(2, "export CLAUDE_CONFIG_DIR=%s" % shq(config) if config
+                 else "unset CLAUDE_CONFIG_DIR")
     if title_role(title) == AUDIT:
         # A marker the session carries in its own environment. The auditor's name is read
         # from the process table, which cannot give it back for a session launched without
@@ -6152,7 +6159,12 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
             if given:
                 die("spawn: refused: %s is not a successor's: a successor runs on your live "
                     "model and effort, read on your transcript" % flag)
-    # The caller's launch is read in the caller's own plan, before a routed plan replaces it.
+    if args.plan and args.successor and not auditor_successor:
+        die("spawn: refused: --plan is not an orchestrator's successor's: it runs on your plan")
+    # The caller's launch is read in the caller's own plan, before a routed plan replaces it: a
+    # successor's pair too, which is on its caller's transcript.
+    if args.plan and args.successor:
+        args.caller_pair = own_pair("a successor, an auditor or an inheriting spawn")
     plugin_dirs, caller_plugins = caller_plugin_launch(auditor_successor)
     caller_config = os.environ.get("CLAUDE_CONFIG_DIR", "")
     routed = route_plan(args.plan) if args.plan else None
