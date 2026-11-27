@@ -5676,6 +5676,89 @@ opened = s.rfind('try', 0, select)
 closed = s.find('end try', select)
 ret = s.find('return newTty', select)
 print('guarded' if -1 < opened < select < closed < ret else 'no')" "$AS_SENT")"
+# A window made activates the app, and macOS switches Space to it: the application in front is read
+# before, and put back by a script of its own once the creation has answered. The stub logs every
+# script it is sent; the restore's script is read whole, its target and its guard with it.
+AS_LOG="$WORK/as-front-sent.log"
+cat > "$IBIN/osascript-front" <<'STUB'
+#!/bin/bash
+script=$(cat)
+printf '%s\n=====\n' "$script" >> "$AS_LOG"
+case "$script" in
+  *' to activate'*) [ "${AS_BACK:-}" = hang ] && exec sleep 60
+                    [ "${AS_BACK:-}" = fail ] && { echo 'execution error' >&2; exit 1; } ;;
+esac
+case "$script" in
+  *'tell application "iTerm2"'*) [ "${AS_SAID:-}" = broken ] && { echo 'execution error' >&2; exit 1; }
+                                 echo "${AS_SAID:-/dev/ttys900}" ;;
+  *'path to frontmost application'*) echo 'Disk:Applications:Editor.app:' ;;
+esac
+STUB
+chmod +x "$IBIN/osascript-front"
+front_spawn() { : > "$AS_LOG"
+  AS_LOG="$AS_LOG" ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-front" ORCHESTRATOR_PROBE_TIMEOUT=2 ipy "
+try:
+    print(ia.as_spawn('true'))
+except ia.Unreachable:
+    print('unreachable')"; }
+# The scripts sent, in order, and « exact » only for the one restore the launcher may send.
+front_sent() { "$py" -c "
+import sys
+exact = ['set frontPath to \"Disk:Applications:Editor.app:\"',
+         'if frontPath is not \"\" and frontPath is not (path to application id \"com.googlecode.iterm2\" as text) then',
+         'tell application frontPath to activate', 'end if']
+kinds = []
+for script in open(sys.argv[1]).read().split('\n=====\n')[:-1]:
+    if 'tell application \"iTerm2\"' in script:
+        kinds.append('spawn' if 'activate' not in script else 'spawn that activates')
+    elif 'path to frontmost application' in script:
+        kinds.append('read' if 'activate' not in script else 'read that activates')
+    else:
+        kinds.append('put back' if [l.strip() for l in script.strip().splitlines()] == exact else 'another restore')
+print(','.join(kinds))" "$AS_LOG"; }
+res=$(AS_SAID='window /dev/ttys900' front_spawn)
+check "the AppleScript spawn that makes a window puts back the application that was in front, never the app itself" \
+  "/dev/ttys900|read,spawn,put back" "$res|$(front_sent)"
+res=$(front_spawn)
+check "the AppleScript spawn that makes a tab activates nothing" "/dev/ttys900|read,spawn" "$res|$(front_sent)"
+for trouble in hang fail; do
+  res=$(AS_SAID='window /dev/ttys900' AS_BACK=$trouble front_spawn)
+  check "a restore that does not answer or is refused ($trouble) keeps the new session's tty" \
+    "/dev/ttys900|read,spawn,put back" "$res|$(front_sent)"
+done
+res=$(AS_SAID=broken front_spawn)
+check "a creation that fails, perhaps with its window made, still puts the application back" \
+  "unreachable|read,spawn,put back" "$res|$(front_sent)"
+# The API rung over an app that records every activation and selection asked of it.
+check "the API spawn makes its tab unselected and asks no activation and no selection of the app" "/dev/ttys902|select=False" \
+  "$(ORCHESTRATOR_BACKEND=api ipy "
+import asyncio, types
+asked = []
+class Spy:
+    def __getattr__(s, name):
+        if 'activate' not in name and 'select' not in name:
+            raise AttributeError(name)
+        async def call(*a, **k): asked.append(name)
+        return call
+class S(Spy):
+    session_id = 'S'
+    async def async_get_variable(s, k): return {'tty': '/dev/ttys902'}.get(k)
+class T(Spy):
+    tab_id = 'NEW'
+    def __init__(s): s.sessions = s.all_sessions = [S()]; s.current_session = s.sessions[0]
+class W(Spy):
+    window_id, tabs = 'w', []
+    async def async_create_tab(s, command=None, index=None, select=True):
+        asked.append('select=%s' % select); s.tabs.append(T()); return s.tabs[-1]
+class App(Spy):
+    windows = [W()]
+    current_window = windows[0]
+class Api(Spy):
+    async def async_get_app(s, connection): return App()
+ia.run = lambda fn: asyncio.run(fn(Api(), None))
+made = {}
+ia.ITERM.create('true', 't', types.SimpleNamespace(at='anywhere', anchor='', side='', read_back=False), None, made)
+print('%s|%s' % (made['tty'], ','.join(asked)))")"
 
 echo "== iterm-agents: the AppleScript close compares the title before it closes =="
 # The rung used to send `close s` and read the name afterwards, so a refused title had
@@ -7509,9 +7592,9 @@ check "list names no orphan when the process table cannot be read" "0|4" \
   "$(sfield "$res" rows | tr '~' '\n' | grep -c '^orphan:')|$(sfield "$res" rows | tr '~' '\n' | grep -c '^w1/t')"
 
 # Chain files of dead or recycled ttys piled up. The next chain write removes every file
-# whose owner (the tty that names it) no longer carries an orchestrator host: not one whose
+# whose owner (the tty that names it) carries no host, or an agent's: not one whose
 # agents' ttys were recycled by strangers, not an ended orchestrator's with an agent still
-# running; never the caller's own, a live orchestrator's, nor the client of a live home
+# running; never the caller's own, a live orchestrator's, auditor's or coordinator's, nor the client of a live home
 # server whose window 0 holds one, and nothing at all when the process table cannot be read.
 PRSTATE="$WORK/prunestate"
 prune_seed() { rm -rf "$PRSTATE"; mkdir -p "$PRSTATE/chains"
@@ -7537,6 +7620,13 @@ check "a file whose owner tty now carries an agent is pruned, though its own age
 prune_seed
 check "a file whose owner carries a host with no readable name is kept" "present" \
   "$(printf '/dev/ttys016 claude\n' > "$WORK/ps-prune-bare.txt"; prune_run "$WORK/ps-prune-bare.txt" >/dev/null; [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent)"
+# An auditor and a coordinator launch agents of their own: their pane's count reads these files.
+prune_seed
+check "a file whose owner carries an auditor is kept" "present" \
+  "$(printf '/dev/ttys016 claude --name Audit: home\n' > "$WORK/ps-prune-audit.txt"; prune_run "$WORK/ps-prune-audit.txt" >/dev/null; [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent)"
+prune_seed
+check "a file whose owner carries a coordinator is kept" "present" \
+  "$(printf '/dev/ttys016 claude --name Coord: home\n' > "$WORK/ps-prune-coord.txt"; prune_run "$WORK/ps-prune-coord.txt" >/dev/null; [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent)"
 # A home orchestrator's tab carries only the tmux client; its host runs on the server's pane.
 prune_seed
 printf '/dev/ttys016 tmux -L orch-abc123 attach\n/dev/ttys950 claude --name Orch: home\n' > "$WORK/ps-prune-home.txt"
@@ -9482,6 +9572,20 @@ check "and one that had no server to arm again, which iTerm2 stopped alone says"
 res=$(restarted lost-client)
 check "a home server whose client did not come back gets a new tab at its place, then is armed" "0|1|031 001 060/041 090 050|orch-a+orch-b|$RALL" \
   "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'open,attach orch-b,arm')|$(sfield "$res" tabs)|$(sfield "$res" armed)|$(sfield "$res" alive)"
+res=$(restarted no-window)
+check "a restart whose new iTerm2 has no window makes one and puts back at once the application that was in front" \
+  "front read,new window,put back" "$(sfield "$res" fronts | cut -d, -f1-3)"
+res=$(restarted ok)
+check "and so does the window a tab is moved to, to set the tabs' order again" \
+  "front read,moved window,put back" "$(sfield "$res" fronts)"
+check "the restart starts iTerm2 in the background, leaving the application in front where it is" "yes" \
+  "$(ipy "
+import iterm_restart as r
+ran = []
+r.output_of = lambda *words: ''
+r.subprocess.run = lambda words, **options: ran.append(words)
+r.open_app()
+print('yes' if ran == [['/usr/bin/open', '-g', '-b', 'com.googlecode.iterm2']] else ran)")"
 res=$(restarted dead-tab)
 check "a plain tab's dead session is resumed at its place, with its role and not its first prompt, and is said" \
   "1|1|031 001 060/091 002 050|1" \

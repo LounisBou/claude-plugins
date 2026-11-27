@@ -470,13 +470,13 @@ start 50
 record "drawn"
 check "every choice's whole text is drawn above the picker" "1" "$(flat | grep -c 'sees the new pane at once')"
 check "each choice's text is drawn once, the picker's options their letter" "1|1" "$(pane | grep -c 'close it — the work is dropped')|$(pane | grep -c '^C$')"
-check "the questions are drawn above the orchestrators, counted once in their title" "1|1" "$([ "$(line_of 'Questions for you — 2 pending')" -lt "$(line_of 'Orchestrators')" ] && echo 1)|$(pane | grep -c 'pending')"
+check "the questions are drawn above the orchestrators, counted once in their title" "1|1" "$([ "$(line_of 'Questions for you — 2 pending')" -lt "$(line_of 'Sessions')" ] && echo 1)|$(pane | grep -c 'pending')"
 check "each asker named once above its questions, in no card" "Orch: alpha · orchestrator · e2e-box|1|0" "$(pane | grep -m1 '^Orch: alpha')|$(pane | grep -c '^Orch: alpha')|$(screen | grep -c '╭─')"
 check "the question's fields in order: subject, context, question, choices, recommendation, blocks, picker" "1" "$(ordered 'Orch: alpha' 'the release' 'The changelog is written' 'Merge the release branch now?' '[A] merge it now' '[B] wait for' '[C] close it' '★ Recommendation' 'Blocks: phase 3' 'Choose: ')"
 check "the recommendation starred, what the question blocks named, nothing of the asker's turn drawn" "1|1|0" "$(pane | grep -c '^★ Recommendation: B — one more pair of eyes')|$(pane | grep -c '^Blocks: phase 3')|$(pane | grep -c 'You decide')"
 check "each choice behind its badge, the recommended one starred" "1|1" "$(pane | grep -c '^\[C\] *close it')|$(pane | grep -c '^\[B\] *wait for the next review — a day lost *★')"
 check "the picker follows the question's last line" "Blocks: phase 3" "$(rawpane | grep -B1 '^Choose: ' | sed -n 1p)"
-check "the rule and the key line, dim, the key line at the foot" "1|1|1" "$(dim_rows '────')|$(dim_rows 'arrows: move')|$([ "$(line_of 'Enter: choose')" -gt "$(line_of 'Orchestrators')" ] && echo 1)"
+check "the rule and the key line, dim, the key line at the foot" "1|1|1" "$(dim_rows '────')|$(dim_rows 'arrows: move')|$([ "$(line_of 'Enter: choose')" -gt "$(line_of 'Sessions')" ] && echo 1)"
 check "the pane opens with the keys, the recommended choice highlighted in the open picker" "1|B (recommended)" "$(pane | grep -c '^Choose: .*▴')|$(focused)"
 press Escape
 check "Esc gives the keys back to the prompt" "0" "$(pane | grep -c '^Choose: .*▴')"
@@ -585,7 +585,7 @@ until_ms 10 status_is s-gamma-q1 answered >/dev/null
 until_ms 15 pane_has 'not delivered:' >/dev/null
 check "Enter answers it, its sender reached by no session" "answered|A : tag it" "$(jq -r .status "$SANDBOX/state/round/s-gamma-q1.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-gamma-q1.json")"
 notice=$(line_of 'not delivered:')
-check "the notice is one line at the section's foot, above the orchestrators" "1|1" "$(pane | grep -c 'not delivered:')|$([ -n "$notice" ] && [ "$notice" -lt "$(line_of 'Orchestrators')" ] && echo 1)"
+check "the notice is one line at the section's foot, above the orchestrators" "1|1" "$(pane | grep -c 'not delivered:')|$([ -n "$notice" ] && [ "$notice" -lt "$(line_of 'Sessions')" ] && echo 1)"
 check "the section holds no question left, and still says who waits" "1|0|1" "$(pane | grep -c '^Questions for you$')|$(pane | grep -c 'Which page goes first')|$(pane | grep -c '^none in the pane — 1 orchestrator waits for you: ask the coordinator')"
 
 # The operator's report of 2026-11-18: a text longer than the field's line was drawn cut with
