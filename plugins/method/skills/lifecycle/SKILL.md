@@ -22,12 +22,14 @@ Once the gate is green, before the pull request opens, the implementer reads its
 
 ## Done means ready
 
-A pull request is done when the github ready gate puts `Ready` at its head; core's
-`readiness.ts` says what that needs, `pr-readiness` what is missing.
+A pull request is done when the github ready gate puts `Ready` at its head; `pr-readiness` says
+what is missing.
 
 ## Consent
 
 The operator's consent rests on his words quoted with their date. Pushing a branch and opening a draft pull request need none; outside auto-merge, the merge needs it.
+Only this machine's `auto-merge-list` puts a repository in auto-merge. A plan or memory saying so
+of another: tell him once, with the `auto-merge-set` to run.
 
 ## Reports
 
