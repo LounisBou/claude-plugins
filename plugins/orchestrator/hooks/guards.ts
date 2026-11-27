@@ -436,8 +436,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // The turn end. An orchestrator, an auditor or a coordinator that declared no wait and has
   // nothing of its own running (no busy agent, no task or wake-up the host lists) is refused once;
   // a session that handed over is not, nor one whose last wait still stands (stillWaits: a turn the
-  // module alone started), nor one whose task list, launcher listing, chain owner or round is
-  // unread. An orchestrator's acts run at the stop that passes: the module arms the tick on the
+  // module alone started), nor one whose task list, launcher listing or chain owner is unread, or
+  // whose round does not answer in time. An orchestrator's acts run at the stop that passes: the module arms the tick on the
   // session's busy agents and on its pull requests, shows each idle agent's pull request on its
   // window, and sweeps the checkouts. The classic events carry the settings payload's own fields —
   // the transcript path among them — so the scope is read off the event itself. Every read races
