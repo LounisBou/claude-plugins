@@ -868,7 +868,14 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
         } else for (const one of close.reviews) settleOwed(one)
         continue
       }
-      const done = await closeAgent($, close.target).catch((err: unknown) => ({ closed: false, why: `its close broke: ${messageOf(err)}` }))
+      const done: { closed: boolean; why: string | null; later?: true } = await closeAgent($, close.target).catch((err: unknown) => ({ closed: false, why: `its close broke: ${messageOf(err)}` }))
+      // Refused on the agent's prompt, which holds what the operator typed: tried again as a later of the facts is.
+      if (done.later === true) {
+        if (close.reviews.length === 0 && done.why !== null) told.add(`owed ${closeFailedLine(close.agent, close.key, done.why)}`)
+        for (const key of close.ready) told.delete(key)
+        for (const pk of close.ended) waiting.add(pk)
+        continue
+      }
       if (done.why !== null) told.add(`owed ${closeFailedLine(close.agent, close.key, done.why)}`)
       for (const one of close.reviews) settleOwed(one)
     }

@@ -47,6 +47,8 @@ type Over = {
   // Its `close` drops the session on that tty from it, or fails when `closeFails`.
   launcher?: string | null
   closeFails?: boolean
+  // Its `close` refuses on the agent's prompt (exit 3) while this holds the operator's text, its bound of the wait recorded in `inputWaits`.
+  unsent?: { text: string | null; inputWaits: (string | undefined)[] }
   // Whether `dispatch-record.sh cost` fails.
   costFails?: boolean
   // What `git status --porcelain` prints in an agent's checkout, and how many commits `git rev-list` counts unpushed.
@@ -120,7 +122,7 @@ function fake(over: Over = {}) {
         .map(p => ({ name: p.slice(dir.length + 1), kind: 'file' as const, size: 1, isLink: false, mtimeMs: 0 })),
     },
     process: {
-      run: async (argv: readonly string[], init?: { stdin?: string }) => {
+      run: async (argv: readonly string[], init?: { stdin?: string; env?: Record<string, string> }) => {
         const log = logLineOf(argv)
         if (log !== null) { logged.push(log); return { exitCode: 0, stdout: '', stderr: '' } }
         runs.push([...argv])
@@ -128,6 +130,8 @@ function fake(over: Over = {}) {
         if (lock !== null) return lock
         if (argv[0] === 'bash' && argv[2] === 'list') return listed === null ? { exitCode: 1, stdout: '', stderr: 'no terminal' } : { exitCode: 0, stdout: listed ?? '', stderr: '' }
         if (argv[0] === 'bash' && argv[2] === 'close') {
+          over.unsent?.inputWaits.push(init?.env?.['ORCHESTRATOR_INPUT_WAIT'])
+          if (over.unsent?.text != null) return { exitCode: 3, stdout: '', stderr: `close: the prompt on ${argv[4]} holds text the operator typed and has not sent: waiting up to 0s for it to be sent or cleared\nERROR: close: refused: the prompt on ${argv[4]} still holds text the operator typed and has not sent, after 0s: the tab is kept, nothing was closed. His text: «${over.unsent.text}»` }
           if (over.closeFails) return { exitCode: 1, stdout: '', stderr: `ERROR: close: refused: the window on ${argv[4]} is named 'Other'` }
           listed = (listed ?? '').split('\n').filter(line => !line.includes(` | ${argv[4]} | `)).join('\n')
           return { exitCode: 0, stdout: '', stderr: '' }
@@ -614,6 +618,26 @@ test('a close the launcher refuses after the wake is told at the next tick, once
   await woke.settle()
   expect((await prWake(world.dollar, told)).lines).toEqual(["[module] Agent: p17 (acme/app#17): the launcher's close failed: ERROR: close: refused: the window on /dev/ttys000 is named 'Other'."])
   expect((await prWake(world.dollar, told)).lines).toEqual([])
+})
+
+test('a close refused on the agent\'s prompt waits for no text, is told once with the whole refusal, and is tried again until the prompt is empty', async () => {
+  const unsent = { text: 'je réponds ⏎ sur deux lignes' as string | null, inputWaits: [] as (string | undefined)[] }
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17'), unsent })
+  const told = new Set<string>()
+  const woke = await prWake(world.dollar, told)
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  await woke.settle()
+  // The launcher's close runs with no wait: what he sends is the agent's to answer, never killed while it starts on it.
+  expect(unsent.inputWaits).toEqual(['0'])
+  const next = await prWake(world.dollar, told)
+  expect(next.lines).toEqual([
+    '[module] Agent: p17 (acme/app#17): left open: ERROR: close: refused: the prompt on /dev/ttys000 still holds text the operator typed and has not sent, after 0s: the tab is kept, nothing was closed. His text: «je réponds ⏎ sur deux lignes».',
+    closedLine('acme/app#17', 'is Ready'),
+  ])
+  // Sent or cleared by the next try: the same Ready head closes it.
+  unsent.text = null
+  await next.settle()
+  expect([closes(world.runs), unsent.inputWaits]).toEqual([['--tty /dev/ttys000 --expect-title Agent: p17', '--tty /dev/ttys000 --expect-title Agent: p17'], ['0', '0']])
 })
 
 test('a close is made only once its wake is delivered: a wake the host drops leaves the agent running', async () => {

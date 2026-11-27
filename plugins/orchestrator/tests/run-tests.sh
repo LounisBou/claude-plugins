@@ -5942,8 +5942,8 @@ import iterm_agent as ia
 class Accepting:
     def close(self, tty, expect): return ''
     def survives(self, closed_id): return False
+    def prompt_lines(self, tty): return ['─' * 40, '❯\u00a0', '─' * 40]
 ia.terminal_for = lambda tty: Accepting()
-ia.await_unsent = lambda *a, **k: False  # no prompt holds typed text here: that read is tested on its own
 ia.os.kill = lambda pid, sig: (_ for _ in ()).throw(AssertionError('signalled %s' % pid))
 ia.process_state = lambda pid: $1
 try:
@@ -6183,7 +6183,7 @@ class Home:
 ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
-ia.tmux_out = lambda args, what: '0'
+ia.tmux_out = lambda args, what: ('─' * 40 + '\n❯\u00a0\n' + '─' * 40) if 'capture-pane' in args else '0'
 ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" 2>&1)
 check "a successor's takeover ends its predecessor's host before it takes window 0" "1|1|gone" \
   "$(printf '%s' "$out" | grep -c "SIGKILL sent to $st")|$(printf '%s' "$out" | grep -c '^took window 0')|$(alive "$st")"
@@ -6300,7 +6300,7 @@ def sid(tty):
 ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
-ia.tmux_out = lambda args, what: '0'
+ia.tmux_out = lambda args, what: ('─' * 40 + '\n❯\u00a0\n' + '─' * 40) if 'capture-pane' in args else '0'
 ia.host_identity = lambda tty: None
 ia.wait_gone = lambda *a, **k: None
 ia.await_handover = lambda tty: 'takeover: « handed over » read'
@@ -6342,11 +6342,41 @@ $(printf '\033[39m❯\302\240')je réponds
   sur deux lignes
 $PRULE
   x │ Opus"
-check "the prompt box: a faint placeholder is nothing typed, the operator's lines are his text, no box is nothing" \
-  "||je réponds⏎sur deux lignes||" \
+check "the prompt box: a faint placeholder is nothing typed, the operator's lines are his text, no box is never an empty one" \
+  "||je réponds⏎sur deux lignes|None|" \
   "$(PE="$PEMPTY" PT="$PTYPED" ipy "
 import os
-print('|' + ia.typed_input(ia.unfaint(os.environ['PE']).split(chr(10))) + '|' + ia.typed_input(ia.unfaint(os.environ['PT']).split(chr(10))) + '|' + ia.typed_input(['\$ ls', 'a']) + '|')" | nl_join)"
+print('|' + ia.typed_input(ia.unfaint(os.environ['PE']).split(chr(10))) + '|' + ia.typed_input(ia.unfaint(os.environ['PT']).split(chr(10))) + '|' + str(ia.typed_input(['\$ ls', 'a'])) + '|')" | nl_join)"
+# Bash mode draws ! as the mark; a busy host on a theme of ANSI colours draws ❯ faint, so it is
+# left out with the faint cells; a dialog (a permission, a question) draws no box at all.
+check "bash mode's ! box holds his command, a faint mark's box his text; a dialog shows no box, never an empty one" \
+  "git push --force|je tape|None" \
+  "$(ipy "
+R = '─' * 40
+bash = [R, '!\u00a0git push --force', R]
+faint = ia.unfaint(R + '\n\x1b[2m❯\x1b[22m\u00a0je tape\n' + R).split('\n')
+dialog = [R, ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', R]
+print('|'.join(str(ia.typed_input(lines)) for lines in (bash, faint, dialog)))")"
+# The host draws its placeholder, when it draws its own cursor, as an inverse first letter then
+# the rest faint: that letter is no text; the cursor on a letter of his text keeps it.
+PINVERSE="$PRULE Orch: x
+$(printf '\033[39m❯\302\240\033[7mT\033[27m\033[2mry \"write a test\"\033[0m')
+$PRULE"
+check "an inverse first letter before a faint placeholder is nothing typed, in a pane and in an iTerm2 line; his text under the cursor is kept" \
+  "|je tape||je tape" \
+  "$(PI="$PINVERSE" ipy "
+import os
+class Style:
+    def __init__(self, faint, inverse): self.faint, self.inverse = faint, inverse
+class Line:
+    def __init__(self, cells): self.cells = cells
+    def string_at(self, x): return self.cells[x][0]
+    def style_at(self, x): return Style(*self.cells[x][1:]) if x < len(self.cells) else None
+R = '─' * 40
+hint = Line([('❯', False, False), ('\u00a0', False, False), ('T', False, True)] + [(c, True, False) for c in 'ry this'])
+typed = Line([('❯', False, False), ('\u00a0', False, False)] + [(c, False, c == 'a') for c in 'je tape'])
+cursor = ia.unfaint(R + '\n❯\u00a0je t\x1b[7ma\x1b[27mpe\n' + R).split('\n')
+print('|'.join([ia.typed_input(ia.unfaint(os.environ['PI']).split('\n')), ia.typed_input(cursor), ia.typed_input([R, ia.plain_cells(hint), R]), ia.typed_input([R, ia.plain_cells(typed), R])]))")"
 # The app answers a cell the host moved the cursor over as NUL, and says which cells are faint.
 check "an iTerm2 line: its NUL cells are spaces, its faint cells left out" "❯ je tape|❯" \
   "$(ipy "
@@ -6372,7 +6402,7 @@ def read():
     r = reads.pop(0) if len(reads) > 1 else reads[0]
     if r == 'NONE':
         raise RuntimeError('no API')
-    return '' if r == 'EMPTY' else r
+    return '' if r == 'EMPTY' else None if r == 'NOBOX' else r.replace('/', chr(10))
 def clock():
     t[0] += 1
     return t[0]
@@ -6386,16 +6416,29 @@ res=$(unsent 'mon texte,mon texte,EMPTY')
 check "text typed, then sent or cleared: the close goes on, having said it waited" "1|True" \
   "$(printf '%s\n' "$res" | grep -c '^close: the prompt on /dev/ttys901 holds text the operator typed and has not sent: waiting up to 5s')|$(printf '%s\n' "$res" | tail -1)"
 res=$(unsent 'mon texte')
-check "text still there at the bound: refused, the tab kept, his text on the line" "1|exit=1" \
+check "text still there at the bound: refused, the tab kept, his text on the line" "1|exit=3" \
   "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the prompt on /dev/ttys901 still holds text the operator typed and has not sent, after 5s: the tab is kept, nothing was closed.*His text: «mon texte»$')|$(printf '%s\n' "$res" | tail -1)"
 res=$(unsent 'mon texte,NONE')
-check "text seen, then a prompt that cannot be read: never taken for sent, refused at the bound with his text" "1|exit=1" \
+check "text seen, then a prompt that cannot be read: never taken for sent, refused at the bound with his text" "1|exit=3" \
   "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: .*His text: «mon texte»$')|$(printf '%s\n' "$res" | tail -1)"
 res=$(unsent NONE)
-check "a prompt that cannot be read is never taken for an empty one: refused at once, the tab kept" "1|exit=1" \
+check "a prompt that cannot be read is never taken for an empty one: refused at once, the tab kept" "1|exit=3" \
   "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the prompt on /dev/ttys901 cannot be read (no API), so whether it holds text .*: the tab is kept, nothing was closed$')|$(printf '%s\n' "$res" | tail -1)"
+# A screen with no box (a dialog, a host still drawing) is waited for as text is: a box drawn
+# empty then closes; none drawn by the bound refuses, with nothing to show.
+res=$(unsent 'NOBOX,EMPTY')
+check "no prompt box, then an empty one: the close waits, then goes on, no text seen" "1|False" \
+  "$(printf '%s\n' "$res" | grep -c '^close: the prompt on /dev/ttys901 shows no prompt box (a dialog, or a host still drawing), so what it holds is not known: waiting up to 5s')|$(printf '%s\n' "$res" | tail -1)"
+res=$(unsent NOBOX)
+check "no prompt box by the bound: refused, the tab kept" "1|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the screen on /dev/ttys901 showed no prompt box for 5s .*: the tab is kept, nothing was closed$')|$(printf '%s\n' "$res" | tail -1)"
+# The refusal is one line: the module's close keeps the last line, and a successor reads it as
+# the launcher's, never the host's, so no end_session ends the tab over his text.
+res=$(unsent 'je réponds/sur deux lignes')
+check "his text on several lines is on the refusal's one line, after the way out" "1|0|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: .*this refusal is the launcher.s, no refusal of the host.s: never ask the session to call end_session, which would destroy his text\. His text: «je réponds ⏎ sur deux lignes»$')|$(printf '%s\n' "$res" | grep -c '^sur deux lignes')|$(printf '%s\n' "$res" | tail -1)"
 # A takeover reads its predecessor's pane before the kill: text there keeps window 0 as it is.
-unsent_takeover() { SCREEN="$1" ORCHESTRATOR_INPUT_WAIT=0 ORCHESTRATOR_STATE_DIR="$ESTATE" ipy "
+unsent_takeover() { SCREEN="$1" SCREEN2="${2:-}" ORCHESTRATOR_INPUT_WAIT="${TWAIT:-0}" ORCHESTRATOR_STATE_DIR="$ESTATE" ipy "
 import os
 P = ia.Pane
 killed = []
@@ -6410,11 +6453,20 @@ class Home:
 ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
-ia.tmux_out = lambda args, what: os.environ['SCREEN'] if 'capture-pane' in args else '0'
+# The pane's capture: SCREEN, then SCREEN2 once read (what he left: sent or cleared).
+reads = []
+def tmux_out(args, what):
+    if 'capture-pane' not in args:
+        return '0'
+    reads.append(1)
+    return os.environ['SCREEN2'] if len(reads) > 1 and os.environ['SCREEN2'] else os.environ['SCREEN']
+ia.tmux_out = tmux_out
+ia.INPUT_POLL = 0
 ia.host_identity = lambda tty: None
 ia.wait_gone = lambda *a, **k: None
 ia.await_handover = lambda tty: 'takeover: « handed over » read'
-ia.conversation_of = lambda tty: ''
+# Read once the wait is over: what he sent during it is in the conversation.
+ia.conversation_of = lambda tty: 'conversation: read after %d prompt reads' % len(reads)
 try:
     ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))
 finally:
@@ -6425,6 +6477,101 @@ check "a takeover whose predecessor holds typed text refuses before the kill: wi
 res=$(unsent_takeover "$PEMPTY")
 check "and one whose prompt shows only the placeholder takes window 0 as before" "1|killed=@1" \
   "$(printf '%s\n' "$res" | grep -c '^took window 0')|$(printf '%s\n' "$res" | tail -1)"
+res=$(TWAIT=10 unsent_takeover "$PTYPED" "$PEMPTY")
+check "a takeover whose predecessor's text is sent during its wait waits, then takes window 0, its conversation read after the wait" \
+  "1|1|1|killed=@1" \
+  "$(printf '%s\n' "$res" | grep -c '^takeover: the prompt on /dev/ttys966 holds text the operator typed and has not sent: waiting up to 10s')|$(printf '%s\n' "$res" | grep -c '^conversation: read after 2 prompt reads$')|$(printf '%s\n' "$res" | grep -c '^took window 0')|$(printf '%s\n' "$res" | tail -1)"
+
+# The close of a home tab, an orchestrator's or a coordinator's, reads window 0 of its server,
+# where the host runs: text there keeps the server and every window, nothing ended.
+hometab_close() { SCREEN="$1" ORCHESTRATOR_INPUT_WAIT=0 ORCHESTRATOR_STATE_DIR="$ESTATE" ipy "
+import os
+calls = []
+ia.DRY_RUN = False
+ia.pane_tab_tty = lambda tty: tty
+ia.close_host_tty = lambda tty, strict=False: ('orch-suite', ([['0', '/dev/ttys905']], ''), '/dev/ttys905')
+ia.host_clis_on = lambda tty, strict=False: ['4242']
+ia.host_cli_cwd = lambda tty: None
+ia.recorded_pids = lambda ttys: []
+ia.name_lingering = lambda pids: None
+ia.conversation_of = lambda tty: ''
+def tmux_out(args, what):
+    calls.append(' '.join(args))
+    return os.environ['SCREEN']
+ia.tmux_out = tmux_out
+def close_home_tab(tty, socket, expect, listed, end_agents):
+    calls.append('end ' + socket)
+    print('closed 1 session on ' + tty)
+ia.close_home_tab = close_home_tab
+try:
+    ia.cmd_close(ia.args_from_line('close', ['--tty', '/dev/ttys904', '--expect-title', 'Orch: x', '--keep-checkout']))
+except SystemExit as e:
+    print('exit=%s' % e.code)
+print('calls=' + '|'.join(calls))" 2>&1; }
+res=$(hometab_close "$PTYPED")
+check "close of a home tab whose window 0 holds his text: refused on window 0's capture, the server and its windows kept" \
+  "1|calls=-L orch-suite capture-pane -p -e -t home:0|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the prompt on /dev/ttys904 still holds text .*His text: «je réponds ⏎ sur deux lignes»$')|$(printf '%s\n' "$res" | grep '^calls=')|$(printf '%s\n' "$res" | grep '^exit=')"
+res=$(hometab_close "$PEMPTY")
+check "and one whose window 0 shows the placeholder alone ends its server as before" \
+  "closed 1 session on /dev/ttys904|calls=-L orch-suite capture-pane -p -e -t home:0|end orch-suite" \
+  "$(printf '%s\n' "$res" | grep '^closed')|$(printf '%s\n' "$res" | grep '^calls=')"
+# The close of an iTerm2 tab reads the app's screen through its API, styles included: his text
+# refuses it, nothing closed; the placeholder alone closes it. Where the API cannot serve (the
+# module missing, the app not answering), the prompt cannot be read: the close refuses, the
+# reason and the way out on its line, and no rung below closes the tab over his text.
+iterm_close() { MODE="$1" ORCHESTRATOR_INPUT_WAIT=0 ORCHESTRATOR_STATE_DIR="$ESTATE" ipy "
+import asyncio, os
+mode = os.environ['MODE']
+closed = []
+class Style:
+    def __init__(self, faint): self.faint, self.inverse = faint, False
+class Line:
+    def __init__(self, cells): self.cells = cells
+    def string_at(self, x): return self.cells[x][0]
+    def style_at(self, x): return Style(self.cells[x][1]) if x < len(self.cells) else None
+class Contents:
+    def __init__(self, lines): self.lines, self.number_of_lines = lines, len(lines)
+    def line(self, i): return self.lines[i]
+R = Line([('─', False)] * 40)
+box = Line([('❯', False), ('\u00a0', False)] + ([(c, False) for c in 'ma réponse'] if mode == 'typed' else [(c, True) for c in 'Try this']))
+class Sess:
+    async def async_get_screen_contents(self): return Contents([R, box, R])
+async def find_tab(app, tty): return None, None, Sess()
+class Api:
+    @staticmethod
+    async def async_get_app(connection): return None
+ia.find_tab = find_tab
+if mode == 'noapi':
+    def api_ready(): raise ia.Unreachable('the iterm2 module is not installed for py; run /orchestrator:install')
+    ia.api_ready = api_ready
+else:
+    ia.run = lambda go: asyncio.run(go(Api, None))
+ia.as_close = lambda tty, expect: closed.append('applescript ' + tty)
+ia.DRY_RUN = False
+ia.pane_tab_tty = lambda tty: tty
+ia.close_host_tty = lambda tty, strict=False: ('', None, tty)
+ia.host_clis_on = lambda tty, strict=False: ['4242']
+ia.host_cli_on = lambda tty: '4242'
+ia.host_cli_cwd = lambda tty: None
+ia.recorded_pids = lambda ttys: []
+ia.name_lingering = lambda pids: None
+ia.terminal_for = lambda tty: ia.ITERM
+ia.close_tab = lambda tty, expect: closed.append(tty)
+try:
+    ia.cmd_close(ia.args_from_line('close', ['--tty', '/dev/ttys906', '--expect-title', 'Agent: x', '--keep-checkout']))
+except SystemExit as e:
+    print('exit=%s' % e.code)
+print('closed=' + ','.join(closed))" 2>&1; }
+res=$(iterm_close typed)
+check "close of an iTerm2 tab whose prompt holds his text: refused, nothing closed" "1|exit=3|closed=" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the prompt on /dev/ttys906 still holds text .*His text: «ma réponse»$')|$(printf '%s\n' "$res" | grep '^exit=')|$(printf '%s\n' "$res" | grep '^closed=')"
+res=$(iterm_close empty)
+check "and one whose prompt shows the faint placeholder alone is closed as before" "closed 1 session on /dev/ttys906|closed=/dev/ttys906" \
+  "$(printf '%s\n' "$res" | grep '^closed 1')|$(printf '%s\n' "$res" | grep '^closed=')"
+res=$(iterm_close noapi)
+check "where the app's API cannot serve, the close refuses with its reason and the way out, and no rung closes the tab" "1|exit=3|closed=" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the prompt on /dev/ttys906 cannot be read (the iterm2 module is not installed for py; run /orchestrator:install), .* Run this close again once he has sent or cleared it and the prompt can be read; .*: the tab is kept, nothing was closed$')|$(printf '%s\n' "$res" | grep '^exit=')|$(printf '%s\n' "$res" | grep '^closed=')"
 
 echo "== iterm-agents: closing a home tab ends its server =="
 # The operator closes the tab of an orchestrator's home session and expects the orchestrator
@@ -6747,7 +6894,27 @@ mode = sys.argv[2]
 tty = '/dev/ttys901'
 table = os.environ['ORCHESTRATOR_CWD_TABLE']
 ia.host_cli_on = lambda t: '4242'
-ia.await_unsent = lambda *a, **k: False  # no prompt holds typed text here: that read is tested on its own
+ia.host_clis_on = lambda t, strict=False: ['4242']
+# The host's prompt box, empty unless PROMPT_SEQ gives what each read shows, the last one again:
+# once it reads empty after his text, SENT is what he sent, written to the transcript then.
+seq = (os.environ.get('PROMPT_SEQ') or '').split(',')
+def prompt_lines(self, tty):
+    text = seq.pop(0) if len(seq) > 1 else seq[0]
+    if text == '' and os.environ.get('SENT') and os.environ.get('CONV_TRANSCRIPT'):
+        import datetime, json
+        with open(os.environ['CONV_TRANSCRIPT'], 'a') as fh:
+            fh.write(json.dumps({"type": "user", "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z'), "origin": {"kind": "human"}, "message": {"content": os.environ.pop('SENT')}}) + '\n')
+    return ['─' * 40, '❯\u00a0' + text, '─' * 40]
+ia.ItermTerminal.prompt_lines = prompt_lines
+ia.INPUT_POLL = 0
+# A process table that cannot be read: nothing, or with `strict` the failure.
+if os.environ.get('PS_FAIL'):
+    def failing(t, strict=False):
+        if strict:
+            raise OSError('ps could not be run')
+        return []
+    ia.host_clis_on = failing
+    ia.host_cli_on = lambda t: None
 ia.wait_gone = lambda t, timeout=None: '4242' if mode == 'survivor' else None
 ia.served_by = (lambda *a, **k: open(table, 'w').close()) if mode == 'vanish' else (lambda *a, **k: None)
 ia.cmd_spawn = lambda argv, pair_from='', old_tty='', made=None: None
@@ -6853,6 +7020,17 @@ res=$(CONV_TRANSCRIPT="$CVT_CLOSE" CONV_BOOM=1 cprobe close --keep-checkout --ex
 check "a close whose conversation cannot be read still closes, its first line the contract's, the reason on stderr only" \
   "exit=0|closed 1 session on /dev/ttys901|0|1" \
   "$(printf '%s\n' "$res" | head -1)|$(field "$res" OUT)|$(printf '%s\n' "$res" | grep -c '^conversation:')|$(field "$res" ERR | grep -c '^conversation: not read (no table)$')"
+# The operator types in the agent's prompt during the close, then sends it: the close waits for
+# it, then goes on, and prints the conversation read after the wait, his message in it.
+cp "$CVT_CLOSE" "$WORK/conv-close-sent.jsonl"
+res=$(ORCHESTRATOR_INPUT_WAIT=10 PROMPT_SEQ='mon message,' SENT=MON-MESSAGE-SENT CONV_TRANSCRIPT="$WORK/conv-close-sent.jsonl" cprobe close --keep-checkout --expect-title 'Agent: x')
+check "a close whose prompt holds his text waits, then closes once he sends it, and prints the conversation that holds it" \
+  "exit=0|1|1|1|1" \
+  "$(printf '%s\n' "$res" | head -1)|$(printf '%s\n' "$res" | grep -c 'close: the prompt on /dev/ttys901 holds text the operator typed and has not sent: waiting up to 10s')|$(printf '%s\n' "$res" | grep -c 'close: the operator sent or cleared what he typed in the prompt on /dev/ttys901: show him what the conversation section below leaves pending')|$(printf '%s\n' "$res" | grep -c '^conversation: ')|$(printf '%s\n' "$res" | grep -c 'MON-MESSAGE-SENT')"
+# A process table that cannot be read is no proof that no host is there: the prompt is read.
+res=$(ORCHESTRATOR_INPUT_WAIT=0 PS_FAIL=1 PROMPT_SEQ='mon texte' cprobe close --keep-checkout --expect-title 'Agent: x')
+check "a close whose process table cannot be read still reads the prompt: his text there refuses it, nothing closed" "exit=3|1|0" \
+  "$(printf '%s\n' "$res" | head -1)|$(printf '%s\n' "$res" | grep -c 'refused: the prompt on /dev/ttys901 still holds text .*His text: «mon texte»')|$(printf '%s\n' "$res" | grep -c '^OUT:closed')"
 res=$(cprobe rotate)
 check "a rotation deletes nothing: its replacement works in the same checkout" "1|0" \
   "$(exists "$CL")|$(field "$res" ERR | grep -c 'deleted')"
@@ -7598,7 +7776,7 @@ class Home:
 ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
-ia.tmux_out = lambda args, what: '0'
+ia.tmux_out = lambda args, what: ('─' * 40 + '\n❯\u00a0\n' + '─' * 40) if 'capture-pane' in args else '0'
 ia.host_identity = lambda tty: None
 ia.wait_gone = lambda tty, timeout=None: None
 ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" "$ROOT/skills/iterm-agents/scripts" 2>&1)
@@ -7711,7 +7889,11 @@ case "$1" in
       printf '{"permissionMode":"auto"}\n{"cwd":"%s"}\n' "$REC_CWD" > "$d/projects/w/$win.jsonl"
     fi
     cat "$d/new" ;;
-  capture-pane) cat "$d/screen" ;;
+  capture-pane)
+    [ -n "${REC_CAPTURE_ERR:-}" ] && { echo "$REC_CAPTURE_ERR" >&2; exit 1; }
+    cat "$d/screen"
+    # What the operator does after the first read: the screen he leaves (sent or cleared).
+    [ -f "$d/screen.next" ] && mv "$d/screen.next" "$d/screen" ;;
   kill-window)
     tty=$(awk -F'\t' -v w="$3" '$3 == w { print $5 }' "$d/panes")
     [ -z "${REC_KEEP_WINDOW:-}" ] && awk -F'\t' -v w="$3" '$3 != w' "$d/panes" > "$d/panes.tmp" && mv "$d/panes.tmp" "$d/panes"
@@ -7731,8 +7913,10 @@ chmod +x "$TR/osascript"
 TSOCK=/private/tmp/tmux-501/home
 TSTATE="$WORK/tmuxstate"
 reset_home() { # the home session: the orchestrator in window 0, two agents, a stranger's session
-  rm -rf "$TSTATE" "$TR/projects" "$TR/calls" "$TR/panes.moved"
+  rm -rf "$TSTATE" "$TR/projects" "$TR/calls" "$TR/panes.moved" "$TR/screen.next"
   mkdir -p "$TSTATE/chains"
+  # Each host's prompt box, empty: a close reads it before the kill.
+  printf '%s\n' "$PEMPTY" > "$TR/screen"
   printf '1\n' > "$TR/mark"
   printf '%s\n' '$1	0	@0	%0	/dev/ttys900	orch	✳ Orch: home' \
     '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' \
@@ -7837,6 +8021,18 @@ printf '%s\n' "$PEMPTY" > "$TR/screen"
 out=$(ORCHESTRATOR_INPUT_WAIT=0 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
 check "close: a window whose prompt shows only the host's faint placeholder is closed as before" "closed 1 session on /dev/ttys901|1" \
   "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[kill-window\]')"
+# He sends or clears his text during the wait: the close, which read it, waits, then kills.
+reset_home
+printf '%s\n' "$PTYPED" > "$TR/screen"; printf '%s\n' "$PEMPTY" > "$TR/screen.next"
+out=$(ORCHESTRATOR_INPUT_WAIT=10 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
+check "close: a window whose prompt holds his text waits for it to be sent or cleared, then is closed" \
+  "1|closed 1 session on /dev/ttys901|2|1|1" \
+  "$(printf '%s\n' "$out" | grep -c '^close: the prompt on /dev/ttys901 holds text the operator typed and has not sent: waiting up to 10s')|$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[capture-pane\]')|$(calls | grep -c '\[kill-window\]')|$(printf '%s\n' "$out" | grep -c '^close: the operator sent or cleared what he typed in the prompt on /dev/ttys901')"
+# A capture tmux refuses is a prompt that cannot be read: refused, nothing killed.
+reset_home
+out=$(REC_CAPTURE_ERR="can't find pane: %1" home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1); rc=$?
+check "close: a window whose pane tmux fails to capture is refused, nothing killed, its host kept" "3|1|0|1" \
+  "$rc|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 cannot be read (.*), so whether it holds text the operator typed and has not sent is not known')|$(calls | grep -c '\[kill-window\]')|$(grep -c ttys901 "$TR/ps")"
 rm -f "$TR/screen"
 reset_home
 out=$(home close --tty /dev/ttys902 --expect-title "Agent: one" 2>&1)
@@ -8025,7 +8221,8 @@ else:
         WinTerm() if mode == "glyph-window" else None, TITLES.get(mode, "Agent: one"),
         "@1" if mode == "glyph-window" else "")
 ia.terminal_for = lambda tty: ia.ITERM
-ia.await_unsent = lambda *a, **k: False  # no prompt holds typed text here: that read is tested on its own
+# The old session's prompt box, empty: its read is the close's own, before the kill.
+ia.ITERM.prompt_lines = lambda tty: ['─' * 40, '❯\u00a0', '─' * 40]
 # The app's id of the session on the old tab: the old one's before the spawn; after it, gone in
 # « vanished » and once the close began in « sent-gone », another's in « stranger », and in
 # « read-interrupt » a first read after the spawn interrupted.
@@ -9261,6 +9458,8 @@ class FakeIterm(ia.Terminal):
         return "/dev/ttys970", "NEW-TAB"
     def close_made(self, made):
         calls.append("close_made %s" % made.get("session_id")); return True
+    def prompt_lines(self, tty):
+        return ['─' * 40, '❯\u00a0' + ("je réponds" if scenario == "typed" else ""), '─' * 40]
 ia.ITERM = FakeIterm()
 ia.time.sleep = lambda s: None
 ia.SPAWN_TIMEOUT = 0
@@ -9289,6 +9488,12 @@ check "the old tab is read first, the new one is made right of it under the orch
 check "window 0 closes the old tab by the id read before the move, and the new tab runs the client of the home server alone" \
   "1|1" \
   "$(grep -c "home-release --tty /dev/ttys900 --session-id OLD-SESSION " "$(ls "$WORK"/homestate/prompts/home-*.sh)")|$(grep -c "exec env -u TMUX -u TMUX_PANE $HR/tmux -u -L orch-abcdef12 attach -t home\$" "$(sed 's/^\/bin\/sh -l //' "$HR/attach")")"
+# The move ends the session in its tab: his text in its prompt keeps the session there, nothing made.
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(hprobe typed)
+check "a move whose tab's prompt holds his text stays: no server, no tab, the old tab read alone" \
+  "0|identity /dev/ttys900|OUT:stay: the prompt on /dev/ttys900 holds text, so the move, which ends the session there, would destroy what the operator typed and has not sent|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(printf '%s\n' "$res" | grep '^OUT:')|$(hcalls | grep -c 'new-session')"
 check "the server's environment is the operator's, without the caller's session or nesting marks" "none" \
   "$(homecmd env CLAUDECODE=1 ITERM_SESSION_ID=w0t0p0:X "$py" -c "
 import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
