@@ -38,9 +38,9 @@ export const NO_OPERATOR = [
   'This checkout is what is graded: spawn every agent with `--dir` set to this checkout, never through `workspace.sh create`, with one agent writing at a time, and have each commit here.',
 ].join(' ')
 
-/** What the orchestrator is typed at its start: its skill in `build` mode, then the brief. */
+/** What the orchestrator is typed at its start: its skill, then the brief. */
 export function startupPrompt(brief: string): string {
-  return `/orchestrator:orchestrator build\n\n${brief}\n\n${NO_OPERATOR}`
+  return `/orchestrator:orchestrator ${brief}\n\n${NO_OPERATOR}`
 }
 
 /** The orchestrator's session name for a case, its subject cut to what a name holds. */

@@ -2013,21 +2013,8 @@ check "the second address is named" "1" "$(bash "$LINT" "$B/twoaddr.md" 2>&1 | g
 check "the same references in an implementer brief are still refused" "1" \
   "$(ok_brief "$B/succaddr-impl.md"; printf 'Peers `Agent: a [a1b2c3]` and `Agent: b [d4e5f6]`.\n' >> "$B/succaddr-impl.md"; bash "$LINT" "$B/succaddr-impl.md" 2>&1 | grep -c 'more than one session reference')"
 
-# The succession template's mode line, quoted in a brief that describes it, is a mention: a
-# placeholder inside an inline code span, only that name. The line itself, any other name, and
-# the name outside a span are holes still.
-ok_brief "$B/modemention.md"; printf 'Succession fills `Mode: {{MODE}}` from the predecessor, and `{{MODE}}` is never left.\n' >> "$B/modemention.md"
-check_status "the mode placeholder quoted in a code span is a mention, not a hole" 0 bash "$LINT" "$B/modemention.md"
-ok_brief "$B/modeline.md"; printf 'Mode: {{MODE}}\n' >> "$B/modeline.md"
-check "the mode placeholder left as a line is still a finding" "1" "$(bash "$LINT" "$B/modeline.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
-ok_brief "$B/modeprose.md"; printf 'Your mode is {{MODE}}, and `Mode: {{MODE}}` is the line.\n' >> "$B/modeprose.md"
-check "the mode placeholder in prose beside a quoted one is one finding" "1" "$(bash "$LINT" "$B/modeprose.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
-ok_brief "$B/modestray.md"; printf 'A stray ` before {{MODE}} and none after.\n' >> "$B/modestray.md"
-check "a backtick left open before the mode placeholder keeps it a finding" "1" "$(bash "$LINT" "$B/modestray.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
 ok_brief "$B/spanother.md"; printf 'The branch is `{{BRANCH}}`.\n' >> "$B/spanother.md"
 check "another placeholder in a code span is still a finding" "1" "$(bash "$LINT" "$B/spanother.md" 2>&1 | grep -c 'unfilled placeholder {{BRANCH}}')"
-check "the succession template, unfilled, still fails on its mode line" "1" \
-  "$(bash "$LINT" "$ROOT/templates/orchestrator-succession-brief.md" 2>&1 | grep -c ':3: unfilled placeholder {{MODE}}')"
 
 printf '# nothing\n\nYou are the implementer for this phase.\n' > "$B/noaddr.md"
 check_status "an implementer brief without an address is a finding" 1 bash "$LINT" "$B/noaddr.md"
@@ -2865,18 +2852,18 @@ check "and a successor's, with the remote-control flag behind it" "Orch: f" \
   "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
 # A successor reads the state through `succession.sh takeover` (decision 0007): no brief is
 # written, so the launcher reads none; the prompt `/orchestrator:succeed` writes carries the load
-# of the rulebook with its mode and the takeover command, and is passed as given.
-SUCCB="$WORK/succession-brief.md"; printf '# Orchestrator succession brief — scratch\n\nMode: build\n' > "$SUCCB"
-TAKEOVER_PROMPT='Load the skill orchestrator:orchestrator with the argument "build", then run /p/succession.sh takeover /r.jsonl --mode build --tty /dev/ttys900 and execute what it prints.'
+# of the rulebook and the takeover command, and is passed as given.
+SUCCB="$WORK/succession-brief.md"; printf '# Orchestrator succession brief — scratch\n' > "$SUCCB"
+TAKEOVER_PROMPT='Load the skill orchestrator:orchestrator, then run /p/succession.sh takeover /r.jsonl --tty /dev/ttys900 and execute what it prints.'
 check "a successor spawns on the takeover prompt, and on a prompt naming a brief, which it no longer reads" "1|0|1|0" \
   "$(succ "$PSTAB" --successor --prompt "$TAKEOVER_PROMPT" | grep -c '^launch=')|$(succ "$PSTAB" --successor --prompt "$TAKEOVER_PROMPT" | grep -c 'refused')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c '^launch=')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c 'refused')"
 # `--brief` builds the spawn's prompt from the brief and the successor's prompt, which carries the
-# mode, would be dropped: the combination is refused, before any tab opens, and says why.
+# takeover, would be dropped: the combination is refused, before any tab opens, and says why.
 succ_brief() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
   ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$PSTAB" bash "$AGENT" spawn --dir "$WORK" --successor \
   --brief "$SUCCB" --orchestrator "Orch: f [abc123]" 2>&1; }
-check "a successor spawned with --brief is refused, before any tab, rather than losing its mode" "1|1|0" \
-  "$(succ_brief | grep -c 'spawn: refused: --successor takes its prompt, not --brief')|$(succ_brief | grep -c 'loads the rulebook with its mode and runs the takeover')|$(succ_brief | grep -c '^launch=')"
+check "a successor spawned with --brief is refused, before any tab, rather than losing its takeover" "1|1|0" \
+  "$(succ_brief | grep -c 'spawn: refused: --successor takes its prompt, not --brief')|$(succ_brief | grep -c 'loads the rulebook and runs the takeover')|$(succ_brief | grep -c '^launch=')"
 check "the launch puts the prompt before the name" "1" \
   "$(printf '%s' "$d1launch" | grep -cE '"\$\(cat [^"]+\)" --name ')"
 

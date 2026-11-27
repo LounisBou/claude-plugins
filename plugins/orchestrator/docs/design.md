@@ -15,7 +15,7 @@ section here. A number that is absent names a decision a skill now states in ful
 
 One session supervises implementer sessions instead of writing code itself: it writes their
 briefs, launches them, reviews every delivery on the artifact, rotates saturated agents and
-hands over to a successor before its own judgment degrades. It starts in one of two modes, the orchestrator skill's argument: `build`, a spec delivered as pull requests, which loads the lifecycle, done and the artifact formats from the `method` plugin (`method:lifecycle`) rather than stating them; and `investigate`, debugging or analysis with no goals, phases or ready gate. This plugin ships that method as skills, the tab tooling the method needs on macOS, the briefs as
+hands over to a successor before its own judgment degrades. For work ending in a pull request it loads the lifecycle, done and the artifact formats from the `method` plugin (`method:lifecycle`) rather than stating them; an investigation is a row delivering a report (decision 0008). This plugin ships that method as skills, the tab tooling the method needs on macOS, the briefs as
 templates, and a context gauge that does not depend on any particular status bar.
 
 Everything here was extracted from a working setup: the skills were loose files in the

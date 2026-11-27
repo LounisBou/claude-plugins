@@ -17,13 +17,10 @@ test('a complete implementer brief has no finding', () => {
   assert.deepEqual(texts(''), [])
 })
 
-test('a placeholder is a finding, but the mode quoted in a closed code span', () => {
+test('a placeholder is a finding, quoted in a code span or not', () => {
   assert.deepEqual(texts('a\nBranch: {{BRANCH}} {{X_1}}\n'), ['2: unfilled placeholder {{BRANCH}}', '2: unfilled placeholder {{X_1}}'])
-  assert.deepEqual(texts('The line `Mode: {{MODE}}` is filled.\n'), [])
-  assert.deepEqual(texts('Mode: {{MODE}}\n'), ['1: unfilled placeholder {{MODE}}'])
-  assert.deepEqual(texts('`Mode: {{MODE}}` and {{MODE}}\n'), ['1: unfilled placeholder {{MODE}}'])
-  assert.deepEqual(texts('a ` stray {{MODE}}\n'), ['1: unfilled placeholder {{MODE}}'])
   assert.deepEqual(texts('`{{BRANCH}}`\n'), ['1: unfilled placeholder {{BRANCH}}'])
+  assert.deepEqual(texts('The line `Mode: {{MODE}}` is filled.\n'), ['1: unfilled placeholder {{MODE}}'])
 })
 
 test('an upper-case variable reference is a finding, in both spellings', () => {

@@ -15,7 +15,7 @@
 #   coordinator.sh roots     the roots, one line each by core's rule: protected=<what runs>, data=<what
 #                            any session writes>, module=<the hooks module's own files, measure/ among them>
 #   coordinator.sh sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id>
-#                        --effort <level> [--session <id>] [--mode build|investigate] [--config <dir>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+#                        --effort <level> [--session <id>] [--config <dir>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
 #                            records a paused orchestrator as sleeping, once its tab is closed;
 #                            prints "sleeping <name>"
 #   coordinator.sh sleeping  one line per sleeping orchestrator; nothing when none sleeps
@@ -174,7 +174,7 @@
 # lock is never broken automatically.
 #
 # The sleeping orchestrators: <state>/sleeping.json, an array of {"name","brief","dir","model",
-# "effort","slept","prs","checkouts"[,"session"][,"mode"][,"config"]}, "config" the configuration
+# "effort","slept","prs","checkouts"[,"session"][,"config"]}, "config" the configuration
 # directory the orchestrator ran on (absent: plan 1) that a wake and a move run it on again,
 # written in one rename under the same lock as a
 # registration — sleep, wake-done and drop each take it — and kept apart from the
