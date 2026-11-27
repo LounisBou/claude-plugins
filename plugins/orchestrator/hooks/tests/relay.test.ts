@@ -9,9 +9,10 @@ import { declaredWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLab
 import { roundEntry, type RoundEntry } from '../round.ts'
 import { settledText, successorText, parseSessionRow, paneRows, withWait, writeSession, readSessions, WORKS_AGAIN, HANDED_ON, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
-import { answerAskedFromPane, askTurnStarted, callAsk, settle } from '../question.ts'
+import { answerAskedFromPane, askTurnStarted, callAsk, clearFailed, settle } from '../question.ts'
 import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
 import { DECLARATIONS } from '../wait.ts'
+import { remoteKey } from '../remote-row.ts'
 import type { DeclaredWait } from '../stop-gate.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
@@ -1919,10 +1920,9 @@ for (const [what, listing] of [
 
 // Observed 2026-11-27: an answer failed before its asker could be reached again stayed failed, said
 // in the pane for good, though a live session of its asker's name ran under a new address.
-const REMOTE_ROW_OF_BELT = `${HOME}/.claude/claude-orchestrator/store/remote/Orch__belt`
 const UNACKED = 'no acknowledgment after 3 sends'
-const askerRow = (coordinator: ReturnType<typeof fake>, machine = 'unknown') => coordinator.files.set(REMOTE_ROW_OF_BELT, JSON.stringify({
-  name: 'Orch: belt', role: 'orchestrator', context_tokens: 1, context_percent: 30, window: 100, waiting: null, blocks: null,
+const askerRow = (coordinator: ReturnType<typeof fake>, machine = 'unknown', name = 'Orch: belt') => coordinator.files.set(`${HOME}/.claude/claude-orchestrator/store/${remoteKey(name)}`, JSON.stringify({
+  name, role: 'orchestrator', context_tokens: 1, context_percent: 30, window: 100, waiting: null, blocks: null,
   waiting_since: null, updated_at: new Date().toISOString(), machine, repo: null, prs: [],
 }) + '\n')
 
@@ -1950,6 +1950,7 @@ test('a failed answer is sent again at the next wake to the live session of its 
 for (const [what, set] of [
   ['no row of its asker', () => undefined],
   ['its asker\'s name measured on another machine', (c: ReturnType<typeof fake>) => { askerRow(c, 'near') }],
+  ['only another name\'s row on its asker\'s machine', (c: ReturnType<typeof fake>) => { askerRow(c, 'unknown', 'Orch: other') }],
   ['no live session of the name listed', (c: ReturnType<typeof fake>) => { askerRow(c); c.dollar.tool.call = async () => ({ text: remoteRows([LIVE_AT, 'offline']) }) }],
 ] as const) {
   test(`a failed answer with ${what} is not sent, and stays failed`, async () => {
@@ -2021,6 +2022,23 @@ test('a failed answer another question\'s send readdressed is still sent again t
   expect(objectAt(coordinator, id).delivery).toMatchObject({ state: 'sent', attempts: 1 })
   await wakes(8)
   expect(objectAt(coordinator, id).delivery.state).toBe('failed')
+})
+
+test('a clear landing while the listing is read for a failed answer holds: it is not sent, and stays cleared', async () => {
+  const { coordinator, id, tried } = await refusingAt([])
+  failedAt(coordinator, id)
+  askerRow(coordinator)
+  let listed = 0
+  coordinator.dollar.tool.call = async () => {
+    listed++
+    await clearFailed(coordinator.dollar, [id])
+    return { text: LIVE_LISTING }
+  }
+  await resendReplies(coordinator.dollar)
+  expect(listed).toBe(1)
+  expect(tried).toEqual([])
+  expect(objectAt(coordinator, id).delivery.state).toBe('failed')
+  expect(typeof objectAt(coordinator, id).delivery.cleared).toBe('string')
 })
 
 for (const [what, over, delivery] of [

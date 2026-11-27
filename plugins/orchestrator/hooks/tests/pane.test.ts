@@ -2519,20 +2519,22 @@ test('a failed answer sent again is said sent again to its asker, and is drawn n
 })
 
 test('the lines not delivered are cleared from the pane: recorded on each entry, logged, drawn and sent no more', async () => {
-  const replica = failedReplica()
-  const { fx, sent, render } = await askedPane([replica])
+  const replicas = [failedReplica(), { ...failedReplica(), id: 'q-s-far-second', blocks: 'acme/app#2' }]
+  const { fx, sent, render } = await askedPane(replicas)
   remoteRow(fx, 'Orch: belt', 'far')
   const tree = await render()
   // The line stays the section's foot, its action over it.
   const kids = kidsOf(elAt(tree, 0))
-  expect(saidBy(kids.at(-2))).toBe(NOT_DELIVERED)
+  expect(saidBy(kids.at(-2))).toBe(`${NOT_DELIVERED} · no acknowledgment after 3 sends — the answer to Orch: belt on far (blocks: acme/app#2)`)
   expect(kids.at(-3)).toBe(button(tree, 'clear-failed'))
   expect(button(tree, 'clear-failed').props['hotkey']).toBe('x')
   await button(tree, 'clear-failed').props.onPress!()
-  const stored = JSON.parse(String(fx.files.get(`${ROUND}/${replica.id}.json`)))
-  expect(stored.delivery).toMatchObject({ state: 'failed', reason: 'no acknowledgment after 3 sends' })
-  expect(typeof stored.delivery.cleared).toBe('string')
-  expect(fx.written.filter(l => l.endsWith(`the answer to ${replica.id} not delivered: its line cleared in the pane`)).length).toBe(1)
+  for (const replica of replicas) {
+    const stored = JSON.parse(String(fx.files.get(`${ROUND}/${replica.id}.json`)))
+    expect(stored.delivery).toMatchObject({ state: 'failed', reason: 'no acknowledgment after 3 sends' })
+    expect(typeof stored.delivery.cleared).toBe('string')
+    expect(fx.written.filter(l => l.endsWith(`the answer to ${replica.id} not delivered: its line cleared in the pane`)).length).toBe(1)
+  }
   const cleared = await render()
   expect(texts(cleared).some(t => t.startsWith('not delivered:'))).toBe(false)
   expect(findAll(cleared, n => n.type === 'Button' && n.props.key === 'clear-failed')).toEqual([])
