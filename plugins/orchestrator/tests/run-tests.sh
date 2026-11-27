@@ -9362,6 +9362,8 @@ case "$1" in
   list-windows) [ -f "$d/windows" ] && cat "$d/windows"; exit 0 ;;
   kill-window) [ -f "$d/kwin-err" ] && { cat "$d/kwin-err" >&2; exit 1; }; exit 0 ;;
   list-panes) [ -f "$d/panes-err" ] && { cat "$d/panes-err" >&2; exit 1; }; [ -f "$d/panes" ] && cat "$d/panes"; exit 0 ;;
+  # Window 0's host shows its prompt box, empty: nothing the operator typed is waiting.
+  capture-pane) printf '%s\n\xe2\x9d\xaf\xc2\xa0\n%s\n' "$(printf '─%.0s' {1..40})" "$(printf '─%.0s' {1..40})"; exit 0 ;;
 esac
 exit 0
 SH
@@ -10069,6 +10071,9 @@ class FakeIterm(ia.Terminal):
         if scenario == "close-raises": raise ia.Unreachable("iTerm2 did not answer a close")
         return "TAB"
     def close_made(self, made): calls.append("close_made %s" % made.get("session_id")); return True
+    def prompt_lines(self, tty):
+        # The old session's prompt box, empty: nothing the operator typed is waiting.
+        return ['─' * 40, '❯\u00a0', '─' * 40]
     def identity(self, tty, fresh=False):
         # The app's id of a session, read by the API alone: it cannot serve 997.
         if tty == "/dev/ttys997": raise ia.Unreachable("the API is not enabled")
