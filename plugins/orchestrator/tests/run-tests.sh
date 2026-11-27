@@ -5689,6 +5689,51 @@ opened = s.rfind('try', 0, select)
 closed = s.find('end try', select)
 ret = s.find('return newTty', select)
 print('guarded' if -1 < opened < select < closed < ret else 'no')" "$AS_SENT")"
+# A window made activates the app, and macOS switches Space to it: the application in front is read
+# before the app is told anything, and put back once the window exists, outside the app's `tell`.
+check "the AppleScript spawn puts back the application that was in front after the window it makes, never activating the app" \
+  "read first|no activate in the tell|put back after|never the app itself|only after a new window" \
+  "$("$py" -c "
+import sys
+s = open(sys.argv[1]).read()
+tell, end = s.find('tell application \"iTerm2\"'), s.rfind('end tell')
+read, block, after = s.find('path to frontmost application as text'), s[tell:end], s[end:]
+print('|'.join([
+    'read first' if -1 < read < tell else 'not read',
+    'no activate in the tell' if 'create window' in block and 'activate' not in block else 'activate in the tell',
+    'put back after' if s.count(' to activate') == 1 and ' to activate' in after else 'not put back',
+    'never the app itself' if 'path to application id \"com.googlecode.iterm2\"' in after else 'no guard',
+    'only after a new window' if -1 < block.find('set madeWindow to true') < block.find('create window') < block.find('else') < block.find('create tab') and 'if madeWindow' in after else 'always']))" "$AS_SENT")"
+# The API rung over an app that records every activation and selection asked of it.
+check "the API spawn makes its tab unselected and asks no activation and no selection of the app" "/dev/ttys902|select=False" \
+  "$(ORCHESTRATOR_BACKEND=api ipy "
+import asyncio, types
+asked = []
+class Spy:
+    def __getattr__(s, name):
+        if 'activate' not in name and 'select' not in name:
+            raise AttributeError(name)
+        async def call(*a, **k): asked.append(name)
+        return call
+class S(Spy):
+    session_id = 'S'
+    async def async_get_variable(s, k): return {'tty': '/dev/ttys902'}.get(k)
+class T(Spy):
+    tab_id = 'NEW'
+    def __init__(s): s.sessions = s.all_sessions = [S()]; s.current_session = s.sessions[0]
+class W(Spy):
+    window_id, tabs = 'w', []
+    async def async_create_tab(s, command=None, index=None, select=True):
+        asked.append('select=%s' % select); s.tabs.append(T()); return s.tabs[-1]
+class App(Spy):
+    windows = [W()]
+    current_window = windows[0]
+class Api(Spy):
+    async def async_get_app(s, connection): return App()
+ia.run = lambda fn: asyncio.run(fn(Api(), None))
+made = {}
+ia.ITERM.create('true', 't', types.SimpleNamespace(at='anywhere', anchor='', side='', read_back=False), None, made)
+print('%s|%s' % (made['tty'], ','.join(asked)))")"
 
 echo "== iterm-agents: the AppleScript close compares the title before it closes =="
 # The rung used to send `close s` and read the name afterwards, so a refused title had
@@ -9495,6 +9540,20 @@ check "and one that had no server to arm again, which iTerm2 stopped alone says"
 res=$(restarted lost-client)
 check "a home server whose client did not come back gets a new tab at its place, then is armed" "0|1|031 001 060/041 090 050|orch-a+orch-b|$RALL" \
   "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'open,attach orch-b,arm')|$(sfield "$res" tabs)|$(sfield "$res" armed)|$(sfield "$res" alive)"
+res=$(restarted no-window)
+check "a restart whose new iTerm2 has no window makes one and puts back at once the application that was in front" \
+  "front read,new window,put back" "$(sfield "$res" fronts | cut -d, -f1-3)"
+res=$(restarted ok)
+check "and so does the window a tab is moved to, to set the tabs' order again" \
+  "front read,moved window,put back" "$(sfield "$res" fronts)"
+check "the restart starts iTerm2 in the background, leaving the application in front where it is" "yes" \
+  "$(ipy "
+import iterm_restart as r
+ran = []
+r.output_of = lambda *words: ''
+r.subprocess.run = lambda words, **options: ran.append(words)
+r.open_app()
+print('yes' if ran == [['/usr/bin/open', '-g', '-b', 'com.googlecode.iterm2']] else ran)")"
 res=$(restarted dead-tab)
 check "a plain tab's dead session is resumed at its place, with its role and not its first prompt, and is said" \
   "1|1|031 001 060/091 002 050|1" \

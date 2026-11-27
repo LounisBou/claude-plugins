@@ -45,7 +45,8 @@ def open_app():
     env = {k: os.environ[k] for k in ("HOME", "USER", "LOGNAME", "SHELL", "LANG") if k in os.environ}
     env.update(PATH="/usr/bin:/bin:/usr/sbin:/sbin", TMPDIR=output_of("getconf", "DARWIN_USER_TEMP_DIR"),
                SSH_AUTH_SOCK=output_of("launchctl", "getenv", "SSH_AUTH_SOCK"))
-    subprocess.run(["/usr/bin/open", "-b", "com.googlecode.iterm2"], capture_output=True, timeout=30,
+    # -g: the application in front stays there.
+    subprocess.run(["/usr/bin/open", "-g", "-b", "com.googlecode.iterm2"], capture_output=True, timeout=30,
                    env={k: v for k, v in env.items() if v})
 
 
@@ -372,7 +373,9 @@ class Run:
             if app.windows:
                 tab = await app.windows[0].async_create_tab(command=command, select=False)
             else:
-                tab = (await iterm2.Window.async_create(connection, command=command)).current_tab
+                with ia.front_kept():
+                    window = await iterm2.Window.async_create(connection, command=command)
+                tab = window.current_tab
             return await ia.tty_of(tab, connection)
         return ia.run(go) or ""
 
@@ -409,8 +412,10 @@ class Run:
                 found = [await ia.find_tab(app, next((t for t in ttys if t), "")) for ttys in tabs]
                 found = [(window, tab) for window, tab, _ in found if tab is not None]
                 if found:
-                    target = (next((w for w, _ in found if w.window_id not in used), None)
-                              or await found[0][1].async_move_to_window())
+                    target = next((w for w, _ in found if w.window_id not in used), None)
+                    if target is None:
+                        with ia.front_kept():
+                            target = await found[0][1].async_move_to_window()
                     used.add(target.window_id)
                     # The app's other tabs of that window stay after these.
                     await target.async_set_tabs([tab for _, tab in found])
