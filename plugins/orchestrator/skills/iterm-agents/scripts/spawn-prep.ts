@@ -160,7 +160,7 @@ export async function prepareSpawn(given: Options, deps: PrepDeps): Promise<Opti
   if (auditor) {
     noneOf([['--successor', successor], ['--right-of', !!rightOf], ['--left-of', !!leftOf], ['--title-free', titleFree],
       ['--tier', !!tier], ['--no-remote-control', noRemote]],
-    flag => `spawn: refused: ${flag} is not an auditor's: an auditor lands immediately right of the orchestrator it audits (its caller, or the one --of names), reads "Audit: <subject>", runs on the pair given with --model and --effort, else on its caller's, and comes up under remote control`)
+    flag => `spawn: refused: ${flag} is not an auditor's: an auditor lands immediately left of the orchestrator it audits (its caller, or the one --of names), reads "Audit: <subject>", runs on the pair given with --model and --effort, else on its caller's, and comes up under remote control`)
     if (of && of !== 'self' && !of.startsWith('/dev/')) refuse(`spawn: refused: --of names the audited orchestrator's tty (/dev/ttysNNN) or self, got '${of}'`)
     if (!!model !== !!effort) refuse("spawn: refused: an auditor takes --model and --effort together, or neither (the caller's pair): half a pair is a guess at the other half")
     if (!title) refuse('spawn: refused: --auditor needs --title "Audit: <subject>"')

@@ -26,7 +26,7 @@ function row(over: Partial<RemoteRow> = {}): RemoteRow {
   return {
     name: 'Orch: far', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100,
     waiting: null, blocks: null, waiting_since: null, updated_at: new Date(NOW).toISOString(), machine: 'IznoServer',
-    repo: null, prs: [], held: null, home: SOCKET, ...over,
+    repo: null, prs: [], held: null, account: null, agents: null, home: SOCKET, ...over,
   }
 }
 
@@ -439,26 +439,26 @@ test('the row carries the home server its orchestrator runs in, and none outside
   expect(homeOf(`/private/tmp/tmux-501/${SOCKET},123,0`)).toBe(SOCKET)
   expect(homeOf('/private/tmp/tmux-501/default,123,0')).toBeNull()
   expect(homeOf(undefined)).toBeNull()
-  const carried = remoteRowOf(sessionRow, 'iznoserver', [], null, homeOf(`/tmp/tmux-501/${SOCKET},1,0`))!
+  const carried = remoteRowOf(sessionRow, 'iznoserver', [], null, undefined, homeOf(`/tmp/tmux-501/${SOCKET},1,0`))!
   expect(parseRemoteRow(rowText(carried))!.home).toBe(SOCKET)
-  const none = remoteRowOf(sessionRow, 'iznoserver', [], null, null)!
+  const none = remoteRowOf(sessionRow, 'iznoserver', [], null, undefined, null)!
   expect('home' in none).toBe(false)
   expect('home' in parseRemoteRow(rowText(none))!).toBe(false)
 })
 
 test('a row whose home is not a home server is refused whole', () => {
-  const carried = remoteRowOf(sessionRow, 'iznoserver', [], null, SOCKET)!
+  const carried = remoteRowOf(sessionRow, 'iznoserver', [], null, undefined, SOCKET)!
   for (const home of ['orch-../../x', 'default', 'orch-CDC52505', 1, `${SOCKET};x`, `x${SOCKET}`, `${SOCKET}0`, `${SOCKET}\n`]) {
     expect(parseRemoteRow(rowText({ ...carried, home } as unknown as RemoteRow))).toBeNull()
   }
   expect(HOME_SHAPE.test(SOCKET)).toBe(true)
-  for (const home of [`${SOCKET};x`, `x${SOCKET}`, `${SOCKET}0`]) expect('home' in remoteRowOf(sessionRow, 'iznoserver', [], null, home)!).toBe(false)
+  for (const home of [`${SOCKET};x`, `x${SOCKET}`, `${SOCKET}0`]) expect('home' in remoteRowOf(sessionRow, 'iznoserver', [], null, undefined, home)!).toBe(false)
   expect(homeOf(`/tmp/tmux-501/x${SOCKET},1,0`)).toBeNull()
 })
 
 test('a home the last send did not carry is news', () => {
-  const carried = remoteRowOf(sessionRow, 'iznoserver', [], null, SOCKET)!
-  const without = remoteRowOf(sessionRow, 'iznoserver', [], null, null)!
+  const carried = remoteRowOf(sessionRow, 'iznoserver', [], null, undefined, SOCKET)!
+  const without = remoteRowOf(sessionRow, 'iznoserver', [], null, undefined, null)!
   expect(rowIsNews(carried, rowSent(without, NOW), NOW)).toBe(true)
   expect(rowIsNews(carried, rowSent(carried, NOW), NOW)).toBe(false)
 })

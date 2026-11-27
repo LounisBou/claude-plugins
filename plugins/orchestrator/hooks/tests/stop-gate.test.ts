@@ -9,7 +9,7 @@ import {
   withDeadline, isDegradedPass,
   deferredRows, listing, ownAgents, hostStatusOf, openRows, watchNumberOf, pullRequestOf,
   checkWakeDone, chainEntries, isSuccessorSpawn, hostTasks,
-  NOTICE_TTL_MS, busyWake, parseGoalsCheck, goalsPaths,
+  NOTICE_TTL_MS, busyWake, parseGoalsCheck, goalsPaths, NOTHING_WAKES, type DeclaredWait,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
@@ -507,8 +507,11 @@ test('a session that is no orchestrator stops untouched, the launcher never aske
 })
 
 // His ruling of 2026-11-18 (the sweep, P1): the turn end observes nothing. Whatever is left open — rows,
-// goals, to-dos, a pending check, an idle agent, no wait declared — the stop passes with no reason
-// logged and no escape journalled, for an orchestrator, an auditor and an agent alike.
+// goals, to-dos, a pending check, an idle agent — the stop passes with no reason logged and no escape
+// journalled, for an orchestrator, an auditor and an agent alike. His A of 2026-11-27
+// (q-fb4f5a6c-68d-mwz7e562-sbhn) replaces it for one case alone, held by the tests of « a turn end
+// with nothing to wake the session » below: an orchestrator, an auditor or a coordinator that
+// declared no wait and has nothing of its own running is refused once.
 test('a stop always passes, no reason logged and nothing journalled, whatever is left open', async () => {
   const { handlers } = mounted()
   const todo = `${JSON.stringify({ v: 1, id: 1, opened: '2026-11-14T15:00:00Z', label: 'item 1', state: 'open', verdict: '', words: 'his words', said_at: '2026-11-14T14:58:00Z', from: 'Coord: general' })}\n`
@@ -526,11 +529,306 @@ test('a stop always passes, no reason logged and nothing journalled, whatever is
   ]
   for (const { launchName, message } of ends) {
     const fx = fakeDollar({ ...open, launchName })
-    const e = stopEvent({ last_assistant_message: message, background_tasks: [], session_crons: [] })
+    // A command of its own still runs for an orchestrator and an auditor; nothing does for the agent.
+    const running = launchName.startsWith('Agent:') ? [] : [{ type: 'shell', status: 'running', command: 'npm test' }]
+    const e = stopEvent({ last_assistant_message: message, background_tasks: running, session_crons: [] })
     const out = await stop(handlers['classic.Stop'], fx.dollar, e)
     expect(out.answer).toBe(e)
     expect(out.passed).toBe(e)
     expect(fx.written.filter(l => /stop gate: (?:let through|check|warn)|names no report file|open to-do/.test(l))).toEqual([])
+  }
+})
+
+// --- a turn end with nothing to wake the session ------------------------------------------
+
+const RESTING = ['Orch: belt', 'Audit: belt', 'Coord: general']
+const REST_CHAIN = '{"tab_id":"T1","tty":"/dev/ttys003","owner":"17"}\n'
+const AT_REST = { background_tasks: [], session_crons: [] }
+
+// The stop's answer as the host reads it, the chain beneath answering what it is handed unless `below` says.
+async function endTurn(handlers: Guards, dollar: World, over: Record<string, unknown> = AT_REST, below?: object) {
+  const e = stopEvent(over)
+  return fieldsIn(await handlers['classic.Stop'](dollar, e, async x => below ?? x))
+}
+
+test('an orchestrator, an auditor or a coordinator ending a turn with no wait and nothing running is refused toward ask', async () => {
+  for (const launchName of RESTING) {
+    // Nothing spawned, then an agent of its own that is idle: neither wakes the session.
+    for (const spawned of [{}, { listing: IDLE_ROW, chain: REST_CHAIN }]) {
+      const { dollar } = fakeDollar({ launchName, ...spawned })
+      expect((await endTurn(mounted().handlers, dollar)).block).toBe(NOTHING_WAKES)
+    }
+    // A task the host lists as settled runs no more.
+    const { dollar } = fakeDollar({ launchName })
+    const settled = { background_tasks: [{ type: 'shell', status: 'completed', command: 'npm test' }], session_crons: [] }
+    expect((await endTurn(mounted().handlers, dollar, settled)).block).toBe(NOTHING_WAKES)
+  }
+  for (const named of ['`ask`', '`declare_wait` operator', '`declare_wait` done']) expect(NOTHING_WAKES).toContain(named)
+})
+
+test('a wait declared in the turn lets the stop pass, one of an earlier turn does not', async () => {
+  const waits: DeclaredWait[] = [{ kind: 'operator', blocks: 'the mode', asked: ['q-1'] }, { kind: 'done', blocks: '' }, { kind: 'deferred', blocks: '2 items' }]
+  for (const launchName of RESTING) {
+    for (const wait of waits) {
+      const declarations = new Declarations()
+      declarations.declare(wait)
+      const { dollar } = fakeDollar({ launchName })
+      const { handlers } = mounted(declarations)
+      expect((await endTurn(handlers, dollar)).block).toBeUndefined()
+      declarations.turnStarted()
+      expect((await endTurn(handlers, dollar)).block).toBe(NOTHING_WAKES)
+    }
+  }
+})
+
+// The wait module's own hooks over `declarations`: a turn's start, and what reaches the session, as the host raises them.
+function waitHears(declarations: Declarations) {
+  const hooks = capture<World>(on => registerWait(on, declarations))
+  const { dollar } = fakeDollar({})
+  return {
+    start: (text: string, over: { agentId?: string } = {}) => {
+      // The host's event carries the turn's text, which the module's type of it does not name.
+      const event: { agentId?: string; text: string; turnId: string } = { text, turnId: 't', ...over }
+      return hookOf(hooks, 'turn.start', {}).handler(dollar, event, async x => x)
+    },
+    prompt: (origin: object, over: object = {}) => hookOf(hooks, 'prompt.submit', {}).handler(dollar, { origin, text: 'go on', ...over }, async x => x),
+    receive: (below: object, over: object = {}) => hookOf(hooks, 'session.receive', {}).handler(dollar, { origin: { kind: 'peer' }, text: 'a report', ...over }, async () => below),
+  }
+}
+
+const ROUND_WAKE = '[module] A question of the round is now due in this tab: Orch: low. Run coordinator.sh round.'
+// The host frames a module's prompt under the plugin's name.
+const framed = (text: string) => `The orchestrator plugin sent a message: ${text}`
+
+// A wait declared in one turn, then a turn opened by the wake the module said brings nothing new.
+function declaredEarlier(wait: DeclaredWait): Declarations {
+  const declarations = new Declarations()
+  declarations.declare(wait)
+  declarations.keepsThrough(ROUND_WAKE)
+  declarations.turnStarted(framed(ROUND_WAKE))
+  return declarations
+}
+
+const OWN_PROMPT = { kind: 'plugin', name: 'orchestrator' }
+const WAITS_ON_ASKED: DeclaredWait = { kind: 'operator', blocks: 'the mode', asked: ['q-a1b2c3-1'] }
+const STANDING: DeclaredWait[] = [WAITS_ON_ASKED, { kind: 'operator', blocks: 'acme/app#1', asked: [] }, { kind: 'done', blocks: '' }, { kind: 'deferred', blocks: '2 items' }]
+const ASKED_ROUND = { 'q-a1b2c3-1.json': ASKED_HERE }
+
+test('in a turn the round wake opened, the last declared wait still stands: the stop passes, and the wait is that turn\'s own', async () => {
+  for (const launchName of RESTING) {
+    for (const wait of STANDING) {
+      const declarations = new Declarations()
+      declarations.declare(wait)
+      const hears = waitHears(declarations)
+      const { handlers } = mounted(declarations)
+      // Two wakes in a row, each its own turn.
+      for (const turn of [1, 2]) {
+        declarations.keepsThrough(ROUND_WAKE)
+        await hears.start(framed(ROUND_WAKE))
+        expect([turn, declarations.current()]).toEqual([turn, null])
+        // A subagent's run, the module's own wake as it is submitted, a subagent's prompt, a line the module consumes.
+        await hears.start('search the tree', { agentId: 'sub-1' })
+        await hears.prompt(OWN_PROMPT)
+        await hears.prompt({ kind: 'composer' }, { agentId: 'sub-1' })
+        await hears.receive({ consumed: 'orchestrator: a row' })
+        await hears.receive({ text: 'for a subagent' }, { agentId: 'sub-1' })
+        const { dollar } = fakeDollar({ launchName, round: ASKED_ROUND })
+        expect((await endTurn(handlers, dollar)).block).toBeUndefined()
+        expect(declarations.current()).toEqual(wait)
+      }
+    }
+  }
+})
+
+test('a turn the round wake did not open ends the standing wait, a module wake that brings news among them', async () => {
+  const opened = [
+    '[module] acme/app#1 merged', '[module] acme/app#1 en anomalie (sans agent depuis 10:00) — reattach an agent, refresh its wait, or ask',
+    '[module] acme/app#1 is Ready now: the Ready gate passes at its head.', '[module] A to-do of your list is due:', 'a report', '',
+  ]
+  for (const text of opened) {
+    for (const wait of STANDING) {
+      const declarations = new Declarations()
+      declarations.declare(wait)
+      await waitHears(declarations).start(framed(text))
+      const { dollar } = fakeDollar({ round: ASKED_ROUND })
+      expect([text, (await endTurn(mounted(declarations).handlers, dollar)).block]).toEqual([text, NOTHING_WAKES])
+    }
+  }
+})
+
+test('an entry queued behind a turn before it declared its wait is not forgotten: its own turn is refused, even with the wake behind it', async () => {
+  const declarations = new Declarations()
+  const hears = waitHears(declarations)
+  await hears.prompt({ kind: 'peer' }, { turnId: 't1' })
+  declarations.declare({ kind: 'done', blocks: '' })
+  await hears.start('a report')
+  expect((await endTurn(mounted(declarations).handlers, fakeDollar({}).dollar)).block).toBe(NOTHING_WAKES)
+  // The wake submitted, another turn opening first: the wake's own turn finds nothing kept.
+  declarations.declare({ kind: 'done', blocks: '' })
+  declarations.keepsThrough(ROUND_WAKE)
+  await hears.start('a report')
+  await hears.start(framed(ROUND_WAKE))
+  expect((await endTurn(mounted(declarations).handlers, fakeDollar({}).dollar)).block).toBe(NOTHING_WAKES)
+})
+
+test('something new that reaches the session during the wake\'s turn ends the standing wait: the stop is refused', async () => {
+  const news: Array<(hears: ReturnType<typeof waitHears>) => Promise<unknown>> = [
+    ...[{ kind: 'composer' }, { kind: 'bridge' }, { kind: 'peer' }, { kind: 'task-notification' }, { kind: 'plugin', name: 'github' }]
+      .map(origin => (hears: ReturnType<typeof waitHears>) => hears.prompt(origin)),
+    hears => hears.receive({ text: 'a report' }),
+  ]
+  for (const arrives of news) {
+    const declarations = declaredEarlier(WAITS_ON_ASKED)
+    await arrives(waitHears(declarations))
+    const { dollar } = fakeDollar({ round: ASKED_ROUND })
+    expect((await endTurn(mounted(declarations).handlers, dollar)).block).toBe(NOTHING_WAKES)
+  }
+})
+
+test('a turn\'s end is reported with its own words, a kept wait with those it was first reported with', () => {
+  const declarations = new Declarations()
+  const said = (answer: string) => declarations.reportedWith(answer)
+  expect([said('status: question — a'), said('status: done — b')]).toEqual(['status: question — a', 'status: done — b'])
+  declarations.declare({ kind: 'done', blocks: '' })
+  expect(said('All done.')).toBe('All done.')
+  const wakes = () => {
+    declarations.keepsThrough(ROUND_WAKE)
+    declarations.turnStarted(ROUND_WAKE)
+  }
+  // A wake's turn that keeps nothing (something of its own runs) says its own words, and leaves the first ones.
+  wakes()
+  expect(said('A command runs.')).toBe('A command runs.')
+  wakes()
+  declarations.keep()
+  expect(said('Nothing new.')).toBe('All done.')
+  declarations.turnStarted('a report')
+  expect(said('Working.')).toBe('Working.')
+  declarations.declare({ kind: 'done', blocks: '' })
+  expect(said('Done again.')).toBe('Done again.')
+  // A wait whose own turn ended unreported has no first words: the kept turn's are its own.
+  declarations.declare({ kind: 'done', blocks: '' })
+  wakes()
+  declarations.keep()
+  expect(said('Still done.')).toBe('Still done.')
+})
+
+test('a standing operator wait ends once a question it waits on is settled', async () => {
+  const two: DeclaredWait = { kind: 'operator', blocks: 'both', asked: ['q-a1b2c3-1', 'q-a1b2c3-2'] }
+  const rounds: Array<[DeclaredWait, Record<string, string>]> = [
+    [WAITS_ON_ASKED, {}],
+    [WAITS_ON_ASKED, { 'q-a1b2c3-1.json': askedHere({ status: 'answered' }) }],
+    [WAITS_ON_ASKED, { 'q-a1b2c3-1.json': askedHere({ status: 'withdrawn' }) }],
+    // One another session holds now is not this one's to wait on.
+    [WAITS_ON_ASKED, { 'q-a1b2c3-1.json': askedHere({ sender: { session: 'z9y8', name: 'Orch: other', role: 'orchestrator', machine: 'box-1' } }) }],
+    [two, ASKED_ROUND],
+  ]
+  for (const [wait, round] of rounds) {
+    const { dollar } = fakeDollar({ round })
+    expect((await endTurn(mounted(declaredEarlier(wait)).handlers, dollar)).block).toBe(NOTHING_WAKES)
+  }
+  // A round that does not answer in time says nothing of the question: nothing is refused.
+  const hung = fakeDollar({ roundHang: 'list', env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.2' } })
+  expect((await endTurn(mounted(declaredEarlier(WAITS_ON_ASKED)).handlers, hung.dollar)).block).toBeUndefined()
+})
+
+test('something the session started that still runs lets the stop pass: a command, a monitor, a subagent, a wake-up, a busy agent', async () => {
+  const running = [
+    { background_tasks: [{ type: 'shell', status: 'running', command: 'npm test' }], session_crons: [] },
+    { background_tasks: [{ type: 'monitor', status: 'running', description: 'the deploy log' }], session_crons: [] },
+    { background_tasks: [{ type: 'subagent', status: 'running', description: 'search' }], session_crons: [] },
+    { background_tasks: [], session_crons: [{ schedule: '0 * * * *' }] },
+  ]
+  for (const launchName of RESTING) {
+    for (const tasks of running) {
+      const { dollar } = fakeDollar({ launchName })
+      expect((await endTurn(mounted().handlers, dollar, tasks)).block).toBeUndefined()
+    }
+    const { dollar } = fakeDollar({ launchName, listing: BUSY_ROW, chain: OWNED })
+    expect((await endTurn(mounted().handlers, dollar)).block).toBeUndefined()
+  }
+})
+
+test('a session that handed over to its successor is not refused', async () => {
+  for (const launchName of RESTING) {
+    const declarations = new Declarations()
+    declarations.handOver('a1b2c3')
+    const { dollar } = fakeDollar({ launchName })
+    expect((await endTurn(mounted(declarations).handlers, dollar)).block).toBeUndefined()
+  }
+})
+
+test('an agent, a review session and a session of no role are never refused', async () => {
+  for (const launchName of ['Agent: belt-p3', 'Agent: review belt', 'belt']) {
+    const { dollar } = fakeDollar({ launchName })
+    expect((await endTurn(mounted().handlers, dollar)).block).toBeUndefined()
+  }
+})
+
+test('what cannot be read refuses nothing: no task list from the host, no launcher listing, no chain owner', async () => {
+  for (const launchName of RESTING) {
+    const silent = fakeDollar({ launchName })
+    expect((await endTurn(mounted().handlers, silent.dollar, {})).block).toBeUndefined()
+    const unlisted = fakeDollar({ launchName, hangListing: true, env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.05' } })
+    expect((await endTurn(mounted().handlers, unlisted.dollar)).block).toBeUndefined()
+    // A chain with entries and no owner to tell them by: whether one of them runs is unread.
+    const unowned = fakeDollar({ launchName, listing: BUSY_ROW, chain: OWNED, env: { ITERM_SESSION_ID: '' } })
+    expect((await endTurn(mounted().handlers, unowned.dollar)).block).toBeUndefined()
+  }
+})
+
+test('a refusal another hook beneath also gives is said with this one, never in its place', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({})
+  expect((await endTurn(handlers, dollar, AT_REST, { block: 'theirs' })).block).toBe(`theirs\n\n${NOTHING_WAKES}`)
+  expect((await endTurn(handlers, dollar, { ...AT_REST, stop_hook_active: true })).block).toBeUndefined()
+})
+
+test('with no chain owner and no chain entry, nothing of its own runs: refused', async () => {
+  for (const launchName of RESTING) {
+    const { dollar } = fakeDollar({ launchName, env: { ITERM_SESSION_ID: '' } })
+    expect((await endTurn(mounted().handlers, dollar)).block).toBe(NOTHING_WAKES)
+  }
+})
+
+test('a turn is refused once: the stop after the refusal passes, logged once, and the next turn is refused again', async () => {
+  for (const launchName of RESTING) {
+    const { handlers } = mounted()
+    const { dollar, written } = fakeDollar({ launchName })
+    const passes = () => written.filter(line => line.includes('stop gate: the stop after the refusal passes')).length
+    expect((await endTurn(handlers, dollar)).block).toBe(NOTHING_WAKES)
+    expect(passes()).toBe(0)
+    expect((await endTurn(handlers, dollar, { ...AT_REST, stop_hook_active: true })).block).toBeUndefined()
+    expect(passes()).toBe(1)
+    expect((await endTurn(handlers, dollar, { ...AT_REST, stop_hook_active: true })).block).toBeUndefined()
+    expect(passes()).toBe(1)
+    expect((await endTurn(handlers, dollar)).block).toBe(NOTHING_WAKES)
+  }
+})
+
+test('the turn end\'s acts wait for the stop that passes: none at the refusal, all at the stop after it', async () => {
+  const { handlers } = mounted()
+  const world = prWorld([9])
+  expect((await endTurn(handlers, world.dollar)).block).toBe(NOTHING_WAKES)
+  expect(world.timers).toEqual([])
+  expect(world.ran.filter(line => line.includes('workspace.sh sweep'))).toEqual([])
+  await endTurn(handlers, world.dollar, { ...AT_REST, stop_hook_active: true })
+  expect(world.timers.map(t => t.ms)).toEqual([0])
+  expect(world.ran.filter(line => line.includes('workspace.sh sweep')).length).toBe(1)
+})
+
+test('an auditor\'s or a coordinator\'s stop does none of an orchestrator\'s acts: no tick armed, no sweep', async () => {
+  for (const launchName of ['Audit: belt', 'Coord: general']) {
+    // A busy agent of its own, which arms an orchestrator's tick.
+    const world = busyWorld(0)
+    const busy = fakeDollar({ launchName, listing: BUSY_ROW, chain: OWNED })
+    expect((await endTurn(mounted().handlers, { ...world.dollar, process: busy.dollar.process })).block).toBeUndefined()
+    expect(world.timers).toEqual([])
+    // A launcher that fails, where an orchestrator's stop still sweeps.
+    const failing = fakeDollar({ launchName })
+    const run = (argv: readonly string[], init?: ProcessRunInit) => argv[1] === LAUNCHER
+      ? Promise.resolve({ exitCode: 1, stdout: '', stderr: 'no terminal' }) : failing.dollar.process.run(argv, init)
+    expect((await endTurn(mounted().handlers, { ...failing.dollar, process: { ...failing.dollar.process, run } })).block).toBeUndefined()
+    expect([...busy.ran, ...failing.ran].filter(line => line.includes('workspace.sh sweep'))).toEqual([])
   }
 })
 

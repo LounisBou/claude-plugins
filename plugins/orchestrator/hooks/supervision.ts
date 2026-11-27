@@ -37,7 +37,7 @@ import { planOlder, planWithdrawal } from './settle.ts'
 import { answerAskedFromPane, askedAsEntry, clearFailed, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
-  remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
+  remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow, type Fleet,
   remoteKey, withRemote, isRemoteStale, homeOf, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS, UNREACHED_RETRY_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
@@ -47,6 +47,7 @@ import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfter
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
 import { configDir, dataDir, gateEnv, logLine, moduleDir, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { configDirOf } from '../core/env.ts'
 import { unattendedPaneLines, type Unattended, type UnattendedPaneLine } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ciGatePath, ROUND_DIR } from '../core/orchestration.ts'
@@ -96,7 +97,7 @@ export type SessionRow = {
   tty?: string | null
   // The session's window, `<session>:@N.%N`, when it runs in a home session (the deck's focus).
   tmux?: string | null
-  // The session's configuration directory, which names its account (fleetLabel), and the owner its launcher
+  // The session's configuration directory, which names its account (fleetOf), and the owner its launcher
   // writes on the chain entries of the agents it spawns (chainOwner): both read by the session's own module, so
   // the coordinator's pane counts a session's agents as an orchestrator's own pane does.
   config?: string | null
@@ -119,6 +120,9 @@ export type SessionRow = {
   relayed?: string | null
   // A row received from an orchestrator on another machine (remote-row.ts): its machine.
   machine?: string | null
+  // A remote row's account and live agent count, as its sender read them (remote-row.ts); null when it could not.
+  account?: string | null
+  agents?: number | null
   // The session's own token use (usage.ts), published by its own read (readOwnUsage) and kept
   // by the measure's merge: the deck takes every session's from here. Absent until the first
   // read completes; null when its transcript is not found.
@@ -878,10 +882,12 @@ async function agentViews($: Host<'env' | 'fs' | 'process'>, tty: string): Promi
 type PidsOn = (tty: string) => Promise<readonly string[]>
 
 // Asked of ps, one listing a tty.
-const pidsAsked = ($: Host<'process'>): PidsOn => async tty => {
-  const ps = await $.process.run(['ps', '-t', tty, '-o', 'pid='])
-  if (ps.exitCode !== 0) return []
-  return String(ps.stdout ?? '').split('\n').map((line: string) => line.trim().split(/\s+/)[0] ?? '').filter((pid: string) => /^\d+$/.test(pid))
+function pidsAsked($: Host<'process'>): PidsOn {
+  return async tty => {
+    const ps = await $.process.run(['ps', '-t', tty, '-o', 'pid='])
+    if (ps.exitCode !== 0) return []
+    return String(ps.stdout ?? '').split('\n').map((line: string) => line.trim().split(/\s+/)[0] ?? '').filter((pid: string) => /^\d+$/.test(pid))
+  }
 }
 
 // Read in a process table already taken: the pids it shows on that tty that still run a session (runsLive).
@@ -913,19 +919,78 @@ async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner
 // The accounts by the launcher's `--plan` numbers, over core's naming of a configuration directory.
 const ACCOUNTS: Readonly<Record<string, string>> = { plan1: 'plan 1', plan2: 'plan 2' }
 
-// What a session's line says of its account and its live agents, `plan 2 · 3 agents`: the account of the
-// configuration directory its row names, and the agents of its chain alive at this drawing, each session once,
-// over the process table this drawing read, no count drawn at none. « ? » for whatever the facts do not carry
-// (a remote row, a row written before rows carried them, a listing that failed or an agent list not read
-// within the bound).
-async function fleetLabel($: Host<'env' | 'fs' | 'process'>, row: SessionRow, home: string, table: ProcessTable | null | undefined): Promise<string> {
-  const account = (row.config ? ACCOUNTS[planOfConfig(row.config, home)] : undefined) ?? '?'
-  let count: number | null = null
-  if (row.config && row.tty && row.chain_owner && table) {
-    const agents = await withDeadline(chainAgents($, row.tty, row.chain_owner, { config: row.config, pidsOn: pidsListed(table) }), await sideReadBoundMs($))
-    if (!isDegradedPass(agents)) count = new Set(agents.map(agent => agent.sessionId)).size
+// A session's account and live agent count, read from its own facts at this drawing (the pane and the sender of
+// a remote row alike). A remote row carries what its sender read. A local row reads its configuration directory
+// (its row's, else the one its process was started with: envConfigOf), its tty (its row's, else its pid's on the
+// process table) and the chain of that tty: its entries of the owner its row names. With no owner named, the
+// chain's entries count only when one owner wrote them all: another owner's on a recycled tty is not this session's.
+// The agents are those alive at this drawing, each session once, over the process table this drawing read; none is
+// no count. A value the facts do not carry is null (no pid, no environment, no tty, a listing that failed, an agent
+// list not read within the bound): drawn as nothing and logged, never as « ? ».
+async function fleetOf($: Host<'env' | 'fs' | 'plugin' | 'process'>, row: SessionRow, home: string, table: ProcessTable | null | undefined, seen: Set<string>): Promise<Fleet> {
+  if (row.machine) return gapsLogged($, row, { account: row.account ?? null, agents: row.agents ?? null }, seen)
+  const config = row.config || await envConfigOf($, row, home)
+  const account = config ? ACCOUNTS[planOfConfig(config, home)] ?? null : null
+  const tty = row.tty || (row.pid && table ? table.get(String(row.pid))?.tty ?? null : null)
+  let agents: number | null = null
+  if (config && tty && table && (row.chain_owner || (await chainOwnersOf($, tty)).size <= 1)) {
+    const listed = await withDeadline(chainAgents($, tty, row.chain_owner ?? null, { config, pidsOn: pidsListed(table) }), await sideReadBoundMs($))
+    if (!isDegradedPass(listed)) agents = new Set(listed.map(agent => agent.sessionId)).size
   }
-  return count === 0 ? account : `${account} · ${count ?? '?'} agent${count === 1 ? '' : 's'}`
+  return gapsLogged($, row, { account, agents }, seen)
+}
+
+// The configuration directory a session runs on, read from the environment of its pid: the CLAUDE_CONFIG_DIR its
+// process was started with, that one variable taken from the process listing and nothing else kept. Absent, the
+// host's default directory. Null when the environment cannot be read (no pid, a listing that failed or named no
+// process): never read as absent.
+// The environment is what `ps eww` shows after the command line `ps ww` shows (the words come first, the environment
+// follows): only that rest is searched, its last assignment is the process's own (the reading of the pane's facts
+// and of the iTerm agents' launcher). An empty value is the default directory. A rest that is empty, or a listing
+// that failed, is an environment not read: null.
+async function envConfigOf($: Host<'process'>, row: SessionRow, home: string): Promise<string | null> {
+  if (!row.pid || !/^\d+$/.test(String(row.pid))) return null
+  const pid = String(row.pid)
+  const words = await commandLineOf($, ['ps', 'ww', '-o', 'command=', '-p', pid])
+  const withEnv = await commandLineOf($, ['ps', 'eww', '-o', 'command=', '-p', pid])
+  if (words === null || withEnv === null || !withEnv.startsWith(words)) return null
+  const environment = withEnv.slice(words.length)
+  if (environment.trim() === '') return null
+  const named = [...environment.matchAll(/(?:^|\s)CLAUDE_CONFIG_DIR=(\S*)/g)].at(-1)?.[1]
+  return named || configDirOf({}, home)
+}
+
+// The command line a `ps` listing shows, trimmed; null when the listing failed or did not answer.
+async function commandLineOf($: Host<'process'>, argv: string[]): Promise<string | null> {
+  const listed = await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null)
+  if (!isRecord(listed) || listed['exitCode'] !== 0) return null
+  return String(listed['stdout'] ?? '').trim()
+}
+
+// The distinct owners of the entries the launcher kept under `tty` (none when the chain is not there).
+async function chainOwnersOf($: Host<'env' | 'fs'>, tty: string): Promise<Set<string>> {
+  const state = await dataDir($)
+  const chain = String(await $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`).catch(() => ''))
+  return new Set(chainEntries(chain).map(entry => entry.owner))
+}
+
+// The figures a fleet reads, `plan 2 · 3 agents`: each one read, joined; none when neither is.
+function fleetText(fleet: Fleet): string {
+  const count = fleet.agents === null || fleet.agents === 0 ? null : `${fleet.agents} agent${fleet.agents === 1 ? '' : 's'}`
+  return [fleet.account, count].filter((part): part is string => part !== null).join(' · ')
+}
+
+// One log line per field a fleet could not read, naming the session and the field, once per `seen` (the pane's memory,
+// the pane draws at every tick); the fleet is returned as it is.
+async function gapsLogged($: Host<'env' | 'fs' | 'plugin' | 'process'>, row: SessionRow, fleet: Fleet, seen: Set<string>): Promise<Fleet> {
+  const missing = [fleet.account === null ? 'account' : null, fleet.agents === null ? 'agents' : null].filter((field): field is string => field !== null)
+  for (const field of missing) {
+    const key = `${row.name ?? row.pid ?? 'session'}|${field}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    await logLine($, 'supervision', `fleet: ${row.name ?? 'session'} ${field} not read: ${row.machine ? `not sent by its machine ${row.machine}` : 'its own facts carry none'}`)
+  }
+  return fleet
 }
 
 // The line an agent is sent when its orchestrator's successor confirmed the takeover.
@@ -1108,6 +1173,8 @@ export type PaneMemory = {
   measure?: { contentRows: number; drawn: string }
   // The role's pane put as it was left, once per module life (restorePane).
   restored?: boolean
+  // The fleet gaps logged in this pane's life, each once (fleetOf).
+  gaps?: Set<string>
 }
 
 function freshPane(): PaneMemory {
@@ -1683,7 +1750,10 @@ async function wakeForDue($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' 
   const woken = (await readWoken($)).filter(id => present.has(id))
   const due = read.filter(dueBeside(woken))
   if (due.length === 0) return
-  const taken = await $.prompt.submit({ text: dueText(due) })
+  const text = dueText(due)
+  // The wake brings the session nothing new: what it declared it waits on stands through the turn it opens.
+  DECLARATIONS.keepsThrough(text)
+  const taken = await $.prompt.submit({ text })
   if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) {
     await logLine($, 'supervision', `round wake: the host dropped the wake: ${String(taken.drop)}`)
     return
@@ -2093,7 +2163,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         inFlightAtStop = null
         const sessionId = await $.session.id()
         const declared = { wait: declarations.current(), handedOver: declarations.handedOver(sessionId) }
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight, e.reason ?? 'answer', declared, outbox), RELAY_BOUND_MS)
+        const done = await withDeadline(relayTurnEnd($, declarations.reportedWith(String(e.answer ?? '')), e.turnId, inFlight, e.reason ?? 'answer', declared, outbox), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const queued = await withDeadline(sendRow($, sessionId, outbox), RELAY_BOUND_MS)
@@ -2307,7 +2377,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       pane.ticksSinceDraw = 0
       let rows: { label: string; name: string; rest: string; urgency: number }[] = []
       let blocks: PaneRow[] = []
-      // Each listed session's account and live agent count (fleetLabel), by its block's key, read at this drawing.
+      // Each listed session's account and live agent count (fleetOf), by its block's key, read at this drawing.
       let fleet = new Map<string, string>()
       let failed: { entry: RoundEntry; reason: string }[] = []
       let delivering: Asked[] = []
@@ -2327,7 +2397,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         const ownKey = sessionKey(await $.session.id())
         blocks = paneRows(Object.fromEntries(supervised)).map(row => (row.key === ownKey ? { ...row, head: `${row.head} (${WORDS.self})` } : row))
         const home = (await $.env.get('HOME') ?? '').replace(/\/+$/, '')
-        fleet = new Map(await Promise.all(supervised.map(async ([key, row]) => [key, await fleetLabel($, row, home, store.alive)] as const)))
+        pane.gaps ??= new Set()
+        fleet = new Map(await Promise.all(supervised.map(async ([key, row]) => [key, fleetText(await fleetOf($, row, home, store.alive, pane.gaps ?? new Set()))] as const)))
         const repo = await (ownRepo ??= repoRead($))
         if (repo === undefined) ownRepo = null
         owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : []), ...(row.unattended?.prs.map(u => u.repo) ?? [])])])
@@ -2425,7 +2496,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // character. A blank line between two blocks.
       const block = (row: PaneRow, i: number): Drawn => {
         const state = row.waiting === 'operator' ? 'warning' : row.waiting === 'done' ? 'success' : 'suggestion'
-        const head = `${row.head} · ${fleet.get(row.key)}`
+        const figures = fleet.get(row.key)
+        const head = figures ? `${row.head} · ${figures}` : row.head
         const line = el.Text({
           children: [
             el.Text({ color: state, children: '●' }),
@@ -3342,12 +3414,14 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const to = await coordinatorAddress($)
   if (!to || to.local) return
   const prs = await pullRequestsOf($, sessionId, read)
+  const listed = livePids(await $.process.run(['ps', '-A', '-o', 'pid=,stat=,tty='], { timeoutMs: 5000 }).catch(() => null))
+  const fleet = await fleetOf($, read, (await $.env.get('HOME') ?? '').replace(/\/+$/, ''), listed, new Set())
   const waitText = String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => ''))
   const fill = await hostFill($)
   // The reading is the one of this instant: its stamp is now, not the last measure's.
   const measured = { ...read, updated_at: new Date().toISOString(), ...(fill ? { context_tokens: fill.tokens, context_percent: fill.percent, window: fill.window } : {}) }
   // The home server it runs in travels too: the coordinator's machine opens its view (remote-view.ts).
-  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)), homeOf(await $.env.get('TMUX')))
+  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)), fleet, homeOf(await $.env.get('TMUX')))
   if (!row) return
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`
