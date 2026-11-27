@@ -819,19 +819,22 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
   const now = Date.now()
   return Object.entries(rows)
     .map(([key, row]) => {
-      const past = tripGate(row.context_percent, row.context_tokens, row.window).tripped
+      // A row with no measure yet (written at its first turn's start, its updated_at empty) draws no
+      // figure and no age, and sorts after every measured row, as an unmeasured agent does.
+      const measured = row.updated_at !== ''
+      const past = measured && tripGate(row.context_percent, row.context_tokens, row.window).tripped
       const name = row.name ?? 'unnamed'
       const head = [row.role ?? 'no role', ...(row.machine ? [`remote ${row.machine}`] : [])].join(' · ')
-      const percent = `${row.context_percent}%`
-      const fill = `${percent}${past ? ' past the gate' : ''}`
-      const age = ageLabel(row.updated_at, now)
+      const percent = measured ? `${row.context_percent}%` : ''
+      const fill = measured ? `${percent}${past ? ' past the gate' : ''}` : ''
+      const age = measured ? ageLabel(row.updated_at, now) : null
       const wait = waitLabel(row)
       const split = waitParts(row)
       const parts = [name, head, fill]
       if (age !== null) parts.push(age)
       if (wait !== null) parts.push(wait)
       return {
-        label: parts.join(' · '), urgency: (past ? GATE_URGENCY_FLOOR : 0) + row.context_percent,
+        label: parts.filter(part => part !== '').join(' · '), urgency: measured ? (past ? GATE_URGENCY_FLOOR : 0) + row.context_percent : -1,
         key, role: row.role, name, head, fill, percent, past, age, wait, status: split?.status ?? null, blocked: split?.blocks ?? null,
         waiting: wait !== null ? row.waiting ?? null : null,
         unattended: unattendedOfRow(row),
@@ -1168,6 +1171,8 @@ async function writeOwnRow($: Held, sessionId: string, reading: NonNullable<Retu
     config: await configDir($),
     chain_owner: (await chainOwner($)) || null,
     repo,
+    // Without a reading the row holds no measure: its figures stay the parser's and its updated_at is
+    // empty, so the pane draws neither a percentage nor an age for it (paneRows).
     ...(reading ? {
       context_percent: reading.context_percent,
       context_tokens: reading.context_tokens,
@@ -1175,7 +1180,7 @@ async function writeOwnRow($: Held, sessionId: string, reading: NonNullable<Retu
       model: reading.model,
       busy: false,
       updated_at: reading.updated_at,
-    } : {}),
+    } : { updated_at: '' }),
   })
   return walked
 }
@@ -2527,8 +2532,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             el.Text({ color: state, children: '●' }),
             el.Text({ children: ' ' }),
             el.Text({ bold: true, children: row.name }),
-            el.Text({ children: ` · ${head} · ` }),
-            el.Text(row.past ? { color: 'error', children: row.fill } : { children: row.fill }),
+            el.Text({ children: row.fill === '' ? ` · ${head}` : ` · ${head} · ` }),
+            ...(row.fill === '' ? [] : [el.Text(row.past ? { color: 'error', children: row.fill } : { children: row.fill })]),
             ...(row.age !== null ? [el.Text({ children: ` · ${row.age}` })] : []),
           ],
         })
@@ -2554,7 +2559,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             ],
           }),
           rows: (i > 0 ? 1 : 0)
-            + rowsOf(`● ${row.name} · ${head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
+            + rowsOf(`● ${row.name} · ${head}${row.fill === '' ? '' : ` · ${row.fill}`}${row.age !== null ? ` · ${row.age}` : ''}`, width)
             + (row.status !== null ? rowsOf(row.status, textWidth) : 0)
             + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0)
             + (row.unattended ?? []).reduce((sum, said) => sum + (said.wraps ? rowsOf(takesRows(said.text), unattendedWidth) : width > 0 ? 1 : 0), 0),

@@ -593,6 +593,28 @@ test('a session in its first turn is listed: its row is written at the turn star
   expect(listed[0]!.head).toContain('auditor')
 })
 
+test('a row written at the first turn start, with no reading, draws no figure and no age, and sorts after a measured row', async () => {
+  // A session in its first turn has no measure: its row keeps an empty updated_at, and the pane
+  // draws its name and role only, sorted as unmeasured, never as a 0 % reading of this minute.
+  const fresh = fakeDollar({ launchName: 'Audit: Claude plugins' })
+  fresh.env['ORCHESTRATOR_OSASCRIPT'] = '/usr/bin/false'
+  const { handlers } = mounted(registerSupervision)
+  await handlers['turn.start'](fresh.dollar, { turnId: 't' }, (x: unknown) => x)
+  const stored = parseSessionRow(String(fresh.files.get(`${SESSIONS}/s-one`)))
+  expect(stored?.updated_at).toBe('')
+  const listed = paneRows({ 'sessions/s-alpha': orch('Orch: alpha', { context_percent: 12 }), 'sessions/s-one': stored! })
+  expect(listed.map(pane => pane.name)).toEqual(['Orch: alpha', 'Audit: Claude plugins'])
+  expect(listed[1]!.label).toBe('Audit: Claude plugins · auditor')
+  expect(listed[1]!.fill).toBe('')
+  expect(listed[1]!.age).toBeNull()
+  // Drawn by the coordinator's pane: the row's name and role, and no percentage.
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/s-one`, String(fresh.files.get(`${SESSIONS}/s-one`)))
+  const drawn = JSON.stringify(await coordinatorRender(fx))
+  expect(drawn).toContain('Audit: Claude plugins')
+  expect(drawn).not.toContain('0%')
+})
+
 test('a name walk that cannot answer in time costs the row its name, never the measure', async () => {
   // The Task 9 review's bounded-reads carry: the measure's side reads run
   // under their own deadline, and one that loses the race is quietly no name —
