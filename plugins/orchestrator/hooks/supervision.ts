@@ -1080,13 +1080,13 @@ async function openPane($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 
 }
 
 // A pane the host shows already, opened by no call of this one: the module takes it as its own, so
-// that it draws its role's list on its clock, and writes its record when no live one is there.
+// that it draws its role's list on its clock, and writes its record when the one there is dead.
 async function takeShownPane($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, pane: PaneMemory, role: 'coordinator' | 'orchestrator', tty: string | null, pid: string | null, name: string): Promise<void> {
   pane.opened = { role, tty, name, pid }
   await keepPaneState($, name, true)
   if (!pane.ticker) startTicker($, pane)
   $.ui.invalidate('ui.render')
-  if (role === 'coordinator' && !(await paneIsOpen($))) await keepPaneRecord($, pid, tty, 'the pane shown had no live record')
+  if (role === 'coordinator' && (await paneRecordState($)) === 'dead') await keepPaneRecord($, pid, tty, 'the pane shown had no live record')
 }
 
 function startTicker($: Host<'clock' | 'env' | 'fs' | 'ui'>, pane: PaneMemory): void {
@@ -1223,13 +1223,12 @@ async function recordPaneClosed($: Host<'env' | 'fs' | 'plugin' | 'process' | 's
   else await logLine($, 'supervision', 'pane: the record removed with this session\'s pane')
 }
 
-// The coordinator's pane as `coordinator.sh round` judges it (its pane_open): a record naming a
-// pid that still runs a session, whichever session wrote it. A record absent, unreadable or naming
-// no pid is no pane, and so is one whose pid the machine's listing does not hold, or holds as
-// exiting or a zombie, or on another tty than the record's (a host whose tab was closed stays
-// listed for days under the terminal's session-keeping daemon: runsLive's rule), or a listing that
-// failed, as the script's own ps failing is.
-async function paneIsOpen($: Host<'env' | 'fs' | 'process'>): Promise<boolean> {
+// The pane record's process, whichever session wrote it: `live`, its pid still runs a session;
+// `dead`, a record absent, unreadable or naming no pid, which asks no listing, or one whose pid
+// the machine's listing does not hold, or holds as exiting or a zombie, or on another tty than the
+// record's (a host whose tab was closed stays listed for days under the terminal's session-keeping
+// daemon: runsLive's rule); `unknown`, the listing failed. Only a `dead` record is written over.
+async function paneRecordState($: Host<'env' | 'fs' | 'process'>): Promise<'live' | 'dead' | 'unknown'> {
   let pid: string
   let tty: string | null = null
   try {
@@ -1237,12 +1236,19 @@ async function paneIsOpen($: Host<'env' | 'fs' | 'process'>): Promise<boolean> {
     pid = String(isRecord(record) ? record['pid'] ?? '' : '')
     if (isRecord(record) && isText(record['tty'])) tty = record['tty']
   } catch {
-    return false
+    return 'dead'
   }
   const argv = livePidsArgv([pid])
-  if (!argv) return false
+  if (!argv) return 'dead'
   const alive = livePids(await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null))
-  return alive !== null && runsLive(alive, pid, tty)
+  if (alive === null) return 'unknown'
+  return runsLive(alive, pid, tty) ? 'live' : 'dead'
+}
+
+// The coordinator's pane as `coordinator.sh round` judges it (its pane_open): a live record alone.
+// A listing that failed is no pane, as the script's own ps failing is.
+async function paneIsOpen($: Host<'env' | 'fs' | 'process'>): Promise<boolean> {
+  return (await paneRecordState($)) === 'live'
 }
 
 // Whether a coordinator is live on this machine, from coordinator.sh's record (<state>/coordinator.json):
@@ -1270,9 +1276,10 @@ export async function coordinatorRuns($: Host<'env' | 'fs' | 'process'>): Promis
 }
 
 // The record follows the pane this host shows, both ways. A coordinator's pane the module draws,
-// with its record gone, or naming another session whose process runs no more, is recorded again:
-// there is one record for the machine, and a second session of the role (two successors started
-// together) writes over it and removes it as its own when it ends. Another live session's is left.
+// with its record gone, or naming another session whose process is known to run no more, is
+// recorded again: there is one record for the machine, and a second session of the role (two
+// successors started together) writes over it and removes it as its own when it ends. Another
+// session's is left while its process runs, or while the listing cannot say.
 //
 // A record that says open while this host shows no such pane is removed: the pane went with no
 // close of the module's (the host's own, a tab or a session gone, a clear that gave the session
@@ -1295,7 +1302,7 @@ async function reconcilePaneRecord($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   try {
     if (await paneShown($)) {
       // A pane whose pid was not read at its open was said then: nothing to record it with.
-      if (drawn?.pid && (!isRecord(record) || (record['session'] !== await $.session.id() && !(await paneIsOpen($))))) {
+      if (drawn?.pid && (!isRecord(record) || (record['session'] !== await $.session.id() && (await paneRecordState($)) === 'dead'))) {
         await keepPaneRecord($, drawn.pid, drawn.tty, 'the pane shown had no live record')
       }
       return

@@ -2194,6 +2194,50 @@ test('open on a pane already shown writes its record again when it is missing or
   expect(fx.opened.length).toBe(1)
 })
 
+test('the wake leaves another live session\'s record over a pane this one shows', async () => {
+  const young = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([young])
+  const live = staleRecord({ session: 's-two', pid: '777', tty: null })
+  fx.files.set(PANE_FILE, live)
+  await tick()
+  expect(fx.files.get(PANE_FILE)).toBe(live)
+})
+
+// The machine's listing as it fails: a call that rejects, a non-zero exit, a listing with no pid.
+const FAILED_LISTINGS: readonly [string, () => Promise<{ exitCode: number; stdout: string; stderr: string }>][] = [
+  ['rejects', async () => { throw new Error('timed out') }],
+  ['exits 1', async () => ({ exitCode: 1, stdout: '', stderr: 'denied' })],
+  ['lists no pid', async () => ({ exitCode: 0, stdout: '', stderr: '' })],
+]
+
+for (const [how, listing] of FAILED_LISTINGS) {
+  test(`a listing that ${how} leaves another session's record over a shown pane, at the wake, a turn's start and the tool's open; one that needs no listing is written again`, async () => {
+    const { fx, handlers, tick } = await wakingCoordinator([])
+    const run = fx.dollar.process.run
+    fx.dollar.process.run = async (argv: readonly string[], init?: object) =>
+      argv[0] === 'ps' && argv[1] === '-A' ? listing() : run(argv, init)
+    const theirs = staleRecord({ session: 's-two', pid: '777', tty: null })
+    for (const read of [
+      () => tick(),
+      () => handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x),
+      () => handlers['tool.call'](fx.dollar, toolCall('open')),
+    ]) {
+      fx.files.set(PANE_FILE, theirs)
+      await read()
+      expect(fx.files.get(PANE_FILE)).toBe(theirs)
+    }
+    // No record, a torn one, one naming no pid: nothing to ask the listing.
+    for (const left of [undefined, '{ torn', staleRecord({ session: 's-two', pid: null })]) {
+      for (const read of [() => tick(), () => handlers['tool.call'](fx.dollar, toolCall('open'))]) {
+        if (left === undefined) fx.files.delete(PANE_FILE)
+        else fx.files.set(PANE_FILE, left)
+        await read()
+        expect(recorded(fx)).toEqual(OWN_PANE)
+      }
+    }
+  })
+}
+
 test('a pane the host still shows when the module starts over is taken back: drawn, its clock running, recorded, not opened twice', async () => {
   const fx = coordinatorSession()
   fx.files.set(KEPT_OPEN, 'open\n')
