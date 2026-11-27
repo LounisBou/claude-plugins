@@ -10191,12 +10191,17 @@ res=$(rprobe gone "$HSID" "/dev/ttys961 /opt/x/host --resume $HSID
 check "a tab already closed is said so, and nothing is closed twice" "0||home-release: the tab on /dev/ttys900 was already closed" \
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
 
-# Never for anyone but an orchestrator, never twice.
-for who in "Coord: c" "Audit: a" "Agent: x"; do
-  reset_homerec
+# Never for anyone but an orchestrator, the coordinator or an auditor (the operator's order,
+# 2026-11-27: every session he names runs in tmux), never twice.
+reset_homerec
+res=$(hprobe ok "Agent: x")
+check "a session named 'Agent: x' stays where it is, and tmux is never asked" "0|1|" \
+  "$(sfield "$res" exit)|$(sfield "$res" OUT | grep -c '^stay: only an orchestrator moves into a home session')|$(hcalls)"
+for who in "Coord: c" "Audit: a"; do
+  reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
   res=$(hprobe ok "$who")
-  check "a session named '$who' stays where it is, and tmux is never asked" "0|1|" \
-    "$(sfield "$res" exit)|$(sfield "$res" OUT | grep -c '^stay: only an orchestrator moves into a home session')|$(hcalls)"
+  check "a session named '$who' moves into a home session of its own, window 0 named after it" "0|1|0" \
+    "$(sfield "$res" exit)|$(hcalls | grep -cF "[new-session][-d][-s][home][-n][$who]")|$(sfield "$res" OUT | grep -c '^stay:')"
 done
 reset_homerec; printf '1\n' > "$HR/mark"
 res=$(HTMUX=/private/tmp/tmux-501/orch-x,1,0 hprobe ok)
