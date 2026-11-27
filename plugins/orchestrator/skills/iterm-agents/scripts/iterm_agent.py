@@ -1675,30 +1675,32 @@ def as_close(tty, expect):
 
 
 # A window the app makes activates it, and macOS switches Space to it: the application frontmost
-# before is read, then put back. Both run outside any `tell` of the app's, which is never the one
-# put back, and a failure of either never fails the creation they surround.
+# before is read, then put back. Each is a script of its own, bounded and its failure ignored, so
+# neither can lose what the creation between them answered.
 FRONT_READ = '''
-        set frontPath to ""
-        try
-          set frontPath to path to frontmost application as text
-        end try'''
+set frontPath to ""
+try
+  set frontPath to path to frontmost application as text
+end try
+return frontPath'''
 FRONT_BACK = '''
-          try
-            if frontPath is not "" and frontPath is not (path to application id "com.googlecode.iterm2" as text) then
-              tell application frontPath to activate
-            end if
-          end try'''
+set frontPath to %s
+if frontPath is not "" and frontPath is not (path to application id "com.googlecode.iterm2" as text) then
+  tell application frontPath to activate
+end if'''
 
 
 @contextlib.contextmanager
 def front_kept():
-    """FRONT_READ and FRONT_BACK around a window the API makes."""
-    status, front = osascript_run(FRONT_READ + "\nreturn frontPath")
+    """The frontmost application put back after the block, however it ends. A block that learns
+    it made no window sets `window` False, and nothing is put back."""
+    status, front = osascript_run(FRONT_READ)
+    kept = {"window": True}
     try:
-        yield
+        yield kept
     finally:
-        if status == "ok" and front:
-            osascript_run("set frontPath to %s%s" % (as_quote(front), FRONT_BACK))
+        if kept["window"] and status == "ok" and front:
+            osascript_run(FRONT_BACK % as_quote(front))
 
 
 def as_spawn(command):
@@ -1706,28 +1708,28 @@ def as_spawn(command):
     # operator's tab is remembered and selected again, so a launch does not pull them away.
     # A new window has no tab to go back to. The re-selection is guarded: the agent's tab
     # already runs, so the operator's tab closing meanwhile must not fail the spawn.
-    return as_run(FRONT_READ + '''
-        set madeWindow to false
+    # The script says « window » before the tty of a window it made.
+    with front_kept() as kept:
+        said = as_run('''
         tell application "iTerm2"
           if (count of windows) is 0 then
-            set madeWindow to true
             set w to (create window with default profile command %s)
-            set newTty to tty of current session of current tab of w
-          else
-            set w to current window
-            tell w
-              set prev to current tab
-              set t to (create tab with default profile command %s)
-              set newTty to tty of current session of t
-              try
-                select prev
-              end try
-            end tell
+            return "window " & (tty of current session of current tab of w)
           end if
-        end tell
-        if madeWindow then''' % (as_quote(command), as_quote(command)) + FRONT_BACK + '''
-        end if
-        return newTty''', "a new tab")
+          set w to current window
+          tell w
+            set prev to current tab
+            set t to (create tab with default profile command %s)
+            set newTty to tty of current session of t
+            try
+              select prev
+            end try
+            return newTty
+          end tell
+        end tell''' % (as_quote(command), as_quote(command)), "a new tab")
+        tty = said.removeprefix("window ")
+        kept["window"] = tty != said
+    return tty
 
 
 # --- the tier map ----------------------------------------------------------------

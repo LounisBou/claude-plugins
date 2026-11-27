@@ -323,13 +323,20 @@ ia.registered_coord_on = lambda tty: "Coord: c" if tty == "/dev/ttys031" else No
 ia.host_cli_on = lambda tty: next((p for p, t in hosts.items() if t == tty and p in alive), None)
 
 
+# The one restore the launcher may send, its target and its guard read whole.
+PUT_BACK = ['set frontPath to "%s"' % FRONT,
+            'if frontPath is not "" and frontPath is not (path to application id "com.googlecode.iterm2" as text) then',
+            "tell application frontPath to activate", "end if"]
+
+
 def osascript(script, timeout=None):
     if "display notification" in script:
         acts.append("notify")
-    elif " to activate" in script:
-        fronts.append("put back" if FRONT in script else "put back another")
-    else:
+    elif "path to frontmost application" in script and "activate" not in script:
         fronts.append("front read")
+    else:
+        fronts.append("put back" if [l.strip() for l in script.strip().splitlines()] == PUT_BACK
+                      else "another restore")
     return "ok", FRONT
 
 

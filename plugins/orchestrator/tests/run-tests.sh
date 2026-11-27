@@ -5690,20 +5690,58 @@ closed = s.find('end try', select)
 ret = s.find('return newTty', select)
 print('guarded' if -1 < opened < select < closed < ret else 'no')" "$AS_SENT")"
 # A window made activates the app, and macOS switches Space to it: the application in front is read
-# before the app is told anything, and put back once the window exists, outside the app's `tell`.
-check "the AppleScript spawn puts back the application that was in front after the window it makes, never activating the app" \
-  "read first|no activate in the tell|put back after|never the app itself|only after a new window" \
-  "$("$py" -c "
+# before, and put back by a script of its own once the creation has answered. The stub logs every
+# script it is sent; the restore's script is read whole, its target and its guard with it.
+AS_LOG="$WORK/as-front-sent.log"
+cat > "$IBIN/osascript-front" <<'STUB'
+#!/bin/bash
+script=$(cat)
+printf '%s\n=====\n' "$script" >> "$AS_LOG"
+case "$script" in
+  *' to activate'*) [ "${AS_BACK:-}" = hang ] && exec sleep 60
+                    [ "${AS_BACK:-}" = fail ] && { echo 'execution error' >&2; exit 1; } ;;
+esac
+case "$script" in
+  *'tell application "iTerm2"'*) [ "${AS_SAID:-}" = broken ] && { echo 'execution error' >&2; exit 1; }
+                                 echo "${AS_SAID:-/dev/ttys900}" ;;
+  *'path to frontmost application'*) echo 'Disk:Applications:Editor.app:' ;;
+esac
+STUB
+chmod +x "$IBIN/osascript-front"
+front_spawn() { : > "$AS_LOG"
+  AS_LOG="$AS_LOG" ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-front" ORCHESTRATOR_PROBE_TIMEOUT=2 ipy "
+try:
+    print(ia.as_spawn('true'))
+except ia.Unreachable:
+    print('unreachable')"; }
+# The scripts sent, in order, and « exact » only for the one restore the launcher may send.
+front_sent() { "$py" -c "
 import sys
-s = open(sys.argv[1]).read()
-tell, end = s.find('tell application \"iTerm2\"'), s.rfind('end tell')
-read, block, after = s.find('path to frontmost application as text'), s[tell:end], s[end:]
-print('|'.join([
-    'read first' if -1 < read < tell else 'not read',
-    'no activate in the tell' if 'create window' in block and 'activate' not in block else 'activate in the tell',
-    'put back after' if s.count(' to activate') == 1 and ' to activate' in after else 'not put back',
-    'never the app itself' if 'path to application id \"com.googlecode.iterm2\"' in after else 'no guard',
-    'only after a new window' if -1 < block.find('set madeWindow to true') < block.find('create window') < block.find('else') < block.find('create tab') and 'if madeWindow' in after else 'always']))" "$AS_SENT")"
+exact = ['set frontPath to \"Disk:Applications:Editor.app:\"',
+         'if frontPath is not \"\" and frontPath is not (path to application id \"com.googlecode.iterm2\" as text) then',
+         'tell application frontPath to activate', 'end if']
+kinds = []
+for script in open(sys.argv[1]).read().split('\n=====\n')[:-1]:
+    if 'tell application \"iTerm2\"' in script:
+        kinds.append('spawn' if 'activate' not in script else 'spawn that activates')
+    elif 'path to frontmost application' in script:
+        kinds.append('read' if 'activate' not in script else 'read that activates')
+    else:
+        kinds.append('put back' if [l.strip() for l in script.strip().splitlines()] == exact else 'another restore')
+print(','.join(kinds))" "$AS_LOG"; }
+res=$(AS_SAID='window /dev/ttys900' front_spawn)
+check "the AppleScript spawn that makes a window puts back the application that was in front, never the app itself" \
+  "/dev/ttys900|read,spawn,put back" "$res|$(front_sent)"
+res=$(front_spawn)
+check "the AppleScript spawn that makes a tab activates nothing" "/dev/ttys900|read,spawn" "$res|$(front_sent)"
+for trouble in hang fail; do
+  res=$(AS_SAID='window /dev/ttys900' AS_BACK=$trouble front_spawn)
+  check "a restore that does not answer or is refused ($trouble) keeps the new session's tty" \
+    "/dev/ttys900|read,spawn,put back" "$res|$(front_sent)"
+done
+res=$(AS_SAID=broken front_spawn)
+check "a creation that fails, perhaps with its window made, still puts the application back" \
+  "unreachable|read,spawn,put back" "$res|$(front_sent)"
 # The API rung over an app that records every activation and selection asked of it.
 check "the API spawn makes its tab unselected and asks no activation and no selection of the app" "/dev/ttys902|select=False" \
   "$(ORCHESTRATOR_BACKEND=api ipy "
