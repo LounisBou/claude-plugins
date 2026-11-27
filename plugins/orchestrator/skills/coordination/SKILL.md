@@ -172,7 +172,7 @@ and present the next one in full in the same message; a superseded one makes <id
 7. **The end line.** « The round is complete: N/N. » — then one short list: each ruling
    and the sender told.
 
-**A question of your own** for him is one `ask` call, one per turn: the module stores it, draws it in the pane and writes its block in your tab; write none.
+**A question of your own** for him is one `ask` call, one per turn: the module stores it and draws it in the pane.
 
 **You never answer an operator question yourself**: no question reworded, merged, filtered
 or held back, and no verdict, summary or recommendation of your own added to it. A facts

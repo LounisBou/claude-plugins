@@ -50,7 +50,7 @@ The shape is the method's question (`method:lifecycle`, « Questions to the oper
 language, one field per line: the operator's pane draws these fields alone. The context names
 the goal of `goals.md` the question serves. Close with « You decide: », the letters offered,
 « or your own words ». Launch first, in this turn, what the question does not block; then ask it
-with one `ask` call (the module writes its block: write none) and
+with one `ask` call and
 `declare_wait({kind: "operator"})`, without `question`. Split references in `blocks` by `, `, never `/`.
 
 ## 3. While the answer is awaited
