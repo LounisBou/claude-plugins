@@ -31,7 +31,7 @@ function remote(over: Partial<RemoteRow> = {}): RemoteRow {
   return {
     name: 'Orch: far', role: 'orchestrator', context_tokens: 120000, context_percent: 12, window: 1000000,
     waiting: null, blocks: null, waiting_since: null, updated_at: AT, machine: 'mini',
-    repo: 'acme/site', prs: ['acme/site#7'], held: null, ...over,
+    repo: 'acme/site', prs: ['acme/site#7'], held: null, account: 'plan 2', agents: 1, ...over,
   }
 }
 

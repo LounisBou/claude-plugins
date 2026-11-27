@@ -10531,6 +10531,58 @@ check "an option of many values keeps them all, an optional value is kept when g
   "$(rw '["--disallowedTools","A","B","--remote-control","Orch: r","--effort=high"]')"
 check "an option that takes a value and has none is refused" "refused: --model has no value" "$(rw '["--model"]')"
 
+echo "== iterm-agents: the tabs keep the order the operator sees =="
+# Over an app of the probe's own (tests/order-probe.py): no iTerm2, no tmux, no process.
+tabs_order() { rm -rf "$WORK/taborder"; mkdir -p "$WORK/taborder"
+  env -u ORCHESTRATOR_PS_TABLE -u ORCHESTRATOR_BACKEND "$py" "$ROOT/tests/order-probe.py" "$ROOT/skills/iterm-agents/scripts" "$WORK/taborder" "$1" 2>&1; }
+ordered() { res=$(tabs_order "$1"); printf '%s|%s' "$(sfield "$res" before)" "$(sfield "$res" after)"; }
+check "a tab replaced while it runs: the new one takes its place" "A B C D|A B C D" "$(ordered replaced-live)"
+check "the operator's own order holds through a batch of two moves, each closed then woken" "D A C B|D A C B" "$(ordered batch)"
+check "a paused orchestrator is woken where it was" "A B C|A B C" "$(ordered paused)"
+check "an order recorded, all closed, the app started again: reopened in any order it reads the same" "c A B C|c A B C" "$(ordered all-closed)"
+check "a tab the operator moved by hand after the close keeps its newer place" "c C A|c C A B" "$(ordered hand-move)"
+res=$(tabs_order repaired)
+check "a placement the app did not make is read back and repaired once" "c A B C|2|" "$(sfield "$res" after)|$(sfield "$res" moves)|$(sfield "$res" said)"
+res=$(tabs_order unrepaired)
+check "one that stays wrong after the repair is said" "2|1" "$(sfield "$res" moves)|$(sfield "$res" said | grep -c 'could not be put right of the tab')"
+check "a coordinator's successor, wherever it was opened, takes its predecessor's place on closing it" "t1 t2 t3 t4|t4 t2 t3" "$(ordered coordinator)"
+check "so does an auditor's" "t1 t2 t3 t4|t4 t2 t3" "$(ordered auditor)"
+check "a coordinator that closes a duplicate keeps its own place" "t1 t2 t3 t4|t1 t2 t3" "$(ordered duplicate)"
+check "a rotation's replacement takes the old agent's place" "c a b c a2|c a2 b c" "$(ordered rotate)"
+check "a home tab is known by its server and its window 0's name, not by the title it follows" "Orch: h|orch-abc" \
+  "$(sfield "$(tabs_order home-identity)" entry)"
+check "a closed tab keeps its side when the tab it followed, known by no session id, is retitled" "A vim C|A vim B C" "$(ordered renamed-neighbour)"
+check "a new window the app lists first does not take the closed tabs of the window they left" "D / A C|D / A B C" "$(ordered new-window-first)"
+check "a move across plans with a registry each reads every tab under its own plan" "A D C B|A D C B" "$(ordered plans)"
+res=$(tabs_order plans)
+check "a session moved across plans starts on the plan asked, whatever plan the last tab read was on" \
+  "2 2" "$(sfield "$res" made)"
+check "a tab of the other plan is kept with the session id its own registry holds" \
+  "S/dev/ttys001 S/dev/ttys002" "$(sfield "$res" ids)"
+check "a successor whose close was refused takes its predecessor's place on proving its end" "t4 t1 t2 t3|t1 t2 t4 t3" "$(ordered refused-close)"
+check "the place a successor takes on proving that end is kept, though a proof keeps no order itself" \
+  "t1 t2 t4 t3" "$(sfield "$(tabs_order refused-close)" record)"
+check "not while the predecessor runs, for a caller that is no coordinator, or for one process of the tty" \
+  "t4 t1 t2 t3|t4 t1 t2 t3,t4 t1 t2 t3|t4 t1 t2 t3,t4 t1 t2 t3|t4 t1 t2 t3" \
+  "$(ordered verify-running),$(ordered verify-by-agent),$(ordered verify-pid)"
+check "an agent resumed outside a home session goes back where it was" "c a c|c a b c" "$(ordered resumed)"
+check "a resume that names its anchor keeps it" "c a c|c a c b" "$(ordered resumed-anchored)"
+check "a resume takes no place from another open session of its name" "c b a|c a b a" "$(ordered resumed-namesake)"
+check "a session resumed under another title is known by its session id" "c a c|c a b2 c" "$(ordered by-session)"
+check "an open tab renamed is the same one by its session id, and the closed tab stays after it" "c A2 C|c A2 B C" "$(ordered renamed-open)"
+check "a session renamed and moved to another window leaves no closed entry" "c / a2" "$(sfield "$(tabs_order moved-renamed)" record)"
+check "in a window of another id, a tab id seen before erases no closed tab" "A Sh: logs* C* Sh: other" \
+  "$(sfield "$(tabs_order reused-ids)" record)"
+check "the reading made after a hand move is the one a closed tab goes back by" "c C|c C B" "$(ordered hand-move-then-close)"
+check "everything closed, reopened in any order beside a tab never recorded" "x A B C|x A B C" "$(sfield "$(tabs_order restarted-unknown)" after)"
+check "a tab that followed none goes back before the one it preceded" "A B C|A B C" "$(ordered first-closed)"
+check "a record that does not read as one is dropped and the places are kept again" "A B C|A B C" "$(ordered bad-record)"
+res=$(tabs_order capped)
+check "past the closed tabs a window keeps, the oldest go and the last closed keeps its place" "32|c z last" "$(sfield "$res" gone)|$(sfield "$res" after)"
+check "of the windows left with no tab, the newest are kept" "s6* / s5* / s4* / s3*" "$(sfield "$(tabs_order kept-windows)" record)"
+check "a record another process holds is not written over" "no" "$(sfield "$(tabs_order locked)" written)"
+check "an auditor that closes a tab of another name keeps its own place" "t1 t2 t3|t1 t2" "$(ordered auditor-other)"
+
 echo "== iterm-agents: the coordinator opens, pauses and wakes an orchestrator in its home session =="
 # Each from the coordinator's own tab: an opened or woken orchestrator starts in window 0 of a
 # home session of its own, shown by a tab right of the caller's; a pause ends the whole server,

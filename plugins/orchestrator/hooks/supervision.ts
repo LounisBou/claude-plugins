@@ -24,7 +24,7 @@ import {
   roleOf, walkName, hostBasenames, hostRecordOf, blockArgv, bytesOfBase64,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, hostTasks, type DegradedPass } from './stop-gate.ts'
+import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, hostTasks } from './stop-gate.ts'
 import { isTemporary, STORE_CONTRACT, staleTemporaries, removeArgv, withLockOver, writeAtomicOver } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
@@ -37,7 +37,7 @@ import { planOlder, planWithdrawal } from './settle.ts'
 import { answerAskedFromPane, askedAsEntry, clearFailed, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
-  remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
+  remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow, type Fleet,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS, UNREACHED_RETRY_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
@@ -46,6 +46,7 @@ import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfter
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
 import { configDir, dataDir, gateEnv, logLine, moduleDir, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { configDirOf } from '../core/env.ts'
 import { unattendedPaneLines, type Unattended, type UnattendedPaneLine } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ciGatePath, ROUND_DIR } from '../core/orchestration.ts'
@@ -95,7 +96,7 @@ export type SessionRow = {
   tty?: string | null
   // The session's window, `<session>:@N.%N`, when it runs in a home session (the deck's focus).
   tmux?: string | null
-  // The session's configuration directory, which names its account (fleetLabel), and the owner its launcher
+  // The session's configuration directory, which names its account (fleetOf), and the owner its launcher
   // writes on the chain entries of the agents it spawns (chainOwner): both read by the session's own module, so
   // the coordinator's pane counts a session's agents as an orchestrator's own pane does.
   config?: string | null
@@ -118,6 +119,9 @@ export type SessionRow = {
   relayed?: string | null
   // A row received from an orchestrator on another machine (remote-row.ts): its machine.
   machine?: string | null
+  // A remote row's account and live agent count, as its sender read them (remote-row.ts); null when it could not.
+  account?: string | null
+  agents?: number | null
   // The session's own token use (usage.ts), published by its own read (readOwnUsage) and kept
   // by the measure's merge: the deck takes every session's from here. Absent until the first
   // read completes; null when its transcript is not found.
@@ -877,10 +881,12 @@ async function agentViews($: Host<'env' | 'fs' | 'process'>, tty: string): Promi
 type PidsOn = (tty: string) => Promise<readonly string[]>
 
 // Asked of ps, one listing a tty.
-const pidsAsked = ($: Host<'process'>): PidsOn => async tty => {
-  const ps = await $.process.run(['ps', '-t', tty, '-o', 'pid='])
-  if (ps.exitCode !== 0) return []
-  return String(ps.stdout ?? '').split('\n').map((line: string) => line.trim().split(/\s+/)[0] ?? '').filter((pid: string) => /^\d+$/.test(pid))
+function pidsAsked($: Host<'process'>): PidsOn {
+  return async tty => {
+    const ps = await $.process.run(['ps', '-t', tty, '-o', 'pid='])
+    if (ps.exitCode !== 0) return []
+    return String(ps.stdout ?? '').split('\n').map((line: string) => line.trim().split(/\s+/)[0] ?? '').filter((pid: string) => /^\d+$/.test(pid))
+  }
 }
 
 // Read in a process table already taken: the pids it shows on that tty that still run a session (runsLive).
@@ -912,19 +918,78 @@ async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner
 // The accounts by the launcher's `--plan` numbers, over core's naming of a configuration directory.
 const ACCOUNTS: Readonly<Record<string, string>> = { plan1: 'plan 1', plan2: 'plan 2' }
 
-// What a session's line says of its account and its live agents, `plan 2 · 3 agents`: the account of the
-// configuration directory its row names, and the agents of its chain alive at this drawing, each session once,
-// over the process table this drawing read, no count drawn at none. « ? » for whatever the facts do not carry
-// (a remote row, a row written before rows carried them, a listing that failed or an agent list not read
-// within the bound).
-async function fleetLabel($: Host<'env' | 'fs' | 'process'>, row: SessionRow, home: string, table: ProcessTable | null | undefined): Promise<string> {
-  const account = (row.config ? ACCOUNTS[planOfConfig(row.config, home)] : undefined) ?? '?'
-  let count: number | null = null
-  if (row.config && row.tty && row.chain_owner && table) {
-    const agents = await withDeadline(chainAgents($, row.tty, row.chain_owner, { config: row.config, pidsOn: pidsListed(table) }), await sideReadBoundMs($))
-    if (!isDegradedPass(agents)) count = new Set(agents.map(agent => agent.sessionId)).size
+// A session's account and live agent count, read from its own facts at this drawing (the pane and the sender of
+// a remote row alike). A remote row carries what its sender read. A local row reads its configuration directory
+// (its row's, else the one its process was started with: envConfigOf), its tty (its row's, else its pid's on the
+// process table) and the chain of that tty: its entries of the owner its row names. With no owner named, the
+// chain's entries count only when one owner wrote them all: another owner's on a recycled tty is not this session's.
+// The agents are those alive at this drawing, each session once, over the process table this drawing read; none is
+// no count. A value the facts do not carry is null (no pid, no environment, no tty, a listing that failed, an agent
+// list not read within the bound): drawn as nothing and logged, never as « ? ».
+async function fleetOf($: Host<'env' | 'fs' | 'plugin' | 'process'>, row: SessionRow, home: string, table: ProcessTable | null | undefined, seen: Set<string>): Promise<Fleet> {
+  if (row.machine) return gapsLogged($, row, { account: row.account ?? null, agents: row.agents ?? null }, seen)
+  const config = row.config || await envConfigOf($, row, home)
+  const account = config ? ACCOUNTS[planOfConfig(config, home)] ?? null : null
+  const tty = row.tty || (row.pid && table ? table.get(String(row.pid))?.tty ?? null : null)
+  let agents: number | null = null
+  if (config && tty && table && (row.chain_owner || (await chainOwnersOf($, tty)).size <= 1)) {
+    const listed = await withDeadline(chainAgents($, tty, row.chain_owner ?? null, { config, pidsOn: pidsListed(table) }), await sideReadBoundMs($))
+    if (!isDegradedPass(listed)) agents = new Set(listed.map(agent => agent.sessionId)).size
   }
-  return count === 0 ? account : `${account} · ${count ?? '?'} agent${count === 1 ? '' : 's'}`
+  return gapsLogged($, row, { account, agents }, seen)
+}
+
+// The configuration directory a session runs on, read from the environment of its pid: the CLAUDE_CONFIG_DIR its
+// process was started with, that one variable taken from the process listing and nothing else kept. Absent, the
+// host's default directory. Null when the environment cannot be read (no pid, a listing that failed or named no
+// process): never read as absent.
+// The environment is what `ps eww` shows after the command line `ps ww` shows (the words come first, the environment
+// follows): only that rest is searched, its last assignment is the process's own (the reading of the pane's facts
+// and of the iTerm agents' launcher). An empty value is the default directory. A rest that is empty, or a listing
+// that failed, is an environment not read: null.
+async function envConfigOf($: Host<'process'>, row: SessionRow, home: string): Promise<string | null> {
+  if (!row.pid || !/^\d+$/.test(String(row.pid))) return null
+  const pid = String(row.pid)
+  const words = await commandLineOf($, ['ps', 'ww', '-o', 'command=', '-p', pid])
+  const withEnv = await commandLineOf($, ['ps', 'eww', '-o', 'command=', '-p', pid])
+  if (words === null || withEnv === null || !withEnv.startsWith(words)) return null
+  const environment = withEnv.slice(words.length)
+  if (environment.trim() === '') return null
+  const named = [...environment.matchAll(/(?:^|\s)CLAUDE_CONFIG_DIR=(\S*)/g)].at(-1)?.[1]
+  return named || configDirOf({}, home)
+}
+
+// The command line a `ps` listing shows, trimmed; null when the listing failed or did not answer.
+async function commandLineOf($: Host<'process'>, argv: string[]): Promise<string | null> {
+  const listed = await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null)
+  if (!isRecord(listed) || listed['exitCode'] !== 0) return null
+  return String(listed['stdout'] ?? '').trim()
+}
+
+// The distinct owners of the entries the launcher kept under `tty` (none when the chain is not there).
+async function chainOwnersOf($: Host<'env' | 'fs'>, tty: string): Promise<Set<string>> {
+  const state = await dataDir($)
+  const chain = String(await $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`).catch(() => ''))
+  return new Set(chainEntries(chain).map(entry => entry.owner))
+}
+
+// The figures a fleet reads, `plan 2 · 3 agents`: each one read, joined; none when neither is.
+function fleetText(fleet: Fleet): string {
+  const count = fleet.agents === null || fleet.agents === 0 ? null : `${fleet.agents} agent${fleet.agents === 1 ? '' : 's'}`
+  return [fleet.account, count].filter((part): part is string => part !== null).join(' · ')
+}
+
+// One log line per field a fleet could not read, naming the session and the field, once per `seen` (the pane's memory,
+// the pane draws at every tick); the fleet is returned as it is.
+async function gapsLogged($: Host<'env' | 'fs' | 'plugin' | 'process'>, row: SessionRow, fleet: Fleet, seen: Set<string>): Promise<Fleet> {
+  const missing = [fleet.account === null ? 'account' : null, fleet.agents === null ? 'agents' : null].filter((field): field is string => field !== null)
+  for (const field of missing) {
+    const key = `${row.name ?? row.pid ?? 'session'}|${field}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    await logLine($, 'supervision', `fleet: ${row.name ?? 'session'} ${field} not read: ${row.machine ? `not sent by its machine ${row.machine}` : 'its own facts carry none'}`)
+  }
+  return fleet
 }
 
 // The line an agent is sent when its orchestrator's successor confirmed the takeover.
@@ -1107,6 +1172,8 @@ export type PaneMemory = {
   measure?: { contentRows: number; drawn: string }
   // The role's pane put as it was left, once per module life (restorePane).
   restored?: boolean
+  // The fleet gaps logged in this pane's life, each once (fleetOf).
+  gaps?: Set<string>
 }
 
 function freshPane(): PaneMemory {
@@ -1677,7 +1744,10 @@ async function wakeForDue($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' 
   const woken = (await readWoken($)).filter(id => present.has(id))
   const due = read.filter(dueBeside(woken))
   if (due.length === 0) return
-  const taken = await $.prompt.submit({ text: dueText(due) })
+  const text = dueText(due)
+  // The wake brings the session nothing new: what it declared it waits on stands through the turn it opens.
+  DECLARATIONS.keepsThrough(text)
+  const taken = await $.prompt.submit({ text })
   if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) {
     await logLine($, 'supervision', `round wake: the host dropped the wake: ${String(taken.drop)}`)
     return
@@ -1779,7 +1849,7 @@ let shownPane: PaneMemory = freshPane()
 // directory the module writes in is listed at a session's start, which spawns nothing, and those
 // older than core's STALE_MS are removed in one process, none when there are none. The readers of
 // the store and of the round sweep their own directory at each read the same way.
-export const WRITTEN_DIRS = ['sessions', 'waits', 'gates', 'rows', 'answered', 'successors', 'remote', 'relays']
+export const WRITTEN_DIRS = ['sessions', 'waits', 'gates', 'rows', 'answered', 'successors', 'remote']
 export async function sweepTemporaries($: Host<'env' | 'fs' | 'process'>): Promise<string[]> {
   const store = await storeOf($)
   const state = await dataDir($)
@@ -1826,14 +1896,10 @@ export function registerWake(on: On<Held>): void {
 // is sent if it is news (a send that fails arms its retry), and a question this session asked whose
 // push still awaits its resend arms that timer, so a session that takes no turn is still heard.
 export function registerRetries(on: On<Held>): void {
-  // A load starts the kept turn ends' timers and the backstop's afresh: the host dropped the old ones.
-  forgetKeptTimers()
   on('session.start', {}, async ($, e, next) => {
     try {
       const sessionId = await $.session.id()
       await rearmResend($, sessionId)
-      await rearmKept($, sessionId)
-      armBackstop($)
       const sent = await withDeadline(sendRow($, sessionId), RELAY_BOUND_MS)
       if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
     } catch (err) {
@@ -2089,18 +2155,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         inFlightAtStop = null
         const sessionId = await $.session.id()
         const declared = { wait: declarations.current(), handedOver: declarations.handedOver(sessionId) }
-        // A turn end that carries a status line is kept before its relay, and goes only once delivered.
-        const answer = String(e.answer ?? '')
-        const kept = parseStatus(answer) ? await keepTurnEnd($, sessionId, answer, e.turnId, e.reason ?? 'answer') : null
-        let done: RelayOutcome | DegradedPass = 'kept'
-        try {
-          done = await withDeadline(relayTurnEnd($, answer, e.turnId, inFlight, e.reason ?? 'answer', declared, outbox), RELAY_BOUND_MS)
-          if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms${kept ? ': its turn end is kept and tried again' : ''}`)
-        } catch (err) {
-          await logLine($, 'supervision', `relay: ${messageOf(err)}`)
-        }
-        if (kept && done === 'settled') await dropKept($, sessionId, kept.at)
-        else if (kept) armKeptRetry($, sessionId, 0)
+        const done = await withDeadline(relayTurnEnd($, declarations.reportedWith(String(e.answer ?? '')), e.turnId, inFlight, e.reason ?? 'answer', declared, outbox), RELAY_BOUND_MS)
+        if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const queued = await withDeadline(sendRow($, sessionId, outbox), RELAY_BOUND_MS)
         if (isDegradedPass(queued)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
@@ -2313,7 +2369,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       pane.ticksSinceDraw = 0
       let rows: { label: string; name: string; rest: string; urgency: number }[] = []
       let blocks: PaneRow[] = []
-      // Each listed session's account and live agent count (fleetLabel), by its block's key, read at this drawing.
+      // Each listed session's account and live agent count (fleetOf), by its block's key, read at this drawing.
       let fleet = new Map<string, string>()
       let failed: { entry: RoundEntry; reason: string }[] = []
       let delivering: Asked[] = []
@@ -2333,7 +2389,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         const ownKey = sessionKey(await $.session.id())
         blocks = paneRows(Object.fromEntries(supervised)).map(row => (row.key === ownKey ? { ...row, head: `${row.head} (${WORDS.self})` } : row))
         const home = (await $.env.get('HOME') ?? '').replace(/\/+$/, '')
-        fleet = new Map(await Promise.all(supervised.map(async ([key, row]) => [key, await fleetLabel($, row, home, store.alive)] as const)))
+        pane.gaps ??= new Set()
+        fleet = new Map(await Promise.all(supervised.map(async ([key, row]) => [key, fleetText(await fleetOf($, row, home, store.alive, pane.gaps ?? new Set()))] as const)))
         const repo = await (ownRepo ??= repoRead($))
         if (repo === undefined) ownRepo = null
         owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : []), ...(row.unattended?.prs.map(u => u.repo) ?? [])])])
@@ -2431,7 +2488,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // character. A blank line between two blocks.
       const block = (row: PaneRow, i: number): Drawn => {
         const state = row.waiting === 'operator' ? 'warning' : row.waiting === 'done' ? 'success' : 'suggestion'
-        const head = `${row.head} · ${fleet.get(row.key)}`
+        const figures = fleet.get(row.key)
+        const head = figures ? `${row.head} · ${figures}` : row.head
         const line = el.Text({
           children: [
             el.Text({ color: state, children: '●' }),
@@ -2747,20 +2805,15 @@ export function entersRound(role: string | null): boolean {
 }
 
 // The session's name, host pid and tty, with its row: the row's (the measure's walk named it), else
-// a walk of its own when the row names no role, or an agent without its tty. `known` is false when
-// neither the row nor the walk said who the session is: a walk that did not finish in its bound.
-export async function selfOf($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<{ row: SessionRow | null; name: string | null; pid: string | null; tty: string | null; known: boolean }> {
+// a walk of its own when the row names no role, or an agent without its tty.
+export async function selfOf($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<{ row: SessionRow | null; name: string | null; pid: string | null; tty: string | null }> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
-  if (row?.role && (row.role !== 'agent' || row.tty)) return { row, name: row.name, pid: row.pid ?? null, tty: row.tty ?? null, known: true }
+  if (row?.role && (row.role !== 'agent' || row.tty)) return { row, name: row.name, pid: row.pid ?? null, tty: row.tty ?? null }
   const walked = await walkWithinBound($, sessionId)
   return walked.known
-    ? { row, name: walked.name, pid: walked.pid ?? row?.pid ?? null, tty: walked.tty ?? row?.tty ?? null, known: true }
-    : { row, name: row?.name ?? null, pid: row?.pid ?? null, tty: row?.tty ?? null, known: row?.name != null }
+    ? { row, name: walked.name, pid: walked.pid ?? row?.pid ?? null, tty: walked.tty ?? row?.tty ?? null }
+    : { row, name: row?.name ?? null, pid: row?.pid ?? null, tty: row?.tty ?? null }
 }
-
-// What a relay of a turn's end came to: `settled`, nothing is left to send (sent, sent before, or
-// nothing to send); `kept`, what it had to send reached nobody, and a kept turn end is tried again.
-export type RelayOutcome = 'settled' | 'kept'
 
 // A turn's end, read and reported. The role comes from the session's row (the measure's
 // walk named it), else from a walk of its own. An orchestrator's machine line goes to the
@@ -2782,28 +2835,18 @@ export type RelayOutcome = 'settled' | 'kept'
 // An agent's turn the host ended in its own words (its limit or spend text, an API error: relay.ts hostStopOf,
 // read on the answer, else on the transcript's tail) is sent as one stop line (relayStop), work in
 // flight or not: nothing resumes it. Any other end that is no answer is read for that alone.
-// A session whose own name could not be read in time is `kept`, said in the log when its turn carries a
-// status line: the turn end that carries one was kept before the relay (keepTurnEnd) and is tried again.
 export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer',
-  declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }, outbox: Outgoing[] = []): Promise<RelayOutcome> {
+  declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }, outbox: Outgoing[] = []): Promise<void> {
   const sessionId = await $.session.id()
-  const { row, name, pid, tty, known } = await selfOf($, sessionId)
+  const { row, name, pid, tty } = await selfOf($, sessionId)
   const role = roleOf(name)
   const orchestrating = entersRound(role)
-  if (!name) {
-    if (parseStatus(answer)) {
-      await logLine($, 'supervision', known
-        ? `relay: session ${sessionId} has no name: its status line goes to no orchestrator`
-        : `relay: session ${sessionId}'s own name was not read in time: its turn end is kept and tried again`)
-    }
-    return known ? 'settled' : 'kept'
-  }
-  if (!orchestrating && role !== 'agent') return 'settled'
+  if (!name || (!orchestrating && role !== 'agent')) return
   if (role === 'agent') {
     const stop = hostStopOf(answer) ?? (reason !== 'answer' || answer.trim() === '' ? await stopAtTail($, sessionId) : null)
     if (stop) return relayStop($, sessionId, name, pid, tty, stop, turnId)
   }
-  if (reason !== 'answer') return 'settled'
+  if (reason !== 'answer') return
   // An agent's text goes up held to the verdict limit; an orchestrator's to the coordinator is never cut here.
   const whole = answer
   if (role === 'agent') answer = heldReport(answer)
@@ -2817,22 +2860,22 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   if (successor) await handOver($, sessionId, successor)
   if (!wait && orchestrating) {
     if (before?.waiting) await writeWait($, sessionId, { ...clearedWait(before), relayed, relayed_id: relayedId, name, pid })
-    return 'settled'
+    return
   }
   const patch = wait
     ? waitPatch(before, wait, new Date().toISOString())
     : before?.waiting ? clearedWait(before) : null
   if (patch) await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, name, pid })
-  if (orchestrating && wait?.kind === 'operator') return 'settled'
-  if (!wait && inFlight !== null && inFlight.length > 0) return 'settled'
+  if (orchestrating && wait?.kind === 'operator') return
+  if (!wait && inFlight !== null && inFlight.length > 0) return
   const key = wait ? fingerprint(wait) : noStatusKey(turnId, answer)
   let coordinator: Awaited<ReturnType<typeof coordinatorAddress>> = null
   if (relayed === key) {
     // The fingerprint of a question whose entry the coordinator closed (its answer comes by a
     // message, which forgets nothing) or archived blocks nothing: only an entry still open does.
-    if (!orchestrating || !wait || wait.kind !== 'done') return 'settled'
+    if (!orchestrating || !wait || wait.kind !== 'done') return
     coordinator = await coordinatorAddress($)
-    if (!coordinator?.local || await entryIsOpen($, roundEntryId(sessionId, wait))) return 'settled'
+    if (!coordinator?.local || await entryIsOpen($, roundEntryId(sessionId, wait))) return
   } else if (orchestrating) {
     coordinator = await coordinatorAddress($)
   }
@@ -2844,14 +2887,14 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
     await forgetShown($, entry.id)
     await changeEntry($, roundPath(await dataDir($), entry.id), () => entry)
     await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
-    return 'settled'
+    return
   }
   const to = orchestrating
     ? coordinator?.to ?? null
     : await orchestratorOn($, tty, name, 'relay')
   if (!to) {
     if (role === 'agent') await logLine($, 'supervision', `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
-    return role === 'agent' ? 'kept' : 'settled'
+    return
   }
   // A coordinator on another machine is sent the entry itself, to enter in its round: the wait
   // holds it as pending until the acknowledgment, which keeps the fingerprint (receiveAck). The
@@ -2869,7 +2912,7 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
       },
     }
     outbox.push(item)
-    return 'settled'
+    return
   }
   /*
    * The figure is the host's own at this turn's end: the row is written by the measure, which
@@ -2896,10 +2939,9 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   const sent = orchestrating ? await sendToCoordinator($, coordinator!, text) : await $.session.send({ to, text })
   if (sent?.isDelivered) {
     await writeWait($, sessionId, { ...(patch ?? before ?? {}), relayed: key, name, pid })
-    return 'settled'
+  } else {
+    await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
   }
-  await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'} — ${name}'s turn end`)
-  return 'kept'
 }
 
 // The bytes of the transcript's end read for a stop the host wrote: its last lines, never the whole file.
@@ -2917,233 +2959,18 @@ async function stopAtTail($: Host<'env' | 'fs' | 'process'>, sessionId: string):
 // stopKey in the wait file's `relayed`); a wait it carried is cleared. Nobody to tell, or a send
 // refused, is one log line, and the next turn's end tries again.
 async function relayStop($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, name: string,
-  pid: string | null, tty: string | null, stop: HostStop, turnId: unknown): Promise<RelayOutcome> {
+  pid: string | null, tty: string | null, stop: HostStop, turnId: unknown): Promise<void> {
   const before = await readWait($, sessionId)
   const key = stopKey(turnId, stop)
-  if (before?.relayed === key) return 'settled'
+  if (before?.relayed === key) return
   const to = await orchestratorOn($, tty, name, 'relay')
   if (!to) {
     await logLine($, 'supervision', `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
-    return 'kept'
+    return
   }
   const sent = await $.session.send({ to, text: stopText(name, stop) })
-  if (sent?.isDelivered) {
-    await writeWait($, sessionId, { ...(before?.waiting ? clearedWait(before) : before ?? {}), relayed: key, name, pid })
-    return 'settled'
-  }
-  await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'} — ${name}'s stop`)
-  return 'kept'
-}
-
-// A turn end that carries a status line, kept (`relays/<id>`) from before its relay until it is
-// delivered: a relay that reaches nobody — its own name or its orchestrator not read in time, a send
-// refused, a relay past its bound — leaves it, and it is tried again (retryKept), each failed try one
-// log line, until it is delivered, and never once more. Its orchestrator's backstop (backstopTick)
-// relays one its agent's own tries left past BACKSTOP_AGE_MS. It goes with what delivered it.
-export function keptKey(id: string): string {
-  return `relays/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
-}
-
-type KeptTurnEnd = { answer: string; turn_id: string | null; reason: string; at: string; tty: string | null; reports_to: string | null; tries: number }
-
-export function parseKept(text: string): KeptTurnEnd | null {
-  let read: unknown
-  try {
-    read = JSON.parse(text)
-  } catch {
-    return null
-  }
-  if (!isRecord(read) || !isText(read['answer']) || !isText(read['at']) || Number.isNaN(Date.parse(read['at']))) return null
-  return {
-    answer: read['answer'],
-    turn_id: isText(read['turn_id']) ? read['turn_id'] : null,
-    reason: isText(read['reason']) ? read['reason'] : 'answer',
-    at: read['at'],
-    tty: isText(read['tty']) ? read['tty'] : null,
-    reports_to: isText(read['reports_to']) ? read['reports_to'] : null,
-    tries: isFigure(read['tries']) && read['tries'] >= 0 ? Math.floor(read['tries']) : 0,
-  }
-}
-
-// The first try again of a kept turn end, each next one twice as late, never later than the cap.
-export const KEPT_RETRY_MS = 20_000
-export const KEPT_RETRY_CAP_MS = 10 * 60_000
-const keptDelay = (tries: number): number => Math.min(KEPT_RETRY_MS * 2 ** tries, KEPT_RETRY_CAP_MS)
-
-// The orchestrator's backstop reads the kept turn ends of its agents at this period, and relays one
-// kept this long: its agent's own tries had their turn.
-export const BACKSTOP_MS = 60_000
-export const BACKSTOP_AGE_MS = 3 * 60_000
-
-async function keptPath($: Host<'env'>, id: string): Promise<string> {
-  return `${await storeOf($)}/${keptKey(id)}`
-}
-
-// The turn end written before its relay, under its lock, with what routes it without a walk: the tty
-// the row knows and the orchestrator the launch recorded. A write that fails is said; the relay goes on.
-async function keepTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, sessionId: string, answer: string, turnId: unknown, reason: string): Promise<KeptTurnEnd | null> {
-  try {
-    const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
-    const kept: KeptTurnEnd = {
-      answer, turn_id: typeof turnId === 'string' && turnId !== '' ? turnId : null, reason, at: new Date(await clockNow($)).toISOString(),
-      tty: row?.tty ?? null, reports_to: String((await $.env.get('ORCHESTRATOR_REPORTS_TO')) ?? '').trim() || null, tries: 0,
-    }
-    const path = await keptPath($, sessionId)
-    const io = storeIo($)
-    await withLockOver(io, path, () => writeAtomicOver(io, path, JSON.stringify(kept) + '\n'))
-    return kept
-  } catch (err) {
-    await logLine($, 'supervision', `relay: session ${sessionId}'s turn end could not be kept: ${messageOf(err)}`)
-    return null
-  }
-}
-
-// The kept turn end removed once delivered, when it is still the one `at` names.
-async function dropKept($: Host<'clock' | 'env' | 'fs' | 'process'>, sessionId: string, at: string): Promise<void> {
-  const path = await keptPath($, sessionId)
-  const io = storeIo($)
-  await withLockOver(io, path, async () => {
-    if (parseKept((await io.read(path)) ?? '')?.at === at) await io.run(removeArgv(path))
-  })
-}
-
-// One timer per session at a time, module memory: a reload forgets it, and the start arms it again.
-const keptArmed = new Set<string>()
-function armKeptRetry($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, tries: number): void {
-  if (keptArmed.has(sessionId)) return
-  try {
-    $.clock.after(keptDelay(tries), async () => {
-      keptArmed.delete(sessionId)
-      await retryKept($, sessionId).catch((err: unknown) => logLine($, 'supervision', `relay: ${messageOf(err)}`))
-    })
-    keptArmed.add(sessionId)
-  } catch {
-    void logLine($, 'supervision', `relay: no timer to try session ${sessionId}'s kept turn end again: its orchestrator's backstop takes it`)
-  }
-}
-
-// One try again, under the kept file's lock, which the backstop takes too: delivered, the file goes;
-// not, its tries are counted, the try said, and the next one armed.
-async function retryKept($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string): Promise<void> {
-  const path = await keptPath($, sessionId)
-  const io = storeIo($)
-  const again = await withLockOver(io, path, async (): Promise<number | null> => {
-    const kept = parseKept((await io.read(path)) ?? '')
-    if (!kept) return null
-    let done: RelayOutcome = 'kept'
-    try {
-      const relayed = await withDeadline(relayTurnEnd($, kept.answer, kept.turn_id, null, kept.reason), RELAY_BOUND_MS)
-      if (isDegradedPass(relayed)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
-      else done = relayed
-    } catch (err) {
-      await logLine($, 'supervision', `relay: ${messageOf(err)}`)
-    }
-    if (done === 'settled') {
-      await io.run(removeArgv(path))
-      return null
-    }
-    const tries = kept.tries + 1
-    await writeAtomicOver(io, path, JSON.stringify({ ...kept, tries }) + '\n')
-    await logLine($, 'supervision', `relay: session ${sessionId}'s kept turn end of ${kept.at} is not delivered at try ${tries}: tried again in ${keptDelay(tries) / 1000} s`)
-    return tries
-  })
-  if (again !== null) armKeptRetry($, sessionId, again)
-}
-
-// At a start, a reload's too: a kept turn end of this session is tried again soon.
-async function rearmKept($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string): Promise<void> {
-  if (parseKept(String(await $.fs.read(await keptPath($, sessionId)).catch(() => '')))) armKeptRetry($, sessionId, 0)
-}
-
-// The orchestrator's backstop, one timer, module memory: armed at every start, it goes on while the
-// session's role is unknown or an orchestrator's, and stops at any other role.
-let backstopArmed = false
-function armBackstop($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session' | 'ui'>): void {
-  if (backstopArmed) return
-  try {
-    $.clock.after(BACKSTOP_MS, async () => {
-      backstopArmed = false
-      const goOn = await backstopTick($).catch(async (err: unknown) => {
-        await logLine($, 'supervision', `relay: backstop: ${messageOf(err)}`)
-        return true
-      })
-      if (goOn) armBackstop($)
-    })
-    backstopArmed = true
-  } catch {
-    // A host with no timer: the agents' own tries remain.
-  }
-}
-
-// The backstop's timer and the kept turn ends' timers forgotten, as at a module load.
-function forgetKeptTimers(): void {
-  backstopArmed = false
-  keptArmed.clear()
-}
-
-// One reading of the backstop: every kept turn end older than BACKSTOP_AGE_MS of an agent of this
-// orchestrator — the launch recorded it for this name, or this session's chain names its tty — is
-// relayed here. Answers whether the backstop goes on. An orchestrator that handed over relays nothing.
-async function backstopTick($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session' | 'ui'>): Promise<boolean> {
-  const sessionId = await $.session.id()
-  const store = await storeOf($)
-  const row = parseSessionRow(String(await $.fs.read(`${store}/${sessionKey(sessionId)}`).catch(() => '')))
-  if (row?.role && row.role !== 'orchestrator') return false
-  if (row?.role !== 'orchestrator' || !row.name || await readSuccessor($, sessionId)) return true
-  const now = await clockNow($)
-  const dir = `${store}/relays`
-  const chain = row.tty ? String(await $.fs.read(`${await dataDir($)}/chains/${row.tty.split('/').pop()}.jsonl`).catch(() => '')) : ''
-  const chained = new Set(chainEntries(chain).filter(entry => row.chain_owner && entry.owner === row.chain_owner).map(entry => entry.tty))
-  for (const file of await $.fs.list(dir).catch(() => [])) {
-    if (file.kind !== 'file' || isTemporary(file.name) || file.name.endsWith(STORE_CONTRACT.lock_suffix)) continue
-    const kept = parseKept(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
-    if (!kept || now - Date.parse(kept.at) < BACKSTOP_AGE_MS) continue
-    const own = (kept.reports_to !== null && kept.reports_to.replace(REFERENCED, '').trim() === row.name) || (kept.tty !== null && chained.has(kept.tty))
-    if (own) await relayKeptHere($, file.name, row.name)
-  }
-  return true
-}
-
-// The host's registry's name of a session, null when no record names it.
-async function registeredName($: Host<'env' | 'fs'>, sessionId: string): Promise<string | null> {
-  const registry = `${await configDir($)}/sessions`
-  for (const file of await $.fs.list(registry).catch(() => [])) {
-    if (!file || file.kind !== 'file' || !file.name.endsWith('.json')) continue
-    try {
-      const record = registryRecord(String(await $.fs.read(`${registry}/${file.name}`)))
-      if (record?.sessionId === sessionId && isText(record.name) && record.name !== '') return record.name
-    } catch { /* a record being written, or gone: not this one */ }
-  }
-  return null
-}
-
-// An agent's kept turn end relayed into this orchestrator's own session, under the kept file's lock: one
-// its wait file already marks relayed goes without a word; else it is put to the host, marked relayed in
-// the agent's wait file as its own relay marks it, and the kept file goes. A prompt the host drops is
-// said, and the next reading tries again.
-async function relayKeptHere($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'prompt' | 'session' | 'ui'>, agentId: string, ownName: string): Promise<void> {
-  const path = await keptPath($, agentId)
-  const io = storeIo($)
-  await withLockOver(io, path, async () => {
-    const kept = parseKept((await io.read(path)) ?? '')
-    if (!kept) return
-    const wait = parseStatus(heldReport(kept.answer))
-    const before = await readWait($, agentId)
-    if (!wait || before?.relayed === fingerprint(wait)) {
-      await io.run(removeArgv(path))
-      return
-    }
-    const name = await registeredName($, agentId) ?? before?.name ?? `session ${agentId}`
-    const text = `${relayText(name, wait, kept.at)}\n\n(relayed by ${ownName}'s backstop: the agent's own relay of its turn end of ${kept.at} reached nobody)`
-    const taken = await $.prompt.submit({ text })
-    if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) {
-      await logLine($, 'supervision', `relay: backstop: ${name}'s turn end of ${kept.at} not taken by the host: ${String(taken.drop)}`)
-      return
-    }
-    await writeWait($, agentId, { ...(before ?? {}), ...waitPatch(before, wait, kept.at), relayed: fingerprint(wait), name, pid: before?.pid ?? null })
-    await io.run(removeArgv(path))
-    await logLine($, 'supervision', `relay: backstop: ${name}'s turn end of ${kept.at}, which its own relay did not deliver, is relayed to ${ownName}`)
-  })
+  if (sent?.isDelivered) await writeWait($, sessionId, { ...(before?.waiting ? clearedWait(before) : before ?? {}), relayed: key, name, pid })
+  else await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
 }
 
 // The session's open entries moved to the successor that confirmed the takeover, within the bound.
@@ -3579,11 +3406,13 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const to = await coordinatorAddress($)
   if (!to || to.local) return
   const prs = await pullRequestsOf($, sessionId, read)
+  const listed = livePids(await $.process.run(['ps', '-A', '-o', 'pid=,stat=,tty='], { timeoutMs: 5000 }).catch(() => null))
+  const fleet = await fleetOf($, read, (await $.env.get('HOME') ?? '').replace(/\/+$/, ''), listed, new Set())
   const waitText = String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => ''))
   const fill = await hostFill($)
   // The reading is the one of this instant: its stamp is now, not the last measure's.
   const measured = { ...read, updated_at: new Date().toISOString(), ...(fill ? { context_tokens: fill.tokens, context_percent: fill.percent, window: fill.window } : {}) }
-  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)))
+  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)), fleet)
   if (!row) return
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`
