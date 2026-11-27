@@ -22,6 +22,6 @@ _Recommendation_ : A — <why it beats the others>
 - A host dialog (`SKILL.md`): the recommended option first and marked, « Other » for the free answer.
 - Record the question as asked and his words, dated, where answers are kept; your reading of them goes
   apart, named as yours, never as his order.
-- Orchestrator plugin: ask with `ask`, close with `settle`, no block.
+- Orchestrator plugin: ask with `ask`, close with `settle`.
 - Never ask what the spec or the code answers. Answer him first, check the premise after.
   Asked again for what you failed to deliver, say you failed, answer, offer a fresh session.
