@@ -575,10 +575,83 @@ test('a wait declared in the turn lets the stop pass, one of an earlier turn doe
       const { dollar } = fakeDollar({ launchName })
       const { handlers } = mounted(declarations)
       expect((await endTurn(handlers, dollar)).block).toBeUndefined()
+      await waitHears(declarations).prompt({ kind: 'composer' })
       declarations.turnStarted()
       expect((await endTurn(handlers, dollar)).block).toBe(NOTHING_WAKES)
     }
   }
+})
+
+// The wait module's own hooks over `declarations`: what reaches the session, as the host raises it.
+function waitHears(declarations: Declarations) {
+  const hooks = capture<World>(on => registerWait(on, declarations))
+  const { dollar } = fakeDollar({})
+  return {
+    prompt: (origin: object, over: object = {}) => hookOf(hooks, 'prompt.submit', {}).handler(dollar, { origin, text: 'go on', ...over }, async x => x),
+    receive: (below: object, over: object = {}) => hookOf(hooks, 'session.receive', {}).handler(dollar, { origin: { kind: 'peer' }, text: 'a report', ...over }, async () => below),
+  }
+}
+
+// A wait declared in one turn, then the start of the next one.
+function declaredEarlier(wait: DeclaredWait): Declarations {
+  const declarations = new Declarations()
+  declarations.declare(wait)
+  declarations.turnStarted()
+  return declarations
+}
+
+const OWN_PROMPT = { kind: 'plugin', name: 'orchestrator' }
+const WAITS_ON_ASKED: DeclaredWait = { kind: 'operator', blocks: 'the mode', asked: ['q-a1b2c3-1'] }
+const STANDING: DeclaredWait[] = [WAITS_ON_ASKED, { kind: 'operator', blocks: 'acme/app#1', asked: [] }, { kind: 'done', blocks: '' }, { kind: 'deferred', blocks: '2 items' }]
+const ASKED_ROUND = { 'q-a1b2c3-1.json': ASKED_HERE }
+
+test('in a turn the module alone started, the last declared wait still stands: the stop passes', async () => {
+  for (const launchName of RESTING) {
+    for (const wait of STANDING) {
+      const declarations = declaredEarlier(wait)
+      const hears = waitHears(declarations)
+      // The module's own wake (the round, the pull requests' tick), a subagent's prompt, a line the module consumes.
+      await hears.prompt(OWN_PROMPT)
+      await hears.prompt({ kind: 'composer' }, { agentId: 'sub-1' })
+      await hears.receive({ consumed: 'orchestrator: a row' })
+      await hears.receive({ text: 'for a subagent' }, { agentId: 'sub-1' })
+      const { dollar } = fakeDollar({ launchName, round: ASKED_ROUND })
+      expect((await endTurn(mounted(declarations).handlers, dollar)).block).toBeUndefined()
+    }
+  }
+})
+
+test('something new that reaches the session ends the standing wait: the stop is refused', async () => {
+  const news: Array<(hears: ReturnType<typeof waitHears>) => Promise<unknown>> = [
+    ...[{ kind: 'composer' }, { kind: 'bridge' }, { kind: 'peer' }, { kind: 'task-notification' }, { kind: 'plugin', name: 'github' }]
+      .map(origin => (hears: ReturnType<typeof waitHears>) => hears.prompt(origin)),
+    hears => hears.receive({ text: 'a report' }),
+  ]
+  for (const arrives of news) {
+    const declarations = declaredEarlier(WAITS_ON_ASKED)
+    await arrives(waitHears(declarations))
+    const { dollar } = fakeDollar({ round: ASKED_ROUND })
+    expect((await endTurn(mounted(declarations).handlers, dollar)).block).toBe(NOTHING_WAKES)
+  }
+})
+
+test('a standing operator wait ends once a question it waits on is settled', async () => {
+  const two: DeclaredWait = { kind: 'operator', blocks: 'both', asked: ['q-a1b2c3-1', 'q-a1b2c3-2'] }
+  const rounds: Array<[DeclaredWait, Record<string, string>]> = [
+    [WAITS_ON_ASKED, {}],
+    [WAITS_ON_ASKED, { 'q-a1b2c3-1.json': askedHere({ status: 'answered' }) }],
+    [WAITS_ON_ASKED, { 'q-a1b2c3-1.json': askedHere({ status: 'withdrawn' }) }],
+    // One another session holds now is not this one's to wait on.
+    [WAITS_ON_ASKED, { 'q-a1b2c3-1.json': askedHere({ sender: { session: 'z9y8', name: 'Orch: other', role: 'orchestrator', machine: 'box-1' } }) }],
+    [two, ASKED_ROUND],
+  ]
+  for (const [wait, round] of rounds) {
+    const { dollar } = fakeDollar({ round })
+    expect((await endTurn(mounted(declaredEarlier(wait)).handlers, dollar)).block).toBe(NOTHING_WAKES)
+  }
+  // A round that does not answer in time says nothing of the question: nothing is refused.
+  const hung = fakeDollar({ roundHang: 'list', env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.2' } })
+  expect((await endTurn(mounted(declaredEarlier(WAITS_ON_ASKED)).handlers, hung.dollar)).block).toBeUndefined()
 })
 
 test('something the session started that still runs lets the stop pass: a command, a monitor, a subagent, a wake-up, a busy agent', async () => {

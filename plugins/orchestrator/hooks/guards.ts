@@ -24,11 +24,12 @@ import {
 import { tripGate, parseMeasure, measureFilePath, newerInstalled, generationLived, runtimeChanges, runtimeDiffArgv, homeReloadArgv, type Newer } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
+import { readAsked } from './question.ts'
 import { detectPatternKills, type Own } from './pattern-kills.ts'
 import {
   withDeadline, isDegradedPass, type DegradedPass,
   listing, chainOwner, ownAgents, hostStatusOf, pullRequestOf, isSuccessorSpawn,
-  orchestrationOf, ownerOf, isOwnRecord, busyWake, hostTasks, NOTHING_WAKES, type BusyAgent, type OwnAgent,
+  orchestrationOf, ownerOf, isOwnRecord, busyWake, hostTasks, NOTHING_WAKES, type BusyAgent, type OwnAgent, type DeclaredWait,
 } from './stop-gate.ts'
 import { launcherOf, recordsRegistryPath } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
@@ -271,6 +272,16 @@ async function changesRuntime($: Held, newer: Newer): Promise<boolean> {
   return run.exitCode === 1 && runtimeChanges(String(run.stdout ?? ''), newer, await loadedPlugins($)).length > 0
 }
 
+// Whether the last declared wait still stands for a turn that declared none: nothing new has reached
+// the session since (wait.ts, `heard`), and every question it waits on is still open.
+async function stillWaits($: Held, wait: DeclaredWait | null, sessionId: string): Promise<boolean> {
+  if (wait === null) return false
+  const asked = wait.asked ?? []
+  if (asked.length === 0) return true
+  const open = new Set((await readAsked($)).filter(entry => entry.status === 'open' && entry.sender.session === sessionId).map(entry => entry.id))
+  return asked.every(id => open.has(id))
+}
+
 // `declarations`: the waits this session's turns declared and its hand-over (wait.ts), read at the turn's end (supervision.ts).
 export function register(on: On<Held>, declarations: Declarations = DECLARATIONS): void {
   // Module memory, the gauge's own law: a reload resets it all. The transcript's
@@ -424,12 +435,13 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 
   // The turn end. An orchestrator, an auditor or a coordinator that declared no wait and has
   // nothing of its own running (no busy agent, no task or wake-up the host lists) is refused once;
-  // a session that handed over is not, nor one whose task list, launcher listing or chain owner is
-  // unread. An orchestrator's acts run at the stop that passes: the module arms the tick on the session's busy agents and on its pull
-  // requests, shows each idle agent's pull request on its window, and sweeps the checkouts. The
-  // classic events carry the settings payload's own fields — the transcript path among them — so
-  // the scope is read off the event itself. Every read races one deadline; a read that fails is a
-  // log line, and the stop passes all the same.
+  // a session that handed over is not, nor one whose last wait still stands (stillWaits: a turn the
+  // module alone started), nor one whose task list, launcher listing, chain owner or round is
+  // unread. An orchestrator's acts run at the stop that passes: the module arms the tick on the
+  // session's busy agents and on its pull requests, shows each idle agent's pull request on its
+  // window, and sweeps the checkouts. The classic events carry the settings payload's own fields —
+  // the transcript path among them — so the scope is read off the event itself. Every read races
+  // one deadline; a read that fails is a log line, and the stop passes all the same.
   on('classic.Stop', async ($, e, next) => {
     // The sweep's one shot, armed once the stop is known an orchestrator's: every exit below
     // calls it before next(e), the catch too. Null until the scope is settled, so a failure
@@ -501,7 +513,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const agents = ownAgents(rows, entries, owner, hostStatus)
       // With no owner, a chain that has entries says nothing of which of them runs.
-      if (resting && (owner !== '' || entries.length === 0) && !agents.some(agent => agent.state === 'busy')) {
+      if (resting && (owner !== '' || entries.length === 0) && !agents.some(agent => agent.state === 'busy')
+        && !await quietly($, () => stillWaits($, declarations.standing(), sessionId), until, true)) {
         refused = sessionId
         const below = await next(e)
         return fieldsOf(below)?.['block'] ? below : { ...fieldsOf(below), block: NOTHING_WAKES }

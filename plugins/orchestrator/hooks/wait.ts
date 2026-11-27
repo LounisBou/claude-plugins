@@ -2,7 +2,8 @@
 // The declared wait: `declare_wait({kind, blocks})`, the structured act by which a turn says
 // what will wake it, read at the turn's end in place of the wording of its last line
 // (docs/conventions.md, « Guards and consent »). A declaration belongs to the turn that made
-// it: the next turn's start makes it stale, and a stale one is never read.
+// it: the next turn's start makes it stale, and a stale one is never read. One reader asks for the
+// last one all the same: the turn end's refusal (guards.ts), while nothing new reached the session.
 //
 // An operator wait is refused while a row of the record is ready with nobody on it (unattended.ts, `readyRefusal`).
 // The refusals of a done or deferred wait live in stop-gate.ts; the turn's end reads the declaration
@@ -21,6 +22,7 @@ import { prKey, unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 import { holdsTodos, openFor, whoAmI } from './todo.ts'
 import { todoName } from './todo-format.ts'
 import { readAsked } from './question.ts'
+import { PLUGIN } from './audit-events.ts'
 
 // The nouns the declaration holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs' | 'clock' | 'settings'>
@@ -76,6 +78,7 @@ export class Declarations {
   private turn = 0
   private declared: { wait: DeclaredWait; turn: number } | null = null
   private handed: string | null = null
+  private last: DeclaredWait | null = null
 
   turnStarted(): void {
     this.turn += 1
@@ -83,6 +86,18 @@ export class Declarations {
 
   declare(wait: DeclaredWait): void {
     this.declared = { wait, turn: this.turn }
+    this.last = wait
+  }
+
+  // Something the module did not submit reached the session: the last wait stands no longer.
+  heard(): void {
+    this.last = null
+  }
+
+  // The last wait declared, of any turn, while nothing new has reached the session since: what a
+  // turn the module alone started still waits on.
+  standing(): DeclaredWait | null {
+    return this.last
   }
 
   // The session that handed over (it spawned its successor): not a turn's
@@ -247,6 +262,26 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   on('turn.start', {}, async ($, e, next) => {
     if (e.agentId === undefined) declarations.turnStarted()
     return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
+  // What is new to the session ends its standing wait: a prompt the module did not submit (the
+  // operator's, a peer's, a notification, another plugin's), or a delivery its model will read.
+  on('prompt.submit', {}, async ($, e, next) => {
+    if (e.agentId === undefined && !(e.origin?.kind === 'plugin' && fieldsOf(e.origin)?.['name'] === PLUGIN)) declarations.heard()
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
+  on('session.receive', {}, async ($, e, next) => {
+    const out = await next(e)
+    // A line the module consumes reaches no model.
+    if (e.agentId === undefined && !fieldsOf(out)?.['consumed']) declarations.heard()
+    return out
   }).catch(async ($, e, next) => {
     await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
