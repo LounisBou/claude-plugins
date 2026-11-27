@@ -536,8 +536,8 @@ def refuse_made(made, msg, shown=""):
     operator was told of a failure over a tab still open, possibly holding a running agent
     nobody would now stop.
 
-    `shown` is what the screen showed, read by the caller before the close: said last, outside a
-    rotation, whose one line stays as it is.
+    `shown` is what the screen showed, read by the caller before the close: said last, by this
+    refusal or, inside a rotation, by the rotation's line.
 
     The refusal is recorded in `made` before the close: an interrupt during that close then
     finds what it interrupted, and a rotation does not take the session being closed for a
@@ -546,7 +546,7 @@ def refuse_made(made, msg, shown=""):
     The tty's write is guarded as `settle_stdout` guards it: a reader gone from stdout must not
     lose the refusal to a traceback. Inside a rotation (`made["creating"]`) the refusal is the
     rotation's to say, on its one line: it is raised, not printed."""
-    made["refusing"] = msg
+    made["refusing"], made["shown"] = msg, shown
     closed = close_made(made)
     made["refused_closed"] = closed
     tty = made.get("tty") or ""
@@ -559,7 +559,13 @@ def refuse_made(made, msg, shown=""):
     if made.get("creating"):
         raise SpawnFailed(msg)
     said = "%s; %s" % (msg, closed_clause(closed, tty))
-    die("%s. %s" % (said, shown) if shown else said)
+    die(then_shown(said, made))
+
+
+def then_shown(line, made):
+    """A refused spawn's `line`, then what its screen showed when that was read apart."""
+    shown = made.get("shown")
+    return "%s. %s" % (line, shown) if shown else line
 
 
 def await_host(tty, dir_, launch_epoch, made, what):
@@ -5260,18 +5266,23 @@ def route_plan(choice):
     return None
 
 
-# The key either answer to the host's browser extension dialog writes in the account's record.
+# The key either answer to the host's browser extension dialog writes in the account's record,
+# and the host's command whose default toggle writes it too, with no dialog.
 BROWSER_DIALOG_ANSWER = 'claudeInChromeDefaultEnabled'
+BROWSER_SETTINGS_COMMAND = '/chrome'
 
 
-def unpassed_first_start(record):
-    """The first-start step of the host that a session launched on the account of `record`, its
-    own state file, would stop on, named with its key, or "". Read on the host's own code: the
-    onboarding shows until `hasCompletedOnboarding` is true; the browser extension dialog, shown
-    in every permission mode with a text naming the mode, is offered while neither answer is
-    recorded, the record carries the extension and the host's cached gate is on."""
+def unpassed_first_start(record, mode):
+    """The first-start step of the host that a session launched in `mode` on the account of
+    `record`, its own state file, would stop on, named with its key, or "". Read on the host's own
+    code: the onboarding shows until `hasCompletedOnboarding` is true; the browser extension
+    dialog is offered, outside bypassPermissions, while neither answer is recorded, the record
+    carries the extension and the host's cached gate is on. The host then looks for the extension
+    again and offers nothing when the record is stale, which only its own run can tell."""
     if record.get("hasCompletedOnboarding") is not True:
         return "the onboarding (hasCompletedOnboarding)"
+    if mode == "bypassPermissions":
+        return ""
     paired, gates = record.get("chromeExtension"), record.get("cachedGrowthBookFeatures")
     detected = (record.get("cachedChromeExtensionInstalled") is True
                 or (isinstance(paired, dict) and bool(paired.get("pairedDeviceId"))))
@@ -5297,13 +5308,16 @@ def refuse_unpassed_account(config, mode):
         print("spawn: warning: whether the account of %s passed its first-start dialogs is "
               "unknown (%s); launching anyway" % (path, exc), file=sys.stderr)
         return
-    missing = unpassed_first_start(record)
+    missing = unpassed_first_start(record, mode)
     if missing:
         environment = ("CLAUDE_CONFIG_DIR=%s" % shq(config) if config
                        else "env -u CLAUDE_CONFIG_DIR")
+        unshown = ("; if it shows none, type %s there and select « Turn on by default », which "
+                   "records the answer" % BROWSER_SETTINGS_COMMAND
+                   if BROWSER_DIALOG_ANSWER in missing else "")
         die("spawn: refused: the account of %s has not passed %s: run once by hand on this "
-            "machine `%s %s --permission-mode %s` and answer the dialog"
-            % (path, missing, environment, HOST_CLI, mode))
+            "machine `%s %s --permission-mode %s` and answer the dialog%s"
+            % (path, missing, environment, HOST_CLI, mode, unshown))
 
 
 def process_config(pid):
@@ -7062,9 +7076,9 @@ def spawn_failed(spawned, old, exc):
             why = why[len(prefix):]
     refused = bool(spawned.get("refusing"))
     if refused and spawned.get("refused_closed"):
-        die("rotate: the spawn refused the replacement it made%s (%s) and closed it; the old "
-            "session on %s was not touched, and nothing is left to close"
-            % (" on %s" % tty if tty else "", why, old["tty"]))
+        die(then_shown("rotate: the spawn refused the replacement it made%s (%s) and closed it; "
+                       "the old session on %s was not touched, and nothing is left to close"
+                       % (" on %s" % tty if tty else "", why, old["tty"]), spawned))
     if tty:
         refuse_recycled(spawned, old, None)
         lead = ("the spawn refused the replacement it made on %s (%s) and could not close it"
@@ -7113,10 +7127,11 @@ def refused_interrupted(made, old, name):
     step = ("close it with close --tty %s --expect-title %s --keep-checkout"
             % (shlex.quote(tty), shlex.quote(title)) if re.search(r"\w", title) else
             "no close of it is named, for its title holds no word a close could be guarded on")
-    die("rotate: the rotation was interrupted by %s while the spawn closed the replacement it "
+    die(then_shown(
+        "rotate: the rotation was interrupted by %s while the spawn closed the replacement it "
         "made on %s, which it refused (%s): whether that close went through is not known: if "
         "list still shows a session on %s, %s; the old session on %s was not touched"
-        % (name, tty, why, tty, step, old["tty"]))
+        % (name, tty, why, tty, step, old["tty"]), made))
 
 
 def refuse_recycled(made, old, after):
@@ -7235,7 +7250,7 @@ def late_refusal(made, old, refused, error, interrupted=False, lead="", reading=
     steps = old_steps(old, reading)
     if unverified:
         steps = "%s before ending the old session: %s" % (replacement_check(made or {}), steps)
-    die("rotate: %s; %s; %s" % (lead, kept, steps))
+    die(then_shown("rotate: %s; %s; %s" % (lead, kept, steps), made or {}))
 
 
 def replacement_check(made):
