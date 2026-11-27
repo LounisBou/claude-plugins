@@ -1118,7 +1118,7 @@ test('a plain orchestrator is one line: a dot, its bold name, then its figures i
     { text: '●', color: 'suggestion', bold: false },
     { text: ' ', bold: false },
     { text: 'Orch: low', bold: true },
-    { text: ' · orchestrator · ', bold: false },
+    { text: ' · orchestrator · ? · ? agents · ', bold: false },
     { text: '30%', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1173,7 +1173,7 @@ test('a done orchestrator draws a success dot and one Status line in success, wi
 test('a row past the gate draws its fill and gate words in the error colour, the rest in the normal colour', async () => {
   const tree = await paneTree({ hot: orch('Orch: hot', { context_percent: 85, context_tokens: 85000 }) })
   expect(pieces(elAt(tree, 2, 0)).slice(3)).toEqual([
-    { text: ' · orchestrator · ', bold: false },
+    { text: ' · orchestrator · ? · ? agents · ', bold: false },
     { text: '85% past the gate', color: 'error', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1181,7 +1181,7 @@ test('a row past the gate draws its fill and gate words in the error colour, the
 
 test('a remote orchestrator keeps its machine in its line', async () => {
   const tree = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
-  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · 30% · 3m')
+  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · ? · ? agents · 30% · 3m')
 })
 
 test('one blank line separates two blocks', async () => {
@@ -1196,7 +1196,7 @@ test('a done proposal is no question: no row stands out', async () => {
   const done = entry('Orch: d', '2026-10-18T10:03:00.000Z', { session: 'd', kind: 'done', blocks: null })
   const tree = await paneTree({ d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) }, [done])
   const line = pieces(elAt(tree, 2, 0))
-  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ', '30%', ' · 3m'])
+  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ? · ? agents · ', '30%', ' · 3m'])
   expect(line.some(p => p.bold && p.color === 'suggestion')).toBe(false)
 })
 
