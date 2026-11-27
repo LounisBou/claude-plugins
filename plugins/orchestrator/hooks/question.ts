@@ -81,8 +81,8 @@ export type Asked = AskFields & {
   delivery?: { state: 'pending' | 'sent' | 'delivered' | 'failed'; at: string; attempts: number; reason?: string; refused?: { to: string; sends: number }; tried?: string[]; again?: true; cleared?: string }
   /** A replica (remote-asked.ts): the owner's machine, and the address its last push came from, or the one the host's listing gave since. */
   origin?: { machine: string; address: string }
-  /** On the owner's machine: the push of this `seq` to the coordinator on another machine, and how it went. */
-  replica?: { seq: number; state: 'sent' | 'acked' | 'failed'; attempts: number; at: string; reason?: string }
+  /** On the owner's machine: the push of this `seq` to the coordinator on another machine, and how it went; `unreached`, its last send reached nobody. */
+  replica?: { seq: number; state: 'sent' | 'acked' | 'failed'; attempts: number; at: string; reason?: string; unreached?: true }
   /** The session it was asked by, before a succession moved it to its successor. */
   movedFrom?: string
   /** What the operator typed in its asker's tab that names one of its choices: off the pane until that turn's end answers it with those words. */
@@ -199,7 +199,8 @@ function replicaOf(read: unknown): Asked['replica'] | null {
   const state = REPLICA_STATES.find(known => known === read['state'])
   const [seq, attempts, at] = [read['seq'], read['attempts'], read['at']]
   const extra = texts(read, ['reason'] as const)
-  return state !== undefined && typeof seq === 'number' && isCount(attempts) && isText(at) && extra !== null ? { seq, state, attempts, at, ...extra } : null
+  const unreached = read['unreached'] === true ? { unreached: true as const } : {}
+  return state !== undefined && typeof seq === 'number' && isCount(attempts) && isText(at) && extra !== null ? { seq, state, attempts, at, ...extra, ...unreached } : null
 }
 
 /** An object `ask` stored, read back with each field of its type; null for anything else, the relay's entries included. */

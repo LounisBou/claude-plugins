@@ -32,13 +32,13 @@ import {
   hostStopOf, stopInTail, stopKey, stopText, type HostStop, type KeptGate, type WaitKind,
   confirmsTakeover,
 } from './relay.ts'
-import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
+import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, rearmResend, resendReplies } from './remote-asked.ts'
 import { planOlder, planWithdrawal } from './settle.ts'
 import { answerAskedFromPane, askedAsEntry, clearFailed, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
-  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
+  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS, UNREACHED_RETRY_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLines, splitLines, seqOf, type QAck, type QEvent } from './remote-round.ts'
@@ -1822,6 +1822,26 @@ export function registerWake(on: On<Held>): void {
   })
 }
 
+// The retries' timers are the module's memory: at each start, a reload's too, an orchestrator's row
+// is sent if it is news (a send that fails arms its retry), and a question this session asked whose
+// push still awaits its resend arms that timer, so a session that takes no turn is still heard.
+export function registerRetries(on: On<Held>): void {
+  on('session.start', {}, async ($, e, next) => {
+    try {
+      const sessionId = await $.session.id()
+      await rearmResend($, sessionId)
+      const sent = await withDeadline(sendRow($, sessionId), RELAY_BOUND_MS)
+      if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
+    } catch (err) {
+      await logLine($, 'supervision', `retries: ${messageOf(err)}`)
+    }
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+}
+
 // The supervision tool registered at each start, mounted beside the supervision like the wake:
 // a registration, never an open. Every session gets it, the tool.call refusing those that
 // supervise nothing, so a role read later than the start is never missed.
@@ -3303,10 +3323,11 @@ async function pullRequestsOf($: Host<'env' | 'fs'>, sessionId: string, row: Ses
 
 // An orchestrator's row, for a coordinator on another machine when it is news
 // (remote-row.ts): a coordinator on this machine reads the store itself, and none known
-// is nobody to send to. It is sent at a turn's end alone, with the figures the host has at that
+// is nobody to send to. It is sent at a turn's end, with the figures the host has at that
 // instant, in the turn's one message (flushOutbox); what was sent is kept only once delivered, a
-// failure is one log line, and the next turn's end sends it again.
-export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, outbox?: Outgoing[]): Promise<void> {
+// failure is one log line, and the next turn's end, or the retry it arms, sends it again.
+// `refused` is the reason of the send a retry follows: the same one is not said again.
+export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, outbox?: Outgoing[], refused?: string): Promise<void> {
   const store = await storeOf($)
   const read = parseSessionRow(String(await $.fs.read(`${store}/${sessionKey(sessionId)}`).catch(() => '')))
   if (read?.role !== 'orchestrator') return
@@ -3325,12 +3346,38 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const item: Outgoing = {
     to, line: rowText(row),
     settle: async sent => {
-      if (sent?.isDelivered) await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
-      else await logLine($, 'supervision', `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
+      if (sent?.isDelivered) {
+        await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
+        return
+      }
+      const reason = sent?.reason ?? 'no answer'
+      armRowRetry($, sessionId, reason)
+      if (reason !== refused) await logLine($, 'supervision', `row: not delivered to ${to.name}: ${reason}`)
     },
   }
   if (outbox) outbox.push(item)
   else await flushOutbox($, [item])
+}
+
+// One retry of a row that reached nobody, UNREACHED_RETRY_MS on, armed once at a time; it reads the
+// row again, and arms the next one when that send fails too.
+let rowRetryArmed = false
+function armRowRetry($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, refused: string): void {
+  if (rowRetryArmed) return
+  try {
+    $.clock.after(UNREACHED_RETRY_MS, async () => {
+      rowRetryArmed = false
+      await sendRow($, sessionId, undefined, refused).catch((err: unknown) => logLine($, 'supervision', `row: ${messageOf(err)}`))
+    })
+    rowRetryArmed = true
+  } catch {
+    // A host with no timer: the next turn's end sends it again.
+  }
+}
+
+/** The row's retry forgotten, as at a module load: the next failed send arms one. */
+export function forgetRowRetry(): void {
+  rowRetryArmed = false
 }
 
 // The context fill as the host states it at this instant, none when it states none.
