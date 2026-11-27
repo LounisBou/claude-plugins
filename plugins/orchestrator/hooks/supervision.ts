@@ -1744,7 +1744,10 @@ async function wakeForDue($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' 
   const woken = (await readWoken($)).filter(id => present.has(id))
   const due = read.filter(dueBeside(woken))
   if (due.length === 0) return
-  const taken = await $.prompt.submit({ text: dueText(due) })
+  const text = dueText(due)
+  // The wake brings the session nothing new: what it declared it waits on stands through the turn it opens.
+  DECLARATIONS.keepsThrough(text)
+  const taken = await $.prompt.submit({ text })
   if (taken && typeof taken === 'object' && 'drop' in taken && taken.drop) {
     await logLine($, 'supervision', `round wake: the host dropped the wake: ${String(taken.drop)}`)
     return
@@ -2152,7 +2155,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         inFlightAtStop = null
         const sessionId = await $.session.id()
         const declared = { wait: declarations.current(), handedOver: declarations.handedOver(sessionId) }
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId, inFlight, e.reason ?? 'answer', declared, outbox), RELAY_BOUND_MS)
+        const done = await withDeadline(relayTurnEnd($, declarations.reportedWith(String(e.answer ?? '')), e.turnId, inFlight, e.reason ?? 'answer', declared, outbox), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const queued = await withDeadline(sendRow($, sessionId, outbox), RELAY_BOUND_MS)

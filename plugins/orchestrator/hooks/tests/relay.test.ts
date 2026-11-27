@@ -336,6 +336,45 @@ test('done is one closing proposal', async () => {
   expect(fx.row()!.waiting).toBe('done')
 })
 
+// The fake host answering what a turn end reads besides: the session's tty, its launch name, an empty launcher listing.
+function atStop(fx: ReturnType<typeof fake>, name: string): World {
+  const env: Record<string, string> = { HOME, ITERM_SESSION_ID: 'w0t0:2:17', ORCHESTRATOR_HOST_CLI: 'hostcli' }
+  return {
+    ...fx.dollar,
+    env: { get: async (key: string) => env[key] },
+    process: { ...fx.dollar.process, run: async (argv, init) => {
+      if (argv[0] === 'sh') return { exitCode: 0, stdout: '123 ttys001\n', stderr: '' }
+      if (argv[0] === 'ps' && argv[2] === 'ttys001') return { exitCode: 0, stdout: `  501 hostcli --name ${name}\n`, stderr: '' }
+      if (argv[0] === 'bash' && argv[2] === 'list') return { exitCode: 0, stdout: '', stderr: '' }
+      return fx.dollar.process.run(argv, init)
+    } },
+  }
+}
+
+test('a wait the round wake\'s turn keeps is published again at its end: the row waits on it still, the closing proposal is the one first made', async () => {
+  const wake = '[module] A question of the round is now due in this tab: Orch: low. Run coordinator.sh round.'
+  const waits: DeclaredWait[] = [{ kind: 'done', blocks: '' }, { kind: 'operator', blocks: 'acme/app#1', asked: [] }]
+  for (const wait of waits) {
+    const chains = mounted()
+    const fx = fake({ role: 'coordinator', name: 'Coord: general', coordinator: 'Coord: general' })
+    DECLARATIONS.turnStarted()
+    DECLARATIONS.declare(wait)
+    await drive(chains, 'turn.complete', fx.dollar, { answer: 'Everything merged.', reason: 'answer', isAborted: false, turnId: 't1' })
+    const first = fx.row()!
+    const proposed = entries(fx).map(e => [e.id, e.question, e.status])
+    expect([first.waiting, proposed.length]).toEqual([wait.kind, wait.kind === 'done' ? 1 : 0])
+    DECLARATIONS.keepsThrough(wake)
+    const opens: { agentId?: string; text: string; turnId: string } = { text: wake, turnId: 't2' }
+    await drive(chains, 'turn.start', fx.dollar, opens)
+    expect(fx.row()!.waiting).toBeNull()
+    const stopped = await drive(chains, 'classic.Stop', atStop(fx, 'Coord: general'), { session_id: 's-one', transcript_path: '/tmp/h/none.jsonl', stop_hook_active: false, background_tasks: [], session_crons: [] })
+    expect(fieldsOf(stopped)?.['block']).toBeUndefined()
+    await drive(chains, 'turn.complete', fx.dollar, { answer: 'Nothing new in the round.', reason: 'answer', isAborted: false, turnId: 't2' })
+    expect([fx.row()!.waiting, fx.row()!.waiting_since]).toEqual([wait.kind, first.waiting_since])
+    expect(entries(fx).map(e => [e.id, e.question, e.status])).toEqual(proposed)
+  }
+})
+
 test('a turn that starts, or ends without a machine line, clears the wait', async () => {
   const chains = mounted()
   const fx = fake()

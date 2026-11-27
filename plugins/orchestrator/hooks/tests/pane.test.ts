@@ -20,6 +20,7 @@ import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
 import { statusText } from '../commands.ts'
 import { withdrawalText } from '../relay.ts'
+import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, blockOf, lockRun } from './fakes.ts'
 import { drawScreen, textOf } from './screen.ts'
 import { GLUED_BLOCKS } from './fixtures.ts'
@@ -1711,6 +1712,19 @@ async function wakingCoordinator(asked: RoundEntry[], over: { paneClosed?: boole
   }
   return { fx, handlers, tick }
 }
+
+test('the round wake brings nothing new: the wait declared before it stands in the turn it opens', async () => {
+  const { fx, tick } = await wakingCoordinator([entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })])
+  const wait = { kind: 'done' as const, blocks: '' }
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare(wait)
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  DECLARATIONS.turnStarted(fx.submitted[0])
+  expect(DECLARATIONS.standing()).toEqual(wait)
+  DECLARATIONS.turnStarted('a report')
+  expect(DECLARATIONS.standing()).toBeNull()
+})
 
 test('a due question wakes the coordinator once: with the pane open only an urgent one, however old the others, never one answered', async () => {
   const urgent = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
