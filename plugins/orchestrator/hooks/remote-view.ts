@@ -4,13 +4,14 @@
 // iTerm2 draws as native tabs. A view is a tmux client and nothing else: it attaches, never
 // starts a server or a session, and closing it only detaches. The coordinator's reading
 // (supervision.ts wakeTick) syncs the views on each tick: a row with no live view opens one, a live
-// view is reused, a view that dropped is opened again, a view whose orchestrator is no longer a
-// row is closed. A view is live when this Mac's process table holds its ssh; that same table is
-// what keeps one view per home server. The machines are mapped to an ssh destination by one file
+// view is reused, a view that dropped is opened again, a second view of one server is closed. A
+// view is live when this Mac's process table holds its ssh; that same table is what keeps one view
+// per home server. The machines are mapped to an ssh destination by one file
 // of the protected root (stateDir), beside the launch files it decides; a machine it does not name
 // is a logged line, never a guess.
 import { HOME_SHAPE, type RemoteRow } from './remote-row.ts'
-import { logLine, stateDir, writeAtomic } from './module-io.ts'
+import { logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { withLockOver } from '../core/store-io.ts'
 import { messageOf, type Host } from './host.ts'
 
 // The file that maps a machine label (a row's `machine`) to its ssh destination:
@@ -43,6 +44,9 @@ const PATH_SHAPE = /^[A-Za-z0-9._/-]+$/
 const CHECK_TIMEOUT_MS = 15000
 const OPEN_TIMEOUT_MS = 20000
 const PS_TIMEOUT_MS = 5000
+// A view's lock is held across one table read, one check and one opening: past their bounds
+// together, its holder was killed.
+const LOCK_STALE_MS = 60000
 
 // After an opening, or a check that did not lead to one, the next try waits this long, doubled
 // at each try that shows no live view, up to the cap: a machine down or a view that dies at once
@@ -158,17 +162,18 @@ export type Backoff = Map<string, { tries: number; nextAt: number }>
 
 export type ViewPlan = { reuse: Wanted[]; check: Wanted[]; close: LiveView[] }
 
-// The decision of one tick. A wanted home server with a live view keeps it, the first one: any
-// other view of it is closed, so there is never two. One without, its retry bound passed, is
-// checked and opened. A live view no row wants is closed: its orchestrator ended.
+// The decision of one tick. Each home server keeps one live view, the first one: any other view
+// of it is closed, so there is never two. A live view is kept while its ssh lives, whether a row
+// still wants it or not: a server that ends ends its view itself, and a row past its stale bound
+// says nothing of an orchestrator idle that long. A wanted server without a live view, its retry
+// bound passed, is checked and opened.
 export function planViews(wanted: readonly Wanted[], live: readonly LiveView[], backoff: Backoff, now: number): ViewPlan {
   const plan: ViewPlan = { reuse: [], check: [], close: [] }
   const kept = new Set<string>()
-  const wants = new Set(wanted.map(viewKey))
   for (const view of [...live].sort((a, b) => Number(a.pid) - Number(b.pid))) {
     const key = viewKey(view)
-    if (wants.has(key) && !kept.has(key)) kept.add(key)
-    else plan.close.push(view)
+    if (kept.has(key)) plan.close.push(view)
+    else kept.add(key)
   }
   for (const view of wanted) {
     if (kept.has(viewKey(view))) plan.reuse.push(view)
@@ -204,7 +209,9 @@ async function sayOnce($: ViewHost, memory: ViewsMemory, line: string): Promise<
 }
 
 // One tick: the machine file, the rows' home servers, the process table, then the plan run. No file
-// or a refused one opens and closes nothing; a process table that cannot be read neither.
+// or a refused one opens and closes nothing; a process table that cannot be read neither. Two ticks
+// that overlap, in one module or two, open one view: each opening holds its view's lock and reads
+// the table again under it (checkAndOpen).
 export async function syncViews($: ViewHost, rows: readonly RemoteRow[], memory: ViewsMemory, options: ViewsOptions = {}): Promise<void> {
   const now = options.now ?? Date.now()
   const shape = options.socketShape ?? HOME_SHAPE
@@ -233,39 +240,55 @@ export async function syncViews($: ViewHost, rows: readonly RemoteRow[], memory:
     // The view's ssh ends, and the client with it: the remote session is detached, never ended.
     const killed = await $.process.run(['kill', '-TERM', view.pid], { timeoutMs: PS_TIMEOUT_MS }).catch(() => null)
     await logLine($, 'views', killed?.exitCode === 0
-      ? `closed the view of ${view.socket} on ${view.dest}: no row wants it, or another view shows it`
+      ? `closed a second view of ${view.socket} on ${view.dest}`
       : `the view of ${view.socket} on ${view.dest} (pid ${view.pid}) could not be closed`)
   }
+  // Each try counted before the first wait: whatever runs meanwhile finds its bound set.
+  for (const view of plan.check) tried(memory.backoff, viewKey(view), now)
   for (const view of plan.check) {
     try {
-      await checkAndOpen($, root, view, memory, now)
+      await checkAndOpen($, root, view, memory, shape)
     } catch (err) {
-      tried(memory.backoff, viewKey(view), now)
       await logLine($, 'views', `the view of ${view.socket} on ${view.dest}: ${messageOf(err)}`)
     }
   }
 }
 
 // A home server with no live view: opened when it still runs; an ended one or a machine out of
-// reach is said, and tried again after its bound.
-async function checkAndOpen($: ViewHost, root: string, view: Wanted, memory: ViewsMemory, now: number): Promise<void> {
-  const key = viewKey(view)
-  tried(memory.backoff, key, now)
+// reach is said, and tried again after its bound. Under the view's lock, so that another session's
+// module opens none at the same time, the process table is read again first: a view another one
+// opened meanwhile is kept, not doubled.
+async function checkAndOpen($: ViewHost, root: string, view: Wanted, memory: ViewsMemory, shape: RegExp): Promise<void> {
+  const dir = `${root}/views`
+  const path = `${dir}/${view.machine}-${view.socket}.sh`
+  if (!PATH_SHAPE.test(path)) throw new Error(`the launch file's path ${path} cannot be handed to iTerm2`)
+  const made = await $.process.run(['mkdir', '-p', dir], { timeoutMs: PS_TIMEOUT_MS })
+  if (made.exitCode !== 0) throw new Error(`${dir} could not be made`)
+  let taken = false
+  await withLockOver(storeIo($), path, async () => {
+    taken = true
+    const ps = await $.process.run([...PS_ARGV], { timeoutMs: PS_TIMEOUT_MS }).catch(() => null)
+    if (!ps || ps.exitCode !== 0) throw new Error('the process table could not be read again')
+    if (liveViews(String(ps.stdout ?? ''), shape).some(live => viewKey(live) === viewKey(view))) return
+    await openChecked($, path, view, memory)
+  }, { tries: 0, staleMs: LOCK_STALE_MS }).catch((err: unknown) => {
+    if (taken) throw err
+  })
+  if (!taken) await logLine($, 'views', `the view of ${view.socket} on ${view.dest} is being opened by another session`)
+}
+
+async function openChecked($: ViewHost, path: string, view: Wanted, memory: ViewsMemory): Promise<void> {
+  const ended = `the home server ${view.socket} of ${view.name} runs no more on ${view.dest}: no view is opened`
   const checked = await $.process.run(checkArgv(view.dest, view.socket), { timeoutMs: CHECK_TIMEOUT_MS }).catch(() => null)
   if (checked?.exitCode === 1) {
-    await sayOnce($, memory, `the home server ${view.socket} of ${view.name} runs no more on ${view.dest}: no view is opened`)
+    await sayOnce($, memory, ended)
     return
   }
   if (checked?.exitCode !== 0) {
     await logLine($, 'views', `${view.dest} could not be reached for ${view.socket} (${checked ? `exit ${checked.exitCode}` : 'no answer'}): tried again later`)
     return
   }
-  memory.said.delete(`the home server ${view.socket} of ${view.name} runs no more on ${view.dest}: no view is opened`)
-  const dir = `${root}/views`
-  const path = `${dir}/${view.machine}-${view.socket}.sh`
-  if (!PATH_SHAPE.test(path)) throw new Error(`the launch file's path ${path} cannot be handed to iTerm2`)
-  const made = await $.process.run(['mkdir', '-p', dir], { timeoutMs: PS_TIMEOUT_MS })
-  if (made.exitCode !== 0) throw new Error(`${dir} could not be made`)
+  memory.said.delete(ended)
   await writeAtomic($, path, launchScript(view.dest, view.socket))
   // ORCHESTRATOR_OSASCRIPT, the launcher's own stand-in (iterm_agent.py OSASCRIPT): a run that must
   // never move the operator's screen names one that opens nothing.
