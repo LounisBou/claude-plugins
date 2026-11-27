@@ -66,8 +66,18 @@ for kept in {"kept-disarmed": ["orch-b"], "interrupted-kept": ["orch-a", "orch-b
     servers[kept]["armed"] = "off"
 if scenario == "unshown":
     servers["orch-b"].update(armed="off", clients=[])
-if scenario == "no-stop-elsewhere":
+if scenario in ("no-stop-elsewhere", "unkillable"):
     servers["orch-b"]["clients"] = ["/dev/ttys095"]
+# A view attached over ssh from another machine beside the tab of orch-b: on no tab of the app, and
+# no owner, whether the server lists its owners (view) or was armed the old way (view-old), with
+# iTerm2 frozen at the snapshot and the launcher's order kept (view-old-frozen) or none
+# (view-old-wedged); or a client of this machine that no tab shows, beside the tab of a server armed
+# the old way (view-local-old).
+VIEW = "/dev/ttys097"
+if scenario.startswith("view"):
+    servers["orch-b"]["clients"] = ["/dev/ttys002", VIEW]
+if scenario == "view":
+    servers["orch-b"]["owners"] = "/dev/ttys002"
 os.makedirs(os.path.join(work, "cfg", "sessions"), exist_ok=True)
 os.makedirs(os.path.join(work, "cfg", "projects", "p"), exist_ok=True)
 os.environ["ORCHESTRATOR_PROJECTS_DIR"] = ""
@@ -139,7 +149,8 @@ def new_tab(command):
     socket = next((s for s in servers if " %s " % s in text), None)
     if socket:
         acts.append("attach " + socket)
-        if scenario != "elsewhere":
+        # ghost: the tab made again shows no client.
+        if scenario != "elsewhere" and not (scenario == "ghost" and socket == "orch-b"):
             servers[socket]["clients"].append("/dev/ttys090")
         return Tab("/dev/ttys090", "✳ " + title_of(socket))
     acts.append("resume " + ("with its role" if "ORCHESTRATOR_AUDITOR=1" in text and "SECRET" not in text
@@ -172,16 +183,16 @@ KEPT = {"frozen-kept": WHOLE,
         "frozen-client": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys050")]]],
         "frozen-dead": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys002")], [TAB("/dev/ttys050")], [TAB("/dev/ttys880")]]],
         "frozen-plain": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys002")], [TAB("/dev/ttys050")]]],
-        "frozen-empty": [],
+        "frozen-empty": [], "view-old-frozen": WHOLE,
         "frozen-stale": [[[TAB("/dev/ttys880")], [TAB("/dev/ttys881")]]]}
-FROZEN = ("wedged",) + tuple(KEPT)
+FROZEN = ("wedged", "view-old-wedged") + tuple(KEPT)
 
 
 def run(coro):
     if scenario == "mute":
         signal.pause()
     if APP not in alive and NEW_APP not in alive or scenario in FROZEN and APP in alive \
-            or scenario == "deaf" and NEW_APP in alive:
+            or scenario in ("deaf", "deaf-unread") and NEW_APP in alive:
         raise RuntimeError("iTerm2 does not answer")
     ia.ANSWERED = True
     return asyncio.run(coro(Api(), None))
@@ -197,7 +208,7 @@ def drop_client(socket):
 
 def kill(pid, sig):
     acts.append("kill %s armed=%s" % (pid, "+".join(s for s in servers if servers[s]["armed"] == "on")))
-    if scenario.startswith("no-stop"):
+    if scenario.startswith("no-stop") or scenario == "unkillable":
         return
     alive.pop(str(pid))
     if scenario in ("lost-client", "elsewhere"):
@@ -219,7 +230,8 @@ def open_app():
         windows[:] = []
         return
     back = [t for w in windows for t in w.tabs]
-    back = [t for t in back if not (scenario in ("lost-client", "elsewhere") and t.tab_id == "tab/dev/ttys002"
+    # ghost: orch-b's tab is not back, its client still held by iTermServer.
+    back = [t for t in back if not (scenario in ("lost-client", "elsewhere", "ghost") and t.tab_id == "tab/dev/ttys002"
                                     or scenario == "dead-tab" and t.tab_id == "tab/dev/ttys041")]
     for tab in back:
         tab.sessions[0].title = "tmux" if tab.sessions[0].tty in ("/dev/ttys001", "/dev/ttys002") else HOST
@@ -234,22 +246,35 @@ def tmux_call(args, env=None):
     socket, words = args[1], args[2:]
     server = servers.get(socket)
     out, code = "", 0
-    if server is None or scenario == "refused" and words[:2] == ["set-option", "-s"] and socket == "orch-b" \
-            and words[-1] == "off":
+    # The arm and its suspension, each one call: the owners listed, or none.
+    owning = words[words.index(ia.HOME_OWNERS) + 1].strip() if ia.HOME_OWNERS in words and words[:2] == ["set-option", "-s"] \
+        or words[0] == "set-hook" and ia.HOME_OWNERS in words else None
+    if server is None or scenario == "refused" and owning == "" and socket == "orch-b":
         code = 1
+    elif words[0] == "show-options" and ";" in words:
+        out = "%s\n%s" % (server["armed"], server.get("owners", ""))
     elif words[0] == "show-options":
-        out = server["armed"] if words[1] == "-sv" else server["string"]
+        out = server.get("owners", "") if ia.HOME_OWNERS in words else server["armed"] if words[1] == "-sv" else server["string"]
+    elif words[0] == "kill-server":
+        acts.append("end %s" % socket)
+        for pid in servers.pop(socket)["hosts"]:
+            alive.pop(pid, None)
+    elif words[:2] == ["set-option", "-sF"]:
+        acts.append("drop %s" % socket)
     elif words[0] == "list-clients":
-        out = "\n".join(server["clients"])
+        # A client's pid is its tty's number after 5.
+        out = "\n".join(c + (" 5" + c[-3:] if "#{client_pid}" in words[-1] else "") for c in server["clients"])
     elif words[0] == "list-panes":
         out = "\n".join(hosts[p] for p in server["hosts"])
     elif words[0] == "display-message":
         out = "✳ " + title_of(socket)
-    elif words[1] == "-s":
-        acts.append("%s %s" % ("arm" if words[-1] == "on" else "disarm", socket))
+    elif owning is not None:
+        state = "on" if owning else "off"
+        acts.append("%s %s" % ("arm" if owning else "disarm", socket))
+        server["owners"] = owning
         # Taken with no error and no effect.
-        if not (socket == "orch-b" and scenario in {"off": ("stuck",), "on": ("arm-lost", "stale")}[words[-1]]):
-            server["armed"] = words[-1]
+        if not (socket == "orch-b" and scenario in {"off": ("stuck",), "on": ("arm-lost", "stale")}[state]):
+            server["armed"] = state
     else:
         if server["string"] != words[-1] and not (scenario == "untitled" and socket == "orch-b"):
             for s in (t.sessions[0] for w in windows for t in w.tabs):
@@ -316,8 +341,15 @@ class Interrupted:
 real_run = ia.run
 ia.run, ia.tmux_call, ia.process_state = run, tmux_call, process_state
 ia.live_homes = lambda: sorted(servers)
+# unkillable: orch-b does not end when told to.
+ia.kill_home = lambda socket: not (scenario == "unkillable" and socket == "orch-b") \
+    and tmux_call(["-L", socket, "kill-server"]).returncode == 0
 ia.app_pid = lambda: next((p for p in (APP, NEW_APP) if p in alive), "")
-ia.kernel_procargs = lambda pid: ([HOST], json.loads(os.environ["ORCHESTRATOR_HOST_ENV"]))
+# The view's client holds the SSH_CONNECTION of its ssh login (view-local-old: none); every other process
+# is of this machine. deaf-unread: the environments of the tabs' clients cannot be read.
+ia.kernel_procargs = lambda pid: (None, None) if scenario == "deaf-unread" and pid in ("5001", "5002") else \
+    ([HOST], json.loads(os.environ["ORCHESTRATOR_HOST_ENV"])
+     + (["SSH_CONNECTION=10.0.0.2 50000 10.0.0.1 22"] if pid == "5" + VIEW[-3:] and scenario != "view-local-old" else []))
 ia.self_tty = lambda: "/dev/ttys999" if scenario in ("stranger", "run-stranger") else "/dev/ttys031"
 ia.registered_coord_on = lambda tty: "Coord: c" if tty == "/dev/ttys031" else None
 ia.host_cli_on = lambda tty: next((p for p, t in hosts.items() if t == tty and p in alive), None)
@@ -348,6 +380,22 @@ if scenario == "unreadable-home":
     argv_of = ia.host_argv
     ia.host_argv = lambda pid: None if pid == "12" else argv_of(pid)
 r.processes, r.open_app = processes, open_app
+if scenario == "ps-miss":
+    # The first read of the re-arm misses orch-b's tab: its tty, read on a `ps` that failed, is empty.
+    real_layout, real_rearm, reads = r.layout, r.Run.rearm, []
+    def layout_missed():
+        read = real_layout()
+        if reads == ["rearm"]:
+            reads.append("missed")
+            for tabs in read:
+                for tab in tabs:
+                    for s in tab:
+                        s["tty"] = "" if s["tty"] == "/dev/ttys002" else s["tty"]
+        return read
+    def rearm(self):
+        reads.append("rearm")
+        return real_rearm(self)
+    r.layout, r.Run.rearm = layout_missed, rearm
 r.output_of = lambda *words: "1" if scenario == "no-restore" and words[-1] == "OpenNoWindowsAtStartup" else ""
 own_os = {"kill": kill, "getppid": os.getpid}
 if scenario == "run-owner":
@@ -498,6 +546,7 @@ print("acts=%s" % ",".join(acts))
 print("tabs=%s" % "/".join(" ".join(t.sessions[0].tty[-3:] for t in w.tabs) for w in windows))
 print("titles=%s" % ",".join(t.sessions[0].title for w in windows for t in w.tabs))
 print("armed=%s" % "+".join(s for s in sorted(servers) if servers[s]["armed"] == "on"))
+print("owners=%s" % "+".join("%s:%s" % (s, servers[s].get("owners", "")) for s in sorted(servers)))
 print("alive=%s" % " ".join(sorted(p for p in hosts if p in alive)))
 print("fronts=%s" % ",".join(fronts))
 print("OUT:" + "~".join(out.strip().splitlines()))

@@ -5598,6 +5598,27 @@ check "a pane with two clients (both tabs, or one not), one with no client, a cl
   "$("$py" -c "$HOMEPANE
 $CLOSEPANE
 print('|'.join([close(clients='/dev/ttys811\n/dev/ttys812\n'), close(clients='/dev/ttys999\n/dev/ttys811\n'), close(clients=''), close(clients='/dev/ttys999\n'), close(rc=1, clients='')]))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
+# A server that lists its owners is shown by them alone: a view attached over ssh beside its tab
+# does not make the tab untellable, and two owners still are.
+check "a pane whose server lists its owners goes on with the one owner among its clients, a view beside it; two owners are refused" \
+  "closed:/dev/ttys811|refused:0" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+def owned(clients, owners):
+    ia.tmux_call = lambda args, env=None: types.SimpleNamespace(returncode=0, stdout=owners if 'show-options' in args else clients, stderr='')
+    del seen[:]
+    try: ia.cmd_close(types.SimpleNamespace(bench=False, socket=None, tty='/dev/ttys950', expect=None))
+    except Stop: return 'closed:%s' % seen[0]
+    except SystemExit: return 'refused:%d' % len(seen)
+    return 'returned'
+print('|'.join([owned('/dev/ttys811\n/dev/ttys097\n', ' /dev/ttys811 \n'), owned('/dev/ttys811\n/dev/ttys812\n', ' /dev/ttys811 /dev/ttys812 \n')]))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
+check "a pane whose server lists no owner, armed the old way, goes on with its one client" "closed:/dev/ttys811" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+ia.tmux_call = lambda args, env=None: types.SimpleNamespace(returncode=0, stdout='' if 'show-options' in args else '/dev/ttys811\n', stderr='')
+try: ia.cmd_close(types.SimpleNamespace(bench=False, socket=None, tty='/dev/ttys950', expect=None))
+except Stop: print('closed:%s' % seen[0])
+except SystemExit: print('refused:%d' % len(seen))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
 check "a caller whose terminal is not iTerm2's keeps its own refusals: the pane is not mapped" "closed:/dev/ttys950" \
   "$("$py" -c "$HOMEPANE
 $CLOSEPANE
@@ -6747,7 +6768,7 @@ if command -v tmux >/dev/null 2>&1; then
   hclient=$!
   i=0; while [ "$(hsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
   check "the client of the home tab attaches, and the server is armed" "1|True" \
-    "$(hsrv list-clients 2>/dev/null | wc -l | tr -d ' ')|$(ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "print(ia.arm_home('$HSRV', 'suite'))")"
+    "$(hsrv list-clients 2>/dev/null | wc -l | tr -d ' ')|$(ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "print(ia.arm_home('$HSRV', 'suite', ['$(hsrv list-clients -F '#{client_tty}' 2>/dev/null)']))")"
   # A takeover kills window 0 while the tab stays attached: the server stays.
   hsrv kill-window -t home:0 2>/dev/null
   sleep 1
@@ -6757,11 +6778,12 @@ if command -v tmux >/dev/null 2>&1; then
   sleep 0.5
   check "closing the tab ends the server and every window it held" "down|0" "$(hserver)|$(hpanes)"
   hsrv kill-server 2>/dev/null
-  # Why the option waits for the client: armed with none attached, a server exits at once.
+  # Why the arm waits for the client: an owner that never attached would never leave, so an arm
+  # with no tab of this machine is refused, and the server left as it was.
   hsrv new-session -d -s home "sleep $HMARK" 2>/dev/null
-  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.arm_home('$HSRV', 'suite')" >/dev/null 2>&1
-  i=0; while [ "$(hserver)" = up ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done
-  check "armed before any client attaches, a server exits at once" "down" "$(hserver)"
+  harm=$(ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "print(ia.arm_home('$HSRV', 'suite', []))" 2>/dev/null)
+  check "armed before any client attaches, the arm is refused and the server left as it was" "False|up|" \
+    "$harm|$(hserver)|$(hsrv show-options -sqv @home-owners 2>/dev/null)"
   hsrv kill-server 2>/dev/null
   pkill -fx "sleep $HMARK" 2>/dev/null
 else
@@ -6786,7 +6808,7 @@ if command -v tmux >/dev/null 2>&1; then
   TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$MVSRV" attach -t home >/dev/null 2>&1 &
   mvclient=$!
   i=0; while [ "$(mvsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
-  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.arm_home('$MVSRV', 'suite')" >/dev/null 2>&1
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.arm_home('$MVSRV', 'suite', ['$(mvsrv list-clients -F '#{client_tty}' 2>/dev/null)'])" >/dev/null 2>&1
   mvsrv kill-window -t home:0 2>/dev/null
   mvsrv move-window -d -s "home:1" -t "home:0" 2>/dev/null
   mvpids=$(mvsrv list-panes -s -t home -F '#{pane_pid}' 2>/dev/null | tr '\n' ' ')
@@ -6800,6 +6822,248 @@ if command -v tmux >/dev/null 2>&1; then
   mvsrv kill-server 2>/dev/null
 else
   echo "  skip a moved session's end is not checked: no tmux"
+fi
+echo "== iterm-agents: a home server ends with its last tab of this machine, never with a view =="
+# The operator's rule (2026-11-27): a server ends when the last client of its own machine leaves,
+# never when a client attached over ssh from another machine (a remote view) leaves, and none runs
+# with no client of its own machine. Local is read on the attaching client's own environment
+# (SSH_CONNECTION, which sshd sets): here a viewer is a client started with it set, the real ssh
+# attach being proved once on a throwaway server of a remote running tmux 3.4. Servers and
+# clients of the suite's own, ended by it.
+if command -v tmux >/dev/null 2>&1; then
+  OWSRV="suite-owner-$$"
+  OWMARK=$((7600 + $$ % 1000))
+  owsrv() { env -u TMUX -u TMUX_PANE tmux -L "$OWSRV" "$@"; }
+  owup() { owsrv has-session -t home 2>/dev/null && echo up || echo down; }
+  owwait() { i=0; while [ "$(owup)" = up ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done; }
+  [ -f "$WORK/ptyclient.py" ] || printf '%s\n' 'import os, pty, sys, time' 'pid, fd = pty.fork()' 'if pid == 0:' \
+    '    os.execvp(sys.argv[1], sys.argv[1:])' 'while True:' '    try:' '        os.read(fd, 4096)' '    except OSError:' \
+    '        time.sleep(0.2)' > "$WORK/ptyclient.py"
+  owclient() { # <local|view>: a client of the server in a pty of its own; prints its pid
+    if [ "$1" = view ]; then env SSH_CONNECTION="192.0.2.1 50000 192.0.2.2 22" TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$OWSRV" attach -t home >/dev/null 2>&1 &
+    else env -u SSH_CONNECTION TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$OWSRV" attach -t home >/dev/null 2>&1 & fi
+    echo $!
+    n=$(owsrv list-clients 2>/dev/null | wc -l); i=0
+    while [ "$(owsrv list-clients 2>/dev/null | wc -l)" -le "$n" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done; }
+  owgone() { { kill "$1"; wait "$1"; } 2>/dev/null; sleep 0.5; }
+  owhome() { # a server made by the launcher, an agent window beside window 0, its tab attached and armed
+    ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$OWSRV', 'Orch: x', '$WORK', 'sleep $OWMARK', 'suite')" >/dev/null 2>&1
+    owsrv new-window -d -t home: -n 'Agent: a' "sleep $OWMARK" 2>/dev/null
+    owtab=$(owclient local)
+    ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.arm_home('$OWSRV', 'suite', ['$(owsrv list-clients -F '#{client_tty}' 2>/dev/null)'])" >/dev/null 2>&1; }
+  owhome
+  owview=$(owclient view)
+  check "a view attached over ssh is never an owner" "2|1" \
+    "$(owsrv list-clients 2>/dev/null | wc -l | tr -d ' ')|$(owsrv show-options -sv @home-owners 2>/dev/null | wc -w | tr -d ' ')"
+  owgone "$owview"
+  check "the view leaving ends nothing: the server runs on, its windows with it" "up|2" "$(owup)|$(pgrep -fx "sleep $OWMARK" | wc -l | tr -d ' ')"
+  owview=$(owclient view)
+  owgone "$owtab"; owwait
+  check "the tab of this machine leaving ends the server, a view still attached, and every window it held" "down|0" \
+    "$(owup)|$(pgrep -fx "sleep $OWMARK" | wc -l | tr -d ' ')"
+  owgone "$owview"; owsrv kill-server 2>/dev/null
+  owhome
+  owsecond=$(owclient local)
+  check "a second client of this machine is an owner too" "2" "$(owsrv show-options -sv @home-owners 2>/dev/null | wc -w | tr -d ' ')"
+  owgone "$owtab"
+  check "the first leaving ends nothing while the second stays" "up" "$(owup)"
+  owgone "$owsecond"; owwait
+  check "the last of them leaving ends the server" "down" "$(owup)"
+  owsrv kill-server 2>/dev/null
+  # A restart suspends the arm for its run alone: no tab of this machine left, the server stays.
+  owhome
+  ORCHESTRATOR_TMUX="$(command -v tmux)" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia, iterm_restart as r
+r.ia = ia
+print(r.read_server('$OWSRV')['armed'], end='|'); r.tmux('$OWSRV', *ia.HOME_DISARM); print(r.read_server('$OWSRV')['armed'])" > "$WORK/owdisarm" 2>&1
+  owgone "$owtab"
+  check "a restart's suspension is read and taken, and the server outlives its tab for the run" "True|False|up" "$(cat "$WORK/owdisarm")|$(owup)"
+  owtab=$(owclient local)
+  check "and a client that attaches while it is suspended arms nothing" "up|" "$(owup)|$(owsrv show-options -sqv @home-owners 2>/dev/null | tr -d ' ')"
+  owgone "$owtab"; owsrv kill-server 2>/dev/null
+  # A server armed the old way, by a launcher of before (exit-unattached on), keeps its arm and ends
+  # with its last client, whoever it is, until it ends; the restart reads and suspends it too.
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$OWSRV', 'Orch: x', '$WORK', 'sleep $OWMARK', 'suite')" >/dev/null 2>&1
+  owtab=$(owclient local)
+  owsrv set-option -s exit-unattached on
+  check "a server armed the old way reads as armed" "True" \
+    "$(ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "import iterm_restart as r; r.ia = ia; print(r.read_server('$OWSRV')['armed'])" 2>/dev/null)"
+  owgone "$owtab"; owwait
+  check "and still ends with its last client" "down" "$(owup)"
+  owsrv kill-server 2>/dev/null
+  # The same rule through the launcher's own paths, on real hooks: the arm given an owner that left
+  # before it, a launcher of before suspending the arm, the close of the owner's tab with an agent
+  # (keep_home), and a restart's re-arm, done and failed. iTerm2, the agents' hosts and window 0's
+  # session are stood in for; the server, its hooks and its clients are real.
+  cat > "$WORK/owpaths.py" <<'PY'
+import os, subprocess, sys, time
+scripts, socket, pty, mark, work, case = sys.argv[1:7]
+sys.path.insert(0, scripts)
+import iterm_agent as ia, iterm_restart as r
+r.ia = ia
+def tm(*w): return subprocess.run(["tmux", "-L", socket, *w], capture_output=True, text=True).stdout
+def clients(): return tm("list-clients", "-F", "#{client_tty}").split()
+def client(view=False):
+    env = {k: v for k, v in os.environ.items() if k not in ("TMUX", "TMUX_PANE", "SSH_CONNECTION")}
+    env["TERM"] = "xterm-256color"
+    if view:
+        env["SSH_CONNECTION"] = "192.0.2.1 50000 192.0.2.2 22"
+    before = set(clients())
+    p = subprocess.Popen([sys.executable, pty, "tmux", "-L", socket, "attach", "-t", "home"], env=env,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(50):
+        new = set(clients()) - before
+        if new:
+            return p, new.pop()
+        time.sleep(0.1)
+    return p, ""
+def leave(p):
+    p.kill(); p.wait(); time.sleep(0.5)
+def up():
+    return subprocess.run(["tmux", "-L", socket, "has-session", "-t", "home"], capture_output=True).returncode == 0
+def windows():
+    return subprocess.run(["pgrep", "-fx", "sleep %s" % mark], capture_output=True, text=True).stdout.count("\n")
+def home(arm=True):
+    ia.make_home(socket, "Orch: x", work, "sleep %s" % mark, "suite")
+    tm("new-window", "-d", "-t", "home:", "-n", "Agent: a", "sleep %s" % mark)
+    tab = client()
+    if arm:
+        ia.arm_home(socket, "suite", [tab[1]])
+    return tab
+said = lambda *v: print("|".join(str(x) for x in v))
+ia.trace_home = lambda *a: None
+ia.live_homes = lambda: [socket] if up() else []
+if case == "gone":
+    # Its owner gone before the arm: the server ends, a view attached or none.
+    for view in (True, False):
+        tab = home(arm=False)
+        seen = client(True) if view else None
+        leave(tab[0])
+        armed = ia.arm_home(socket, "suite", [tab[1]])
+        time.sleep(0.5)
+        said(armed, "up" if up() else "down", windows())
+        if seen:
+            leave(seen[0])
+        tm("kill-server")
+elif case == "older":
+    # A launcher of before reads the arm on exit-unattached and suspends it by turning it off.
+    tab = home()
+    read = tm("show-options", "-sv", "exit-unattached").strip()
+    tm("set-option", "-s", "exit-unattached", "off")
+    leave(tab[0])
+    kept = "up" if up() else "down"
+    tab = client()
+    tm("set-option", "-s", "exit-unattached", "on")
+    leave(tab[0])
+    said(read, kept, "up" if up() else "down")
+elif case == "close":
+    # The owner's tab closed by the launcher with an agent running: a new tab owns the server first,
+    # then window 0 ends; once that tab leaves too, the server ends, a view still attached.
+    tab = home()
+    seen = client(True)
+    made = {}
+    class Tabs:
+        def create(self, program, title, place, profile, made_):
+            made_["p"], made["tty"] = client()
+            made["p"] = made_["p"]
+            return made["tty"], None
+        def close(self, tty, why):
+            leave(tab[0])
+        def find(self, tty):
+            return tty in clients()
+        def close_made(self, made_):
+            leave(made_["p"])
+            return True
+    ia.ITERM = Tabs()
+    ia.window0_session = lambda what, s, listed=None, bench=False: (listed[0], "sid")
+    ia.home_agents = lambda what, s, panes: [(i, t, "Agent: a") for i, t in panes if i != "0"]
+    ia.host_identity = lambda tty: None
+    ia.wait_gone = lambda tty, timeout=None: None
+    out, sys.stdout = sys.stdout, open(os.devnull, "w")
+    ia.keep_home(tab[1], socket, ia.home_panes(socket))
+    sys.stdout = out
+    kept = ("up" if up() else "down", ia.home_owners(socket) == [made["tty"]], windows())
+    leave(made["p"])
+    said(*(kept + ("up" if up() else "down", windows())))
+    leave(seen[0])
+elif case in ("rearm", "rearm-none"):
+    tab = home()
+    seen = client(True)
+    tm(*ia.HOME_DISARM)
+    leave(tab[0])
+    suspended = "up" if up() else "down"
+    new = client() if case == "rearm" else (None, "")
+    run = r.Run.__new__(r.Run)
+    run.s = {"disarmed": [socket], "servers": {socket: {"clients": [tab[1], seen[1]], "local": [tab[1]]}},
+             "sessions": [], "moved": {}, "defects": []}
+    ia.app_pid = lambda: "1"
+    r.layout = lambda: [[[{"tty": new[1], "title": ""}]]] if new[1] else []
+    run.rearm()
+    owners = ia.home_owners(socket)
+    if new[0]:
+        leave(new[0])
+    said(suspended, owners == ([new[1]] if new[1] else []), "up" if up() else "down", windows(), len(run.s["defects"]))
+    leave(seen[0])
+elif case == "partial":
+    # Two tabs of this machine, one gone before the arm lists both: the live one alone owns it.
+    tab = home(arm=False)
+    other = client()
+    leave(other[0])
+    armed = ia.arm_home(socket, "suite", [tab[1], other[1]])
+    time.sleep(0.5)
+    said(armed, "up" if up() else "down", ia.home_owners(socket) == [tab[1]], windows())
+    leave(tab[0])
+elif case == "unread":
+    # The arm taken, then the clients cannot be listed: no owner is dropped, nothing is ended.
+    tab = home(arm=False)
+    calls, real = [], ia.tmux_call
+    def failing(args, env=None):
+        calls.append(args)
+        if "list-clients" in args:
+            return subprocess.CompletedProcess(args, 1, "", "no answer")
+        return real(args, env)
+    ia.tmux_call = failing
+    armed = ia.arm_home(socket, "suite", [tab[1]])
+    ia.tmux_call = real
+    said(armed, "up" if up() else "down", sum("-sF" in c or "kill-server" in c for c in calls), windows())
+    leave(tab[0])
+elif case == "remote":
+    # A restart reads a view attached over ssh as remote on its client's own environment, and a
+    # server armed the old way, which lists no owner, counts its tab alone as of this machine.
+    tab = home(arm=False)
+    seen = client(True)
+    tm("set-option", "-s", "exit-unattached", "on")
+    server = r.read_server(socket)
+    said(server["remote"] == [seen[1]], r.local_clients(server) == [tab[1]])
+    tm("set-option", "-s", "exit-unattached", "off")
+    leave(seen[0]); leave(tab[0])
+tm("kill-server")
+PY
+  owpaths() { ORCHESTRATOR_TMUX="$(command -v tmux)" ORCHESTRATOR_STATE_DIR="$WORK/owstate" "$py" "$WORK/owpaths.py" \
+    "$ROOT/skills/iterm-agents/scripts" "$OWSRV" "$WORK/ptyclient.py" "$OWMARK" "$WORK" "$1" 2>/dev/null | paste -sd'~' -; }
+  check "an owner that left before the arm leaves no server running: it ends, a view attached or none, every window with it" \
+    "False|down|0~False|down|0" "$(owpaths gone)"
+  check "a launcher of before reads the arm as armed, its suspension holds the server with no tab, and its re-arm ends it with its tab" \
+    "on|up|down" "$(owpaths older)"
+  check "closing the owner's tab with an agent hands the server to a new tab first, window 0 alone ended; that tab leaving ends it, a view attached" \
+    "up|True|1|down|0" "$(owpaths close)"
+  check "a restart's re-arm makes the tab of this machine alone an owner, a view never one, and the tab leaving ends the server" \
+    "up|True|down|0|0" "$(owpaths rearm)"
+  check "a re-arm with no tab of this machine left ends the server, a view attached, and says so: no server is left disarmed" \
+    "up|True|down|0|1" "$(owpaths rearm-none)"
+  check "an arm listing a tab gone beside a live one takes the gone one off and keeps the server, the live tab its one owner" \
+    "True|up|True|2" "$(owpaths partial)"
+  check "an arm whose clients cannot be listed after it drops no owner and ends nothing" "False|up|0|2" "$(owpaths unread)"
+  if [ "$(uname)" = Darwin ]; then
+    check "a restart reads a view as remote on its client's environment, and a server armed the old way has its tab alone as local" \
+      "True|True" "$(owpaths remote)"
+  else
+    skip_case "a restart reads a view as remote on its client's environment" "a process's environment is read on macOS only"
+  fi
+  pkill -fx "sleep $OWMARK" 2>/dev/null
+else
+  echo "  skip a home server's owners are not checked: no tmux"
 fi
 echo "== iterm-agents: every end of a home server is traced =="
 # A home server's end writes one dated line in close.log with the socket, the cause and the tty,
@@ -6815,12 +7079,12 @@ if command -v tmux >/dev/null 2>&1; then
   TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$TRSRV" attach -t home >/dev/null 2>&1 &
   trclient=$!
   i=0; while [ "$(trsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
-  tpy "ia.arm_home('$TRSRV', 'suite'); ia.start_home_watch('$TRSRV', '/dev/ttys977')" >/dev/null 2>&1
+  tpy "ia.arm_home('$TRSRV', 'suite', ['$(trsrv list-clients -F '#{client_tty}' 2>/dev/null)']); ia.start_home_watch('$TRSRV', '/dev/ttys977')" >/dev/null 2>&1
   sleep 1
   { kill "$trclient"; wait "$trclient"; } 2>/dev/null
   i=0; while [ ! -s "$TSTATE_E/close.log" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
   check "a tab closed ends its server and the watcher writes the dated line: socket, cause, tty" "1" \
-    "$(grep -cE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: server $TRSRV ended: cause=exit-unattached .* tty=/dev/ttys977\$" "$TSTATE_E/close.log")"
+    "$(grep -cE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: server $TRSRV ended: cause=tab-closed .* tty=/dev/ttys977\$" "$TSTATE_E/close.log")"
   check "and the watcher removes the socket file the exited server left" "absent" \
     "$([ -e "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$TRSRV" ] && echo present || echo absent)"
   trsrv kill-server 2>/dev/null
@@ -6832,7 +7096,7 @@ if command -v tmux >/dev/null 2>&1; then
   TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$TRSRV" attach -t home >/dev/null 2>&1 &
   trclient=$!
   i=0; while [ "$(trsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
-  tpy "ia.arm_home('$TRSRV', 'suite'); ia.start_home_watch('$TRSRV', '/dev/ttys978')" >/dev/null 2>&1
+  tpy "ia.arm_home('$TRSRV', 'suite', ['$(trsrv list-clients -F '#{client_tty}' 2>/dev/null)']); ia.start_home_watch('$TRSRV', '/dev/ttys978')" >/dev/null 2>&1
   sleep 1
   tpy "
 class Gone:
@@ -6915,7 +7179,7 @@ class Maker:
     def close_made(self, made): return True
 ia.ITERM = Maker()
 ia.client_on = lambda socket, tty: calls.append('client') or True
-ia.arm_home = lambda socket, what: calls.append('arm') or True
+ia.arm_home = lambda socket, what, owners: calls.append('arm') or True
 ia.start_home_watch = lambda socket, tty: None
 ia.open_home_tab('orch-suite', 'Orch: x', '', 'spawn')
 print(','.join(calls[1:]))")"
@@ -6929,7 +7193,7 @@ class Maker:
     def close_made(self, made): said.append('closed'); return True
 ia.ITERM = Maker()
 ia.client_on = lambda socket, tty: True
-ia.arm_home = lambda socket, what: False
+ia.arm_home = lambda socket, what, owners: False
 ia.kill_home = lambda socket: said.append('ended') or True
 try:
     ia.open_home_tab('orch-suite', 'Orch: x', '', 'spawn')
@@ -6942,7 +7206,7 @@ class Maker:
     def close_made(self, made): said.append('closed'); return True
 ia.ITERM = Maker()
 ia.client_on = lambda socket, tty: True
-ia.arm_home = lambda socket, what: False
+ia.arm_home = lambda socket, what, owners: False
 ia.kill_home = lambda socket: said.append('ended') or True
 try:
     ia.open_home_tab('orch-suite', 'Orch: x', '', 'spawn')
@@ -9526,6 +9790,9 @@ printf '%s\n' "${TMUX_TMPDIR-unset}" >> "$d/tmpdir"
 [ "$1" = -f ] && shift 2
 case "$1" in
   show) [ -f "$d/mark" ] && cat "$d/mark"; exit 0 ;;
+  show-options) [ -f "$d/owners" ] && cat "$d/owners"; exit 0 ;;
+  # The arm lists its owners: refused when the case says so, else kept for show-options.
+  set-option) if [ "$2" = -s ] && [ "$3" = @home-owners ]; then [ -f "$d/arm-err" ] && { cat "$d/arm-err" >&2; exit 1; }; printf '%s\n' "$4" > "$d/owners"; fi; exit 0 ;;
   new-session) printf '%s\n' "${CLAUDE_CONFIG_DIR-unset}" >> "$d/configdir"; [ -f "$d/new-err" ] && { cat "$d/new-err" >&2; exit 1; }; printf '%s\n' "${@: -1}" > "$d/window0"
     # The host a session starts writes its transcript: one the case staged is put in place now,
     # after the launcher took the launch's time.
@@ -9555,7 +9822,7 @@ homecmd() { # the launcher's `home`, from a plain tab outside tmux unless HTMUX 
     ORCHESTRATOR_STATE_DIR="$WORK/homestate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host \
     "$@"; }
 hcalls() { sed "s#$WORK#@WORK@#g; s#$ROOT#@ROOT@#g; s#-[0-9]\{13\}\.#-@TIME@.#g" "$HR/calls" 2>/dev/null; }
-reset_homerec() { rm -f "$HR/calls" "$HR/tmpdir" "$HR/configdir" "$HR/mark" "$HR/clients" "$HR/window0" "$HR/kill-err" "$HR/panes-err" "$HR/panes" "$HR/windows" "$HR/kwin-err"; rm -rf "$WORK/homestate"; }
+reset_homerec() { rm -f "$HR/calls" "$HR/tmpdir" "$HR/configdir" "$HR/mark" "$HR/clients" "$HR/window0" "$HR/kill-err" "$HR/panes-err" "$HR/panes" "$HR/windows" "$HR/kwin-err" "$HR/owners" "$HR/arm-err"; rm -rf "$WORK/homestate"; }
 
 reset_homerec
 out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
@@ -9659,9 +9926,9 @@ hprobe() { homecmd "$py" "$WORK/home_probe.py" "$ROOT/skills/iterm-agents/script
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(hprobe ok)
 NEWS="[-u][-L][orch-abcdef12][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch: conv][-c][@WORK@][/bin/sh -l @WORK@/homestate/prompts/home-Orch--conv-@TIME@.sh]"
-check "the move starts the home server with its conf, window 0 named after the orchestrator, then reads window 0's tty and the tab's client, then sets the server to exit with its tab" \
-  "0|$NEWS|[-u][-L][orch-abcdef12][display-message][-p][-t][home:0][#{pane_tty}]|[-u][-L][orch-abcdef12][list-clients][-F][#{client_tty}]|[-u][-L][orch-abcdef12][set-option][-s][exit-unattached][on]" \
-  "$(sfield "$res" exit)|$(hcalls | paste -sd'|' -)"
+check "the move starts the home server with its conf, window 0 named after the orchestrator, then reads window 0's tty and the tab's client, then arms the server to end with its tab, the tab its owner (the hooks elided), and reads that its owner is attached" \
+  "0|$NEWS|[-u][-L][orch-abcdef12][display-message][-p][-t][home:0][#{pane_tty}]|[-u][-L][orch-abcdef12][list-clients][-F][#{client_tty}]|[-u][-L][orch-abcdef12][set-option][-s][@home-owners][ /dev/ttys970 ][;][set-hook]…[;][set-option][-s][exit-unattached][on]|[-u][-L][orch-abcdef12][list-clients][-F][#{client_tty}]|[-u][-L][orch-abcdef12][show-options][-sqv][@home-owners]|[-u][-L][orch-abcdef12][list-clients][-F][#{client_tty}]" \
+  "$(sfield "$res" exit)|$(hcalls | sed 's/\[;\]\[set-hook\].*\[;\]\[set-option\]/[;][set-hook]…[;][set-option]/' | paste -sd'|' -)"
 check "the old tab is read first, the new one is made right of it under the orchestrator's name, and the move says where" \
   "identity /dev/ttys900,create beside /dev/ttys900 right Orch: conv|moved: orch-abcdef12, shown on /dev/ttys970 wait: 120" \
   "$(sfield "$res" calls)|$(sfield "$res" OUT)"
@@ -9997,12 +10264,12 @@ res=$(restarted no-stop)
 check "an iTerm2 that does not stop is left running, its servers armed again" "1|0|orch-a+orch-b|1" \
   "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c open)|$(sfield "$res" armed)|$(rsays 'still runs 10s after SIGKILL')"
 res=$(restarted no-start)
-check "an iTerm2 that does not start leaves every server disarmed, so every session runs on, and is said" \
-  "1|disarm orch-a,disarm orch-b,kill 100 armed=,open,open,open,notify|" "$(sfield "$res" first)"
-check "the next restart finishes that run from the relaunch on, with no second stop" "0|open,arm orch-a,arm orch-b|$RORDER" \
-  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" tabs)"
+check "an iTerm2 that does not start is said, and every server armed again on its tab, which iTermServer keeps: none is left disarmed" \
+  "1|disarm orch-a,disarm orch-b,kill 100 armed=,open,open,open,notify,arm orch-a,arm orch-b|orch-a+orch-b" "$(sfield "$res" first)"
+check "the next restart finishes that run from the relaunch on, with no second stop and nothing left to arm" "0|open|$RORDER|orch-a+orch-b" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" tabs)|$(sfield "$res" armed)"
 res=$(restarted deaf)
-check "an iTerm2 that starts and never answers leaves the servers disarmed, the session alive" "1||$RALL|2" \
+check "an iTerm2 that starts and never answers arms the servers again on their tabs, every session alive" "1|orch-a+orch-b|$RALL|0" \
   "$(sfield "$res" exit)|$(sfield "$res" armed)|$(sfield "$res" alive)|$(rsays 'does not exit with its tab until the next')"
 res=$(restarted interrupted)
 check "a run whose process died after the stop is finished by the next restart" "0|disarm orch-a,disarm orch-b,kill 100 armed=,open,arm orch-a,arm orch-b|$RORDER" \
@@ -10112,17 +10379,54 @@ res=$(restarted stuck)
 check "a server that takes the disarm and stays armed stops the run before the stop" "1|0|orch-a+orch-b|1" \
   "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c kill)|$(sfield "$res" armed)|$(rsays 'DEFECT disarm: a home server is still told to exit')"
 res=$(restarted reused)
-check "an iTerm2 that is not the snapshot's is not stopped" "1|$RDIS|1" \
+check "an iTerm2 that is not the snapshot's is not stopped, and its servers are armed again" "1|$RDIS,arm orch-a,arm orch-b|1" \
   "$(sfield "$res" exit)|$(sfield "$res" acts)|$(rsays 'the iTerm2 of the snapshot (pid 100) is not the one running')"
 res=$(restarted half)
 check "a run whose process died before the stop is not gone on with: its servers are armed again" "1|arm orch-a,arm orch-b|1" \
   "$(sfield "$res" exit)|$(sfield "$res" acts)|$(rsays 'the last run ended before it stopped iTerm2')"
 res=$(restarted no-stop-elsewhere)
-check "and one whose iTerm2 does not stop arms again what a tab of it shows, no other" "1|$RDIS,kill 100 armed=,arm orch-a|orch-a|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" armed)|$(rsays 'DEFECT orch-b stays told not to exit: no tab shows it')"
+check "and one whose iTerm2 does not stop arms again what a tab of it shows, and ends a server no tab of this machine shows" "1|$RDIS,kill 100 armed=,arm orch-a,end orch-b|orch-a|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts)|$(sfield "$res" armed)|$(rsays 'DEFECT orch-b was ended: no tab of this machine shows it; it held Orch: b')"
 res=$(restarted elsewhere)
-check "a server whose client is on no tab of the new app is not armed, and is said with the tab missing" "1|orch-a|1|1|1|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" armed)|$(rsays 'DEFECT orch-b stays told not to exit')|$(rsays 'DEFECT no tab shows /dev/ttys002')|$(rsays 'DEFECT the home server orch-b runs and no tab shows it')|$(rsays '^- orch-b does not exit with its tab')"
+check "a server whose client is on no tab of the new app is ended, never left disarmed, and is said with the tab missing" "1|orch-a|1|1|1|0|11 12 31 41" \
+  "$(sfield "$res" exit)|$(sfield "$res" armed)|$(rsays 'DEFECT orch-b was ended: no tab of this machine shows it')|$(rsays 'DEFECT no tab shows /dev/ttys002')|$(rsays 'DEFECT the home server orch-b runs and no tab shows it')|$(rsays '^- orch-b does not exit with its tab')|$(sfield "$res" alive)"
+# A view attached over ssh from another machine is no tab of the restart: none is made for it, it is
+# named missing nowhere, and the re-arm makes the tab alone an owner, the server listing its owners
+# or armed the old way.
+for rview in view view-old; do
+  res=$(restarted $rview)
+  check "a restart takes no view for a tab of this machine ($rview): no tab made for it, and the tab alone owns the server again" \
+    "0|0|0|orch-a+orch-b|orch-a:/dev/ttys001+orch-b:/dev/ttys002" \
+    "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'attach orch-b')|$(rsays 'ttys097')|$(sfield "$res" armed)|$(sfield "$res" owners)"
+done
+# The same with iTerm2 frozen at the snapshot, the order the launcher kept read or none: a server
+# armed the old way lists no owner, and its view is known on its client's environment.
+for rview in view-old-frozen view-old-wedged; do
+  res=$(restarted $rview)
+  check "a restart of a frozen iTerm2 takes no view for a tab of this machine ($rview): none is made or put, and the tab alone owns the server again" \
+    "0|0|orch-a+orch-b|orch-a:/dev/ttys001+orch-b:/dev/ttys002" \
+    "$(sfield "$res" acts | grep -c 'attach orch-b')|$(rsays 'ttys097')|$(sfield "$res" armed)|$(sfield "$res" owners)"
+done
+res=$(restarted view-local-old)
+check "a client of this machine no tab shows, beside the tab of a server armed the old way, gets no tab and owns nothing" \
+  "0|0|0|orch-a+orch-b|orch-a:/dev/ttys001+orch-b:/dev/ttys002" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'attach orch-b')|$(rsays 'ttys097')|$(sfield "$res" armed)|$(sfield "$res" owners)"
+res=$(restarted deaf-unread)
+check "a deaf iTerm2 whose tabs' clients' environments cannot be read takes none of them as remote: every server armed again, every session alive" \
+  "1|orch-a+orch-b|$RALL|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" armed)|$(sfield "$res" alive)|$(rsays 'was ended')"
+res=$(restarted ps-miss)
+check "one read of the app that misses a tab, its tty unread on a failed ps, ends no server the tab shows" \
+  "0|0|orch-a+orch-b|orch-a:/dev/ttys001+orch-b:/dev/ttys002|$RALL" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'end orch-b')|$(sfield "$res" armed)|$(sfield "$res" owners)|$(sfield "$res" alive)"
+res=$(restarted ghost)
+check "a server whose tab the answering app does not show is ended, its client still held by iTermServer, and said with the session it held" \
+  "1|1|orch-a|orch-a:/dev/ttys001|1|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'end orch-b')|$(sfield "$res" armed)|$(sfield "$res" owners)|$(rsays 'DEFECT orch-b was ended: no tab of this machine shows it; it held Orch: b')|$(rsays '^- orch-b does not exit with its tab')"
+res=$(restarted unkillable)
+check "a server no tab of this machine shows that cannot be ended is said, never said ended, and kept as the next restart's" \
+  "1|1|0|1|21" \
+  "$(sfield "$res" exit)|$(rsays 'DEFECT orch-b runs with no tab of this machine and could NOT be ended')|$(rsays 'orch-b was ended')|$(rsays '^- orch-b does not exit with its tab')|$(sfield "$res" alive | grep -o 21)"
 res=$(restarted arm-lost)
 check "a server that takes the arming and stays disarmed is said, and kept as the next restart's to arm" "1|orch-a|1|1" \
   "$(sfield "$res" exit)|$(sfield "$res" armed)|$(rsays 'DEFECT orch-b could not be told again')|$(rsays '^- orch-b does not exit with its tab')"
@@ -10265,7 +10569,7 @@ class FakeIterm(ia.Terminal):
             # little ahead instead, whatever the granularity.
             ahead = time.time() + 2
             os.utime(path, (ahead, ahead))
-        return "/dev/ttys970", "NEW-TAB"
+        return os.environ.get("LIFE_NEW_TTY", "/dev/ttys970"), "NEW-TAB"
     def close(self, tty, expect):
         calls.append("close %s" % tty)
         guards.append(expect)
@@ -10566,23 +10870,43 @@ check "a rotation keeps the checkout for its replacement, neither deleting it no
 # flag and says where each is; `--end-agents` ends them with the server; a reading it cannot make
 # refuses and kills nothing.
 printf '/dev/ttys970 9001 tmux -u -L orch-abcdef12 attach -t home\n/dev/ttys962 /opt/x/host --name Agent: m1a\n' > "$WORK/life-ps-agent"
-agent_home() { reset_homerec; printf '0 /dev/ttys961\n1 /dev/ttys962\n' > "$HR/panes"; printf '0\tOrch: w\n1\tAgent: m1a\n' > "$HR/windows"; }
+agent_home() { reset_homerec; printf '0 /dev/ttys961\n1 /dev/ttys962\n' > "$HR/panes"; printf '0\tOrch: w\n1\tAgent: m1a\n' > "$HR/windows"; printf '/dev/ttys970\n/dev/ttys983\n' > "$HR/clients"; }
+export LIFE_NEW_TTY=/dev/ttys983
 agent_home
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
-check "closing a home tab whose server runs an agent keeps the server with no flag: it is told to stay, window 0 alone is killed, never the server" "0|1|1|0|1" \
-  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-option][-s][exit-unattached][off]')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -c 'kill-window')"
-check "and says the server is kept, then each agent with its attach line" "closed 1 session on /dev/ttys970|home: kept the server orch-abcdef12 for 1 agent(s), session abcdef12-3456-4789-8abc-def012345678|agent: Agent: m1a on /dev/ttys962: $HR/tmux -L orch-abcdef12 attach -t home:1" \
+check "closing a home tab whose server runs an agent keeps the server with no flag: it is never disarmed, window 0 alone is killed, never the server" "0|0|1|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-hook][-gu]')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(hcalls | grep -cF '[kill-server]')|$(hcalls | grep -c 'kill-window')"
+check "and says the server is kept, the tab that shows it now, then each agent with its attach line" "closed 1 session on /dev/ttys970|home: kept the server orch-abcdef12 for 1 agent(s), session abcdef12-3456-4789-8abc-def012345678, shown on /dev/ttys983|agent: Agent: m1a on /dev/ttys962: $HR/tmux -L orch-abcdef12 attach -t home:1" \
   "$(sfield "$res" OUT)"
-check "and the server is told to stay before window 0 is killed" "1" \
-  "$(hcalls | grep -oE 'exit-unattached|kill-window' | paste -sd, - | grep -c '^exit-unattached,kill-window$')"
+check "and a new tab is opened right of the old one, proved and made an owner beside it before window 0 is killed" "1|@home-owners][ /dev/ttys970 /dev/ttys983 ],kill-window" \
+  "$(sfield "$res" calls | tr ',' '\n' | grep -c '^create beside /dev/ttys970 right Agent: m1a$')|$(hcalls | grep -oE '@home-owners\]\[ /dev/ttys970 /dev/ttys983 \]|kill-window' | paste -sd, -)"
 agent_home
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--end-agents"]')
 check "--end-agents ends the server and the agent with it" "0|1|closed 1 session on /dev/ttys970" \
   "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')"
 agent_home; printf 'no such window\n' > "$HR/kwin-err"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
-check "a window 0 tmux refuses to kill arms the server again and closes nothing" "1|1|0|1" \
-  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-option][-s][exit-unattached][on]')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'tmux refused to kill window 0')"
+check "a window 0 tmux refuses to kill closes the new tab and nothing else" "1|1|0|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close_made')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'tmux refused to kill window 0.*the tab opened on /dev/ttys983 was closed; the server orch-abcdef12 keeps its tab /dev/ttys970 and nothing else was closed')"
+agent_home; printf '/dev/ttys970\n/dev/ttys984\n' > "$HR/clients"; printf ' /dev/ttys970 /dev/ttys984 \n' > "$HR/owners"
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "a server another tab of this machine owns stays that tab's: no tab is opened, nothing is armed, window 0 is killed and the tab closed" "0|0|0|1|closed 1 session on /dev/ttys970|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create')|$(hcalls | grep -c '@home-owners\]\[ ')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')|$(sfield "$res" OUT | grep -c 'shown on /dev/ttys984')"
+agent_home; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "a new tab that shows no client is closed, and nothing is killed, armed or closed" "1|1|0|0|0|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close_made')|$(hcalls | grep -c 'kill-')|$(hcalls | grep -c '@home-owners\]\[ ')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'shows no client of the home server orch-abcdef12.*the server orch-abcdef12 keeps its tab /dev/ttys970 and nothing was closed')"
+# The new tab is made an owner before anything is killed: an arm tmux refuses closes it and nothing
+# else, and an owner the server still lists but that is no longer attached stands for no tab.
+agent_home; printf 'arm refused\n' > "$HR/arm-err"
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "a new tab that cannot be made an owner is closed, and nothing is killed or closed" "1|1|0|0|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close_made')|$(hcalls | grep -c 'kill-window')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'the tab on /dev/ttys983 could not be made an owner.*the tab opened on /dev/ttys983 was closed; the server orch-abcdef12 keeps its tab /dev/ttys970')"
+agent_home; printf ' /dev/ttys970 /dev/ttys984 \n' > "$HR/owners"
+res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
+check "an owner listed but no longer attached stands for no tab: a new tab is opened and made an owner before window 0 is killed" "0|1|@home-owners][ /dev/ttys970 /dev/ttys983 ],kill-window|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create beside /dev/ttys970')|$(hcalls | grep -oE '@home-owners\]\[ /dev/ttys970 /dev/ttys983 \]|kill-window' | paste -sd, -)|$(sfield "$res" OUT | grep -c 'shown on /dev/ttys983')"
+unset LIFE_NEW_TTY
 agent_home; printf '0 /dev/ttys961\n' > "$HR/panes"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a server with no agent is ended as before" "0|1|0" \

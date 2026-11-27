@@ -3940,7 +3940,7 @@ def open_home_tab(socket, title, anchor, what):
         die("%s: the tab on %s shows no client of the home server %s after %ds; %s; %s"
             % (what, tty, socket, SPAWN_TIMEOUT, closed_clause(closed, tty),
                ended_clause(socket)))
-    if not arm_home(socket, what):
+    if not arm_home(socket, what, [tty]):
         closed = ITERM.close_made(made)
         die("%s: the home server %s could not be told to exit with its tab, so closing the tab "
             "would not end it; %s; %s" % (what, socket, closed_clause(closed, tty),
@@ -3949,20 +3949,102 @@ def open_home_tab(socket, title, anchor, what):
     return tty, made
 
 
-def arm_home(socket, what):
-    """Tell the home server `socket` to exit once no client is attached: closing its tab then
-    ends the server, its orchestrator and every agent window (the operator's order: the tab's
-    close ends them all). Called only once the tab's client is proved attached. Set at the
-    start, the option would end the server before its tab attached; a takeover kills a window
-    with the tab still attached, and a server shown by no tab is never armed. True when tmux
-    took the option."""
+# The arm of a home server: the clients of this machine that own it, and the two hooks that keep
+# the list and end the server once its last owner leaves. A client attached over ssh from another
+# machine (a remote view) is never an owner: its leaving ends nothing, and no owner left ends the
+# server, so no server runs with no window of its own machine (the operator's rule, 2026-11-27).
+# Local is read on the attaching client's own environment: tmux copies its SSH_CONNECTION into the
+# session's at the attach (update-environment), set over ssh and removed otherwise. The list is
+# written with a space on each side of every tty, so a match is never part of another tty. Only
+# the format operators of tmux 3.4 are used (`#{!:…}` is not one: it reads as text there).
+# `exit-unattached` stays on with the hooks, and the hook ends the server only while it is on: a
+# launcher of before, which reads the arm on that option alone and suspends it by turning it off,
+# sees the server armed and its suspension holds, the server never ended under it.
+HOME_OWNERS = "@home-owners"
+HOME_ATTACHED_HOOK = (
+    'if -F "#{&&:#{==:#{SSH_CONNECTION},},#{==:#{m:* #{hook_client} *,#{%s}},0}}" '
+    '"set -sF %s \\"#{%s}#{hook_client} \\""' % (HOME_OWNERS, HOME_OWNERS, HOME_OWNERS))
+HOME_DETACHED_HOOK = (
+    'if -F "#{m:* #{hook_client} *,#{%s}}" '
+    '"set -sF %s \\"#{s/ #{hook_client} / :%s}\\" ; '
+    'if -F \\"#{||:#{m/r:[^ ],#{%s}},#{==:#{exit-unattached},0}}\\" \\"\\" kill-server"'
+    % (HOME_OWNERS, HOME_OWNERS, HOME_OWNERS, HOME_OWNERS))
+# The arm suspended, a restart's alone: no hook, no owner, and the option off.
+HOME_DISARM = ["set-hook", "-gu", "client-attached", ";", "set-hook", "-gu", "client-detached",
+               ";", "set-option", "-s", HOME_OWNERS, "", ";",
+               "set-option", "-s", "exit-unattached", "off"]
+
+
+def home_arm_words(owners):
+    """The tmux words that arm a home server for `owners`, one call: the owners, the hooks, and
+    the option, which also ends at once a server no client is attached to."""
+    return ["set-option", "-s", HOME_OWNERS, " %s " % " ".join(owners), ";",
+            "set-hook", "-g", "client-attached", HOME_ATTACHED_HOOK, ";",
+            "set-hook", "-g", "client-detached", HOME_DETACHED_HOOK, ";",
+            "set-option", "-s", "exit-unattached", "on"]
+
+
+def home_drop_words(tty):
+    """The tmux words that take `tty` off the owners of a home server and end it when no owner is
+    left: the detached hook's own, for an owner that left before the arm listed it. The slash ends
+    the substitution's pattern, so each one of the tty is matched as any character."""
+    return ["set-option", "-sF", HOME_OWNERS,
+            "#{s/ %s / :%s}" % (re.escape(tty).replace("/", "."), HOME_OWNERS), ";",
+            "if-shell", "-F", "#{m/r:[^ ],#{%s}}" % HOME_OWNERS, "", "kill-server"]
+
+
+def home_armed(said):
+    """Whether a home server ends with its tab, from its answer to HOME_ARM_READ: the option on,
+    which the arm sets with its hooks and an older launcher set alone."""
+    return said.split("\n")[0].strip() == "on"
+
+
+HOME_ARM_READ = ["show-options", "-sv", "exit-unattached", ";", "show-options", "-sqv", HOME_OWNERS]
+
+
+def home_listed(said):
+    """The owners a home server lists, from its answer to HOME_ARM_READ."""
+    lines = said.split("\n")
+    return lines[1].split() if len(lines) > 1 else []
+
+
+def home_owners(socket):
+    """The ttys that own the home server `socket`, as its arm lists them; [] when it lists none
+    or cannot be read."""
     try:
-        done = tmux_call(["-L", socket, "set-option", "-s", "exit-unattached", "on"])
+        done = tmux_call(["-L", socket, "show-options", "-sqv", HOME_OWNERS])
+    except TmuxError:
+        return []
+    return done.stdout.split() if done.returncode == 0 else []
+
+
+def arm_home(socket, what, owners):
+    """Tell the home server `socket` to end once the last of `owners`, the ttys of its tabs on
+    this machine, leaves: closing its tab then ends the server, its orchestrator and every agent
+    window (the operator's order: the tab's close ends them all), and a client of another machine
+    leaving ends nothing. A client of this machine that attaches later becomes an owner too.
+    An owner that left before the arm listed it never leaves again: once armed, every listed
+    owner no longer attached is taken off, and a server left with none is ended, as a server
+    with no client is by the option. True when tmux took the arm and an owner is attached."""
+    if not owners:
+        print("%s: no tab of this machine to arm the home server %s with" % (what, socket),
+              file=sys.stderr)
+        return False
+    try:
+        done = tmux_call(["-L", socket] + home_arm_words(owners))
     except TmuxError as exc:
-        print("%s: tmux set-option: %s" % (what, exc), file=sys.stderr)
+        print("%s: tmux set-hook: %s" % (what, exc), file=sys.stderr)
         return False
     if done.returncode != 0:
-        print("%s: tmux refused exit-unattached: %s" % (what, tmux_refusal(done)),
+        print("%s: tmux refused the arm: %s" % (what, tmux_refusal(done)), file=sys.stderr)
+        return False
+    attached = home_clients(socket, None)
+    for tty in [t for t in owners if attached is not None and t not in attached]:
+        with contextlib.suppress(TmuxError):
+            tmux_call(["-L", socket] + home_drop_words(tty))
+    if not set(home_owners(socket)) & set(home_clients(socket)):
+        print("%s: no tab of this machine is attached to the home server %s: %s"
+              % (what, socket, "it is still up" if home_answers(socket) else "it ended"),
               file=sys.stderr)
         return False
     return True
@@ -4007,8 +4089,8 @@ def cmd_home_watch(args):
     if os.path.exists(marker):
         os.remove(marker)
         return
-    trace_home(args.socket, "server", "exit-unattached (its tab closed; no launcher command "
-               "ended it)", args.tty)
+    trace_home(args.socket, "server", "tab-closed (its last tab of this machine closed; no "
+               "launcher command ended it)", args.tty)
 
 
 def home_of_tab(tty, strict=False):
@@ -4033,7 +4115,7 @@ def home_client_of_pane(tty):
     from the servers' own files and panes. The client is "" with `why` empty when `tty` is no
     window 0 of a server; "" with the reason when it is one and its tab cannot be told (the
     clients cannot be listed, none is attached, or several are: which tab is meant is not
-    guessed); else the one client's tty. `unread` names the servers whose panes could not be
+    guessed); else the one client's tty, a server's owners alone counted when it lists some. `unread` names the servers whose panes could not be
     listed, whether or not another matched."""
     unread = []
     if not tty:
@@ -4060,6 +4142,9 @@ def home_client_of_pane(tty):
             return "", "the clients of %s cannot be listed (%s)" % (socket, tmux_refusal(done)), \
                 unread
         clients = done.stdout.split()
+        # A server that lists its owners is shown by them, a view from another machine never.
+        owners = home_owners(socket)
+        clients = [c for c in clients if c in owners] if owners else clients
         if len(clients) != 1:
             return "", ("%s has %d tmux clients (%s): which tab is meant is not guessed"
                         % (socket, len(clients), ", ".join(clients) or "none")), unread
@@ -4267,49 +4352,87 @@ def refuse_home_agents(what, socket, panes, tty=""):
                " ".join(agent_line(socket, a) for a in agents)))
 
 
+def home_clients(socket, unread=()):
+    """The ttys of the clients the home server `socket` lists; `unread` when it cannot be read."""
+    try:
+        done = tmux_call(["-L", socket, "list-clients", "-F", "#{client_tty}"])
+    except TmuxError:
+        return unread
+    return done.stdout.split() if done.returncode == 0 else unread
+
+
+def home_heir(socket, tty, agents):
+    """A new tab of this machine right of `tty`, showing the home server `socket`, proved by its
+    client: the tab its agents stay on once `tty` closes. `(its tty, what was made)`. Any failure
+    closes what it made and dies; the server is not touched."""
+    title = agents[0][2] if agents and agents[0][2] else "Home: %s" % socket
+    made = {"terminal": ITERM}
+    nothing = "the server %s keeps its tab %s and nothing was closed" % (socket, tty)
+    try:
+        new, _ = ITERM.create(attach_program(socket, title), title,
+                              Place("beside", tty, "right", False), "", made)
+    except SystemExit:
+        print("close: the tab its agents would stay on could not be opened; %s" % nothing,
+              file=sys.stderr)
+        raise
+    if made.get("error") or not new:
+        closed = ITERM.close_made(made)
+        die("close: the tab its agents would stay on %s; %s; %s"
+            % ("failed: %s" % made["error"] if made.get("error") else "returned no tty",
+               closed_clause(closed, new), nothing))
+    if not client_on(socket, new):
+        closed = ITERM.close_made(made)
+        die("close: the tab on %s shows no client of the home server %s after %ds; %s; %s"
+            % (new, socket, SPAWN_TIMEOUT, closed_clause(closed, new), nothing))
+    return new, made
+
+
 def keep_home(tty, socket, listed):
     """Close a home tab and window 0 and keep the server for its agents (what every close of a
-    home tab does while an agent runs, a takeover's included): the server told to stay
-    when no client is attached (`exit-unattached off`), window 0 killed and its host proved gone,
-    then the tab closed, whose client detaches and leaves the server running. A failure after
-    the server was told to stay arms it again, so the server is never left unarmed with its
-    tab. Prints the close's contract line and one line per agent, with its attach command."""
+    home tab does while an agent runs, a takeover's included), never with no tab of this machine
+    to show it: a server runs with no window of its own machine nowhere (the operator's rule,
+    2026-11-27). While another tab of this machine owns the server, it is that tab's; else a new
+    tab is opened right of the old one, proved attached and made an owner before anything is
+    killed. Then window 0 is killed and its host proved gone, and the old tab closed, whose
+    client leaves the owners. A failure before the old tab closes closes the new tab and nothing
+    else. Prints the close's contract line and one line per agent, with its attach command."""
     panes, session_id = window0_session("close", socket, listed)
     agents = home_agents("close", socket, panes)
     ttys = [t for i, t in panes or [] if i == "0"]
     host = host_identity(ttys[0]) if ttys else None
-    try:
-        done = tmux_call(["-L", socket, "set-option", "-s", "exit-unattached", "off"])
-    except TmuxError as exc:
-        die("close: refused: tmux could not be told to keep the home server %s (%s); it was "
-            "NOT ended and nothing was closed" % (socket, exc))
-    if done.returncode != 0:
-        die("close: refused: tmux refused to keep the home server %s (%s); it was NOT ended "
-            "and nothing was closed" % (socket, tmux_refusal(done)))
+    attached = home_clients(socket)
+    others = [t for t in home_owners(socket) if t != tty and t in attached]
+    heir, made = "", {}
+    if not others:
+        heir, made = home_heir(socket, tty, agents)
 
-    def rearm(why):
-        armed = arm_home(socket, "close")
-        die("close: %s; the server %s %s and nothing else was closed"
-            % (why, socket, "was armed again" if armed else
-               "could NOT be armed again (exit-unattached stays off, its tab stays attached)"))
+    def refuse(why):
+        tab = ""
+        if heir:
+            tab = "; the tab opened on %s %s" % (heir, "was closed" if ITERM.close_made(made)
+                                                 else "was NOT closed: close it by hand")
+        die("close: %s%s; the server %s keeps its tab %s and nothing else was closed"
+            % (why, tab, socket, tty))
+    if heir and not arm_home(socket, "close", [tty, heir]):
+        refuse("the tab on %s could not be made an owner of the home server %s" % (heir, socket))
     if ttys:
         KILL_SENT.add(ttys[0])
         try:
             done = tmux_call(["-L", socket, "kill-window", "-t", "%s:0" % HOME_SESSION])
         except TmuxError as exc:
-            rearm("tmux could not kill window 0 (%s)" % exc)
+            refuse("tmux could not kill window 0 (%s)" % exc)
         if done.returncode != 0:
-            rearm("tmux refused to kill window 0 (%s)" % tmux_refusal(done))
+            refuse("tmux refused to kill window 0 (%s)" % tmux_refusal(done))
         if host:
             if not end_host(host[0], host[1], ttys[0], "close"):
-                rearm("%s still runs on %s" % (host[0], ttys[0]))
+                refuse("%s still runs on %s" % (host[0], ttys[0]))
         else:
             survivor = wait_gone(ttys[0])
             if survivor is not None:
-                rearm("%s still runs on %s" % (survivor, ttys[0]))
+                refuse("%s still runs on %s" % (survivor, ttys[0]))
     trace_home(socket, "window 0 of", "close", tty)
     # The client of the tab moves to a surviving agent window and does not exit by itself: the
-    # tab is closed at once, which detaches it, and the server stays for its agents.
+    # tab is closed at once, which detaches it, and the server stays with its other owner.
     ITERM.close(tty, "")
     deadline = time.time() + CLOSE_TIMEOUT
     while ITERM.find(tty):
@@ -4320,8 +4443,9 @@ def keep_home(tty, socket, listed):
         time.sleep(0.3)
     CLOSE_DONE.add(tty)
     print("closed 1 session on %s" % tty)
-    print("home: kept the server %s for %d agent(s)%s"
-          % (socket, len(agents), ", session %s" % session_id if session_id else ""))
+    print("home: kept the server %s for %d agent(s)%s, shown on %s"
+          % (socket, len(agents), ", session %s" % session_id if session_id else "",
+             heir or " ".join(others)))
     for agent in agents:
         print(agent_line(socket, agent))
     sys.stdout.flush()
