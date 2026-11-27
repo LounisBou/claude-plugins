@@ -62,7 +62,7 @@ will check it next time.
 ## 4. The end
 
 Tell the operator, in this tab, and the session that launched you, the report's path, verdict and cost. Then stop:
-answer his questions, apply nothing; a question of yours for him is one `ask` call, no block written. Relaying a proposal is his word. The session that launched you closes this tab; if you succeed, your successor's too.
+answer his questions, apply nothing; a question of yours for him is one `ask` call. Relaying a proposal is his word. The session that launched you closes this tab; if you succeed, your successor's too.
 
 Kept on to watch something, you watch through one background command that ends only on a
 finding (`until <a check that prints a line>; do sleep 600; done`), never a check in your own turns.

@@ -4,9 +4,10 @@
 // (plugins/method/skills/lifecycle/references/questions.md) and stored as its own object in the
 // round, `round/<id>.json`, with a format version that tells it from the closing proposals the relay
 // writes (round.ts). The id is the module's, given at creation; each call is one
-// object, settled and delivered on its own. The module writes the question block into the
-// transcript itself, so the model does not write it. Any main session that keeps a list asks with
-// it: an orchestrator, a coordinator, an auditor; an agent asks the session that launched it.
+// object, settled and delivered on its own. The model writes the question block, in its turn's
+// last text: a viewer on Remote Control is shown that text alone. The tool's result says so, and
+// `declare_wait`'s says it again (wait.ts). Any main session that keeps a list asks with it: an
+// orchestrator, a coordinator, an auditor; an agent asks the session that launched it.
 //
 // The `settle` tool closes a question by its id, here: its one closure function writes every close
 // of a round question, the object `ask` stored or the relay's entry (settle.ts decides what it
@@ -503,6 +504,9 @@ async function machineOf($: Host<'process'>): Promise<string> {
 // so the operator is never given two blocks at once). A turn's start empties it (registerQuestion's turn.start).
 const thisTurn: string[] = []
 
+// The open questions this turn asked again, which stored nothing (askOne): none uses up the turn's question.
+const askedAgain = new Set<string>()
+
 // Held by the `ask` call that is storing this turn's question, from the check to the end: two calls made
 // together find the place taken, whatever order their awaits finish in.
 let asking = false
@@ -510,12 +514,23 @@ let asking = false
 /** The main thread's turn started: it may ask one question again. */
 export function askTurnStarted(): void {
   thisTurn.length = 0
+  askedAgain.clear()
   asking = false
 }
 
 /** A question was asked in this turn: the turn has asked its one. */
 export function askedInTurn(id: string): void {
   thisTurn.push(id)
+}
+
+/** Whether the main thread's current turn asked this question. */
+export function isAskedInTurn(id: string): boolean {
+  return thisTurn.includes(id)
+}
+
+/** Whether the main thread's current turn asked this open question again. */
+export function isAskedAgainInTurn(id: string): boolean {
+  return askedAgain.has(id)
 }
 
 // The answers that are the operator's own: given in the asker's tab (naming one choice), in the pane
@@ -589,7 +604,9 @@ async function askOne($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 's
     }
   }
   if (twin !== null) {
-    return { result: `Not stored: this question is already open as ${twin.id}, asked ${twin.at}, and the operator has it; do not write it again in the chat, refer to it by its subject. For reference:\n\n${questionBlock(twin, { i: 1, n: 1 })}` }
+    // Open is not seen: whether its block ever reached him is nowhere recorded, so showing it again stays possible.
+    askedAgain.add(twin.id)
+    return { result: `Not stored: this question is already open as ${twin.id}, asked ${twin.at}. Refer to it by its subject and do not write it again in the chat, unless he never got its block in a turn's last text or you present it to him again: then write it in this turn's last text, after every tool call (declare_wait included). Its block:\n\n${questionBlock(twin, { i: 1, n: 1 })}` }
   }
   if (!record?.answer && thisTurn.length > 0) return refuse(turnFull(thisTurn[0]))
   const path = roundEntryPath(await dataDir($), entry.id)
@@ -614,7 +631,7 @@ async function askOne($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 's
   askedInTurn(entry.id)
   const block = questionBlock(entry, { i: 1, n: 1 })
   // The block goes in the asker's own message: a line of the host's log does not reach the operator's chat.
-  return { result: `Asked as ${entry.id}: stored in the round. Write this block in your message as it stands, once:\n\n${block}` }
+  return { result: `Asked as ${entry.id}: stored in the round. Write this block in your message as it stands, once, in your turn's last text, after every tool call (declare_wait included): the operator may see that text alone.\n\n${block}` }
 }
 
 /**

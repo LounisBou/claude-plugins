@@ -22,7 +22,7 @@ import { boundedReading, holdsDone, projectRecords, readyRefusal, waitingOnMerge
 import { prKey, unattendedLine, type Unattended } from '../core/pr-ledger.ts'
 import { holdsTodos, openFor, whoAmI } from './todo.ts'
 import { todoName } from './todo-format.ts'
-import { readAsked } from './question.ts'
+import { isAskedAgainInTurn, isAskedInTurn, readAsked } from './question.ts'
 import { PLUGIN } from './audit-events.ts'
 
 // The nouns the declaration holds.
@@ -149,6 +149,17 @@ export class Declarations {
 
 // The declarations of this session's main thread, which the turn's end reads too (question.ts).
 export const DECLARATIONS = new Declarations()
+
+// What the turn does after its declaration. The block of a question asked in this turn is the turn's
+// last text (question.ts), and this result is read after the calls before it: it says so again. So it
+// does for an open question this turn asked again, should its block be shown again. Of any other
+// question it says nothing.
+function afterDeclaring(wait: DeclaredWait): string {
+  const asked = wait.asked?.find(isAskedInTurn)
+  const id = asked ?? wait.asked?.find(isAskedAgainInTurn)
+  if (id === undefined) return 'End the turn now.'
+  return `End the turn with the block of ${id} as its last text${asked === undefined ? ' if you show it again' : ''}, even if already written above.`
+}
 
 // The session's own open questions asked with `ask`, in the order asked; none when they cannot be read.
 async function openAsked($: Held): Promise<{ id: string; blocks: string }[]> {
@@ -344,7 +355,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     const left = handedOver ? null : await holdsRecord($, parsed.wait)
     if (left !== null) return { result: left, isError: true }
     declarations.declare(parsed.wait)
-    return { result: `Wait declared: ${waitLine(parsed.wait)}. End the turn now.` }
+    return { result: `Wait declared: ${waitLine(parsed.wait)}. ${afterDeclaring(parsed.wait)}` }
   }).catch(async ($, e, next) => {
     await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: `the wait could not be declared; the module's log says why`, isError: true }
