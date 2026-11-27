@@ -291,7 +291,7 @@ function fake(id = 's-orch') {
   const fresh = new Date().toISOString()
   files.set(`${STORE}/sessions/s-orch`, JSON.stringify(row({ updated_at: fresh })) + '\n')
   files.set(`${STORE}/sessions/s-agent`, JSON.stringify(row({ role: 'agent', name: 'Agent: one', pid: '502', tty: '/dev/ttys005', updated_at: fresh })) + '\n')
-  files.set(`${STORE}/remote/Orch_far`, JSON.stringify(remote({ updated_at: fresh })) + '\n')
+  files.set(`${STORE}/remote-rows/Orch_far`, JSON.stringify(remote({ updated_at: fresh })) + '\n')
   files.set(`${STATE}/chains/ttys003.jsonl`, chain('/dev/ttys005'))
   files.set(`${STATE}/round/x.json`, JSON.stringify(entry({ session: 's-orch' })) + '\n')
   const dollar = hostOf({

@@ -389,6 +389,15 @@ test('a session start removes the temporary files killed writers left in every d
   expect(ran).toEqual([])
 })
 
+test('a session start removes the temporary file a killed writer left beside the remote rows', async () => {
+  const { dollar, files, mtimes } = fakeDollar()
+  const left = `${STATE}/store/remote-rows/Orch__far.tmp-1-x`
+  files.set(left, '{}')
+  mtimes.set(left, Date.now() - STALE_MS - 1000)
+  expect(await sweepTemporaries(dollar)).toEqual([left])
+  expect(files.has(left)).toBe(false)
+})
+
 // --- the wiring ---------------------------------------------------------------------------
 
 // The composed chain, one list per event: a domain's handler answers after the

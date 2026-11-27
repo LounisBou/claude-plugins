@@ -182,13 +182,26 @@ test('add to the caller\'s own name records once and sends nothing', async () =>
 
 test('add to a session on another machine sends the message and says it is not recorded there', async () => {
   const remote = JSON.stringify({ name: 'Orch: elsewhere', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100, waiting: null, blocks: null, waiting_since: null, updated_at: new Date().toISOString(), machine: 'iznoserver', repo: null, prs: [], held: null })
-  const { dollar, files, sent } = world({ files: { [`${MODULE}/store/remote/Orch__elsewhere`]: remote } })
+  const { dollar, files, sent } = world({ files: { [`${MODULE}/store/remote-rows/Orch__elsewhere`]: remote } })
   const answered = await call(dollar, { action: 'add', words: 'rebase it', said_at: SAID, to: 'Orch: elsewhere [ref-3]' })
   expect(answered.isError).toBe(undefined)
   expect(answered.result).toContain('not recorded there')
   expect(sent.map(message => message.to)).toEqual(['Orch: elsewhere [ref-3]'])
   expect(sent[0]?.text).toContain('rebase it')
   expect([...files.keys()].filter(path => path.startsWith(LISTS))).toEqual([])
+})
+
+test('add to a session whose row is still in the earlier releases\' directory is only sent, and a row a day old there names no machine', async () => {
+  const at = (updated_at: string) => JSON.stringify({ name: 'Orch: elsewhere', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100, waiting: null, blocks: null, waiting_since: null, updated_at, machine: 'iznoserver', repo: null, prs: [], held: null })
+  const path = `${MODULE}/store/remote/Orch__elsewhere`
+  const { dollar, files, sent } = world({ files: { [path]: at(new Date().toISOString()) } })
+  const answered = await call(dollar, { action: 'add', words: 'rebase it', said_at: SAID, to: 'Orch: elsewhere [ref-3]' })
+  expect(answered.result).toContain('not recorded there')
+  expect(sent).toHaveLength(1)
+  expect([...files.keys()].filter(file => file.startsWith(LISTS))).toEqual([])
+  const dead = world({ files: { [path]: at('2020-01-01T00:00:00.000Z') } })
+  await call(dead.dollar, { action: 'add', words: 'rebase it', said_at: SAID, to: 'Orch: elsewhere' })
+  expect(listOf(dead.files, 'Orch: elsewhere')).toHaveLength(1)
 })
 
 test('add to a coordinator whose address a peer taught, on another machine, is also only sent', async () => {
