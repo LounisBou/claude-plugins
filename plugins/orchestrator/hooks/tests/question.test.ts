@@ -6,7 +6,7 @@
 import { expect, test } from 'claude-code/testing'
 import { ASK_TOOL, ASK_VERSION, askTurnStarted, askedGroups, askedLines, askId, callAsk, claimAsked, parseAsk, parseAsked, questionBlock, settle, settleClaimed, register as registerQuestion, type Asked } from '../question.ts'
 import { parseRoundEntry } from '../supervision.ts'
-import { DECLARATIONS } from '../wait.ts'
+import { DECLARATIONS, Declarations, register as registerWait } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hookOf, hostOf } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Host, type Next, type Noun, type ToolSpec } from '../../core/host.ts'
@@ -194,6 +194,34 @@ test('a turn asks one question: a second call in it is refused and stores nothin
   expect(second.isError).toBe(true)
   expect(second.result).toContain(`this turn already asked ${only?.id}: one question per turn`)
   expect(second.result).not.toContain('Question 1 of 1')
+})
+
+// --- where the block goes: a viewer on Remote Control is shown the turn's last text alone ----------
+
+// `declare_wait` through its hook, on the same world as the `ask` before it.
+const declareWait = async (dollar: Host<Noun>) => {
+  const hook = hookOf(capture<Host<Noun>>(on => registerWait(on, new Declarations())), 'tool.call', { tool: 'mcp__orchestrator__declare_wait' })
+  const out = await hook.handler(dollar, { tool: 'mcp__orchestrator__declare_wait', kind: 'operator' }, async () => ({}))
+  return String(fieldsOf(out)?.['result'])
+}
+
+for (const [role, name] of [['orchestrator', 'Orch: belt [a1b2c3]'], ['coordinator', 'Coord: general [a1b2c3]'], ['auditor', 'Audit: belt [a1b2c3]']] as const) {
+  test(`the ${role}'s ask puts the block in the turn's last text, and its operator wait of that turn says so again, by the question's id`, async () => {
+    const { dollar, files } = world({ me: [role, name] })
+    const asked = await ask(dollar, FULL)
+    expect(asked.result).toMatch(/in your turn's last text, after every tool call \(declare_wait included\)/)
+    const id = stored(files)[0]!.id
+    const waited = await declareWait(dollar)
+    expect(waited).toContain(`Wait declared: waiting: operator`)
+    expect(waited).toContain(`End the turn with the block of ${id} as its last text, even if already written above`)
+  })
+}
+
+test('an operator wait in a later turn, on the question still open, asks for no second block', async () => {
+  const { dollar } = world()
+  await ask(dollar, FULL)
+  askTurnStarted()
+  expect(await declareWait(dollar)).toBe(`Wait declared: waiting: operator — blocks: ${FULL.blocks}. End the turn now.`)
 })
 
 test('the same question asked again in the turn is answered by its open twin, not refused', async () => {
