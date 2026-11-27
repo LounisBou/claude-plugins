@@ -3108,7 +3108,7 @@ const chainOf = (...entries: { tty: string; owner?: string }[]) =>
 // alone, after the default words; an object gives both; `null` is a listing that failed; `reject` a call that rejects;
 // `exit` a listing that exits 1 and still prints; `silent` a listing that exits 0 and prints nothing. A pid not named
 // has the default words and the variable absent.
-type Reading = string | null | { words?: string; env?: string } | 'reject' | 'exit' | 'silent'
+type Reading = string | null | { words?: string; env?: string; ww?: string } | 'reject' | 'exit' | 'silent'
 const DEFAULT_WORDS = '/usr/bin/hostcli --name x'
 function fleet(rows: Record<string, SessionRow>, agents: Record<string, string>, environ: Record<string, Reading> = {}) {
   const fx = fakeDollar({ launchName: 'Coord: main' })
@@ -3126,7 +3126,8 @@ function fleet(rows: Record<string, SessionRow>, agents: Record<string, string>,
       const shape = typeof reading === 'object' ? reading : null
       const words = shape?.words ?? DEFAULT_WORDS
       const env = shape ? shape.env ?? '' : reading === 'exit' ? `HOME=${HOME}` : reading
-      const text = argv[1] === 'eww' ? `${words} ${env}` : words
+      // `ww` shows the words its own way when the double is told so (a title rewritten between the two calls).
+      const text = argv[1] === 'eww' ? `${words} ${env}` : shape?.ww ?? words
       return { exitCode: reading === 'exit' ? 1 : 0, stdout: `${text}\n`, stderr: '' }
     }
     if (argv[0] === 'ps' && argv[1] === '-A') {
@@ -3293,6 +3294,48 @@ test('a ps call that exits 1 while printing draws no account, however much it pr
 
 test('a ps call that exits 0 with nothing printed draws no account, and is not read as the default', async () => {
   const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {}, { '900': 'silent' })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
+})
+
+// Two assignments in the environment: the last one is the process's own.
+test('two assignments in the environment: the last is the process\'s own', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {},
+    { '900': `CLAUDE_CONFIG_DIR=${PLAN1} CLAUDE_CONFIG_DIR=${PLAN2}` })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+})
+
+// The same, the last one empty: the default directory, plan 1.
+test('two assignments in the environment, the last empty: the default plan 1', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {},
+    { '900': `CLAUDE_CONFIG_DIR=${PLAN2} CLAUDE_CONFIG_DIR= HOME=${HOME}` })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 30% · 3m')
+})
+
+// An empty value is the default directory, plan 1.
+test('an empty CLAUDE_CONFIG_DIR in the environment is the default plan 1', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {}, { '900': `CLAUDE_CONFIG_DIR= HOME=${HOME}` })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 30% · 3m')
+})
+
+// `ps ww` shows the words and `ps eww` shows the words with nothing after them (an environment the system hides): not
+// read as the default, but as an environment not read.
+test('a ps that shows the words and no environment draws no account, and is not read as the default', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {}, { '900': { words: '/usr/bin/hostcli --name x', env: '' } })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
+})
+
+// The words of `ps ww` differ from the words `ps eww` shows (a title rewritten between the two calls): the environment is
+// not cut at a place the words do not hold, and nothing is read.
+test('a ps ww that does not begin the ps eww reading draws no account, and the log names the field', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {},
+    { '900': { words: `/usr/bin/hostcli CLAUDE_CONFIG_DIR=${PLAN2}`, env: `HOME=${HOME}`, ww: '/usr/bin/other-title' } })
   await pane.open()
   expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
   expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
