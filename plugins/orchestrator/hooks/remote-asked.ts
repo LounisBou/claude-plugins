@@ -7,20 +7,31 @@
 // it while the question is open and acknowledges it, or, settled first in its own tab, acknowledges
 // it `already` and pushes its own state again. A push or a reply not acknowledged is sent again
 // every ANSWER_RESEND_MS, ANSWER_SENDS times in all, then failed, said in the log and, for a reply,
-// in the pane. The handlers' `$` is the supervision's.
-import { roundEntryPath } from '../core/orchestration.ts'
+// in the pane. A reply's address may be gone while its asker's name runs on: a reply refused or not
+// acknowledged goes to the one live remote session of that name the host lists, and a refused one is
+// not failed while one is listed, until that same address has refused ANSWER_SENDS sends in a row.
+// The handlers' `$` is the supervision's.
+import { peersOf, roundEntryPath } from '../core/orchestration.ts'
 import { updateOver } from '../core/store-io.ts'
+import { currentSessionName, orchForm } from '../core/names.ts'
 import { dataDir, logLine, storeIo } from './module-io.ts'
-import { messageOf, type Host } from './host.ts'
+import { fieldsOf, messageOf, type Host } from './host.ts'
+import { isDegradedPass, withDeadline } from './stop-gate.ts'
 import { askedAsEntry, parseAsked, readAsked, type Asked } from './question.ts'
-import { ALREADY_ANSWERED, ANSWER_RESEND_MS, ANSWER_SENDS, closesItself, coordinatorAddress, readSessions, sendToCoordinator, sessionKey, tellSettled } from './supervision.ts'
+import { ALREADY_ANSWERED, ANSWER_RESEND_MS, ANSWER_SENDS, closesItself, coordinatorAddress, readSessions, selfOf, sendToCoordinator, sessionKey, tellSettled } from './supervision.ts'
 import { ASKED_LINE_CAP, qAckLine, qAskedLine, qReplyLine, type QAck, type QReply } from './remote-round.ts'
 import { settledMessage } from './settle.ts'
 
 type Replica = NonNullable<Asked['replica']>
 
+// What the host's listing is given: past it, the reply goes by the address it holds.
+const LISTING_BOUND_MS = 5000
+
 // The nouns the pushes and the replies hold: the supervision's.
 type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session' | 'ui'>
+// What a reply's send holds: the host's listing finds its asker's address again. Optional in the
+// type, for the closes that never reach another machine; a host without it gives no listing.
+type Replying = Held & Partial<Host<'tool'>>
 // What a push alone holds: the send to the coordinator (supervision.ts sendToCoordinator) needs the session.
 type Pushing = Host<'plugin' | 'env' | 'fs' | 'process' | 'clock' | 'session'>
 
@@ -263,33 +274,45 @@ export async function receiveReply($: Held, from: string, id: string, seq: numbe
   await replicate($, done)
   await ack($, from, { id, seq, of: 'reply' })
   const text = settledMessage(done, { session: '', name: reply.settler, role: 'coordinator' })
-  if (done.sender.session !== '' && done.sender.session === await $.session.id()) return { readable: text }
+  const own = await $.session.id()
+  if (done.sender.session !== '' && done.sender.session === own) return { readable: text }
+  // A successor of the asker's name takes this delivery: no message reaches its own sender, so with
+  // the asker gone its model reads the answer here.
+  let successor = false
   try {
+    // A name that cannot be read makes no successor: the answer still goes to the asker by message.
+    successor = await selfOf($, own).then(self => bare(self.name ?? '') === bare(done.sender.name), () => false)
     const live = done.sender.session !== '' && sessionKey(done.sender.session) in await readSessions($)
-    const sent = await $.session.send({ to: live ? { sessionId: done.sender.session } : done.sender.name, text })
-    if (!sent?.isDelivered) await logLine($, 'question', `the remote answer to ${id} was not delivered to ${done.sender.name}: ${sent?.reason ?? 'no answer'}`)
+    if (live || !successor) {
+      const sent = await $.session.send({ to: live ? { sessionId: done.sender.session } : done.sender.name, text })
+      if (sent?.isDelivered) return { consumed: 'orchestrator: a remote reply, applied and sent to its asker' }
+      await logLine($, 'question', `the remote answer to ${id} was not delivered to ${done.sender.name}: ${sent?.reason ?? 'no answer'}`)
+    }
   } catch (err) {
     await logLine($, 'question', `the remote answer to ${id} was not delivered to ${done.sender.name}: ${messageOf(err)}`)
   }
-  return { consumed: 'orchestrator: a remote reply, applied and sent to its asker' }
+  return successor ? { readable: text } : { consumed: 'orchestrator: a remote reply, applied and sent to its asker' }
 }
 
 /**
  * The owner's acknowledgment of a reply, on the replica's machine: delivered, or failed when it was
- * settled there first. One from any other address than the replica's origin is written nowhere.
+ * settled there first. One from any other address than the replica's origin is written nowhere,
+ * unless that origin was read off the listing, which names no address a delivery comes from: its
+ * asker's name then vouches for it.
  */
-export async function receiveReplyAck($: Held, from: string | null, ack: QAck): Promise<{ consumed: string }> {
+export async function receiveReplyAck($: Held, from: string | null, fromName: string | null, ack: QAck): Promise<{ consumed: string }> {
   let taken = false
   let foreign = false
   try {
     await updateOver(storeIo($), await pathOf($, ack.id), current => {
       const now = current === undefined ? null : parseAsked(current)
       foreign = now !== null && now.origin !== undefined && now.origin.address !== from
+        && !(from !== null && fromName !== null && !DELIVERY_ADDRESS.test(now.origin.address) && bare(fromName) === bare(now.sender.name))
       if (foreign) return undefined
       const state = now?.delivery?.state
       // A failure said « already answered » stays: no plain acknowledgment answers a reply its owner did not apply.
       if (now === null || now.origin === undefined || (state !== 'pending' && state !== 'sent' && state !== 'failed') || (state === 'failed' && now.delivery!.reason === ALREADY_ANSWERED && !ack.already)) return undefined
-      const { reason: _reason, ...delivery } = now.delivery!
+      const { reason: _reason, refused: _refused, ...delivery } = now.delivery!
       taken = true
       const at = new Date().toISOString()
       return `${JSON.stringify({ ...now, delivery: ack.already ? { ...delivery, state: 'failed', at, reason: ALREADY_ANSWERED } : { ...delivery, state: 'delivered', at } })}\n`
@@ -303,12 +326,64 @@ export async function receiveReplyAck($: Held, from: string | null, ack: QAck): 
   return { consumed: "orchestrator: a reply's acknowledgment, recorded" }
 }
 
+// An address a delivery comes from; any other a replica holds was read off the listing.
+const DELIVERY_ADDRESS = /^(?:uds|bridge):/
+
+// A session's name as two spellings of it compare: no reference, no former « Orch : ».
+const bare = (name: string): string => currentSessionName(orchForm(name))
+
+// A row of the listing for a session on another machine that is up: any state but `offline`.
+const LIVE_REMOTE_ROW = /·\s+Remote Control\s+·\s+(?!offline\b)\S/
+
 /**
- * One send of the answer a replica holds to its owner, at the address its last push came from: the
- * delivery then written `sent` with one more attempt, the host's refusal kept as its reason, while
- * it is still the one this send moves. Answers the refusal, or null.
+ * The address a send reaches the one live session of another machine named `name` by, as the host
+ * lists it now: its name and reference. Null when none or several are listed, or no listing is had.
  */
-export async function sendReply($: Held, id: string): Promise<string | null> {
+async function liveAddress($: Replying, name: string): Promise<string | null> {
+  try {
+    const answered = await withDeadline($.tool!.call({ tool: 'ListAgents' }), LISTING_BOUND_MS)
+    const answer = isDegradedPass(answered) ? undefined : fieldsOf(answered)
+    if (answer === undefined || answer['deny'] !== undefined || answer['isError']) {
+      await logLine($, 'question', `no listing to find ${name} by`)
+      return null
+    }
+    const result = answer['result']
+    const listing = String(answer['text'] ?? (typeof result === 'string' ? result : ''))
+    const live = listing.split('\n').filter(line => LIVE_REMOTE_ROW.test(line))
+      .flatMap(line => peersOf(`\n${line}`)).filter(peer => bare(peer.name) === bare(name))
+    if (live.length > 1) await logLine($, 'question', `${live.length} live sessions are named ${name}: none is chosen`)
+    return live.length === 1 ? live[0]!.full : null
+  } catch (err) {
+    await logLine($, 'question', `no listing to find ${name} by: ${messageOf(err)}`)
+    return null
+  }
+}
+
+// Every replica of that machine's sender holding the address gone takes the one that replaces it, so
+// that no later answer of theirs is sent to it.
+async function readdress($: Held, sender: { machine: string; name: string }, gone: string, address: string): Promise<void> {
+  const holds = (entry: Asked) => entry.origin?.machine === sender.machine && entry.origin.address === gone && bare(entry.sender.name) === bare(sender.name)
+  for (const entry of (await readAsked($)).filter(holds)) {
+    try {
+      await updateOver(storeIo($), await pathOf($, entry.id), current => {
+        const now = current === undefined ? null : parseAsked(current)
+        return now !== null && holds(now) ? `${JSON.stringify({ ...now, origin: { ...now.origin, address } })}\n` : undefined
+      })
+    } catch (err) {
+      await logLine($, 'question', `the address of ${entry.id} not written: ${messageOf(err)}`)
+    }
+  }
+}
+
+/**
+ * One send of the answer a replica holds to its owner: at the address the replica holds, or, once a
+ * send was refused or not acknowledged, at the one the listing gives its asker's name now, which
+ * every replica of that sender then takes. The delivery is written `sent` with one more attempt (the
+ * first of an address newly reached), the host's refusal kept as its reason, with the address that
+ * refused and its refusals in a row, while it is still the one this send moves. Answers the refusal,
+ * or null.
+ */
+export async function sendReply($: Replying, id: string): Promise<string | null> {
   const path = await pathOf($, id)
   let read = ''
   try {
@@ -328,14 +403,33 @@ export async function sendReply($: Held, id: string): Promise<string | null> {
     status: entry.status === 'withdrawn' ? 'withdrawn' : 'answered', text: entry.answer.text,
     by: entry.answer.by === 'coordinator' ? 'coordinator' : 'pane', at: entry.answer.at, settler: entry.answer.settler,
   }
-  let reason: string | null = null
-  try {
-    const sent = await $.session.send({ to: entry.origin.address, text: qReplyLine(id, entry.seq, reply) })
-    if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
-  } catch (err) {
-    reason = messageOf(err)
+  const line = qReplyLine(id, entry.seq, reply)
+  const refusalAt = async (to: string): Promise<string | null> => {
+    try {
+      const sent = await $.session.send({ to, text: line })
+      return sent?.isDelivered ? null : sent?.reason ?? 'no answer'
+    } catch (err) {
+      return messageOf(err)
+    }
   }
-  const delivery = { state: 'sent' as const, at: new Date().toISOString(), attempts: was.attempts + 1, ...(reason !== null ? { reason } : {}) }
+  const recorded = entry.origin.address
+  let to = (was.attempts > 0 ? await liveAddress($, entry.sender.name) : null) ?? recorded
+  let reason = await refusalAt(to)
+  if (reason !== null && was.attempts === 0) {
+    const live = await liveAddress($, entry.sender.name)
+    if (live !== null && live !== to) {
+      to = live
+      reason = await refusalAt(to)
+    }
+  }
+  const moved = reason === null && to !== recorded
+  if (moved) {
+    // Before the delivery is written: the new address's acknowledgment is matched against it.
+    await readdress($, { machine: entry.origin.machine, name: entry.sender.name }, recorded, to)
+    await logLine($, 'question', `the answer to ${id} goes to ${to}: ${recorded} gave way to the live session of its asker's name`)
+  }
+  const refusal = reason === null ? {} : { reason, refused: { to, sends: was.refused?.to === to ? was.refused.sends + 1 : 1 } }
+  const delivery = { state: 'sent' as const, at: new Date().toISOString(), attempts: moved ? 1 : Math.min(was.attempts + 1, ANSWER_SENDS), ...refusal }
   try {
     await updateOver(storeIo($), path, current => {
       const now = current === undefined ? null : parseAsked(current)
@@ -344,21 +438,29 @@ export async function sendReply($: Held, id: string): Promise<string | null> {
   } catch (err) {
     await logLine($, 'question', `the send of the answer to ${id} not written: ${messageOf(err)}`)
   }
-  if (reason !== null) await logLine($, 'question', `the answer to ${id} was not delivered to ${entry.sender.name} on ${entry.origin.machine}: ${reason}`)
+  // A refusal repeated while the asker is listed is said once, not at every send.
+  if (reason !== null && reason !== was.reason) await logLine($, 'question', `the answer to ${id} was not delivered to ${entry.sender.name} on ${entry.origin.machine}: ${reason}`)
   return reason
 }
 
-/** The replicas' answers not acknowledged, read at each round wake: sent again ANSWER_RESEND_MS after the last send, then failed. */
-export async function resendReplies($: Held, now: number = Date.now()): Promise<void> {
+/**
+ * The replicas' answers not acknowledged, read at each round wake: sent again ANSWER_RESEND_MS after
+ * the last send, then failed. A refused send reached nobody: it is sent again while a live session of
+ * the asker's name is listed, and failed with its refusal once the address listed is the one that
+ * refused the last ANSWER_SENDS sends.
+ */
+export async function resendReplies($: Replying, now: number = Date.now()): Promise<void> {
   for (const entry of await readAsked($)) {
     const delivery = entry.delivery
     if (entry.origin === undefined || (delivery?.state !== 'pending' && delivery?.state !== 'sent') || now - Date.parse(delivery.at) < ANSWER_RESEND_MS) continue
     try {
-      if (delivery.attempts < ANSWER_SENDS) {
+      const live = delivery.attempts >= ANSWER_SENDS && delivery.reason !== undefined ? await liveAddress($, entry.sender.name) : null
+      const spent = delivery.refused !== undefined && delivery.refused.to === live && delivery.refused.sends >= ANSWER_SENDS
+      if (delivery.attempts < ANSWER_SENDS || (live !== null && !spent)) {
         await sendReply($, entry.id)
         continue
       }
-      const reason = `no acknowledgment after ${ANSWER_SENDS} sends`
+      const reason = spent ? delivery.reason! : `no acknowledgment after ${ANSWER_SENDS} sends`
       let written = false
       await updateOver(storeIo($), await pathOf($, entry.id), current => {
         const read = current === undefined ? null : parseAsked(current)

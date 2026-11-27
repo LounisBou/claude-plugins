@@ -1763,3 +1763,185 @@ test('a wait reaches a coordinator whose learnt address went stale, by its name,
   await drive(chains, 'turn.complete', sender.dollar, turnEnd(PROPOSAL))
   expect(asks(sender).length).toBe(1)
 })
+
+// --- the replica's owner replaced on its machine: the address its last push came from is stale ----
+
+// Observed 2026-11-23 and 2026-11-27: a remote orchestrator restarted, or its bridge changed, and the
+// pane's answer went to the address its last push came from alone, refused with HTTP 409 three times
+// and failed, while a session of its name ran. The listing the host gives names the one that runs now.
+const GONE_AT = 'bridge:session_old'
+const NOW_AT = 'bridge:session_now'
+const LIVE_AT = 'Orch: belt [ref-live]'
+const remoteRows = (...rows: [string, string][]) => ['This session is Coord: ops [abc] — the name other sessions use to message it', '', `Peer sessions (${rows.length}):`,
+  ...rows.map(([name, state]) => `  ${name}  ·  Remote Control  ·  ${state}`)].join('\n')
+const LIVE_LISTING = remoteRows([LIVE_AT, 'running'], ['Orch: belt [ref-other]', 'offline'], ['Orch: other [ref-third]', 'running'])
+
+// The coordinator of a question pushed from `GONE_AT`, which the host now refuses; `listing` is what
+// ListAgents answers there, and `refused` the further addresses refused.
+async function replicaOfGone(listing: string, refused: readonly string[] = []) {
+  const ctx = await askedRemotely()
+  const { chains, sender, coordinator, id } = ctx
+  const send = coordinator.dollar.session.send
+  coordinator.dollar.session.send = async args => typeof args.to === 'string' && [GONE_AT, ...refused].includes(args.to)
+    ? { isDelivered: false, reason: `Failed to send to ${args.to}: HTTP 409 — "Session is not active"` }
+    : send(args)
+  coordinator.dollar.tool.call = async () => ({ text: listing })
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(GONE_AT, 'Orch: belt', only(pushes(sender)).text))
+  const age = () => {
+    const now = objectAt(coordinator, id)
+    coordinator.files.set(`${ROUND}/${id}.json`, JSON.stringify({ ...now, delivery: { ...now.delivery, at: new Date(Date.now() - 31_000).toISOString() } }) + '\n')
+  }
+  return { ...ctx, age }
+}
+
+test('an answer refused at the recorded address goes to the live session of the asker\'s name, whose address every replica of that sender takes', async () => {
+  const { coordinator, id } = await replicaOfGone(LIVE_LISTING)
+  // An older question of the same sender holds the same stale address; another sender's keeps its own.
+  const sibling = { ...objectAt(coordinator, id), id: 'q-sibling' }
+  coordinator.files.set(`${ROUND}/q-sibling.json`, JSON.stringify(sibling) + '\n')
+  coordinator.files.set(`${ROUND}/q-foreign.json`, JSON.stringify({ ...sibling, id: 'q-foreign', sender: { ...sibling.sender, name: 'Orch: other' } }) + '\n')
+  await answerAskedFromPane(coordinator.dollar, id, 'B : acme/app#2 first')
+  expect(replies(coordinator).map(s => s.to)).toEqual([LIVE_AT])
+  const replica = objectAt(coordinator, id)
+  expect(replica.delivery).toMatchObject({ state: 'sent', attempts: 1 })
+  expect(replica.delivery.reason).toBeUndefined()
+  expect(replica.origin.address).toBe(LIVE_AT)
+  expect(objectAt(coordinator, 'q-sibling').origin.address).toBe(LIVE_AT)
+  expect(objectAt(coordinator, 'q-foreign').origin.address).toBe(GONE_AT)
+})
+
+test('an acknowledgment from the live session of a readdressed answer delivers it, one from another name is refused', async () => {
+  const { chains, coordinator, id } = await replicaOfGone(LIVE_LISTING)
+  await answerAskedFromPane(coordinator.dollar, id, 'B : acme/app#2 first')
+  const line = qAckLine({ id, seq: 1, of: 'reply' })
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(FORGER_AT, 'Orch: other', line))
+  expect(objectAt(coordinator, id).delivery.state).toBe('sent')
+  // The host's envelope may carry the name with its reference, in the former spelling.
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(NOW_AT, 'Orch : belt [ref-live]', line))
+  expect(objectAt(coordinator, id).delivery.state).toBe('delivered')
+})
+
+test('a send no acknowledgment answered is sent again to the live session of the asker\'s name', async () => {
+  const { coordinator, id, age } = await replicaOfGone(LIVE_LISTING)
+  const send = coordinator.dollar.session.send
+  const reached: unknown[] = []
+  // The recorded address takes this send and answers nothing.
+  coordinator.dollar.session.send = async args => {
+    reached.push(args.to)
+    return args.to === GONE_AT ? { isDelivered: true } : send(args)
+  }
+  await answerAskedFromPane(coordinator.dollar, id, 'A : acme/app#1 first')
+  age()
+  await resendReplies(coordinator.dollar)
+  expect(reached).toEqual([GONE_AT, LIVE_AT])
+  expect(objectAt(coordinator, id)).toMatchObject({ origin: { address: LIVE_AT }, delivery: { state: 'sent', attempts: 1 } })
+  for (let i = 0; i < 3; i++) {
+    age()
+    await resendReplies(coordinator.dollar)
+  }
+  // The live session took three sends and acknowledged none: failed, as an address that answers nothing.
+  expect(reached).toEqual([GONE_AT, LIVE_AT, LIVE_AT, LIVE_AT])
+  expect(objectAt(coordinator, id).delivery).toMatchObject({ state: 'failed', reason: 'no acknowledgment after 3 sends' })
+})
+
+// The coordinator of `replicaOfGone`, every address a send is tried at kept, the refused ones included.
+async function refusingAt(refused: readonly string[]) {
+  const ctx = await replicaOfGone(LIVE_LISTING, refused)
+  const tried: unknown[] = []
+  const send = ctx.coordinator.dollar.session.send
+  ctx.coordinator.dollar.session.send = async args => {
+    tried.push(args.to)
+    return send(args)
+  }
+  const wakes = async (count: number) => {
+    for (let i = 0; i < count; i++) {
+      ctx.age()
+      await resendReplies(ctx.coordinator.dollar)
+    }
+  }
+  return { ...ctx, tried, wakes }
+}
+
+test('an answer the same live address refused three times is failed with that refusal, and sent no more', async () => {
+  const { coordinator, id, tried, wakes } = await refusingAt([LIVE_AT])
+  await answerAskedFromPane(coordinator.dollar, id, 'A : acme/app#1 first')
+  await wakes(2)
+  expect(objectAt(coordinator, id).delivery).toMatchObject({ state: 'sent', attempts: 3 })
+  await wakes(3)
+  // The recorded address once, with the first send, then the live one three times.
+  expect(tried).toEqual([GONE_AT, LIVE_AT, LIVE_AT, LIVE_AT])
+  const reason = `Failed to send to ${LIVE_AT}: HTTP 409 — "Session is not active"`
+  expect(objectAt(coordinator, id)).toMatchObject({ origin: { address: GONE_AT }, delivery: { state: 'failed', attempts: 3, reason } })
+  expect(coordinator.logged.filter(l => l.endsWith(`the answer to ${id} on unknown failed: ${reason}`)).length).toBe(1)
+})
+
+test('a refused answer is not failed while the listing gives another live address, each counted alone, and is once none is listed', async () => {
+  const NEXT_AT = 'Orch: belt [ref-next]'
+  const { coordinator, id, tried, wakes } = await refusingAt([LIVE_AT, NEXT_AT])
+  await answerAskedFromPane(coordinator.dollar, id, 'A : acme/app#1 first')
+  await wakes(2)
+  coordinator.dollar.tool.call = async () => ({ text: remoteRows([NEXT_AT, 'running']) })
+  await wakes(2)
+  expect(tried).toEqual([GONE_AT, LIVE_AT, LIVE_AT, LIVE_AT, NEXT_AT, NEXT_AT])
+  expect(objectAt(coordinator, id).delivery).toMatchObject({ state: 'sent', attempts: 3 })
+  coordinator.dollar.tool.call = async () => ({ text: remoteRows([NEXT_AT, 'offline']) })
+  await wakes(1)
+  expect(tried.length).toBe(6)
+  expect(objectAt(coordinator, id).delivery).toMatchObject({ state: 'failed', attempts: 3, reason: 'no acknowledgment after 3 sends' })
+})
+
+test('an answer refused goes to a live session of the asker\'s name that waits on its user', async () => {
+  const { coordinator, id } = await replicaOfGone(remoteRows([LIVE_AT, 'requires_action']))
+  await answerAskedFromPane(coordinator.dollar, id, 'A : acme/app#1 first')
+  expect(replies(coordinator).map(s => s.to)).toEqual([LIVE_AT])
+  expect(objectAt(coordinator, id)).toMatchObject({ origin: { address: LIVE_AT }, delivery: { state: 'sent', attempts: 1 } })
+})
+
+for (const [what, listing] of [
+  ['no session of the name', remoteRows(['Orch: other [ref-third]', 'running'])],
+  ['only an offline one', remoteRows([LIVE_AT, 'offline'])],
+  ['two live ones', remoteRows([LIVE_AT, 'running'], ['Orch: belt [ref-other]', 'idle'])],
+  ['two live ones, one waiting on its user,', remoteRows([LIVE_AT, 'running'], ['Orch: belt [ref-other]', 'requires_action'])],
+] as const) {
+  test(`an answer refused with ${what} listed is failed after three sends, its address kept`, async () => {
+    const { coordinator, id, age } = await replicaOfGone(listing)
+    await answerAskedFromPane(coordinator.dollar, id, 'A : acme/app#1 first')
+    for (let i = 0; i < 3; i++) {
+      age()
+      await resendReplies(coordinator.dollar)
+    }
+    expect(replies(coordinator)).toEqual([])
+    expect(objectAt(coordinator, id)).toMatchObject({ origin: { address: GONE_AT }, delivery: { state: 'failed', attempts: 3, reason: 'no acknowledgment after 3 sends' } })
+  })
+}
+
+test('a reply reaching the successor of an asker gone from its machine is read by the successor\'s own model', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(pushes(sender)).text))
+  await answerAskedFromPane(coordinator.dollar, id, 'B : acme/app#2 first')
+  // The asker's session is gone; another one of its name runs on its machine and takes the delivery.
+  sender.files.set(ROW.replace('s-one', 's-two'), sender.files.get(ROW)!)
+  sender.files.delete(ROW)
+  sender.dollar.session.id = async () => 's-two'
+  const before = sender.sent.length
+  const passed = await receive(chains, sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', only(replies(coordinator)).text))
+  expect(passed.consumed).toBeUndefined()
+  expect(passed.text).toContain('B : acme/app#2 first')
+  // Nothing sent to the asker by message: the successor is the one reading.
+  expect(sender.sent.slice(before).filter(s => s.text.startsWith('[module] '))).toEqual([])
+  expect(objectAt(sender, id)).toMatchObject({ status: 'answered', seq: 2 })
+})
+
+test('a reply reaching a session of another name, the asker gone, goes to the asker by name and is not read there', async () => {
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(pushes(sender)).text))
+  await answerAskedFromPane(coordinator.dollar, id, 'B : acme/app#2 first')
+  // The asker's row is gone, and the session that takes the delivery carries another name.
+  sender.files.set(ROW.replace('s-one', 's-other'), sender.files.get(ROW)!.replaceAll('Orch: belt', 'Orch: other'))
+  sender.files.delete(ROW)
+  sender.dollar.session.id = async () => 's-other'
+  const before = sender.sent.length
+  const received = await receive(chains, sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', only(replies(coordinator)).text))
+  expect(typeof received.consumed).toBe('string')
+  expect(sender.sent.slice(before).filter(s => s.text.startsWith('[module] ')).map(s => s.to)).toEqual(['Orch: belt'])
+})

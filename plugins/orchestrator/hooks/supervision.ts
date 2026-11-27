@@ -3443,9 +3443,9 @@ async function receiveAnswerAck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pro
 }
 
 // An event line's acknowledgment (remote-round.ts), dispatched by the event it takes.
-async function receiveQAck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, ack: QAck | null, from: string | null): Promise<{ consumed: string }> {
+async function receiveQAck($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, ack: QAck | null, from: string | null, fromName: string | null): Promise<{ consumed: string }> {
   if (ack?.of === 'asked') return receiveAskedAck($, from, ack)
-  if (ack?.of === 'reply') return receiveReplyAck($, from, ack)
+  if (ack?.of === 'reply') return receiveReplyAck($, from, fromName, ack)
   return ack?.of === 'answer' ? receiveAnswerAck($, ack) : receiveAck($, ack)
 }
 
@@ -4081,7 +4081,7 @@ async function readDelivery($: Held, e: Events['session.receive'], declarations:
       const learnt = learntOf(delivery, Date.now())
       // A write that fails here is one log line: the marked lines below are still consumed.
       if (learnt) await learnCoordinator($, learnt, true).catch((err: unknown) => logLine($, 'supervision', `receive: ${messageOf(err)}`))
-      if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body), peerAddress(delivery))
+      if (isQAck(delivery.body)) return await receiveQAck($, parseQAck(delivery.body), peerAddress(delivery), delivery.fromName)
       const q = isQ(delivery.body) ? parseQ(delivery.body) : null
       // A question asked with `ask` crossing machines (remote-asked.ts): its owner's push, taken
       // by the coordinator alone, and the reply given on its replica, which its asker's model reads.
