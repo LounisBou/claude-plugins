@@ -51,6 +51,9 @@ class Clock:
 
 ia.time = r.time = Clock()
 acts = []
+# What surrounded each window made: the frontmost application read, the window, the application put back.
+fronts = []
+FRONT = "Disk:Applications:Editor.app:"
 APP, NEW_APP = "100", "200"
 alive = {APP: "app-start", "11": "s", "12": "s", "21": "s", "31": "s", "41": "s", "900": "s"}
 hosts = {"11": "/dev/ttys011", "12": "/dev/ttys012", "21": "/dev/ttys021", "31": "/dev/ttys031",
@@ -101,6 +104,7 @@ class Tab:
     @property
     def current_session(self): return self.sessions[0]
     async def async_move_to_window(self):
+        fronts.append("moved window")
         home = next(w for w in windows if self in w.tabs)
         home.tabs.remove(self)
         windows.append(Window([self]))
@@ -124,6 +128,7 @@ class Window:
         return tab
     @staticmethod
     async def async_create(connection, command=None):
+        fronts.append("new window")
         windows.append(Window([new_tab(command)]))
         windows[-1].current_tab = windows[-1].tabs[0]
         return windows[-1]
@@ -216,6 +221,9 @@ def open_app():
     if scenario.startswith("no-start"):
         return
     alive[NEW_APP] = "new%d" % len(acts)
+    if scenario == "no-window":
+        windows[:] = []
+        return
     back = [t for w in windows for t in w.tabs]
     back = [t for t in back if not (scenario in ("lost-client", "elsewhere") and t.tab_id == "tab/dev/ttys002"
                                     or scenario == "dead-tab" and t.tab_id == "tab/dev/ttys041")]
@@ -332,7 +340,26 @@ ia.kernel_procargs = lambda pid: ([HOST], json.loads(os.environ["ORCHESTRATOR_HO
 ia.self_tty = lambda: "/dev/ttys999" if scenario in ("stranger", "run-stranger") else "/dev/ttys031"
 ia.registered_coord_on = lambda tty: "Coord: c" if tty == "/dev/ttys031" else None
 ia.host_cli_on = lambda tty: next((p for p, t in hosts.items() if t == tty and p in alive), None)
-ia.osascript_run = lambda script, timeout=None: acts.append("notify") or ("ok", "")
+
+
+# The one restore the launcher may send, its target and its guard read whole.
+PUT_BACK = ['set frontPath to "%s"' % FRONT,
+            'if frontPath is not "" and frontPath is not (path to application id "com.googlecode.iterm2" as text) then',
+            "tell application frontPath to activate", "end if"]
+
+
+def osascript(script, timeout=None):
+    if "display notification" in script:
+        acts.append("notify")
+    elif "path to frontmost application" in script and "activate" not in script:
+        fronts.append("front read")
+    else:
+        fronts.append("put back" if [l.strip() for l in script.strip().splitlines()] == PUT_BACK
+                      else "another restore")
+    return "ok", FRONT
+
+
+ia.osascript_run = osascript
 ia.ps_rows = lambda tty, strict=False: []
 if scenario == "unreadable":
     ia.host_argv = lambda pid: None
@@ -492,5 +519,6 @@ print("titles=%s" % ",".join(t.sessions[0].title for w in windows for t in w.tab
 print("armed=%s" % "+".join(s for s in sorted(servers) if servers[s]["armed"] == "on"))
 print("owners=%s" % "+".join("%s:%s" % (s, servers[s].get("owners", "")) for s in sorted(servers)))
 print("alive=%s" % " ".join(sorted(p for p in hosts if p in alive)))
+print("fronts=%s" % ",".join(fronts))
 print("OUT:" + "~".join(out.strip().splitlines()))
 print("ERR:" + " ".join(err.split()))

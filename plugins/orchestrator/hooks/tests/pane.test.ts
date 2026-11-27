@@ -14,9 +14,11 @@ import { capture, hostOf, type Captured } from '../../core/capture.ts'
 import { fieldsOf, type Events, type FsEntry, type Host, type Noun, type On, type ProcessRunInit, type UiElements } from '../../core/host.ts'
 import { agentPaneRows, paneRows, parseSessionRow, readRound, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
 import { readAsked, settle } from '../question.ts'
+import { receiveReplyAck, resendReplies } from '../remote-asked.ts'
 import { type RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
+import { statusText } from '../commands.ts'
 import { withdrawalText } from '../relay.ts'
 import { logLineOf, blockOf, lockRun } from './fakes.ts'
 import { drawScreen, textOf } from './screen.ts'
@@ -428,7 +430,7 @@ test('/orchestrator-supervision opens the pane in a coordinator or an orchestrat
   const coord = fakeDollar({ launchName: 'Coord: main' })
   // The one command of both roles, the operator's ruling 229 (« B »).
   expect(await handlers['command.run'](coord.dollar, run)).toEqual({ text: 'Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.' })
-  expect(coord.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
+  expect(coord.opened).toEqual([{ id: 'supervision', title: 'Sessions', focus: true }])
   // Typed again, the command closes the pane it opened.
   expect(await handlers['command.run'](coord.dollar, run)).toEqual({ text: 'Supervision pane closed.' })
   expect(coord.closed).toEqual([{ id: 'supervision' }])
@@ -441,7 +443,7 @@ test('/orchestrator-supervision opens the pane in a coordinator or an orchestrat
   for (const launchName of ['Agent: belt-p3', 'Audit: belt', null]) {
     const fx = fakeDollar({ launchName })
     const answer = await handlers['command.run'](fx.dollar, run)
-    expect(answer.text).toContain('coordinator session (« Coord: … »), listing the orchestrators, or in an orchestrator session')
+    expect(answer.text).toContain('coordinator session (« Coord: … »), listing the orchestrators, auditors and coordinators, or in an orchestrator session')
     expect(answer.text).toContain('/orchestrator:status lists the sessions here')
     expect(fx.opened).toEqual([])
   }
@@ -466,7 +468,7 @@ test('the supervision tool is registered at every start, loaded with its schema,
 
 test('the supervision tool opens and closes the pane the commands toggle, by the word it is given', async () => {
   const { handlers } = mounted(registerSupervision)
-  for (const [launchName, title] of [['Coord: main', 'Orchestrators'], ['Orch: phase-3', 'Agents']] as const) {
+  for (const [launchName, title] of [['Coord: main', 'Sessions'], ['Orch: phase-3', 'Agents']] as const) {
     const fx = fakeDollar({ launchName })
     expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'The supervision pane is not open.' })
     expect(await handlers['tool.call'](fx.dollar, toolCall('open'))).toEqual({ result: 'Supervision pane opened.' })
@@ -533,7 +535,7 @@ test('a coordinator\'s pane lists the live orchestrators alone, the urgent first
   const { handlers: fresh } = mounted(registerSupervision)
   const empty = fakeDollar({ launchName: 'Coord: main' })
   await fresh['command.run'](empty.dollar, supervisionRun)
-  expect(JSON.stringify(await fresh['ui.render'](empty.dollar, renderEvent, (x: unknown) => ({ passed: x })))).toContain('no live orchestrator')
+  expect(JSON.stringify(await fresh['ui.render'](empty.dollar, renderEvent, (x: unknown) => ({ passed: x })))).toContain('no live session')
 })
 
 test('an orchestrator\'s pane lists the agents its own tab spawned, read from the host\'s records', async () => {
@@ -812,7 +814,7 @@ test('a coordinator\'s pane is not opened by the end of its first turn, nor by a
   expect(fx.later.filter(t => t.ms === 30000).length).toBe(1)
   // Opened by his command, the pane lists what the command's pane lists.
   await handlers['command.run'](fx.dollar, supervisionRun)
-  expect(fx.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
+  expect(fx.opened).toEqual([{ id: 'supervision', title: 'Sessions', focus: true }])
   expect(fx.timers.map(t => t.ms)).toEqual([2000])
   fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 30 })) + '\n')
   expect(JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))).toContain('Orch: low')
@@ -859,7 +861,7 @@ async function successorStart(predecessor: Fx, launchName: string): Promise<Fx> 
   return successor
 }
 
-const ROLES_WITH_A_PANE = [['Coord: main', 'Orchestrators'], ['Orch: belt', 'Agents']] as const
+const ROLES_WITH_A_PANE = [['Coord: main', 'Sessions'], ['Orch: belt', 'Agents']] as const
 
 test('a pane open when its session ends is open in the successor, the coordinator\'s and the orchestrator\'s', async () => {
   for (const [launchName, title] of ROLES_WITH_A_PANE) {
@@ -1102,10 +1104,10 @@ const orch = (name: string, over: Partial<SessionRow> = {}) => ({ ...row({ role:
 
 test('the coordinator\'s pane opens with a bold title above the orchestrator blocks, and says when there is none', async () => {
   const tree = await paneTree({ low: orch('Orch: low') })
-  expect(pieces(elAt(tree, 1))).toEqual([{ text: 'Orchestrators', bold: true }])
+  expect(pieces(elAt(tree, 1))).toEqual([{ text: 'Sessions', bold: true }])
   const empty = await paneTree({})
-  expect(pieces(elAt(empty, 1))).toEqual([{ text: 'Orchestrators', bold: true }])
-  expect(pieces(elAt(empty, 2))).toEqual([{ text: 'no live orchestrator', bold: false }])
+  expect(pieces(elAt(empty, 1))).toEqual([{ text: 'Sessions', bold: true }])
+  expect(pieces(elAt(empty, 2))).toEqual([{ text: 'no live session', bold: false }])
 })
 
 const text = (nodes: { text: string }[]) => nodes.map(p => p.text).join('')
@@ -1118,7 +1120,7 @@ test('a plain orchestrator is one line: a dot, its bold name, then its figures i
     { text: '●', color: 'suggestion', bold: false },
     { text: ' ', bold: false },
     { text: 'Orch: low', bold: true },
-    { text: ' · orchestrator · ', bold: false },
+    { text: ' · orchestrator · ? · ? agents · ', bold: false },
     { text: '30%', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1173,7 +1175,7 @@ test('a done orchestrator draws a success dot and one Status line in success, wi
 test('a row past the gate draws its fill and gate words in the error colour, the rest in the normal colour', async () => {
   const tree = await paneTree({ hot: orch('Orch: hot', { context_percent: 85, context_tokens: 85000 }) })
   expect(pieces(elAt(tree, 2, 0)).slice(3)).toEqual([
-    { text: ' · orchestrator · ', bold: false },
+    { text: ' · orchestrator · ? · ? agents · ', bold: false },
     { text: '85% past the gate', color: 'error', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1181,7 +1183,7 @@ test('a row past the gate draws its fill and gate words in the error colour, the
 
 test('a remote orchestrator keeps its machine in its line', async () => {
   const tree = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
-  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · 30% · 3m')
+  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · ? · ? agents · 30% · 3m')
 })
 
 test('one blank line separates two blocks', async () => {
@@ -1196,7 +1198,7 @@ test('a done proposal is no question: no row stands out', async () => {
   const done = entry('Orch: d', '2026-10-18T10:03:00.000Z', { session: 'd', kind: 'done', blocks: null })
   const tree = await paneTree({ d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) }, [done])
   const line = pieces(elAt(tree, 2, 0))
-  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ', '30%', ' · 3m'])
+  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ? · ? agents · ', '30%', ' · 3m'])
   expect(line.some(p => p.bold && p.color === 'suggestion')).toBe(false)
 })
 
@@ -2248,7 +2250,7 @@ test('a pane the host still shows when the module starts over is taken back: dra
   expect(fx.opened.length).toBe(1)
   expect(fx.timers.map(t => t.ms)).toEqual([2000])
   const drawn = JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
-  expect(drawn).toContain('Orchestrators')
+  expect(drawn).toContain('Sessions')
   expect(drawn).not.toContain('to open the pane again')
 })
 
@@ -2276,7 +2278,7 @@ test('the questions are drawn first, above the orchestrators, the title counting
   const tree = await render()
   const [section, title] = [elAt(tree, 0), elAt(tree, 1)]
   expect(elAt(section, 0).props.children).toBe('Questions for you — 3 pending')
-  expect(title.props.children).toBe('Orchestrators')
+  expect(title.props.children).toBe('Sessions')
   expect(JSON.stringify(tree).split('pending').length - 1).toBe(1)
 })
 
@@ -2445,7 +2447,7 @@ test('a dim rule line, the pane\'s width wide, stands between the questions and 
     expect(rule.props.marginTop).toBe(1)
     expect(rule.props.children).toHaveLength(1)
     expect(elAt(rule, 0).props).toMatchObject({ dimColor: true, wrap: 'truncate-end', children: '─'.repeat(width) })
-    expect(texts(heading)).toEqual(['Orchestrators'])
+    expect(texts(heading)).toEqual(['Sessions'])
   }
 })
 
@@ -2489,6 +2491,63 @@ test('a replica of a question asked with ask on another machine is drawn only wh
   // Withdrawn here by the coordinator, its withdrawal never acknowledged: its asker still waits, so it stays drawn.
   fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...replica, status: 'withdrawn', answer: { text: 'moot', by: 'coordinator', at: '2026-10-30T10:06:00.000Z', settler: 'Coord: main' }, delivery: { state: 'failed', at: '2026-10-30T10:06:00.000Z', attempts: 3, reason: 'no acknowledgment after 3 sends' } }) + '\n')
   expect(await drawnNow()).toContain('not delivered: no acknowledgment after 3 sends — the answer to Orch: belt on far (blocks: acme/app#1)')
+})
+
+// A replica whose answer given here failed after its sends, its asker's row measured on its machine.
+const failedReplica = () => askedObject('s-far', 'Orch: belt', '2026-10-30T10:04:00.000Z', {
+  origin: { machine: 'far', address: FAR }, status: 'answered',
+  answer: { text: 'A : acme/app#1 first', by: 'pane', at: '2026-10-30T10:05:00.000Z', settler: 'Coord: main' },
+  delivery: { state: 'failed', at: '2026-10-30T10:06:00.000Z', attempts: 3, reason: 'no acknowledgment after 3 sends' },
+})
+const LISTED_ANEW = ['This session is Coord: main [abc] — the name other sessions use to message it', '', 'Peer sessions (1):',
+  '  Orch: belt [ref-live]  ·  Remote Control  ·  idle'].join('\n')
+const NOT_DELIVERED = 'not delivered: no acknowledgment after 3 sends — the answer to Orch: belt on far (blocks: acme/app#1)'
+
+test('a failed answer sent again is said sent again to its asker, and is drawn no more once delivered', async () => {
+  const replica = failedReplica()
+  const { fx, sent, render } = await askedPane([replica])
+  remoteRow(fx, 'Orch: belt', 'far')
+  fx.dollar.tool.call = async () => ({ text: LISTED_ANEW })
+  const drawnNow = async () => texts(await render())
+  expect(await drawnNow()).toContain(NOT_DELIVERED)
+  await resendReplies(fx.dollar)
+  expect(sent.map(s => s.to)).toEqual(['Orch: belt [ref-live]'])
+  const during = await drawnNow()
+  expect(during).toContain('being delivered: the answer to Orch: belt on far (blocks: acme/app#1) — sent again to Orch: belt, 1 of 3, not acknowledged yet')
+  expect(during.some(t => t.startsWith('not delivered:'))).toBe(false)
+  await receiveReplyAck(fx.dollar, 'bridge:session_new', 'Orch: belt', { id: replica.id, seq: 1, of: 'reply' })
+  expect((await drawnNow()).some(t => t.startsWith('not delivered:') || t.startsWith('being delivered:'))).toBe(false)
+})
+
+test('the lines not delivered are cleared from the pane: recorded on each entry, logged, drawn and sent no more', async () => {
+  const replicas = [failedReplica(), { ...failedReplica(), id: 'q-s-far-second', blocks: 'acme/app#2' }]
+  const { fx, sent, render } = await askedPane(replicas)
+  remoteRow(fx, 'Orch: belt', 'far')
+  const tree = await render()
+  // The line stays the section's foot, its action over it.
+  const kids = kidsOf(elAt(tree, 0))
+  expect(saidBy(kids.at(-2))).toBe(`${NOT_DELIVERED} · no acknowledgment after 3 sends — the answer to Orch: belt on far (blocks: acme/app#2)`)
+  expect(kids.at(-3)).toBe(button(tree, 'clear-failed'))
+  expect(button(tree, 'clear-failed').props['hotkey']).toBe('x')
+  await button(tree, 'clear-failed').props.onPress!()
+  for (const replica of replicas) {
+    const stored = JSON.parse(String(fx.files.get(`${ROUND}/${replica.id}.json`)))
+    expect(stored.delivery).toMatchObject({ state: 'failed', reason: 'no acknowledgment after 3 sends' })
+    expect(typeof stored.delivery.cleared).toBe('string')
+    expect(fx.written.filter(l => l.endsWith(`the answer to ${replica.id} not delivered: its line cleared in the pane`)).length).toBe(1)
+  }
+  const cleared = await render()
+  expect(texts(cleared).some(t => t.startsWith('not delivered:'))).toBe(false)
+  expect(findAll(cleared, n => n.type === 'Button' && n.props.key === 'clear-failed')).toEqual([])
+  fx.dollar.tool.call = async () => ({ text: LISTED_ANEW })
+  await resendReplies(fx.dollar)
+  expect(sent).toEqual([])
+})
+
+test('the action clearing the lines not delivered counts its row', async () => {
+  const { fx, render } = await askedPane([failedReplica()])
+  remoteRow(fx, 'Orch: belt', 'far')
+  expect(await countedRows(render)).toBe(drawScreen(await render({ bodyColumns: 200 }), 198).length)
 })
 
 // --- a remote orchestrator's open questions, reconciled with its latest row --------------------
@@ -3032,3 +3091,189 @@ test('a wait of 200 characters is cut to the pane\'s width on one line, its time
 })
 
 // --- a consent question worded with unlettered choices draws them once ----------------------------
+
+// --- each orchestrator's account and live agent count -------------------------------------------
+
+const OWNER = 'tmux:/tmp/tmux-501/orch-a:%0'
+const PLAN2 = [HOME, '.claude'].join('/') + '-bis'
+// An orchestrator's row as its measure writes it: its host on `tty`, its configuration directory and the owner its chain's entries name.
+// No row's tokens over its window give its percent: a pane that estimates the fill draws another figure.
+const fleetRow = (name: string, over: Partial<SessionRow> = {}) =>
+  orch(name, { pid: '900', tty: '/dev/ttys002', config: PLAN2, chain_owner: OWNER, context_tokens: 47000, ...over })
+const chainOf = (...entries: { tty: string; owner?: string }[]) =>
+  entries.map((e, i) => JSON.stringify({ tab_id: `t-${i}-${e.tty}`, tty: `/dev/${e.tty}`, owner: e.owner ?? OWNER })).join('\n') + '\n'
+// The machine's process table, `pid stat tty` a line, read afresh at each listing; the orchestrator's host among them.
+function fleet(rows: Record<string, SessionRow>, agents: Record<string, string>) {
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  for (const [key, value] of Object.entries(rows)) fx.files.set(`${SESSIONS}/${key}`, JSON.stringify(value) + '\n')
+  const table = new Map<string, string>([['900', 'S+ ttys002'], ['901', 'S+ ttys003'], ['911', 'S+ ttys003'], ['902', 'S+ ttys004']])
+  const run = fx.dollar.process.run
+  let listing: 'answers' | 'fails' = 'answers'
+  fx.dollar.process.run = async (argv: readonly string[]) => argv[0] === 'ps' && argv[1] === '-A'
+    ? listing === 'fails' ? { exitCode: 1, stdout: '', stderr: 'no' } : { exitCode: 0, stdout: [...table].map(([pid, rest]) => `  ${pid} ${rest}`).join('\n') + '\n', stderr: '' }
+    : run(argv)
+  // The host's record of each live agent, in the configuration directory its orchestrator runs on.
+  for (const [pid, session] of Object.entries(agents)) fx.files.set(`${PLAN2}/sessions/${pid}.json`, JSON.stringify({ sessionId: session, name: `Agent: ${session}`, status: 'busy' }))
+  const { handlers } = mounted(registerSupervision)
+  const draw = async (props: object = {}) => drawnTree(await handlers['ui.render'](fx.dollar, { ...renderEvent, props }, (x: unknown) => ({ passed: x })))
+  const open = () => handlers['command.run'](fx.dollar, supervisionRun)
+  const lineOf = async (name: string) => shown(await draw()).find(line => line.includes(name))
+  return { fx, table, open, draw, lineOf, failListing: () => { listing = 'fails' } }
+}
+const CHAIN = `${HOME}/.claude/claude-orchestrator/chains/ttys002.jsonl`
+
+test('an orchestrator on plan 2 with two live agents and one dead reads its account and 2 agents', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1', '902': 's-2', '903': 's-dead' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }, { tty: 'ttys004' }, { tty: 'ttys005' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 2 agents · 30% · 3m')
+})
+
+test('an agent ending between two draws of the pane lowers the count at the next one', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1', '902': 's-2' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }, { tty: 'ttys004' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toContain(' · 2 agents · ')
+  pane.table.delete('902')
+  expect(await pane.lineOf('Orch: a')).toContain(' · 1 agent · ')
+  pane.table.set('901', 'Z+ ttys003')
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+})
+
+test('two orchestrators on two accounts each count their own agents', async () => {
+  const pane = fleet({
+    a: fleetRow('Orch: a'),
+    b: fleetRow('Orch: b', { pid: '920', tty: '/dev/ttys006', config: [HOME, '.claude'].join('/'), chain_owner: 'OWNER-B', context_percent: 20 }),
+  }, { '901': 's-1', '902': 's-2' })
+  pane.table.set('920', 'S+ ttys006').set('921', 'S+ ttys007')
+  pane.fx.files.set(`${HOME}/.claude/sessions/921.json`, JSON.stringify({ sessionId: 's-b', name: 'Agent: b', status: 'idle' }))
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }, { tty: 'ttys004' }))
+  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys006.jsonl`, chainOf({ tty: 'ttys007', owner: 'OWNER-B' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 2 agents · 30% · 3m')
+  expect(await pane.lineOf('Orch: b')).toBe('● Orch: b · orchestrator · plan 1 · 1 agent · 20% · 3m')
+})
+
+test('a recycled tty\'s entries of another owner are not counted, and an agent named twice is counted once', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1', '902': 's-2' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }, { tty: 'ttys003' }, { tty: 'ttys004', owner: 'SOMEONE-ELSE' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toContain(' · 1 agent · ')
+})
+
+test('an orchestrator that spawned no agent draws no count', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, {})
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+})
+
+test('an account or a count the facts do not carry reads « ? »', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a', { config: '/opt/other', chain_owner: null }) }, { '901': 's-1' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toContain(' · orchestrator · ? · ? agents · ')
+  // A row written before rows carried either.
+  const older = await paneTree({ low: orch('Orch: low') })
+  expect(shown(older).find(line => line.includes('Orch: low'))).toBe('● Orch: low · orchestrator · ? · ? agents · 30% · 3m')
+  // A remote orchestrator: its row carries neither.
+  const remote = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
+  expect(shown(remote).find(line => line.includes('Orch: r'))).toBe('● Orch: r · orchestrator · remote mini · ? · ? agents · 30% · 3m')
+})
+
+test('a process listing that fails reads « ? agents », never the count drawn before', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toContain(' · 1 agent · ')
+  pane.failListing()
+  expect(await pane.lineOf('Orch: a')).toContain(' · plan 2 · ? agents · ')
+})
+
+test('at a phone\'s width the line wraps with the account and the count whole, and its rows are counted', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  await pane.open()
+  const lines = shown(await pane.draw(), 40)
+  expect(lines.join(' ')).toContain('plan 2 · 1 agent')
+  expect(await countedRows(pane.draw, 40)).toBe(drawScreen(await pane.draw({ bodyColumns: 40 }), 38).length)
+})
+
+// --- the auditors and the coordinators beside the orchestrators ---------------------------------
+
+const PLAN1 = [HOME, '.claude'].join('/')
+const AUDIT_OWNER = 'tmux:/tmp/tmux-501/audit-a:%0'
+const COORD_OWNER = 'tmux:/tmp/tmux-501/coord:%0'
+// An auditor on plan 1, host on ttys010, and the pane's own coordinator on plan 2, host on ttys012: each
+// row under its own role, its fill its own. The coordinator's row is the pane's session's (s-one).
+const auditorRow = (over: Partial<SessionRow> = {}) =>
+  fleetRow('Audit: a', { role: 'auditor', pid: '930', tty: '/dev/ttys010', config: PLAN1, chain_owner: AUDIT_OWNER, context_percent: 12, context_tokens: 38000, ...over })
+const coordRow = (over: Partial<SessionRow> = {}) =>
+  fleetRow('Coord: main', { role: 'coordinator', pid: '940', tty: '/dev/ttys012', chain_owner: COORD_OWNER, context_percent: 21, context_tokens: 44000, ...over })
+function allRoles(agents: Record<string, string> = {}) {
+  const pane = fleet({ a: fleetRow('Orch: a'), u: auditorRow(), 's-one': coordRow() }, agents)
+  pane.table.set('930', 'S+ ttys010').set('940', 'S+ ttys012').set('931', 'S+ ttys011').set('941', 'S+ ttys013').set('942', 'S+ ttys014')
+  return pane
+}
+const AUDIT_CHAIN = `${HOME}/.claude/claude-orchestrator/chains/ttys010.jsonl`
+const COORD_CHAIN = `${HOME}/.claude/claude-orchestrator/chains/ttys012.jsonl`
+
+test('an auditor and a coordinator are listed beside the orchestrators, each with its role, account and context, the pane\'s own marked', async () => {
+  const pane = allRoles()
+  await pane.open()
+  expect(shown(await pane.draw()).filter(line => line.startsWith('●'))).toEqual([
+    '● Orch: a · orchestrator · plan 2 · 30% · 3m',
+    '● Coord: main · coordinator (this session) · plan 2 · 21% · 3m',
+    '● Audit: a · auditor · plan 1 · 12% · 3m',
+  ])
+  expect(pieces(elAt(await pane.draw(), 1))).toEqual([{ text: 'Sessions', bold: true }])
+  expect(pane.fx.opened).toEqual([{ id: 'supervision', title: 'Sessions', focus: true }])
+})
+
+test('another coordinator is listed without the mark, and an implementer agent or a row of no role is not listed', async () => {
+  const pane = fleet({
+    other: coordRow({ name: 'Coord: other', pid: '900', tty: '/dev/ttys002' }),
+    g: fleetRow('Agent: belt', { role: 'agent' }),
+    n: fleetRow('somebody', { role: null }),
+  }, {})
+  await pane.open()
+  expect(shown(await pane.draw()).filter(line => line.startsWith('●'))).toEqual(['● Coord: other · coordinator · plan 2 · 21% · 3m'])
+})
+
+test('each role counts its own live agents: 2 reads 2 agents, none draws no count', async () => {
+  // The auditor's two readers on plan 1, the coordinator's one agent on plan 2, none of the orchestrator's.
+  const pane = allRoles({ '941': 's-c' })
+  for (const [pid, session] of [['931', 's-r1'], ['942', 's-r2']] as const) {
+    pane.fx.files.set(`${PLAN1}/sessions/${pid}.json`, JSON.stringify({ sessionId: session, name: `Agent: ${session}`, status: 'busy' }))
+  }
+  pane.fx.files.set(AUDIT_CHAIN, chainOf({ tty: 'ttys011', owner: AUDIT_OWNER }, { tty: 'ttys014', owner: AUDIT_OWNER }))
+  pane.fx.files.set(COORD_CHAIN, chainOf({ tty: 'ttys013', owner: COORD_OWNER }))
+  await pane.open()
+  expect(await pane.lineOf('Audit: a')).toBe('● Audit: a · auditor · plan 1 · 2 agents · 12% · 3m')
+  expect(await pane.lineOf('Coord: main')).toBe('● Coord: main · coordinator (this session) · plan 2 · 1 agent · 21% · 3m')
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+})
+
+test('the context of every role is the measured fill /orchestrator:status prints, past the gate in the error colour', async () => {
+  const rows = { u: orch('Audit: a', { role: 'auditor', context_percent: 85, context_tokens: 82000 }), c: orch('Coord: b', { role: 'coordinator', context_percent: 17, context_tokens: 25000 }) }
+  const tree = await paneTree(rows)
+  expect(pieces(elAt(tree, 2, 0)).slice(-2)).toEqual([{ text: '85% past the gate', color: 'error', bold: false }, { text: ' · 3m', bold: false }])
+  expect(pieces(elAt(tree, 3, 0)).slice(-2)).toEqual([{ text: '17%', bold: false }, { text: ' · 3m', bold: false }])
+  const status = statusText(rows)
+  expect(status).toMatch(/Audit: a +auditor +85% +3m +past the gate/)
+  expect(status).toMatch(/Coord: b +coordinator +17% +3m/)
+})
+
+test('only the orchestrators waiting are counted in the line that names orchestrators', async () => {
+  const waiting = { waiting: 'operator' as const, waiting_since: SINCE }
+  const drawn = texts(await paneTree({ u: orch('Audit: a', { role: 'auditor', ...waiting }), a: orch('Orch: a', waiting) }))
+  expect(drawn).toContain('none in the pane — 1 orchestrator waits for you: ask the coordinator')
+})
+
+test('at a phone\'s width each role\'s line wraps with its role, account and count whole, and its rows are counted', async () => {
+  const pane = allRoles({ '941': 's-c' })
+  pane.fx.files.set(COORD_CHAIN, chainOf({ tty: 'ttys013', owner: COORD_OWNER }))
+  await pane.open()
+  const drawn = shown(await pane.draw(), 40).join(' ')
+  for (const said of ['orchestrator · plan 2', 'auditor · plan 1', '(this session)', 'plan 2 · 1 agent', '30%', '21%', '12%']) expect(drawn).toContain(said)
+  expect(await countedRows(pane.draw, 40)).toBe(drawScreen(await pane.draw({ bodyColumns: 40 }), 38).length)
+})

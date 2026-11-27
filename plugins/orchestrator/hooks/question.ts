@@ -74,9 +74,11 @@ export type Asked = AskFields & {
   /**
    * The answer's trip to its asker: on the owner's machine, delivered or failed; on a replica, its
    * answer given here on its way to the owner (pending, then sent), delivered once acknowledged. A
-   * replica's last send, refused: the address that refused it, and its refusals in a row.
+   * replica's last send, refused: the address that refused it, and its refusals in a row; the
+   * addresses it was sent to, none of them taken again once it failed; sent again after a failure;
+   * failed, then cleared by the operator in the pane, drawn and sent no more.
    */
-  delivery?: { state: 'pending' | 'sent' | 'delivered' | 'failed'; at: string; attempts: number; reason?: string; refused?: { to: string; sends: number } }
+  delivery?: { state: 'pending' | 'sent' | 'delivered' | 'failed'; at: string; attempts: number; reason?: string; refused?: { to: string; sends: number }; tried?: string[]; again?: true; cleared?: string }
   /** A replica (remote-asked.ts): the owner's machine, and the address its last push came from, or the one the host's listing gave since. */
   origin?: { machine: string; address: string }
   /** On the owner's machine: the push of this `seq` to the coordinator on another machine, and how it went. */
@@ -177,9 +179,13 @@ function deliveryOf(read: unknown): Asked['delivery'] | null {
   if (!isRecord(read)) return null
   const state = DELIVERY_STATES.find(known => known === read['state'])
   const [at, attempts] = [read['at'], read['attempts']]
-  const extra = texts(read, ['reason'] as const)
+  const extra = texts(read, ['reason', 'cleared'] as const)
   const refused = read['refused'] === undefined ? undefined : refusedOf(read['refused'])
-  return state !== undefined && isText(at) && isCount(attempts) && extra !== null && refused !== null ? { state, at, attempts, ...extra, ...(refused !== undefined ? { refused } : {}) } : null
+  const tried = read['tried']
+  if (tried !== undefined && !(Array.isArray(tried) && tried.every(isText))) return null
+  return state !== undefined && isText(at) && isCount(attempts) && extra !== null && refused !== null
+    ? { state, at, attempts, ...extra, ...(refused !== undefined ? { refused } : {}), ...(tried !== undefined ? { tried } : {}), ...(read['again'] === true ? { again: true as const } : {}) }
+    : null
 }
 
 function refusedOf(read: unknown): NonNullable<Asked['delivery']>['refused'] | null {
@@ -748,6 +754,26 @@ export async function closeRound(
   }
   if (done.deliver !== 'remote' && asked !== null) await replicate($, asked)
   return { plan: done, said }
+}
+
+/**
+ * The answers not delivered the operator clears from the pane: each one still failed is marked
+ * cleared on its object, then drawn and sent no more. A write that fails is a log line.
+ */
+export async function clearFailed($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, ids: readonly string[]): Promise<void> {
+  for (const id of ids) {
+    try {
+      let written = false
+      await updateOver(storeIo($), roundEntryPath(await dataDir($), id), current => {
+        const now = current === undefined ? null : parseAsked(current)
+        written = now?.delivery?.state === 'failed'
+        return written ? `${JSON.stringify({ ...now, delivery: { ...now!.delivery, cleared: new Date().toISOString() } })}\n` : undefined
+      })
+      if (written) await logLine($, 'question', `the answer to ${id} not delivered: its line cleared in the pane`)
+    } catch (err) {
+      await logLine($, 'question', `the line of the answer to ${id} not cleared: ${messageOf(err)}`)
+    }
+  }
 }
 
 // The answer sent to its asker by message — its session while it has a row here (two sessions may

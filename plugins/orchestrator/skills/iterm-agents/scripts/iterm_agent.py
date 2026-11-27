@@ -1674,16 +1674,47 @@ def as_close(tty, expect):
     return name
 
 
+# A window the app makes activates it, and macOS switches Space to it: the application frontmost
+# before is read, then put back. Each is a script of its own, bounded and its failure ignored, so
+# neither can lose what the creation between them answered.
+FRONT_READ = '''
+set frontPath to ""
+try
+  set frontPath to path to frontmost application as text
+end try
+return frontPath'''
+FRONT_BACK = '''
+set frontPath to %s
+if frontPath is not "" and frontPath is not (path to application id "com.googlecode.iterm2" as text) then
+  tell application frontPath to activate
+end if'''
+
+
+@contextlib.contextmanager
+def front_kept():
+    """The frontmost application put back after the block, however it ends. A block that learns
+    it made no window sets `window` False, and nothing is put back."""
+    status, front = osascript_run(FRONT_READ)
+    kept = {"window": True}
+    try:
+        yield kept
+    finally:
+        if kept["window"] and status == "ok" and front:
+            osascript_run(FRONT_BACK % as_quote(front))
+
+
 def as_spawn(command):
     # `create tab` selects the tab it makes, where the API rung creates it unselected: the
     # operator's tab is remembered and selected again, so a launch does not pull them away.
     # A new window has no tab to go back to. The re-selection is guarded: the agent's tab
     # already runs, so the operator's tab closing meanwhile must not fail the spawn.
-    return as_run('''
+    # The script says « window » before the tty of a window it made.
+    with front_kept() as kept:
+        said = as_run('''
         tell application "iTerm2"
           if (count of windows) is 0 then
             set w to (create window with default profile command %s)
-            return tty of current session of current tab of w
+            return "window " & (tty of current session of current tab of w)
           end if
           set w to current window
           tell w
@@ -1696,7 +1727,9 @@ def as_spawn(command):
             return newTty
           end tell
         end tell''' % (as_quote(command), as_quote(command)), "a new tab")
-
+        tty = said.removeprefix("window ")
+        kept["window"] = tty != said
+    return tty
 
 
 # --- the tier map ----------------------------------------------------------------
@@ -1952,33 +1985,34 @@ def live_host_ttys():
 _PRUNED = []
 
 
-def orchestrator_host_on(tty, live):
-    """Whether a host that can be an orchestrator runs on `tty`: a live host whose name does
-    not read as an agent's, an auditor's or the coordinator's. A host with no readable name
-    counts, so that a name the table cannot give back never costs a chain."""
+def chain_host_on(tty, live):
+    """Whether a host that can own a chain runs on `tty`: a live host whose name does not read
+    as an agent's, an orchestrator, an auditor and a coordinator each launching agents of their
+    own. A host with no readable name counts, so that a name the table cannot give back never
+    costs a chain."""
     if tty not in live:
         return False
     role = ROLE_PREFIX.match(session_name_on(tty) or "")
-    return role is None or role.group(1) == ORCH
+    return role is None or role.group(1) != AGENT
 
 
 def chain_owner_lives(tty, live):
-    """Whether the owner of the chain file named after `tty` still runs: an orchestrator host
-    on that tty, or the tmux client of a home server on it whose window 0 holds one. A tty is
-    recycled within minutes, so an agent's tty carrying some host proves nothing about the
-    orchestrator that wrote the file."""
-    if orchestrator_host_on(tty, live):
+    """Whether the owner of the chain file named after `tty` still runs: a host that can own a
+    chain on that tty, or the tmux client of a home server on it whose window 0 holds one. A tty
+    is recycled within minutes, so an agent's tty carrying some host proves nothing about the
+    session that wrote the file."""
+    if chain_host_on(tty, live):
         return True
     socket = home_of_tab(tty)
     if not socket:
         return False
     panes, _ = home_panes(socket)
-    return any(index == "0" and orchestrator_host_on(pane, live) for index, pane in panes or [])
+    return any(index == "0" and chain_host_on(pane, live) for index, pane in panes or [])
 
 
 def chain_prune(keep):
     """Remove the chain files whose owner no longer runs, once per run. The owner is the tty
-    the file is named after: a file is kept while an orchestrator host runs there (or the
+    the file is named after: a file is kept while a host that can own a chain runs there (or the
     client of a home server whose window 0 holds one), whatever its agents' ttys carry now.
     Those piled up under dead and recycled ttys, and a file kept because one of its agents'
     ttys had been recycled by a stranger was read, and rewritten, as a live chain.

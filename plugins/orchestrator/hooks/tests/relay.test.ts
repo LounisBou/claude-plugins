@@ -9,9 +9,10 @@ import { declaredWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLab
 import { roundEntry, type RoundEntry } from '../round.ts'
 import { settledText, successorText, parseSessionRow, paneRows, withWait, writeSession, readSessions, WORKS_AGAIN, HANDED_ON, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
-import { answerAskedFromPane, askTurnStarted, callAsk, settle } from '../question.ts'
+import { answerAskedFromPane, askTurnStarted, callAsk, clearFailed, settle } from '../question.ts'
 import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
 import { DECLARATIONS } from '../wait.ts'
+import { remoteKey } from '../remote-row.ts'
 import type { DeclaredWait } from '../stop-gate.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hookOf, hooksOn, hostOf, type Captured } from '../../core/capture.ts'
@@ -1912,6 +1913,148 @@ for (const [what, listing] of [
     }
     expect(replies(coordinator)).toEqual([])
     expect(objectAt(coordinator, id)).toMatchObject({ origin: { address: GONE_AT }, delivery: { state: 'failed', attempts: 3, reason: 'no acknowledgment after 3 sends' } })
+  })
+}
+
+// --- a failed answer sent again once its asker is reachable ----------------------------------
+
+// Observed 2026-11-27: an answer failed before its asker could be reached again stayed failed, said
+// in the pane for good, though a live session of its asker's name ran under a new address.
+const UNACKED = 'no acknowledgment after 3 sends'
+const askerRow = (coordinator: ReturnType<typeof fake>, machine = 'unknown', name = 'Orch: belt') => coordinator.files.set(`${HOME}/.claude/claude-orchestrator/store/${remoteKey(name)}`, JSON.stringify({
+  name, role: 'orchestrator', context_tokens: 1, context_percent: 30, window: 100, waiting: null, blocks: null,
+  waiting_since: null, updated_at: new Date().toISOString(), machine, repo: null, prs: [],
+}) + '\n')
+
+// A replica whose answer given here failed, as the module stored it before it kept the addresses sent to.
+function failedAt(coordinator: ReturnType<typeof fake>, id: string, over: Record<string, unknown> = {}, delivery: Record<string, unknown> = {}) {
+  const at = new Date(Date.now() - 3_600_000).toISOString()
+  coordinator.files.set(`${ROUND}/${id}.json`, JSON.stringify({
+    ...objectAt(coordinator, id), status: 'answered', answer: { text: 'A : acme/app#1 first', by: 'pane', at, settler: 'Coord: ops [abc]' },
+    delivery: { state: 'failed', at, attempts: 3, reason: UNACKED, ...delivery }, ...over,
+  }) + '\n')
+}
+
+test('a failed answer is sent again at the next wake to the live session of its asker\'s name, and delivered once acknowledged', async () => {
+  const { chains, coordinator, id, tried } = await refusingAt([])
+  failedAt(coordinator, id)
+  askerRow(coordinator)
+  await resendReplies(coordinator.dollar)
+  expect(tried).toEqual([LIVE_AT])
+  expect(objectAt(coordinator, id)).toMatchObject({ origin: { address: LIVE_AT }, delivery: { state: 'sent', attempts: 1, again: true } })
+  expect(coordinator.logged.filter(l => l.endsWith(`the answer to ${id} is sent again to Orch: belt on unknown, at ${LIVE_AT}`)).length).toBe(1)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(NOW_AT, 'Orch: belt [ref-live]', qAckLine({ id, seq: 1, of: 'reply' })))
+  expect(objectAt(coordinator, id).delivery.state).toBe('delivered')
+})
+
+for (const [what, set] of [
+  ['no row of its asker', () => undefined],
+  ['its asker\'s name measured on another machine', (c: ReturnType<typeof fake>) => { askerRow(c, 'near') }],
+  ['only another name\'s row on its asker\'s machine', (c: ReturnType<typeof fake>) => { askerRow(c, 'unknown', 'Orch: other') }],
+  ['no live session of the name listed', (c: ReturnType<typeof fake>) => { askerRow(c); c.dollar.tool.call = async () => ({ text: remoteRows([LIVE_AT, 'offline']) }) }],
+] as const) {
+  test(`a failed answer with ${what} is not sent, and stays failed`, async () => {
+    const { coordinator, id, tried, wakes } = await refusingAt([])
+    failedAt(coordinator, id)
+    set(coordinator)
+    const before = objectAt(coordinator, id)
+    await wakes(1)
+    await resendReplies(coordinator.dollar)
+    expect(tried).toEqual([])
+    expect(objectAt(coordinator, id).delivery).toMatchObject({ state: 'failed', reason: before.delivery.reason })
+  })
+}
+
+test('a failed answer whose recorded address is the one listed is not sent to it again', async () => {
+  const { coordinator, id, tried } = await refusingAt([])
+  failedAt(coordinator, id, { origin: { machine: 'unknown', address: LIVE_AT } })
+  askerRow(coordinator)
+  await resendReplies(coordinator.dollar)
+  expect(tried).toEqual([])
+  expect(objectAt(coordinator, id).delivery.state).toBe('failed')
+})
+
+for (const [what, refused, reason] of [
+  ['refuses every send', true, `Failed to send to ${LIVE_AT}: HTTP 409 — "Session is not active"`],
+  ['acknowledges none', false, UNACKED],
+] as const) {
+  test(`a failed answer sent again to an address that ${what} takes three sends there, then is failed and sent there no more`, async () => {
+    const { coordinator, id, tried, wakes } = await refusingAt(refused ? [LIVE_AT] : [])
+    failedAt(coordinator, id)
+    askerRow(coordinator)
+    await resendReplies(coordinator.dollar)
+    await wakes(8)
+    expect(tried).toEqual([LIVE_AT, LIVE_AT, LIVE_AT])
+    expect(objectAt(coordinator, id).delivery).toMatchObject({ state: 'failed', attempts: 3, reason })
+    expect(objectAt(coordinator, id).delivery.again).toBeUndefined()
+  })
+}
+
+test('each new live address takes its own sends, and one already sent to is never sent to again', async () => {
+  const NEXT_AT = 'Orch: belt [ref-next]'
+  const { coordinator, id, tried, wakes } = await refusingAt([LIVE_AT, NEXT_AT])
+  // The first life of the answer: the recorded address, then the live one three times, failed there.
+  askerRow(coordinator)
+  await answerAskedFromPane(coordinator.dollar, id, 'A : acme/app#1 first')
+  await wakes(8)
+  expect(tried).toEqual([GONE_AT, LIVE_AT, LIVE_AT, LIVE_AT])
+  coordinator.dollar.tool.call = async () => ({ text: remoteRows([NEXT_AT, 'running']) })
+  await wakes(8)
+  expect(tried.slice(4)).toEqual([NEXT_AT, NEXT_AT, NEXT_AT])
+  coordinator.dollar.tool.call = async () => ({ text: LIVE_LISTING })
+  await wakes(8)
+  expect(tried.length).toBe(7)
+  expect(objectAt(coordinator, id).delivery.state).toBe('failed')
+})
+
+test('a failed answer another question\'s send readdressed is still sent again to the new address', async () => {
+  const { coordinator, id, tried, wakes } = await refusingAt([])
+  failedAt(coordinator, id)
+  const open = { ...objectAt(coordinator, id), id: 'q-sibling', status: 'open', answer: null }
+  delete open.delivery
+  coordinator.files.set(`${ROUND}/q-sibling.json`, JSON.stringify(open) + '\n')
+  await answerAskedFromPane(coordinator.dollar, 'q-sibling', 'B : acme/app#2 first')
+  expect(objectAt(coordinator, id).origin.address).toBe(LIVE_AT)
+  tried.length = 0
+  askerRow(coordinator)
+  await resendReplies(coordinator.dollar)
+  expect(tried).toEqual([LIVE_AT])
+  expect(objectAt(coordinator, id).delivery).toMatchObject({ state: 'sent', attempts: 1 })
+  await wakes(8)
+  expect(objectAt(coordinator, id).delivery.state).toBe('failed')
+})
+
+test('a clear landing while the listing is read for a failed answer holds: it is not sent, and stays cleared', async () => {
+  const { coordinator, id, tried } = await refusingAt([])
+  failedAt(coordinator, id)
+  askerRow(coordinator)
+  let listed = 0
+  coordinator.dollar.tool.call = async () => {
+    listed++
+    await clearFailed(coordinator.dollar, [id])
+    return { text: LIVE_LISTING }
+  }
+  await resendReplies(coordinator.dollar)
+  expect(listed).toBe(1)
+  expect(tried).toEqual([])
+  expect(objectAt(coordinator, id).delivery.state).toBe('failed')
+  expect(typeof objectAt(coordinator, id).delivery.cleared).toBe('string')
+})
+
+for (const [what, over, delivery] of [
+  ['its asker said it had answered first', {}, { reason: 'already answered in its own tab' }],
+  ['its asker withdrew', { status: 'withdrawn', answer: { text: 'merged it myself', by: 'sender', at: '2026-11-27T13:00:00.000Z', settler: 'Orch: belt' } }, {}],
+  ['the operator cleared', {}, { cleared: '2026-11-27T13:00:00.000Z' }],
+] as const) {
+  test(`a failed answer ${what} is not sent again`, async () => {
+    const { coordinator, id, tried } = await refusingAt([])
+    failedAt(coordinator, id, over, delivery)
+    askerRow(coordinator)
+    const before = objectAt(coordinator, id)
+    await resendReplies(coordinator.dollar)
+    await resendReplies(coordinator.dollar)
+    expect(tried).toEqual([])
+    expect(objectAt(coordinator, id).delivery).toMatchObject(before.delivery)
   })
 }
 
