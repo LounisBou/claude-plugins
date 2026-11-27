@@ -399,6 +399,10 @@ const refusedKey = (pk: string, agent: string): string => `${pk} ended refused $
 // That a tick saw an agent of the line running: the line it then finds with none is told at the tick after, if still so.
 const attendedKey = (pk: string): string => `${pk} attended`
 
+// That an agent's close was refused on its prompt, which holds what the operator typed: told once, then the close tried again
+// at each tick, saying nothing, while the agent runs and its facts still allow the close.
+const unsentKey = (agent: string): string => `unsent ${agent}`
+
 // What is told of a Ready head to an agent of its line, once.
 const readyKey = (pk: string, head: string, agent: string): string => `${pk} ready ${head} ${agent}`
 
@@ -675,7 +679,7 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
   const current = new Set([...anomalyKeys, ...reading.ended.flatMap(e => [`${prKey(e.line.repo, e.line.pr)} ended`, ...everyAgentOf(e.line).map(agent => refusedKey(prKey(e.line.repo, e.line.pr), agent))]),
     ...[...reading.readyHeads].map(([key, sha]) => `${key} ready ${sha}`), ...readyAgentKeys,
     ...unmergedKeys, ...open.flatMap(pr => [ciFailingKey(prKey(pr.repo, pr.pr), pr), ciGuardKey(prKey(pr.repo, pr.pr), pr)]),
-    ...reading.kept.map(line => attendedKey(prKey(line.repo, line.pr)))])
+    ...reading.kept.map(line => attendedKey(prKey(line.repo, line.pr))), ...[...reading.live].map(unsentKey)])
   // A repository the file could not read this time keeps what was told of it: no wake again on its return.
   const unread = (key: string): boolean => reading.unread.some(repo => key.startsWith(`${repo}#`))
   for (const key of [...told]) if (!current.has(key) && !unread(key)) told.delete(key)
@@ -706,6 +710,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
         await logLine($, 'ledger', `the close of ${agent} waited ${STUCK_TICKS} ticks (${act.why}): the orchestrator told`)
       }
     } else if (fresh) stuckTicks.delete(stuckKey)
+    // Facts that no longer allow the close end its silent retry: a close they allow again is said again.
+    if (fresh && act.kind !== 'close') told.delete(unsentKey(agent))
     if (act.kind === 'close') {
       const close = closes.get(agent) ?? { agent, key, target: act.target, ready: [], ended: [], reviews: [] }
       if (at.ready !== undefined) close.ready.push(at.ready)
@@ -713,7 +719,8 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
       if (at.review !== undefined) close.reviews.push(at.review)
       closes.set(agent, close)
     }
-    const said = act.kind === 'close' ? agentLine({ key, what, agent, session: act.session })
+    // A close retried after a refusal on the prompt is said by nothing: its refusal was told.
+    const said = act.kind === 'close' ? (told.has(unsentKey(agent)) ? null : agentLine({ key, what, agent, session: act.session }))
       : act.kind === 'refused' ? agentLine({ key, what, agent, open: act.why }) : null
     return { act, said }
   }
@@ -783,7 +790,10 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
       const key = readyKey(pk, head, agent)
       if (told.has(key)) continue
       const holds = [...new Set((await otherRowsOf($, agent, records)).map(rowName)), ...holdsOf(reading.kept, other => other === agent, key => reading.readyHeads.has(key))]
-      const said = holds.length > 0 ? agentLine({ key: pk, what: 'is Ready', agent, holds }) : (await actOn(agent, pk, 'is Ready', { ready: key })).said
+      const acted = holds.length > 0 ? null : await actOn(agent, pk, 'is Ready', { ready: key })
+      const said = acted === null ? agentLine({ key: pk, what: 'is Ready', agent, holds }) : acted.said
+      // A close retried in silence keeps its head told, as a close said does: a refusal again takes it back.
+      if (said === null && acted?.act.kind === 'close') told.add(key)
       if (said === null) continue
       told.add(key)
       // In a repository github's auto-merge list names, the merge is this orchestrator's own: unless the operator holds it (On Hold is his pause).
@@ -869,13 +879,15 @@ export async function prWake($: Held, told: Set<string>, now: number = Date.now(
         continue
       }
       const done: { closed: boolean; why: string | null; later?: true } = await closeAgent($, close.target).catch((err: unknown) => ({ closed: false, why: `its close broke: ${messageOf(err)}` }))
-      // Refused on the agent's prompt, which holds what the operator typed: tried again as a later of the facts is.
+      // Refused on the agent's prompt, which holds what the operator typed: told once, tried again as a later of the facts is.
       if (done.later === true) {
-        if (close.reviews.length === 0 && done.why !== null) told.add(`owed ${closeFailedLine(close.agent, close.key, done.why)}`)
+        if (close.reviews.length === 0 && done.why !== null && !told.has(unsentKey(close.agent))) told.add(`owed ${closeFailedLine(close.agent, close.key, done.why)}`)
+        told.add(unsentKey(close.agent))
         for (const key of close.ready) told.delete(key)
         for (const pk of close.ended) waiting.add(pk)
         continue
       }
+      told.delete(unsentKey(close.agent))
       if (done.why !== null) told.add(`owed ${closeFailedLine(close.agent, close.key, done.why)}`)
       for (const one of close.reviews) settleOwed(one)
     }

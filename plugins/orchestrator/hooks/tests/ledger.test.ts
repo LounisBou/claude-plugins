@@ -620,7 +620,11 @@ test('a close the launcher refuses after the wake is told at the next tick, once
   expect((await prWake(world.dollar, told)).lines).toEqual([])
 })
 
-test('a close refused on the agent\'s prompt waits for no text, is told once with the whole refusal, and is tried again until the prompt is empty', async () => {
+// The line a close refused on the prompt of Agent: p17 holding `text` is told with, for the pull request `key`.
+const unsentLine = (key: string, text: string): string => `[module] Agent: p17 (${key}): left open: ERROR: close: refused: the prompt on /dev/ttys000 still holds text the operator typed and has not sent, after 0s: the tab is kept, nothing was closed. His text: «${text}».`
+const P17_CLOSE = '--tty /dev/ttys000 --expect-title Agent: p17'
+
+test('a close refused on the agent\'s prompt waits for no text, is told once with the whole refusal, and is tried again in silence until the prompt is empty', async () => {
   const unsent = { text: 'je réponds ⏎ sur deux lignes' as string | null, inputWaits: [] as (string | undefined)[] }
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17'), unsent })
   const told = new Set<string>()
@@ -629,15 +633,45 @@ test('a close refused on the agent\'s prompt waits for no text, is told once wit
   await woke.settle()
   // The launcher's close runs with no wait: what he sends is the agent's to answer, never killed while it starts on it.
   expect(unsent.inputWaits).toEqual(['0'])
-  const next = await prWake(world.dollar, told)
-  expect(next.lines).toEqual([
-    '[module] Agent: p17 (acme/app#17): left open: ERROR: close: refused: the prompt on /dev/ttys000 still holds text the operator typed and has not sent, after 0s: the tab is kept, nothing was closed. His text: «je réponds ⏎ sur deux lignes».',
-    closedLine('acme/app#17', 'is Ready'),
-  ])
-  // Sent or cleared by the next try: the same Ready head closes it.
+  // The refusal told once, the close never said again while it is retried: one wake for the refusal, its line true.
+  const second = await prWake(world.dollar, told)
+  expect([second.lines, second.watching]).toEqual([[unsentLine('acme/app#17', 'je réponds ⏎ sur deux lignes')], true])
+  await second.settle()
+  const third = await prWake(world.dollar, told)
+  expect([third.lines, third.watching]).toEqual([[], true])
+  await third.settle()
+  expect(closes(world.runs)).toEqual([P17_CLOSE, P17_CLOSE, P17_CLOSE])
+  // Sent or cleared by the next try: the same Ready head closes it, and nothing more is said.
   unsent.text = null
-  await next.settle()
-  expect([closes(world.runs), unsent.inputWaits]).toEqual([['--tty /dev/ttys000 --expect-title Agent: p17', '--tty /dev/ttys000 --expect-title Agent: p17'], ['0', '0']])
+  const fourth = await prWake(world.dollar, told)
+  expect(fourth.lines).toEqual([])
+  await fourth.settle()
+  expect([closes(world.runs), unsent.inputWaits]).toEqual([[P17_CLOSE, P17_CLOSE, P17_CLOSE, P17_CLOSE], ['0', '0', '0', '0']])
+  expect((await prWake(world.dollar, told)).lines).toEqual([])
+})
+
+test('a merged pull request whose agent\'s close is refused on its prompt keeps its line, told once, the close tried again until the prompt is empty', async () => {
+  const unsent = { text: 'encore une remarque' as string | null, inputWaits: [] as (string | undefined)[] }
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${mergedLine}\n`, ...P17_DONE }, forge: { 'acme/app': '[]' }, launcher: running('Agent: p17'), unsent })
+  const told = new Set<string>()
+  const woke = await prWake(world.dollar, told)
+  expect(woke.lines).toEqual([closedLine('acme/app#17', 'merged')])
+  await woke.settle()
+  // Not archived while its agent runs: the close is owed to it.
+  expect(world.files.get(RECORD)).toEqual(`${mergedLine}\n`)
+  const second = await prWake(world.dollar, told)
+  expect([second.lines, second.watching]).toEqual([[unsentLine('acme/app#17', 'encore une remarque')], true])
+  await second.settle()
+  const third = await prWake(world.dollar, told)
+  expect([third.lines, third.watching]).toEqual([[], true])
+  await third.settle()
+  expect([closes(world.runs), world.files.get(RECORD)]).toEqual([[P17_CLOSE, P17_CLOSE, P17_CLOSE], `${mergedLine}\n`])
+  unsent.text = null
+  const fourth = await prWake(world.dollar, told)
+  expect(fourth.lines).toEqual([])
+  await fourth.settle()
+  expect(closes(world.runs)).toHaveLength(4)
+  expect(world.files.get(RECORD)).not.toContain('"pr":17')
 })
 
 test('a close is made only once its wake is delivered: a wake the host drops leaves the agent running', async () => {
@@ -1583,6 +1617,24 @@ test('a review session still busy when the verdict lands is closed at the end of
   const then = await prWake(idle.dollar, new Set())
   await then.settle()
   expect([then.lines, closes(idle.runs), owedOf('s-orch')]).toEqual([[], ['--tty /dev/ttys000 --expect-title Agent: review 17 r1'], []])
+})
+
+test('a review session whose close is refused on its prompt stays owed, silent, and is closed once the prompt is empty', async () => {
+  drainOwed()
+  const unsent = { text: 'une question au relecteur' as string | null, inputWaits: [] as (string | undefined)[] }
+  const world = reviewWorld({ unsent })
+  await owe(world)
+  const told = new Set<string>()
+  for (let tick = 0; tick < 3; tick++) {
+    const woke = await prWake(world.dollar, told)
+    expect([woke.lines, woke.watching]).toEqual([[], true])
+    await woke.settle()
+    expect([closes(world.runs).length, owedOf('s-orch').length]).toEqual([tick + 1, 1])
+  }
+  unsent.text = null
+  const then = await prWake(world.dollar, told)
+  await then.settle()
+  expect([then.lines, closes(world.runs).length, owedOf('s-orch')]).toEqual([[], 4, []])
 })
 
 test('a review session whose pin has changes or unpushed commits is left open and told once, its close no longer owed', async () => {
