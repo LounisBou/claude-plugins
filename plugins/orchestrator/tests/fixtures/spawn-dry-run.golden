@@ -630,7 +630,7 @@ ERROR: spawn: refused: --resident marks an agent of your chain; a successor, an 
 exit=1
 ### auditor
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_AUDITOR=1 && export CLAUDE_CONFIG_DIR=@WORK@/config && printf '\033]0;%s\007' 'Audit: tm' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement mcp__pr-review mcp__orchestrator__review mcp__github__light_ci mcp__github__record --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Audit--tm-@TIME@.txt)" --name 'Audit: tm' --remote-control 'Audit: tm'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_AUDITOR=1 && export CLAUDE_CONFIG_DIR=@WORK@/config && printf '\033]0;%s\007' 'Audit: tm' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement mcp__pr-review mcp__orchestrator__review mcp__github__light_ci mcp__github__record --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Audit--tm-@TIME@.txt)" --name 'Audit: tm' --remote-control 'Audit: tm'
 effort=high
 pair_source=transcript @WORK@/projects/p/s-dry.jsonl
 prompt_file=@WORK@/state/prompts/prompt-Audit--tm-@TIME@.txt
@@ -655,10 +655,14 @@ tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
+home_server=orch-<new>
+home_conf=skills/iterm-agents/tmux/home.conf
+home_window0=Audit: tm
+home_tab=right of self
 exit=0
 ### auditor, derived successor
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_AUDITOR=1 && export CLAUDE_CONFIG_DIR=@WORK@/config && printf '\033]0;%s\007' 'Audit: f' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement mcp__pr-review mcp__orchestrator__review mcp__github__light_ci mcp__github__record --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Audit--f-@TIME@.txt)" --name 'Audit: f' --remote-control 'Audit: f'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_AUDITOR=1 && export CLAUDE_CONFIG_DIR=@WORK@/config && printf '\033]0;%s\007' 'Audit: f' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement mcp__pr-review mcp__orchestrator__review mcp__github__light_ci mcp__github__record --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Audit--f-@TIME@.txt)" --name 'Audit: f' --remote-control 'Audit: f'
 effort=high
 pair_source=transcript @WORK@/projects/p/s-dry.jsonl
 prompt_file=@WORK@/state/prompts/prompt-Audit--f-@TIME@.txt
@@ -683,13 +687,17 @@ tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
+home_server=orch-<new>
+home_conf=skills/iterm-agents/tmux/home.conf
+home_window0=Audit: f
+home_tab=right of self
 exit=0
 ### auditor, tier refused
 ERROR: spawn: refused: --tier is not an auditor's: an auditor lands immediately right of the orchestrator it audits (its caller, or the one --of names), reads "Audit: <subject>", runs on the pair given with --model and --effort, else on its caller's, and comes up under remote control
 exit=1
 ### coordinator successor
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export CLAUDE_CONFIG_DIR=@WORK@/config && printf '\033]0;%s\007' 'Coord: c' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement mcp__pr-review mcp__orchestrator__review mcp__github__light_ci mcp__github__record --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Coord--c-@TIME@.txt)" --name 'Coord: c' --remote-control 'Coord: c'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export CLAUDE_CONFIG_DIR=@WORK@/config && printf '\033]0;%s\007' 'Coord: c' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__cloudflare mcp__bugs-bot mcp__norms mcp__implement mcp__pr-review mcp__orchestrator__review mcp__github__light_ci mcp__github__record --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Coord--c-@TIME@.txt)" --name 'Coord: c' --remote-control 'Coord: c'
 effort=high
 pair_source=transcript @WORK@/projects/p/s-dry.jsonl
 prompt_file=@WORK@/state/prompts/prompt-Coord--c-@TIME@.txt
@@ -714,6 +722,10 @@ tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
+home_server=orch-<new>
+home_conf=skills/iterm-agents/tmux/home.conf
+home_window0=Coord: c
+home_tab=first of the window
 exit=0
 ### wake
 spawn: no sleeping record names Orch: w: it wakes on its caller's plan
