@@ -575,6 +575,23 @@ test('a pane the module no longer remembers opening asks to be opened again', as
   expect(text).toContain('type /orchestrator-supervision to open the pane again')
 })
 
+test('a session in its first turn is listed: its row is written at the turn start, before any measure, and the pane lists it', async () => {
+  // Row 547: a freshly placed auditor stayed out of the pane until its first turn ended, the row
+  // being written only at the measure. Its row now exists from the first turn's start, and the
+  // pane's rows, read from the store, list it as an auditor.
+  const fx = fakeDollar({ launchName: 'Audit: Claude plugins' })
+  fx.env['ORCHESTRATOR_OSASCRIPT'] = '/usr/bin/false'
+  expect(fx.files.has(`${SESSIONS}/s-one`)).toBe(false)
+  const { handlers } = mounted(registerSupervision)
+  await handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  const stored = parseSessionRow(String(fx.files.get(`${SESSIONS}/s-one`)))
+  expect(stored?.role).toBe('auditor')
+  expect(stored?.name).toBe('Audit: Claude plugins')
+  const listed = paneRows({ 'sessions/s-one': stored! })
+  expect(listed.map(pane => pane.name)).toEqual(['Audit: Claude plugins'])
+  expect(listed[0]!.head).toContain('auditor')
+})
+
 test('a name walk that cannot answer in time costs the row its name, never the measure', async () => {
   // The Task 9 review's bounded-reads carry: the measure's side reads run
   // under their own deadline, and one that loses the race is quietly no name —
