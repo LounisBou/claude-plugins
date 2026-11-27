@@ -9,7 +9,8 @@
 // every ANSWER_RESEND_MS, ANSWER_SENDS times in all, then failed, said in the log and, for a reply,
 // in the pane. A reply's address may be gone while its asker's name runs on: a reply refused or not
 // acknowledged goes to the one live remote session of that name the host lists, and a refused one is
-// not failed while it is listed. The handlers' `$` is the supervision's.
+// not failed while one is listed, until that same address has refused ANSWER_SENDS sends in a row.
+// The handlers' `$` is the supervision's.
 import { peersOf, roundEntryPath } from '../core/orchestration.ts'
 import { updateOver } from '../core/store-io.ts'
 import { currentSessionName, orchForm } from '../core/names.ts'
@@ -311,7 +312,7 @@ export async function receiveReplyAck($: Held, from: string | null, fromName: st
       const state = now?.delivery?.state
       // A failure said « already answered » stays: no plain acknowledgment answers a reply its owner did not apply.
       if (now === null || now.origin === undefined || (state !== 'pending' && state !== 'sent' && state !== 'failed') || (state === 'failed' && now.delivery!.reason === ALREADY_ANSWERED && !ack.already)) return undefined
-      const { reason: _reason, ...delivery } = now.delivery!
+      const { reason: _reason, refused: _refused, ...delivery } = now.delivery!
       taken = true
       const at = new Date().toISOString()
       return `${JSON.stringify({ ...now, delivery: ack.already ? { ...delivery, state: 'failed', at, reason: ALREADY_ANSWERED } : { ...delivery, state: 'delivered', at } })}\n`
@@ -331,8 +332,8 @@ const DELIVERY_ADDRESS = /^(?:uds|bridge):/
 // A session's name as two spellings of it compare: no reference, no former « Orch : ».
 const bare = (name: string): string => currentSessionName(orchForm(name))
 
-// A row of the listing for a session on another machine that is up.
-const LIVE_REMOTE_ROW = /·\s+Remote Control\s+·\s+(?:running|idle)\b/
+// A row of the listing for a session on another machine that is up: any state but `offline`.
+const LIVE_REMOTE_ROW = /·\s+Remote Control\s+·\s+(?!offline\b)\S/
 
 /**
  * The address a send reaches the one live session of another machine named `name` by, as the host
@@ -378,8 +379,9 @@ async function readdress($: Held, sender: { machine: string; name: string }, gon
  * One send of the answer a replica holds to its owner: at the address the replica holds, or, once a
  * send was refused or not acknowledged, at the one the listing gives its asker's name now, which
  * every replica of that sender then takes. The delivery is written `sent` with one more attempt (the
- * first of an address newly reached), the host's refusal kept as its reason, while it is still the
- * one this send moves. Answers the refusal, or null.
+ * first of an address newly reached), the host's refusal kept as its reason, with the address that
+ * refused and its refusals in a row, while it is still the one this send moves. Answers the refusal,
+ * or null.
  */
 export async function sendReply($: Replying, id: string): Promise<string | null> {
   const path = await pathOf($, id)
@@ -426,7 +428,8 @@ export async function sendReply($: Replying, id: string): Promise<string | null>
     await readdress($, { machine: entry.origin.machine, name: entry.sender.name }, recorded, to)
     await logLine($, 'question', `the answer to ${id} goes to ${to}: ${recorded} gave way to the live session of its asker's name`)
   }
-  const delivery = { state: 'sent' as const, at: new Date().toISOString(), attempts: moved ? 1 : Math.min(was.attempts + 1, ANSWER_SENDS), ...(reason !== null ? { reason } : {}) }
+  const refusal = reason === null ? {} : { reason, refused: { to, sends: was.refused?.to === to ? was.refused.sends + 1 : 1 } }
+  const delivery = { state: 'sent' as const, at: new Date().toISOString(), attempts: moved ? 1 : Math.min(was.attempts + 1, ANSWER_SENDS), ...refusal }
   try {
     await updateOver(storeIo($), path, current => {
       const now = current === undefined ? null : parseAsked(current)
@@ -442,19 +445,22 @@ export async function sendReply($: Replying, id: string): Promise<string | null>
 
 /**
  * The replicas' answers not acknowledged, read at each round wake: sent again ANSWER_RESEND_MS after
- * the last send, then failed. A refused send reached nobody: while a live session of the asker's name
- * is listed it is sent again, never failed.
+ * the last send, then failed. A refused send reached nobody: it is sent again while a live session of
+ * the asker's name is listed, and failed with its refusal once the address listed is the one that
+ * refused the last ANSWER_SENDS sends.
  */
 export async function resendReplies($: Replying, now: number = Date.now()): Promise<void> {
   for (const entry of await readAsked($)) {
     const delivery = entry.delivery
     if (entry.origin === undefined || (delivery?.state !== 'pending' && delivery?.state !== 'sent') || now - Date.parse(delivery.at) < ANSWER_RESEND_MS) continue
     try {
-      if (delivery.attempts < ANSWER_SENDS || (delivery.reason !== undefined && await liveAddress($, entry.sender.name) !== null)) {
+      const live = delivery.attempts >= ANSWER_SENDS && delivery.reason !== undefined ? await liveAddress($, entry.sender.name) : null
+      const spent = delivery.refused !== undefined && delivery.refused.to === live && delivery.refused.sends >= ANSWER_SENDS
+      if (delivery.attempts < ANSWER_SENDS || (live !== null && !spent)) {
         await sendReply($, entry.id)
         continue
       }
-      const reason = `no acknowledgment after ${ANSWER_SENDS} sends`
+      const reason = spent ? delivery.reason! : `no acknowledgment after ${ANSWER_SENDS} sends`
       let written = false
       await updateOver(storeIo($), await pathOf($, entry.id), current => {
         const read = current === undefined ? null : parseAsked(current)
