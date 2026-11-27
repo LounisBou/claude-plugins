@@ -1771,10 +1771,10 @@ test('a wait reaches a coordinator whose learnt address went stale, by its name,
 // and failed, while a session of its name ran. The listing the host gives names the one that runs now.
 const GONE_AT = 'bridge:session_old'
 const NOW_AT = 'bridge:session_now'
-const LIVE_AT = 'Orch: belt [b2060c]'
+const LIVE_AT = 'Orch: belt [ref-live]'
 const remoteRows = (...rows: [string, string][]) => ['This session is Coord: ops [abc] — the name other sessions use to message it', '', `Peer sessions (${rows.length}):`,
   ...rows.map(([name, state]) => `  ${name}  ·  Remote Control  ·  ${state}`)].join('\n')
-const LIVE_LISTING = remoteRows([LIVE_AT, 'running'], ['Orch: belt [22e182]', 'offline'], ['Orch: other [7b46ca]', 'running'])
+const LIVE_LISTING = remoteRows([LIVE_AT, 'running'], ['Orch: belt [ref-other]', 'offline'], ['Orch: other [ref-third]', 'running'])
 
 // The coordinator of a question pushed from `GONE_AT`, which the host now refuses; `listing` is what
 // ListAgents answers there, and `refused` the further addresses refused.
@@ -1817,7 +1817,7 @@ test('an acknowledgment from the live session of a readdressed answer delivers i
   await drive(chains, 'session.receive', coordinator.dollar, delivered(FORGER_AT, 'Orch: other', line))
   expect(objectAt(coordinator, id).delivery.state).toBe('sent')
   // The host's envelope may carry the name with its reference, in the former spelling.
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(NOW_AT, 'Orch : belt [b2060c]', line))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(NOW_AT, 'Orch : belt [ref-live]', line))
   expect(objectAt(coordinator, id).delivery.state).toBe('delivered')
 })
 
@@ -1859,9 +1859,9 @@ test('an answer refused everywhere is not failed while a live session of the ask
 })
 
 for (const [what, listing] of [
-  ['no session of the name', remoteRows(['Orch: other [7b46ca]', 'running'])],
+  ['no session of the name', remoteRows(['Orch: other [ref-third]', 'running'])],
   ['only an offline one', remoteRows([LIVE_AT, 'offline'])],
-  ['two live ones', remoteRows([LIVE_AT, 'running'], ['Orch: belt [22e182]', 'idle'])],
+  ['two live ones', remoteRows([LIVE_AT, 'running'], ['Orch: belt [ref-other]', 'idle'])],
 ] as const) {
   test(`an answer refused with ${what} listed is failed after three sends, its address kept`, async () => {
     const { coordinator, id, age } = await replicaOfGone(listing)
