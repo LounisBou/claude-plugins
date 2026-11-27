@@ -41,8 +41,12 @@ import {
   type Act, type Carried, type Gate, type HeadRead, type RecordFile,
 } from './ready.ts'
 
-// The host's nouns the module calls.
+// Where a line goes: `transcript` shows it in the session, `debug` keeps it in the host's debug log, off screen.
+type Sink = 'transcript' | 'debug'
+
+// The host's nouns the module calls, its `ui.log` taking a sink too, which core's type does not name.
 type Mod = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'ui' | 'tool' | 'command' | 'clock'>
+  & { readonly ui: { log(text: string, options?: { to: Sink }): void } }
 
 // What a tool call hands a hook: the tool's arguments, each read through a validator.
 type ToolInput = Events['tool.call']
@@ -113,6 +117,10 @@ export function ghRequest(raw: ToolInput): GhRequest | string {
   return { command, args: args ?? undefined, repo: repo ?? undefined }
 }
 
+// The session's own calls of GitHub, the one thing that makes an outage its business: how many wait for their answer, and
+// whether one was refused by an unreachable GitHub with no answer of GitHub since (an engine call of gh.py going through).
+const ownCalls = { inFlight: 0, refused: false }
+
 // The request travels as JSON on stdin: gh.py maps it onto its own parser,
 // refuses what that parser does not declare, and writes the bodies to a
 // private directory it removes. No argv is built and no file written here.
@@ -126,6 +134,7 @@ async function runGhRaw(
     { stdin: JSON.stringify({ command, args, repo, ...(full ? { full: true } : {}) }), timeoutMs: 120_000 },
   )
   if (r.exitCode !== 0) throw new Error(r.stderr || 'gh.py exited ' + r.exitCode)
+  ownCalls.refused = false
   const out = r.isStdoutTruncated ? r.stdout + '\n[output cut at 4 MiB]' : r.stdout
   return { out, err: r.stderr?.trim() ?? '' }
 }
@@ -696,10 +705,10 @@ export async function diagnose($: Mod, check = false): Promise<string> {
 
 export const RECORD_TOOL = 'mcp__github__record'
 
-// A line in the transcript that never fails what it reports on.
-function note($: Mod, text: string): void {
+// A line, in the transcript unless sent to the debug log, that never fails what it reports on.
+function note($: Mod, text: string, to: Sink = 'transcript'): void {
   try {
-    const sent: unknown = $.ui.log(text)
+    const sent: unknown = to === 'transcript' ? $.ui.log(text) : $.ui.log(text, { to })
     if (isCatchable(sent)) sent.catch(() => undefined)
   } catch {
     // Nowhere to say it: the act it notes is not held for that.
@@ -938,8 +947,9 @@ async function earlierRecords($: Mod, gate: Gate, root: string): Promise<{ found
  * earlier head that cannot be fingerprinted may hold that newer failure: the kinds it has records of
  * are carried from no head, and every kind when the records of a head cannot be listed. A record file
  * of a head of the same diff that does not parse may be that failure too: its kind is carried from no head.
+ * A line on a fingerprint that cannot be taken asks nothing of anyone: the debug log's. The others go where `sink` says.
  */
-async function carriedRecords($: Mod, gate: Gate, files: RecordFile[]): Promise<Carried[]> {
+async function carriedRecords($: Mod, gate: Gate, files: RecordFile[], sink: () => Promise<Sink> = async () => 'transcript'): Promise<Carried[]> {
   await keepCount($, gate)
   // A tests record carries only to a stacked pull request: the bottom one reads no light CI.
   const possible = KINDS.filter((kind) => kind !== SCRIPTED.kind || gate.stacked === true)
@@ -955,9 +965,9 @@ async function carriedRecords($: Mod, gate: Gate, files: RecordFile[]): Promise<
   // A waiver stands beside what the same diff carries, or alone.
   const withWaiver = (carried: Carried[]): Carried[] => [...carried, ...waivers.filter((w) => !carried.some((c) => c.kind === w.kind))]
   // A line on the kinds not carried leaves out the kinds a waiver stands for.
-  const uncarried = (reason: string, kinds: PrRecord['kind'][] = wanted) => {
+  const uncarried = (reason: string, to: Sink, kinds: PrRecord['kind'][] = wanted) => {
     const left = kinds.filter((kind) => !waivers.some((w) => w.kind === kind))
-    if (left.length > 0) note($, uncarriedLine(gate.repo, gate.pr, gate.head, reason, left.length === possible.length ? undefined : left))
+    if (left.length > 0) note($, uncarriedLine(gate.repo, gate.pr, gate.head, reason, left.length === possible.length ? undefined : left), to)
   }
   const candidates: Array<{ head: string; latest: PrRecord[]; unreadable: Array<{ name: string; kinds: PrRecord['kind'][] }> }> = []
   for (const [head, records] of found) {
@@ -970,14 +980,14 @@ async function carriedRecords($: Mod, gate: Gate, files: RecordFile[]): Promise<
   }
   if (!candidates.some((c) => c.latest.some(carries))) return withWaiver([])
   if (unread) {
-    uncarried(unread)
+    uncarried(unread, await sink())
     return withWaiver([])
   }
   let current: Fingerprint
   try {
     current = await headFingerprint($, gate.repo, gate.pr, gate.head, countOf(gate.commits) ? gate.commits : undefined)
   } catch (err: unknown) {
-    uncarried(gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + reasonOf(err).trim())
+    uncarried(gate.head.slice(0, 7) + "'s commits cannot be fingerprinted: " + reasonOf(err).trim(), 'debug')
     return withWaiver([])
   }
   const newest = new Map<PrRecord['kind'], { record: PrRecord; from: string }>()
@@ -991,7 +1001,7 @@ async function carriedRecords($: Mod, gate: Gate, files: RecordFile[]): Promise<
     const blame = (err: unknown, whose: string): void => {
       const kinds = wanted.filter((kind) => unreadKinds.includes(kind) || latest.some((record) => record.kind === kind))
       for (const kind of kinds) blocked.add(kind)
-      uncarried(whose + "'s commits cannot be fingerprinted: " + reasonOf(err).trim(), kinds)
+      uncarried(whose + "'s commits cannot be fingerprinted: " + reasonOf(err).trim(), 'debug', kinds)
     }
     try {
       const kept = await keptOf($, await fingerprintPath($, gate.repo, gate.pr, head))
@@ -1017,7 +1027,7 @@ async function carriedRecords($: Mod, gate: Gate, files: RecordFile[]): Promise<
     if (unreadKinds.length > 0) {
       for (const kind of unreadKinds) blocked.add(kind)
       const files = unreadable.map((file) => head.slice(0, 7) + "'s record " + file.name + ' does not parse').join(', ')
-      uncarried(files, unreadKinds)
+      uncarried(files, await sink(), unreadKinds)
     }
     for (const record of latest) {
       const before = newest.get(record.kind)?.record
@@ -1136,13 +1146,20 @@ async function readiness($: Mod, repo: string, pr: number, sha?: string): Promis
  */
 // `unwritten`: the gate read at the head, its label not written (the reconciler keeps the reading all the same).
 // `held`: Ready held over a Not Ready this machine did not set, until when (ms) at the earliest; none when the clock cannot be read.
-type Followed = { line?: string; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] }; held?: { until: number | undefined; failing?: boolean } }
+// `moved`: the head moved while the gate read it; the next beat reads it again.
+type Followed = { line?: string; moved?: boolean; labels?: string[]; draft?: boolean; missing?: string[]; gate?: Gate; unwritten?: { gate: Gate; missing: string[] }; held?: { until: number | undefined; failing?: boolean } }
 
 const flapKey = (repo: string, pr: number) => repo.toLowerCase() + '#' + pr
 
 // The reconciler's say on a label about to be written: `copies` whether to hold it for the forge copy of the head's plan and exemption,
-// `flap` whether to hold it as another machine keeps undoing it (it says so itself, once).
-type Watch = { copies: (gate: Gate, move: LabelMove) => boolean; flap: (gate: Gate, move: LabelMove) => boolean }
+// `flap` whether to hold it as another machine keeps undoing it (it says so itself, once). `session`: the one it runs in, whose lines go by sinkOf.
+type Watch = { session: string; copies: (gate: Gate, move: LabelMove) => boolean; flap: (gate: Gate, move: LabelMove) => Promise<boolean> }
+
+// Where a line of the reconciler on a pull request goes: it runs in whichever session holds the lease, which is shown the line only when it
+// pushed that head, the one sign the pull request is its own. A line asked by the session's own call (no watch) is shown.
+async function sinkOf($: Mod, watch: { session: string } | undefined, head: string): Promise<Sink> {
+  return !watch || (await pushersOf($, head)).has(watch.session) ? 'transcript' : 'debug'
+}
 
 // What this machine saw of a pull request's label, shared by the reconciler and the tools of every session: a file of the
 // data directory, changed under core's store lock. Without a data directory, what this module instance saw.
@@ -1239,7 +1256,7 @@ async function forgeBringsNothing($: Mod, repo: string, pr: number, head: string
 // act (pr-ready, pr-merge, pr-readiness ready) follows: its hold has no ceiling.
 async function followGate($: Mod, repo: string, pr: number, known?: Gate, always = false, unlabelled = false, watch?: Watch, act = false): Promise<Followed> {
   const followed = await readGate($, repo, pr, known, always, unlabelled, watch, act)
-  return act ? followed : undraftForCi($, repo, pr, followed)
+  return act ? followed : undraftForCi($, repo, pr, followed, watch)
 }
 
 // Pull requests (repo#pr@head) taken out of draft for their CI by this instance: a head the operator put back to draft is not taken out again.
@@ -1247,7 +1264,7 @@ const undraftedForCi = new Set<string>()
 
 // A draft that misses only its CI, which its draft state keeps from running or passing (gateUndraft), leaves draft for it, still Not Ready, in every
 // repository: no session has to know the undraft or ask for it. What else it misses is the ready guard's, so a draft missing a record stays one.
-async function undraftForCi($: Mod, repo: string, pr: number, followed: Followed): Promise<Followed> {
+async function undraftForCi($: Mod, repo: string, pr: number, followed: Followed, watch?: Watch): Promise<Followed> {
   const { gate, missing } = followed
   if (!gate || !missing || !(followed.draft ?? gate.draft) || gate.state !== 'open' || !ciOnlyMissing(missing)) return followed
   // A draft carrying neither label is read as Not Ready: leaving draft for its CI puts it on.
@@ -1262,7 +1279,7 @@ async function undraftForCi($: Mod, repo: string, pr: number, followed: Followed
   const verdict = await $.tool.check({ tool: TOOL, input: { command: 'pr-ready', args: { pr, 'for-ci': true }, repo } })
     .catch((err: unknown) => ({ decision: 'deny', rule: undefined, reason: 'the permission check failed: ' + reasonOf(err).trim() }))
   if (verdict.decision === 'deny' || (verdict.rule && verdict.decision !== 'allow')) {
-    note($, 'github: ' + repo + '#' + pr + ' not taken out of draft for its CI: ' + (verdict.reason || 'a permission rule on pr-ready'))
+    note($, 'github: ' + repo + '#' + pr + ' not taken out of draft for its CI: ' + (verdict.reason || 'a permission rule on pr-ready'), await sinkOf($, watch, gate.head))
     return followed
   }
   try {
@@ -1270,10 +1287,11 @@ async function undraftForCi($: Mod, repo: string, pr: number, followed: Followed
   } catch (err: unknown) {
     // Said by itself, whatever line the gate has, and tried again at the next read of this head.
     undraftedForCi.delete(key)
-    note($, 'github: ' + repo + '#' + pr + ' not taken out of draft for its CI: ' + reasonOf(err).trim())
+    note($, 'github: ' + repo + '#' + pr + ' not taken out of draft for its CI: ' + reasonOf(err).trim(), await sinkOf($, watch, gate.head))
     return followed
   }
-  note($, ciUndraftLine(repo, pr))
+  // Done, nothing asked: the reconciler's own undraft is the debug log's.
+  note($, ciUndraftLine(repo, pr), watch ? 'debug' : 'transcript')
   return { ...followed, draft: false }
 }
 
@@ -1288,7 +1306,8 @@ async function readGate($: Mod, repo: string, pr: number, known?: Gate, always =
     gate = known ?? parseGate(await runGh($, 'pr-gate', { pr }, repo))
     excused = await excusedOf($, gate)
     const files = await headRecords($, gate)
-    carried = await carriedRecords($, gate, files)
+    const { head } = gate
+    carried = await carriedRecords($, gate, files, () => sinkOf($, watch, head))
     const off = await lightCiOffOf($, gate)
     missing = await missingWithExpiry($, gate, missingItems(gate, files, undefined, excused, carried, undefined, off))
     accepted = reviewAccepted(gate, files)
@@ -1319,16 +1338,16 @@ async function readGate($: Mod, repo: string, pr: number, known?: Gate, always =
     if (until !== undefined && (watch !== undefined || until > readAt || !(await forgeBringsNothing($, repo, pr, gate.head)))) {
       return { line: gateHeldLine(repo, pr, gate.head, until, readAt, failing), missing, gate, held: { until, failing } }
     }
-    if (ceiling !== undefined && foreignGivenUp(seen, move, listedAt, ceiling)) note($, gateHeldGivenUpLine(repo, pr, gate.head, FOREIGN_CEILING_MS / 60_000))
+    if (ceiling !== undefined && foreignGivenUp(seen, move, listedAt, ceiling)) note($, gateHeldGivenUpLine(repo, pr, gate.head, FOREIGN_CEILING_MS / 60_000), watch ? 'debug' : 'transcript')
   }
-  if (watch?.flap(gate, move)) return { missing, gate }
+  if (watch && (await watch.flap(gate, move))) return { missing, gate }
   let now: HeadRead
   try {
     now = parseHeadRead(await runGh($, 'pr-gate', { pr, 'head-only': true }, repo))
   } catch (err: unknown) {
     return { line: gateLeftLine(repo, pr, reasonOf(err).trim()) }
   }
-  if (now.head !== gate.head) return { line: gateMovedLine(repo, pr, gate.head, now.head) }
+  if (now.head !== gate.head) return { line: gateMovedLine(repo, pr, gate.head, now.head), moved: true }
   try {
     await runGh($, 'pr-readiness', { pr, state: move }, repo)
   } catch (err: unknown) {
@@ -1374,13 +1393,14 @@ type Reconciler = {
   held: Map<string, { fingerprint: string; until: number; unpublished: string; since: number }>
   edgeSeen: number
   counts: Counts
-  // The lines said and not yet forgotten, and whether this beat said one: a beat that said none lets the same failures be said again.
+  // The lines said and not yet forgotten, each with where it went, and whether this beat said one: a beat that said none lets the same failures be said again.
   said: Set<string>
   saidNow: boolean
   // The reasons said of each failing step (a listing, a copy, a post), by step: said once each until the step goes through.
   told: Map<string, Set<string>>
   // The outage of GitHub the reconciler has said and not seen over: since when listings go through again, none while the last one found it unreachable.
-  outage: { answeringSince: number | undefined } | undefined
+  // Its line, and whether the session was shown it (the debug log has it otherwise, and its end).
+  outage: { answeringSince: number | undefined; line: string; shown: boolean } | undefined
   // The repositories GitHub says are archived (read-only), by its listing's flag or a refused post: neither listed nor posted to until the module reloads.
   archived: Set<string>
   // The host's session id, and the counts the journal last received.
@@ -1444,19 +1464,22 @@ async function localOf($: Mod, root: string, data: string, repo: string, row: Li
 }
 
 // A line the reconciler says once, however many other lines are said between: a failure that repeats at every beat is not repeated.
-function sayOnce($: Mod, rec: Reconciler, line: string, step?: string): void {
+// It asks nothing of the session the reconciler happens to run in, so it is the debug log's unless `to` says otherwise (sinkOf).
+// Once for each place it goes: a line the debug log alone had is still shown once the pull request is the session's own.
+function sayOnce($: Mod, rec: Reconciler, line: string, step?: string, to: Sink = 'debug'): void {
+  const key = to + ' ' + line
   if (step !== undefined) {
     // A step that fails keeps its line said until it goes through (told): other failures speaking at every beat change nothing.
     const reasons = rec.told.get(step) ?? new Set<string>()
-    if (reasons.has(line)) return
-    rec.told.set(step, reasons.add(line))
-    note($, line)
+    if (reasons.has(key)) return
+    rec.told.set(step, reasons.add(key))
+    note($, line, to)
     return
   }
   rec.saidNow = true
-  if (rec.said.has(line)) return
-  rec.said.add(line)
-  note($, line)
+  if (rec.said.has(key)) return
+  rec.said.add(key)
+  note($, line, to)
 }
 
 // Whether a held move calls for a listing now: a Ready held over another machine's Not Ready that has waited long enough with no listing since.
@@ -1469,9 +1492,49 @@ function forgeAwaited(rec: Reconciler, repo: string, now: number): boolean {
 const UNREACHABLE = /gaierror|nodename nor servname|name or service not known|temporary failure in name resolution|connection (refused|reset|aborted)|network is unreachable|no route to host|handshake|timed out|gave no answer within|still running after/i
 const REASON_MAX = 200
 
-// The last meaningful line of an error's text (the exception line of a traceback, the engine's `error: …`), bounded.
+// Shows the session the outage the debug log alone holds, once it waits on GitHub.
+function showOutage($: Mod): void {
+  const outage = reconciler?.outage
+  if (!outage || outage.shown) return
+  outage.shown = true
+  note($, outage.line)
+}
+
+// What an answer says the call failed with: a refusal, an error's text, or a readiness left unread.
+function failureOf(answer: unknown): string | undefined {
+  if (!isRecord(answer)) return undefined
+  if (typeof answer['deny'] === 'string') return answer['deny']
+  const result = typeof answer['result'] === 'string' ? answer['result'] : undefined
+  return result !== undefined && (answer['isError'] === true || result.includes('readiness unverified')) ? result : undefined
+}
+
+// A GitHub call of the session's own, from its start to its answer. `failure`: what its answer failed with, undefined when it went through.
+async function ownCall<T>($: Mod, call: () => Promise<T>, failure: (answer: T) => string | undefined = failureOf): Promise<T> {
+  // The whole last line is read: a cause can stand past what a shown reason keeps.
+  const heard = (why: string | undefined): void => {
+    if (why === undefined || !UNREACHABLE.test(lastLine(why))) return
+    ownCalls.refused = true
+    showOutage($)
+  }
+  ownCalls.inFlight += 1
+  try {
+    const answer = await call()
+    heard(failure(answer))
+    return answer
+  } catch (err: unknown) {
+    heard(reasonOf(err).trim())
+    throw err
+  } finally {
+    ownCalls.inFlight -= 1
+  }
+}
+
+// The last meaningful line of an error's text: the exception line of a traceback, the engine's `error: …`.
+const lastLine = (why: string): string => why.split('\n').map((line) => line.trim()).filter(Boolean).pop() ?? why
+
+// That line, bounded.
 function shortReason(why: string): string {
-  const last = why.split('\n').map((line) => line.trim()).filter(Boolean).pop() ?? why
+  const last = lastLine(why)
   return (last.length > REASON_MAX ? last.slice(0, REASON_MAX - 1) + '…' : last).replace(/^github:\s*/i, '')
 }
 
@@ -1489,9 +1552,12 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
     if (limited) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
     rec.repos.set(repo, { ...before, rows: before?.rows ?? [], schedule })
     if (UNREACHABLE.test(shortReason(why))) {
-      // One line an outage, with its first reason: a later failure only starts the wait for its end anew.
-      if (!rec.outage) note($, 'github: the reconciler cannot reach GitHub (' + shortReason(why) + '); listings resume when it answers')
-      rec.outage = { answeringSince: undefined }
+      // One line an outage, with its first reason: a later failure only starts the wait for its end anew. Shown only to a session that waits on GitHub.
+      const first = !rec.outage
+      const outage = rec.outage ?? { line: 'github: the reconciler cannot reach GitHub (' + shortReason(why) + '); listings resume when it answers', shown: false, answeringSince: undefined }
+      rec.outage = { ...outage, answeringSince: undefined }
+      if (ownCalls.refused || ownCalls.inFlight > 0) showOutage($)
+      else if (first) note($, outage.line, 'debug')
       return 'unreachable'
     }
     sayOnce($, rec, 'github: the reconciler could not list ' + repo + ': ' + shortReason(why), 'list ' + repo)
@@ -1499,9 +1565,10 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
   }
   rec.told.delete('list ' + repo)
   if (rec.outage) {
+    const { shown } = rec.outage
     const since = rec.outage.answeringSince ?? now
-    rec.outage = now - since >= OUTAGE_OVER_MS ? undefined : { answeringSince: since }
-    if (!rec.outage) note($, 'github: GitHub answers again; listings resumed')
+    rec.outage = now - since >= OUTAGE_OVER_MS ? undefined : { ...rec.outage, answeringSince: since }
+    if (!rec.outage) note($, 'github: GitHub answers again; listings resumed', shown ? 'transcript' : 'debug')
   }
   const changed = JSON.stringify(before?.rows ?? null) !== JSON.stringify(listing.rows)
   const schedule = nextListing(before?.schedule, now, changed, listing.rows, listing.rate)
@@ -1607,6 +1674,7 @@ async function reconcilePr(
   const before = rec.held.get(id)?.fingerprint === fingerprint ? rec.held.get(id) : undefined
   const since = before?.since ?? at.now
   const watch: Watch = {
+    session: rec.session,
     copies: (gate, move) => {
       // The plan and the exemption the move rests on reach the forge first: the other machine reads them there, not the label.
       const missingCopies = awaited(rec.unpublished.get(id) ?? [], move)
@@ -1620,14 +1688,14 @@ async function reconcilePr(
       }
       return false
     },
-    flap: (gate, move) => {
+    flap: async (gate, move) => {
       // Two machines in lasting disagreement stop moving it.
       const head = gate.head
       const checked = flapCheck(rec.flaps.get(id), head, move)
       if (checked.flap) rec.flaps.set(id, checked.flap)
       if (checked.say) {
         sayOnce($, rec, 'github: the ' + (move === 'ready' ? 'Ready' : 'Not Ready') + ' label of ' + key + ' at ' + head.slice(0, 7) + ' was put back ' + String(FLAP_UNDONE)
-          + ' times after it was taken away: this machine no longer moves it there, another machine disagrees on what the pull request misses')
+          + ' times after it was taken away: this machine no longer moves it there, another machine disagrees on what the pull request misses', undefined, await sinkOf($, watch, head))
       }
       return checked.hold
     },
@@ -1638,7 +1706,7 @@ async function reconcilePr(
   const gate = followed.gate
   if (!gate || followed.missing === undefined) {
     rec.failed.set(key, { fingerprint, at: at.now })
-    if (followed.line) sayOnce($, rec, followed.line)
+    if (followed.line) sayOnce($, rec, followed.line, undefined, followed.moved ? 'debug' : await sinkOf($, watch, row.head))
     // The gate was read at the head, only its label failed: the reading is kept, the label tried again after RETRY_MS.
     // Its fingerprint is none, so a restart that seeds from the file reads the gate again too.
     const read = followed.unwritten
@@ -1740,7 +1808,7 @@ async function syncForge(
   const records = await recordsAt($, at.root, repo, row.head)
   if (records === undefined) {
     // What it waited for stays: an unread set is not an empty one.
-    sayOnce($, rec, 'github: the reconciler could not read the records of ' + id + ' at ' + row.head.slice(0, 7) + ': its forge copies wait')
+    sayOnce($, rec, 'github: the reconciler could not read the records of ' + id + ' at ' + row.head.slice(0, 7) + ': its forge copies wait', undefined, await sinkOf($, rec, row.head))
     return { wrote: false, ok: false, imported: false }
   }
   const plan = at.data ? await readPlan($, repo, row.number) : undefined
@@ -1757,7 +1825,7 @@ async function syncForge(
     if (run.exitCode !== 0) {
       ok = false
       imported = false
-      sayOnce($, rec, 'github: the reconciler could not copy ' + forgeContext(copy.kind) + ' of ' + id + ' from the forge: ' + (String(run.stderr ?? '').trim() || 'exit ' + run.exitCode), 'copy ' + id + ' ' + copy.kind)
+      sayOnce($, rec, 'github: the reconciler could not copy ' + forgeContext(copy.kind) + ' of ' + id + ' from the forge: ' + (String(run.stderr ?? '').trim() || 'exit ' + run.exitCode), 'copy ' + id + ' ' + copy.kind, await sinkOf($, rec, row.head))
     } else rec.told.delete('copy ' + id + ' ' + copy.kind)
   }
   // The plan and the exemption are written as their tools write them, under the list's lock.
@@ -1770,7 +1838,7 @@ async function syncForge(
     } catch (err: unknown) {
       ok = false
       imported = false
-      sayOnce($, rec, 'github: the reconciler could not copy ' + copy.what + ' of ' + id + ' from the forge: ' + reasonOf(err).trim(), 'copy ' + id + ' ' + copy.what)
+      sayOnce($, rec, 'github: the reconciler could not copy ' + copy.what + ' of ' + id + ' from the forge: ' + reasonOf(err).trim(), 'copy ' + id + ' ' + copy.what, await sinkOf($, rec, row.head))
       continue
     }
     rec.told.delete('copy ' + id + ' ' + copy.what)
@@ -1796,7 +1864,7 @@ async function syncForge(
     if (failed) {
       ok = false
       pending.push(post)
-      sayOnce($, rec, 'github: the reconciler could not post ' + forgeContext(post.name) + ' of ' + id + ': ' + failed, 'post ' + id + ' ' + post.name)
+      sayOnce($, rec, 'github: the reconciler could not post ' + forgeContext(post.name) + ' of ' + id + ': ' + failed, 'post ' + id + ' ' + post.name, await sinkOf($, rec, row.head))
       continue
     }
     rec.told.delete('post ' + id + ' ' + post.name)
@@ -3018,6 +3086,62 @@ async function pruneRecords($: Mod): Promise<void> {
   await $.fs.write(stamp, new Date().toISOString() + '\n')
 }
 
+// The gh tool's call, as its hook answers it.
+async function ghTool($: Mod, input: Events['tool.call']) {
+  const raw = ghRequest(input)
+  if (typeof raw === 'string') return { result: raw, isError: true }
+  if (MOD_COMMANDS.has(raw.command)) {
+    try {
+      if (raw.command === 'auto-merge-set') return await setAutoMerge($, raw)
+      if (raw.command === 'auto-deploy-set') return await setAutoDeploy($, raw)
+      const verdict = await $.tool.check({ tool: TOOL, input: { command: raw.command, args: raw.args, repo: raw.repo } })
+      if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
+      if (raw.command === 'pr-plan') return await showPlan($, raw)
+      return { result: raw.command === 'auto-deploy-list' ? await listAutoDeploy($) : await listAutoMerge($) }
+    } catch (err: unknown) {
+      return { result: reasonOf(err), isError: true }
+    }
+  }
+  const e: GhCall = { ...raw, args: withHouseDefaults(raw.command, raw.args ?? {}) }
+  // The head the caller pinned, as the call gave it: the gate completes a prefix of it in the arguments.
+  const pinned = typeof e.args['sha'] === 'string' ? e.args['sha'] : undefined
+  const act = toolAct(e.command, e.args)
+  const ready = act ? toolReady($, e, act) : undefined
+  const label = ready ? undefined : readyLabelCall($, e)
+  const refused = await permit($, e, ready?.beforeAsk ?? label?.check, ready?.ciUndraft)
+  if (refused) return label?.answer(refused) ?? { deny: refused }
+  try {
+    // The line of a gate read (the Actions runs it could not read) is shown after afterRead,
+    // which parses the output: no added text may reach parseGate.
+    // A merge asks the engine for the stack its pull request is in first: in a stack of several it merges nothing and answers the plan.
+    const ran = await runGhRaw($, e.command, act?.kind === 'merge' ? { ...e.args, stack: true } : e.args, e.repo)
+    const plan = act?.kind === 'merge' ? parseStackPlan(ran.out) : undefined
+    if (act?.kind === 'merge' && !plan && holdsStack(ran.out)) return { result: 'github: the engine answered a stack this module cannot read, and merged nothing: ' + ran.out.trim().slice(0, 300), isError: true }
+    if (plan) {
+      const walked = await mergeStack($, e, plan, ran.err, pinned)
+      if (watch) {
+        dirty = true
+        void refreshIfDue($, false)
+      }
+      return walked
+    }
+    let result = (READS.has(e.command) ? ran.out : withNote(ran.out, ran.err)) || '(no output)'
+    if (ready) await ready.ran()
+    if (e.command === 'pr-create') await noteCreated($, ran.out)
+    result = await afterRead($, e, result)
+    if (GATE_READS.has(e.command)) result = withNote(result, ran.err)
+    // A write changes what the open pane shows: its rows are stale, read again at once when the
+    // pane is shown, else when it shows again. Unawaited.
+    if (watch && !READS.has(e.command)) {
+      dirty = true
+      void refreshIfDue($, false)
+    }
+    return { result }
+  } catch (err: unknown) {
+    return { result: reasonOf(err), isError: true }
+  }
+}
+
 export function register(on: On<Mod>): void {
   on('session.start', async ($, e, next) => {
     const root = $.plugin.root
@@ -3151,7 +3275,7 @@ export function register(on: On<Mod>): void {
     try {
       for (const act of bashActs(line)) {
         current = act
-        const refused = await bashReady($, act, after)
+        const refused = await ownCall($, () => bashReady($, act, after), (why) => why)
         if (refused) return await refuse($, REFUSED.ready, refused)
       }
     } catch (err) {
@@ -3208,7 +3332,7 @@ export function register(on: On<Mod>): void {
 
   on('tool.call', { tool: RECORD_TOOL }, async ($, e, next) => {
     try {
-      return await writeRecord($, e, String(next?.origin?.plugin ?? 'engine'))
+      return await ownCall($, () => writeRecord($, e, String(next?.origin?.plugin ?? 'engine')))
     } catch (err: unknown) {
       return { result: reasonOf(err), isError: true }
     }
@@ -3216,71 +3340,18 @@ export function register(on: On<Mod>): void {
 
   on('tool.call', { tool: LIGHT_CI_TOOL }, async ($, e) => {
     try {
-      return await lightCi($, e)
+      return await ownCall($, () => lightCi($, e))
     } catch (err: unknown) {
       return { result: reasonOf(err), isError: true }
     }
   }).catch(async () => ({ deny: 'github mod error: the light CI hook itself failed' }))
 
-  on('tool.call', { tool: TOOL }, async ($, input) => {
-    const raw = ghRequest(input)
-    if (typeof raw === 'string') return { result: raw, isError: true }
-    if (MOD_COMMANDS.has(raw.command)) {
-      try {
-        if (raw.command === 'auto-merge-set') return await setAutoMerge($, raw)
-        if (raw.command === 'auto-deploy-set') return await setAutoDeploy($, raw)
-        const verdict = await $.tool.check({ tool: TOOL, input: { command: raw.command, args: raw.args, repo: raw.repo } })
-        if (verdict.decision === 'deny') return { deny: verdict.reason || 'refused by a permission rule' }
-        if (raw.command === 'pr-plan') return await showPlan($, raw)
-        return { result: raw.command === 'auto-deploy-list' ? await listAutoDeploy($) : await listAutoMerge($) }
-      } catch (err: unknown) {
-        return { result: reasonOf(err), isError: true }
-      }
-    }
-    const e: GhCall = { ...raw, args: withHouseDefaults(raw.command, raw.args ?? {}) }
-    // The head the caller pinned, as the call gave it: the gate completes a prefix of it in the arguments.
-    const pinned = typeof e.args['sha'] === 'string' ? e.args['sha'] : undefined
-    const act = toolAct(e.command, e.args)
-    const ready = act ? toolReady($, e, act) : undefined
-    const label = ready ? undefined : readyLabelCall($, e)
-    const refused = await permit($, e, ready?.beforeAsk ?? label?.check, ready?.ciUndraft)
-    if (refused) return label?.answer(refused) ?? { deny: refused }
-    try {
-      // The line of a gate read (the Actions runs it could not read) is shown after afterRead,
-      // which parses the output: no added text may reach parseGate.
-      // A merge asks the engine for the stack its pull request is in first: in a stack of several it merges nothing and answers the plan.
-      const ran = await runGhRaw($, e.command, act?.kind === 'merge' ? { ...e.args, stack: true } : e.args, e.repo)
-      const plan = act?.kind === 'merge' ? parseStackPlan(ran.out) : undefined
-      if (act?.kind === 'merge' && !plan && holdsStack(ran.out)) return { result: 'github: the engine answered a stack this module cannot read, and merged nothing: ' + ran.out.trim().slice(0, 300), isError: true }
-      if (plan) {
-        const walked = await mergeStack($, e, plan, ran.err, pinned)
-        if (watch) {
-          dirty = true
-          void refreshIfDue($, false)
-        }
-        return walked
-      }
-      let result = (READS.has(e.command) ? ran.out : withNote(ran.out, ran.err)) || '(no output)'
-      if (ready) await ready.ran()
-      if (e.command === 'pr-create') await noteCreated($, ran.out)
-      result = await afterRead($, e, result)
-      if (GATE_READS.has(e.command)) result = withNote(result, ran.err)
-      // A write changes what the open pane shows: its rows are stale, read again at once when the
-      // pane is shown, else when it shows again. Unawaited.
-      if (watch && !READS.has(e.command)) {
-        dirty = true
-        void refreshIfDue($, false)
-      }
-      return { result }
-    } catch (err: unknown) {
-      return { result: reasonOf(err), isError: true }
-    }
-  }).catch(async () => ({ deny: 'github mod error: the hook itself failed' }))
+  on('tool.call', { tool: TOOL }, ($, input) => ownCall($, () => ghTool($, input))).catch(async () => ({ deny: 'github mod error: the hook itself failed' }))
 
   on('command.run', { command: 'checks' }, async ($, e, next) => {
     if (!ownedCommands.has('checks')) return next(e)
     try {
-      return { text: await prText($, e.args, 'pr-checks', 'checks-status', checksLine) }
+      return { text: await ownCall($, () => prText($, e.args, 'pr-checks', 'checks-status', checksLine), () => undefined) }
     } catch (err: unknown) {
       return { text: reasonOf(err) }
     }
@@ -3289,7 +3360,7 @@ export function register(on: On<Mod>): void {
   on('command.run', { command: 'threads' }, async ($, e, next) => {
     if (!ownedCommands.has('threads')) return next(e)
     try {
-      return { text: await prText($, e.args, 'pr-threads', 'thread-summary') }
+      return { text: await ownCall($, () => prText($, e.args, 'pr-threads', 'thread-summary'), () => undefined) }
     } catch (err: unknown) {
       return { text: reasonOf(err) }
     }
