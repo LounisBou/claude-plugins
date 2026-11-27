@@ -512,7 +512,7 @@ def _stacked(owner, name, pull, reads):
             return False
         if (_read_once(reads, owner, name, "branches/%s" % branch) or {}).get("protected"):
             return False
-        return not (_read_once(reads, owner, name, "rules/branches/%s" % branch, paginate=True) or [])
+        return not stack.rules_or_none(lambda: _read_once(reads, owner, name, "rules/branches/%s" % branch, paginate=True))
     except (errors.GhError, OSError) as exc:
         why = exc.message if isinstance(exc, errors.GhError) else exc
         print("error: cannot read whether %s is a stacked base: %s" % (base, why), file=sys.stderr)

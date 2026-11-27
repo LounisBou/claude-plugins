@@ -2516,6 +2516,26 @@ printf '%s' '[{"type":"required_status_checks","parameters":{"required_status_ch
 check "pr-gate uses the rules it read for the stacked test as the base's required checks" "False PENDING 1 1" \
   "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["stacked"], d["ci"]["result"], d["ci"]["total"], end=" ")')$(grep -c '"path": "/repos/acme/thing/rules/branches/feat-a?' "$F8/sent.jsonl")"
 
+# A base whose rules GitHub refuses as no rules (403 « Upgrade to GitHub Pro » on a private repository
+# without them, or 404) reads as stacked from its branch read alone, silently. Any other error of the
+# rules read is named on stderr, and the base reads as not stacked.
+stackbase8() {
+  gate8 "$1" "$STACK8" '{"statuses":[]}' '{"check_runs":[]}'
+  printf '%s' '[{"number":11,"head":{"ref":"feat-a"}}]' > "$F8/GET_repos_acme_thing_pulls__state=open&head=acme%3Afeat-a&per_page=100.json"
+  printf '%s' '{"name":"feat-a","protected":false}' > "$F8/GET_repos_acme_thing_branches_feat-a.json"
+  printf '%s' "$2" > "$F8/GET_repos_acme_thing_rules_branches_feat-a__per_page=100.json"
+}
+UPGRADE8='{"__status":403,"message":"Upgrade to GitHub Pro or make this repository public to enable this feature."}'
+stackbase8 stack-plan "$UPGRADE8"
+check "pr-gate reads a stacked base whose rules a free plan refuses: stacked, nothing on stderr" "True 0" \
+  "$(gh8 pr-gate 12 2>"$F8/err" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"], end=" ")')$(grep -c 'cannot read whether' "$F8/err" || true)"
+stackbase8 stack-404 '{"__status":404,"message":"Not Found"}'
+check "pr-gate reads a stacked base whose rules answer 404: stacked, nothing on stderr" "True 0" \
+  "$(gh8 pr-gate 12 2>"$F8/err" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"], end=" ")')$(grep -c 'cannot read whether' "$F8/err" || true)"
+stackbase8 stack-500 '{"__status":500,"message":"boom"}'
+check "pr-gate names a failed rules read of a stacked base and reads it as not stacked" "False 1" \
+  "$(gh8 pr-gate 12 2>"$F8/err" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"], end=" ")')$(grep -c 'cannot read whether' "$F8/err" || true)"
+
 gate8 head-only "$PULL8" '{"state":"success","statuses":[]}' '{"check_runs":[]}'
 check "pr-gate --head-only answers the head, the draft, the state and the labels" \
   "acme/thing 12 open False $GATEHEAD Not Ready|bug" \
@@ -3718,6 +3738,17 @@ check "a pull_request workflow that never runs on open or push is no CI" "bottom
 stackfix "$SF" main $'on: pull_request\n'
 printf '%s' '{"protected":true}' > "$SF/GET_repos_acme_thing_branches_feat%2Fa.json"
 check "a protected head is no stacked base: 10 is alone, 11 and 12 stack on it" "none|bottom-up feat/a 11 12" "$(plan 10)|$(plan 11)"
+
+# The rules of a base a free plan refuses as no rules (403 « Upgrade to GitHub Pro », or 404) are none: feat/a
+# stacks as before, silently. Any other error of that read is named, and feat/a reads as long-lived.
+stackfix "$SF" main $'on: pull_request\n'
+printf '%s' '{"protected":false}' > "$SF/GET_repos_acme_thing_branches_feat%2Fa.json"
+printf '%s' '{"__status":403,"message":"Upgrade to GitHub Pro or make this repository public to enable this feature."}' > "$SF/GET_repos_acme_thing_rules_branches_feat%2Fa__per_page=100.json"
+check "a base whose rules a free plan refuses is no protected branch: 11 and 12 stack on feat/a, so 10 stacks them" "bottom-up main 10 11 12" "$(plan 10)"
+check "the free plan's refusal of the rules is said nowhere" "0" "$(ghs pr-merge 11 --stack --format raw 2>&1 >/dev/null | grep -c 'cannot read whether' || true)"
+printf '%s' '{"__status":500,"message":"boom"}' > "$SF/GET_repos_acme_thing_rules_branches_feat%2Fa__per_page=100.json"
+check "a failed rules read of a base names it and reads the base as long-lived: 10 stacks nothing on feat/a" "none" "$(plan 10)"
+check "the failed rules read is named on stderr" "1" "$(ghs pr-merge 11 --stack --format raw 2>&1 >/dev/null | grep -c 'cannot read whether' || true)"
 
 # A draft above is left out of the stack with all that stands on it: work stacked on a delivery is opened as
 # a draft on purpose, and merges nothing. A draft below stays, the asked pull request needs it.
