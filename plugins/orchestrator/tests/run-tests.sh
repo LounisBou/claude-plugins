@@ -6770,7 +6770,7 @@ if command -v tmux >/dev/null 2>&1; then
   check "the client of the home tab attaches, and the server is armed" "1|True" \
     "$(hsrv list-clients 2>/dev/null | wc -l | tr -d ' ')|$(ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "print(ia.arm_home('$HSRV', 'suite', ['$(hsrv list-clients -F '#{client_tty}' 2>/dev/null)']))")"
   # A takeover kills window 0 while the tab stays attached: the server stays.
-  hsrv kill-window -t home:0 2>/dev/null
+  hsrv killw -t home:0 2>/dev/null
   sleep 1
   check "a takeover's kill of window 0 leaves the attached server running" "up|2" "$(hserver)|$(hpanes)"
   { kill "$hclient"; wait "$hclient"; } 2>/dev/null
@@ -6809,7 +6809,7 @@ if command -v tmux >/dev/null 2>&1; then
   mvclient=$!
   i=0; while [ "$(mvsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
   ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.arm_home('$MVSRV', 'suite', ['$(mvsrv list-clients -F '#{client_tty}' 2>/dev/null)'])" >/dev/null 2>&1
-  mvsrv kill-window -t home:0 2>/dev/null
+  mvsrv killw -t home:0 2>/dev/null
   mvsrv move-window -d -s "home:1" -t "home:0" 2>/dev/null
   mvpids=$(mvsrv list-panes -s -t home -F '#{pane_pid}' 2>/dev/null | tr '\n' ' ')
   check "the successor's window is window 0, and the server still runs it beside the agent" "Orch: new|2" \
@@ -8319,7 +8319,7 @@ case "$1" in
     cat "$d/screen"
     # What the operator does after the first read: the screen he leaves (sent or cleared).
     [ -f "$d/screen.next" ] && mv "$d/screen.next" "$d/screen" ;;
-  kill-window)
+  killw)
     tty=$(awk -F'\t' -v w="$3" '$3 == w { print $5 }' "$d/panes")
     [ -z "${REC_KEEP_WINDOW:-}" ] && awk -F'\t' -v w="$3" '$3 != w' "$d/panes" > "$d/panes.tmp" && mv "$d/panes.tmp" "$d/panes"
     case "${REC_KEEP_HOST:-}" in 1|"$tty") ;; *) grep -v "^$tty " "$d/ps" > "$d/ps.tmp"; mv "$d/ps.tmp" "$d/ps" ;; esac
@@ -8425,8 +8425,8 @@ check "screen: the pane's capture with its scrollback, read from the bottom" \
 reset_home
 out=$(home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
 check "close: the window killed by its id, proved gone from the process table, its chain entry dropped" \
-  "closed 1 session on /dev/ttys901|[-u][kill-window][-t][@1]|0|0|1" \
-  "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -F '[kill-window]')|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')|$(chainf | grep -c '@2')"
+  "closed 1 session on /dev/ttys901|[-u][killw][-t][@1]|0|0|1" \
+  "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -F '[killw]')|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')|$(chainf | grep -c '@2')"
 # The window's prompt holds what the operator typed and has not sent: the close reads it on the
 # pane's capture, styles included, and refuses at its bound with nothing killed; a rotation keeps
 # its replacement and the old window both.
@@ -8435,46 +8435,46 @@ printf '%s\n' "$PTYPED" > "$TR/screen"
 out=$(ORCHESTRATOR_INPUT_WAIT=0 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1); rc=$?
 check "close: a window whose prompt holds typed text is refused, nothing killed, its host and chain entry kept" \
   "1|1|[-u][capture-pane][-p][-e][-t][%1]|0|1|1" \
-  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 still holds text .*His text: «je réponds')|$(calls | grep -F '[capture-pane]')|$(calls | grep -c '\[kill-window\]')|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')"
+  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 still holds text .*His text: «je réponds')|$(calls | grep -F '[capture-pane]')|$(calls | grep -c '\[killw\]')|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')"
 reset_home
 printf '%s\n' "$PTYPED" > "$TR/screen"
 out=$(ORCHESTRATOR_INPUT_WAIT=0 home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: one" --prompt p 2>&1); rc=$?
 check "rotate: typed text in the old window keeps it, beside its replacement, which runs" "1|new-window|1|1" \
-  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -oE '\[(new|kill)-window\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(printf '%s' "$out" | grep -c 'rotate: the old session on /dev/ttys901 was not closed: its close refused before it ended anything')|$(grep -c ttys903 "$TR/ps")"
+  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -oE '\[(new-window|killw)\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(printf '%s' "$out" | grep -c 'rotate: the old session on /dev/ttys901 was not closed: its close refused before it ended anything')|$(grep -c ttys903 "$TR/ps")"
 reset_home
 printf '%s\n' "$PEMPTY" > "$TR/screen"
 out=$(ORCHESTRATOR_INPUT_WAIT=0 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
 check "close: a window whose prompt shows only the host's faint placeholder is closed as before" "closed 1 session on /dev/ttys901|1" \
-  "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[killw\]')"
 # He sends or clears his text during the wait: the close, which read it, waits, then kills.
 reset_home
 printf '%s\n' "$PTYPED" > "$TR/screen"; printf '%s\n' "$PEMPTY" > "$TR/screen.next"
 out=$(ORCHESTRATOR_INPUT_WAIT=10 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
 check "close: a window whose prompt holds his text waits for it to be sent or cleared, then is closed" \
   "1|closed 1 session on /dev/ttys901|2|1|1" \
-  "$(printf '%s\n' "$out" | grep -c '^close: the prompt on /dev/ttys901 holds text the operator typed and has not sent: waiting up to 10s')|$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[capture-pane\]')|$(calls | grep -c '\[kill-window\]')|$(printf '%s\n' "$out" | grep -c '^close: the operator sent or cleared what he typed in the prompt on /dev/ttys901')"
+  "$(printf '%s\n' "$out" | grep -c '^close: the prompt on /dev/ttys901 holds text the operator typed and has not sent: waiting up to 10s')|$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[capture-pane\]')|$(calls | grep -c '\[killw\]')|$(printf '%s\n' "$out" | grep -c '^close: the operator sent or cleared what he typed in the prompt on /dev/ttys901')"
 # A capture tmux refuses is a prompt that cannot be read: refused, nothing killed.
 reset_home
 out=$(REC_CAPTURE_ERR="can't find pane: %1" home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1); rc=$?
 check "close: a window whose pane tmux fails to capture is refused, nothing killed, its host kept" "3|1|0|1" \
-  "$rc|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 cannot be read (.*), so whether it holds text the operator typed and has not sent is not known')|$(calls | grep -c '\[kill-window\]')|$(grep -c ttys901 "$TR/ps")"
+  "$rc|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 cannot be read (.*), so whether it holds text the operator typed and has not sent is not known')|$(calls | grep -c '\[killw\]')|$(grep -c ttys901 "$TR/ps")"
 rm -f "$TR/screen"
 reset_home
 out=$(home close --tty /dev/ttys902 --expect-title "Agent: one" 2>&1)
 check "a window whose name does not hold the expected words is not killed" "1|0" \
-  "$(printf '%s' "$out" | grep -c "close: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "close: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$(calls | grep -c '\[killw\]')"
 reset_home
 out=$(home close --tty /dev/ttys901 --expect-title '' 2>&1)
 check "an empty title to expect is refused before anything is closed, a blank one too" "1|0|1|0" \
-  "$(printf '%s' "$out" | grep -c 'close: refused: --expect-title is empty: give the title `list` printed for /dev/ttys901')|$(calls | grep -c '\[kill-window\]')|$(home close --tty /dev/ttys901 --expect-title '  ' 2>&1 | grep -c 'expect-title is empty')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'close: refused: --expect-title is empty: give the title `list` printed for /dev/ttys901')|$(calls | grep -c '\[killw\]')|$(home close --tty /dev/ttys901 --expect-title '  ' 2>&1 | grep -c 'expect-title is empty')|$(calls | grep -c '\[killw\]')"
 reset_home
 out=$(home close --tty /dev/ttys950 2>&1)
 check "nor is a window of another session" "1|0" \
-  "$(printf '%s' "$out" | grep -c 'close: refused: /dev/ttys950 is a window of another tmux session')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'close: refused: /dev/ttys950 is a window of another tmux session')|$(calls | grep -c '\[killw\]')"
 rm -f "$TR/iterm-asked"
 out=$(home close --tty /dev/ttys999 2>&1)
 check "and a tty no window of the server runs on is an iTerm2 tab's, asked of the app" "iterm|0|0" \
-  "$(asked)|$(printf '%s' "$out" | grep -c 'no window of this home session runs on')|$(calls | grep -c '\[kill-window\]')"
+  "$(asked)|$(printf '%s' "$out" | grep -c 'no window of this home session runs on')|$(calls | grep -c '\[killw\]')"
 rm -f "$TR/iterm-asked"
 
 reset_home
@@ -8509,15 +8509,15 @@ check "a window whose id the caller's chain does not hold is moved with a warnin
 reset_home
 out=$(home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: one" --prompt p 2>"$WORK/trot.err")
 check "rotate: the replacement's window first, verified on the process table and its transcript, then the old window killed" \
-  "/dev/ttys903⏎closed 1 session on /dev/ttys901|new-window kill-window|1|1" \
-  "$(printf '%s' "$out" | nl_join)|$(calls | grep -oE '\[(new|kill)-window\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(grep -c 'running on /dev/ttys903' "$WORK/trot.err")|$(grep -c 'mode auto read on the transcript' "$WORK/trot.err")"
+  "/dev/ttys903⏎closed 1 session on /dev/ttys901|new-window killw|1|1" \
+  "$(printf '%s' "$out" | nl_join)|$(calls | grep -oE '\[(new-window|killw)\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(grep -c 'running on /dev/ttys903' "$WORK/trot.err")|$(grep -c 'mode auto read on the transcript' "$WORK/trot.err")"
 check "and the chain trades the old window's entry for the new one's" "@2|@4" \
   "$(chainf | sed -n 's/.*:\(@[0-9]*\)".*/\1/p' | tr '\n' '|' | sed 's/|$//')"
 reset_home
 out=$(REC_NO_HOST=1 home spawn --dir "$WORK" --title "Agent: dud" --prompt p --right-of self 2>&1)
 check "a window whose session never started is killed by its own id, and the chain is left as it was" \
-  "1|[-u][kill-window][-t][@4]|2" \
-  "$(printf '%s' "$out" | grep -c 'never started on /dev/ttys903 after 2s; the tab was closed')|$(calls | grep -F '[kill-window]')|$(chainf | wc -l | tr -d ' ')"
+  "1|[-u][killw][-t][@4]|2" \
+  "$(printf '%s' "$out" | grep -c 'never started on /dev/ttys903 after 2s; the tab was closed')|$(calls | grep -F '[killw]')|$(chainf | wc -l | tr -d ' ')"
 check "nothing of iTerm2 was asked by any of these, in a marked session" "none" "$(asked)"
 
 # A rotation spawns the replacement first and closes the old window after, so whatever the close
@@ -8527,24 +8527,24 @@ reset_home
 out=$(home rotate --old-tty /dev/ttys950 --dir "$WORK" --title "Agent: rotated" --prompt p 2>&1)
 rc=$?
 check "rotate of a window of another tmux session is refused before anything is spawned or killed" "1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'rotate: refused: /dev/ttys950 is a window of another tmux session')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'rotate: refused: /dev/ttys950 is a window of another tmux session')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[killw\]')"
 reset_home
 out=$(home rotate --old-tty /dev/ttys902 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>&1)
 rc=$?
 check "rotate of a window whose name does not hold the expected words is refused before anything is spawned or killed" "1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c "rotate: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "rotate: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[killw\]')"
 # A tty a brief printed may be another agent's by the time the rotation runs: a window's name is
 # fixed at its making, so a rotation of a window must say whose it expects, and is refused without.
 reset_home
 out=$(home rotate --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: rotated" --prompt p 2>&1)
 rc=$?
 check "rotate of a window with no --expect-title is refused before anything is spawned or killed" "1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c "rotate: refused: --expect-title is required for a window of a home session: give the name .list. printed for /dev/ttys901")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "rotate: refused: --expect-title is required for a window of a home session: give the name .list. printed for /dev/ttys901")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[killw\]')"
 reset_home
 out=$(home rotate --old-tty /dev/ttys900 --dir "$WORK" --title "Agent: rotated" --prompt p 2>&1)
 rc=$?
 check "rotate of window 0 stays refused before anything is spawned, through the check close shares" "1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'rotate: refused: the window on /dev/ttys900 is window 0')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'rotate: refused: the window on /dev/ttys900 is window 0')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[killw\]')"
 # What only the close can know comes after the spawn, and once spawned the replacement is never
 # closed: two agents can be recovered by hand, none cannot. A close of the old session that
 # refused, failed or raised, and a read of it that failed, end on one `rotate:` line that names
@@ -8553,13 +8553,13 @@ check "rotate of window 0 stays refused before anything is spawned, through the 
 reset_home
 out=$(REC_KEEP_WINDOW=1 REC_KEEP_HOST=1 REC_KILL_ERR="server busy" home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
-check "a close whose kill tmux refused keeps the replacement, and names the close of the old window that still stands, guarded on its name" "1|1|1|[-u][kill-window][-t][@1]|1|1|/dev/ttys903" \
-  "$(printf '%s' "$err" | grep -c 'ERROR: close: tmux refused kill-window: server busy')|$(printf '%s' "$err" | grep -cF 'ERROR: rotate: the close of the old session on /dev/ttys901 failed; the replacement runs on /dev/ttys903 and is kept; its window or tab is still there, the same window @1 as before the spawn: close it with close --tty /dev/ttys901 --expect-title '"'"'Agent: one'"'"' --keep-checkout (its chain entry is left for that close)')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -F '[kill-window]' | paste -sd'|' -)|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
+check "a close whose kill tmux refused keeps the replacement, and names the close of the old window that still stands, guarded on its name" "1|1|1|[-u][killw][-t][@1]|1|1|/dev/ttys903" \
+  "$(printf '%s' "$err" | grep -c 'ERROR: close: tmux refused kill-window: server busy')|$(printf '%s' "$err" | grep -cF 'ERROR: rotate: the close of the old session on /dev/ttys901 failed; the replacement runs on /dev/ttys903 and is kept; its window or tab is still there, the same window @1 as before the spawn: close it with close --tty /dev/ttys901 --expect-title '"'"'Agent: one'"'"' --keep-checkout (its chain entry is left for that close)')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -F '[killw]' | paste -sd'|' -)|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
 reset_home
 out=$(REC_KEEP_HOST=1 home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
-check "a close that took the old window but not its host keeps the replacement, and names neither a kill of a host never identified nor a close of a window that is gone" "1|1|0|1|[-u][kill-window][-t][@1]|1|1|/dev/ttys903" \
-  "$(printf '%s' "$err" | grep -c 'ERROR: close: the request was accepted but .* is still running on /dev/ttys901')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the close of the old session on /dev/ttys901 failed; the replacement runs on /dev/ttys903 and is kept; a host runs on /dev/ttys901, but the old one's pid was not read before the spawn, so it cannot be told from another session's: no kill is named; its window or tab is gone, and its chain entry is left")|$(printf '%s' "$err" | grep '^ERROR: rotate:' | grep -c 'close --tty /dev/ttys901')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -F '[kill-window]' | paste -sd'|' -)|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
+check "a close that took the old window but not its host keeps the replacement, and names neither a kill of a host never identified nor a close of a window that is gone" "1|1|0|1|[-u][killw][-t][@1]|1|1|/dev/ttys903" \
+  "$(printf '%s' "$err" | grep -c 'ERROR: close: the request was accepted but .* is still running on /dev/ttys901')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the close of the old session on /dev/ttys901 failed; the replacement runs on /dev/ttys903 and is kept; a host runs on /dev/ttys901, but the old one's pid was not read before the spawn, so it cannot be told from another session's: no kill is named; its window or tab is gone, and its chain entry is left")|$(printf '%s' "$err" | grep '^ERROR: rotate:' | grep -c 'close --tty /dev/ttys901')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -F '[killw]' | paste -sd'|' -)|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
 # A window renamed during the spawn: the close refuses it by its name, before any kill, and the
 # replacement stays beside it, its window never killed and its chain entry kept. The window is
 # still the one read before the spawn (its id, not its name), so the line names its close.
@@ -8567,7 +8567,7 @@ reset_home
 out=$(REC_RENAME_ON_NEW='@1 Agent: renamed' home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
 check "a close refused by its name before any kill keeps the replacement, and names the close of the old window that still stands, guarded on the name it has now" "1|1|1|0|1|1|/dev/ttys903" \
-  "$(printf '%s' "$err" | grep -c "ERROR: close: refused: the window on /dev/ttys901 is named 'Agent: renamed'")|$(printf '%s' "$err" | grep -cF 'ERROR: rotate: the old session on /dev/ttys901 was not closed: its close refused before it ended anything; the replacement runs on /dev/ttys903 and is kept; its window or tab is still there, the same window @1 as before the spawn: close it with close --tty /dev/ttys901 --expect-title '"'"'Agent: renamed'"'"' --keep-checkout (its chain entry is left for that close)')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
+  "$(printf '%s' "$err" | grep -c "ERROR: close: refused: the window on /dev/ttys901 is named 'Agent: renamed'")|$(printf '%s' "$err" | grep -cF 'ERROR: rotate: the old session on /dev/ttys901 was not closed: its close refused before it ended anything; the replacement runs on /dev/ttys903 and is kept; its window or tab is still there, the same window @1 as before the spawn: close it with close --tty /dev/ttys901 --expect-title '"'"'Agent: renamed'"'"' --keep-checkout (its chain entry is left for that close)')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[killw\]')|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
 # The old window gone during the spawn: it is read by its id before the spawn and looked for
 # again before the close, so nothing is killed; the replacement is kept, and the one line names
 # it and the host left behind.
@@ -8575,7 +8575,7 @@ reset_home
 out=$(REC_GONE_ON_NEW=@1 home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
 check "an old window gone during the spawn keeps the replacement, and one line names it and the host left" "0|1|1|1|0|1|/dev/ttys903" \
-  "$(printf '%s' "$err" | grep -c 'no window of this home session runs on /dev/ttys901')|$(printf '%s' "$err" | grep -c '^ERROR:')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the old session on /dev/ttys901 was not closed: its window or tab is gone since the spawn; the replacement runs on /dev/ttys903 and is kept; a host runs on /dev/ttys901, but the old one's pid was not read before the spawn, so it cannot be told from another session's: no kill is named; its window or tab is gone, and its chain entry is left")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(chainf | grep -c '@4')|$out"
+  "$(printf '%s' "$err" | grep -c 'no window of this home session runs on /dev/ttys901')|$(printf '%s' "$err" | grep -c '^ERROR:')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the old session on /dev/ttys901 was not closed: its window or tab is gone since the spawn; the replacement runs on /dev/ttys903 and is kept; a host runs on /dev/ttys901, but the old one's pid was not read before the spawn, so it cannot be told from another session's: no kill is named; its window or tab is gone, and its chain entry is left")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[killw\]')|$(chainf | grep -c '@4')|$out"
 # Another window given the old window's tty during the spawn is no « still there »: the old
 # window is read by its id before the spawn, the window on its tty by the close is another's,
 # and that one is neither closed nor named in a close step.
@@ -8583,7 +8583,7 @@ reset_home
 out=$(REC_GONE_ON_NEW=@1 REC_ADD_ON_NEW='$1\t5\t@7\t%7\t/dev/ttys901\tstranger\t✳ Agent: stranger' home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
 check "a stranger on the old window's tty after the spawn is never closed, and no close of its tty is printed" "1|0|1|0|1|/dev/ttys903" \
-  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the old session on /dev/ttys901 was not closed: /dev/ttys901 now holds another session (window @7, named 'stranger'), not the window @1 read before the spawn; the replacement runs on /dev/ttys903 and is kept; ")|$(printf '%s' "$err" | grep -c 'close --tty /dev/ttys901')|$(chainf | grep -c '@4')|$out"
+  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[killw\]')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the old session on /dev/ttys901 was not closed: /dev/ttys901 now holds another session (window @7, named 'stranger'), not the window @1 read before the spawn; the replacement runs on /dev/ttys903 and is kept; ")|$(printf '%s' "$err" | grep -c 'close --tty /dev/ttys901')|$(chainf | grep -c '@4')|$out"
 # The tab that shows the caller's own home server: the replacement would be a window of that
 # server, and the close of the tab ends the server, the replacement and the caller with it.
 # Refused before anything is spawned.
@@ -9228,7 +9228,7 @@ for m in create-raises tmux-killed; do
 done
 # A window tmux made and answered badly: its id is kept from the creation and named, and no step
 # ends the old session; once killed, nothing of the replacement is left.
-printf 'import os, sys\nif "new-window" in sys.argv:\n    print("@4 %%4")\nelif "kill-window" in sys.argv:\n    sys.exit(0 if os.environ.get("PROBE_KILL_OK") else 1)\n' > "$WORK/half-tmux.py"
+printf 'import os, sys\nif "new-window" in sys.argv:\n    print("@4 %%4")\nelif "killw" in sys.argv:\n    sys.exit(0 if os.environ.get("PROBE_KILL_OK") else 1)\n' > "$WORK/half-tmux.py"
 printf '#!/bin/bash\nexec "%s" "%s" "$@"\n' "$py" "$WORK/half-tmux.py" > "$WORK/half-tmux"
 chmod +x "$WORK/half-tmux"
 res=$(PROBE_TMUX="$WORK/half-tmux" TMUX="$TSOCK,4242,1" TMUX_PANE=%0 rprobe tmux-window-left)
@@ -9322,7 +9322,7 @@ for c in "close --tty /dev/ttys777" "screen --tty /dev/ttys777 --lines 5" \
   reset_home; rm -f "$TR/iterm-asked"
   out=$(home $c 2>&1)
   check "from a home session, ${c%% *} on an iTerm2 tab's tty goes to the app, tmux touching no window" "0|0" \
-    "$(calls | grep -cE '\[(kill-window|capture-pane|move-window)\]')|$(printf '%s' "$out" | grep -c 'of this home session\|window of another tmux')"
+    "$(calls | grep -cE '\[(killw|capture-pane|move-window)\]')|$(printf '%s' "$out" | grep -c 'of this home session\|window of another tmux')"
   case "$c" in close*) check "and the app is what close asked" "iterm" "$(asked)";; esac
 done
 rm -f "$TR/iterm-asked"
@@ -9448,10 +9448,10 @@ check "one unparsable line among good ones is one warning, the good ones still l
 reset_home
 out=$(REC_NEW_RAW='@7 %7' home spawn --dir "$WORK" --title "Agent: odd" --prompt p --right-of self --no-verify 2>&1)
 check "a window made and answered in too few fields is killed by its id, then the spawn dies" "1|1" \
-  "$(calls | grep -c '^\[-u\]\[kill-window\]\[-t\]\[@7\]$')|$(printf '%s' "$out" | grep -c 'ERROR: spawn: tmux made a window and answered')"
+  "$(calls | grep -c '^\[-u\]\[killw\]\[-t\]\[@7\]$')|$(printf '%s' "$out" | grep -c 'ERROR: spawn: tmux made a window and answered')"
 reset_home
 out=$(REC_NEW_RAW='weird' home spawn --dir "$WORK" --title "Agent: odd" --prompt p --right-of self --no-verify 2>&1)
-check "an answer with no window id kills nothing" "0" "$(calls | grep -c '\[kill-window\]')"
+check "an answer with no window id kills nothing" "0" "$(calls | grep -c '\[killw\]')"
 
 # A window already gone is closed; any other refusal is a failure with its message.
 reset_home
@@ -9517,8 +9517,8 @@ out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 # No transcript of the predecessor is found here: the line says no « handed over » was read.
 check "takeover kills window 0 by its id, proved gone, and moves the successor to index 0 detached" \
   "takeover: no transcript of the session on /dev/ttys900 was found: no « handed over » read
-took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
-  "$out|$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')|$(calls | grep -c '\[select-window\]')|$(grep -c ttys900 "$TR/ps")"
+took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][killw][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
+  "$out|$(calls | grep -F '[killw]')|$(calls | grep -F '[move-window]')|$(calls | grep -c '\[select-window\]')|$(grep -c ttys900 "$TR/ps")"
 check "a takeover writes its dated line: the socket, the cause takeover and the predecessor's tty" "1" \
   "$(grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: window 0 of home ended: cause=takeover tty=/dev/ttys900$' "$TSTATE/close.log")"
 # A TMUX value that names no socket gives the takeover no socket to write: no line, rather than a
@@ -9543,22 +9543,22 @@ printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch: home	✳ Orch: home' '$1	1	@1	%1	/d
 rm -f "$TR/calls"
 out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: other" 2>&1)
 check "a window 0 whose name does not hold the expected words is not killed" "1|0" \
-  "$(printf '%s' "$out" | grep -c "takeover: refused: the window on /dev/ttys900 is named 'Orch: home', which does not contain 'Orch: other'")|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "takeover: refused: the window on /dev/ttys900 is named 'Orch: home', which does not contain 'Orch: other'")|$(calls | grep -c '\[killw\]')"
 rm -f "$TR/calls"
 out=$(heir takeover --tty /dev/ttys901 2>&1)
 check "an agent's window is not the predecessor's place" "1|0" \
-  "$(printf '%s' "$out" | grep -c 'takeover: refused: the window on /dev/ttys901 is window 1, not window 0')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'takeover: refused: the window on /dev/ttys901 is window 1, not window 0')|$(calls | grep -c '\[killw\]')"
 rm -f "$TR/calls"
 out=$(heir takeover --tty /dev/ttys903 2>&1)
 check "nor is the successor's own window" "1|0" \
-  "$(printf '%s' "$out" | grep -c "takeover: refused: /dev/ttys903 is this session's own window")|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "takeover: refused: /dev/ttys903 is this session's own window")|$(calls | grep -c '\[killw\]')"
 # close is the wrong command for window 0 of a home session: refused before anything is killed
 # or moved, and the refusal names takeover, the one command that puts a successor at index 0.
 rm -f "$TR/calls"
 out=$(heir close --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 rc=$?
 check "close on window 0 of a home session is refused before anything is killed, and names takeover" "1|1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'close: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title .Orch: home., which also puts its own window at index 0')|$(printf '%s' "$out" | grep -cF -e "--expect-title 'Orch: home',")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+  "$(printf '%s' "$out" | grep -c 'close: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title .Orch: home., which also puts its own window at index 0')|$(printf '%s' "$out" | grep -cF -e "--expect-title 'Orch: home',")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[killw\]')|$(calls | grep -c '\[move-window\]')"
 # rotate closes the old window only after its replacement has spawned, so a close that refuses
 # window 0 would leave the replacement running with nothing to close: the rotation refuses window
 # 0 first, before anything is spawned or killed, with the refusal close gives and the same command.
@@ -9566,7 +9566,7 @@ rm -f "$TR/calls"
 out=$(heir rotate --old-tty /dev/ttys900 --expect-title "Orch: home" --dir "$WORK" --title "Agent: rotated" --tier light --prompt p 2>&1)
 rc=$?
 check "rotate on window 0 of a home session is refused before anything is spawned or killed, and names takeover" "1|1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'rotate: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title .Orch: home., which also puts its own window at index 0')|$(printf '%s' "$out" | grep -cF -e "--expect-title 'Orch: home',")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'rotate: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title .Orch: home., which also puts its own window at index 0')|$(printf '%s' "$out" | grep -cF -e "--expect-title 'Orch: home',")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[killw\]')"
 # The coordinator's pause close is a close on a home tab's tty, which is not a pane of this
 # server: it takes the home server's road, never window 0's refusal, and kills no window. The
 # whole close (tab and server ended) is pinned beside the home close tests.
@@ -9574,7 +9574,7 @@ printf '/dev/ttys970 tmux -u -L orch-tsuite attach -t home\n' >> "$TR/ps"
 rm -f "$TR/calls"
 out=$(heir close --tty /dev/ttys970 2>&1)
 check "a close on a home tab's tty is not window 0's refusal, and kills no window" "0|0" \
-  "$(printf '%s' "$out" | grep -c 'close: refused: the window on')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'close: refused: the window on')|$(calls | grep -c '\[killw\]')"
 grep -v '^/dev/ttys970 ' "$TR/ps" > "$TR/ps.tmp" && mv "$TR/ps.tmp" "$TR/ps"
 # The successor's takeover proves what it did before it takes the index: a host that outlives
 # the kill, or a window still listed, stops it; the name guard is required; the chain entry of
@@ -9589,15 +9589,15 @@ takeover_setup() {
 takeover_setup
 out=$(REC_KEEP_HOST=1 heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 check "a host still on the tty after the kill stops the takeover: it dies and window 0 is not taken" "1|1|0" \
-  "$(printf '%s' "$out" | grep -c 'takeover: the window @0 was killed and .* still runs on /dev/ttys900; window 0 was not taken')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+  "$(printf '%s' "$out" | grep -c 'takeover: the window @0 was killed and .* still runs on /dev/ttys900; window 0 was not taken')|$(calls | grep -c '\[killw\]')|$(calls | grep -c '\[move-window\]')"
 takeover_setup
 out=$(REC_KEEP_WINDOW=1 heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 check "a window still listed by the server after the kill stops it too" "1|1|0" \
-  "$(printf '%s' "$out" | grep -c 'takeover: the window @0 is still there; window 0 was not taken')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+  "$(printf '%s' "$out" | grep -c 'takeover: the window @0 is still there; window 0 was not taken')|$(calls | grep -c '\[killw\]')|$(calls | grep -c '\[move-window\]')"
 takeover_setup
 out=$(heir takeover --tty /dev/ttys900 2>&1)
 check "a takeover without the expected title is refused before anything is killed" "1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'takeover: --expect-title is required')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+  "$(printf '%s' "$out" | grep -c 'takeover: --expect-title is required')|$(calls | grep -c '\[killw\]')|$(calls | grep -c '\[move-window\]')"
 takeover_setup
 printf '{"tab_id":"tmux:%s:@0","tty":"/dev/ttys905","owner":"tmux:%s:%%9"}\n{"tab_id":"tmux:%s:@7","tty":"/dev/ttys906","owner":"tmux:%s:%%9"}\n' "$TSOCK" "$TSOCK" "$TSOCK" "$TSOCK" > "$TSTATE/chains/ttys905.jsonl"
 out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
@@ -9907,7 +9907,7 @@ case "$1" in
   has-session) exit 1 ;;
   kill-server) [ -f "$d/kill-err" ] && { cat "$d/kill-err" >&2; exit 1; }; exit 0 ;;
   list-windows) [ -f "$d/windows" ] && cat "$d/windows"; exit 0 ;;
-  kill-window) [ -f "$d/kwin-err" ] && { cat "$d/kwin-err" >&2; exit 1; }; exit 0 ;;
+  killw) [ -f "$d/kwin-err" ] && { cat "$d/kwin-err" >&2; exit 1; }; exit 0 ;;
   list-panes) [ -f "$d/panes-err" ] && { cat "$d/panes-err" >&2; exit 1; }; [ -f "$d/panes" ] && cat "$d/panes"; exit 0 ;;
   # Window 0's host shows its prompt box, empty: nothing the operator typed is waiting.
   capture-pane) printf '%s\n\xe2\x9d\xaf\xc2\xa0\n%s\n' "$(printf '─%.0s' {1..40})" "$(printf '─%.0s' {1..40})"; exit 0 ;;
@@ -10980,11 +10980,11 @@ export LIFE_NEW_TTY=/dev/ttys983
 agent_home
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "closing a home tab whose server runs an agent keeps the server with no flag: it is never disarmed, window 0 alone is killed, never the server" "0|0|1|0|1" \
-  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-hook][-gu]')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(hcalls | grep -cF '[kill-server]')|$(hcalls | grep -c 'kill-window')"
+  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-hook][-gu]')|$(hcalls | grep -cF '[killw][-t][home:0]')|$(hcalls | grep -cF '[kill-server]')|$(hcalls | grep -c 'killw')"
 check "and says the server is kept, the tab that shows it now, then each agent with its attach line" "closed 1 session on /dev/ttys970|home: kept the server orch-abcdef12 for 1 agent(s), session abcdef12-3456-4789-8abc-def012345678, shown on /dev/ttys983|agent: Agent: m1a on /dev/ttys962: $HR/tmux -L orch-abcdef12 attach -t home:1" \
   "$(sfield "$res" OUT)"
-check "and a new tab is opened right of the old one, proved and made an owner beside it before window 0 is killed" "1|@home-owners][ /dev/ttys970 /dev/ttys983 ],kill-window" \
-  "$(sfield "$res" calls | tr ',' '\n' | grep -c '^create beside /dev/ttys970 right Agent: m1a$')|$(hcalls | grep -oE '@home-owners\]\[ /dev/ttys970 /dev/ttys983 \]|kill-window' | paste -sd, -)"
+check "and a new tab is opened right of the old one, proved and made an owner beside it before window 0 is killed" "1|@home-owners][ /dev/ttys970 /dev/ttys983 ],killw" \
+  "$(sfield "$res" calls | tr ',' '\n' | grep -c '^create beside /dev/ttys970 right Agent: m1a$')|$(hcalls | grep -oE '@home-owners\]\[ /dev/ttys970 /dev/ttys983 \]|killw' | paste -sd, -)"
 agent_home
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--end-agents"]')
 check "--end-agents ends the server and the agent with it" "0|1|closed 1 session on /dev/ttys970" \
@@ -10996,7 +10996,7 @@ check "a window 0 tmux refuses to kill closes the new tab and nothing else" "1|1
 agent_home; printf '/dev/ttys970\n/dev/ttys984\n' > "$HR/clients"; printf ' /dev/ttys970 /dev/ttys984 \n' > "$HR/owners"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a server another tab of this machine owns stays that tab's: no tab is opened, nothing is armed, window 0 is killed and the tab closed" "0|0|0|1|closed 1 session on /dev/ttys970|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create')|$(hcalls | grep -c '@home-owners\]\[ ')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')|$(sfield "$res" OUT | grep -c 'shown on /dev/ttys984')"
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create')|$(hcalls | grep -c '@home-owners\]\[ ')|$(hcalls | grep -cF '[killw][-t][home:0]')|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')|$(sfield "$res" OUT | grep -c 'shown on /dev/ttys984')"
 agent_home; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a new tab that shows no client is closed, and nothing is killed, armed or closed" "1|1|0|0|0|1" \
@@ -11006,16 +11006,16 @@ check "a new tab that shows no client is closed, and nothing is killed, armed or
 agent_home; printf 'arm refused\n' > "$HR/arm-err"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a new tab that cannot be made an owner is closed, and nothing is killed or closed" "1|1|0|0|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close_made')|$(hcalls | grep -c 'kill-window')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'the tab on /dev/ttys983 could not be made an owner.*the tab opened on /dev/ttys983 was closed; the server orch-abcdef12 keeps its tab /dev/ttys970')"
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close_made')|$(hcalls | grep -c 'killw')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'the tab on /dev/ttys983 could not be made an owner.*the tab opened on /dev/ttys983 was closed; the server orch-abcdef12 keeps its tab /dev/ttys970')"
 agent_home; printf ' /dev/ttys970 /dev/ttys984 \n' > "$HR/owners"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
-check "an owner listed but no longer attached stands for no tab: a new tab is opened and made an owner before window 0 is killed" "0|1|@home-owners][ /dev/ttys970 /dev/ttys983 ],kill-window|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create beside /dev/ttys970')|$(hcalls | grep -oE '@home-owners\]\[ /dev/ttys970 /dev/ttys983 \]|kill-window' | paste -sd, -)|$(sfield "$res" OUT | grep -c 'shown on /dev/ttys983')"
+check "an owner listed but no longer attached stands for no tab: a new tab is opened and made an owner before window 0 is killed" "0|1|@home-owners][ /dev/ttys970 /dev/ttys983 ],killw|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create beside /dev/ttys970')|$(hcalls | grep -oE '@home-owners\]\[ /dev/ttys970 /dev/ttys983 \]|killw' | paste -sd, -)|$(sfield "$res" OUT | grep -c 'shown on /dev/ttys983')"
 unset LIFE_NEW_TTY
 agent_home; printf '0 /dev/ttys961\n' > "$HR/panes"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a server with no agent is ended as before" "0|1|0" \
-  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -c 'kill-window')"
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -c 'killw')"
 # Fail closed: whether an agent lives is read on the process table and the server's panes, and a
 # reading that cannot be made is no answer of « none ».
 agent_home
