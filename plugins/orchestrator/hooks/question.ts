@@ -73,10 +73,11 @@ export type Asked = AskFields & {
   answer: AskedAnswer | null
   /**
    * The answer's trip to its asker: on the owner's machine, delivered or failed; on a replica, its
-   * answer given here on its way to the owner (pending, then sent), delivered once acknowledged.
+   * answer given here on its way to the owner (pending, then sent), delivered once acknowledged. A
+   * replica's last send, refused: the address that refused it, and its refusals in a row.
    */
-  delivery?: { state: 'pending' | 'sent' | 'delivered' | 'failed'; at: string; attempts: number; reason?: string }
-  /** A replica (remote-asked.ts): the owner's machine, and the address its last push came from. */
+  delivery?: { state: 'pending' | 'sent' | 'delivered' | 'failed'; at: string; attempts: number; reason?: string; refused?: { to: string; sends: number } }
+  /** A replica (remote-asked.ts): the owner's machine, and the address its last push came from, or the one the host's listing gave since. */
   origin?: { machine: string; address: string }
   /** On the owner's machine: the push of this `seq` to the coordinator on another machine, and how it went. */
   replica?: { seq: number; state: 'sent' | 'acked' | 'failed'; attempts: number; at: string; reason?: string }
@@ -177,7 +178,14 @@ function deliveryOf(read: unknown): Asked['delivery'] | null {
   const state = DELIVERY_STATES.find(known => known === read['state'])
   const [at, attempts] = [read['at'], read['attempts']]
   const extra = texts(read, ['reason'] as const)
-  return state !== undefined && isText(at) && isCount(attempts) && extra !== null ? { state, at, attempts, ...extra } : null
+  const refused = read['refused'] === undefined ? undefined : refusedOf(read['refused'])
+  return state !== undefined && isText(at) && isCount(attempts) && extra !== null && refused !== null ? { state, at, attempts, ...extra, ...(refused !== undefined ? { refused } : {}) } : null
+}
+
+function refusedOf(read: unknown): NonNullable<Asked['delivery']>['refused'] | null {
+  if (!isRecord(read)) return null
+  const [to, sends] = [read['to'], read['sends']]
+  return isText(to) && isCount(sends) ? { to, sends } : null
 }
 
 function replicaOf(read: unknown): Asked['replica'] | null {
