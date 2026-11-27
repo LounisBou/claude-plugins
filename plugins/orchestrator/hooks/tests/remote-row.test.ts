@@ -568,13 +568,14 @@ test('a remote orchestrator waiting on the operator stays drawn for hours; past 
 const CI_WATCH = `${HOME}/.claude/claude-orchestrator/ci-watch`
 const ME = 's-one'
 
-// The row a turn end sends names its session's account and live agent count, read from the session's own facts: the
-// host record of its pid under its account's directory, its tty's chain, and the process table.
+// The row a turn end sends names its session's account and live agent count, read from the session's own facts: its
+// configuration directory, its tty's chain, and the process table.
+const PLAN2 = [HOME, '.claude'].join('/') + '-bis'
 function senderFacts(ps: string | 'fails') {
   const fx = fake({ ps })
-  fx.files.set(ROW, storeRow({ pid: '900', tty: '/dev/ttys002', config: `${HOME}/.claude-bis`, chain_owner: 'OWNER' }))
+  fx.files.set(ROW, storeRow({ pid: '900', tty: '/dev/ttys002', config: PLAN2, chain_owner: 'OWNER' }))
   fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys002.jsonl`, JSON.stringify({ tab_id: 't-1', tty: '/dev/ttys003', owner: 'OWNER' }) + '\n')
-  fx.files.set(`${HOME}/.claude-bis/sessions/901.json`, JSON.stringify({ sessionId: 's-2', name: 'Agent: x', status: 'busy' }))
+  fx.files.set(`${PLAN2}/sessions/901.json`, JSON.stringify({ sessionId: 's-2', name: 'Agent: x', status: 'busy' }))
   return fx
 }
 

@@ -46,6 +46,7 @@ import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfter
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
 import { configDir, dataDir, gateEnv, logLine, moduleDir, stateDir, storeIo, writeAtomic } from './module-io.ts'
+import { configDirOf } from '../core/env.ts'
 import { unattendedPaneLines, type Unattended, type UnattendedPaneLine } from '../core/pr-ledger.ts'
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ciGatePath, ROUND_DIR } from '../core/orchestration.ts'
@@ -919,15 +920,15 @@ const ACCOUNTS: Readonly<Record<string, string>> = { plan1: 'plan 1', plan2: 'pl
 
 // A session's account and live agent count, read from its own facts at this drawing (the pane and the sender of
 // a remote row alike). A remote row carries what its sender read. A local row reads its configuration directory
-// from its own host record (ownConfigOf: the record of its pid under one account's directory, and not another's),
-// its tty (its row's, else its pid's on the process table) and the chain of that tty: its entries of the owner its
-// row names. With no owner named, the chain's entries count only when one owner wrote them all: another owner's on
-// a recycled tty is not this session's. The agents are those alive at this drawing, each session once, over the
-// process table this drawing read; none is no count. A value the facts do not carry is null (no host record, no
-// tty, a listing that failed, an agent list not read within the bound): drawn as nothing and logged, never as « ? ».
+// (its row's, else the one its process was started with: envConfigOf), its tty (its row's, else its pid's on the
+// process table) and the chain of that tty: its entries of the owner its row names. With no owner named, the
+// chain's entries count only when one owner wrote them all: another owner's on a recycled tty is not this session's.
+// The agents are those alive at this drawing, each session once, over the process table this drawing read; none is
+// no count. A value the facts do not carry is null (no pid, no environment, no tty, a listing that failed, an agent
+// list not read within the bound): drawn as nothing and logged, never as « ? ».
 async function fleetOf($: Host<'env' | 'fs' | 'plugin' | 'process'>, row: SessionRow, home: string, table: ProcessTable | null | undefined, seen: Set<string>): Promise<Fleet> {
   if (row.machine) return gapsLogged($, row, { account: row.account ?? null, agents: row.agents ?? null }, seen)
-  const config = row.config || await ownConfigOf($, row, home)
+  const config = row.config || await envConfigOf($, row, home)
   const account = config ? ACCOUNTS[planOfConfig(config, home)] ?? null : null
   const tty = row.tty || (row.pid && table ? table.get(String(row.pid))?.tty ?? null : null)
   let agents: number | null = null
@@ -938,17 +939,18 @@ async function fleetOf($: Host<'env' | 'fs' | 'plugin' | 'process'>, row: Sessio
   return gapsLogged($, row, { account, agents }, seen)
 }
 
-// The configuration directory a session runs on, read from its own host record: `sessions/<pid>.json` under one
-// account's directory, naming the row's session. Null unless exactly one of the accounts holds it, so another
-// session's account is never taken for this one's.
-async function ownConfigOf($: Host<'fs'>, row: SessionRow, home: string): Promise<string | null> {
-  if (!row.pid || !row.name) return null
-  const found: string[] = []
-  for (const config of [`${home}/.claude`, `${home}/.claude-bis`]) {
-    const record = hostRecordOf(String(await $.fs.read(`${config}/sessions/${row.pid}.json`).catch(() => '')))
-    if (record?.name === row.name) found.push(config)
-  }
-  return found.length === 1 ? found[0] ?? null : null
+// The configuration directory a session runs on, read from the environment of its pid: the CLAUDE_CONFIG_DIR its
+// process was started with, that one variable taken from the process listing and nothing else kept. Absent, the
+// host's default directory. Null when the environment cannot be read (no pid, a listing that failed or named no
+// process): never read as absent.
+async function envConfigOf($: Host<'process'>, row: SessionRow, home: string): Promise<string | null> {
+  if (!row.pid || !/^\d+$/.test(String(row.pid))) return null
+  const listed = await $.process.run(['ps', 'eww', '-o', 'command=', '-p', String(row.pid)], { timeoutMs: 5000 }).catch(() => null)
+  if (!isRecord(listed) || listed['exitCode'] !== 0) return null
+  const text = String(listed['stdout'] ?? '').trim()
+  if (text === '') return null
+  const named = /(?:^|\s)CLAUDE_CONFIG_DIR=(\S+)/.exec(text)
+  return named ? named[1] ?? null : configDirOf({}, home)
 }
 
 // The distinct owners of the entries the launcher kept under `tty` (none when the chain is not there).

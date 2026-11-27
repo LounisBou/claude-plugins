@@ -2880,7 +2880,8 @@ test('a git that hangs holds no render: the origin read is bounded, and a render
     expect((asked[0] as { timeoutMs: number }).timeoutMs).toBeLessThanOrEqual(2000)
     // A render whose reads took longer than its bound says so, once, with its duration: here the
     // process listing its live row's pid sends the store's read to.
-    fx.files.set(`${SESSIONS}/low`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: low' }), pid: '501' }) + '\n')
+    // Its row carries its configuration directory, as a row of this module does: no environment read adds a listing.
+    fx.files.set(`${SESSIONS}/low`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: low' }), pid: '501', config: [HOME, '.claude'].join('/') }) + '\n')
     fx.dollar.process.run = async (argv: readonly string[], init?: { timeoutMs?: number }) => {
       if (argv[0] === 'ps') skew += 6000
       return run(argv, init)
@@ -3103,15 +3104,25 @@ const fleetRow = (name: string, over: Partial<SessionRow> = {}) =>
 const chainOf = (...entries: { tty: string; owner?: string }[]) =>
   entries.map((e, i) => JSON.stringify({ tab_id: `t-${i}-${e.tty}`, tty: `/dev/${e.tty}`, owner: e.owner ?? OWNER })).join('\n') + '\n'
 // The machine's process table, `pid stat tty` a line, read afresh at each listing; the orchestrator's host among them.
-function fleet(rows: Record<string, SessionRow>, agents: Record<string, string>) {
+// `environ` gives the command line `ps eww` shows for a pid (its environment after it); a pid it does not name is a
+// process with no CLAUDE_CONFIG_DIR, and a null is a listing that failed.
+function fleet(rows: Record<string, SessionRow>, agents: Record<string, string>, environ: Record<string, string | null> = {}) {
   const fx = fakeDollar({ launchName: 'Coord: main' })
   for (const [key, value] of Object.entries(rows)) fx.files.set(`${SESSIONS}/${key}`, JSON.stringify(value) + '\n')
   const table = new Map<string, string>([['900', 'S+ ttys002'], ['901', 'S+ ttys003'], ['911', 'S+ ttys003'], ['902', 'S+ ttys004']])
   const run = fx.dollar.process.run
   let listing: 'answers' | 'fails' = 'answers'
-  fx.dollar.process.run = async (argv: readonly string[]) => argv[0] === 'ps' && argv[1] === '-A'
-    ? listing === 'fails' ? { exitCode: 1, stdout: '', stderr: 'no' } : { exitCode: 0, stdout: [...table].map(([pid, rest]) => `  ${pid} ${rest}`).join('\n') + '\n', stderr: '' }
-    : run(argv)
+  fx.dollar.process.run = async (argv: readonly string[]) => {
+    if (argv[0] === 'ps' && argv[1] === 'eww') {
+      const pid = argv[argv.length - 1] ?? ''
+      const text = pid in environ ? environ[pid] : '/usr/bin/hostcli --name x'
+      return text === null || text === undefined ? { exitCode: 1, stdout: '', stderr: 'no' } : { exitCode: 0, stdout: `${text}\n`, stderr: '' }
+    }
+    if (argv[0] === 'ps' && argv[1] === '-A') {
+      return listing === 'fails' ? { exitCode: 1, stdout: '', stderr: 'no' } : { exitCode: 0, stdout: [...table].map(([pid, rest]) => `  ${pid} ${rest}`).join('\n') + '\n', stderr: '' }
+    }
+    return run(argv)
+  }
   // The host's record of each live agent, in the configuration directory its orchestrator runs on.
   for (const [pid, session] of Object.entries(agents)) fx.files.set(`${PLAN2}/sessions/${pid}.json`, JSON.stringify({ sessionId: session, name: `Agent: ${session}`, status: 'busy' }))
   const { handlers } = mounted(registerSupervision)
@@ -3184,7 +3195,6 @@ test('an account the facts do not carry draws nothing, and the log names the ses
 test('a local row with no config and no chain owner is read from its own facts: its account, its pid\'s tty, its chain\'s agents', async () => {
   const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'tty', 'config', 'chain_owner') }, {})
   pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
-  pane.fx.files.set(`${HOME}/.claude/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
   pane.fx.files.set(`${HOME}/.claude/sessions/901.json`, JSON.stringify({ sessionId: 's-1', name: 'Agent: s-1', status: 'busy' }))
   await pane.open()
   expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 1 agent · 30% · 3m')
@@ -3198,13 +3208,43 @@ test('a row an older module wrote, with no pid to read its facts from, draws nei
   expect(pane.fx.written.some(line => line.includes('fleet: Orch: a agents not read'))).toBe(true)
 })
 
-// The drawing session's own account is never the account of a row it does not run on: a row without config reads its
-// own host record, which names the other account.
-test('a row without config on the other account reads that account from its own host record, not the drawer\'s', async () => {
-  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {})
-  pane.fx.files.set(`${HOME}/.claude-bis/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
+// The drawing session's own account is never the account of a row it does not run on: a row without config reads the
+// CLAUDE_CONFIG_DIR of its own process, which names the other account.
+test('a row without config reads its account and its agents from the CLAUDE_CONFIG_DIR of its process, not the drawer\'s', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, { '901': 's-1' }, { '900': `/usr/bin/hostcli CLAUDE_CONFIG_DIR=${PLAN2} HOME=${HOME}` })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
   await pane.open()
-  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 1 agent · 30% · 3m')
+})
+
+// The same session record under both accounts' directories: the process names the second, and the second's count is read.
+test('the same session record under both account directories: the process naming the second account reads plan 2 and its count', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, { '901': 's-1' }, { '900': `/usr/bin/hostcli CLAUDE_CONFIG_DIR=${PLAN2}` })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  pane.fx.files.set(`${PLAN1}/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
+  pane.fx.files.set(`${PLAN2}/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 1 agent · 30% · 3m')
+})
+
+// The same record under both directories, the process with no CLAUDE_CONFIG_DIR: the default directory, plan 1.
+test('the same session record under both account directories: a process with the variable absent reads the default plan 1', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {}, { '900': '/usr/bin/hostcli --name x' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  pane.fx.files.set(`${PLAN1}/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
+  pane.fx.files.set(`${PLAN2}/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
+  pane.fx.files.set(`${PLAN1}/sessions/901.json`, JSON.stringify({ sessionId: 's-1', name: 'Agent: s-1', status: 'busy' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 1 agent · 30% · 3m')
+})
+
+// A process whose environment cannot be read draws no account and no count, and each gap is logged, never read as absent.
+test('a process whose environment cannot be read draws no account, and the log names the session and the field', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, { '901': 's-1' }, { '900': null })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
 })
 
 // Without a chain owner, the chain's entries count only when one owner wrote them all.
