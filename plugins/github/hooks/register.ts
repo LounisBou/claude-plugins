@@ -1465,8 +1465,8 @@ function forgeAwaited(rec: Reconciler, repo: string, now: number): boolean {
   return [...rec.held].some(([key, held]) => key.startsWith(repo.toLowerCase() + '#') && held.until <= now && listedAt < held.until)
 }
 
-// A failure of the forge's call that shows GitHub cannot be reached at all: name resolution, a connection refused or reset, no route, a handshake or connection timeout, the call's own timeout.
-const UNREACHABLE = /gaierror|nodename nor servname|name or service not known|temporary failure in name resolution|connection (refused|reset|aborted)|network is unreachable|no route to host|handshake|timed out|still running after/i
+// A failure of the forge's call that shows GitHub cannot be reached at all: name resolution, a connection refused or reset, no route, a handshake or connection timeout, the engine's line for a socket timeout of its request (« gave no answer within »), the call's own timeout.
+const UNREACHABLE = /gaierror|nodename nor servname|name or service not known|temporary failure in name resolution|connection (refused|reset|aborted)|network is unreachable|no route to host|handshake|timed out|gave no answer within|still running after/i
 const REASON_MAX = 200
 
 // The last meaningful line of an error's text (the exception line of a traceback, the engine's `error: …`), bounded.

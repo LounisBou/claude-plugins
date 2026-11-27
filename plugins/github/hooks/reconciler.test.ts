@@ -507,6 +507,17 @@ test('listings going through for OUTAGE_OVER_MS end the outage in one line, and 
   expect([lost().length, back()]).toEqual([2, 1])
 })
 
+// What the engine prints for every socket timeout of its own call to GitHub (ghlib/http.py).
+const NO_ANSWER = 'error: GitHub gave no answer within 20 s: the request may still have been applied'
+
+test('a listing GitHub did not answer in time is part of the outage: after a name that did not resolve and across a flap, one line in all', async ($, on) => {
+  const w = await started($, on)
+  const { run } = outageBeats(w)
+  await run(NO_DNS, NO_ANSWER, undefined, NO_ANSWER)
+  expect(count(w.state.runs, 'pr-panel')).toBe(4)
+  expect(w.state.said.filter((line) => line.includes(OFFLINE_LINE) || line.includes('could not list'))).toEqual(['github: the reconciler cannot reach GitHub (socket.gaierror: [Errno 8] nodename nor servname provided, or not known); listings resume when it answers'])
+})
+
 test('one listing that goes through long after the last failure does not end the outage by itself', async ($, on) => {
   const w = await started($, on)
   const { run, lost, back } = outageBeats(w)
@@ -555,6 +566,7 @@ for (const reason of [
   'socket.gaierror: [Errno -3] Temporary failure in name resolution',
   'TimeoutError: _ssl.c:1112: The handshake operation timed out',
   'TimeoutError: timed out',
+  'error: GitHub gave no answer within 20 s: the request may still have been applied',
 ]) {
   test('a reason that shows the forge cannot be reached says one line for the machine: ' + reason, async ($, on) => {
     const { clock, state } = await started($, on)
