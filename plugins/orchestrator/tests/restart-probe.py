@@ -226,8 +226,9 @@ def tmux_call(args, env=None):
     socket, words = args[1], args[2:]
     server = servers.get(socket)
     out, code = "", 0
-    if server is None or scenario == "refused" and words[:2] == ["set-option", "-s"] and socket == "orch-b" \
-            and words[-1] == "off":
+    # The arm and its suspension, each one call: the owners listed, or none.
+    owning = words[words.index(ia.HOME_OWNERS) + 1].strip() if ia.HOME_OWNERS in words and words[0] != "show-options" else None
+    if server is None or scenario == "refused" and owning == "" and socket == "orch-b":
         code = 1
     elif words[0] == "show-options":
         out = server["armed"] if words[1] == "-sv" else server["string"]
@@ -237,11 +238,14 @@ def tmux_call(args, env=None):
         out = "\n".join(hosts[p] for p in server["hosts"])
     elif words[0] == "display-message":
         out = "✳ " + title_of(socket)
-    elif words[1] == "-s":
-        acts.append("%s %s" % ("arm" if words[-1] == "on" else "disarm", socket))
+    elif owning is not None:
+        state = "on" if owning else "off"
+        acts.append("%s %s" % ("arm" if owning else "disarm", socket))
+        if owning:
+            server["owners"] = owning
         # Taken with no error and no effect.
-        if not (socket == "orch-b" and scenario in {"off": ("stuck",), "on": ("arm-lost", "stale")}[words[-1]]):
-            server["armed"] = words[-1]
+        if not (socket == "orch-b" and scenario in {"off": ("stuck",), "on": ("arm-lost", "stale")}[state]):
+            server["armed"] = state
     else:
         if server["string"] != words[-1] and not (scenario == "untitled" and socket == "orch-b"):
             for s in (t.sessions[0] for w in windows for t in w.tabs):
@@ -471,6 +475,7 @@ print("acts=%s" % ",".join(acts))
 print("tabs=%s" % "/".join(" ".join(t.sessions[0].tty[-3:] for t in w.tabs) for w in windows))
 print("titles=%s" % ",".join(t.sessions[0].title for w in windows for t in w.tabs))
 print("armed=%s" % "+".join(s for s in sorted(servers) if servers[s]["armed"] == "on"))
+print("owners=%s" % "+".join("%s:%s" % (s, servers[s].get("owners", "")) for s in sorted(servers)))
 print("alive=%s" % " ".join(sorted(p for p in hosts if p in alive)))
 print("OUT:" + "~".join(out.strip().splitlines()))
 print("ERR:" + " ".join(err.split()))

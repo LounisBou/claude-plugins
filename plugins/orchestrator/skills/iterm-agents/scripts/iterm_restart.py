@@ -64,8 +64,8 @@ def tmux(socket, *words):
 
 
 def read_server(socket):
-    """Whether a home server exits with its last client, its clients' ttys, its panes' ttys."""
-    return {"armed": tmux(socket, "show-options", "-sv", "exit-unattached").strip() == "on",
+    """Whether a home server ends with its tab, its clients' ttys, its panes' ttys."""
+    return {"armed": ia.home_armed(tmux(socket, *ia.HOME_ARM_READ)),
             "clients": tmux(socket, "list-clients", "-F", "#{client_tty}").split(),
             "panes": tmux(socket, "list-panes", "-a", "-F", "#{pane_tty}").split()}
 
@@ -336,7 +336,7 @@ class Run:
             for socket in armed:
                 self.s["servers"].setdefault(socket, servers[socket])
                 self.save(disarmed=sorted(set(self.s["disarmed"]) | {socket}))
-                tmux(socket, "set-option", "-s", "exit-unattached", "off")
+                tmux(socket, *ia.HOME_DISARM)
             if not armed:
                 return
         raise Stop("a home server is still told to exit with its tab: iTerm2 was not stopped")
@@ -441,12 +441,14 @@ class Run:
             self.bad("the title of %s is not back" % what)
 
     def rearm(self):
-        """Each server a run disarmed, armed again once its client is on a tab of the app."""
+        """Each server a run disarmed, armed again once its client is on a tab of the app: its
+        owners are the clients the app's tabs show, a view from another machine never one."""
         seen = set(shown(layout()))
         for socket in [s for s in self.s["disarmed"] if s in ia.live_homes()]:
-            if not set(read_server(socket)["clients"]) & seen:
+            owners = sorted(set(read_server(socket)["clients"]) & seen)
+            if not owners:
                 self.bad("%s stays told not to exit: no tab shows it" % socket)
-            elif not ia.arm_home(socket, "restart") or not read_server(socket)["armed"]:
+            elif not ia.arm_home(socket, "restart", owners) or not read_server(socket)["armed"]:
                 self.bad("%s could not be told again to exit with its tab" % socket)
             else:
                 self.s["disarmed"].remove(socket)
