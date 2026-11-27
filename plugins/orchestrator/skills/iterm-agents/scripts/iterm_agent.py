@@ -3202,8 +3202,8 @@ def in_home_session():
 
 
 class TmuxTerminal(Terminal):
-    """The windows of the caller's home session. A window takes the next free index and is
-    never selected, so the operator's view stays where he put it; window 0 is the
+    """The windows of the caller's home session. A window goes after the session's last one
+    and is never selected, so the operator's view stays where he put it; window 0 is the
     orchestrator's, and is neither placed before nor moved.
 
     Its own key in `made`: `window`, the tmux id of the window it made."""
@@ -3317,10 +3317,14 @@ class TmuxTerminal(Terminal):
         # Named with -n: unnamed, tmux renames the window after the program it runs, which
         # reads the host's version number. -d: the operator's window stays the current one.
         if place.at == "first" or (place.at == "beside" and place.side == "left"):
-            print("spawn: a window of a home session takes the next free index; the new "
-                  "session is not placed %s." % ("first" if place.at == "first" else
-                                                 "left of %s" % place.anchor), file=sys.stderr)
-        out = tmux_out(["new-window", "-d", "-t", self.session() + ":", "-n", title, "-P",
+            print("spawn: a window of a home session goes after the session's last window; the "
+                  "new session is not placed %s." % ("first" if place.at == "first" else
+                                                     "left of %s" % place.anchor),
+                  file=sys.stderr)
+        # `{end}` is the session's highest-index window: -a places the new one right after it,
+        # so it goes after the orchestrator's and every agent's, whatever index a closed window
+        # left free.
+        out = tmux_out(["new-window", "-d", "-a", "-t", self.session() + ":{end}", "-n", title, "-P",
                         "-F", "#{window_id} #{pane_id} #{pane_tty}", command], "spawn")
         fields = out.split()
         if len(fields) != 3:

@@ -6823,6 +6823,39 @@ if command -v tmux >/dev/null 2>&1; then
 else
   echo "  skip a moved session's end is not checked: no tmux"
 fi
+echo "== iterm-agents: an agent window goes after its orchestrator's, the orchestrator first =="
+# A window made without an index takes the lowest free one: with window 0 free (a takeover closed
+# it) an agent landed on index 0, before the orchestrator on 1. The agent goes after the session's
+# last window, and the orchestrator stays where it is. Throwaway servers of the suite's own, with
+# the default configuration left out (-f /dev/null) so no base index of the operator's is read.
+if command -v tmux >/dev/null 2>&1; then
+  AWSRV="windowzero-after-$$"
+  AWHOME="windowzero-move-$$"
+  AWMARK=$((9100 + $$ % 800))
+  awsrv() { env -u TMUX -u TMUX_PANE tmux -L "$AWSRV" "$@"; }
+  awhome() { env -u TMUX -u TMUX_PANE tmux -L "$AWHOME" "$@"; }
+  awsrv -f /dev/null new-session -d -s home -n 'Orch: old' "sleep $AWMARK" 2>/dev/null
+  awsrv set-option -g automatic-rename off 2>/dev/null
+  awsrv new-window -d -t home:1 -n 'Orch: x' "sleep $AWMARK" 2>/dev/null
+  awsrv kill-window -t home:0 2>/dev/null
+  AWSOCK=$(awsrv display-message -p '#{socket_path}' 2>/dev/null)
+  AWPANE=$(awsrv display-message -p -t home:1 '#{pane_id}' 2>/dev/null)
+  awplace() { TMUX="$AWSOCK,$$,0" TMUX_PANE="$AWPANE" ipy "ia.TmuxTerminal().create('sleep $AWMARK', '$1', ia.Place('anywhere', '', 'right', False), '', {})" >/dev/null 2>&1; }
+  awlist() { awsrv list-windows -t home -F '#{window_index}=#{window_name}' 2>/dev/null | paste -sd' ' -; }
+  awplace 'Agent: a'
+  awplace 'Agent: b'
+  check "with window 0 free, the agents go after the orchestrator's window, in the order they were made" \
+    "1=Orch: x 2=Agent: a 3=Agent: b" "$(awlist)"
+  awsrv kill-server 2>/dev/null
+  # The move into a home session: a home server made for it starts its orchestrator on window 0.
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$AWHOME', 'Orch: moved', '$WORK', 'sleep $AWMARK', 'suite')" >/dev/null 2>&1
+  check "the home server made for a move holds its orchestrator on window 0" "0=Orch: moved" \
+    "$(awhome list-windows -t home -F '#{window_index}=#{window_name}' 2>/dev/null | paste -sd' ' -)"
+  awhome kill-server 2>/dev/null
+  pkill -fx "sleep $AWMARK" 2>/dev/null
+else
+  echo "  skip an agent window's place is not checked: no tmux"
+fi
 echo "== iterm-agents: a home server ends with its last tab of this machine, never with a view =="
 # The operator's rule (2026-11-27): a server ends when the last client of its own machine leaves,
 # never when a client attached over ssh from another machine (a remote view) leaves, and none runs
@@ -8409,7 +8442,7 @@ rm -f "$TR/iterm-asked"
 reset_home
 out=$(home spawn --dir "$WORK" --title "Agent: three" --prompt p --right-of self --no-verify 2>"$WORK/tspawn.err")
 check "spawn: a window of the home session, detached, named, its ids and tty printed back, the launch file as its program" \
-  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Agent: three][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Agent--three-@TIME@.sh]|none" \
+  "/dev/ttys903|[-u][new-window][-d][-a][-t][\$1:{end}][-n][Agent: three][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Agent--three-@TIME@.sh]|none" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)"
 check "and the chain entry names the window by the server's socket and its id, owned by the caller's pane" \
   "{\"tab_id\": \"tmux:$TSOCK:@4\", \"tty\": \"/dev/ttys903\", \"owner\": \"tmux:$TSOCK:%0\"}" "$(chainf | tail -1)"
@@ -9493,7 +9526,7 @@ reset_home; rm -f "$TR/iterm-asked"
 ORCHESTRATOR_PROJECTS_DIR="$TR/projects" pair_transcript s-suite s-model high
 out=$(home spawn --dir "$WORK" --successor --prompt p 2>"$WORK/tsucc.err")
 check "a successor spawned from a home session is a window of that session under the caller's name, and iTerm2 is never asked" \
-  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Orch: home][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Orch--home-@TIME@.sh]|none" \
+  "/dev/ttys903|[-u][new-window][-d][-a][-t][\$1:{end}][-n][Orch: home][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Orch--home-@TIME@.sh]|none" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)"
 check "the chain is handed over keyed on the successor's pane: its tty's file, the successor's tmux owner, never an app id" \
   "{\"tab_id\": \"tmux:$TSOCK:@1\", \"tty\": \"/dev/ttys901\", \"owner\": \"tmux:$TSOCK:%4\"}|{\"tab_id\": \"tmux:$TSOCK:@2\", \"tty\": \"/dev/ttys902\", \"owner\": \"tmux:$TSOCK:%4\"}|0|1" \
