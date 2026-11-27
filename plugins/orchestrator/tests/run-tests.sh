@@ -3164,6 +3164,10 @@ def stub_run(fn):
 m.run = stub_run
 m.as_spawn = lambda command: AUD
 m.as_list = next_reading
+# The auditor starts in window 0 of a home server of its own: no server is made here, and the
+# tab that shows it is the one the app made, on AUD.
+m.make_home = lambda socket, title, cwd, program, what: AUD
+m.open_home_tab = lambda socket, title, anchor, what, place=None: (AUD, {'terminal': m.ITERM})
 code = 0
 with open('$WORK/aud-spawn.out', 'w') as out, open('$WORK/aud-spawn.err', 'w') as err, \
      contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -3683,7 +3687,9 @@ check "the end checks this session is the recorded coordinator before it clears"
 COORDFILLED="$WORK/coordinator-brief-filled.md"
 mkdir -p "$WORK/coord-fill/coordinator" "$WORK/coord-fill/scratch"; : > "$WORK/coord-fill/coordinator/notes.md"; : > "$WORK/coord-fill/scratch/decision-round.md"
 if [ -f "$COORDTPL" ]; then
-  sed -E -e 's#\{\{PREDECESSOR\}\}#Coord: ops [a1b2c3]#g' -e 's#\{\{PREDECESSOR_TTY\}\}#/dev/ttys950#g' -e 's#\{\{SUBJECT\}\}#ops#g' \
+  # The close step is the printer's (brief.ts closeStep): for a predecessor in a tab, the close of it.
+  sed -E -e "s#\{\{CLOSE_STEP\}\}#**CLOSE ITS TAB**: \`$AGENT close --tty /dev/ttys950 --expect-title \"Coord:\"\`#g" \
+    -e 's#\{\{PREDECESSOR\}\}#Coord: ops [a1b2c3]#g' -e 's#\{\{PREDECESSOR_TTY\}\}#/dev/ttys950#g' -e 's#\{\{SUBJECT\}\}#ops#g' \
     -e "s#\{\{STATE_DIR\}\}#$WORK/coord-fill#g" -e "s#\{\{NOTES_FILE\}\}#$WORK/coord-fill/coordinator/notes.md#g" -e "s#\{\{ROUND_FILE\}\}#$WORK/coord-fill/scratch/decision-round.md#g" \
     -e "s#\{\{COORDINATOR_SH\}\}#$ROOT/skills/coordinator/scripts/coordinator.sh#g" -e "s#\{\{ITERM_AGENT_SH\}\}#$AGENT#g" \
     -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$COORDTPL" > "$COORDFILLED"
@@ -3757,7 +3763,8 @@ AUDSUCCTPL="$ROOT/templates/auditor-succession-brief.md"
 check "no template, command or orchestrator skill teaches --successor --inherit-model" "0" \
   "$(grep -rlE -e '--successor( [^`]*)? --inherit-model' "$ROOT/templates" "$ROOT/commands" "$ROOT/skills/orchestrator" 2>/dev/null | wc -l | tr -d ' ')"
 AUDSUCCFILLED="$WORK/audit-succession-filled.md"
-[ -f "$AUDSUCCTPL" ] && sed -E -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDSUCCTPL" > "$AUDSUCCFILLED"
+[ -f "$AUDSUCCTPL" ] && sed -E -e "s#\{\{CLOSE_STEP\}\}#**Close its tab**: \`$AGENT close --tty /dev/ttys950 --expect-title \"Audit: tm\"\`#g" \
+  -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDSUCCTPL" > "$AUDSUCCFILLED"
 check "the auditor's succession brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDSUCCFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDSUCCFILLED" >/dev/null 2>&1; echo $?)"
 # The code cites §52: the section it cites exists.
@@ -9508,8 +9515,8 @@ role_home() { # <window 0's name>: the home session of a coordinator or an audit
   reset_home
   printf '%s\n' "\$1	0	@0	%0	/dev/ttys900	$1	✳ $1" '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' > "$TR/panes"
   printf '%s\n' "/dev/ttys900 claude --name $1" '/dev/ttys901 claude --name Agent: one' > "$TR/ps"
+  ORCHESTRATOR_PROJECTS_DIR="$TR/projects" pair_transcript s-suite s-model high
   rm -f "$TR/iterm-asked"; }
-ORCHESTRATOR_PROJECTS_DIR="$TR/projects" pair_transcript s-suite s-model high
 role_home "Coord: machine"
 out=$(home spawn --dir "$WORK" --coordinator-successor --title "Coord: machine" --prompt p --no-verify 2>"$WORK/trole.err")
 check "a coordinator's successor spawned from its home session is a window of it under its name, iTerm2 never asked" \

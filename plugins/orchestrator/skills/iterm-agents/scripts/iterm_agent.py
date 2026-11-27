@@ -3626,10 +3626,10 @@ def terminal(agent=True):
     """The terminal this launcher drives: the one place that chooses.
 
     A caller in a home session gets its windows; any other gets iTerm2. Only an agent's
-    spawn and an orchestrator's successor are windows (`agent` True): the successor takes the
-    predecessor's window 0 in the same session, where its agents are. The auditor, the
-    coordinator's successor and a woken or opened orchestrator are made as tabs (`agent`
-    False). The mark is read once per run."""
+    spawn and a successor are windows (`agent` True): the successor takes the predecessor's
+    window 0 in the same session, where its agents are. The auditor and a woken or opened
+    orchestrator start in a home session of their own, shown by a tab (`agent` False). The
+    mark is read once per run."""
     if not agent:
         return ITERM
     if "terminal" not in _chosen:
@@ -7233,12 +7233,15 @@ def cmd_move(args):
         print("move=%s %s=%s" % (args.tty, "right_of" if args.right_of else "left_of", anchor))
         return
 
-    shown = own_home_tab("move", own) if args.tty == own else ""
+    # Only a place among the app's tabs is the home tab's: the first of its window, or beside a
+    # tab that is no pane of this server. A place among the session's own windows is window 0's,
+    # and its guard below refuses it.
+    shown = own_home_tab("move", own) if args.tty == own and (
+        args.leftmost or terminal_for(anchor) is ITERM) else ""
     if shown:
         # The caller's own window 0 is shown by the tab of its home server: its own place, the
         # coordinator's leftmost one among them, is that tab's.
-        idx = ITERM.move(shown, shown if anchor == own else anchor, bool(args.right_of),
-                         args.leftmost)
+        idx = ITERM.move(shown, anchor, bool(args.right_of), args.leftmost)
         print("moved %s to position %s" % (shown, idx))
         return
     # The guard rules BEFORE anything moves: a refusal must find the layout as it was.
