@@ -318,7 +318,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types --exclude-dir=core \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_GITHUB_ROOT|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|CLAUDE_CODE_CHILD_SESSION|CLAUDE_CODE_CHILD_NOTES_DIR|CLAUDE_CODE_BRIDGE_SESSION_ID|CLAUDE_CODE_MESSAGING_SOCKET|CLAUDE_CODE_MESSAGING_TOKEN|CLAUDE_CODE_SESSION_ATTENDED|CLAUDE_PID|CLAUDECODE|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_SESSION_KIND|CLAUDE_JOB_DIR|syncClaudeAiSkills' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_GITHUB_ROOT|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|CLAUDE_CODE_CHILD_SESSION|CLAUDE_CODE_CHILD_NOTES_DIR|CLAUDE_CODE_BRIDGE_SESSION_ID|CLAUDE_CODE_MESSAGING_SOCKET|CLAUDE_CODE_MESSAGING_TOKEN|CLAUDE_CODE_SESSION_ATTENDED|CLAUDE_PID|CLAUDECODE|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_SESSION_KIND|CLAUDE_JOB_DIR|'"'"'claudeInChromeDefaultEnabled'"'"'|syncClaudeAiSkills' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
@@ -3330,7 +3330,7 @@ OPSTATE="$WORK/opstate"; mkdir -p "$OPSTATE/chains"; OPPS="$WORK/ps-open.txt"
 opn() { local caller="$1"; shift
   if [ "$caller" = - ]; then printf '/dev/ttys900 /opt/x/claude\n' > "$OPPS"
   else printf '/dev/ttys900 /opt/x/claude --name %s\n' "$caller" > "$OPPS"; fi
-  ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="${OPST:-$OPSTATE}" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="${OPST:-$OPSTATE}" CLAUDE_CONFIG_DIR="${OPCFG:-$CRDCFG}" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd ORCHESTRATOR_PS_TABLE="$OPPS" ORCHESTRATOR_TIER_DEEP=deep-model \
   bash "$AGENT" spawn --dir "$WORK" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 OPOUT=$(opn 'Coord: ops' --open --title 'Orch: sync logs')
@@ -3424,6 +3424,72 @@ OPRECOLD="$WORK/opstate-rec-former"; mkdir -p "$OPRECOLD/chains"
 printf '{"name":"Coord : hand","tty":"/dev/ttys900"}\n' > "$OPRECOLD/coordinator.json"
 check "a coordinator whose record reads the former « Coord : hand » opens one too" "1" \
   "$(OPST="$OPRECOLD" opn - --open --title 'Orch: x' | grep -c '^open=yes$')"
+# A launch routed to an account is refused when the host would stop it on a first-start dialog:
+# read in the account's own `.claude.json`, which is never written. A record that cannot be read
+# is warned of, and the launch goes on.
+ACHOME="$WORK/achome"; ACST="$WORK/acstate"; ACFILE="$ACHOME/.claude-bis/.claude.json"
+mkdir -p "$ACHOME/.claude-bis" "$ACST"
+ACGATE='"cachedGrowthBookFeatures":{"tengu_chrome_auto_enable":true}'
+acrec() { printf '{%s}' "$1" > "$ACFILE"; }
+acopn() { HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --open --title 'Orch: routed' --plan 2 --permission-mode auto "$@"; }
+acrefused() { acopn | grep -c "spawn: refused: the account of $ACFILE has not passed $1"; }
+acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,'"$ACGATE"
+check "an account with the extension and no answer to its first start is refused, the key and the hand step named" "1|0|1" \
+  "$(acrefused 'the browser extension dialog (claudeInChromeDefaultEnabled absent)')|$(acopn | grep -c '^launch=')|$(acopn | grep -cF "CLAUDE_CONFIG_DIR=$ACHOME/.claude-bis claude --permission-mode auto\` and answer the dialog")"
+acrec '"hasCompletedOnboarding":true,"chromeExtension":{"pairedDeviceId":"d1"},'"$ACGATE"
+check "a paired browser is the extension detected too" "1" "$(acrefused 'the browser extension dialog')"
+check "the host shows that dialog in another mode than auto too, which is refused" "1" \
+  "$(acopn --permission-mode acceptEdits | grep -c 'has not passed the browser extension dialog')"
+check "a bypassPermissions launch is offered no such dialog, and passes" "1|0" \
+  "$(acopn --permission-mode bypassPermissions | grep -c '^launch=')|$(acopn --permission-mode bypassPermissions | grep -c 'has not passed')"
+check "the refusal names the step that records the answer when no dialog shows, which lifts it" "1" \
+  "$(acopn | grep -cF 'and answer the dialog; if it shows none, type /chrome there and select « Turn on by default », which records the answer')"
+acrec '"numStartups":1'
+check "a bypassPermissions launch is still refused on an onboarding not passed" "1|0" \
+  "$(acopn --permission-mode bypassPermissions | grep -c 'has not passed the onboarding')|$(acopn --permission-mode bypassPermissions | grep -c '^launch=')"
+check "an onboarding refusal names no step of the browser dialog" "0" "$(acopn | grep -cF '/chrome')"
+ACPASS=''
+for ACANSWER in true false; do
+  acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,"claudeInChromeDefaultEnabled":'"$ACANSWER,$ACGATE"
+  ACPASS="$ACPASS$(acopn | grep -c '^launch=')|$(acopn | grep -c 'first.start');"
+done
+check "either answer to the dialog passes, with no warning" "1|0;1|0;" "$ACPASS"
+acrec '"hasCompletedOnboarding":true,'"$ACGATE"
+check "an account whose extension is not recorded is offered nothing, and passes" "1|0" \
+  "$(acopn | grep -c '^launch=')|$(acopn | grep -c 'first.start')"
+acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,"cachedGrowthBookFeatures":{"tengu_chrome_auto_enable":false}'
+check "an account the host's gate offers nothing passes" "1" "$(acopn | grep -c '^launch=')"
+acrec '"numStartups":1'
+check "an account that has not passed the onboarding is refused naming it" "1|0" \
+  "$(acrefused 'the onboarding (hasCompletedOnboarding)')|$(acopn | grep -c '^launch=')"
+ACWARN=''
+for ACBROKEN in absent 'not json' '[1]' '{"projects":{}}'; do
+  if [ "$ACBROKEN" = absent ]; then rm -f "$ACFILE"; else printf '%s' "$ACBROKEN" > "$ACFILE"; fi
+  ACWARN="$ACWARN$(acopn | grep -c '^launch=')|$(acopn | grep -c "spawn: warning: whether the account of $ACFILE passed its first-start dialogs is unknown");"
+done
+check "a record absent, unreadable or of another shape is warned of, and the launch goes on" "1|1;1|1;1|1;1|1;" "$ACWARN"
+acrec '"numStartups":1'
+printf '[{"name":"Orch: routed","config":"%s"}]' "$ACHOME/.claude-bis" > "$ACST/sleeping.json"
+check "a wake onto a plan other than its caller's is checked with no --plan" "1" \
+  "$(HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --wake --title 'Orch: routed' --model m --effort high | grep -c 'has not passed the onboarding')"
+rm -f "$ACST/sleeping.json"
+check "--plan is checked even when its caller already runs on that plan" "1|0" \
+  "$(OPCFG="$ACHOME/.claude-bis" acrefused 'the onboarding')|$(OPCFG="$ACHOME/.claude-bis" acopn | grep -c '^launch=')"
+printf '{"numStartups":1}' > "$ACHOME/.claude.json"
+check "a route to plan 1 reads the record in the home directory, and the hand step unsets the plan variable" "1|1|0" \
+  "$(acopn --plan 1 | grep -cF "the account of $ACHOME/.claude.json has not passed the onboarding")|$(acopn --plan 1 | grep -cF 'env -u CLAUDE_CONFIG_DIR claude --permission-mode auto')|$(acopn --plan 1 | grep -c '^launch=')"
+rm -f "$ACHOME/.claude.json"
+# The account is read before anything is written: a directory the host never opened, which a
+# launch is refused for, is not reached when the account is.
+ACSUM=$(cksum < "$ACFILE")
+check "the account is refused before the directory's trust is read, its record left as it was" "1|0|same" \
+  "$(acopn --dir "$UNTRUSTED" | grep -c 'has not passed the onboarding')|$(acopn --dir "$UNTRUSTED" | grep -c 'has not been told to trust')|$([ "$(cksum < "$ACFILE")" = "$ACSUM" ] && echo same || echo changed)"
+acrec '"hasCompletedOnboarding":true'
+check "and that directory is refused on its trust once the account passes" "1" \
+  "$(acopn --dir "$UNTRUSTED" | grep -c 'has not been told to trust')"
+acrec '"numStartups":1'
+check "a launch that stays on its caller's plan reads no account record" "1|0" \
+  "$(HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --open --title 'Orch: routed' | grep -c '^launch=')|$(HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --open --title 'Orch: routed' | grep -c 'first.start')"
 check "an opening needs an orchestrator's title, with no reference" "1|1" \
   "$(opn 'Coord: ops' --open --title 'Agent: x' | grep -c -- "--open needs the new orchestrator's name")|$(opn 'Coord: ops' --open --title 'Orch: x [abc123]' >/dev/null 2>&1; echo $?)"
 for OPFLAG in --successor --auditor --wake '--right-of self' '--left-of /dev/ttys555' --title-free --resident --no-remote-control; do
@@ -4269,6 +4335,10 @@ check "an agent that lived on plan 1 is resumed on plan 1 from a caller on plan 
   "$(rsl "$BIS" --resume s-rs-one --tier light | grep -cF 'export CLAUDE_CONFIG_DIR')|$(rsl "$BIS" --resume s-rs-one --tier light | grep -cE "'--resume' s-rs-one ")|$(rsm "$BIS" --resume s-rs-one --tier light | grep -c 'spawn: the resume runs on plan 1, the one session s-rs-one lived on')"
 check "an agent that lived on plan 2 is resumed on plan 2 from a caller on plan 1" "1|1" \
   "$(rsl '' --resume s-rs-two --tier light | grep -cF "export CLAUDE_CONFIG_DIR=$BIS &&")|$(rsm '' --resume s-rs-two --tier light | grep -c 'spawn: the resume runs on plan 2, the one session s-rs-two lived on')"
+printf '{"numStartups":1,"oauthAccount":{"organizationUuid":"org-two"}}' > "$RSHOME/.claude-bis/.claude.json"
+check "a resume that moves to a plan with no --plan is checked on the account it moves to" "1|0" \
+  "$(rsm '' --resume s-rs-two --tier light | grep -cF "the account of $BIS/.claude.json has not passed the onboarding")|$(rsm '' --resume s-rs-two --tier light | grep -c '^launch=')"
+printf '{"oauthAccount":{"organizationUuid":"org-two"}}' > "$RSHOME/.claude-bis/.claude.json"
 check "a resume on the plan it lived on says nothing of a move" "0|1" \
   "$(rsm "$BIS" --resume s-rs-two --tier light | grep -c 'lived on')|$(rsl "$BIS" --resume s-rs-two --tier light | grep -cF "export CLAUDE_CONFIG_DIR=$BIS &&")"
 check "a resume runs on its transcript's pair with no --tier, and says where the pair came from" "1|0|0|transcript $ORCHESTRATOR_PROJECTS_DIR/p/s-rs-two.jsonl" \
@@ -7163,7 +7233,7 @@ m.transcript_of = lambda sid: (None, 0)
 m.tmux_on = lambda socket, args, what: 'Resume this session? 1. Yes'
 m.verify_resumed('s', 0, 'auto', 'a-model', dict(home='x', tty='/dev/ttys9'), timeout=1, sleep=lambda s: None, dir_='/checkout')" 2>&1 | tee "$WORK/resume-screen.txt" | grep -c 'The tab showed: Resume this session? 1. Yes\.')|$(grep -c 'workspace-trust dialog' "$WORK/resume-screen.txt")"
 check "a long screen is quoted by its last lines only" "1|0" \
-  "$(screen_refusal "$(seq 1 20)" | grep -c 'The tab showed: 15 | 16 | 17 | 18 | 19 | 20\.')|$(screen_refusal "$(seq 1 20)" | grep -c '| 14 |')"
+  "$(screen_refusal "$(seq 1 20)" | grep -c 'The tab showed: 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20\.')|$(screen_refusal "$(seq 1 20)" | grep -c '| 8 |')"
 out_mismatch=$(verify_mode_run /checkout/t.jsonl default auto 2>/dev/null)
 check "a mismatch is still refused, the made tab still closed" "exit=1|True" \
   "$(printf '%s' "$out_mismatch" | sed -n '1p')|$(printf '%s' "$out_mismatch" | sed -n '2p' | sed 's/closed=//')"
@@ -7258,6 +7328,20 @@ res=$(sprobe never none /dev/ttys801 --title "Agent: x")
 check "a spawn that never started closes its tab, prints its tty, and leaves the chain untouched" \
   "1|['/dev/ttys902']|['1', '2']|[('2', 'S-OWN')]|1" \
   "$(sfield "$res" exit)|$(sfield "$res" stdout)|$(sfield "$res" tabs)|$(sfield "$res" own)|$(sfield "$res" ERR | grep -c 'never started on /dev/ttys902 after 1s; the tab was closed')"
+# The other startup timeout says what the screen showed too, read before the close.
+never_screen() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.SPAWN_TIMEOUT = 1
+m.time.sleep = lambda s: None
+m.cli_pid_on_tty = lambda tty: None
+m.find_transcript = lambda d, since: None
+closed = []
+m.close_made = lambda made: closed.append(1) or True
+m.tmux_on = lambda socket, args, what: '' if closed else 'zsh: command not found: claude'
+m.await_host('/dev/ttys9', '/checkout', 0, dict(home='orch-x', tty='/dev/ttys9'), 'spawn')" 2>&1 >/dev/null; }
+check "a session that never started is refused with what its screen showed before the close" "1|1" \
+  "$(never_screen | grep -c 'never started on /dev/ttys9 after 1s; the tab was closed. The tab showed: zsh: command not found: claude\.')|$(never_screen | grep -c 'ORCHESTRATOR_SPAWN_TIMEOUT')"
 res=$(sprobe succnever none /dev/ttys801 --successor --title "Orch: heir")
 check "a successor that never started takes no chain and re-points no entry" \
   "1|['1', '2']|[('2', 'S-OWN')]|absent" \
@@ -8175,7 +8259,9 @@ elif mode in ("create-sigterm", "verify-interrupt", "before-create", "create-rai
             raise KeyboardInterrupt()
         ia.verify_mode = mode_read
     if mode in NEVER:
-        # A replacement that never starts: the spawn refuses it and closes it itself.
+        # A replacement that never starts: the spawn refuses it and closes it itself. Its
+        # screen is stood in for: the app is never read.
+        ia.screen_text = lambda made: "zsh: command not found: claude"
         ia.cli_pid_on_tty = lambda tty: None
         ia.find_transcript = lambda dir_, epoch: ""
     if mode == "refuse-closed-signal":
@@ -8459,6 +8545,18 @@ check "an interrupt during the spawn's own close of a refused replacement says s
 res=$(ORCHESTRATOR_SPAWN_TIMEOUT=2 rprobe refuse-closed-signal)
 check "an interrupt once the spawn closed the replacement it refused says it was closed" "1|close_made /dev/ttys903,drop T903|1|0|0" \
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -cF "rotate: the spawn refused the replacement it made on /dev/ttys903 (claude never started on /dev/ttys903 after 2s) and closed it; the old session on /dev/ttys901 was not touched, and nothing is left to close")|$(sfield "$res" ERR | grep -c 'not known')|$(printf '%s' "$res" | grep -c 'Traceback')"
+# A replacement that never started: what its screen showed, read before the close, ends the
+# rotation's line, whatever became of that close.
+SHOWN='The tab showed: zsh: command not found: claude\.'
+res=$(ORCHESTRATOR_SPAWN_TIMEOUT=2 rprobe refuse-closed)
+check "a rotation whose replacement never started says what its screen showed, the wait to raise named" "1|1" \
+  "$(sfield "$res" ERR | grep -c "nothing is left to close\. $SHOWN")|$(sfield "$res" ERR | grep -c 'ORCHESTRATOR_SPAWN_TIMEOUT')"
+res=$(ORCHESTRATOR_SPAWN_TIMEOUT=2 rprobe refuse-unclosed)
+check "and so does one whose replacement could not be closed" "1|1" \
+  "$(sfield "$res" ERR | grep -c "which still runs\. $SHOWN")|$(sfield "$res" closes)"
+res=$(ORCHESTRATOR_SPAWN_TIMEOUT=2 rprobe refuse-interrupt)
+check "and one interrupted while that replacement was being closed" "1" \
+  "$(sfield "$res" ERR | grep -c "the old session on /dev/ttys901 was not touched\. $SHOWN")"
 # The terminal's own children run apart from the launcher's process group while a rotation's
 # replacement is made: an interrupt sent to the group (a Ctrl-C at the terminal) is held by the
 # launcher until the creation returns, and does not kill the tmux client after the server made
