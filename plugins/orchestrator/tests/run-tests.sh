@@ -3437,6 +3437,49 @@ OPRECOLD="$WORK/opstate-rec-former"; mkdir -p "$OPRECOLD/chains"
 printf '{"name":"Coord : hand","tty":"/dev/ttys900"}\n' > "$OPRECOLD/coordinator.json"
 check "a coordinator whose record reads the former « Coord : hand » opens one too" "1" \
   "$(OPST="$OPRECOLD" opn - --open --title 'Orch: x' | grep -c '^open=yes$')"
+# A launch routed to an account is refused when the host would stop it on a first-start dialog:
+# read in the account's own `.claude.json`, which is never written. A record that cannot be read
+# is warned of, and the launch goes on.
+ACHOME="$WORK/achome"; ACST="$WORK/acstate"; ACFILE="$ACHOME/.claude-bis/.claude.json"
+mkdir -p "$ACHOME/.claude-bis" "$ACST"
+ACGATE='"cachedGrowthBookFeatures":{"tengu_chrome_auto_enable":true}'
+acrec() { printf '{%s}' "$1" > "$ACFILE"; }
+acopn() { HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --open --title 'Orch: routed' --plan 2 --permission-mode auto "$@"; }
+acrefused() { acopn | grep -c "spawn: refused: the account of $ACFILE has not passed $1"; }
+acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,'"$ACGATE"
+check "an account with the extension and no answer to its first start is refused, the key and the hand step named" "1|0|1" \
+  "$(acrefused 'the Claude in Chrome first start (claudeInChromeDefaultEnabled absent)')|$(acopn | grep -c '^launch=')|$(acopn | grep -cF "CLAUDE_CONFIG_DIR=$ACHOME/.claude-bis claude --permission-mode auto\` and answer the dialog")"
+acrec '"hasCompletedOnboarding":true,"chromeExtension":{"pairedDeviceId":"d1"},'"$ACGATE"
+check "a paired browser is the extension detected too" "1" "$(acrefused 'the Claude in Chrome first start')"
+check "the host shows that dialog in every mode, so another mode is refused too" "1" \
+  "$(acopn --permission-mode acceptEdits | grep -c 'has not passed the Claude in Chrome first start')"
+ACPASS=''
+for ACANSWER in true false; do
+  acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,"claudeInChromeDefaultEnabled":'"$ACANSWER,$ACGATE"
+  ACPASS="$ACPASS$(acopn | grep -c '^launch=')|$(acopn | grep -c 'first.start');"
+done
+check "either answer to the dialog passes, with no warning" "1|0;1|0;" "$ACPASS"
+acrec '"hasCompletedOnboarding":true,'"$ACGATE"
+check "an account whose extension is not recorded is offered nothing, and passes" "1|0" \
+  "$(acopn | grep -c '^launch=')|$(acopn | grep -c 'first.start')"
+acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,"cachedGrowthBookFeatures":{"tengu_chrome_auto_enable":false}'
+check "an account the host's gate offers nothing passes" "1" "$(acopn | grep -c '^launch=')"
+acrec '"numStartups":1'
+check "an account that has not passed the onboarding is refused naming it" "1|0" \
+  "$(acrefused 'the onboarding (hasCompletedOnboarding)')|$(acopn | grep -c '^launch=')"
+ACWARN=''
+for ACBROKEN in absent 'not json' '[1]' '{"projects":{}}'; do
+  if [ "$ACBROKEN" = absent ]; then rm -f "$ACFILE"; else printf '%s' "$ACBROKEN" > "$ACFILE"; fi
+  ACWARN="$ACWARN$(acopn | grep -c '^launch=')|$(acopn | grep -c "spawn: warning: whether the account of $ACFILE passed its first-start dialogs is unknown");"
+done
+check "a record absent, unreadable or of another shape is warned of, and the launch goes on" "1|1;1|1;1|1;1|1;" "$ACWARN"
+acrec '"numStartups":1'
+printf '[{"name":"Orch: routed","config":"%s"}]' "$ACHOME/.claude-bis" > "$ACST/sleeping.json"
+check "a wake onto a plan other than its caller's is checked with no --plan" "1" \
+  "$(HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --wake --title 'Orch: routed' --model m --effort high | grep -c 'has not passed the onboarding')"
+rm -f "$ACST/sleeping.json"
+check "a launch that stays on its caller's plan reads no account record" "1|0" \
+  "$(HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --open --title 'Orch: routed' | grep -c '^launch=')|$(HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --open --title 'Orch: routed' | grep -c 'first.start')"
 check "an opening needs an orchestrator's title, with no reference" "1|1" \
   "$(opn 'Coord: ops' --open --title 'Agent: x' | grep -c -- "--open needs the new orchestrator's name")|$(opn 'Coord: ops' --open --title 'Orch: x [abc123]' >/dev/null 2>&1; echo $?)"
 for OPFLAG in --successor --auditor --wake '--right-of self' '--left-of /dev/ttys555' --title-free --resident --no-remote-control; do
@@ -7188,6 +7231,20 @@ res=$(sprobe never none /dev/ttys801 --title "Agent: x")
 check "a spawn that never started closes its tab, prints its tty, and leaves the chain untouched" \
   "1|['/dev/ttys902']|['1', '2']|[('2', 'S-OWN')]|1" \
   "$(sfield "$res" exit)|$(sfield "$res" stdout)|$(sfield "$res" tabs)|$(sfield "$res" own)|$(sfield "$res" ERR | grep -c 'never started on /dev/ttys902 after 1s; the tab was closed')"
+# The other startup timeout says what the screen showed too, read before the close.
+never_screen() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.SPAWN_TIMEOUT = 1
+m.time.sleep = lambda s: None
+m.cli_pid_on_tty = lambda tty: None
+m.find_transcript = lambda d, since: None
+closed = []
+m.close_made = lambda made: closed.append(1) or True
+m.tmux_on = lambda socket, args, what: '' if closed else 'zsh: command not found: claude'
+m.await_host('/dev/ttys9', '/checkout', 0, dict(home='orch-x', tty='/dev/ttys9'), 'spawn')" 2>&1 >/dev/null; }
+check "a session that never started is refused with what its screen showed before the close" "1|1" \
+  "$(never_screen | grep -c 'never started on /dev/ttys9 after 1s; the tab was closed. The tab showed: zsh: command not found: claude\.')|$(never_screen | grep -c 'ORCHESTRATOR_SPAWN_TIMEOUT')"
 res=$(sprobe succnever none /dev/ttys801 --successor --title "Orch: heir")
 check "a successor that never started takes no chain and re-points no entry" \
   "1|['1', '2']|[('2', 'S-OWN')]|absent" \
