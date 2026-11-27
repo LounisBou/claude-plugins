@@ -65,21 +65,37 @@ def tmux(socket, *words):
 
 
 def read_server(socket):
-    """Whether a home server ends with its tab, the owners its arm lists, its clients' ttys, its
-    panes' ttys."""
+    """Whether a home server ends with its tab, the owners its arm lists, its clients' ttys, those
+    of them attached over ssh from another machine, its panes' ttys."""
     arm = tmux(socket, *ia.HOME_ARM_READ)
     return {"armed": ia.home_armed(arm), "owners": ia.home_listed(arm),
             "clients": tmux(socket, "list-clients", "-F", "#{client_tty}").split(),
+            "remote": remote_clients(socket),
             "panes": tmux(socket, "list-panes", "-a", "-F", "#{pane_tty}").split()}
+
+
+def remote_clients(socket):
+    """The ttys of the clients of `socket` attached over ssh from another machine: the client's
+    own process holds SSH_CONNECTION, the attached hook's criterion. A client whose environment
+    cannot be read is not said remote."""
+    remote = []
+    for line in tmux(socket, "list-clients", "-F", "#{client_tty} #{client_pid}").splitlines():
+        tty, _, pid = line.partition(" ")
+        environment = ia.kernel_procargs(pid)[1] if pid.strip().isdigit() else None
+        if any(e.startswith("SSH_CONNECTION=") for e in environment or []):
+            remote.append(tty)
+    return remote
 
 
 def local_clients(server, windows=None):
     """The clients of a home server that are tabs of this machine: its listed owners attached, or,
-    for a server that lists none, those the app's tabs show when they are known. A view attached
-    over ssh from another machine is never one: no tab is made for it, and it owns nothing."""
+    for a server that lists none, its clients not attached over ssh, and of them those the app's
+    tabs show when they are known. A view attached over ssh from another machine is never one:
+    no tab is made for it, and it owns nothing."""
     if server.get("owners"):
         return [c for c in server["clients"] if c in server["owners"]]
-    return [c for c in server["clients"] if c in shown(windows)] if windows else server["clients"]
+    here = [c for c in server["clients"] if c not in server.get("remote", [])]
+    return [c for c in here if c in shown(windows)] if windows else here
 
 
 def read_servers():
@@ -459,14 +475,13 @@ class Run:
             self.bad("the title of %s is not back" % what)
 
     def seen(self):
-        """The ttys of this machine's tabs: those the app shows, when it runs and answers, and the
-        snapshot's own tabs of a home server, which iTermServer keeps on the same ttys."""
-        seen = set()
+        """The ttys of this machine's tabs: those the app shows, when it runs and answers; else the
+        snapshot's own tabs of a home server, which iTermServer keeps on the same ttys. A tab the
+        answering app does not show is no tab, whatever client iTermServer still holds on it."""
         if ia.app_pid():
             with contextlib.suppress(Exception, SystemExit):
-                seen = set(shown(layout()))
-        return seen | {self.now(c) for server in self.s["servers"].values()
-                       for c in server.get("local", [])}
+                return set(shown(layout()))
+        return {self.now(c) for server in self.s["servers"].values() for c in server.get("local", [])}
 
     def rearm(self):
         """Each server a run disarmed, armed again with its clients that are tabs of this machine

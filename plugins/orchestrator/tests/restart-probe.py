@@ -66,12 +66,15 @@ for kept in {"kept-disarmed": ["orch-b"], "interrupted-kept": ["orch-a", "orch-b
     servers[kept]["armed"] = "off"
 if scenario == "unshown":
     servers["orch-b"].update(armed="off", clients=[])
-if scenario == "no-stop-elsewhere":
+if scenario in ("no-stop-elsewhere", "unkillable"):
     servers["orch-b"]["clients"] = ["/dev/ttys095"]
 # A view attached over ssh from another machine beside the tab of orch-b: on no tab of the app, and
-# no owner, whether the server lists its owners (view) or was armed the old way (view-old).
-if scenario in ("view", "view-old"):
-    servers["orch-b"]["clients"] = ["/dev/ttys002", "/dev/ttys097"]
+# no owner, whether the server lists its owners (view) or was armed the old way (view-old), with
+# iTerm2 frozen at the snapshot and the launcher's order kept (view-old-frozen) or none
+# (view-old-wedged).
+VIEW = "/dev/ttys097"
+if scenario.startswith("view"):
+    servers["orch-b"]["clients"] = ["/dev/ttys002", VIEW]
 if scenario == "view":
     servers["orch-b"]["owners"] = "/dev/ttys002"
 os.makedirs(os.path.join(work, "cfg", "sessions"), exist_ok=True)
@@ -145,7 +148,8 @@ def new_tab(command):
     socket = next((s for s in servers if " %s " % s in text), None)
     if socket:
         acts.append("attach " + socket)
-        if scenario != "elsewhere":
+        # ghost: the tab made again shows no client.
+        if scenario != "elsewhere" and not (scenario == "ghost" and socket == "orch-b"):
             servers[socket]["clients"].append("/dev/ttys090")
         return Tab("/dev/ttys090", "✳ " + title_of(socket))
     acts.append("resume " + ("with its role" if "ORCHESTRATOR_AUDITOR=1" in text and "SECRET" not in text
@@ -178,9 +182,9 @@ KEPT = {"frozen-kept": WHOLE,
         "frozen-client": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys050")]]],
         "frozen-dead": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys041")], [TAB("/dev/ttys002")], [TAB("/dev/ttys050")], [TAB("/dev/ttys880")]]],
         "frozen-plain": [[[TAB("/dev/ttys031")], [TAB("/dev/ttys001")]], [[TAB("/dev/ttys002")], [TAB("/dev/ttys050")]]],
-        "frozen-empty": [],
+        "frozen-empty": [], "view-old-frozen": WHOLE,
         "frozen-stale": [[[TAB("/dev/ttys880")], [TAB("/dev/ttys881")]]]}
-FROZEN = ("wedged",) + tuple(KEPT)
+FROZEN = ("wedged", "view-old-wedged") + tuple(KEPT)
 
 
 def run(coro):
@@ -203,7 +207,7 @@ def drop_client(socket):
 
 def kill(pid, sig):
     acts.append("kill %s armed=%s" % (pid, "+".join(s for s in servers if servers[s]["armed"] == "on")))
-    if scenario.startswith("no-stop"):
+    if scenario.startswith("no-stop") or scenario == "unkillable":
         return
     alive.pop(str(pid))
     if scenario in ("lost-client", "elsewhere"):
@@ -225,7 +229,8 @@ def open_app():
         windows[:] = []
         return
     back = [t for w in windows for t in w.tabs]
-    back = [t for t in back if not (scenario in ("lost-client", "elsewhere") and t.tab_id == "tab/dev/ttys002"
+    # ghost: orch-b's tab is not back, its client still held by iTermServer.
+    back = [t for t in back if not (scenario in ("lost-client", "elsewhere", "ghost") and t.tab_id == "tab/dev/ttys002"
                                     or scenario == "dead-tab" and t.tab_id == "tab/dev/ttys041")]
     for tab in back:
         tab.sessions[0].title = "tmux" if tab.sessions[0].tty in ("/dev/ttys001", "/dev/ttys002") else HOST
@@ -256,7 +261,8 @@ def tmux_call(args, env=None):
     elif words[:2] == ["set-option", "-sF"]:
         acts.append("drop %s" % socket)
     elif words[0] == "list-clients":
-        out = "\n".join(server["clients"])
+        # A client's pid is its tty's number after 5.
+        out = "\n".join(c + (" 5" + c[-3:] if "#{client_pid}" in words[-1] else "") for c in server["clients"])
     elif words[0] == "list-panes":
         out = "\n".join(hosts[p] for p in server["hosts"])
     elif words[0] == "display-message":
@@ -334,9 +340,13 @@ class Interrupted:
 real_run = ia.run
 ia.run, ia.tmux_call, ia.process_state = run, tmux_call, process_state
 ia.live_homes = lambda: sorted(servers)
-ia.kill_home = lambda socket: tmux_call(["-L", socket, "kill-server"]).returncode == 0
+# unkillable: orch-b does not end when told to.
+ia.kill_home = lambda socket: not (scenario == "unkillable" and socket == "orch-b") \
+    and tmux_call(["-L", socket, "kill-server"]).returncode == 0
 ia.app_pid = lambda: next((p for p in (APP, NEW_APP) if p in alive), "")
-ia.kernel_procargs = lambda pid: ([HOST], json.loads(os.environ["ORCHESTRATOR_HOST_ENV"]))
+# The view's client holds the SSH_CONNECTION of its ssh login; every other process is of this machine.
+ia.kernel_procargs = lambda pid: ([HOST], json.loads(os.environ["ORCHESTRATOR_HOST_ENV"])
+                                  + (["SSH_CONNECTION=10.0.0.2 50000 10.0.0.1 22"] if pid == "5" + VIEW[-3:] else []))
 ia.self_tty = lambda: "/dev/ttys999" if scenario in ("stranger", "run-stranger") else "/dev/ttys031"
 ia.registered_coord_on = lambda tty: "Coord: c" if tty == "/dev/ttys031" else None
 ia.host_cli_on = lambda tty: next((p for p, t in hosts.items() if t == tty and p in alive), None)

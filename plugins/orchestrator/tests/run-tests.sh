@@ -5555,6 +5555,13 @@ def owned(clients, owners):
     except SystemExit: return 'refused:%d' % len(seen)
     return 'returned'
 print('|'.join([owned('/dev/ttys811\n/dev/ttys097\n', ' /dev/ttys811 \n'), owned('/dev/ttys811\n/dev/ttys812\n', ' /dev/ttys811 /dev/ttys812 \n')]))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
+check "a pane whose server lists no owner, armed the old way, goes on with its one client" "closed:/dev/ttys811" \
+  "$("$py" -c "$HOMEPANE
+$CLOSEPANE
+ia.tmux_call = lambda args, env=None: types.SimpleNamespace(returncode=0, stdout='' if 'show-options' in args else '/dev/ttys811\n', stderr='')
+try: ia.cmd_close(types.SimpleNamespace(bench=False, socket=None, tty='/dev/ttys950', expect=None))
+except Stop: print('closed:%s' % seen[0])
+except SystemExit: print('refused:%d' % len(seen))" "$ROOT/skills/iterm-agents/scripts" 2>/dev/null)"
 check "a caller whose terminal is not iTerm2's keeps its own refusals: the pane is not mapped" "closed:/dev/ttys950" \
   "$("$py" -c "$HOMEPANE
 $CLOSEPANE
@@ -6694,6 +6701,39 @@ elif case in ("rearm", "rearm-none"):
         leave(new[0])
     said(suspended, owners == ([new[1]] if new[1] else []), "up" if up() else "down", windows(), len(run.s["defects"]))
     leave(seen[0])
+elif case == "partial":
+    # Two tabs of this machine, one gone before the arm lists both: the live one alone owns it.
+    tab = home(arm=False)
+    other = client()
+    leave(other[0])
+    armed = ia.arm_home(socket, "suite", [tab[1], other[1]])
+    time.sleep(0.5)
+    said(armed, "up" if up() else "down", ia.home_owners(socket) == [tab[1]], windows())
+    leave(tab[0])
+elif case == "unread":
+    # The arm taken, then the clients cannot be listed: no owner is dropped, nothing is ended.
+    tab = home(arm=False)
+    calls, real = [], ia.tmux_call
+    def failing(args, env=None):
+        calls.append(args)
+        if "list-clients" in args:
+            return subprocess.CompletedProcess(args, 1, "", "no answer")
+        return real(args, env)
+    ia.tmux_call = failing
+    armed = ia.arm_home(socket, "suite", [tab[1]])
+    ia.tmux_call = real
+    said(armed, "up" if up() else "down", sum("-sF" in c or "kill-server" in c for c in calls), windows())
+    leave(tab[0])
+elif case == "remote":
+    # A restart reads a view attached over ssh as remote on its client's own environment, and a
+    # server armed the old way, which lists no owner, counts its tab alone as of this machine.
+    tab = home(arm=False)
+    seen = client(True)
+    tm("set-option", "-s", "exit-unattached", "on")
+    server = r.read_server(socket)
+    said(server["remote"] == [seen[1]], r.local_clients(server) == [tab[1]])
+    tm("set-option", "-s", "exit-unattached", "off")
+    leave(seen[0]); leave(tab[0])
 tm("kill-server")
 PY
   owpaths() { ORCHESTRATOR_TMUX="$(command -v tmux)" ORCHESTRATOR_STATE_DIR="$WORK/owstate" "$py" "$WORK/owpaths.py" \
@@ -6708,6 +6748,15 @@ PY
     "up|True|down|0|0" "$(owpaths rearm)"
   check "a re-arm with no tab of this machine left ends the server, a view attached, and says so: no server is left disarmed" \
     "up|True|down|0|1" "$(owpaths rearm-none)"
+  check "an arm listing a tab gone beside a live one takes the gone one off and keeps the server, the live tab its one owner" \
+    "True|up|True|2" "$(owpaths partial)"
+  check "an arm whose clients cannot be listed after it drops no owner and ends nothing" "False|up|0|2" "$(owpaths unread)"
+  if [ "$(uname)" = Darwin ]; then
+    check "a restart reads a view as remote on its client's environment, and a server armed the old way has its tab alone as local" \
+      "True|True" "$(owpaths remote)"
+  else
+    skip_case "a restart reads a view as remote on its client's environment" "a process's environment is read on macOS only"
+  fi
   pkill -fx "sleep $OWMARK" 2>/dev/null
 else
   echo "  skip a home server's owners are not checked: no tmux"
@@ -9922,6 +9971,22 @@ for rview in view view-old; do
     "0|0|0|orch-a+orch-b|orch-a:/dev/ttys001+orch-b:/dev/ttys002" \
     "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'attach orch-b')|$(rsays 'ttys097')|$(sfield "$res" armed)|$(sfield "$res" owners)"
 done
+# The same with iTerm2 frozen at the snapshot, the order the launcher kept read or none: a server
+# armed the old way lists no owner, and its view is known on its client's environment.
+for rview in view-old-frozen view-old-wedged; do
+  res=$(restarted $rview)
+  check "a restart of a frozen iTerm2 takes no view for a tab of this machine ($rview): none is made or put, and the tab alone owns the server again" \
+    "0|0|orch-a+orch-b|orch-a:/dev/ttys001+orch-b:/dev/ttys002" \
+    "$(sfield "$res" acts | grep -c 'attach orch-b')|$(rsays 'ttys097')|$(sfield "$res" armed)|$(sfield "$res" owners)"
+done
+res=$(restarted ghost)
+check "a server whose tab the answering app does not show is ended, its client still held by iTermServer, and said with the session it held" \
+  "1|1|orch-a|orch-a:/dev/ttys001|1|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'end orch-b')|$(sfield "$res" armed)|$(sfield "$res" owners)|$(rsays 'DEFECT orch-b was ended: no tab of this machine shows it; it held Orch: b')|$(rsays '^- orch-b does not exit with its tab')"
+res=$(restarted unkillable)
+check "a server no tab of this machine shows that cannot be ended is said, never said ended, and kept as the next restart's" \
+  "1|1|0|1|21" \
+  "$(sfield "$res" exit)|$(rsays 'DEFECT orch-b runs with no tab of this machine and could NOT be ended')|$(rsays 'orch-b was ended')|$(rsays '^- orch-b does not exit with its tab')|$(sfield "$res" alive | grep -o 21)"
 res=$(restarted arm-lost)
 check "a server that takes the arming and stays disarmed is said, and kept as the next restart's to arm" "1|orch-a|1|1" \
   "$(sfield "$res" exit)|$(sfield "$res" armed)|$(rsays 'DEFECT orch-b could not be told again')|$(rsays '^- orch-b does not exit with its tab')"
