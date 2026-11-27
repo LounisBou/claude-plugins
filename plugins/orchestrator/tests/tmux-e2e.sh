@@ -15,7 +15,8 @@
 # launcher command is typed into window 0 and runs there, so its TMUX, its TMUX_PANE and its
 # tty are a real pane's and nothing stands in for them. Before the takeover, the shell of window 0
 # gives way to a real host, the predecessor the takeover ends. Nothing is ever attached, but to the
-# server of its own where a home server's owners are checked, ended there.
+# server of its own where a home server's owners and its refusal of a view's kill are checked,
+# ended there.
 #
 # The hosts are the one logged in on this machine, on its subscription: the script makes no
 # credential, asks for none and writes none. Before any host starts it asks the host for its
@@ -173,8 +174,8 @@ OWN_TTY=$(tm display -p -t home:0 '#{pane_tty}')
 
 # One launcher command, typed into window 0 and waited for: its stdout, its stderr and its exit
 # code land in the run directory under the step's name.
-# LT names the pane it is typed into (window 0 of the home session unless set), LENV the
-# variables it runs with, as `NAME=value` words.
+# LT names the pane it is typed into (window 0 of the home session unless set; a home server's
+# is `<server>::<pane>`), LENV the variables it runs with, as `NAME=value` words.
 n=0
 LT=home:0
 LENV=()
@@ -185,7 +186,7 @@ launcher() { # <timeout> <subcommand and options>
   { [ ${#LENV[@]} -gt 0 ] && printf 'env'; [ ${#LENV[@]} -gt 0 ] && printf ' %q' "${LENV[@]}"
     printf ' bash %q' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"; printf ' %q' "$@"
     printf ' > %q 2> %q; echo $? > %q\n' "$step.out" "$step.err" "$step.rc"; } > "$step.sh"
-  tm send-keys -t "$LT" "bash $step.sh" Enter
+  type_line "$LT" "bash $step.sh"
   local i=0
   while [ ! -s "$step.rc" ] && [ $i -lt $((wait * 2)) ]; do sleep 0.5; i=$((i + 1)); done
   [ -s "$step.rc" ] || { echo "timeout" > "$step.rc"; }
@@ -194,6 +195,7 @@ launcher() { # <timeout> <subcommand and options>
 rc() { cat "$STEP.rc"; }
 out() { cat "$STEP.out"; }
 # A pane of this server, or `<server>::<pane>` for one of a home server's.
+type_line() { case "$1" in *::*) tmux -L "${1%%::*}" send-keys -t "${1#*::}" "$2" Enter ;; *) tm send-keys -t "$1" "$2" Enter ;; esac; }
 screen_of() { case "$1" in *::*) tmux -L "${1%%::*}" capture-pane -p -t "${1#*::}" ;; *) tm capture-pane -p -t "$1" ;; esac; }
 windows() { tm list-windows -t home -F '#{window_index} #{window_id} #{window_name} #{window_active}'; }
 hosts_on() { ps -t "${1#/dev/}" -o command= 2>/dev/null | grep -c -- "--setting-sources project"; }
@@ -349,6 +351,44 @@ check "the first of them leaving ends nothing" "up|2" "$(owup)|$(owwindows)"
 owgone "$OWSECOND"; owwait
 check "the last of them leaving ends the server and every window it held" "down|0" "$(owup)|$(owwindows)"
 owsrv kill-server 2>/dev/null
+pkill -fx "sleep $OWMARK" 2>/dev/null
+
+echo "== a home server refuses a view's kill-window, and the launcher's close still ends the window =="
+# The same server, made with the real home.conf, no host: the agent's window runs a sleep. The
+# view is a client in control mode, as iTerm2's, its environment set as sshd sets it, and it
+# types what iTerm2 sends when its close dialog is answered « Terminate ».
+kwindow_of() { owsrv list-windows -t home -F '#{window_id} #{window_name}' | awk '/ Agent: e2e owner$/ { print $1 }'; }
+kwindows() { owsrv list-windows -t home -F '#{window_id}' | grep -cxF -- "$1"; }
+viewkill() { # <window id>: prints `<errors>|<errors naming the refusal>`
+  local answers
+  answers=$({ printf 'kill-window -t %s\n' "$1"; sleep 1; } |
+    env -u TMUX -u TMUX_PANE SSH_CONNECTION="192.0.2.1 50000 192.0.2.2 22" tmux -L "$OWSRV" -C attach -t home 2>&1)
+  printf '%s|%s' "$(printf '%s\n' "$answers" | grep -c '^%error')" \
+    "$(printf '%s\n' "$answers" | grep -c 'home-server-refuses-a-clients-kill-window')"
+}
+owhome
+KWIN=$(kwindow_of)
+KANSWER=$(viewkill "$KWIN")
+check "a view's kill-window is refused by name, and the agent's window and its program stay" "1|1|1|2" \
+  "$KANSWER|$(kwindows "$KWIN")|$(owwindows)"
+owgone "$OWTAB"; owwait; owsrv kill-server 2>/dev/null; pkill -fx "sleep $OWMARK" 2>/dev/null
+# On a server of its own again: the launcher's close, typed into a shell window of that server,
+# ends the very window a view has just been refused, so its TMUX and its TMUX_PANE are that
+# server's own. The shell starts from an empty environment, as the home session's does.
+owhome
+KWIN=$(kwindow_of)
+KTTY=$(owsrv display -p -t "$KWIN" '#{pane_tty}')
+KSHELL=$(owsrv new-window -d -P -F '#{pane_id}' -t home: -n caller -c "$WORKDIR" \
+  "exec env -i HOME=\"\$HOME\" USER=\"$USER\" PATH=$EPATH TERM=xterm-256color TMUX=\"\$TMUX\" TMUX_PANE=\"\$TMUX_PANE\" /bin/bash --noprofile --norc")
+KHELD="$(viewkill "$KWIN")|$(kwindows "$KWIN")"
+LT="$OWSRV::$KSHELL"
+LENV=(ORCHESTRATOR_STATE_DIR="$STATE" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" ORCHESTRATOR_OSASCRIPT=/usr/bin/false)
+launcher 30 close --tty "$KTTY" --expect-title "Agent: e2e owner" --keep-checkout
+LT=home:0; LENV=()
+check "the launcher's close ends the window a view could not kill, and the server runs on" \
+  "1|1|1|0|closed 1 session on $KTTY|0|1|up" \
+  "$KHELD|$(rc)|$(out)|$(kwindows "$KWIN")|$(owwindows)|$(owup)"
+owgone "$OWTAB"; owwait; owsrv kill-server 2>/dev/null
 pkill -fx "sleep $OWMARK" 2>/dev/null
 
 echo "== spawn: two agents, each a window of the home session =="
