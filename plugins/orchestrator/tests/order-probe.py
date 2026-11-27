@@ -7,6 +7,7 @@ Prints the order of each window on screen, before and after, and what the comman
 import asyncio
 import contextlib
 import io
+import json
 import os
 import subprocess
 import sys
@@ -14,6 +15,12 @@ import sys
 scripts, work, scenario = sys.argv[1:4]
 os.environ["ORCHESTRATOR_STATE_DIR"] = os.path.join(work, "state")
 os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(work, "cfg")
+os.environ["ORCHESTRATOR_PROJECTS_DIR"] = os.path.join(work, "projects")
+# Its own trust file: a spawn from `work` is refused unless the host trusts it, and neither the
+# machine's file nor the caller's says so.
+os.environ["ORCHESTRATOR_TRUST_FILE"] = os.path.join(work, "trust.json")
+with open(os.environ["ORCHESTRATOR_TRUST_FILE"], "w", encoding="utf-8") as fh:
+    json.dump({"projects": {os.path.realpath(work): {"hasTrustDialogAccepted": True}}}, fh)
 sys.path.insert(0, scripts)
 import iterm_agent as ia  # noqa: E402
 
