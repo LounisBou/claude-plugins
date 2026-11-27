@@ -12508,7 +12508,7 @@ check "two orchestrators in one checkout are still a pull request collision; a f
 CT="$WORK/coord-tree/skills"
 mkdir -p "$CT/iterm-agents/scripts"
 cp -R "$ROOT/skills/coordinator" "$ROOT/skills/orchestrator" "$CT/" && cp -R "$ROOT/core" "$WORK/coord-tree/"
-mkdir -p "$WORK/coord-tree/hooks" && cp "$ROOT/hooks/pr-file-format.ts" "$WORK/coord-tree/hooks/"
+cp -R "$ROOT/hooks" "$WORK/coord-tree/"
 printf '#!/bin/bash\necho "workspace: cannot read the root" >&2\nexit 1\n' > "$CT/orchestrator/scripts/workspace.sh"
 check "a workspace list that fails is said, and exit 2" "unread checkouts: workspace: cannot read the root|exit 2" \
   "$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" ORCHESTRATOR_STATE_DIR="$CS" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" ORCHESTRATOR_STATE_DIR="$CS" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"
