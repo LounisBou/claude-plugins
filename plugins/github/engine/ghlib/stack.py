@@ -40,10 +40,12 @@ NO_RULES_STATUSES = (403, 404)
 
 def rules_or_none(read):
     """What `read()` gives, the rules of a branch, or [] when GitHub refuses them as no rules (NO_RULES_STATUSES).
-    Any other error is raised as it was."""
+    A rate limit is no refusal of the rules: it is raised as it was, a 403 too. Any other error is raised as it was."""
     try:
         return read() or []
     except errors.GhError as exc:
+        if isinstance(exc, errors.RateLimited):
+            raise
         if exc.status in NO_RULES_STATUSES:
             return []
         raise

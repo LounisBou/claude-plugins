@@ -2535,6 +2535,10 @@ check "pr-gate reads a stacked base whose rules answer 404: stacked, nothing on 
 stackbase8 stack-500 '{"__status":500,"message":"boom"}'
 check "pr-gate names a failed rules read of a stacked base and reads it as not stacked" "False 1" \
   "$(gh8 pr-gate 12 2>"$F8/err" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"], end=" ")')$(grep -c 'cannot read whether' "$F8/err" || true)"
+# A rate limit is no « no rules », though it is a 403 too: the rules read is named and the base reads as not stacked.
+stackbase8 stack-limit '{"__status":403,"message":"API rate limit exceeded for user."}'
+check "pr-gate names a rate-limited rules read of a stacked base and reads it as not stacked" "False 1" \
+  "$(gh8 pr-gate 12 2>"$F8/err" | python3 -c 'import json,sys; print(json.load(sys.stdin)["stacked"], end=" ")')$(grep -c 'cannot read whether' "$F8/err" || true)"
 
 gate8 head-only "$PULL8" '{"state":"success","statuses":[]}' '{"check_runs":[]}'
 check "pr-gate --head-only answers the head, the draft, the state and the labels" \
@@ -3745,6 +3749,9 @@ stackfix "$SF" main $'on: pull_request\n'
 printf '%s' '{"protected":false}' > "$SF/GET_repos_acme_thing_branches_feat%2Fa.json"
 printf '%s' '{"__status":403,"message":"Upgrade to GitHub Pro or make this repository public to enable this feature."}' > "$SF/GET_repos_acme_thing_rules_branches_feat%2Fa__per_page=100.json"
 check "a base whose rules a free plan refuses is no protected branch: 11 and 12 stack on feat/a, so 10 stacks them" "bottom-up main 10 11 12" "$(plan 10)"
+printf '%s' '{"__status":404,"message":"Not Found"}' > "$SF/GET_repos_acme_thing_rules_branches_feat%2Fa__per_page=100.json"
+check "a base whose rules answer 404 is no protected branch either: 10 stacks 11 and 12 on feat/a" "bottom-up main 10 11 12" "$(plan 10)"
+check "a 404 of the rules is said nowhere" "0" "$(ghs pr-merge 11 --stack --format raw 2>&1 >/dev/null | grep -c 'cannot read whether' || true)"
 check "the free plan's refusal of the rules is said nowhere" "0" "$(ghs pr-merge 11 --stack --format raw 2>&1 >/dev/null | grep -c 'cannot read whether' || true)"
 printf '%s' '{"__status":500,"message":"boom"}' > "$SF/GET_repos_acme_thing_rules_branches_feat%2Fa__per_page=100.json"
 check "a failed rules read of a base names it and reads the base as long-lived: 10 stacks nothing on feat/a" "none" "$(plan 10)"
