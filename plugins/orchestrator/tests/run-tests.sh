@@ -9718,7 +9718,14 @@ check "a home tab is known by its server and its window 0's name, not by the tit
 check "a closed tab keeps its side when the tab it followed, known by no session id, is retitled" "A vim C|A vim B C" "$(ordered renamed-neighbour)"
 check "a new window the app lists first does not take the closed tabs of the window they left" "D / A C|D / A B C" "$(ordered new-window-first)"
 check "a move across plans with a registry each reads every tab under its own plan" "A D C B|A D C B" "$(ordered plans)"
+res=$(tabs_order plans)
+check "a session moved across plans starts on the plan asked, whatever plan the last tab read was on" \
+  "2 2" "$(sfield "$res" made)"
+check "a tab of the other plan is kept with the session id its own registry holds" \
+  "S/dev/ttys001 S/dev/ttys002" "$(sfield "$res" ids)"
 check "a successor whose close was refused takes its predecessor's place on proving its end" "t4 t1 t2 t3|t1 t2 t4 t3" "$(ordered refused-close)"
+check "the place a successor takes on proving that end is kept, though a proof keeps no order itself" \
+  "t1 t2 t4 t3" "$(sfield "$(tabs_order refused-close)" record)"
 check "not while the predecessor runs, for a caller that is no coordinator, or for one process of the tty" \
   "t4 t1 t2 t3|t4 t1 t2 t3,t4 t1 t2 t3|t4 t1 t2 t3,t4 t1 t2 t3|t4 t1 t2 t3" \
   "$(ordered verify-running),$(ordered verify-by-agent),$(ordered verify-pid)"
@@ -9728,6 +9735,8 @@ check "a resume takes no place from another open session of its name" "c b a|c a
 check "a session resumed under another title is known by its session id" "c a c|c a b2 c" "$(ordered by-session)"
 check "an open tab renamed is the same one by its session id, and the closed tab stays after it" "c A2 C|c A2 B C" "$(ordered renamed-open)"
 check "a session renamed and moved to another window leaves no closed entry" "c / a2" "$(sfield "$(tabs_order moved-renamed)" record)"
+check "in a window of another id, a tab id seen before erases no closed tab" "A Sh: logs* C* Sh: other" \
+  "$(sfield "$(tabs_order reused-ids)" record)"
 check "the reading made after a hand move is the one a closed tab goes back by" "c C|c C B" "$(ordered hand-move-then-close)"
 check "everything closed, reopened in any order beside a tab never recorded" "x A B C|x A B C" "$(sfield "$(tabs_order restarted-unknown)" after)"
 check "a tab that followed none goes back before the one it preceded" "A B C|A B C" "$(ordered first-closed)"

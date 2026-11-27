@@ -157,11 +157,12 @@ def quiet(call):
 
 
 def launcher(command, *words):
-    """One command as the entry runs it, the order kept after it. Each is a process of its own:
-    the plan a command moved to ends with it."""
+    """One command as the entry runs it, the order kept after one that changes it. Each is a
+    process of its own: the plan a command moved to ends with it."""
     plan = os.environ.get("CLAUDE_CONFIG_DIR", "")
     said = quiet(lambda: ia.COMMANDS[command](ia.args_from_line(command, list(words))))
-    quiet(ia.keep_order)
+    if command in ia.ORDER_CHANGERS:
+        quiet(ia.keep_order)
     ia.use_config(plan)
     return said
 
@@ -384,6 +385,10 @@ elif scenario == "plans":
     wake("Orch: A", "--plan", "2")
     wake("Orch: C", "--plan", "2")
     print("after=%s" % screen())
+    # The plan each woken tab was made on, and the id kept for each tab of the first plan.
+    print("made=%s" % " ".join(ia.plan_of_config(plans[tab(n).tty]) or "?" for n in ("Orch: A", "Orch: C")))
+    ids = {e["name"]: e["session"] for w in ia.kept_places() for e in w["tabs"]}
+    print("ids=%s" % " ".join(ids.get(n) or "-" for n in ("Coord: D", "Orch: B")))
 elif scenario in ("refused-close", "verify-running", "verify-by-agent", "verify-pid"):
     # The host refused the successor its close: the predecessor ended itself, its tab left on a
     # shell, and the successor, made at the window's first place, proves that end with `verify`.
@@ -399,6 +404,7 @@ elif scenario in ("refused-close", "verify-running", "verify-by-agent", "verify-
     print("before=%s" % tab_ids())
     launcher("verify", "--tty", first.tty, *(("--pid", "9") if scenario == "verify-pid" else ()))
     print("after=%s" % tab_ids())
+    print("record=%s" % " / ".join(" ".join(e["tab"] for e in w["tabs"]) for w in ia.kept_places()))
 elif scenario in ("resumed", "resumed-anchored"):
     window("w1", "Coord: c", "Agent: a", "Agent: b", "Agent: c")
     own[0] = tab("Coord: c").tty
@@ -441,6 +447,14 @@ elif scenario == "moved-renamed":
     one = tab_order.merge([], [{"window": "w1", "tabs": [entry("c", "", "1"), entry("a", "sid", "2")]}], 1)
     two = tab_order.merge(one, [{"window": "w1", "tabs": [entry("c", "", "1")]},
                                 {"window": "w2", "tabs": [entry("a2", "sid", "3")]}], 2)
+    print("record=%s" % kept(two))
+elif scenario == "reused-ids":
+    # The app started again gives out its tab ids anew: in a window of another id, one names no
+    # earlier tab.
+    one = tab_order.merge([], [{"window": "w1", "tabs": [
+        entry("A", "a", "1"), entry("Sh: logs", "", "2"), entry("C", "c", "3")]}], 1)
+    two = tab_order.merge(one, [{"window": "w9", "tabs": [
+        entry("A", "a", "1"), entry("Sh: other", "", "2")]}], 2)
     print("record=%s" % kept(two))
 elif scenario == "hand-move-then-close":
     # C dragged before A after B was closed, then A closed: B goes back after C, where the newer
