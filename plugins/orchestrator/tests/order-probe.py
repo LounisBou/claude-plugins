@@ -134,6 +134,8 @@ ia.wait_gone = lambda tty, timeout=None: None
 ia.pane_tab_tty = lambda tty: tty
 ia.close_host_tty = lambda tty, strict=False: ("", None, tty)
 ia.host_cli_cwd = lambda tty: None
+# Nothing typed in any prompt: the empty box a close reads where it finds a host on the tab.
+ia.ITERM.prompt_lines = lambda tty: ["─" * 40, "❯\u00a0", "─" * 40]
 ia.recorded_pids = lambda ttys: {}
 ia.in_home_session = lambda: False
 # A woken orchestrator's home server, stood in for: its tab is the app's.
