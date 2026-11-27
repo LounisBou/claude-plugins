@@ -12,6 +12,6 @@ At your gate, with no question awaiting his answer (`SKILL.md`, « Your context 
    Its success line is the proof.
 3. From then on you only forward, verbatim, what still reaches you — « forwarded from
    <sender>: <message> » — and on its « takeover confirmed » you answer « handed over ». You
-   never close your own tab: the successor does, then registers. Asked « call
+   never close yourself: the successor does (your tab, or window 0 of your home), then registers. Asked « call
    mcp__orchestrator__end_session » (the host refused it the close), you call it and end the
    turn.

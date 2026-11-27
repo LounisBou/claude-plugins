@@ -400,6 +400,21 @@ export function todoLines(text: string | undefined): string {
 /** The subject of a session's name, its role and reference left off. */
 const subjectOf = (name: string): string => name.trim().replace(/ \[[^\]\s]+\]$/, '').replace(/^[A-Za-z]+ ?: */, '').trim()
 
+/**
+ * The step of a coordinator's or an auditor's takeover that ends its predecessor, as an orchestrator's
+ * does: where the predecessor is window 0 of the home session the successor was spawned in, the launcher's
+ * `takeover`, which waits for its « handed over », kills that window and moves the successor's to index 0;
+ * else the `close` of its tab, introduced by `tab` and followed by `after`. `expect` is the title the
+ * launcher checks before it ends anything.
+ */
+export function closeStep(tty: string, expect: string, deps: Deps, tab: string, after = ''): string {
+  const line = (verb: string): string => `\n\n   \`\`\`\n   ${LAUNCHER} ${verb} --tty ${tty} --expect-title "${expect}"\n   \`\`\``
+  if ((deps.paneWindow ?? tmuxWindow)(tty) === 0) {
+    return `**TAKE WINDOW 0**, nothing asked of the operator: your predecessor runs in window 0 of your home session. Run at once, with \`timeout: 600000\`; it waits for its « handed over », or five minutes of an idle transcript, then ends it and moves your window to index 0; its \`took window 0\` line is the proof:${line('takeover')}`
+  }
+  return `${tab}${line('close')}${after}`
+}
+
 function auditorValues(f: Fields, deps: Deps): Values {
   const repository = f['repository'] ?? ''
   const name = f['name'] ?? ''
@@ -409,6 +424,8 @@ function auditorValues(f: Fields, deps: Deps): Values {
     PREDECESSOR: name,
     PREDECESSOR_TTY: f['tty'] ?? '',
     REPORT_PATH: f['report'] ?? '',
+    CLOSE_STEP: closeStep(f['tty'] ?? '', `Audit: ${subjectOf(name)}`, deps,
+      `**Close its tab**, once \`list\` still shows an \`Audit:\` session on ${f['tty'] ?? ''} that is not yours; its \`closed 1 session\` line is the proof:`),
     OPERATOR_WORK: todoLines(readText(todoPath(stateRoot(deps.env), name))),
     ITERM_AGENT_SH: LAUNCHER,
     BRIEF_SH: SCRIPT,
@@ -425,6 +442,9 @@ function coordinatorValues(f: Fields, deps: Deps): Values {
     SUBJECT: subjectOf(name),
     PREDECESSOR: name,
     PREDECESSOR_TTY: f['tty'] ?? '',
+    CLOSE_STEP: closeStep(f['tty'] ?? '', 'Coord:', deps,
+      `**CLOSE ITS TAB**, nothing asked of the operator, one the launcher did not open included, once \`list\` still shows a session on ${f['tty'] ?? ''} that is not \`self\`; its \`closed 1 session\` line is the proof (a predecessor the launcher did not open: the title \`list\` printed for it as \`--expect-title\`):`,
+      `\n\n   Where the host refuses the close, message \`${name}\` « call mcp__orchestrator__end_session », prove its end with \`verify --tty ${f['tty'] ?? ''}\` failing, and tell the operator in one line that its tab holds only a shell.`),
     NOTES_CAP: String(NOTES_CAP),
     NOTES_FILE: notesFile,
     NOTES: notes === undefined || notes.trim() === '' ? 'none' : [...notes].slice(0, NOTES_CAP).join('').replace(/\n+$/, ''),

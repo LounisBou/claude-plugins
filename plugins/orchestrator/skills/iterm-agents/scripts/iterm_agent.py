@@ -2450,7 +2450,8 @@ def take_predecessors_place(tty, what):
     the order: a successor takes its predecessor's place, however its tab was opened."""
     own = self_tty() or ""
     if predecessor_of_caller(own, tty) and terminal_for(tty) is ITERM:
-        put_beside(own, tty, "right", what)
+        # A successor born in window 0 of a home server of its own is shown by that server's tab.
+        put_beside(shown_tab(own, what), tty, "right", what)
         read_order()
 
 
@@ -2833,6 +2834,37 @@ def home_tab_tty(term):
         if term.find(tty):
             return tty
     return ""
+
+
+def shown_tab(own, what):
+    """The tab that shows `own`: the home session's tab when `own` is its window 0 and that tab
+    can be read, else `own`."""
+    return own_home_tab(what, own, strict=False) or own
+
+
+def own_home_tab(what, own, strict=True):
+    """The tty of the tab that shows the caller's home session when `own`, the caller's tty, is
+    window 0 of it; "" for a caller in no home session or in another window of one. A window 0
+    whose tab cannot be read is a refusal when `strict`: its window is no tab of the app's to
+    act on; else it is ""."""
+    if not own or not in_home_session():
+        return ""
+    term = TmuxTerminal()
+    if strict:
+        pane = term.window_of(own, what)
+    else:
+        try:
+            pane = term.lookup(own)
+        except Exception:
+            return ""
+    if pane is None or pane.index != "0":
+        return ""
+    # The tab is the app's: only the app finds it, a pane list never does.
+    tab = home_tab_tty(ITERM)
+    if not tab and strict:
+        die("%s: refused: %s is window 0 of a home session whose tab cannot be read; nothing "
+            "was moved" % (what, own))
+    return tab
 
 
 def remember_auditor(term, auditor, launcher_tty):
@@ -3610,10 +3642,10 @@ def terminal(agent=True):
     """The terminal this launcher drives: the one place that chooses.
 
     A caller in a home session gets its windows; any other gets iTerm2. Only an agent's
-    spawn and an orchestrator's successor are windows (`agent` True): the successor takes the
-    predecessor's window 0 in the same session, where its agents are. The auditor, the
-    coordinator's successor and a woken or opened orchestrator are made as tabs (`agent`
-    False). The mark is read once per run."""
+    spawn and a successor are windows (`agent` True): the successor takes the predecessor's
+    window 0 in the same session, where its agents are. The auditor and a woken or opened
+    orchestrator start in a home session of their own, shown by a tab (`agent` False). The
+    mark is read once per run."""
     if not agent:
         return ITERM
     if "terminal" not in _chosen:
@@ -4065,13 +4097,14 @@ def client_on(socket, tty):
         time.sleep(0.3)
 
 
-def open_home_tab(socket, title, anchor, what):
-    """The iTerm2 tab that shows the home server, right of `anchor`, proved by its client:
-    `(its tty, what was made)`. Any failure ends the server and closes the tab, then dies:
-    a home session nobody can see is not left running."""
+def open_home_tab(socket, title, anchor, what, place=None):
+    """The iTerm2 tab that shows the home server, right of `anchor` or at `place`, proved by its
+    client: `(its tty, what was made)`. Any failure ends the server and closes the tab, then
+    dies: a home session nobody can see is not left running."""
     made = {"terminal": ITERM}
-    place = Place("beside", anchor, "right", False) if anchor else Place("anywhere", "",
-                                                                         "right", False)
+    if place is None:
+        place = Place("beside", anchor, "right", False) if anchor else Place("anywhere", "",
+                                                                             "right", False)
     try:
         tty, _ = ITERM.create(attach_program(socket, title), title, place, "", made)
     except SystemExit:
@@ -4768,6 +4801,16 @@ def cmd_takeover(args):
     print("took window 0: the predecessor's window %s on %s was closed" % (pred.window, args.tty))
 
 
+def home_role_name(name):
+    """Whether `name` is a session that runs in a home session of its own: an orchestrator's,
+    the coordinator's or an auditor's (the operator's order of 2026-11-27: every agent runs in
+    tmux, and none outlives its last tab of this machine)."""
+    name = name or ""
+    if name.startswith(ORCH_ROLE + " "):
+        return bool(TITLE_SHAPE.match(name))
+    return bool(COORD_TITLE_SHAPE.match(name) or AUDIT_NAME_SHAPE.match(name))
+
+
 def cmd_home(args):
     """Move a running orchestrator into a home session of its own, in its own place: a home
     server whose window 0 resumes the same conversation once the session has ended where it
@@ -4781,9 +4824,9 @@ def cmd_home(args):
         die("home: --session is required")
     own_name = args.name or session_name_on(self_tty() or "") or ""
     args.name = current_name("" if own_name == UNREADABLE_NAME else own_name)
-    if not args.name.startswith(ORCH_ROLE + " ") or not TITLE_SHAPE.match(args.name):
-        print("stay: only an orchestrator moves into a home session, and this session is "
-              "named '%s'" % args.name[:40])
+    if not home_role_name(args.name):
+        print("stay: only an orchestrator moves into a home session, or a coordinator or an "
+              "auditor, and this session is named '%s'" % args.name[:40])
         return
     if in_home_session():
         print("stay: this session already runs in a home session")
@@ -6047,20 +6090,32 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
         side, anchor = "left", "leftmost"
     effect = chain_effect(args.successor, args.auditor, args.coordinator_successor,
                           auditor_successor, args.wake, args.open_)
+    # A coordinator's or an auditor's successor takes its predecessor's place as an orchestrator's
+    # does: from a home session, a window of it, which takes window 0 by the takeover; from a
+    # tab, window 0 of a home server of its own, shown by a tab where the successor would sit.
+    role_successor = bool(args.coordinator_successor or auditor_successor)
+    caller_home = role_successor and in_home_session()
+    # A woken or opened orchestrator, an auditor, and a coordinator's or an auditor's successor
+    # spawned from a tab start in window 0 of a home session of their own, shown by a tab where
+    # the session would sit: its server is named after its session, the one it resumes or the
+    # id it is given.
+    home = args.wake or args.open_ or args.auditor or (role_successor and not caller_home)
     defaulted = effect == "append" and not anchor
     if defaulted:
         # An agent given no place sits in its orchestrator's group, to its right: unanchored,
         # it landed at the window's end, beside whoever sat there, and was still written into
         # the caller's chain.
         side, anchor = "right", "self"
-    # Chosen once, and only for a launch that reaches a terminal: a dry run asks none. Only an
-    # agent joins its caller's chain and only a successor takes it, and only those two may be
-    # windows of a home session.
-    term = None if DRY_RUN else terminal(agent=effect in ("append", "transfer"))
-    if args.auditor and anchor == "self" and term is not None and in_home_session():
-        # An orchestrator of a home session is shown by a tab of its own, not by the pane it
-        # runs in: the auditor sits left of THAT tab, the one the operator reads.
-        anchor = home_tab_tty(term) or "self"
+    # Chosen once, and only for a launch that reaches a terminal: a dry run asks none. An agent,
+    # which joins its caller's chain, and a successor of any role may be windows of a home
+    # session; nothing else is.
+    windowed = effect in ("append", "transfer") or caller_home
+    term = None if DRY_RUN else terminal(agent=windowed)
+    if home and anchor == "self" and term is not None and in_home_session():
+        # A caller of a home session is shown by a tab of its own, not by the pane it runs in:
+        # an auditor sits left of THAT tab, the one the operator reads, and an orchestrator the
+        # coordinator wakes or opens right of it.
+        anchor = home_tab_tty(ITERM) or "self"
     if term is ITERM and effect == "append":
         # An orchestrator's agents are windows of its home session. Spawned from its tab
         # before the move into its home, at the end of the turn that named it, they stayed
@@ -6155,7 +6210,7 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
                       "cannot be placed at the first place of your window; it lands where "
                       "the app puts it." % own, file=sys.stderr)
                 anchor = ""
-    if (args.wake or args.open_) and home_no_tab():
+    if home and home_no_tab():
         # No tab shows the server: there is no place to probe, and the app is never asked.
         anchor = ""
     if anchor and anchor not in ("self", "leftmost") and not DRY_RUN:
@@ -6187,10 +6242,6 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
     remote_control = title if ((args.successor and args.remote_control) or args.auditor
                                 or args.coordinator_successor or args.wake
                                 or args.open_) else ""
-    # A woken or opened orchestrator starts in window 0 of a home session of its own, shown by
-    # a tab right of the caller's: its server is named after its session, the one it resumes
-    # or the id it is given.
-    home = args.wake or args.open_
     session_words, socket = (), ""
     if args.resume and not home:
         # A closed agent resumed in its own checkout: the same conversation, its next work as the prompt.
@@ -6248,8 +6299,12 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
             print("home_server=%s" % socket)
             print("home_conf=%s" % plugin_path(HOME_CONF))
             print("home_window0=%s" % title)
-            print("home_tab=%s" % ("right of %s" % ("self" if anchor == own else anchor)
+            print("home_tab=%s" % ("first of the window" if anchor == "leftmost"
+                                   else "%s of %s" % (side, "self" if anchor == own else anchor)
                                    if anchor else "where the app puts it"))
+        elif caller_home:
+            print("home_window=a window of the caller's home session, which takes window 0 "
+                  "by the takeover")
         return
 
     script = write_launch_script(launch, title)
@@ -6266,7 +6321,10 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
 
     made = {} if made is None else made
     made["terminal"] = term
-    if anchor == "leftmost":
+    if caller_home:
+        # A window takes the next free index, and the takeover moves it to window 0.
+        place = Place("anywhere", "", side, False)
+    elif anchor == "leftmost":
         place = Place("first", own, side, args.auditor)
     elif anchor:
         place = Place("beside", anchor, side, args.auditor)
@@ -6300,8 +6358,8 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
                 print("spawn: home server %s, window 0 on %s, no tab: attach with %s -L %s attach"
                       % (socket, pane_tty, TMUX_BIN, socket), file=sys.stderr)
             else:
-                tab_tty, made = open_home_tab(socket, title, place.anchor, "spawn")
-                made.update(home=socket, tty=pane_tty)
+                tab_tty, made = open_home_tab(socket, title, place.anchor, "spawn", place)
+                made.update(home=socket, tty=pane_tty, tab_tty=tab_tty)
                 if reopened:
                     put_beside(tab_tty, reopened[0], reopened[1], "spawn")
                 print("spawn: home server %s, window 0 on %s, shown in the tab on %s"
@@ -6335,11 +6393,13 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
     # Before the verification below, which may wait or die: an auditor's place is settled as
     # soon as its tab exists, and said on stdout, where the orchestrator reads the launch.
     misplaced = 0
-    if args.auditor:
-        line, misplaced = repair_auditor_place(new_tty, anchor or own, term)
+    if args.auditor and made.get("tab_tty"):
+        # The auditor runs in window 0 of its home server: the tab that shows it is what sits
+        # beside its orchestrator, and what the operator moves.
+        line, misplaced = repair_auditor_place(made["tab_tty"], anchor or own, ITERM)
         if line:
             print(line)
-        remember_auditor(term, new_tty, own)
+        remember_auditor(ITERM, made["tab_tty"], own)
 
     if args.verify:
         await_host(new_tty, args.dir, launch_epoch, made, "spawn")
@@ -6972,6 +7032,15 @@ def close_host_tty(tty, strict=False):
     return socket, listed, host_tty
 
 
+def role_host_tty(tty):
+    """The tty a role's name is read on for `tty`: window 0's pane when `tty` is the tab of a home
+    session, whose own process is only the tmux client; `tty` itself otherwise."""
+    try:
+        return close_host_tty(tty)[2]
+    except Exception:
+        return tty
+
+
 def host_fate(host):
     """What became of a host read before a rotation's spawn, by its pid and its start time:
     "runs" while that same process runs, "ended" once it is gone (its pid free, or held by a
@@ -7153,8 +7222,10 @@ def cmd_move(args):
         no chain, so each is nobody's to place but its own session's, whatever a stale chain
         entry on its tty says (§52). An auditor the caller itself launched is the exception:
         the launch recorded it, and the caller that placed it is the one that repairs it."""
-        coord = ((coord_name_on(args.tty) or registered_coord_on(args.tty))
-                 if args.tty != own else None)
+        # The coordinator and an auditor run in window 0 of a home session: their tab runs only
+        # its client, and their name is read on that window's pane.
+        host = role_host_tty(args.tty) if args.tty != own else ""
+        coord = (coord_name_on(host) or registered_coord_on(host)) if host else None
         if coord:
             if not args.force:
                 die("move: refused: %s is the coordinator's tab ('%s'), not this session's "
@@ -7162,7 +7233,7 @@ def cmd_move(args):
             print("move: forced: %s is the coordinator's tab ('%s')" % (args.tty, coord),
                   file=sys.stderr)
             return
-        audit = audit_name_on(args.tty) if args.tty != own else None
+        audit = audit_name_on(host) if host else None
         if audit:
             if launched():
                 # The auditor's own launcher placed it, and a place that comes out wrong is
@@ -7189,6 +7260,17 @@ def cmd_move(args):
         print("move=%s %s=%s" % (args.tty, "right_of" if args.right_of else "left_of", anchor))
         return
 
+    # Only a place among the app's tabs is the home tab's: the first of its window, or beside a
+    # tab that is no pane of this server. A place among the session's own windows is window 0's,
+    # and its guard below refuses it.
+    shown = own_home_tab("move", own) if args.tty == own and (
+        args.leftmost or terminal_for(anchor) is ITERM) else ""
+    if shown:
+        # The caller's own window 0 is shown by the tab of its home server: its own place, the
+        # coordinator's leftmost one among them, is that tab's.
+        idx = ITERM.move(shown, anchor, bool(args.right_of), args.leftmost)
+        print("moved %s to position %s" % (shown, idx))
+        return
     # The guard rules BEFORE anything moves: a refusal must find the layout as it was.
     term = terminal_for(args.tty)
     owned = term.owns(args.tty, own)
@@ -7286,7 +7368,9 @@ def cmd_rotate(args):
     # caller's, and a rotation that closed one would end an audit nobody ended, or drop the
     # machine's coordinator, without anyone having asked for either (§52). Read before the
     # spawn, so a refusal leaves no replacement behind.
-    coord = coord_name_on(args.old_tty) or registered_coord_on(args.old_tty)
+    # Read on window 0's pane for the tab of a home session, where the role runs.
+    host = role_host_tty(args.old_tty)
+    coord = coord_name_on(host) or registered_coord_on(host)
     if coord:
         if not args.force:
             die("rotate: refused: %s is the coordinator's tab ('%s'): the coordinator is "
@@ -7294,7 +7378,7 @@ def cmd_rotate(args):
                 % (args.old_tty, coord))
         print("rotate: forced: %s is the coordinator's tab ('%s')" % (args.old_tty, coord),
               file=sys.stderr)
-    audit = audit_name_on(args.old_tty)
+    audit = audit_name_on(host)
     if audit:
         if not args.force:
             die("rotate: refused: %s is an auditor's tab ('%s'): an auditor is not an agent "
