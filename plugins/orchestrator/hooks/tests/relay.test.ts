@@ -10,7 +10,7 @@ import { roundEntry, type RoundEntry } from '../round.ts'
 import { settledText, successorText, parseSessionRow, paneRows, withWait, writeSession, readSessions, WORKS_AGAIN, HANDED_ON, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { answerAskedFromPane, askTurnStarted, callAsk, clearFailed, settle } from '../question.ts'
-import { forgetResendTimer, resendReplies } from '../remote-asked.ts'
+import { forgetResendTimer, resendReplicas, resendReplies } from '../remote-asked.ts'
 import { DECLARATIONS } from '../wait.ts'
 import { remoteKey } from '../remote-row.ts'
 import type { DeclaredWait } from '../stop-gate.ts'
@@ -1520,6 +1520,65 @@ test('a push not acked is sent again at the asker\'s turn ends every 30 s, three
   expect(pushes(sender).length).toBe(3)
   expect(objectAt(sender, id).replica).toMatchObject({ state: 'failed', attempts: 3, reason: 'no acknowledgment after 3 sends' })
   expect(sender.logged.filter(l => l.endsWith(`${id} not pushed to the coordinator Coord: ops [abc]: no acknowledgment after 3 sends`)).length).toBe(1)
+})
+
+// An orchestrator moved to an account its coordinator has not reached yet (2026-11-27): the host
+// refuses every send for minutes, and the asker, waiting on the operator, ends no turn.
+test('an open question its coordinator could not be reached with is pushed again by the timer alone until it reaches the round', async () => {
+  forgetResendTimer()
+  const { chains, sender, coordinator, id } = await askedRemotely()
+  const reachable = sender.dollar.session.send
+  const UNREACHED = 'No agent named \'Coord: ops [abc]\' is reachable.'
+  let refusals = 0
+  sender.dollar.session.send = async () => { refusals++; return { isDelivered: false, reason: UNREACHED } }
+  const age = (ms: number) => {
+    const now = objectAt(sender, id)
+    sender.files.set(`${ROUND}/${id}.json`, JSON.stringify({ ...now, replica: { ...now.replica, at: new Date(Date.now() - ms).toISOString() } }) + '\n')
+  }
+  let fired = 0
+  const tick = async () => {
+    const timers = sender.later.filter(t => t.ms > 30_000)
+    expect(timers.length).toBe(fired + 1)
+    await only(timers, fired++).fn()
+  }
+  for (let sends = 0; sends < 3; sends++) { age(31_000); await tick() }
+  expect(objectAt(sender, id).replica).toMatchObject({ state: 'failed', reason: 'no acknowledgment after 3 sends' })
+  // Not yet two minutes: nothing is sent, the timer stays armed.
+  const sofar = refusals
+  age(31_000)
+  await tick()
+  expect(refusals).toBe(sofar)
+  const said = () => sender.logged.filter(l => l.includes(`${id} not pushed`) && l.includes(UNREACHED)).length
+  const before = said()
+  for (let round = 0; round < 2; round++) { age(121_000); await tick() }
+  expect(refusals).toBeGreaterThan(sofar)
+  expect(objectAt(sender, id).replica).toMatchObject({ seq: 1, state: 'failed', reason: UNREACHED })
+  // The same refusal is said once, not at every retry.
+  expect(said()).toBe(before + 1)
+  // The coordinator is reachable at last: the next retry carries the question to its round.
+  sender.dollar.session.send = reachable
+  age(121_000)
+  await tick()
+  expect(objectAt(sender, id).replica).toMatchObject({ seq: 1, state: 'sent', attempts: 1 })
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', pushes(sender).at(-1)!.text))
+  expect(objectAt(coordinator, id)).toMatchObject({ id, status: 'open', origin: { address: SENDER_AT } })
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', only(qAcks(coordinator, 'asked')).text))
+  expect(objectAt(sender, id).replica.state).toBe('acked')
+  // Acknowledged: the tick that finds it so arms no other.
+  await tick()
+  expect(sender.later.filter(t => t.ms > 30_000).length).toBe(fired)
+})
+
+test('a question closed while its coordinator is out of reach is retried no more once its close has failed', async () => {
+  forgetResendTimer()
+  const { sender, id } = await askedRemotely()
+  await settle(sender.dollar, { id, outcome: 'withdrawn', text: 'moot now', author: null, work: null })
+  const now = objectAt(sender, id)
+  const at = new Date(Date.now() - 121_000).toISOString()
+  sender.files.set(`${ROUND}/${id}.json`, JSON.stringify({ ...now, replica: { seq: now.seq, state: 'failed', attempts: 3, at, reason: 'no acknowledgment after 3 sends' } }) + '\n')
+  const sofar = pushes(sender).length
+  await resendReplicas(sender.dollar)
+  expect(pushes(sender).length).toBe(sofar)
 })
 
 test('a replica\'s answer not acked is sent again by the round\'s wake every 30 s, three sends in all, then failed', async () => {
