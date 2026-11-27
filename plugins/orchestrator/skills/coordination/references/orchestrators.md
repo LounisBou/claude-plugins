@@ -9,7 +9,7 @@ of you in plain words. Never your own initiative, never a peer's request, never 
 > your succession for a pause: reach a quiet boundary, stand your agents down and close their
 > tabs, stop your CI watches, bring your dispatch record current (every open item a row with
 > its blocker, a judgment its note), then reply `paused-ready <dispatch record path>
-> mode=<your mode> model=<model> effort=<effort>`, the last two the values `iterm-agent.sh pair` prints for you. Spawn no successor and do not close yourself: I close your tab.
+> model=<model> effort=<effort>`, the last two the values `iterm-agent.sh pair` prints for you. Spawn no successor and do not close yourself: I close your tab.
 > If you cannot, or `iterm-agent.sh pair` exits 1, reply `pause-refused <reason>`.
 
 Then, on its `paused-ready`:
@@ -24,7 +24,7 @@ Then, on its `paused-ready`:
 3. **Record it sleeping**, its name without its reference:
 
    ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch: <subject>" --brief <its dispatch record> --dir <its directory> --model <model> --effort <effort> --mode <its mode> [--session <that session>] [--config <its plan's directory>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch: <subject>" --brief <its dispatch record> --dir <its directory> --model <model> --effort <effort> [--session <that session>] [--config <its plan's directory>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
    ```
 
    `--config`: its `CLAUDE_CONFIG_DIR` (`~/.claude-bis` in full for `plan2`), none for `plan1`.
@@ -40,7 +40,7 @@ Its open pull requests stay as they are.
 field):
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch: <subject>" [--model <model> --effort <effort>] [--resume <its session>] [--plan 1|2|auto] --dir <its directory> --permission-mode auto --prompt 'Load the skill orchestrator:orchestrator with the argument "<its mode>", then, from its working directory (no cd), run <the base directory that skill load printed>/scripts/succession.sh takeover <its dispatch record> --mode <its mode> and execute what it prints. You wake from a pause: your predecessor is gone; skip the takeover handshake.'
+${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch: <subject>" [--model <model> --effort <effort>] [--resume <its session>] [--plan 1|2|auto] --dir <its directory> --permission-mode auto --prompt 'Load the skill orchestrator:orchestrator, then, from its working directory (no cd), run <the base directory that skill load printed>/scripts/succession.sh takeover <its dispatch record> and execute what it prints. You wake from a pause: your predecessor is gone; skip the takeover handshake.'
 ```
 
 The record's model and effort go together, or neither: a record a pause wrote before an

@@ -48,16 +48,9 @@ export function lint(text: string, context: Context): Finding[] {
   const some = (re: RegExp): boolean => lines.some(l => re.test(l))
   const implementer = some(/^You are the implementer/)
 
-  /*
-   * A placeholder that survived instantiation is a hole the agent reads as literal text. The one
-   * name a brief may quote is the succession template's mode, inside an inline code span closed
-   * on the same line (`Mode: {{MODE}}`): an odd count of backticks on each side of it.
-   */
+  // A placeholder that survived instantiation is a hole the agent reads as literal text.
   lines.forEach((line, i) => {
-    for (const m of line.matchAll(/\{\{[A-Za-z0-9_]+\}\}/g)) {
-      const quoted = count(line.slice(0, m.index), /`/g) % 2 === 1 && count(line.slice(m.index + m[0].length), /`/g) % 2 === 1
-      if (!(m[0] === '{{MODE}}' && quoted)) say(i + 1, `unfilled placeholder ${m[0]}`)
-    }
+    for (const m of line.matchAll(/\{\{[A-Za-z0-9_]+\}\}/g)) say(i + 1, `unfilled placeholder ${m[0]}`)
   })
 
   // An upper-case variable reference does not expand in the shell of the session that opens the

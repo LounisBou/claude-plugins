@@ -1,5 +1,5 @@
 // The sleeping orchestrators: <state>/sleeping.json, an array of {"name","brief","dir","model",
-// "effort","slept","prs","checkouts"[,"session"][,"mode"][,"config"]}, its "brief" the dispatch record a wake
+// "effort","slept","prs","checkouts"[,"session"][,"config"]}, its "brief" the dispatch record a wake
 // runs the takeover on, written in one rename under the coordinator's
 // lock and kept apart from its own record, so it outlives a succession. A sleeping orchestrator
 // is the operator's to wake or drop: nothing here acts on its own.
@@ -70,11 +70,10 @@ export function sleepingLine(one: Sleeper): string {
   const checkouts = list(one['checkouts'])
   const effort = isNone(one['effort']) ? 'none' : shown(one['effort'])
   const session = isNone(one['session']) ? '' : ` | session ${shown(one['session'])}`
-  const mode = isNone(one['mode']) ? '' : ` | mode ${shown(one['mode'])}`
   const config = isNone(one['config']) ? '' : ` | config ${shown(one['config'])}`
   return `sleeping ${shown(one['name'])} | since ${shown(one['slept'])} | ${shown(one['dir'])}`
     + ` | prs ${prs.length > 0 ? prs.join(', ') : 'none'} | checkouts ${checkouts.length > 0 ? checkouts.join(', ') : 'none'}`
-    + ` | brief ${shown(one['brief'])} | model ${shown(one['model'])} | effort ${effort}${session}${mode}${config}`
+    + ` | brief ${shown(one['brief'])} | model ${shown(one['model'])} | effort ${effort}${session}${config}`
 }
 
 /** Whether `name` is the launcher's shape for an orchestrator's title, without its reference. */
@@ -113,12 +112,13 @@ function isDirectory(path: string): boolean {
   }
 }
 
-const SLEEP_USAGE = 'sleep: usage: sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id> --effort <level> [--session <id>] [--mode build|investigate] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'
+const SLEEP_USAGE = 'sleep: usage: sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id> --effort <level> [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'
 
 export function sleep(ctx: Context, args: readonly string[]): number {
   const single = new Map<string, string>()
   const prs: string[] = []
   const checkouts: string[] = []
+  // `--mode` is what an older pause line still passes: accepted and ignored for one release.
   for (let i = 0; i < args.length; i += 2) {
     const option = args[i] ?? ''
     const value = args[i + 1]
@@ -139,7 +139,6 @@ export function sleep(ctx: Context, args: readonly string[]): number {
   const model = get('--model')
   const effort = get('--effort')
   const session = get('--session')
-  const mode = get('--mode')
   const config = get('--config')
   if (name === '' || brief === '' || dir === '' || model === '') die(SLEEP_USAGE)
   if (!isSleeperName(name)) die(`sleep: refused: the name reads "Orch: <subject>", without its reference, the subject at most 25 characters, got '${name}'`)
@@ -152,15 +151,13 @@ export function sleep(ctx: Context, args: readonly string[]): number {
   if (effort === '') die('sleep: refused: no effort: a pause records the model with its effort, --effort <level> (the paused orchestrator reads both with iterm-agent.sh pair)')
   if (!(EFFORTS as readonly string[]).includes(effort)) die(`sleep: refused: unknown effort ${effort} (low, medium, high, xhigh or max)`)
   if (session !== '' && !/^[0-9A-Za-z-]+$/.test(session)) die(`sleep: refused: a session id reads letters, digits and hyphens, got '${session}'`)
-  // The mode the wake loads the rulebook with: the takeover needs it, and no file holds it.
-  if (mode !== '' && mode !== 'build' && mode !== 'investigate') die(`sleep: refused: the mode is build or investigate, got '${mode}'`)
   // The plan the orchestrator ran on (absent: plan 1): a wake and a move run it there again.
   if (config !== '' && !config.startsWith('/')) die(`sleep: refused: the configuration directory must be absolute, got ${config}`)
   const state = stateOf(ctx.env)
   withCoordinatorLock(ctx, 'sleep', () => {
     const all = readSleeping(state)
     if (all.some(one => named(one, name))) die(`sleep: refused: ${name} is already sleeping`)
-    const record = { name, brief, dir, model, effort, slept: utc(ctx.now()), prs, checkouts, ...(session === '' ? {} : { session }), ...(mode === '' ? {} : { mode }), ...(config === '' ? {} : { config }) }
+    const record = { name, brief, dir, model, effort, slept: utc(ctx.now()), prs, checkouts, ...(session === '' ? {} : { session }), ...(config === '' ? {} : { config }) }
     writeWhole(sleepingPath(state), JSON.stringify([...all, record]))
   })
   ctx.out(`sleeping ${name}`)

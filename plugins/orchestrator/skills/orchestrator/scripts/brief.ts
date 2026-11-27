@@ -1,7 +1,7 @@
 // brief — the briefs printed from the state, never typed.
 //
 //   brief.sh phase --record <dispatch record> --row <id> --plan <phase file> --worktree <dir> --branch <b>
-//     --orchestrator "<name [ref]>" --out <path> [--base <ref>] [--spec <path>] [--mode build|investigate]
+//     --orchestrator "<name [ref]>" --out <path> [--base <ref>] [--spec <path>]
 //     [--report <path>] [--scope "<text>"] [--repo <owner/name>]
 //   brief.sh audit --subject <s> --repository <dir> --briefs <dir> --kind <kind> --words "<his words>"
 //     --question "<text>" [--established "<text>"] [--since <date>] [--reading "<text>"] [--records "<text>"]
@@ -63,7 +63,7 @@ export const NOTES_CAP = 4000
 const FLAGS: Record<Command, { readonly required: readonly string[]; readonly optional: readonly string[]; readonly paths: readonly string[] }> = {
   phase: {
     required: ['record', 'row', 'plan', 'worktree', 'branch', 'orchestrator', 'out'],
-    optional: ['base', 'spec', 'mode', 'report', 'scope', 'repo', 'phase'],
+    optional: ['base', 'spec', 'report', 'scope', 'repo', 'phase'],
     paths: ['record', 'plan', 'worktree', 'out', 'report'],
   },
   rotation: {
@@ -91,6 +91,8 @@ export function parseArgs(argv: readonly string[]): { readonly command: Command;
   for (let k = 0; k < rest.length; k += 2) {
     const flag = rest[k] ?? ''
     const name = flag.slice(2)
+    // `--mode` is what an older dispatch line still passes: accepted and ignored for one release.
+    if (command === 'phase' && flag === '--mode') continue
     if (!flag.startsWith('--') || ![...spec.required, ...spec.optional].includes(name)) return { error: `${command}: unknown argument: ${flag} (${USAGE})` }
     const value = rest[k + 1]
     if (value === undefined || value.startsWith('--')) return { error: `${command}: ${flag} needs a value` }
@@ -98,7 +100,6 @@ export function parseArgs(argv: readonly string[]): { readonly command: Command;
   }
   for (const name of spec.required) if ((fields[name] ?? '').trim() === '') return { error: `${command}: --${name} is required (${USAGE})` }
   for (const name of spec.paths) if (fields[name] !== undefined && !isAbsolute(fields[name] ?? '')) return { error: `${command}: --${name} is an absolute path, got: ${fields[name]}` }
-  if (fields['mode'] !== undefined && !['build', 'investigate'].includes(fields['mode'])) return { error: `${command}: --mode is build or investigate, got: ${fields['mode']}` }
   if (fields['row'] !== undefined && !/^[1-9][0-9]*$/.test(fields['row'])) return { error: `${command}: --row is the row's id, got: ${fields['row']}` }
   return { command: command as Command, fields }
 }
@@ -180,14 +181,14 @@ function openRow(f: Fields): { readonly row: Row } | { readonly error: string } 
   return { row }
 }
 
-/** The rules a build brief adds for the work's checks: the browser captures and the E2E. An investigate brief carries none. */
-const buildRulesOf = (mode: string): string => mode === 'investigate' ? '' : [
+/** The rules for the work's checks: the browser captures and the E2E. */
+const CHECK_RULES = [
   `- A frontend surface created or substantially changed is tested in a real browser with Playwright, on seeded or fixture data, its screenshots in the pull request's description, never committed. The report names the Playwright run. No secret, token, personal data, internal host or local path is visible in a capture. Audit each capture against \`${CHECKLIST}\`; the report carries \`<image>: clean\` or \`<image>: <defect>\` per image. A capture that shows a defect is not delivered: fix it, retake, audit again. A screen with no data for your account is seeded, never skipped; if you cannot, STOP. A minor change says so and why in the report.`,
   '- E2E as the pull request\'s check plan requires; the report carries `E2E: <test path(s)> — <command> — passed` or `E2E: none — <reason>`, never the description.',
 ].join('\n')
 
-/** The delivery lines of a build brief: the push, the draft pull request and the turn's last line. An investigate brief carries none. */
-const deliveryOf = (mode: string, branch: string, base: string, report: string): string => mode === 'investigate' ? '' : [
+/** The delivery lines: the push, the draft pull request and the turn's last line. */
+const deliveryOf = (branch: string, base: string, report: string): string => [
   `- Push with one bare command, \`git push -u origin ${branch}\`.`,
   `- Draft pull request on \`${base}\`, opened with the github tool's \`pr-create --draft\`, never \`Ready\`: that is the github ready gate's; its title and description follow the rules that tool shows. Figures once, on the final head. You never watch its checks.`,
   `- Your turn ends on \`<repo>#<pr> <head7> — <verdict> — blocking: <file:line, …|none> — report: ${report}\`, then the status line. You may be closed when your pull request is Ready: the orchestrator resumes you or starts a fresh agent for later work.`,
@@ -219,7 +220,6 @@ function phaseValues(f: Fields, deps: Deps): Values {
     PROJECT: (f['repo'] ?? projectOf(worktree, f['record'] ?? '')).split('/').at(-1) ?? '',
     TITLE: title,
     ROW_ID: f['row'] ?? '',
-    MODE: f['mode'] ?? 'build',
     ROW: `${f['row']} ${label}${note}`,
     SPEC: `\`${spec}\`${cited.length === 0 ? '' : `, ${cited.map(where).join('; ')}`}`,
     PLAN: `\`${f['plan'] ?? ''}\`${section === undefined ? '' : `, ${where(section)}`}`,
@@ -232,8 +232,8 @@ function phaseValues(f: Fields, deps: Deps): Values {
     TIER: tierOf(row),
     ORCHESTRATOR: f['orchestrator'] ?? '',
     REPORT_PATH: report,
-    BUILD_RULES: buildRulesOf(f['mode'] ?? 'build'),
-    DELIVERY: deliveryOf(f['mode'] ?? 'build', f['branch'] ?? '', base, report),
+    CHECK_RULES,
+    DELIVERY: deliveryOf(f['branch'] ?? '', base, report),
   }
 }
 

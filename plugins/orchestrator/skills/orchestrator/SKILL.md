@@ -1,7 +1,6 @@
 ---
 name: orchestrator
 description: Use when this session must supervise implementer agents running in separate sessions instead of writing code itself — multi-phase builds delivered as stacked PRs, per-phase agent prompts, evidence-based reviews, corrective follow-ups, agent context rotation, and shared-machine resource discipline.
-argument-hint: build | investigate
 ---
 
 # Orchestrator
@@ -19,18 +18,12 @@ printed it: `<base>/scripts/<name>.sh`, the launcher `<base>/../iterm-agents/scr
 A script path another session, a brief, a prompt or a
 memo gave you may be an older copy: never run one.
 
-## Your mode
+## The work
 
-Your mode is this skill's argument, `build` or `investigate`; a successor's launch passes its
-brief's `Mode:` line. With none, ask as `orchestrator:decide` does. Never infer it from
-words.
-
-- **`build`**: a spec delivered as pull requests. Load `method:lifecycle` with the Skill tool
-  before you plan: it owns the lifecycle, done and the formats. Done: every goal of
-  `goals.md` met or ruled out by the operator.
-- **`investigate`**: debugging or analysis, without goals, phases, ready gate or
-  `method:lifecycle`. Your sessions read and report; a change they find needed is a question
-  for the operator. Done: his question answered on evidence.
+Load `method:lifecycle` before planning work that ends in a pull request: goals, phases and the
+ready gate apply to it, done when every goal of `goals.md` is met or ruled out by the operator.
+An investigation is a row delivering a report (read, measure, report); a change it finds is a new
+row ending in a pull request.
 
 ## The principles
 
@@ -80,17 +73,17 @@ Each file is one moment's: read the file or files the moment names, and no other
 
 | Moment | Read |
 |---|---|
-| Planning the phases (`build`) | `references/phases.md` |
-| Dispatching a row, choosing a tier (`build`) | `references/brief.md` |
+| Planning the phases | `references/phases.md` |
+| Dispatching a row, choosing a tier | `references/brief.md` |
 | Spawning, dispatching, verifying, standing down, closing an agent | `references/agents.md` |
 | Rotating an agent past its gate | `references/rotation.md` |
 | Handing over | `/orchestrator:succeed`, then `references/succession-predecessor.md` |
 | Taking over | the text `succession.sh takeover` prints, nothing else |
 | Pausing, opening | `references/pause-opening-move.md` |
-| Launching a review round (`build`) | `references/review-thresholds.md`, `references/review-round.md` |
-| Launching a comments round, publishing as the operator (`build`) | `references/review-comments.md`, `references/review-round.md` (« The cost of a round ») |
-| Judging a delivery, recording a verdict, telling it ready (`build`) | `references/review-thresholds.md`, `references/review-verdict.md`, `references/standing-rules.md` |
-| Watching a pull request's checks (`build`) | `references/ci-watch.md` |
-| Rebasing (`build`) | `references/review-thresholds.md`, `references/rebase.md` |
+| Launching a review round | `references/review-thresholds.md`, `references/review-round.md` |
+| Launching a comments round, publishing as the operator | `references/review-comments.md`, `references/review-round.md` (« The cost of a round ») |
+| Judging a delivery, recording a verdict, telling it ready | `references/review-thresholds.md`, `references/review-verdict.md`, `references/standing-rules.md` |
+| Watching a pull request's checks | `references/ci-watch.md` |
+| Rebasing | `references/review-thresholds.md`, `references/rebase.md` |
 | Recording a changed decision, a defect found | `references/directives.md` |
 | Asking the operator a question, a coordinator running or not | `commands/decide.md` |

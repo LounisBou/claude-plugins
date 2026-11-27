@@ -107,7 +107,7 @@ npm run outcome -- measure --out <dir> --model <agent model> --judge-model <judg
   launcher of this checkout's `plugins/orchestrator` (the release measured, with the plugins its
   manifest depends on) opens `Orch: eval <case id>` in a tmux home of its own under
   `<dir>/tmux`, detached from the operator's windows, Remote Control off, on the run's settings
-  file, typed `/orchestrator:orchestrator build` and then the brief. The brief says no operator
+  file, typed `/orchestrator:orchestrator` followed by the brief. The brief says no operator
   answers: the orchestrator decides each question by its own recommendation and writes it as a
   `Decision: <question> → <choice>` line, which the report lists. It also says to spawn every
   agent with `--dir` set to the graded checkout, never through `workspace.sh create`, one agent
