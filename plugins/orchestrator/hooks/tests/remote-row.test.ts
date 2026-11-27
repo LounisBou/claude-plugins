@@ -42,7 +42,7 @@ const RECORD_PATH = '/briefs/belt/dispatch-record.jsonl'
 
 // `record`: the orchestration's dispatch record, registered by the session s-one, with a line saying the operator's merge is awaited
 // on acme/app#8, which the forge (`forge`) lists Ready.
-function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean; record?: boolean; ps?: string | 'fails' } = {}) {
+function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean; record?: boolean; ps?: string | 'fails'; tmux?: string } = {}) {
   const files = new Map<string, string>()
   const sent: { to: unknown; text: string }[] = []
   const logged: string[] = []
@@ -65,7 +65,7 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
         return { isDelivered: true }
       },
     },
-    env: { get: async (name: string) => ({ HOME } as Record<string, string>)[name] },
+    env: { get: async (name: string) => ({ HOME, ...(over.tmux ? { TMUX: over.tmux } : {}) } as Record<string, string>)[name] },
     plugin: { root: '/plugins/orch-root' },
     clock: { after: (ms: number, fn: () => unknown) => { later.push({ ms, fn }); return { cancel: () => undefined } } },
     fs: {
@@ -184,6 +184,14 @@ test('the row goes to the learnt coordinator once, and a repeat sends nothing', 
   expect(fx.sent[0]!.text).not.toContain('ttys3')
   expect(fx.sent[0]!.text).not.toContain('a-model')
   expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)
+})
+
+test('an orchestrator in a home server sends its home once: a repeat is no news', async () => {
+  const fx = fake({ tmux: '/private/tmp/tmux-501/orch-cdc52505,123,0' })
+  await sendRow(fx.dollar, 's-one')
+  await sendRow(fx.dollar, 's-one')
+  expect(fx.sent.length).toBe(1)
+  expect(parseRemoteRow(fx.sent[0]!.text)!.home).toBe('orch-cdc52505')
 })
 
 test('a wait change is sent, and so is a band crossing; a move inside the band is not', async () => {

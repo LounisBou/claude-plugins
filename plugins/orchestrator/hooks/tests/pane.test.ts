@@ -3539,3 +3539,40 @@ test('at a phone\'s width each role\'s line wraps with its role, account and cou
   for (const said of ['orchestrator · plan 2', 'auditor · plan 1', '(this session)', 'plan 2 · 1 agent', '30%', '21%', '12%']) expect(drawn).toContain(said)
   expect(await countedRows(pane.draw, 40)).toBe(drawScreen(await pane.draw({ bodyColumns: 40 }), 38).length)
 })
+
+test('the coordinator\'s wake opens a remote orchestrator\'s view once, and a sync that throws still arms the next wake', async () => {
+  mounted(registerSupervision)
+  const waking = mounted(registerWake).handlers
+  const fx = coordinatorSession()
+  const state = `${HOME}/.claude/claude-orchestrator`
+  fx.files.set(`${state}/remote-machines.json`, JSON.stringify({ version: 1, machines: { iznoserver: 'izno' } }))
+  fx.files.set(`${state}/store/remote/Orch__far`, JSON.stringify({
+    name: 'Orch: far', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100, waiting: null, blocks: null,
+    waiting_since: null, updated_at: new Date().toISOString(), machine: 'IznoServer', repo: null, prs: [], held: null, account: null, agents: null, home: 'orch-0a0b0c0d',
+  }) + '\n')
+  await waking['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+  const fired = new Set<object>()
+  const tick = async () => {
+    const timer = fx.later.filter(t => t.ms === 30000 && !t.cancelled && !fired.has(t)).at(-1)
+    expect(timer).toBeDefined()
+    fired.add(timer!)
+    await timer!.fn()
+  }
+  const opened = () => fx.ran.filter(line => line.startsWith('osascript -e ')).length
+  await tick()
+  expect(opened()).toBe(1)
+  expect(fx.ran.some(line => line.includes('tmux -L orch-0a0b0c0d has-session -t home'))).toBe(true)
+  // The next tick keeps the module's memory: the opening is within its bound, not made again.
+  await tick()
+  expect(opened()).toBe(1)
+  const read = fx.dollar.fs.read
+  Object.assign(fx.dollar.fs, {
+    read: (p: string) => {
+      if (p.endsWith('/remote-machines.json')) throw new Error('the disk is gone')
+      return read(p)
+    },
+  })
+  await tick()
+  expect(fx.written.some(line => line.includes('the disk is gone'))).toBe(true)
+  expect(fx.later.filter(t => t.ms === 30000 && !t.cancelled && !fired.has(t)).length).toBe(1)
+})

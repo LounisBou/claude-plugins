@@ -38,10 +38,11 @@ import { answerAskedFromPane, askedAsEntry, clearFailed, closeRound, moveAsked, 
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow, type Fleet,
-  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS, UNREACHED_RETRY_MS,
+  remoteKey, withRemote, isRemoteStale, homeOf, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS, UNREACHED_RETRY_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLines, splitLines, seqOf, type QAck, type QEvent } from './remote-round.ts'
+import { newViewsMemory, syncViews } from './remote-view.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
@@ -1679,6 +1680,11 @@ async function wakeTick($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 
   } catch (err) {
     await logLine($, 'supervision', `round resend: ${messageOf(err)}`)
   }
+  try {
+    await syncViews($, await readRemoteRows($), views)
+  } catch (err) {
+    await logLine($, 'views', messageOf(err))
+  }
   if (wake.generation === generation) armWake($, wake)
 }
 
@@ -1897,6 +1903,8 @@ let inFlightAtStop: readonly string[] | null = null
 // The coordinator's round reading, module memory that register and registerWake share: a reload
 // starts it afresh, the host having dropped the old environment's timers with it.
 let wake: WakeMemory = { timer: null, generation: 0, told: false }
+// The remote views' retries, lines said and homes seen (remote-view.ts), for the module's life.
+const views = newViewsMemory()
 
 // The pane's memory, module memory that register and the record's reconciliation share, started
 // afresh by register like the wake's.
@@ -3449,7 +3457,8 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const fill = await hostFill($)
   // The reading is the one of this instant: its stamp is now, not the last measure's.
   const measured = { ...read, updated_at: new Date().toISOString(), ...(fill ? { context_tokens: fill.tokens, context_percent: fill.percent, window: fill.window } : {}) }
-  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)), fleet)
+  // The home server it runs in travels too: the coordinator's machine opens its view (remote-view.ts).
+  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)), fleet, homeOf(await $.env.get('TMUX')))
   if (!row) return
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`
