@@ -3097,8 +3097,9 @@ test('a wait of 200 characters is cut to the pane\'s width on one line, its time
 const OWNER = 'tmux:/tmp/tmux-501/orch-a:%0'
 const PLAN2 = [HOME, '.claude'].join('/') + '-bis'
 // An orchestrator's row as its measure writes it: its host on `tty`, its configuration directory and the owner its chain's entries name.
+// No row's tokens over its window give its percent: a pane that estimates the fill draws another figure.
 const fleetRow = (name: string, over: Partial<SessionRow> = {}) =>
-  orch(name, { pid: '900', tty: '/dev/ttys002', config: PLAN2, chain_owner: OWNER, ...over })
+  orch(name, { pid: '900', tty: '/dev/ttys002', config: PLAN2, chain_owner: OWNER, context_tokens: 47000, ...over })
 const chainOf = (...entries: { tty: string; owner?: string }[]) =>
   entries.map((e, i) => JSON.stringify({ tab_id: `t-${i}-${e.tty}`, tty: `/dev/${e.tty}`, owner: e.owner ?? OWNER })).join('\n') + '\n'
 // The machine's process table, `pid stat tty` a line, read afresh at each listing; the orchestrator's host among them.
@@ -3205,9 +3206,9 @@ const COORD_OWNER = 'tmux:/tmp/tmux-501/coord:%0'
 // An auditor on plan 1, host on ttys010, and the pane's own coordinator on plan 2, host on ttys012: each
 // row under its own role, its fill its own. The coordinator's row is the pane's session's (s-one).
 const auditorRow = (over: Partial<SessionRow> = {}) =>
-  fleetRow('Audit: a', { role: 'auditor', pid: '930', tty: '/dev/ttys010', config: PLAN1, chain_owner: AUDIT_OWNER, context_percent: 12, context_tokens: 12000, ...over })
+  fleetRow('Audit: a', { role: 'auditor', pid: '930', tty: '/dev/ttys010', config: PLAN1, chain_owner: AUDIT_OWNER, context_percent: 12, context_tokens: 38000, ...over })
 const coordRow = (over: Partial<SessionRow> = {}) =>
-  fleetRow('Coord: main', { role: 'coordinator', pid: '940', tty: '/dev/ttys012', chain_owner: COORD_OWNER, context_percent: 21, context_tokens: 21000, ...over })
+  fleetRow('Coord: main', { role: 'coordinator', pid: '940', tty: '/dev/ttys012', chain_owner: COORD_OWNER, context_percent: 21, context_tokens: 44000, ...over })
 function allRoles(agents: Record<string, string> = {}) {
   const pane = fleet({ a: fleetRow('Orch: a'), u: auditorRow(), 's-one': coordRow() }, agents)
   pane.table.set('930', 'S+ ttys010').set('940', 'S+ ttys012').set('931', 'S+ ttys011').set('941', 'S+ ttys013').set('942', 'S+ ttys014')
@@ -3253,7 +3254,7 @@ test('each role counts its own live agents: 2 reads 2 agents, none draws no coun
 })
 
 test('the context of every role is the measured fill /orchestrator:status prints, past the gate in the error colour', async () => {
-  const rows = { u: orch('Audit: a', { role: 'auditor', context_percent: 85, context_tokens: 85000 }), c: orch('Coord: b', { role: 'coordinator', context_percent: 17, context_tokens: 17000 }) }
+  const rows = { u: orch('Audit: a', { role: 'auditor', context_percent: 85, context_tokens: 82000 }), c: orch('Coord: b', { role: 'coordinator', context_percent: 17, context_tokens: 25000 }) }
   const tree = await paneTree(rows)
   expect(pieces(elAt(tree, 2, 0)).slice(-2)).toEqual([{ text: '85% past the gate', color: 'error', bold: false }, { text: ' · 3m', bold: false }])
   expect(pieces(elAt(tree, 3, 0)).slice(-2)).toEqual([{ text: '17%', bold: false }, { text: ' · 3m', bold: false }])
