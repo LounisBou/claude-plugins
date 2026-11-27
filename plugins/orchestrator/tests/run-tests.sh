@@ -10200,8 +10200,8 @@ check "a session named 'Agent: x' stays where it is, and tmux is never asked" "0
 for who in "Coord: c" "Audit: a"; do
   reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
   res=$(hprobe ok "$who")
-  check "a session named '$who' moves into a home session of its own, window 0 named after it" "0|1|0" \
-    "$(sfield "$res" exit)|$(hcalls | grep -cF "[new-session][-d][-s][home][-n][$who]")|$(sfield "$res" OUT | grep -c '^stay:')"
+  check "a session named '$who' moves into a home session of its own, window 0 named after it, armed to end with its last tab" "0|1|1|1|1|0" \
+    "$(sfield "$res" exit)|$(sfield "$res" OUT | grep -c '^moved: orch-abcdef12')|$(hcalls | grep -cF "[new-session][-d][-s][home][-n][$who]")|$(hcalls | grep -cF '[set-option][-s][@home-owners][ /dev/ttys970 ]')|$(hcalls | grep -cF '[set-option][-s][exit-unattached][on]')|$(sfield "$res" OUT | grep -c '^stay:')"
 done
 reset_homerec; printf '1\n' > "$HR/mark"
 res=$(HTMUX=/private/tmp/tmux-501/orch-x,1,0 hprobe ok)
