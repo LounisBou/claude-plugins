@@ -9589,12 +9589,12 @@ role_home() { # <window 0's name>: the home session of a coordinator or an audit
 role_home "Coord: machine"
 out=$(home spawn --dir "$WORK" --coordinator-successor --title "Coord: machine" --prompt p --no-verify 2>"$WORK/trole.err")
 check "a coordinator's successor spawned from its home session is a window of it under its name, iTerm2 never asked" \
-  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Coord: machine][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Coord--machine-@TIME@.sh]|none|0" \
+  "/dev/ttys903|[-u][new-window][-d][-a][-t][\$1:{end}][-n][Coord: machine][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Coord--machine-@TIME@.sh]|none|0" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)|$(grep -c 'is not placed first' "$WORK/trole.err")"
 role_home "Audit: tm"
 out=$(home spawn --dir "$WORK" --successor --prompt p --no-verify 2>&1 | tail -1)
 check "an auditor's successor spawned from its home session is a window of it under the auditor's name, iTerm2 never asked" \
-  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Audit: tm][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Audit--tm-@TIME@.sh]|none" \
+  "/dev/ttys903|[-u][new-window][-d][-a][-t][\$1:{end}][-n][Audit: tm][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Audit--tm-@TIME@.sh]|none" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)"
 # The agent each role launches (an auditor's reader, the coordinator's one-off job) is a window of
 # its home session; its successor is one too, and the takeover its brief prints ends window 0.
@@ -9606,7 +9606,7 @@ for who in "Coord: machine|--coordinator-successor --title Coord:\ machine|coord
   role_home "$name"
   out=$(home spawn --dir "$WORK" --title "Agent: job" --prompt p --no-verify 2>/dev/null | tail -1)
   check "an agent the ${name%%:*} session launches from its home session is a window of it, iTerm2 never asked" \
-    "/dev/ttys903|1|none" "$out|$(calls | grep -cF '[new-window][-d][-t][$1:][-n][Agent: job]')|$(asked)"
+    "/dev/ttys903|1|none" "$out|$(calls | grep -cF '[new-window][-d][-a][-t][$1:{end}][-n][Agent: job]')|$(asked)"
   role_home "$name"
   eval "home spawn --dir \"\$WORK\" $succ --prompt p --no-verify" >/dev/null 2>&1
   # The brief printed for the successor reads window 0 on tmux, and its takeover line is run as printed.
@@ -9617,8 +9617,8 @@ for who in "Coord: machine|--coordinator-successor --title Coord:\ machine|coord
     ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
     bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" "$@" 2>&1)
   check "the takeover the ${name%%:*} successor's brief prints kills window 0, its name checked, and moves the successor to index 0" \
-    "1|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0" \
-    "$(printf '%s' "$out" | grep -c '^took window 0: the predecessor.s window @0 on /dev/ttys900 was closed')|$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')|$(grep -c ttys900 "$TR/ps")"
+    "1|[-u][killw][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0" \
+    "$(printf '%s' "$out" | grep -c '^took window 0: the predecessor.s window @0 on /dev/ttys900 was closed')|$(calls | grep -E "\[($KILLS)\]")|$(calls | grep -F '[move-window]')|$(grep -c ttys900 "$TR/ps")"
 done
 rm -f "$TR/iterm-asked"
 
