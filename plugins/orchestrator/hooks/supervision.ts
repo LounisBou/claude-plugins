@@ -95,7 +95,7 @@ export type SessionRow = {
   tty?: string | null
   // The session's window, `<session>:@N.%N`, when it runs in a home session (the deck's focus).
   tmux?: string | null
-  // The session's configuration directory, which names its account (fleetLabel), and the owner its launcher
+  // The session's configuration directory, which names its account (fleetOf), and the owner its launcher
   // writes on the chain entries of the agents it spawns (chainOwner): both read by the session's own module, so
   // the coordinator's pane counts a session's agents as an orchestrator's own pane does.
   config?: string | null
@@ -919,22 +919,43 @@ const ACCOUNTS: Readonly<Record<string, string>> = { plan1: 'plan 1', plan2: 'pl
 
 // A session's account and live agent count, read from its own facts at this drawing (the pane and the sender of
 // a remote row alike). A remote row carries what its sender read. A local row reads its configuration directory
-// (its row's, else this machine's: the store is this directory's), its tty (its row's, else its pid's on the
-// process table) and the chain of that tty: its entries of the owner its row names, or every entry when the row
-// names none (a row written before rows carried it). The agents are those alive at this drawing, each session
-// once, over the process table this drawing read; none is no count. A value the facts do not carry is null (a
-// listing that failed, an agent list not read within the bound): drawn as nothing and logged, never as « ? ».
+// from its own host record (ownConfigOf: the record of its pid under one account's directory, and not another's),
+// its tty (its row's, else its pid's on the process table) and the chain of that tty: its entries of the owner its
+// row names. With no owner named, the chain's entries count only when one owner wrote them all: another owner's on
+// a recycled tty is not this session's. The agents are those alive at this drawing, each session once, over the
+// process table this drawing read; none is no count. A value the facts do not carry is null (no host record, no
+// tty, a listing that failed, an agent list not read within the bound): drawn as nothing and logged, never as « ? ».
 async function fleetOf($: Host<'env' | 'fs' | 'plugin' | 'process'>, row: SessionRow, home: string, table: ProcessTable | null | undefined, seen: Set<string>): Promise<Fleet> {
   if (row.machine) return gapsLogged($, row, { account: row.account ?? null, agents: row.agents ?? null }, seen)
-  const config = row.config || await configDir($)
-  const account = ACCOUNTS[planOfConfig(config, home)] ?? null
+  const config = row.config || await ownConfigOf($, row, home)
+  const account = config ? ACCOUNTS[planOfConfig(config, home)] ?? null : null
   const tty = row.tty || (row.pid && table ? table.get(String(row.pid))?.tty ?? null : null)
   let agents: number | null = null
-  if (tty && table) {
+  if (config && tty && table && (row.chain_owner || (await chainOwnersOf($, tty)).size <= 1)) {
     const listed = await withDeadline(chainAgents($, tty, row.chain_owner ?? null, { config, pidsOn: pidsListed(table) }), await sideReadBoundMs($))
     if (!isDegradedPass(listed)) agents = new Set(listed.map(agent => agent.sessionId)).size
   }
   return gapsLogged($, row, { account, agents }, seen)
+}
+
+// The configuration directory a session runs on, read from its own host record: `sessions/<pid>.json` under one
+// account's directory, naming the row's session. Null unless exactly one of the accounts holds it, so another
+// session's account is never taken for this one's.
+async function ownConfigOf($: Host<'fs'>, row: SessionRow, home: string): Promise<string | null> {
+  if (!row.pid || !row.name) return null
+  const found: string[] = []
+  for (const config of [`${home}/.claude`, `${home}/.claude-bis`]) {
+    const record = hostRecordOf(String(await $.fs.read(`${config}/sessions/${row.pid}.json`).catch(() => '')))
+    if (record?.name === row.name) found.push(config)
+  }
+  return found.length === 1 ? found[0] ?? null : null
+}
+
+// The distinct owners of the entries the launcher kept under `tty` (none when the chain is not there).
+async function chainOwnersOf($: Host<'env' | 'fs'>, tty: string): Promise<Set<string>> {
+  const state = await dataDir($)
+  const chain = String(await $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`).catch(() => ''))
+  return new Set(chainEntries(chain).map(entry => entry.owner))
 }
 
 // The figures a fleet reads, `plan 2 · 3 agents`: each one read, joined; none when neither is.
@@ -2330,7 +2351,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       pane.ticksSinceDraw = 0
       let rows: { label: string; name: string; rest: string; urgency: number }[] = []
       let blocks: PaneRow[] = []
-      // Each listed session's account and live agent count (fleetLabel), by its block's key, read at this drawing.
+      // Each listed session's account and live agent count (fleetOf), by its block's key, read at this drawing.
       let fleet = new Map<string, string>()
       let failed: { entry: RoundEntry; reason: string }[] = []
       let delivering: Asked[] = []

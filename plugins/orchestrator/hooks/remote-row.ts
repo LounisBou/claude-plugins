@@ -94,8 +94,9 @@ export type RemoteRow = {
   agents: number | null
 }
 
-// The ten fields 0.58 and 0.59 sent, still accepted as no repository and no pull request, the twelve that
-// followed, as no word on the questions held, and the fourteen after them, as no account and no agent count.
+// The ten fields 0.58 and 0.59 sent, still accepted as no repository and no pull request; the twelve that
+// followed, as no word on the questions held; the thirteen of the release in service, carrying the questions
+// held and no account; and the fifteen since, carrying the account and the agent count too.
 const OLD_FIELDS = ['name', 'role', 'context_tokens', 'context_percent', 'window', 'waiting', 'blocks', 'waiting_since', 'updated_at', 'machine'] as const
 const PRS_FIELDS = [...OLD_FIELDS, 'repo', 'prs'] as const
 const FIELDS = [...PRS_FIELDS, 'held'] as const

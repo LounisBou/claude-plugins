@@ -42,7 +42,7 @@ const RECORD_PATH = '/briefs/belt/dispatch-record.jsonl'
 
 // `record`: the orchestration's dispatch record, registered by the session s-one, with a line saying the operator's merge is awaited
 // on acme/app#8, which the forge (`forge`) lists Ready.
-function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean; record?: boolean } = {}) {
+function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean; record?: boolean; ps?: string | 'fails' } = {}) {
   const files = new Map<string, string>()
   const sent: { to: unknown; text: string }[] = []
   const logged: string[] = []
@@ -102,6 +102,7 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
           for (const p of argv.slice(2)) files.delete(p)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
+        if (argv[0] === 'ps' && argv[1] === '-A' && over.ps !== undefined) return over.ps === 'fails' ? { exitCode: 1, stdout: '', stderr: 'no' } : { exitCode: 0, stdout: over.ps, stderr: '' }
         if (argv[0] === 'ps') return { exitCode: 0, stdout: '1\n501\n', stderr: '' }
         return { exitCode: 1, stdout: '', stderr: '' }
       },
@@ -158,6 +159,12 @@ function oldRowText(row: RemoteRow): string {
 function twelveRowText(row: RemoteRow): string {
   const { held: _held, account: _account, agents: _agents, ...twelve } = row
   return ROW_MARKER + JSON.stringify(twelve)
+}
+
+// The thirteen fields of the release in service: the questions held, no account and no agent count.
+function thirteenRowText(row: RemoteRow): string {
+  const { account: _account, agents: _agents, ...thirteen } = row
+  return ROW_MARKER + JSON.stringify(thirteen)
 }
 
 // --- the send --------------------------------------------------------------------------
@@ -561,6 +568,31 @@ test('a remote orchestrator waiting on the operator stays drawn for hours; past 
 const CI_WATCH = `${HOME}/.claude/claude-orchestrator/ci-watch`
 const ME = 's-one'
 
+// The row a turn end sends names its session's account and live agent count, read from the session's own facts: the
+// host record of its pid under its account's directory, its tty's chain, and the process table.
+function senderFacts(ps: string | 'fails') {
+  const fx = fake({ ps })
+  fx.files.set(ROW, storeRow({ pid: '900', tty: '/dev/ttys002', config: `${HOME}/.claude-bis`, chain_owner: 'OWNER' }))
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys002.jsonl`, JSON.stringify({ tab_id: 't-1', tty: '/dev/ttys003', owner: 'OWNER' }) + '\n')
+  fx.files.set(`${HOME}/.claude-bis/sessions/901.json`, JSON.stringify({ sessionId: 's-2', name: 'Agent: x', status: 'busy' }))
+  return fx
+}
+
+test('the row a turn end sends carries its session\'s account and live agent count', async () => {
+  const fx = senderFacts('900 S+ ttys002\n901 S+ ttys003\n')
+  await sendRow(fx.dollar, ME)
+  expect(fx.sent.length).toBe(1)
+  const row = parseRemoteRow(fx.sent[0]!.text)!
+  expect([row.account, row.agents]).toEqual(['plan 2', 1])
+})
+
+test('a process listing that fails sends the account and no count', async () => {
+  const fx = senderFacts('fails')
+  await sendRow(fx.dollar, ME)
+  const row = parseRemoteRow(fx.sent[0]!.text)!
+  expect([row.account, row.agents]).toEqual(['plan 2', null])
+})
+
 test('prsInFlight keeps only the watches this session armed, and drops one merged to its base', () => {
   const owners = new Map([
     ['acme_app-pr7.log', ME],
@@ -834,7 +866,13 @@ for (const [label, held] of [
 test('a row carrying its account and agent count reads them back; a row of an older release reads none', () => {
   const row = remote({ account: 'plan 2', agents: 2 })
   expect(parseRemoteRow(rowText(row))).toEqual(row)
-  expect(parseRemoteRow(twelveRowText(remote()))).toEqual(remote())
+  const old = remote()
+  expect(parseRemoteRow(twelveRowText(old))).toEqual(old)
+})
+
+test('the thirteen fields of the release in service are read with their questions held and no account or count', () => {
+  const row = remote({ held: HELD })
+  expect(parseRemoteRow(thirteenRowText(row))).toEqual(row)
 })
 
 test('an account of the wrong shape, or an agent count that is no whole number, refuses the row', () => {

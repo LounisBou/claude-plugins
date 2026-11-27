@@ -1120,7 +1120,7 @@ test('a plain orchestrator is one line: a dot, its bold name, then its figures i
     { text: '●', color: 'suggestion', bold: false },
     { text: ' ', bold: false },
     { text: 'Orch: low', bold: true },
-    { text: ' · orchestrator · plan 1 · ', bold: false },
+    { text: ' · orchestrator · ', bold: false },
     { text: '30%', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1175,7 +1175,7 @@ test('a done orchestrator draws a success dot and one Status line in success, wi
 test('a row past the gate draws its fill and gate words in the error colour, the rest in the normal colour', async () => {
   const tree = await paneTree({ hot: orch('Orch: hot', { context_percent: 85, context_tokens: 85000 }) })
   expect(pieces(elAt(tree, 2, 0)).slice(3)).toEqual([
-    { text: ' · orchestrator · plan 1 · ', bold: false },
+    { text: ' · orchestrator · ', bold: false },
     { text: '85% past the gate', color: 'error', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1198,7 +1198,7 @@ test('a done proposal is no question: no row stands out', async () => {
   const done = entry('Orch: d', '2026-10-18T10:03:00.000Z', { session: 'd', kind: 'done', blocks: null })
   const tree = await paneTree({ d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) }, [done])
   const line = pieces(elAt(tree, 2, 0))
-  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · plan 1 · ', '30%', ' · 3m'])
+  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ', '30%', ' · 3m'])
   expect(line.some(p => p.bold && p.color === 'suggestion')).toBe(false)
 })
 
@@ -3184,16 +3184,52 @@ test('an account the facts do not carry draws nothing, and the log names the ses
 test('a local row with no config and no chain owner is read from its own facts: its account, its pid\'s tty, its chain\'s agents', async () => {
   const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'tty', 'config', 'chain_owner') }, {})
   pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  pane.fx.files.set(`${HOME}/.claude/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
   pane.fx.files.set(`${HOME}/.claude/sessions/901.json`, JSON.stringify({ sessionId: 's-1', name: 'Agent: s-1', status: 'busy' }))
   await pane.open()
   expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 1 agent · 30% · 3m')
 })
 
-test('a row an older module wrote, with no account and no tty, draws its account and no count: the count is logged, never « ? »', async () => {
+test('a row an older module wrote, with no pid to read its facts from, draws neither figure: both gaps are logged, never « ? »', async () => {
   const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'pid', 'tty', 'config', 'chain_owner') }, {})
   await pane.open()
-  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 30% · 3m')
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
   expect(pane.fx.written.some(line => line.includes('fleet: Orch: a agents not read'))).toBe(true)
+})
+
+// The drawing session's own account is never the account of a row it does not run on: a row without config reads its
+// own host record, which names the other account.
+test('a row without config on the other account reads that account from its own host record, not the drawer\'s', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {})
+  pane.fx.files.set(`${HOME}/.claude-bis/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+})
+
+// Without a chain owner, the chain's entries count only when one owner wrote them all.
+test('a row with no chain owner counts no agent of a tty whose chain names two owners, and logs it', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'chain_owner') }, { '901': 's-1' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003', owner: 'OWNER-A' }, { tty: 'ttys003', owner: 'OWNER-B' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a agents not read'))).toBe(true)
+})
+
+// A remote row with neither figure: each gap is logged once, naming the machine, however often the pane draws.
+test('a remote row with no account and no count logs each gap once, naming its machine, however often the pane draws', async () => {
+  const pane = fleet({}, {})
+  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__r`, JSON.stringify({
+    name: 'Orch: r', role: 'orchestrator', context_tokens: 47000, context_percent: 30, window: 1000000,
+    waiting: null, blocks: null, waiting_since: null, updated_at: AGO(), machine: 'mini',
+    repo: null, prs: [], held: null,
+  }))
+  await pane.open()
+  await pane.draw()
+  await pane.draw()
+  const gaps = pane.fx.written.filter(line => line.includes('fleet: Orch: r '))
+  expect(gaps.filter(line => line.includes('account not read') && line.includes('mini')).length).toBe(1)
+  expect(gaps.filter(line => line.includes('agents not read') && line.includes('mini')).length).toBe(1)
 })
 
 test('a remote row draws the account and the agent count its sender sent', async () => {
