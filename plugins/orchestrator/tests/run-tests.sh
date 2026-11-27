@@ -9636,13 +9636,13 @@ for who in "Coord: machine||--coordinator-successor --title Coord:\ machine" "Au
   out=$(eval "HOME=\"\$MVHOME\" ORCHESTRATOR_AUDITOR=$marker home spawn --dir \"\$WORK\" $succ --plan 2 --prompt p --no-verify" 2>/dev/null | tail -1)
   check "the ${name%%:*} successor moved to plan 2 from its home session is a window of it on that plan, iTerm2 never asked" \
     "/dev/ttys903|1|1|none" \
-    "$out|$(calls | grep -cF "[new-window][-d][-t][\$1:][-n][$name]")|$(moved_launch | grep -cF "export CLAUDE_CONFIG_DIR=$MVHOME/.claude-bis &&")|$(asked)"
+    "$out|$(calls | grep -cF "[new-window][-d][-a][-t][\$1:{end}][-n][$name]")|$(moved_launch | grep -cF "export CLAUDE_CONFIG_DIR=$MVHOME/.claude-bis &&")|$(asked)"
   rm -f "$TR/calls"
   out=$(TMUX="$TSOCK,4242,1" TMUX_PANE=%4 ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_OSASCRIPT="$TR/osascript" ORCHESTRATOR_SAMPLE=/usr/bin/false \
     ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
     bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" takeover --tty /dev/ttys900 --expect-title "$name" 2>&1)
-  check "and its takeover gives it window 0, the predecessor's place" "[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]" \
-    "$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')"
+  check "and its takeover gives it window 0, the predecessor's place" "[-u][killw][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]" \
+    "$(calls | grep -E "\[($KILLS)\]")|$(calls | grep -F '[move-window]')"
   # Back to plan 1: the window inherits its server's plan 2, so the launch itself unsets it. The
   # launch is run up to the host, as a window of that server would run it.
   role_home "$name"
