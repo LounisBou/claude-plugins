@@ -1118,7 +1118,7 @@ test('a plain orchestrator is one line: a dot, its bold name, then its figures i
     { text: '●', color: 'suggestion', bold: false },
     { text: ' ', bold: false },
     { text: 'Orch: low', bold: true },
-    { text: ' · orchestrator · ', bold: false },
+    { text: ' · orchestrator · ? · ? agents · ', bold: false },
     { text: '30%', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1173,7 +1173,7 @@ test('a done orchestrator draws a success dot and one Status line in success, wi
 test('a row past the gate draws its fill and gate words in the error colour, the rest in the normal colour', async () => {
   const tree = await paneTree({ hot: orch('Orch: hot', { context_percent: 85, context_tokens: 85000 }) })
   expect(pieces(elAt(tree, 2, 0)).slice(3)).toEqual([
-    { text: ' · orchestrator · ', bold: false },
+    { text: ' · orchestrator · ? · ? agents · ', bold: false },
     { text: '85% past the gate', color: 'error', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1181,7 +1181,7 @@ test('a row past the gate draws its fill and gate words in the error colour, the
 
 test('a remote orchestrator keeps its machine in its line', async () => {
   const tree = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
-  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · 30% · 3m')
+  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · ? · ? agents · 30% · 3m')
 })
 
 test('one blank line separates two blocks', async () => {
@@ -1196,7 +1196,7 @@ test('a done proposal is no question: no row stands out', async () => {
   const done = entry('Orch: d', '2026-10-18T10:03:00.000Z', { session: 'd', kind: 'done', blocks: null })
   const tree = await paneTree({ d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) }, [done])
   const line = pieces(elAt(tree, 2, 0))
-  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ', '30%', ' · 3m'])
+  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ? · ? agents · ', '30%', ' · 3m'])
   expect(line.some(p => p.bold && p.color === 'suggestion')).toBe(false)
 })
 
@@ -3032,3 +3032,108 @@ test('a wait of 200 characters is cut to the pane\'s width on one line, its time
 })
 
 // --- a consent question worded with unlettered choices draws them once ----------------------------
+
+// --- each orchestrator's account and live agent count -------------------------------------------
+
+const OWNER = 'tmux:/tmp/tmux-501/orch-a:%0'
+const PLAN2 = [HOME, '.claude'].join('/') + '-bis'
+// An orchestrator's row as its measure writes it: its host on `tty`, its configuration directory and the owner its chain's entries name.
+const fleetRow = (name: string, over: Partial<SessionRow> = {}) =>
+  orch(name, { pid: '900', tty: '/dev/ttys002', config: PLAN2, chain_owner: OWNER, ...over })
+const chainOf = (...entries: { tty: string; owner?: string }[]) =>
+  entries.map((e, i) => JSON.stringify({ tab_id: `t-${i}-${e.tty}`, tty: `/dev/${e.tty}`, owner: e.owner ?? OWNER })).join('\n') + '\n'
+// The machine's process table, `pid stat tty` a line, read afresh at each listing; the orchestrator's host among them.
+function fleet(rows: Record<string, SessionRow>, agents: Record<string, string>) {
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  for (const [key, value] of Object.entries(rows)) fx.files.set(`${SESSIONS}/${key}`, JSON.stringify(value) + '\n')
+  const table = new Map<string, string>([['900', 'S+ ttys002'], ['901', 'S+ ttys003'], ['911', 'S+ ttys003'], ['902', 'S+ ttys004']])
+  const run = fx.dollar.process.run
+  let listing: 'answers' | 'fails' = 'answers'
+  fx.dollar.process.run = async (argv: readonly string[]) => argv[0] === 'ps' && argv[1] === '-A'
+    ? listing === 'fails' ? { exitCode: 1, stdout: '', stderr: 'no' } : { exitCode: 0, stdout: [...table].map(([pid, rest]) => `  ${pid} ${rest}`).join('\n') + '\n', stderr: '' }
+    : run(argv)
+  // The host's record of each live agent, in the configuration directory its orchestrator runs on.
+  for (const [pid, session] of Object.entries(agents)) fx.files.set(`${PLAN2}/sessions/${pid}.json`, JSON.stringify({ sessionId: session, name: `Agent: ${session}`, status: 'busy' }))
+  const { handlers } = mounted(registerSupervision)
+  const draw = async (props: object = {}) => drawnTree(await handlers['ui.render'](fx.dollar, { ...renderEvent, props }, (x: unknown) => ({ passed: x })))
+  const open = () => handlers['command.run'](fx.dollar, supervisionRun)
+  const lineOf = async (name: string) => shown(await draw()).find(line => line.includes(name))
+  return { fx, table, open, draw, lineOf, failListing: () => { listing = 'fails' } }
+}
+const CHAIN = `${HOME}/.claude/claude-orchestrator/chains/ttys002.jsonl`
+
+test('an orchestrator on plan 2 with two live agents and one dead reads its account and 2 agents', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1', '902': 's-2', '903': 's-dead' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }, { tty: 'ttys004' }, { tty: 'ttys005' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 2 agents · 30% · 3m')
+})
+
+test('an agent ending between two draws of the pane lowers the count at the next one', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1', '902': 's-2' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }, { tty: 'ttys004' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toContain(' · 2 agents · ')
+  pane.table.delete('902')
+  expect(await pane.lineOf('Orch: a')).toContain(' · 1 agent · ')
+  pane.table.set('901', 'Z+ ttys003')
+  expect(await pane.lineOf('Orch: a')).toContain(' · 0 agents · ')
+})
+
+test('two orchestrators on two accounts each count their own agents', async () => {
+  const pane = fleet({
+    a: fleetRow('Orch: a'),
+    b: fleetRow('Orch: b', { pid: '920', tty: '/dev/ttys006', config: [HOME, '.claude'].join('/'), chain_owner: 'OWNER-B', context_percent: 20 }),
+  }, { '901': 's-1', '902': 's-2' })
+  pane.table.set('920', 'S+ ttys006').set('921', 'S+ ttys007')
+  pane.fx.files.set(`${HOME}/.claude/sessions/921.json`, JSON.stringify({ sessionId: 's-b', name: 'Agent: b', status: 'idle' }))
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }, { tty: 'ttys004' }))
+  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys006.jsonl`, chainOf({ tty: 'ttys007', owner: 'OWNER-B' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 2 agents · 30% · 3m')
+  expect(await pane.lineOf('Orch: b')).toBe('● Orch: b · orchestrator · plan 1 · 1 agent · 20% · 3m')
+})
+
+test('a recycled tty\'s entries of another owner are not counted, and an agent named twice is counted once', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1', '902': 's-2' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }, { tty: 'ttys003' }, { tty: 'ttys004', owner: 'SOMEONE-ELSE' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toContain(' · 1 agent · ')
+})
+
+test('an orchestrator that spawned no agent reads 0 agents', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, {})
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toContain(' · plan 2 · 0 agents · ')
+})
+
+test('an account or a count the facts do not carry reads « ? »', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a', { config: '/opt/other', chain_owner: null }) }, { '901': 's-1' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toContain(' · orchestrator · ? · ? agents · ')
+  // A row written before rows carried either.
+  const older = await paneTree({ low: orch('Orch: low') })
+  expect(shown(older).find(line => line.includes('Orch: low'))).toBe('● Orch: low · orchestrator · ? · ? agents · 30% · 3m')
+  // A remote orchestrator: its row carries neither.
+  const remote = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
+  expect(shown(remote).find(line => line.includes('Orch: r'))).toBe('● Orch: r · orchestrator · remote mini · ? · ? agents · 30% · 3m')
+})
+
+test('a process listing that fails reads « ? agents », never the count drawn before', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toContain(' · 1 agent · ')
+  pane.failListing()
+  expect(await pane.lineOf('Orch: a')).toContain(' · plan 2 · ? agents · ')
+})
+
+test('at a phone\'s width the line wraps with the account and the count whole, and its rows are counted', async () => {
+  const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  await pane.open()
+  const lines = shown(await pane.draw(), 40)
+  expect(lines.join(' ')).toContain('plan 2 · 1 agent')
+  expect(await countedRows(pane.draw, 40)).toBe(drawScreen(await pane.draw({ bodyColumns: 40 }), 38).length)
+})

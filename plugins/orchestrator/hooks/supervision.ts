@@ -50,6 +50,7 @@ import { unattendedPaneLines, type Unattended, type UnattendedPaneLine } from '.
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ciGatePath, ROUND_DIR } from '../core/orchestration.ts'
 import { orchForm } from '../core/names.ts'
+import { planOfConfig } from '../core/quota.ts'
 import { fieldsOf, messageOf, type Events, type Host, type On, type SessionSendResult, type Timer, type UiOpenResult } from './host.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
 import type { DeclaredWait } from './stop-gate.ts'
@@ -94,6 +95,11 @@ export type SessionRow = {
   tty?: string | null
   // The session's window, `<session>:@N.%N`, when it runs in a home session (the deck's focus).
   tmux?: string | null
+  // The session's configuration directory, which names its account (fleetLabel), and the owner its launcher
+  // writes on the chain entries of the agents it spawns (chainOwner): both read by the session's own module, so
+  // the coordinator's pane counts an orchestrator's agents as that orchestrator's own pane does.
+  config?: string | null
+  chain_owner?: string | null
   repo: string | null
   context_percent: number
   context_tokens: number
@@ -407,6 +413,8 @@ export function parseSessionRow(text: string): SessionRow | null {
     ...(isTextOrNull(read['pid']) ? { pid: read['pid'] } : isFigure(read['pid']) ? { pid: String(read['pid']) } : {}),
     ...optional('tty', isTextOrNull),
     ...optional('tmux', isTextOrNull),
+    ...optional('config', isTextOrNull),
+    ...optional('chain_owner', isTextOrNull),
     ...optional('waiting', (value): value is WaitKind | null => value === null || isWaitKind(value)),
     ...optional('blocks', isTextOrNull),
     ...optional('waiting_since', isTextOrNull),
@@ -857,18 +865,31 @@ async function agentViews($: Host<'env' | 'fs' | 'process'>, tty: string): Promi
   return (await chainAgents($, tty, owner)).map(({ name, status, row }) => ({ name, status, row }))
 }
 
+// The pids on an agent's tty.
+type PidsOn = (tty: string) => Promise<readonly string[]>
+
+// Asked of ps, one listing a tty.
+const pidsAsked = ($: Host<'process'>): PidsOn => async tty => {
+  const ps = await $.process.run(['ps', '-t', tty, '-o', 'pid='])
+  if (ps.exitCode !== 0) return []
+  return String(ps.stdout ?? '').split('\n').map((line: string) => line.trim().split(/\s+/)[0] ?? '').filter((pid: string) => /^\d+$/.test(pid))
+}
+
+// Read in a process table already taken: the pids it shows on that tty that still run a session (runsLive).
+const pidsListed = (table: ProcessTable): PidsOn => async tty =>
+  [...table].filter(([pid, state]) => state.tty === tty && runsLive(table, pid, tty)).map(([pid]) => pid)
+
 // The live agents of the chain kept under `tty` (those `owner` launched, or every one when null),
-// each by the host's record of the session on its tty.
-async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner: string | null): Promise<(AgentView & { sessionId: string; startedAt: number | null })[]> {
-  const config = await configDir($)
+// each by the record of the session on its tty that the host keeps in `config`.
+async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner: string | null,
+  host: { config: string; pidsOn: PidsOn } | null = null): Promise<(AgentView & { sessionId: string; startedAt: number | null })[]> {
+  const { config, pidsOn } = host ?? { config: await configDir($), pidsOn: pidsAsked($) }
   const state = await dataDir($)
   const chain = String(await $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`).catch(() => ''))
   const views: (AgentView & { sessionId: string; startedAt: number | null })[] = []
   for (const entry of chainEntries(chain)) {
     if (owner !== null && entry.owner !== owner) continue
-    const ps = await $.process.run(['ps', '-t', entry.tty.replace(/^\/dev\//, ''), '-o', 'pid='])
-    if (ps.exitCode !== 0) continue
-    for (const pid of String(ps.stdout ?? '').split('\n').map((line: string) => line.trim().split(/\s+/)[0] ?? '').filter((pid: string) => /^\d+$/.test(pid))) {
+    for (const pid of await pidsOn(entry.tty.replace(/^\/dev\//, ''))) {
       const record = hostRecordOf(String(await $.fs.read(`${config}/sessions/${pid}.json`).catch(() => '')))
       if (!record || !record.sessionId) continue
       const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(record.sessionId)}`).catch(() => '')))
@@ -878,6 +899,23 @@ async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner
     }
   }
   return views
+}
+
+// The accounts by the launcher's `--plan` numbers, over core's naming of a configuration directory.
+const ACCOUNTS: Readonly<Record<string, string>> = { plan1: 'plan 1', plan2: 'plan 2' }
+
+// What an orchestrator's line says of its account and its live agents, `plan 2 · 3 agents`: the account of the
+// configuration directory its row names, and the agents of its chain alive at this drawing, each session once,
+// over the process table this drawing read. « ? » for whatever the facts do not carry (a remote row, a row
+// written before rows carried them, a listing that failed or an agent list not read within the bound).
+async function fleetLabel($: Host<'env' | 'fs' | 'process'>, row: SessionRow, home: string, table: ProcessTable | null | undefined): Promise<string> {
+  const account = (row.config ? ACCOUNTS[planOfConfig(row.config, home)] : undefined) ?? '?'
+  let count: number | null = null
+  if (row.config && row.tty && row.chain_owner && table) {
+    const agents = await withDeadline(chainAgents($, row.tty, row.chain_owner, { config: row.config, pidsOn: pidsListed(table) }), await sideReadBoundMs($))
+    if (!isDegradedPass(agents)) count = new Set(agents.map(agent => agent.sessionId)).size
+  }
+  return `${account} · ${count ?? '?'} agent${count === 1 ? '' : 's'}`
 }
 
 // The line an agent is sent when its orchestrator's successor confirmed the takeover.
@@ -1889,6 +1927,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           ...(walked.pid ? { pid: walked.pid } : {}),
           ...(walked.tty ? { tty: walked.tty } : {}),
           tmux: await windowAddress($),
+          config: await configDir($),
+          chain_owner: (await chainOwner($)) || null,
           repo: isDegradedPass(origin) ? null : origin,
           context_percent: reading.context_percent,
           context_tokens: reading.context_tokens,
@@ -2230,6 +2270,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       pane.ticksSinceDraw = 0
       let rows: { label: string; name: string; rest: string; urgency: number }[] = []
       let blocks: PaneRow[] = []
+      // Each orchestrator's account and live agent count (fleetLabel), by its block's key, read at this drawing.
+      let fleet = new Map<string, string>()
       let failed: { entry: RoundEntry; reason: string }[] = []
       let delivering: RoundEntry[] = []
       let pending = 0
@@ -2243,7 +2285,10 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         const store = await readStore($)
         const local = store.rows
         const merged = withRemote(local, await readRemoteRows($), Date.now(), REMOTE_STALE_AFTER_MS)
-        blocks = paneRows(Object.fromEntries(Object.entries(merged).filter(([, row]) => row.role === 'orchestrator')))
+        const orchestrators = Object.entries(merged).filter(([, row]) => row.role === 'orchestrator')
+        blocks = paneRows(Object.fromEntries(orchestrators))
+        const home = (await $.env.get('HOME') ?? '').replace(/\/+$/, '')
+        fleet = new Map(await Promise.all(orchestrators.map(async ([key, row]) => [key, await fleetLabel($, row, home, store.alive)] as const)))
         const repo = await (ownRepo ??= repoRead($))
         if (repo === undefined) ownRepo = null
         owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : []), ...(row.unattended?.prs.map(u => u.repo) ?? [])])])
@@ -2340,12 +2385,13 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // character. A blank line between two blocks.
       const block = (row: PaneRow, i: number): Drawn => {
         const state = row.waiting === 'operator' ? 'warning' : row.waiting === 'done' ? 'success' : 'suggestion'
+        const head = `${row.head} · ${fleet.get(row.key)}`
         const line = el.Text({
           children: [
             el.Text({ color: state, children: '●' }),
             el.Text({ children: ' ' }),
             el.Text({ bold: true, children: row.name }),
-            el.Text({ children: ` · ${row.head} · ` }),
+            el.Text({ children: ` · ${head} · ` }),
             el.Text(row.past ? { color: 'error', children: row.fill } : { children: row.fill }),
             ...(row.age !== null ? [el.Text({ children: ` · ${row.age}` })] : []),
           ],
@@ -2372,7 +2418,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             ],
           }),
           rows: (i > 0 ? 1 : 0)
-            + rowsOf(`● ${row.name} · ${row.head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
+            + rowsOf(`● ${row.name} · ${head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
             + (row.status !== null ? rowsOf(row.status, textWidth) : 0)
             + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0)
             + (row.unattended ?? []).reduce((sum, said) => sum + (said.wraps ? rowsOf(takesRows(said.text), unattendedWidth) : width > 0 ? 1 : 0), 0),
@@ -2575,7 +2621,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it. While the « Other answer » field is drawn the track alone is left
       // out: its right margin would take columns the field counts as its own (see ANSWER_ROWS).
-      const drawnKey = JSON.stringify([answering?.id ?? null, pending, asked.map(entry => entry.id), blocks, failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([answering?.id ?? null, pending, asked.map(entry => entry.id), blocks, [...fleet], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
