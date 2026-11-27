@@ -6840,7 +6840,7 @@ if command -v tmux >/dev/null 2>&1; then
   awsrv kill-window -t home:0 2>/dev/null
   AWSOCK=$(awsrv display-message -p '#{socket_path}' 2>/dev/null)
   AWPANE=$(awsrv display-message -p -t home:1 '#{pane_id}' 2>/dev/null)
-  awplace() { TMUX="$AWSOCK,$$,0" TMUX_PANE="$AWPANE" ipy "ia.TmuxTerminal().create('sleep $AWMARK', '$1', ia.Place('anywhere', '', 'right', False), '', {})" >/dev/null 2>&1; }
+  awplace() { ORCHESTRATOR_OSASCRIPT=/usr/bin/false TMUX="$AWSOCK,$$,0" TMUX_PANE="$AWPANE" ipy "ia.TmuxTerminal().create('sleep $AWMARK', '$1', ia.Place('anywhere', '', 'right', False), '', {})" >/dev/null 2>&1; }
   awlist() { awsrv list-windows -t home -F '#{window_index}=#{window_name}' 2>/dev/null | paste -sd' ' -; }
   awplace 'Agent: a'
   awplace 'Agent: b'
@@ -6848,7 +6848,7 @@ if command -v tmux >/dev/null 2>&1; then
     "1=Orch: x 2=Agent: a 3=Agent: b" "$(awlist)"
   awsrv kill-server 2>/dev/null
   # The move into a home session: a home server made for it starts its orchestrator on window 0.
-  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$AWHOME', 'Orch: moved', '$WORK', 'sleep $AWMARK', 'suite')" >/dev/null 2>&1
+  ORCHESTRATOR_OSASCRIPT=/usr/bin/false ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$AWHOME', 'Orch: moved', '$WORK', 'sleep $AWMARK', 'suite')" >/dev/null 2>&1
   check "the home server made for a move holds its orchestrator on window 0" "0=Orch: moved" \
     "$(awhome list-windows -t home -F '#{window_index}=#{window_name}' 2>/dev/null | paste -sd' ' -)"
   awhome kill-server 2>/dev/null
