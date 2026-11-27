@@ -3298,6 +3298,10 @@ NO_TAB = NoTab()
 
 # The tmux to run, overridable so the suite can stand a recorder in for it.
 TMUX_BIN = os.environ.get("ORCHESTRATOR_TMUX") or "tmux"
+# The word the launcher kills a window with, tmux's own short name: a home server aliases
+# kill-window, the name a client sends, to a refusal (home.conf), and no alias covers this one.
+# Every tmux reads it, so a server made before the refusal is ended by it too.
+KILL_WINDOW = "killw"
 # The session option the home command sets on the session it makes.
 HOME_MARK = "@orchestrator-home"
 # One line per pane, tab-separated; the title is last because the host rewrites it freely.
@@ -3383,8 +3387,8 @@ def in_home_session():
 
 
 class TmuxTerminal(Terminal):
-    """The windows of the caller's home session. A window takes the next free index and is
-    never selected, so the operator's view stays where he put it; window 0 is the
+    """The windows of the caller's home session. A window goes after the session's last one
+    and is never selected, so the operator's view stays where he put it; window 0 is the
     orchestrator's, and is neither placed before nor moved.
 
     Its own key in `made`: `window`, the tmux id of the window it made."""
@@ -3498,10 +3502,14 @@ class TmuxTerminal(Terminal):
         # Named with -n: unnamed, tmux renames the window after the program it runs, which
         # reads the host's version number. -d: the operator's window stays the current one.
         if place.at == "first" or (place.at == "beside" and place.side == "left"):
-            print("spawn: a window of a home session takes the next free index; the new "
-                  "session is not placed %s." % ("first" if place.at == "first" else
-                                                 "left of %s" % place.anchor), file=sys.stderr)
-        out = tmux_out(["new-window", "-d", "-t", self.session() + ":", "-n", title, "-P",
+            print("spawn: a window of a home session goes after the session's last window; the "
+                  "new session is not placed %s." % ("first" if place.at == "first" else
+                                                     "left of %s" % place.anchor),
+                  file=sys.stderr)
+        # `{end}` is the session's highest-index window: -a places the new one right after it,
+        # so it goes after the orchestrator's and every agent's, whatever index a closed window
+        # left free.
+        out = tmux_out(["new-window", "-d", "-a", "-t", self.session() + ":{end}", "-n", title, "-P",
                         "-F", "#{window_id} #{pane_id} #{pane_tty}", command], "spawn")
         fields = out.split()
         if len(fields) != 3:
@@ -3509,7 +3517,7 @@ class TmuxTerminal(Terminal):
             # death, so a refusal leaves no window running a session nobody will start.
             if fields and fields[0].startswith("@"):
                 try:
-                    done = tmux_call(["kill-window", "-t", fields[0]])
+                    done = tmux_call([KILL_WINDOW, "-t", fields[0]])
                     killed = done.returncode == 0
                 except TmuxError:
                     killed = False
@@ -3566,7 +3574,7 @@ class TmuxTerminal(Terminal):
         """Kill a window by its id. A window tmux cannot find is already closed, which is
         what was asked; any other refusal dies with its message."""
         try:
-            done = tmux_call(["kill-window", "-t", window])
+            done = tmux_call([KILL_WINDOW, "-t", window])
         except TmuxError as exc:
             die("%s: tmux kill-window: %s" % (what, exc))
         if done.returncode == 0:
@@ -4600,7 +4608,7 @@ def keep_home(tty, socket, listed):
     if ttys:
         KILL_SENT.add(ttys[0])
         try:
-            done = tmux_call(["-L", socket, "kill-window", "-t", "%s:0" % HOME_SESSION])
+            done = tmux_call(["-L", socket, KILL_WINDOW, "-t", "%s:0" % HOME_SESSION])
         except TmuxError as exc:
             refuse("tmux could not kill window 0 (%s)" % exc)
         if done.returncode != 0:
