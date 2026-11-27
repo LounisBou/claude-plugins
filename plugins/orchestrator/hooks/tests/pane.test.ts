@@ -576,6 +576,45 @@ test('a pane the module no longer remembers opening asks to be opened again', as
   expect(text).toContain('type /orchestrator-supervision to open the pane again')
 })
 
+test('a session in its first turn is listed: its row is written at the turn start, before any measure, and the pane lists it', async () => {
+  // Row 547: a freshly placed auditor stayed out of the pane until its first turn ended, the row
+  // being written only at the measure. Its row now exists from the first turn's start, and the
+  // pane's rows, read from the store, list it as an auditor.
+  const fx = fakeDollar({ launchName: 'Audit: collecte' })
+  fx.env['ORCHESTRATOR_OSASCRIPT'] = '/usr/bin/false'
+  expect(fx.files.has(`${SESSIONS}/s-one`)).toBe(false)
+  const { handlers } = mounted(registerSupervision)
+  await handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  const stored = parseSessionRow(String(fx.files.get(`${SESSIONS}/s-one`)))
+  expect(stored?.role).toBe('auditor')
+  expect(stored?.name).toBe('Audit: collecte')
+  const listed = paneRows({ 'sessions/s-one': stored! })
+  expect(listed.map(pane => pane.name)).toEqual(['Audit: collecte'])
+  expect(listed[0]!.head).toContain('auditor')
+})
+
+test('a row written at the first turn start, with no reading, draws no figure and no age, and sorts after a measured row', async () => {
+  // A session in its first turn has no measure: its row keeps an empty updated_at, and the pane
+  // draws its name and role only, sorted as unmeasured, never as a 0 % reading of this minute.
+  const fresh = fakeDollar({ launchName: 'Audit: collecte' })
+  fresh.env['ORCHESTRATOR_OSASCRIPT'] = '/usr/bin/false'
+  const { handlers } = mounted(registerSupervision)
+  await handlers['turn.start'](fresh.dollar, { turnId: 't' }, (x: unknown) => x)
+  const stored = parseSessionRow(String(fresh.files.get(`${SESSIONS}/s-one`)))
+  expect(stored?.updated_at).toBe('')
+  const listed = paneRows({ 'sessions/s-alpha': orch('Orch: alpha', { context_percent: 12 }), 'sessions/s-one': stored! })
+  expect(listed.map(pane => pane.name)).toEqual(['Orch: alpha', 'Audit: collecte'])
+  expect(listed[1]!.label).toBe('Audit: collecte · auditor')
+  expect(listed[1]!.fill).toBe('')
+  expect(listed[1]!.age).toBeNull()
+  // Drawn by the coordinator's pane: the row's name and role, and no percentage.
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/s-one`, String(fresh.files.get(`${SESSIONS}/s-one`)))
+  const drawn = JSON.stringify(await coordinatorRender(fx))
+  expect(drawn).toContain('Audit: collecte')
+  expect(drawn).not.toContain('0%')
+})
+
 test('a name walk that cannot answer in time costs the row its name, never the measure', async () => {
   // The Task 9 review's bounded-reads carry: the measure's side reads run
   // under their own deadline, and one that loses the race is quietly no name —
