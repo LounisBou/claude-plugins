@@ -674,6 +674,50 @@ test('a merged pull request whose agent\'s close is refused on its prompt keeps 
   expect(world.files.get(RECORD)).not.toContain('"pr":17')
 })
 
+test('a new Ready head of an agent whose close was refused on its prompt is said again, with its merge order', async () => {
+  const unsent = { text: 'une remarque' as string | null, inputWaits: [] as (string | undefined)[] }
+  const at = (sha: string) => JSON.stringify([{ number: 17, createdAt: '2026-11-15T06:00:00Z', sha, labels: [{ name: 'Ready' }] }])
+  const worldAt = (sha: string) => fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': at(sha) }, launcher: running('Agent: p17'), autoMerge: { result: 'acme/app' }, unsent })
+  const world = worldAt('a'.repeat(40))
+  const told = new Set<string>()
+  const first = await prWake(world.dollar, told)
+  expect(first.lines).toEqual([closedLine('acme/app#17', 'is Ready') + MERGE_NOW])
+  await first.settle()
+  const second = await prWake(world.dollar, told)
+  expect(second.lines).toEqual([unsentLine('acme/app#17', 'une remarque')])
+  await second.settle()
+  // He answered, the agent fixed: a new head carries Ready. Its line and its merge order are said, and its refusal told.
+  const fixed = worldAt('b'.repeat(40))
+  const third = await prWake(fixed.dollar, told)
+  expect(third.lines).toEqual([closedLine('acme/app#17', 'is Ready') + MERGE_NOW])
+  await third.settle()
+  expect((await prWake(fixed.dollar, told)).lines).toEqual([unsentLine('acme/app#17', 'une remarque')])
+})
+
+test('a close refused on the prompt, then facts that no longer allow it, is said again once they do', async () => {
+  const unsent = { text: 'je réponds' as string | null, inputWaits: [] as (string | undefined)[] }
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17'), unsent })
+  const told = new Set<string>()
+  const first = await prWake(world.dollar, told)
+  await first.settle()
+  const second = await prWake(world.dollar, told)
+  expect(second.lines).toEqual([unsentLine('acme/app#17', 'je réponds')])
+  await second.settle()
+  // He sent it: the agent's turn runs, its host busy; nothing is closed nor said.
+  const host = `${HOME}/.claude/sessions/417.json`
+  world.files.set(host, world.files.get(host)!.replace('"idle"', '"busy"'))
+  unsent.text = null
+  const busy = await prWake(world.dollar, told)
+  await busy.settle()
+  expect([busy.lines, closes(world.runs).length]).toEqual([[], 2])
+  // Idle again: the close is said again, as any close the facts allow.
+  world.files.set(host, world.files.get(host)!.replace('"busy"', '"idle"'))
+  const then = await prWake(world.dollar, told)
+  expect(then.lines).toEqual([closedLine('acme/app#17', 'is Ready')])
+  await then.settle()
+  expect(closes(world.runs)).toHaveLength(3)
+})
+
 test('a close is made only once its wake is delivered: a wake the host drops leaves the agent running', async () => {
   const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${P17_LINE}\n`, ...P17_DONE }, forge: { 'acme/app': READY_PR }, launcher: running('Agent: p17') })
   await prWake(world.dollar, new Set())
@@ -1783,6 +1827,28 @@ test('the backstop: an idle agent of this orchestration whose row is closed is c
   expect(woke.lines).toEqual([closedLine('row 8 (app)', 'is closed')])
   await woke.settle()
   expect(closes(world.runs)).toEqual(['--tty /dev/ttys000 --expect-title Agent: p17'])
+})
+
+test('the backstop: a close refused on the agent\'s prompt is told once and tried again in silence until the prompt is empty', async () => {
+  // Row 81, which no other spec closes: what the backstop told lives as long as the module.
+  const unsent = { text: 'brouillon' as string | null, inputWaits: [] as (string | undefined)[] }
+  const world = fake({ session: 's-orch', reportsTo: null, rows: { [RECORD]: `${rowOf(81, 'closed', { agent: 'Agent: p17' })}\n`, ...launched('/briefs/app', 'Agent: p17', 81), ...P17_DONE }, launcher: running('Agent: p17'), unsent })
+  const told = new Set<string>()
+  const first = await prWake(world.dollar, told)
+  expect(first.lines).toEqual([closedLine('row 81 (app)', 'is closed')])
+  await first.settle()
+  const second = await prWake(world.dollar, told)
+  expect([second.lines, second.watching]).toEqual([[unsentLine('row 81 (app)', 'brouillon')], true])
+  await second.settle()
+  const third = await prWake(world.dollar, told)
+  expect([third.lines, third.watching]).toEqual([[], true])
+  await third.settle()
+  expect(closes(world.runs)).toHaveLength(3)
+  unsent.text = null
+  const fourth = await prWake(world.dollar, told)
+  expect(fourth.lines).toEqual([])
+  await fourth.settle()
+  expect(closes(world.runs)).toHaveLength(4)
 })
 
 // Mutation: `|| backstop` removed from prWake's `watching` (ledger.ts): the busy and the holding worlds stop the tick and this test falls.
