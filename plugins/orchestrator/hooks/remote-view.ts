@@ -7,9 +7,9 @@
 // view is reused, a view that dropped is opened again while its server runs, with a fresh row or
 // none, a second view of one server is closed. A
 // view is live when this Mac's process table holds its ssh; that same table is what keeps one view
-// per home server. The machines are mapped to an ssh destination by one file
-// of the protected root (stateDir), beside the launch files it decides; a machine it does not name
-// is a logged line, never a guess.
+// per home server, and no view opens while the server lists a control-mode client. The machines
+// are mapped to an ssh destination by one file of the protected root (stateDir), beside the launch
+// files it decides; a machine it does not name is a logged line, never a guess.
 import { HOME_SHAPE, type RemoteRow } from './remote-row.ts'
 import { logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
 import { withLockOver } from '../core/store-io.ts'
@@ -41,12 +41,14 @@ const DEST_CAP = 120
 // path holds no character a word break or a quote could change.
 const PATH_SHAPE = /^[A-Za-z0-9._/-]+$/
 
-// How long the check that a home server still runs may take, and the window's opening.
+// How long the check that a home server still runs may take, its client list, and the window's
+// opening.
 const CHECK_TIMEOUT_MS = 15000
+const CLIENTS_TIMEOUT_MS = 10000
 const OPEN_TIMEOUT_MS = 20000
 const PS_TIMEOUT_MS = 5000
-// A view's lock is held across one table read, one check and one opening: past their bounds
-// together, its holder was killed.
+// A view's lock is held across one table read, one check, one client list and one opening: past
+// their bounds together, its holder was killed.
 const LOCK_STALE_MS = 60000
 
 // After an opening, or a check that did not lead to one, the next try waits this long, doubled
@@ -90,9 +92,31 @@ export function viewArgv(dest: string, socket: string): string[] {
   return [SSH, '-t', ...SSH_OPTIONS, dest, viewCommand(socket)]
 }
 
+// An ssh that reads the home server's tmux, through a login shell as the view's.
+function readArgv(dest: string, command: string): string[] {
+  return [SSH, ...SSH_OPTIONS, '-o', 'ConnectTimeout=10', dest, `zsh -lc "${command}"`]
+}
+
 // Whether the home server still runs: has-session starts nothing on the remote.
 export function checkArgv(dest: string, socket: string): string[] {
-  return [SSH, ...SSH_OPTIONS, '-o', 'ConnectTimeout=10', dest, `zsh -lc "tmux -L ${socket} has-session -t ${VIEW_SESSION}"`]
+  return readArgv(dest, `tmux -L ${socket} has-session -t ${VIEW_SESSION}`)
+}
+
+// The home server's clients, each by its flags: list-clients starts nothing on the remote either.
+export function clientsArgv(dest: string, socket: string): string[] {
+  return readArgv(dest, `tmux -L ${socket} list-clients -F '#{client_flags}'`)
+}
+
+// A client's flags as the server prints them: words, some with a value, joined by commas.
+const FLAGS_SHAPE = /^[A-Za-z0-9=_-]+(?:,[A-Za-z0-9=_-]+)*$/
+
+// Whether the client list holds a control-mode client: one line of flags per client, nothing when
+// none is attached; null when a line is not a client's flags.
+function controlAttached(stdout: string): boolean | null {
+  if (stdout === '') return false
+  const lines = stdout.replace(/\n$/, '').split('\n')
+  if (!lines.every(line => FLAGS_SHAPE.test(line))) return null
+  return lines.some(line => line.split(',').includes('control-mode'))
 }
 
 // The launch file iTerm2 runs: the view's ssh in place of the shell, each word quoted.
@@ -303,6 +327,7 @@ async function openChecked($: ViewHost, path: string, view: Wanted, memory: View
     return
   }
   memory.said.delete(ended)
+  if (await heldBack($, view)) return
   await writeAtomic($, path, launchScript(view.dest, view.socket))
   // ORCHESTRATOR_OSASCRIPT, the launcher's own stand-in (iterm_agent.py OSASCRIPT): a run that must
   // never move the operator's screen names one that opens nothing.
@@ -311,4 +336,18 @@ async function openChecked($: ViewHost, path: string, view: Wanted, memory: View
   await logLine($, 'views', opened?.exitCode === 0
     ? `opened a view of ${view.socket} (${view.name}) on ${view.dest}`
     : `iTerm2 did not open the view of ${view.socket} on ${view.dest}${opened?.stderr ? `: ${String(opened.stderr).trim().slice(0, 200)}` : ''}`)
+}
+
+// iTerm2 refuses a second control-mode attach to a server it holds, with a modal that waits for a
+// hand. The process table does not show every view that holds one, so the server is asked for its
+// clients before an opening; a list that cannot be read opens nothing either.
+async function heldBack($: ViewHost, view: Wanted): Promise<boolean> {
+  const listed = await $.process.run(clientsArgv(view.dest, view.socket), { timeoutMs: CLIENTS_TIMEOUT_MS }).catch(() => null)
+  const control = listed?.exitCode === 0 ? controlAttached(String(listed.stdout ?? '')) : null
+  if (control === false) return false
+  const why = !listed ? 'no answer' : listed.exitCode !== 0 ? `exit ${listed.exitCode}` : 'a line is not a client\'s flags'
+  await logLine($, 'views', control
+    ? `a control-mode client is attached to ${view.socket} on ${view.dest}: no second view is opened, tried again later`
+    : `the clients of ${view.socket} on ${view.dest} could not be read (${why}): no view is opened, tried again later`)
+  return true
 }

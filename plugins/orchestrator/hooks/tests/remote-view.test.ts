@@ -7,7 +7,7 @@
 // The fakes play ssh, the process table and iTerm2.
 import { expect, test } from 'claude-code/testing'
 import {
-  MACHINES_FILE, VIEW_RETRY_MS, VIEW_RETRY_CAP_MS, checkArgv, launchScript, liveViews, newViewsMemory, parseMachines, planViews,
+  MACHINES_FILE, VIEW_RETRY_MS, VIEW_RETRY_CAP_MS, checkArgv, clientsArgv, launchScript, liveViews, newViewsMemory, parseMachines, planViews,
   syncViews, tried, viewArgv, viewCommand, wantedViews, type Backoff, type LiveView, type ViewsMemory,
 } from '../remote-view.ts'
 import { HOME_SHAPE, homeOf, parseRemoteRow, remoteRowOf, rowIsNews, rowSent, rowText, type RemoteRow } from '../remote-row.ts'
@@ -38,9 +38,12 @@ const psLine = (pid: number, dest: string, socket: string) => `${pid} ${viewArgv
 // `opensShow`: an opening puts its view's ssh in the table, as iTerm2 does once it runs the file.
 // `hold`: the check of that socket waits until `release` is called. `rejects`: the check of that
 // socket rejects (a run that timed out). `failWrite`: the launch file of that socket is not renamed.
+// `clients`: what the server's client list prints, nobody attached by default. `clientsRead`: that
+// list's run exits as a dead link does, or rejects.
 type World = {
   live: string[]; servers: Set<string>; unreachable: Set<string>; psFails?: boolean; osaFails?: boolean
   opensShow?: boolean; hold?: string; rejects?: string; failWrite?: string
+  clients?: string; clientsRead?: 'fails' | 'rejects'
 }
 
 function fake(world: Partial<World> = {}, file: string | null = machines(), env: Record<string, string> = {}, shared?: Map<string, string>) {
@@ -90,7 +93,11 @@ function fake(world: Partial<World> = {}, file: string | null = machines(), env:
           if (w.hold === socket) await held
           if (w.rejects === socket) throw new Error('timed out')
           if (w.unreachable.has(dest)) return { exitCode: 255, stdout: '', stderr: 'timeout' }
-          return w.servers.has(`${dest}|${socket}`) ? ok : { exitCode: 1, stdout: '', stderr: 'no server running' }
+          if (!w.servers.has(`${dest}|${socket}`)) return { exitCode: 1, stdout: '', stderr: 'no server running' }
+          if (!argv[argv.length - 1]!.includes(' list-clients ')) return ok
+          if (w.clientsRead === 'rejects') throw new Error('timed out')
+          if (w.clientsRead === 'fails') return { exitCode: 255, stdout: '', stderr: 'timeout' }
+          return { ...ok, stdout: w.clients ?? '' }
         }
         if (argv[0] === 'mv') {
           if (w.failWrite && argv[3]!.includes(w.failWrite)) return { exitCode: 1, stdout: '', stderr: 'denied' }
@@ -115,7 +122,19 @@ function fake(world: Partial<World> = {}, file: string | null = machines(), env:
 
 const opens = (runs: string[][]) => runs.filter(argv => argv[0] === 'osascript')
 const kills = (runs: string[][]) => runs.filter(argv => argv[0] === 'kill')
-const checks = (runs: string[][]) => runs.filter(argv => argv[0] === '/usr/bin/ssh')
+// Whether an ssh run is the client list asked right after the check of the same server.
+const listsWhatWasChecked = (argv: string[], before: string[] | undefined) => {
+  const socket = /-L (\S+)/.exec(before?.[before.length - 1] ?? '')?.[1]
+  if (before === undefined || socket === undefined) return false
+  const dest = before[before.length - 2]!
+  return before.join(' ') === checkArgv(dest, socket).join(' ') && argv.join(' ') === clientsArgv(dest, socket).join(' ')
+}
+// Every ssh run, so that none goes unseen. An opening asks its server twice: the client list that
+// directly follows its server's check counts with it, any other one counts of its own.
+const checks = (runs: string[][]) => {
+  const ssh = runs.filter(argv => argv[0] === '/usr/bin/ssh')
+  return ssh.filter((argv, i) => !listsWhatWasChecked(argv, ssh[i - 1]))
+}
 
 // --- the command -------------------------------------------------------------------------
 
@@ -353,13 +372,35 @@ function lockedFor(age: number) {
   return fx
 }
 
-// 45 s: past core's own 30 s, within the holder's bounds summed (a table read, a check, an opening).
+// 45 s: past core's own 30 s, within the holder's bounds summed (a table read, a check, a client
+// list, an opening).
 test('a lock its holder may still hold is left to it: nothing is opened', async () => {
   const fx = lockedFor(45000)
   await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
   expect(checks(fx.runs)).toEqual([])
   expect(opens(fx.runs)).toEqual([])
   expect(fx.logged.filter(line => line.includes('is being opened by another session')).length).toBe(1)
+})
+
+test('every run under the lock is bounded, and a lock aged by the bounds through the opening is left to its holder', async () => {
+  const holder = fake()
+  const lock = `${STATE}/views/IznoServer-${SOCKET}.sh.lock`
+  const run = holder.dollar.process.run
+  const under: { program: string; timeoutMs: number | undefined }[] = []
+  Object.assign(holder.dollar.process, {
+    run: async (argv: readonly string[], init?: { timeoutMs?: number }) => {
+      if (holder.files.has(lock)) under.push({ program: argv[0]!, timeoutMs: init?.timeoutMs })
+      return run(argv, init)
+    },
+  })
+  await syncViews(holder.dollar, [row()], newViewsMemory(), { now: NOW })
+  const opening = under.slice(0, under.findIndex(u => u.program === 'osascript') + 1)
+  expect(opening.map(u => u.program)).toEqual(['ps', '/usr/bin/ssh', '/usr/bin/ssh', 'mv', 'osascript'])
+  expect(under.filter(u => !(u.timeoutMs! > 0))).toEqual([])
+  const fx = lockedFor(opening.reduce((sum, u) => sum + u.timeoutMs!, 0))
+  await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
+  expect(checks(fx.runs)).toEqual([])
+  expect(opens(fx.runs)).toEqual([])
 })
 
 test('a lock a killed holder left is taken over, and its view opened', async () => {
@@ -499,6 +540,53 @@ test('the retry bound doubles at each try and stops at its cap', () => {
   expect(bounds.slice(0, 4)).toEqual([VIEW_RETRY_MS, 2 * VIEW_RETRY_MS, 4 * VIEW_RETRY_MS, 8 * VIEW_RETRY_MS])
   expect(bounds[9]).toBe(VIEW_RETRY_CAP_MS)
   expect(VIEW_RETRY_CAP_MS).toBe(10 * 60 * 1000)
+})
+
+// --- a view already attached --------------------------------------------------------------
+
+// A client's flags as the server lists them: a control-mode client's, and a plain terminal's.
+const CONTROL = 'attached,focused,control-mode,UTF-8\n'
+const PLAIN = 'attached,focused,UTF-8\n'
+const launched = (files: Map<string, string>) => [...files.keys()].some(p => p.endsWith('.sh'))
+
+test('the client list is read with the options of the check, each client\'s flags and nothing else', () => {
+  expect(clientsArgv('izno', SOCKET)).toEqual([...checkArgv('izno', SOCKET).slice(0, -1), `zsh -lc "tmux -L ${SOCKET} list-clients -F '#{client_flags}'"`])
+})
+
+test('a server with a control-mode client gets no open though the table shows no view, until that client leaves', async () => {
+  const fx = fake({ clients: PLAIN + CONTROL })
+  const memory = newViewsMemory()
+  await syncViews(fx.dollar, [row()], memory, { now: NOW })
+  expect(opens(fx.runs)).toEqual([])
+  expect(launched(fx.files)).toBe(false)
+  expect(fx.logged.filter(line => line.includes('a control-mode client is attached')).length).toBe(1)
+  fx.world.clients = ''
+  await syncViews(fx.dollar, [row()], memory, { now: NOW + VIEW_RETRY_MS })
+  expect(opens(fx.runs).length).toBe(1)
+})
+
+test('a client that is not in control mode holds no open back, and the list is read last before it', async () => {
+  const fx = fake({ clients: PLAIN })
+  await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
+  const asked = fx.runs.filter(argv => argv[0] === '/usr/bin/ssh' || argv[0] === 'osascript')
+  expect(asked.slice(0, 2)).toEqual([checkArgv('izno', SOCKET), clientsArgv('izno', SOCKET)])
+  expect(asked.map(argv => argv[0])).toEqual(['/usr/bin/ssh', '/usr/bin/ssh', 'osascript'])
+})
+
+test('a client list that fails, gets no answer or is not one opens nothing, and says why', async () => {
+  const cases: [Partial<World>, string][] = [
+    [{ clientsRead: 'fails' }, 'exit 255'],
+    [{ clientsRead: 'rejects' }, 'no answer'],
+    [{ clients: 'a login banner\n' }, 'a line is not a client\'s flags'],
+    [{ clients: PLAIN + '\n' }, 'a line is not a client\'s flags'],
+  ]
+  for (const [world, why] of cases) {
+    const fx = fake(world)
+    await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
+    expect(opens(fx.runs)).toEqual([])
+    expect(launched(fx.files)).toBe(false)
+    expect(fx.logged.filter(line => line.includes(`the clients of ${SOCKET} on izno could not be read (${why})`)).length).toBe(1)
+  }
 })
 
 // --- the row's home ----------------------------------------------------------------------
