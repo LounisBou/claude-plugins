@@ -64,10 +64,21 @@ def tmux(socket, *words):
 
 
 def read_server(socket):
-    """Whether a home server ends with its tab, its clients' ttys, its panes' ttys."""
-    return {"armed": ia.home_armed(tmux(socket, *ia.HOME_ARM_READ)),
+    """Whether a home server ends with its tab, the owners its arm lists, its clients' ttys, its
+    panes' ttys."""
+    arm = tmux(socket, *ia.HOME_ARM_READ)
+    return {"armed": ia.home_armed(arm), "owners": ia.home_listed(arm),
             "clients": tmux(socket, "list-clients", "-F", "#{client_tty}").split(),
             "panes": tmux(socket, "list-panes", "-a", "-F", "#{pane_tty}").split()}
+
+
+def local_clients(server, windows=None):
+    """The clients of a home server that are tabs of this machine: its listed owners attached, or,
+    for a server that lists none, those the app's tabs show when they are known. A view attached
+    over ssh from another machine is never one: no tab is made for it, and it owns nothing."""
+    if server.get("owners"):
+        return [c for c in server["clients"] if c in server["owners"]]
+    return [c for c in server["clients"] if c in shown(windows)] if windows else server["clients"]
 
 
 def read_servers():
@@ -122,7 +133,7 @@ def kept_windows(table, sessions, servers, lines):
         if not s["socket"] and s["tty"] not in known:
             opened.setdefault(s["tty"], s["name"])
     for server in servers.values():
-        for c in server["clients"]:
+        for c in local_clients(server):
             if c not in known:
                 opened.setdefault(c, "")
     for pid, (_, tty, command) in sorted(table.items(), key=lambda item: item[1][1]):
@@ -251,7 +262,9 @@ def snapshot(folder, keep):
         windows = kept_windows(table, sessions, servers, lines)
         if windows is None:
             lines.append("order: unknown, iTerm2 does not answer (%s)" % type(exc).__name__)
-    lines += ["server: %s is shown by no tab" % s for s in servers if not servers[s]["clients"]]
+    for server in servers.values():
+        server["local"] = local_clients(server, windows)
+    lines += ["server: %s is shown by no tab" % s for s in servers if not servers[s]["local"]]
     lines += ["session: %s | %s | %s | pid %s | %s" % (s["socket"] or "plain tab, resumed if it dies",
               s["name"], s["tty"], s["pid"], s["status"]) for s in sessions]
     known = {s["tty"] for s in sessions} | {c for server in servers.values() for c in server["clients"]}
@@ -321,10 +334,9 @@ class Run:
                 ia.keep_order()
         except (Exception, SystemExit) as exc:
             self.bad("%s: %s" % (self.s["step"], exc if isinstance(exc, Stop) else "%r, see the log" % exc))
-            # Once the app is gone the servers stay disarmed, which keeps every session.
-            if not ia.process_gone(*self.s["app"]):
-                with contextlib.suppress(Exception, SystemExit):
-                    self.rearm()
+            # A failed run arms again each server a tab of this machine still shows, and ends the others.
+            with contextlib.suppress(Exception, SystemExit):
+                self.rearm()
         self.report()
         return 1 if self.s["defects"] else 0
 
@@ -379,10 +391,11 @@ class Run:
     def tabs(self):
         """Every tab back, or made again: a home server's, a dead plain session's by its resume line."""
         wanted = set(shown(self.s["windows"])) | {s["tty"] for s in self.s["sessions"] if not s["socket"]}
-        wanted |= {c for server in self.s["servers"].values() for c in server["clients"]}
+        wanted |= {c for server in self.s["servers"].values() for c in server.get("local", server["clients"])}
         until(lambda: {self.now(t) for t in wanted} <= set(shown(layout())), TABS_WAIT)
         for socket in ia.live_homes():
-            for tty in self.s["servers"].get(socket, {"clients": []})["clients"]:
+            server = self.s["servers"].get(socket, {"clients": []})
+            for tty in server.get("local", server["clients"]):
                 if self.now(tty) not in shown(layout()):
                     new = self.make_tab(ia.attach_program(socket, tab_title(socket)))
                     if not new or not ia.client_on(socket, new):
@@ -440,18 +453,38 @@ class Run:
         for what in sum(self.wrong_titles(), []):
             self.bad("the title of %s is not back" % what)
 
+    def seen(self):
+        """The ttys of this machine's tabs: those the app shows, when it runs and answers, and the
+        snapshot's own tabs of a home server, which iTermServer keeps on the same ttys."""
+        seen = set()
+        if ia.app_pid():
+            with contextlib.suppress(Exception, SystemExit):
+                seen = set(shown(layout()))
+        return seen | {self.now(c) for server in self.s["servers"].values()
+                       for c in server.get("local", [])}
+
     def rearm(self):
-        """Each server a run disarmed, armed again once its client is on a tab of the app: its
-        owners are the clients the app's tabs show, a view from another machine never one."""
-        seen = set(shown(layout()))
+        """Each server a run disarmed, armed again with its clients that are tabs of this machine
+        as owners, a view from another machine never one. One that no tab of this machine shows
+        is ended: no server runs with no window of its own machine (the operator's rule,
+        2026-11-27), a failed run's included."""
+        seen = self.seen()
         for socket in [s for s in self.s["disarmed"] if s in ia.live_homes()]:
             owners = sorted(set(read_server(socket)["clients"]) & seen)
-            if not owners:
-                self.bad("%s stays told not to exit: no tab shows it" % socket)
-            elif not ia.arm_home(socket, "restart", owners) or not read_server(socket)["armed"]:
-                self.bad("%s could not be told again to exit with its tab" % socket)
-            else:
+            if owners and ia.arm_home(socket, "restart", owners) and read_server(socket)["armed"]:
                 self.s["disarmed"].remove(socket)
+                continue
+            if owners and socket in ia.live_homes():
+                self.bad("%s could not be told again to exit with its tab" % socket)
+                continue
+            held = [s["name"] for s in self.s["sessions"] if s["socket"] == socket]
+            if socket in ia.live_homes() and not ia.kill_home(socket):
+                self.bad("%s runs with no tab of this machine and could NOT be ended" % socket)
+                continue
+            ia.trace_home(socket, "server", "restart (no tab of this machine shows it)", "")
+            self.s["disarmed"].remove(socket)
+            self.bad("%s was ended: no tab of this machine shows it; it held %s"
+                     % (socket, ", ".join(held) or "no session read"))
 
     def worked(self, s):
         """Whether a session busy at the snapshot wrote since, or came to another status."""

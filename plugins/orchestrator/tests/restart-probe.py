@@ -65,6 +65,12 @@ if scenario == "unshown":
     servers["orch-b"].update(armed="off", clients=[])
 if scenario == "no-stop-elsewhere":
     servers["orch-b"]["clients"] = ["/dev/ttys095"]
+# A view attached over ssh from another machine beside the tab of orch-b: on no tab of the app, and
+# no owner, whether the server lists its owners (view) or was armed the old way (view-old).
+if scenario in ("view", "view-old"):
+    servers["orch-b"]["clients"] = ["/dev/ttys002", "/dev/ttys097"]
+if scenario == "view":
+    servers["orch-b"]["owners"] = "/dev/ttys002"
 os.makedirs(os.path.join(work, "cfg", "sessions"), exist_ok=True)
 os.makedirs(os.path.join(work, "cfg", "projects", "p"), exist_ok=True)
 os.environ["ORCHESTRATOR_PROJECTS_DIR"] = ""
@@ -227,11 +233,20 @@ def tmux_call(args, env=None):
     server = servers.get(socket)
     out, code = "", 0
     # The arm and its suspension, each one call: the owners listed, or none.
-    owning = words[words.index(ia.HOME_OWNERS) + 1].strip() if ia.HOME_OWNERS in words and words[0] != "show-options" else None
+    owning = words[words.index(ia.HOME_OWNERS) + 1].strip() if ia.HOME_OWNERS in words and words[:2] == ["set-option", "-s"] \
+        or words[0] == "set-hook" and ia.HOME_OWNERS in words else None
     if server is None or scenario == "refused" and owning == "" and socket == "orch-b":
         code = 1
+    elif words[0] == "show-options" and ";" in words:
+        out = "%s\n%s" % (server["armed"], server.get("owners", ""))
     elif words[0] == "show-options":
-        out = server["armed"] if words[1] == "-sv" else server["string"]
+        out = server.get("owners", "") if ia.HOME_OWNERS in words else server["armed"] if words[1] == "-sv" else server["string"]
+    elif words[0] == "kill-server":
+        acts.append("end %s" % socket)
+        for pid in servers.pop(socket)["hosts"]:
+            alive.pop(pid, None)
+    elif words[:2] == ["set-option", "-sF"]:
+        acts.append("drop %s" % socket)
     elif words[0] == "list-clients":
         out = "\n".join(server["clients"])
     elif words[0] == "list-panes":
@@ -241,8 +256,7 @@ def tmux_call(args, env=None):
     elif owning is not None:
         state = "on" if owning else "off"
         acts.append("%s %s" % ("arm" if owning else "disarm", socket))
-        if owning:
-            server["owners"] = owning
+        server["owners"] = owning
         # Taken with no error and no effect.
         if not (socket == "orch-b" and scenario in {"off": ("stuck",), "on": ("arm-lost", "stale")}[state]):
             server["armed"] = state
@@ -312,6 +326,7 @@ class Interrupted:
 real_run = ia.run
 ia.run, ia.tmux_call, ia.process_state = run, tmux_call, process_state
 ia.live_homes = lambda: sorted(servers)
+ia.kill_home = lambda socket: tmux_call(["-L", socket, "kill-server"]).returncode == 0
 ia.app_pid = lambda: next((p for p in (APP, NEW_APP) if p in alive), "")
 ia.kernel_procargs = lambda pid: ([HOST], json.loads(os.environ["ORCHESTRATOR_HOST_ENV"]))
 ia.self_tty = lambda: "/dev/ttys999" if scenario in ("stranger", "run-stranger") else "/dev/ttys031"
