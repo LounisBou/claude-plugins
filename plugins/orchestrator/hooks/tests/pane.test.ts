@@ -1120,7 +1120,7 @@ test('a plain orchestrator is one line: a dot, its bold name, then its figures i
     { text: '●', color: 'suggestion', bold: false },
     { text: ' ', bold: false },
     { text: 'Orch: low', bold: true },
-    { text: ' · orchestrator · ? · ? agents · ', bold: false },
+    { text: ' · orchestrator · plan 1 · ', bold: false },
     { text: '30%', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1175,7 +1175,7 @@ test('a done orchestrator draws a success dot and one Status line in success, wi
 test('a row past the gate draws its fill and gate words in the error colour, the rest in the normal colour', async () => {
   const tree = await paneTree({ hot: orch('Orch: hot', { context_percent: 85, context_tokens: 85000 }) })
   expect(pieces(elAt(tree, 2, 0)).slice(3)).toEqual([
-    { text: ' · orchestrator · ? · ? agents · ', bold: false },
+    { text: ' · orchestrator · plan 1 · ', bold: false },
     { text: '85% past the gate', color: 'error', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1183,7 +1183,7 @@ test('a row past the gate draws its fill and gate words in the error colour, the
 
 test('a remote orchestrator keeps its machine in its line', async () => {
   const tree = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
-  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · ? · ? agents · 30% · 3m')
+  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · 30% · 3m')
 })
 
 test('one blank line separates two blocks', async () => {
@@ -1198,7 +1198,7 @@ test('a done proposal is no question: no row stands out', async () => {
   const done = entry('Orch: d', '2026-10-18T10:03:00.000Z', { session: 'd', kind: 'done', blocks: null })
   const tree = await paneTree({ d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) }, [done])
   const line = pieces(elAt(tree, 2, 0))
-  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ? · ? agents · ', '30%', ' · 3m'])
+  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · plan 1 · ', '30%', ' · 3m'])
   expect(line.some(p => p.bold && p.color === 'suggestion')).toBe(false)
 })
 
@@ -3121,6 +3121,12 @@ function fleet(rows: Record<string, SessionRow>, agents: Record<string, string>)
   return { fx, table, open, draw, lineOf, failListing: () => { listing = 'fails' } }
 }
 const CHAIN = `${HOME}/.claude/claude-orchestrator/chains/ttys002.jsonl`
+// A row without the keys named: an older module's row, written before it carried them.
+function withoutKeys(row: SessionRow, ...keys: (keyof SessionRow)[]): SessionRow {
+  const bare = { ...row }
+  for (const key of keys) delete bare[key]
+  return bare
+}
 
 test('an orchestrator on plan 2 with two live agents and one dead reads its account and 2 agents', async () => {
   const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1', '902': 's-2', '903': 's-dead' })
@@ -3167,26 +3173,50 @@ test('an orchestrator that spawned no agent draws no count', async () => {
   expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
 })
 
-test('an account or a count the facts do not carry reads « ? »', async () => {
+test('an account the facts do not carry draws nothing, and the log names the session and the field', async () => {
   const pane = fleet({ a: fleetRow('Orch: a', { config: '/opt/other', chain_owner: null }) }, { '901': 's-1' })
   pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
   await pane.open()
-  expect(await pane.lineOf('Orch: a')).toContain(' · orchestrator · ? · ? agents · ')
-  // A row written before rows carried either.
-  const older = await paneTree({ low: orch('Orch: low') })
-  expect(shown(older).find(line => line.includes('Orch: low'))).toBe('● Orch: low · orchestrator · ? · ? agents · 30% · 3m')
-  // A remote orchestrator: its row carries neither.
-  const remote = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
-  expect(shown(remote).find(line => line.includes('Orch: r'))).toBe('● Orch: r · orchestrator · remote mini · ? · ? agents · 30% · 3m')
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
 })
 
-test('a process listing that fails reads « ? agents », never the count drawn before', async () => {
+test('a local row with no config and no chain owner is read from its own facts: its account, its pid\'s tty, its chain\'s agents', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'tty', 'config', 'chain_owner') }, {})
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  pane.fx.files.set(`${HOME}/.claude/sessions/901.json`, JSON.stringify({ sessionId: 's-1', name: 'Agent: s-1', status: 'busy' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 1 agent · 30% · 3m')
+})
+
+test('a row an older module wrote, with no account and no tty, draws its account and no count: the count is logged, never « ? »', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'pid', 'tty', 'config', 'chain_owner') }, {})
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a agents not read'))).toBe(true)
+})
+
+test('a remote row draws the account and the agent count its sender sent', async () => {
+  const pane = fleet({}, {})
+  // The row as its sender sends it, read back from the store's remote directory.
+  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__r`, JSON.stringify({
+    name: 'Orch: r', role: 'orchestrator', context_tokens: 47000, context_percent: 30, window: 1000000,
+    waiting: null, blocks: null, waiting_since: null, updated_at: AGO(), machine: 'mini',
+    repo: null, prs: [], held: null, account: 'plan 2', agents: 2,
+  }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: r')).toBe('● Orch: r · orchestrator · remote mini · plan 2 · 2 agents · 30% · 3m')
+})
+
+test('a process listing that fails draws no count and no « ? », never the count drawn before', async () => {
   const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1' })
   pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
   await pane.open()
   expect(await pane.lineOf('Orch: a')).toContain(' · 1 agent · ')
   pane.failListing()
-  expect(await pane.lineOf('Orch: a')).toContain(' · plan 2 · ? agents · ')
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+  expect(shown(await pane.draw()).some(line => line.includes('?'))).toBe(false)
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a agents not read'))).toBe(true)
 })
 
 test('at a phone\'s width the line wraps with the account and the count whole, and its rows are counted', async () => {

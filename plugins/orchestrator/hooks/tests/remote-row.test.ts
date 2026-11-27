@@ -142,19 +142,19 @@ function remote(over: Partial<RemoteRow> = {}): RemoteRow {
   return {
     name: 'Orch: far', role: 'orchestrator', context_tokens: 120000, context_percent: 12, window: 1000000,
     waiting: null, blocks: null, waiting_since: null, updated_at: new Date().toISOString(), machine: 'bench-mac',
-    repo: null, prs: [], held: null, ...over,
+    repo: null, prs: [], held: null, account: null, agents: null, ...over,
   }
 }
 
 // The row as 0.58 and 0.59 sent it: the ten fields, no repository and no pull request.
 function oldRowText(row: RemoteRow): string {
-  const { repo: _repo, prs: _prs, held: _held, ...ten } = row
+  const { repo: _repo, prs: _prs, held: _held, account: _account, agents: _agents, ...ten } = row
   return ROW_MARKER + JSON.stringify(ten)
 }
 
 // The row as 0.60 sent it: the twelve fields, no word on the questions held.
 function twelveRowText(row: RemoteRow): string {
-  const { held: _held, ...twelve } = row
+  const { held: _held, account: _account, agents: _agents, ...twelve } = row
   return ROW_MARKER + JSON.stringify(twelve)
 }
 
@@ -797,3 +797,25 @@ for (const [label, held] of [
     expect(parseRemoteRow(rowText(remote({ held: held as never })))).toBeNull()
   })
 }
+
+test('a row carrying its account and agent count reads them back; a row of an older release reads none', () => {
+  const row = remote({ account: 'plan 2', agents: 2 })
+  expect(parseRemoteRow(rowText(row))).toEqual(row)
+  expect(parseRemoteRow(twelveRowText(remote()))).toEqual(remote())
+})
+
+test('an account of the wrong shape, or an agent count that is no whole number, refuses the row', () => {
+  expect(parseRemoteRow(rowText(remote({ account: 'plan 2<x>', agents: 1 })))).toBeNull()
+  expect(parseRemoteRow(rowText(remote({ account: 'plan 2', agents: 1.5 })))).toBeNull()
+  expect(parseRemoteRow(rowText(remote({ account: 'plan 2', agents: -1 })))).toBeNull()
+})
+
+test('an account or an agent count that changes is news at once, and a sent record without them is news once', () => {
+  const now = Date.parse('2026-11-27T17:00:00.000Z')
+  const row = remote({ account: 'plan 2', agents: 2 })
+  const sent = rowSent(row, now)
+  expect(rowIsNews(row, sent, now)).toBe(false)
+  expect(rowIsNews(remote({ account: 'plan 2', agents: 3 }), sent, now)).toBe(true)
+  expect(rowIsNews(remote({ account: 'plan 1', agents: 2 }), sent, now)).toBe(true)
+  expect(rowIsNews(row, { band: sent.band, waiting: null, blocks: null, sent_at: sent.sent_at }, now)).toBe(true)
+})
