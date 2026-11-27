@@ -20,6 +20,7 @@ import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
 import { statusText } from '../commands.ts'
 import { withdrawalText } from '../relay.ts'
+import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, blockOf, lockRun } from './fakes.ts'
 import { drawScreen, textOf } from './screen.ts'
 import { GLUED_BLOCKS } from './fixtures.ts'
@@ -1120,7 +1121,7 @@ test('a plain orchestrator is one line: a dot, its bold name, then its figures i
     { text: '●', color: 'suggestion', bold: false },
     { text: ' ', bold: false },
     { text: 'Orch: low', bold: true },
-    { text: ' · orchestrator · ? · ? agents · ', bold: false },
+    { text: ' · orchestrator · ', bold: false },
     { text: '30%', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1175,7 +1176,7 @@ test('a done orchestrator draws a success dot and one Status line in success, wi
 test('a row past the gate draws its fill and gate words in the error colour, the rest in the normal colour', async () => {
   const tree = await paneTree({ hot: orch('Orch: hot', { context_percent: 85, context_tokens: 85000 }) })
   expect(pieces(elAt(tree, 2, 0)).slice(3)).toEqual([
-    { text: ' · orchestrator · ? · ? agents · ', bold: false },
+    { text: ' · orchestrator · ', bold: false },
     { text: '85% past the gate', color: 'error', bold: false },
     { text: ' · 3m', bold: false },
   ])
@@ -1183,7 +1184,7 @@ test('a row past the gate draws its fill and gate words in the error colour, the
 
 test('a remote orchestrator keeps its machine in its line', async () => {
   const tree = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
-  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · ? · ? agents · 30% · 3m')
+  expect(text(pieces(elAt(tree, 2, 0)))).toBe('● Orch: r · orchestrator · remote mini · 30% · 3m')
 })
 
 test('one blank line separates two blocks', async () => {
@@ -1198,7 +1199,7 @@ test('a done proposal is no question: no row stands out', async () => {
   const done = entry('Orch: d', '2026-10-18T10:03:00.000Z', { session: 'd', kind: 'done', blocks: null })
   const tree = await paneTree({ d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) }, [done])
   const line = pieces(elAt(tree, 2, 0))
-  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ? · ? agents · ', '30%', ' · 3m'])
+  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ', '30%', ' · 3m'])
   expect(line.some(p => p.bold && p.color === 'suggestion')).toBe(false)
 })
 
@@ -1711,6 +1712,19 @@ async function wakingCoordinator(asked: RoundEntry[], over: { paneClosed?: boole
   }
   return { fx, handlers, tick }
 }
+
+test('the round wake brings nothing new: the wait declared before it stands in the turn it opens', async () => {
+  const { fx, tick } = await wakingCoordinator([entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })])
+  const wait = { kind: 'done' as const, blocks: '' }
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare(wait)
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  DECLARATIONS.turnStarted(fx.submitted[0])
+  expect(DECLARATIONS.standing()).toEqual(wait)
+  DECLARATIONS.turnStarted('a report')
+  expect(DECLARATIONS.standing()).toBeNull()
+})
 
 test('a due question wakes the coordinator once: with the pane open only an urgent one, however old the others, never one answered', async () => {
   const urgent = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
@@ -2880,7 +2894,8 @@ test('a git that hangs holds no render: the origin read is bounded, and a render
     expect((asked[0] as { timeoutMs: number }).timeoutMs).toBeLessThanOrEqual(2000)
     // A render whose reads took longer than its bound says so, once, with its duration: here the
     // process listing its live row's pid sends the store's read to.
-    fx.files.set(`${SESSIONS}/low`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: low' }), pid: '501' }) + '\n')
+    // Its row carries its configuration directory, as a row of this module does: no environment read adds a listing.
+    fx.files.set(`${SESSIONS}/low`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: low' }), pid: '501', config: [HOME, '.claude'].join('/') }) + '\n')
     fx.dollar.process.run = async (argv: readonly string[], init?: { timeoutMs?: number }) => {
       if (argv[0] === 'ps') skew += 6000
       return run(argv, init)
@@ -3103,15 +3118,37 @@ const fleetRow = (name: string, over: Partial<SessionRow> = {}) =>
 const chainOf = (...entries: { tty: string; owner?: string }[]) =>
   entries.map((e, i) => JSON.stringify({ tab_id: `t-${i}-${e.tty}`, tty: `/dev/${e.tty}`, owner: e.owner ?? OWNER })).join('\n') + '\n'
 // The machine's process table, `pid stat tty` a line, read afresh at each listing; the orchestrator's host among them.
-function fleet(rows: Record<string, SessionRow>, agents: Record<string, string>) {
+// A pid's reading for `ps ww` (its words) and `ps eww` (its words then its environment). A string is the environment
+// alone, after the default words; an object gives both; `null` is a listing that failed; `reject` a call that rejects;
+// `exit` a listing that exits 1 and still prints; `silent` a listing that exits 0 and prints nothing. A pid not named
+// has the default words and the variable absent.
+type Reading = string | null | { words?: string; env?: string; ww?: string } | 'reject' | 'exit' | 'silent'
+const DEFAULT_WORDS = '/usr/bin/hostcli --name x'
+function fleet(rows: Record<string, SessionRow>, agents: Record<string, string>, environ: Record<string, Reading> = {}) {
   const fx = fakeDollar({ launchName: 'Coord: main' })
   for (const [key, value] of Object.entries(rows)) fx.files.set(`${SESSIONS}/${key}`, JSON.stringify(value) + '\n')
   const table = new Map<string, string>([['900', 'S+ ttys002'], ['901', 'S+ ttys003'], ['911', 'S+ ttys003'], ['902', 'S+ ttys004']])
   const run = fx.dollar.process.run
   let listing: 'answers' | 'fails' = 'answers'
-  fx.dollar.process.run = async (argv: readonly string[]) => argv[0] === 'ps' && argv[1] === '-A'
-    ? listing === 'fails' ? { exitCode: 1, stdout: '', stderr: 'no' } : { exitCode: 0, stdout: [...table].map(([pid, rest]) => `  ${pid} ${rest}`).join('\n') + '\n', stderr: '' }
-    : run(argv)
+  fx.dollar.process.run = async (argv: readonly string[]) => {
+    if (argv[0] === 'ps' && (argv[1] === 'ww' || argv[1] === 'eww')) {
+      const pid = argv[argv.length - 1] ?? ''
+      const reading: Reading = pid in environ ? environ[pid] as Reading : `HOME=${HOME}`
+      if (reading === 'reject') throw new Error('ps rejected')
+      if (reading === null) return { exitCode: 1, stdout: '', stderr: 'no' }
+      if (reading === 'silent') return { exitCode: 0, stdout: '', stderr: '' }
+      const shape = typeof reading === 'object' ? reading : null
+      const words = shape?.words ?? DEFAULT_WORDS
+      const env = shape ? shape.env ?? '' : reading === 'exit' ? `HOME=${HOME}` : reading
+      // `ww` shows the words its own way when the double is told so (a title rewritten between the two calls).
+      const text = argv[1] === 'eww' ? `${words} ${env}` : shape?.ww ?? words
+      return { exitCode: reading === 'exit' ? 1 : 0, stdout: `${text}\n`, stderr: '' }
+    }
+    if (argv[0] === 'ps' && argv[1] === '-A') {
+      return listing === 'fails' ? { exitCode: 1, stdout: '', stderr: 'no' } : { exitCode: 0, stdout: [...table].map(([pid, rest]) => `  ${pid} ${rest}`).join('\n') + '\n', stderr: '' }
+    }
+    return run(argv)
+  }
   // The host's record of each live agent, in the configuration directory its orchestrator runs on.
   for (const [pid, session] of Object.entries(agents)) fx.files.set(`${PLAN2}/sessions/${pid}.json`, JSON.stringify({ sessionId: session, name: `Agent: ${session}`, status: 'busy' }))
   const { handlers } = mounted(registerSupervision)
@@ -3121,6 +3158,12 @@ function fleet(rows: Record<string, SessionRow>, agents: Record<string, string>)
   return { fx, table, open, draw, lineOf, failListing: () => { listing = 'fails' } }
 }
 const CHAIN = `${HOME}/.claude/claude-orchestrator/chains/ttys002.jsonl`
+// A row without the keys named: an older module's row, written before it carried them.
+function withoutKeys(row: SessionRow, ...keys: (keyof SessionRow)[]): SessionRow {
+  const bare = { ...row }
+  for (const key of keys) delete bare[key]
+  return bare
+}
 
 test('an orchestrator on plan 2 with two live agents and one dead reads its account and 2 agents', async () => {
   const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1', '902': 's-2', '903': 's-dead' })
@@ -3167,26 +3210,206 @@ test('an orchestrator that spawned no agent draws no count', async () => {
   expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
 })
 
-test('an account or a count the facts do not carry reads « ? »', async () => {
+test('an account the facts do not carry draws nothing, and the log names the session and the field', async () => {
   const pane = fleet({ a: fleetRow('Orch: a', { config: '/opt/other', chain_owner: null }) }, { '901': 's-1' })
   pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
   await pane.open()
-  expect(await pane.lineOf('Orch: a')).toContain(' · orchestrator · ? · ? agents · ')
-  // A row written before rows carried either.
-  const older = await paneTree({ low: orch('Orch: low') })
-  expect(shown(older).find(line => line.includes('Orch: low'))).toBe('● Orch: low · orchestrator · ? · ? agents · 30% · 3m')
-  // A remote orchestrator: its row carries neither.
-  const remote = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
-  expect(shown(remote).find(line => line.includes('Orch: r'))).toBe('● Orch: r · orchestrator · remote mini · ? · ? agents · 30% · 3m')
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
 })
 
-test('a process listing that fails reads « ? agents », never the count drawn before', async () => {
+test('a local row with no config and no chain owner is read from its own facts: its account, its pid\'s tty, its chain\'s agents', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'tty', 'config', 'chain_owner') }, {})
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  pane.fx.files.set(`${HOME}/.claude/sessions/901.json`, JSON.stringify({ sessionId: 's-1', name: 'Agent: s-1', status: 'busy' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 1 agent · 30% · 3m')
+})
+
+test('a row an older module wrote, with no pid to read its facts from, draws neither figure: both gaps are logged, never « ? »', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'pid', 'tty', 'config', 'chain_owner') }, {})
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a agents not read'))).toBe(true)
+})
+
+// The drawing session's own account is never the account of a row it does not run on: a row without config reads the
+// CLAUDE_CONFIG_DIR of its own process, which names the other account.
+test('a row without config reads its account and its agents from the CLAUDE_CONFIG_DIR of its process, not the drawer\'s', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, { '901': 's-1' }, { '900': `CLAUDE_CONFIG_DIR=${PLAN2} HOME=${HOME}` })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 1 agent · 30% · 3m')
+})
+
+// The same session record under both accounts' directories: the process names the second, and the second's count is read.
+test('the same session record under both account directories: the process naming the second account reads plan 2 and its count', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, { '901': 's-1' }, { '900': `CLAUDE_CONFIG_DIR=${PLAN2}` })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  pane.fx.files.set(`${PLAN1}/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
+  pane.fx.files.set(`${PLAN2}/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 1 agent · 30% · 3m')
+})
+
+// The same record under both directories, the process with no CLAUDE_CONFIG_DIR: the default directory, plan 1.
+test('the same session record under both account directories: a process with the variable absent reads the default plan 1', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {}, { '900': `HOME=${HOME}` })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  pane.fx.files.set(`${PLAN1}/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
+  pane.fx.files.set(`${PLAN2}/sessions/900.json`, JSON.stringify({ sessionId: 's-self', name: 'Orch: a', status: 'busy' }))
+  pane.fx.files.set(`${PLAN1}/sessions/901.json`, JSON.stringify({ sessionId: 's-1', name: 'Agent: s-1', status: 'busy' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 1 agent · 30% · 3m')
+})
+
+// The words of the command line name one account, the environment another: the environment is the process's own.
+test('the words name one account and the environment the other: the environment wins', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, { '901': 's-1' },
+    { '900': { words: `/usr/bin/hostcli CLAUDE_CONFIG_DIR=${PLAN1}`, env: `CLAUDE_CONFIG_DIR=${PLAN2}` } })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 1 agent · 30% · 3m')
+})
+
+// The words name a directory, the environment has no such variable: the default directory, plan 1, and its own agents.
+test('the words name a directory and the environment has no such variable: the default plan 1 and its agents', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {},
+    { '900': { words: `/usr/bin/hostcli CLAUDE_CONFIG_DIR=${PLAN2}`, env: `HOME=${HOME}` } })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  pane.fx.files.set(`${PLAN1}/sessions/901.json`, JSON.stringify({ sessionId: 's-1', name: 'Agent: s-1', status: 'busy' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 1 agent · 30% · 3m')
+})
+
+// Only the neighbours of the name are set, toward plan 2: the exact name is absent, so the default plan 1, and no count.
+test('a variable named like CLAUDE_CONFIG_DIR is not read: the neighbours alone give the default plan 1', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {},
+    { '900': { words: '/usr/bin/hostcli', env: `OLD_CLAUDE_CONFIG_DIR=${PLAN2} OTHER_CONFIG_DIR=${PLAN2} HOME=${HOME}` } })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 30% · 3m')
+})
+
+// Each way `ps` can fail to read an environment draws no account, and logs it: its call rejects, it exits 1 and still prints.
+test('a ps call that rejects draws no account, and the log names the session and the field', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {}, { '900': 'reject' })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
+})
+
+test('a ps call that exits 1 while printing draws no account, however much it printed', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {}, { '900': 'exit' })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
+})
+
+test('a ps call that exits 0 with nothing printed draws no account, and is not read as the default', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {}, { '900': 'silent' })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
+})
+
+// Two assignments in the environment: the last one is the process's own.
+test('two assignments in the environment: the last is the process\'s own', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {},
+    { '900': `CLAUDE_CONFIG_DIR=${PLAN1} CLAUDE_CONFIG_DIR=${PLAN2}` })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+})
+
+// The same, the last one empty: the default directory, plan 1.
+test('two assignments in the environment, the last empty: the default plan 1', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {},
+    { '900': `CLAUDE_CONFIG_DIR=${PLAN2} CLAUDE_CONFIG_DIR= HOME=${HOME}` })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 30% · 3m')
+})
+
+// An empty value is the default directory, plan 1.
+test('an empty CLAUDE_CONFIG_DIR in the environment is the default plan 1', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {}, { '900': `CLAUDE_CONFIG_DIR= HOME=${HOME}` })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 1 · 30% · 3m')
+})
+
+// `ps ww` shows the words and `ps eww` shows the words with nothing after them (an environment the system hides): not
+// read as the default, but as an environment not read.
+test('a ps that shows the words and no environment draws no account, and is not read as the default', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {}, { '900': { words: '/usr/bin/hostcli --name x', env: '' } })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
+})
+
+// The words of `ps ww` differ from the words `ps eww` shows (a title rewritten between the two calls): the environment is
+// not cut at a place the words do not hold, and nothing is read.
+test('a ps ww that does not begin the ps eww reading draws no account, and the log names the field', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, {},
+    { '900': { words: `/usr/bin/hostcli CLAUDE_CONFIG_DIR=${PLAN2}`, env: `HOME=${HOME}`, ww: '/usr/bin/other-title' } })
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
+})
+
+// A process whose environment cannot be read draws no account and no count, and each gap is logged, never read as absent.
+test('a process whose environment cannot be read draws no account, and the log names the session and the field', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'config', 'chain_owner') }, { '901': 's-1' }, { '900': null })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a account not read'))).toBe(true)
+})
+
+// Without a chain owner, the chain's entries count only when one owner wrote them all.
+test('a row with no chain owner counts no agent of a tty whose chain names two owners, and logs it', async () => {
+  const pane = fleet({ a: withoutKeys(fleetRow('Orch: a'), 'chain_owner') }, { '901': 's-1' })
+  pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003', owner: 'OWNER-A' }, { tty: 'ttys003', owner: 'OWNER-B' }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a agents not read'))).toBe(true)
+})
+
+// A remote row with neither figure: each gap is logged once, naming the machine, however often the pane draws.
+test('a remote row with no account and no count logs each gap once, naming its machine, however often the pane draws', async () => {
+  const pane = fleet({}, {})
+  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__r`, JSON.stringify({
+    name: 'Orch: r', role: 'orchestrator', context_tokens: 47000, context_percent: 30, window: 1000000,
+    waiting: null, blocks: null, waiting_since: null, updated_at: AGO(), machine: 'mini',
+    repo: null, prs: [], held: null,
+  }))
+  await pane.open()
+  await pane.draw()
+  await pane.draw()
+  const gaps = pane.fx.written.filter(line => line.includes('fleet: Orch: r '))
+  expect(gaps.filter(line => line.includes('account not read') && line.includes('mini')).length).toBe(1)
+  expect(gaps.filter(line => line.includes('agents not read') && line.includes('mini')).length).toBe(1)
+})
+
+test('a remote row draws the account and the agent count its sender sent', async () => {
+  const pane = fleet({}, {})
+  // The row as its sender sends it, read back from the store's remote directory.
+  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__r`, JSON.stringify({
+    name: 'Orch: r', role: 'orchestrator', context_tokens: 47000, context_percent: 30, window: 1000000,
+    waiting: null, blocks: null, waiting_since: null, updated_at: AGO(), machine: 'mini',
+    repo: null, prs: [], held: null, account: 'plan 2', agents: 2,
+  }))
+  await pane.open()
+  expect(await pane.lineOf('Orch: r')).toBe('● Orch: r · orchestrator · remote mini · plan 2 · 2 agents · 30% · 3m')
+})
+
+test('a process listing that fails draws no count and no « ? », never the count drawn before', async () => {
   const pane = fleet({ a: fleetRow('Orch: a') }, { '901': 's-1' })
   pane.fx.files.set(CHAIN, chainOf({ tty: 'ttys003' }))
   await pane.open()
   expect(await pane.lineOf('Orch: a')).toContain(' · 1 agent · ')
   pane.failListing()
-  expect(await pane.lineOf('Orch: a')).toContain(' · plan 2 · ? agents · ')
+  expect(await pane.lineOf('Orch: a')).toBe('● Orch: a · orchestrator · plan 2 · 30% · 3m')
+  expect(shown(await pane.draw()).some(line => line.includes('?'))).toBe(false)
+  expect(pane.fx.written.some(line => line.includes('fleet: Orch: a agents not read'))).toBe(true)
 })
 
 test('at a phone\'s width the line wraps with the account and the count whole, and its rows are counted', async () => {
