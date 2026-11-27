@@ -6,7 +6,7 @@ import { fieldsOf } from '../core/host.ts'
 import { parseReconcile } from '../core/pr-reconcile.ts'
 import { JOURNAL_EVERY_MS } from './register.ts'
 import { parseAuditEvent } from '../core/learning.ts'
-import { FLAP_UNDONE, FOREIGN_WAIT_MS, GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
+import { FLAP_UNDONE, FOREIGN_WAIT_MS, GATES_PER_TICK, IDLE_MAX_MS, LEASE_MS, OUTAGE_OVER_MS, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, RETRY_MS, TICK_MS } from './reconcile.ts'
 import { POSTS_PER_TICK } from './forge-sync.ts'
 
 const T0 = Date.parse('2026-11-19T10:00:00Z')
@@ -454,23 +454,89 @@ test('the engine call\'s own timeout is an unreachable forge too: one line, no l
   expect(state.said.filter((line) => line.includes('could not list'))).toEqual([])
 })
 
-test('an unreachable forge said once is said again when a listing went through between two outages', async ($, on) => {
-  const { clock, state, put } = await started($, on)
-  const outage = () => state.said.filter((line) => line.includes(OFFLINE_LINE)).length
-  const edge = async (n: number) => {
-    put(EDGE, '', T0 + n * TICK_MS - 1)
-    await beat(clock)
+const ANSWERS_LINE = 'github: GitHub answers again; listings resumed'
+const NO_DNS = TRACEBACK('socket.gaierror: [Errno 8] nodename nor servname provided, or not known')
+
+// A producer touches the marker before each beat, so the repository is listed at every beat: beat n fails with `reasons[n - 1]`,
+// or goes through when that is undefined. Beats are numbered across the calls.
+function outageBeats({ clock, state, put }: Awaited<ReturnType<typeof started>>) {
+  let n = 0
+  return {
+    run: async (...reasons: (string | undefined)[]) => {
+      for (const reason of reasons) {
+        n += 1
+        state.panelFails = reason
+        put(EDGE, '', T0 + n * TICK_MS - 1)
+        await beat(clock)
+      }
+    },
+    lost: () => state.said.filter((line) => line.includes(OFFLINE_LINE)),
+    back: () => state.said.filter((line) => line === ANSWERS_LINE).length,
   }
-  state.panelFails = TRACEBACK('socket.gaierror: [Errno 8] nodename nor servname provided, or not known')
-  await edge(1)
-  await edge(2)
-  expect(outage()).toBe(1)
-  state.panelFails = undefined
-  await edge(3)
-  expect(outage()).toBe(1)
-  state.panelFails = TRACEBACK('socket.gaierror: [Errno 8] nodename nor servname provided, or not known')
-  await edge(4)
-  expect(outage()).toBe(2)
+}
+// The listings that go through, one a beat, whose first and last stand `ms` apart.
+const through = (ms: number): undefined[] => Array.from({ length: ms / TICK_MS + 1 }, () => undefined)
+
+test('two reasons in one outage are one line, which keeps the first reason', async ($, on) => {
+  const w = await started($, on)
+  const { run, lost, back } = outageBeats(w)
+  await run(NO_DNS, 'github: $.process.run(python3) aborted: still running after 120000ms', NO_DNS)
+  expect(count(w.state.runs, 'pr-panel')).toBe(3)
+  expect(lost()).toEqual(['github: the reconciler cannot reach GitHub (socket.gaierror: [Errno 8] nodename nor servname provided, or not known); listings resume when it answers'])
+  expect(back()).toBe(0)
+})
+
+test('a flap inside an outage says nothing new, and starts the wait for its end anew', async ($, on) => {
+  const { run, lost, back } = outageBeats(await started($, on))
+  await run(NO_DNS, undefined, NO_DNS, undefined, NO_DNS)
+  expect([lost().length, back()]).toEqual([1, 0])
+  // One beat short of the wait, then a failure: the listings before it count for nothing after it.
+  await run(...through(OUTAGE_OVER_MS - TICK_MS), NO_DNS, ...through(OUTAGE_OVER_MS - TICK_MS))
+  expect([lost().length, back()]).toEqual([1, 0])
+})
+
+test('listings going through for OUTAGE_OVER_MS end the outage in one line, and the next outage is said again', async ($, on) => {
+  const { run, lost, back } = outageBeats(await started($, on))
+  await run(NO_DNS, ...through(OUTAGE_OVER_MS - TICK_MS))
+  expect(back()).toBe(0)
+  await run(undefined)
+  expect(back()).toBe(1)
+  await run(undefined, undefined)
+  expect([lost().length, back()]).toEqual([1, 1])
+  await run(NO_DNS, NO_DNS)
+  expect([lost().length, back()]).toEqual([2, 1])
+})
+
+// What the engine prints for every socket timeout of its own call to GitHub (ghlib/http.py).
+const NO_ANSWER = 'error: GitHub gave no answer within 20 s: the request may still have been applied'
+
+test('a listing GitHub did not answer in time is part of the outage: after a name that did not resolve and across a flap, one line in all', async ($, on) => {
+  const w = await started($, on)
+  const { run } = outageBeats(w)
+  await run(NO_DNS, NO_ANSWER, undefined, NO_ANSWER)
+  expect(count(w.state.runs, 'pr-panel')).toBe(4)
+  expect(w.state.said.filter((line) => line.includes(OFFLINE_LINE) || line.includes('could not list'))).toEqual(['github: the reconciler cannot reach GitHub (socket.gaierror: [Errno 8] nodename nor servname provided, or not known); listings resume when it answers'])
+})
+
+test('one listing that goes through long after the last failure does not end the outage by itself', async ($, on) => {
+  const w = await started($, on)
+  const { run, lost, back } = outageBeats(w)
+  await run(NO_DNS)
+  // No marker touched: the next listing waits for the failing repository's back-off, and the beats in between list nothing.
+  w.state.panelFails = undefined
+  await beat(w.clock, 2)
+  expect(count(w.state.runs, 'pr-panel')).toBe(2)
+  expect([lost().length, back()]).toEqual([1, 0])
+})
+
+test('a session started again inside an outage does not say it again', async ($, on) => {
+  const w = await started($, on)
+  const { run, lost } = outageBeats(w)
+  await run(NO_DNS)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await run(NO_DNS)
+  expect(count(w.state.runs, 'pr-panel')).toBe(2)
+  expect(lost()).toHaveLength(1)
 })
 
 test('an outage under a touched marker retries the failing repository on its back-off, and lists the next one once its schedule comes', async ($, on) => {
@@ -500,6 +566,7 @@ for (const reason of [
   'socket.gaierror: [Errno -3] Temporary failure in name resolution',
   'TimeoutError: _ssl.c:1112: The handshake operation timed out',
   'TimeoutError: timed out',
+  'error: GitHub gave no answer within 20 s: the request may still have been applied',
 ]) {
   test('a reason that shows the forge cannot be reached says one line for the machine: ' + reason, async ($, on) => {
     const { clock, state } = await started($, on)

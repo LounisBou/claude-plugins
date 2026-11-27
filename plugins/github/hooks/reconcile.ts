@@ -16,6 +16,8 @@ export const QUOTA_WAIT_MS = 900_000
 export const GATES_PER_TICK = 4
 /** A gate that failed on a fingerprint is not tried again on the same one before this. */
 export const RETRY_MS = 300_000
+// An outage of GitHub is over at a listing that goes through this long after the first that did, none found unreachable between.
+export const OUTAGE_OVER_MS = 5 * TICK_MS
 /** The times another machine may undo this one's label on a head before the reconciler stops moving that label there. */
 export const FLAP_UNDONE = 3
 /**

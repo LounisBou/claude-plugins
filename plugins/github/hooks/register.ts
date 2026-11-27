@@ -20,7 +20,7 @@ import { parsePlan, PLAN_DIR, PLAN_WRITER, planExcuses, needText, planInput, pla
 import { normalise } from './guards.ts'
 import { holdsStack, mergeOrder, parseStackPlan, stackMergedLine, stackStoppedLine, walkedHead, type StackPlan } from './stack.ts'
 import {
-  failingPath, fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, FOREIGN_CEILING_MS, foreignGivenUp, foreignHold, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, parseLease, parseListing, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS,
+  failingPath, fingerprintOf, FLAP_UNDONE, flapCheck, flapWrote, FOREIGN_CEILING_MS, foreignGivenUp, foreignHold, GATES_PER_TICK, LEASE_FILE, leaseDue, leaseOf, nextListing, OUTAGE_OVER_MS, parseLease, parseListing, PUBLISH_WAIT_MS, QUOTA_LOW, QUOTA_WAIT_MS, reconciledRepos, RETRY_MS,
   listedPath, parseSeen, seenLabel, seenPath, seenText, seenWrote, sortedStatuses, takenLease, TICK_MS,
   type Counts, type Flap, type LabelMove, type ListedPr, type Listing, type Local, type Schedule, type Seen,
 } from './reconcile.ts'
@@ -1379,6 +1379,8 @@ type Reconciler = {
   saidNow: boolean
   // The reasons said of each failing step (a listing, a copy, a post), by step: said once each until the step goes through.
   told: Map<string, Set<string>>
+  // The outage of GitHub the reconciler has said and not seen over: since when listings go through again, none while the last one found it unreachable.
+  outage: { answeringSince: number | undefined } | undefined
   // The repositories GitHub says are archived (read-only), by its listing's flag or a refused post: neither listed nor posted to until the module reloads.
   archived: Set<string>
   // The host's session id, and the counts the journal last received.
@@ -1463,8 +1465,8 @@ function forgeAwaited(rec: Reconciler, repo: string, now: number): boolean {
   return [...rec.held].some(([key, held]) => key.startsWith(repo.toLowerCase() + '#') && held.until <= now && listedAt < held.until)
 }
 
-// A failure of the forge's call that shows GitHub cannot be reached at all: name resolution, a connection refused or reset, no route, a handshake or connection timeout, the call's own timeout.
-const UNREACHABLE = /gaierror|nodename nor servname|name or service not known|temporary failure in name resolution|connection (refused|reset|aborted)|network is unreachable|no route to host|handshake|timed out|still running after/i
+// A failure of the forge's call that shows GitHub cannot be reached at all: name resolution, a connection refused or reset, no route, a handshake or connection timeout, the engine's line for a socket timeout of its request (« gave no answer within »), the call's own timeout.
+const UNREACHABLE = /gaierror|nodename nor servname|name or service not known|temporary failure in name resolution|connection (refused|reset|aborted)|network is unreachable|no route to host|handshake|timed out|gave no answer within|still running after/i
 const REASON_MAX = 200
 
 // The last meaningful line of an error's text (the exception line of a traceback, the engine's `error: …`), bounded.
@@ -1487,14 +1489,20 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
     if (limited) rec.quotaUntil = Math.max(rec.quotaUntil, schedule.nextAt)
     rec.repos.set(repo, { ...before, rows: before?.rows ?? [], schedule })
     if (UNREACHABLE.test(shortReason(why))) {
-      sayOnce($, rec, 'github: the reconciler cannot reach GitHub (' + shortReason(why) + '); listings resume when it answers', 'unreachable')
+      // One line an outage, with its first reason: a later failure only starts the wait for its end anew.
+      if (!rec.outage) note($, 'github: the reconciler cannot reach GitHub (' + shortReason(why) + '); listings resume when it answers')
+      rec.outage = { answeringSince: undefined }
       return 'unreachable'
     }
     sayOnce($, rec, 'github: the reconciler could not list ' + repo + ': ' + shortReason(why), 'list ' + repo)
     return 'failed'
   }
   rec.told.delete('list ' + repo)
-  rec.told.delete('unreachable')
+  if (rec.outage) {
+    const since = rec.outage.answeringSince ?? now
+    rec.outage = now - since >= OUTAGE_OVER_MS ? undefined : { answeringSince: since }
+    if (!rec.outage) note($, 'github: GitHub answers again; listings resumed')
+  }
   const changed = JSON.stringify(before?.rows ?? null) !== JSON.stringify(listing.rows)
   const schedule = nextListing(before?.schedule, now, changed, listing.rows, listing.rate)
   // The quota is the account's: once low, no repository is listed and no gate read before its reset.
@@ -1908,7 +1916,7 @@ async function startReconciler($: Mod): Promise<void> {
     // The same session started again (resume, clear, compact) keeps its name, and with it the lease it holds.
     me: reconciler?.me ?? (session || 'session') + ':' + Math.random().toString(36).slice(2, 10), running: false, repos: new Map(), kept: new Map(), failed: new Map(), synced: new Map(), flaps: reconciler?.flaps ?? new Map(),
     unpublished: new Map(), held: new Map(),
-    edgeSeen: 0, said: reconciler?.said ?? new Set(), saidNow: false, told: reconciler?.told ?? new Map(), archived: reconciler?.archived ?? new Set(), quotaUntil: 0, session,
+    edgeSeen: 0, said: reconciler?.said ?? new Set(), saidNow: false, told: reconciler?.told ?? new Map(), outage: reconciler?.outage, archived: reconciler?.archived ?? new Set(), quotaUntil: 0, session,
     journaled: { since: '', ticks: 0, listings: 0, gates: 0, moves: 0 }, journaledAt: 0,
     counts: { since: Number.isFinite(now) ? new Date(now).toISOString() : '', ticks: 0, listings: 0, gates: 0, moves: 0, posts: 0 },
   }
