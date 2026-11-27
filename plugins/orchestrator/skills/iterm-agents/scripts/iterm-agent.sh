@@ -42,7 +42,7 @@
 #     --tier also exports the tier's name, ORCHESTRATOR_TIER, for what records the session's
 #     events; a launch by --model, or on the caller's own pair, exports none.
 #   iterm-agent.sh spawn --dir <path> --auditor [--of <tty> | --of self] --title "Audit: <subject>" [--model <id> --effort <level>] (--prompt <text> | --prompt-file <path>)
-#     an auditor: immediately right of the orchestrator it audits (the caller, else the one --of
+#     an auditor: immediately left of the orchestrator it audits (the caller, else the one --of
 #     names; a coordinator names it), its model and effort (the pair given, else the caller's),
 #     remote control on, no chain; `move` places an auditor its own launcher made without --force
 #   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord: <subject>" (--prompt <text> | --prompt-file <path>)

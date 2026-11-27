@@ -68,6 +68,19 @@ const PR_SHAPE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+#[1-9][0-9]{0,8}$/
 const ACCOUNT_CAP = 40
 const ACCOUNT_SHAPE = /^[A-Za-z0-9 _.-]+$/
 
+// A home server's socket name as the launcher makes it (iterm_agent.py home_socket): what a row
+// carries so that the coordinator's machine can open a view of it (remote-view.ts), and the one
+// text of a row that reaches a command line there, so nothing else passes.
+export const HOME_SHAPE = /^orch-[0-9a-f]{8}$/
+
+// The home server a session runs in, by its $TMUX (`<socket path>,<server pid>,<session index>`):
+// the socket's own name when it is a home server's, else null — a plain tab, or any other server.
+export function homeOf(tmux: string | undefined): string | null {
+  const socket = (tmux ?? '').split(',')[0] ?? ''
+  const name = socket.slice(socket.lastIndexOf('/') + 1)
+  return HOME_SHAPE.test(name) ? name : null
+}
+
 // The row as it travels: the pane's own fields, the machine it was measured on, and the
 // repository and the pull requests in flight its orchestrator watches — no path, no model,
 // no pid, no environment value.
@@ -88,6 +101,9 @@ export type RemoteRow = {
   // absent from the latest row is no longer held. Null when the sender does not say (a row of an
   // older release, a wait file that vouches for nothing): unknown, never « none open ».
   held: HeldQuestion[] | null
+  // The home server its orchestrator runs in (HOME_SHAPE), carried only when it runs in one: a row
+  // without it is the fifteen fields a receiver that knows no home still reads.
+  home?: string
   // The session's account (its plan, as the pane names it) and its live agent count, read by its sender from its
   // own facts (supervision.ts fleetOf): null for a value the sender could not read, and for a sender of an older release.
   account: string | null
@@ -96,16 +112,18 @@ export type RemoteRow = {
 
 // The ten fields 0.58 and 0.59 sent, still accepted as no repository and no pull request; the twelve that
 // followed, as no word on the questions held; the thirteen of the release in service, carrying the questions
-// held and no account; and the fifteen since, carrying the account and the agent count too.
+// held and no account; and the fifteen since, carrying the account and the agent count too, sixteen with the
+// home server.
 const OLD_FIELDS = ['name', 'role', 'context_tokens', 'context_percent', 'window', 'waiting', 'blocks', 'waiting_since', 'updated_at', 'machine'] as const
 const PRS_FIELDS = [...OLD_FIELDS, 'repo', 'prs'] as const
 const FIELDS = [...PRS_FIELDS, 'held'] as const
 const ACCOUNT_FIELDS = [...FIELDS, 'account', 'agents'] as const
+const HOME_FIELDS = [...ACCOUNT_FIELDS, 'home'] as const
 
 // What was last sent (`rows/<id>`, beside the wait file): the deduplication key. A record
 // written before the repository and the pull requests were carried has neither field, nor one
 // written before the account and the agent count.
-export type RowSent = { band: number; waiting: string | null; blocks: string | null; repo?: string | null; prs?: string[]; held?: HeldQuestion[] | null; account?: string | null; agents?: number | null; sent_at: string }
+export type RowSent = { band: number; waiting: string | null; blocks: string | null; repo?: string | null; prs?: string[]; held?: HeldQuestion[] | null; account?: string | null; agents?: number | null; home?: string | null; sent_at: string }
 
 // A session's account and live agent count as a remote row carries them (supervision.ts fleetOf).
 export type Fleet = { account: string | null; agents: number | null }
@@ -120,7 +138,7 @@ export function machineLabel(raw: string): string {
 // flight (prsInFlight, and the record's open ones, supervision.ts pullRequestsOf): null for any session that is no named orchestrator — only an
 // orchestrator's row travels. The repository is the store row's own, or none when it is not
 // the receiver's shape.
-export function remoteRowOf(row: SessionRow | null, machine: string, prs: readonly string[] = [], held: readonly HeldQuestion[] | null = null, fleet: Fleet = { account: null, agents: null }): RemoteRow | null {
+export function remoteRowOf(row: SessionRow | null, machine: string, prs: readonly string[] = [], held: readonly HeldQuestion[] | null = null, fleet: Fleet = { account: null, agents: null }, home: string | null = null): RemoteRow | null {
   if (!row || row.role !== 'orchestrator' || !row.name || roleOf(row.name) !== 'orchestrator') return null
   const on = row.waiting === 'operator' || row.waiting === 'done'
   const out: RemoteRow = {
@@ -140,6 +158,7 @@ export function remoteRowOf(row: SessionRow | null, machine: string, prs: readon
     account: accountShaped(fleet.account) ? fleet.account : null,
     agents: fleet.agents === null ? null : clampInt(fleet.agents),
   }
+  if (home !== null && HOME_SHAPE.test(home)) out.home = home
   // The receiver refuses a line past its cap whole, so the pull requests are dropped from the
   // end of the sorted list until the line fits: the row is sent, with fewer of them.
   while (out.prs.length > 0 && rowText(out).length > ROW_TEXT_CAP) out.prs.pop()
@@ -209,6 +228,7 @@ export function rowIsNews(row: RemoteRow, last: RowSent | null, now: number): bo
   if (last.prs === undefined || (last.repo ?? null) !== row.repo || JSON.stringify(last.prs) !== JSON.stringify(row.prs)) return true
   if (last.held === undefined || JSON.stringify(last.held) !== JSON.stringify(row.held)) return true
   if (last.account === undefined || last.agents === undefined || last.account !== row.account || last.agents !== row.agents) return true
+  if ((last.home ?? null) !== (row.home ?? null)) return true
   const at = Date.parse(last.sent_at)
   return !Number.isFinite(at) || now - at >= ROW_REFRESH_MS
 }
@@ -220,7 +240,7 @@ export function bandOf(percent: number): number {
 export function rowSent(row: RemoteRow, now: number): RowSent {
   return {
     band: bandOf(row.context_percent), waiting: row.waiting, blocks: row.blocks,
-    repo: row.repo, prs: row.prs, held: row.held, account: row.account, agents: row.agents, sent_at: new Date(now).toISOString(),
+    repo: row.repo, prs: row.prs, held: row.held, account: row.account, agents: row.agents, home: row.home ?? null, sent_at: new Date(now).toISOString(),
   }
 }
 
@@ -266,9 +286,9 @@ export function isMarked(body: string): boolean {
   return body.trimStart().startsWith(ROW_MARKER)
 }
 
-// The receiver's whole check: the marker, the cap, the exact field set (the twelve, or the
-// ten of 0.58 and 0.59 read as no repository and no pull request — one of the two new
-// fields alone is refused), each field's type and bounds, an orchestrator's name. Anything
+// The receiver's whole check: the marker, the cap, the exact field set (the fifteen with or without the
+// home, the thirteen, the twelve, or the ten of 0.58 and 0.59 read as no repository and no pull request — one of the
+// two new fields alone is refused), each field's type and bounds, an orchestrator's name. Anything
 // else is null.
 export function parseRemoteRow(body: string): RemoteRow | null {
   const text = body.trim()
@@ -282,7 +302,8 @@ export function parseRemoteRow(body: string): RemoteRow | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
   const keys = Object.keys(o)
-  const carriesAccount = sameKeys(keys, ACCOUNT_FIELDS)
+  const carriesHome = sameKeys(keys, HOME_FIELDS)
+  const carriesAccount = carriesHome || sameKeys(keys, ACCOUNT_FIELDS)
   const carriesHeld = carriesAccount || sameKeys(keys, FIELDS)
   const carriesPrs = carriesHeld || sameKeys(keys, PRS_FIELDS)
   if (!carriesPrs && !sameKeys(keys, OLD_FIELDS)) return null
@@ -307,6 +328,7 @@ export function parseRemoteRow(body: string): RemoteRow | null {
   if (carriesHeld && o['held'] !== null && !heldShaped(o['held'])) return null
   if (carriesAccount && o['account'] !== null && !accountShaped(o['account'])) return null
   if (carriesAccount && o['agents'] !== null && !(typeof o['agents'] === 'number' && Number.isInteger(o['agents']) && num(o['agents'], NUMBER_CAP))) return null
+  if (carriesHome && (typeof o['home'] !== 'string' || !HOME_SHAPE.test(o['home']))) return null
   if (/[\u0000-\u001f]/.test(String(o['name']) + String(o['blocks'] ?? ''))) return null
   return {
     ...(o as unknown as RemoteRow),

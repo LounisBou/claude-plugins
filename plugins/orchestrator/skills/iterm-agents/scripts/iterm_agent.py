@@ -2742,16 +2742,16 @@ def tab_of_row(rows, tty):
     return None
 
 
-def placed_right_of(rows, tty, anchor):
-    """True when `tty`'s tab is the one immediately after `anchor`'s, in the same window."""
+def placed_left_of(rows, tty, anchor):
+    """True when `tty`'s tab is the one immediately before `anchor`'s, in the same window."""
     mine, theirs = tab_of_row(rows, tty), tab_of_row(rows, anchor)
-    return bool(mine and theirs and mine[0] == theirs[0] and mine[1] == theirs[1] + 1)
+    return bool(mine and theirs and mine[0] == theirs[0] and mine[1] == theirs[1] - 1)
 
 
 def settle_auditor(read, move, auditor, audited):
     """Read the real tab order, repair once, read again: (line, exit code).
 
-    The auditor lands immediately right of the orchestrator it audits by construction when
+    The auditor lands immediately left of the orchestrator it audits by construction when
     the terminal's API answers, and nowhere in particular when it does not (§52); a launch
     reported as done with the tab elsewhere is the operator finding it by hand. So the order
     is READ, and a wrong one is repaired by the launcher's own move, never by a relaunch.
@@ -2764,24 +2764,24 @@ def settle_auditor(read, move, auditor, audited):
     rows = read()
     if rows is None:
         return unverified_line(auditor), 1
-    if placed_right_of(rows, auditor, audited):
+    if placed_left_of(rows, auditor, audited):
         return "", 0
     served = move(auditor, audited)
     rows = read()
     if rows is None:
         return unverified_line(auditor), 1
-    if placed_right_of(rows, auditor, audited):
+    if placed_left_of(rows, auditor, audited):
         return "", 0
     mine, theirs = tab_of_row(rows, auditor), tab_of_row(rows, audited)
     if mine and theirs and mine[0] != theirs[0]:
         return ("spawn: the auditor on %s is in another window than its orchestrator on %s; "
                 "see iterm-agent.sh list" % (auditor, audited)), 1
     if served is False:
-        return ("spawn: the auditor on %s is not immediately right of %s, and could not be "
+        return ("spawn: the auditor on %s is not immediately left of %s, and could not be "
                 "moved because the terminal's API is not available; read iterm-agent.sh list "
                 "and move the tab by hand only if it is misplaced" % (auditor, audited)), 1
-    return ("spawn: the auditor on %s is not immediately right of %s; repair it with: "
-            "iterm-agent.sh move --tty %s --right-of %s" % (auditor, audited, auditor, audited)), 1
+    return ("spawn: the auditor on %s is not immediately left of %s; repair it with: "
+            "iterm-agent.sh move --tty %s --left-of %s" % (auditor, audited, auditor, audited)), 1
 
 
 def unverified_line(auditor):
@@ -2789,10 +2789,10 @@ def unverified_line(auditor):
             "check with: iterm-agent.sh list" % auditor)
 
 
-async def move_right_of(iterm2, connection, tty, anchor):
-    """Put `tty`'s tab immediately after `anchor`'s in their window, on a fresh app: the
-    window object a caller holds is a cached copy (§14). Silent when either is not in one
-    window, which the caller's next reading turns into the sentence.
+async def move_beside(iterm2, connection, tty, anchor, right):
+    """Put `tty`'s tab immediately after `anchor`'s (`right`) or before it, in their window, on
+    a fresh app: the window object a caller holds is a cached copy (§14). Silent when either
+    is not in one window, which the caller's next reading turns into the sentence.
 
     The anchor is found the way `anchor_position` finds it, by any of its panes: an
     orchestrator in a split tab whose current pane is another one is still in its tab, and
@@ -2805,7 +2805,7 @@ async def move_right_of(iterm2, connection, tty, anchor):
     if target is None or target_win.window_id != win.window_id or target.tab_id == tab.tab_id:
         return
     tabs = [t for t in win.tabs if t.tab_id != tab.tab_id]
-    tabs.insert([t.tab_id for t in tabs].index(target.tab_id) + 1, tab)
+    tabs.insert([t.tab_id for t in tabs].index(target.tab_id) + (1 if right else 0), tab)
     await win.async_set_tabs(tabs)
 
 
@@ -2821,7 +2821,7 @@ def home_tab_tty(term):
     attached to its server, the one the app has a tab for. "" when none can be read.
 
     An orchestrator in a home session runs in window 0 of its server, and that pane's tty is
-    no tab of the app's: the tab the operator sees, and the auditor must sit right of, is the
+    no tab of the app's: the tab the operator sees, and the auditor must sit left of, is the
     one running the server's client."""
     try:
         done = tmux_call(["list-clients", "-t", HOME_SESSION, "-F", "#{client_tty}"])
@@ -2870,7 +2870,7 @@ def remember_auditor(term, auditor, launcher_tty):
 
 def repair_auditor_place(auditor, audited, term=None):
     """§52: read the listing `list` prints, repair with the launcher's own move, read again.
-    `audited` is the orchestrator's tty, the tab the auditor must sit immediately right of.
+    `audited` is the orchestrator's tty, the tab the auditor must sit immediately left of.
 
     Nothing in here may end the launch: the session is up and its tty is what the caller
     reads next. A reading or a move that fails, for whatever reason, is said on stderr in
@@ -2894,7 +2894,7 @@ def repair_auditor_place(auditor, audited, term=None):
 
     def move(tty, anchor):
         try:
-            term.move_right_of(tty, anchor)
+            term.move_beside(tty, anchor, False)
         except SystemExit:
             return False
         except Exception as exc:
@@ -3012,8 +3012,8 @@ class Terminal:
         """Put the session on `tty` beside `anchor` (or first); its new position."""
         raise NotImplementedError
 
-    def move_right_of(self, tty, anchor):
-        """Put the session on `tty` immediately after `anchor`'s, quietly."""
+    def move_beside(self, tty, anchor, right):
+        """Put the session on `tty` immediately after (`right`) or before `anchor`'s, quietly."""
         raise NotImplementedError
 
 
@@ -3254,9 +3254,9 @@ class ItermTerminal(Terminal):
             return idx
         return run(go)
 
-    def move_right_of(self, tty, anchor):
+    def move_beside(self, tty, anchor, right):
         return served_by("move", {"api": lambda: run(
-            lambda iterm2, connection: move_right_of(iterm2, connection, tty, anchor))})
+            lambda iterm2, connection: move_beside(iterm2, connection, tty, anchor, right))})
 
 
 ITERM = ItermTerminal()
@@ -3615,8 +3615,8 @@ class TmuxTerminal(Terminal):
         die("move: the window %s was moved %s %s, and is no longer in the session's listing"
             % (source.window, "after" if right else "before", target.window))
 
-    def move_right_of(self, tty, anchor):
-        self.move(tty, anchor, True, False)
+    def move_beside(self, tty, anchor, right):
+        self.move(tty, anchor, right, False)
 
 
 _chosen = {}
@@ -6055,13 +6055,12 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
         # ignored, and it takes the chain with it once its session can be read (§34).
         side, anchor = "right", "self"
     elif args.auditor:
-        # An auditor is placed immediately RIGHT of the orchestrator it audits, the chain
+        # An auditor is placed immediately LEFT of the orchestrator it audits, the chain
         # ignored, and takes nothing with it (§52) — the operator's layout: the auditor
-        # directly beside its orchestrator, ahead of that orchestrator's agents. That
-        # orchestrator is the caller, or the one --of names: a coordinator launching an audit
-        # an orchestrator proposed is no orchestrator, and its own tab is not where the
-        # auditor belongs.
-        side, anchor = "right", args.of or "self"
+        # directly beside its orchestrator, on its left. That orchestrator is the caller, or
+        # the one --of names: a coordinator launching an audit an orchestrator proposed is no
+        # orchestrator, and its own tab is not where the auditor belongs.
+        side, anchor = "left", args.of or "self"
         if anchor in ("self", own) and own and (coord_name_on(own) or registered_coord_on(own)):
             die("spawn: refused: the coordinator's own tab is not an orchestrator's: an "
                 "auditor it launches takes --of <the audited orchestrator's tty>")
@@ -6098,7 +6097,7 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
     term = None if DRY_RUN else terminal(agent=windowed)
     if args.auditor and anchor == "self" and term is not None and in_home_session():
         # An orchestrator of a home session is shown by a tab of its own, not by the pane it
-        # runs in: the auditor sits right of THAT tab, the one the operator reads.
+        # runs in: the auditor sits left of THAT tab, the one the operator reads.
         anchor = home_tab_tty(term) or "self"
     if term is ITERM and effect == "append":
         # An orchestrator's agents are windows of its home session. Spawned from its tab

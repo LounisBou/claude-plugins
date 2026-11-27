@@ -576,6 +576,45 @@ test('a pane the module no longer remembers opening asks to be opened again', as
   expect(text).toContain('type /orchestrator-supervision to open the pane again')
 })
 
+test('a session in its first turn is listed: its row is written at the turn start, before any measure, and the pane lists it', async () => {
+  // Row 547: a freshly placed auditor stayed out of the pane until its first turn ended, the row
+  // being written only at the measure. Its row now exists from the first turn's start, and the
+  // pane's rows, read from the store, list it as an auditor.
+  const fx = fakeDollar({ launchName: 'Audit: collecte' })
+  fx.env['ORCHESTRATOR_OSASCRIPT'] = '/usr/bin/false'
+  expect(fx.files.has(`${SESSIONS}/s-one`)).toBe(false)
+  const { handlers } = mounted(registerSupervision)
+  await handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  const stored = parseSessionRow(String(fx.files.get(`${SESSIONS}/s-one`)))
+  expect(stored?.role).toBe('auditor')
+  expect(stored?.name).toBe('Audit: collecte')
+  const listed = paneRows({ 'sessions/s-one': stored! })
+  expect(listed.map(pane => pane.name)).toEqual(['Audit: collecte'])
+  expect(listed[0]!.head).toContain('auditor')
+})
+
+test('a row written at the first turn start, with no reading, draws no figure and no age, and sorts after a measured row', async () => {
+  // A session in its first turn has no measure: its row keeps an empty updated_at, and the pane
+  // draws its name and role only, sorted as unmeasured, never as a 0 % reading of this minute.
+  const fresh = fakeDollar({ launchName: 'Audit: collecte' })
+  fresh.env['ORCHESTRATOR_OSASCRIPT'] = '/usr/bin/false'
+  const { handlers } = mounted(registerSupervision)
+  await handlers['turn.start'](fresh.dollar, { turnId: 't' }, (x: unknown) => x)
+  const stored = parseSessionRow(String(fresh.files.get(`${SESSIONS}/s-one`)))
+  expect(stored?.updated_at).toBe('')
+  const listed = paneRows({ 'sessions/s-alpha': orch('Orch: alpha', { context_percent: 12 }), 'sessions/s-one': stored! })
+  expect(listed.map(pane => pane.name)).toEqual(['Orch: alpha', 'Audit: collecte'])
+  expect(listed[1]!.label).toBe('Audit: collecte · auditor')
+  expect(listed[1]!.fill).toBe('')
+  expect(listed[1]!.age).toBeNull()
+  // Drawn by the coordinator's pane: the row's name and role, and no percentage.
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/s-one`, String(fresh.files.get(`${SESSIONS}/s-one`)))
+  const drawn = JSON.stringify(await coordinatorRender(fx))
+  expect(drawn).toContain('Audit: collecte')
+  expect(drawn).not.toContain('0%')
+})
+
 test('a name walk that cannot answer in time costs the row its name, never the measure', async () => {
   // The Task 9 review's bounded-reads carry: the measure's side reads run
   // under their own deadline, and one that loses the race is quietly no name —
@@ -3499,4 +3538,41 @@ test('at a phone\'s width each role\'s line wraps with its role, account and cou
   const drawn = shown(await pane.draw(), 40).join(' ')
   for (const said of ['orchestrator · plan 2', 'auditor · plan 1', '(this session)', 'plan 2 · 1 agent', '30%', '21%', '12%']) expect(drawn).toContain(said)
   expect(await countedRows(pane.draw, 40)).toBe(drawScreen(await pane.draw({ bodyColumns: 40 }), 38).length)
+})
+
+test('the coordinator\'s wake opens a remote orchestrator\'s view once, and a sync that throws still arms the next wake', async () => {
+  mounted(registerSupervision)
+  const waking = mounted(registerWake).handlers
+  const fx = coordinatorSession()
+  const state = `${HOME}/.claude/claude-orchestrator`
+  fx.files.set(`${state}/remote-machines.json`, JSON.stringify({ version: 1, machines: { iznoserver: 'izno' } }))
+  fx.files.set(`${state}/store/remote/Orch__far`, JSON.stringify({
+    name: 'Orch: far', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100, waiting: null, blocks: null,
+    waiting_since: null, updated_at: new Date().toISOString(), machine: 'IznoServer', repo: null, prs: [], held: null, account: null, agents: null, home: 'orch-0a0b0c0d',
+  }) + '\n')
+  await waking['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+  const fired = new Set<object>()
+  const tick = async () => {
+    const timer = fx.later.filter(t => t.ms === 30000 && !t.cancelled && !fired.has(t)).at(-1)
+    expect(timer).toBeDefined()
+    fired.add(timer!)
+    await timer!.fn()
+  }
+  const opened = () => fx.ran.filter(line => line.startsWith('osascript -e ')).length
+  await tick()
+  expect(opened()).toBe(1)
+  expect(fx.ran.some(line => line.includes('tmux -L orch-0a0b0c0d has-session -t home'))).toBe(true)
+  // The next tick keeps the module's memory: the opening is within its bound, not made again.
+  await tick()
+  expect(opened()).toBe(1)
+  const read = fx.dollar.fs.read
+  Object.assign(fx.dollar.fs, {
+    read: (p: string) => {
+      if (p.endsWith('/remote-machines.json')) throw new Error('the disk is gone')
+      return read(p)
+    },
+  })
+  await tick()
+  expect(fx.written.some(line => line.includes('the disk is gone'))).toBe(true)
+  expect(fx.later.filter(t => t.ms === 30000 && !t.cancelled && !fired.has(t)).length).toBe(1)
 })

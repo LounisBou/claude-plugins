@@ -35,7 +35,7 @@ import {
   acceptanceOriginRefusal, latestReview, unpinnedMergeRefusal, passOverFailRefusal, reviewAccepted, NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
   carriesReady, ciOnlyMissing, ciUndraft, gateUndraft, ciUndraftLine, createdPr, durableWaiver, gateHeldAnswer, gateHeldGivenUpLine, gateHeldLine, gateHeldRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
-  notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
+  closedRefusal, notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
   COMPUTING_ITEM, LIGHT_CI_ABSENT,
   type Act, type Carried, type Gate, type HeadRead, type RecordFile,
@@ -2024,7 +2024,9 @@ async function heldNotReady($: Mod, name: string, repo: string, pr: number, r: R
     }
   }
   return {
-    refusal: notReadyRefusal(name, repo, pr, gate.head, r.missing, r.carried),
+    refusal: gate.state === 'open'
+      ? notReadyRefusal(name, repo, pr, gate.head, r.missing, r.carried)
+      : closedRefusal(name, repo, pr, gate.head, gate.state),
     answer: notReadyAnswer(repo, pr, gate.head, labels, r.missing, r.carried),
   }
 }
