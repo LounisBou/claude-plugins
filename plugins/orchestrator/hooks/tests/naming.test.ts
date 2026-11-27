@@ -496,13 +496,13 @@ test('a session the launcher keeps, or a move that fails, is resumed where it is
   }
 })
 
-test('a coordinator never moves, and neither does a session that asked to end', async () => {
+test('a coordinator moves into its home session at its rename, and a session that asked to end never moves', async () => {
   const { handlers } = mounted()
   const fx = movingDollar({ exitCode: 0, stdout: 'moved: orch-S1\n' })
   await handlers['tool.call'](fx.dollar, { name: 'Coord: main' })
   await handlers['turn.complete'](fx.dollar, {}, pass)
-  expect(fx.processes).toEqual([])
-  expect(fx.order).toEqual(['command:rename', 'prompt'])
+  expect(fx.processes).toEqual([{ argv: ['/plugin/skills/iterm-agents/scripts/iterm-agent.sh', 'home', '--session', 'S-1', '--name', 'Coord: main', '--prompt', resumeText('Coord: main')], opts: { timeoutMs: HOME_MOVE_MS } }])
+  expect(fx.order).toEqual(['command:rename', 'command:exit'])
   const ending = mounted()
   const fy = movingDollar({ exitCode: 0, stdout: 'moved: orch-S1\n' })
   await ending.handlers['tool.call'](fy.dollar, { name: 'Orch: phase-3' })
