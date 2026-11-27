@@ -246,6 +246,32 @@ test('a live view no row wants is kept: a row past its stale bound says nothing 
   expect(opens(fx.runs)).toEqual([])
 })
 
+test('a view that dropped is opened again with no fresh row, while its server runs', async () => {
+  const fx = fake({ live: [psLine(40, 'izno', SOCKET)] })
+  const memory = newViewsMemory()
+  await syncViews(fx.dollar, [row()], memory, { now: NOW })
+  // The row passed its stale bound and is gone, then the Mac slept and the ssh died.
+  fx.world.live = []
+  await syncViews(fx.dollar, [], memory, { now: NOW + 25 * 60 * 60 * 1000 })
+  expect(opens(fx.runs).length).toBe(1)
+  expect(fx.files.get(`${STATE}/views/IznoServer-${SOCKET}.sh`)).toBe(launchScript('izno', SOCKET))
+})
+
+test('with no row, a server out of reach is tried again, and one that answers it runs no more is forgotten', async () => {
+  const fx = fake({ unreachable: new Set(['izno']) })
+  const memory = newViewsMemory()
+  await syncViews(fx.dollar, [row()], memory, { now: NOW })
+  await syncViews(fx.dollar, [], memory, { now: NOW + VIEW_RETRY_CAP_MS })
+  expect(checks(fx.runs).length).toBe(2)
+  fx.world.unreachable.clear()
+  fx.world.servers.clear()
+  await syncViews(fx.dollar, [], memory, { now: NOW + 2 * VIEW_RETRY_CAP_MS })
+  expect(checks(fx.runs).length).toBe(3)
+  await syncViews(fx.dollar, [], memory, { now: NOW + 3 * VIEW_RETRY_CAP_MS })
+  expect(checks(fx.runs).length).toBe(3)
+  expect(opens(fx.runs)).toEqual([])
+})
+
 test('a second view of a server is closed by ending its ssh alone, never by a tmux command, on each server', async () => {
   const fx = fake({ live: [psLine(50, 'izno', SOCKET), psLine(52, 'izno', SOCKET), psLine(51, 'me@minitech', OTHER), psLine(53, 'me@minitech', OTHER)] })
   await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
@@ -315,6 +341,53 @@ test('a view another session opened between the table read and the lock is kept,
   await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
   expect(checks(fx.runs)).toEqual([])
   expect(opens(fx.runs)).toEqual([])
+})
+
+// A view's lock left in place, `age` ms old.
+function lockedFor(age: number) {
+  const fx = fake()
+  const lock = `${STATE}/views/IznoServer-${SOCKET}.sh.lock`
+  fx.files.set(lock, '1\n')
+  const since = Date.now() - age
+  Object.assign(fx.dollar.fs, { stat: async (p: string) => { if (p !== lock) throw new Error(`ENOENT: ${p}`); return { kind: 'file', size: 2, mtimeMs: since } } })
+  return fx
+}
+
+// 45 s: past core's own 30 s, within the holder's bounds summed (a table read, a check, an opening).
+test('a lock its holder may still hold is left to it: nothing is opened', async () => {
+  const fx = lockedFor(45000)
+  await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
+  expect(checks(fx.runs)).toEqual([])
+  expect(opens(fx.runs)).toEqual([])
+  expect(fx.logged.filter(line => line.includes('is being opened by another session')).length).toBe(1)
+})
+
+test('a lock a killed holder left is taken over, and its view opened', async () => {
+  const fx = lockedFor(61000)
+  await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
+  expect(opens(fx.runs).length).toBe(1)
+})
+
+test('a process table that cannot be read again under the lock opens nothing, and is said', async () => {
+  for (const second of ['fails', 'rejects']) {
+    const fx = fake()
+    const run = fx.dollar.process.run
+    let tables = 0
+    Object.assign(fx.dollar.process, {
+      run: async (argv: readonly string[], init?: object) => {
+        if (argv[0] === 'ps' && ++tables === 2) {
+          if (second === 'rejects') throw new Error('timed out')
+          return { exitCode: 1, stdout: '', stderr: 'no' }
+        }
+        return run(argv, init)
+      },
+    })
+    await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
+    expect(tables).toBe(2)
+    expect(checks(fx.runs)).toEqual([])
+    expect(opens(fx.runs)).toEqual([])
+    expect(fx.logged.filter(line => line.includes('the process table could not be read again')).length).toBe(1)
+  }
 })
 
 test('a home server that runs no more opens no view, said once', async () => {
@@ -454,6 +527,13 @@ test('a row whose home is not a home server is refused whole', () => {
   expect(HOME_SHAPE.test(SOCKET)).toBe(true)
   for (const home of [`${SOCKET};x`, `x${SOCKET}`, `${SOCKET}0`]) expect('home' in remoteRowOf(sessionRow, 'iznoserver', [], null, undefined, home)!).toBe(false)
   expect(homeOf(`/tmp/tmux-501/x${SOCKET},1,0`)).toBeNull()
+})
+
+test('a row with a home carries its account and agent count too, each still checked', () => {
+  const carried = remoteRowOf(sessionRow, 'iznoserver', [], null, { account: 'plan 2', agents: 3 }, SOCKET)!
+  expect(parseRemoteRow(rowText(carried))).toEqual(carried)
+  expect(parseRemoteRow(rowText({ ...carried, account: 'a;b' }))).toBeNull()
+  expect(parseRemoteRow(rowText({ ...carried, agents: -1 }))).toBeNull()
 })
 
 test('a home the last send did not carry is news', () => {

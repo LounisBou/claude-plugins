@@ -1846,7 +1846,7 @@ let inFlightAtStop: readonly string[] | null = null
 // The coordinator's round reading, module memory that register and registerWake share: a reload
 // starts it afresh, the host having dropped the old environment's timers with it.
 let wake: WakeMemory = { timer: null, generation: 0, told: false }
-// The remote views' retries and lines said (remote-view.ts), for the module's life.
+// The remote views' retries, lines said and homes seen (remote-view.ts), for the module's life.
 const views = newViewsMemory()
 
 // The pane's memory, module memory that register and the record's reconciliation share, started

@@ -4,7 +4,8 @@
 // iTerm2 draws as native tabs. A view is a tmux client and nothing else: it attaches, never
 // starts a server or a session, and closing it only detaches. The coordinator's reading
 // (supervision.ts wakeTick) syncs the views on each tick: a row with no live view opens one, a live
-// view is reused, a view that dropped is opened again, a second view of one server is closed. A
+// view is reused, a view that dropped is opened again while its server runs, with a fresh row or
+// none, a second view of one server is closed. A
 // view is live when this Mac's process table holds its ssh; that same table is what keeps one view
 // per home server. The machines are mapped to an ssh destination by one file
 // of the protected root (stateDir), beside the launch files it decides; a machine it does not name
@@ -139,9 +140,16 @@ export function viewKey(view: { dest: string; socket: string }): string {
   return `${view.dest}|${view.socket}`
 }
 
+// What a view needs of a row.
+export type ViewHome = Pick<RemoteRow, 'name' | 'machine' | 'home'>
+
+function homeKey(machine: string, socket: string): string {
+  return `${machine.toLowerCase()}|${socket}`
+}
+
 // The views the rows want: one per home server, each row that carries a home on a machine the file
 // maps. A machine it does not map is returned apart, for its line.
-export function wantedViews(rows: readonly RemoteRow[], machines: Machines, socketShape: RegExp = HOME_SHAPE): { wanted: Wanted[]; unmapped: { name: string; machine: string }[] } {
+export function wantedViews(rows: readonly ViewHome[], machines: Machines, socketShape: RegExp = HOME_SHAPE): { wanted: Wanted[]; unmapped: { name: string; machine: string }[] } {
   const wanted = new Map<string, Wanted>()
   const unmapped: { name: string; machine: string }[] = []
   for (const row of rows) {
@@ -188,12 +196,14 @@ export function tried(backoff: Backoff, key: string, now: number): void {
   backoff.set(key, { tries, nextAt: now + Math.min(VIEW_RETRY_MS * 2 ** (tries - 1), VIEW_RETRY_CAP_MS) })
 }
 
-// The module's memory of the views: the retries, and the lines already said, each said once while
-// it holds.
-export type ViewsMemory = { backoff: Backoff; said: Set<string> }
+// The module's memory of the views: the retries, the lines already said, each said once while
+// it holds, and what each view needs, kept apart from its row, which is removed 24 h after its
+// last send while an idle orchestrator lives on: forgotten when its server answers that it runs
+// no more.
+export type ViewsMemory = { backoff: Backoff; said: Set<string>; homes: Map<string, ViewHome> }
 
 export function newViewsMemory(): ViewsMemory {
-  return { backoff: new Map(), said: new Set() }
+  return { backoff: new Map(), said: new Set(), homes: new Map() }
 }
 
 // What a sync is given beside the rows. `socketShape` is a bench's own: a test server that is not
@@ -227,7 +237,10 @@ export async function syncViews($: ViewHost, rows: readonly RemoteRow[], memory:
     await sayOnce($, memory, `the machine file ${file} is refused: ${machines}`)
     return
   }
-  const { wanted, unmapped } = wantedViews(rows, machines, shape)
+  for (const { name, machine, home } of rows) {
+    if (home !== undefined) memory.homes.set(homeKey(machine, home), { name, machine, home })
+  }
+  const { wanted, unmapped } = wantedViews([...memory.homes.values()], machines, shape)
   for (const row of unmapped) await sayOnce($, memory, `the machine ${row.machine} of ${row.name} is not in ${file}: no view of it is opened`)
   const ps = await $.process.run([...PS_ARGV], { timeoutMs: PS_TIMEOUT_MS }).catch(() => null)
   if (!ps || ps.exitCode !== 0) {
@@ -281,6 +294,7 @@ async function openChecked($: ViewHost, path: string, view: Wanted, memory: View
   const ended = `the home server ${view.socket} of ${view.name} runs no more on ${view.dest}: no view is opened`
   const checked = await $.process.run(checkArgv(view.dest, view.socket), { timeoutMs: CHECK_TIMEOUT_MS }).catch(() => null)
   if (checked?.exitCode === 1) {
+    memory.homes.delete(homeKey(view.machine, view.socket))
     await sayOnce($, memory, ended)
     return
   }
