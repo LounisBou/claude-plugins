@@ -3688,7 +3688,7 @@ COORDFILLED="$WORK/coordinator-brief-filled.md"
 mkdir -p "$WORK/coord-fill/coordinator" "$WORK/coord-fill/scratch"; : > "$WORK/coord-fill/coordinator/notes.md"; : > "$WORK/coord-fill/scratch/decision-round.md"
 if [ -f "$COORDTPL" ]; then
   # The close step is the printer's (brief.ts closeStep): for a predecessor in a tab, the close of it.
-  sed -E -e "s#\{\{CLOSE_STEP\}\}#**CLOSE ITS TAB**: \`$AGENT close --tty /dev/ttys950 --expect-title \"Coord:\"\`#g" \
+  sed -E -e "s#\{\{CLOSE_STEP\}\}#**CLOSE ITS TAB** with the launcher's close --tty /dev/ttys950 --expect-title \"Coord:\".#g" \
     -e 's#\{\{PREDECESSOR\}\}#Coord: ops [a1b2c3]#g' -e 's#\{\{PREDECESSOR_TTY\}\}#/dev/ttys950#g' -e 's#\{\{SUBJECT\}\}#ops#g' \
     -e "s#\{\{STATE_DIR\}\}#$WORK/coord-fill#g" -e "s#\{\{NOTES_FILE\}\}#$WORK/coord-fill/coordinator/notes.md#g" -e "s#\{\{ROUND_FILE\}\}#$WORK/coord-fill/scratch/decision-round.md#g" \
     -e "s#\{\{COORDINATOR_SH\}\}#$ROOT/skills/coordinator/scripts/coordinator.sh#g" -e "s#\{\{ITERM_AGENT_SH\}\}#$AGENT#g" \
@@ -3763,7 +3763,7 @@ AUDSUCCTPL="$ROOT/templates/auditor-succession-brief.md"
 check "no template, command or orchestrator skill teaches --successor --inherit-model" "0" \
   "$(grep -rlE -e '--successor( [^`]*)? --inherit-model' "$ROOT/templates" "$ROOT/commands" "$ROOT/skills/orchestrator" 2>/dev/null | wc -l | tr -d ' ')"
 AUDSUCCFILLED="$WORK/audit-succession-filled.md"
-[ -f "$AUDSUCCTPL" ] && sed -E -e "s#\{\{CLOSE_STEP\}\}#**Close its tab**: \`$AGENT close --tty /dev/ttys950 --expect-title \"Audit: tm\"\`#g" \
+[ -f "$AUDSUCCTPL" ] && sed -E -e "s#\{\{CLOSE_STEP\}\}#**Close its tab** with the launcher's close --tty /dev/ttys950 --expect-title \"Audit: tm\".#g" \
   -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDSUCCTPL" > "$AUDSUCCFILLED"
 check "the auditor's succession brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDSUCCFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDSUCCFILLED" >/dev/null 2>&1; echo $?)"
