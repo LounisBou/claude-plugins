@@ -547,6 +547,17 @@ test('a merge of a pull request carrying Ready whose records are absent goes thr
   expect(seen.pull?.labels).toEqual(['Not Ready'])
 })
 
+for (const state of ['merged', 'closed'] as const) {
+  test('a merge of a pull request already ' + state + ' is refused as ' + state + ', not as not ready', async ($, on) => {
+    const gate = { repo: 'acme/thing', pr: 12, state, draft: false, head: HEAD, labels: ['Not Ready'],
+      ci: { result: 'SUCCESS', failed: [], running: 0, skipped: [], total: 1 } }
+    const seen = await world($, on, { gate, autoMerge: ['acme/thing'], verdict: { decision: 'ask' } })
+    const out = await $.tool.call(gh('pr-merge', { pr: 12 }))
+    expect(out.deny).toBe('github: pr-merge refused on acme/thing#12 at 0123456: the pull request is already ' + state + '.')
+    expect(seen.asked.length).toBe(0)
+  })
+}
+
 /*
  * These merges ran when CI was left to GitHub alone. The gate now reads CI at the head: a merge
  * whose CI failed or still runs is refused, CI named.
