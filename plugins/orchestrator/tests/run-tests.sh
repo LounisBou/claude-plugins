@@ -9715,6 +9715,28 @@ check "a coordinator that closes a duplicate keeps its own place" "t1 t2 t3 t4|t
 check "a rotation's replacement takes the old agent's place" "c a b c a2|c a2 b c" "$(ordered rotate)"
 check "a home tab is known by its server and its window 0's name, not by the title it follows" "Orch: h|orch-abc" \
   "$(sfield "$(tabs_order home-identity)" entry)"
+check "a closed tab keeps its side when the tab it followed, known by no session id, is retitled" "A vim C|A vim B C" "$(ordered renamed-neighbour)"
+check "a new window the app lists first does not take the closed tabs of the window they left" "D / A C|D / A B C" "$(ordered new-window-first)"
+check "a move across plans with a registry each reads every tab under its own plan" "A D C B|A D C B" "$(ordered plans)"
+check "a successor whose close was refused takes its predecessor's place on proving its end" "t4 t1 t2 t3|t1 t2 t4 t3" "$(ordered refused-close)"
+check "not while the predecessor runs, for a caller that is no coordinator, or for one process of the tty" \
+  "t4 t1 t2 t3|t4 t1 t2 t3,t4 t1 t2 t3|t4 t1 t2 t3,t4 t1 t2 t3|t4 t1 t2 t3" \
+  "$(ordered verify-running),$(ordered verify-by-agent),$(ordered verify-pid)"
+check "an agent resumed outside a home session goes back where it was" "c a c|c a b c" "$(ordered resumed)"
+check "a resume that names its anchor keeps it" "c a c|c a c b" "$(ordered resumed-anchored)"
+check "a resume takes no place from another open session of its name" "c b a|c a b a" "$(ordered resumed-namesake)"
+check "a session resumed under another title is known by its session id" "c a c|c a b2 c" "$(ordered by-session)"
+check "an open tab renamed is the same one by its session id, and the closed tab stays after it" "c A2 C|c A2 B C" "$(ordered renamed-open)"
+check "a session renamed and moved to another window leaves no closed entry" "c / a2" "$(sfield "$(tabs_order moved-renamed)" record)"
+check "the reading made after a hand move is the one a closed tab goes back by" "c C|c C B" "$(ordered hand-move-then-close)"
+check "everything closed, reopened in any order beside a tab never recorded" "x A B C|x A B C" "$(sfield "$(tabs_order restarted-unknown)" after)"
+check "a tab that followed none goes back before the one it preceded" "A B C|A B C" "$(ordered first-closed)"
+check "a record that does not read as one is dropped and the places are kept again" "A B C|A B C" "$(ordered bad-record)"
+res=$(tabs_order capped)
+check "past the closed tabs a window keeps, the oldest go and the last closed keeps its place" "32|c z last" "$(sfield "$res" gone)|$(sfield "$res" after)"
+check "of the windows left with no tab, the newest are kept" "s6* / s5* / s4* / s3*" "$(sfield "$(tabs_order kept-windows)" record)"
+check "a record another process holds is not written over" "no" "$(sfield "$(tabs_order locked)" written)"
+check "an auditor that closes a tab of another name keeps its own place" "t1 t2 t3|t1 t2" "$(ordered auditor-other)"
 
 echo "== iterm-agents: the coordinator opens, pauses and wakes an orchestrator in its home session =="
 # Each from the coordinator's own tab: an opened or woken orchestrator starts in window 0 of a

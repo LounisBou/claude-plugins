@@ -136,17 +136,6 @@ def kept_windows(table, sessions, servers, lines):
     return windows
 
 
-@contextlib.contextmanager
-def plan(config):
-    """The launcher's readings on the plan (configuration directory) of another process."""
-    before = os.environ.get("CLAUDE_CONFIG_DIR", "")
-    ia.use_config(config)
-    try:
-        yield
-    finally:
-        ia.use_config(before)
-
-
 def ancestors(table, pid):
     while pid in table and table[pid][0] != pid:
         pid = table[pid][0]
@@ -184,7 +173,7 @@ def resume_line(launcher, pid):
     config = ia.process_config(pid) if pid else None
     if config is None:
         ia.die("resume-line: pid %s: its process cannot be read" % pid)
-    with plan(config):
+    with ia.on_plan(config):
         try:
             print(resume_of(pid, config, ia.host_registry(pid) or {},
                             "Your process was ended because its orchestrator module was not "
@@ -204,7 +193,7 @@ def read_sessions(table, servers, report, refused):
         if any(a in hosts and hosts[a][1] == tty for a in above) or not (tty in panes or in_tab):
             continue
         state, config = ia.process_state(pid), ia.process_config(pid)
-        with plan(config or ""):
+        with ia.on_plan(config or ""):
             record = ia.host_registry(pid) or {}
             name = record.get("name") or ia.session_name_on(tty) or command[:40]
             sid = record.get("sessionId") or ""
@@ -453,7 +442,7 @@ class Run:
 
     def worked(self, s):
         """Whether a session busy at the snapshot wrote since, or came to another status."""
-        with plan(s["config"]):
+        with ia.on_plan(s["config"]):
             status = (ia.host_registry(s["pid"]) or {}).get("status")
             return status not in (None, "busy") or written(s["id"]) > s["size"]
 

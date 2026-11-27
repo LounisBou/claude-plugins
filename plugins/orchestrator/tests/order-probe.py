@@ -1,5 +1,5 @@
-"""The tabs' order across the launcher's own commands (`spawn`, `close`, `rotate`), over an app of
-the probe's own: no iTerm2, no tmux and no process is touched.
+"""The tabs' order across the launcher's own commands (`spawn`, `close`, `rotate`, `verify`), over an
+app of the probe's own: no iTerm2, no tmux and no process is touched.
 
     order-probe.py <scripts> <work> <scenario>
 
@@ -23,9 +23,10 @@ with open(os.environ["ORCHESTRATOR_TRUST_FILE"], "w", encoding="utf-8") as fh:
     json.dump({"projects": {os.path.realpath(work): {"hasTrustDialogAccepted": True}}}, fh)
 sys.path.insert(0, scripts)
 import iterm_agent as ia  # noqa: E402
+import tab_order  # noqa: E402
 
 # Each tab's session, by tty: the name its process carries.
-names, count = {}, [0]
+names, plans, count = {}, {}, [0]
 
 
 class Session:
@@ -43,6 +44,8 @@ class Tab:
         count[0] += 1
         self.tab_id, tty = "t%d" % count[0], "/dev/ttys%03d" % count[0]
         names[tty] = name
+        # The plan its host runs on: the configuration directory of the launch that made it.
+        plans[tty] = os.environ.get("CLAUDE_CONFIG_DIR", "")
         self.sessions = self.all_sessions = [Session(tty)]
 
     @property
@@ -108,6 +111,9 @@ def run(coro_fn):
     return asyncio.run(coro_fn(Api(), None))
 
 
+# The real readers of a session's name, for the case that reads them over registries of its own.
+real_readers = ia.session_name_on, ia.registry_name_on
+
 # The caller is the tab on `own`; every host is gone as soon as its tab is.
 own = [""]
 ia.run = run
@@ -122,6 +128,7 @@ ia.coord_name_on = lambda tty: names.get(tty) if names.get(tty, "").startswith("
 ia.registered_coord_on = lambda tty: ia.coord_name_on(tty) if registered[0] == tty else None
 registered = [""]
 ia.host_cli_on = lambda tty: None
+ia.process_config = lambda pid: None
 ia.host_identity = lambda tty: None
 ia.wait_gone = lambda tty, timeout=None: None
 ia.pane_tab_tty = lambda tty: tty
@@ -150,9 +157,12 @@ def quiet(call):
 
 
 def launcher(command, *words):
-    """One command as the entry runs it, the order kept after it."""
+    """One command as the entry runs it, the order kept after it. Each is a process of its own:
+    the plan a command moved to ends with it."""
+    plan = os.environ.get("CLAUDE_CONFIG_DIR", "")
     said = quiet(lambda: ia.COMMANDS[command](ia.args_from_line(command, list(words))))
     quiet(ia.keep_order)
+    ia.use_config(plan)
     return said
 
 
@@ -164,6 +174,50 @@ def wake(name, *more):
     made[0] = name
     return launcher("spawn", "--wake", "--title", name, "--dir", work, "--prompt", "p",
                     "--model", "m", "--effort", "medium", "--no-verify", *more)
+
+
+def resume(name, session, *more):
+    """A closed agent resumed outside a home session, on the pair its transcript holds."""
+    made[0] = name
+    os.makedirs(os.path.join(work, "projects", "p"), exist_ok=True)
+    with open(os.path.join(work, "projects", "p", session + ".jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"type": "api-request", "sessionId": session, "querySource": "repl_main_thread",
+                             "params": {"model": "m", "output_config": {"effort": "low"}}}) + "\n")
+    return launcher("spawn", "--resume", session, "--title", name, "--dir", work, "--prompt", "p",
+                    "--no-verify", *more)
+
+
+def pid_of(tty):
+    """A pid no process can have, one a tab."""
+    return str(4000000 + int(tty[-3:]))
+
+
+def on_screen(tty):
+    return any(t.tty == tty for w in app.windows for t in w.tabs)
+
+
+def session_of(tty):
+    return "s-%s" % tty[-3:]
+
+
+def identified():
+    """Each tab on screen runs a host whose registry gives it a session id of its own."""
+    ia.host_cli_on = lambda tty: pid_of(tty) if on_screen(tty) else None
+    ia.host_registry = lambda pid: {"sessionId": "s-%03d" % (int(pid) - 4000000)}
+
+
+def tab_ids():
+    return " ".join(t.tab_id for t in app.windows[0].tabs)
+
+
+def entry(name, session="", tab_id=""):
+    return {"name": name, "session": session, "tab": tab_id}
+
+
+def kept(record):
+    """Each window of a record, its entries by name, a closed one starred."""
+    return " / ".join(" ".join(e["name"] + ("*" if e.get("gone") else "") for e in w["tabs"])
+                      for w in record)
 
 
 def said(text):
@@ -273,3 +327,198 @@ elif scenario == "home-identity":
     ia.tmux_call = lambda words, env=None: subprocess.CompletedProcess(words, 0, "Orch: h\n", "")
     entry = ia.seen_session({"tty": "/dev/ttys001", "title": "◐ Agent: z", "tab": "t1"})
     print("entry=%s|%s" % (entry["name"], entry["session"]))
+elif scenario == "renamed-neighbour":
+    # A shell of the operator's, known by no session id, retitles itself after B was closed.
+    window("w1", "Orch: A", "Sh: zsh", "Orch: B", "Orch: C")
+    own[0] = tab("Orch: A").tty
+    launcher("list")
+    close("Orch: B")
+    names[tab("Sh: zsh").tty] = "Sh: vim"
+    launcher("list")
+    print("before=%s" % screen())
+    wake("Orch: B")
+    print("after=%s" % screen())
+elif scenario == "new-window-first":
+    # B closed, then D dragged into a new window the app lists before the old one.
+    window("w1", "Orch: A", "Orch: B", "Orch: C", "Orch: D")
+    own[0] = tab("Orch: A").tty
+    close("Orch: B")
+    dragged = tab("Orch: D")
+    app.windows[0].tabs.remove(dragged)
+    app.windows.insert(0, Window("w2", [dragged]))
+    launcher("list")
+    print("before=%s" % screen())
+    wake("Orch: B")
+    print("after=%s" % screen())
+elif scenario == "plans":
+    # Two plans, a registry each, the names read by the launcher's own readers. The caller's tab
+    # was opened by hand: its name is in the first plan's registry alone, its tab shows a summary.
+    os.environ["HOME"] = os.path.join(work, "home")
+    os.environ.pop("CLAUDE_CONFIG_DIR")
+    ia.session_name_on, ia.registry_name_on = real_readers
+
+    def rows(tty, strict=False):
+        if not on_screen(tty):
+            return []
+        folder = os.path.join(plans[tty] or os.path.join(os.environ["HOME"], ia.PLAN1_DIRNAME), "sessions")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, pid_of(tty) + ".json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": names[tty], "sessionId": "S" + tty}, fh)
+        return [(pid_of(tty), ia.HOST_CLI)]
+
+    async def summary(self, key):
+        return {"tty": self.tty, "autoName": "Sum: " + self.tty}.get(key)
+
+    ia.ps_rows = rows
+    ia.host_cli_on = lambda tty: pid_of(tty) if on_screen(tty) else None
+    ia.process_config = lambda pid: plans["/dev/ttys%03d" % (int(pid) - 4000000)]
+    Session.async_get_variable = summary
+    window("w1", "Coord: D", "Orch: B", "Orch: A", "Orch: C")
+    drag("Orch: A", 0)
+    drag("Orch: C", 2)
+    own[0] = tab("Coord: D").tty
+    launcher("list")
+    print("before=%s" % screen())
+    close("Orch: A")
+    close("Orch: C")
+    wake("Orch: A", "--plan", "2")
+    wake("Orch: C", "--plan", "2")
+    print("after=%s" % screen())
+elif scenario in ("refused-close", "verify-running", "verify-by-agent", "verify-pid"):
+    # The host refused the successor its close: the predecessor ended itself, its tab left on a
+    # shell, and the successor, made at the window's first place, proves that end with `verify`.
+    window("w1", "Orch: A", "Coord: g", "Orch: B")
+    first = tab("Coord: g")
+    app.windows[0].tabs.insert(0, Tab("Coord: g"))
+    successor = app.windows[0].tabs[0]
+    own[0], registered[0] = successor.tty, first.tty
+    if scenario == "verify-by-agent":
+        names[successor.tty] = "Agent: x"
+    running = scenario == "verify-running"
+    ia.host_clis_on = lambda tty, strict=False: ["7"] if running or tty != first.tty else []
+    print("before=%s" % tab_ids())
+    launcher("verify", "--tty", first.tty, *(("--pid", "9") if scenario == "verify-pid" else ()))
+    print("after=%s" % tab_ids())
+elif scenario in ("resumed", "resumed-anchored"):
+    window("w1", "Coord: c", "Agent: a", "Agent: b", "Agent: c")
+    own[0] = tab("Coord: c").tty
+    close("Agent: b")
+    print("before=%s" % screen())
+    anchor = ("--right-of", tab("Agent: c").tty) if scenario == "resumed-anchored" else ()
+    resume("Agent: b", "s-resumed", *anchor)
+    print("after=%s" % screen())
+elif scenario == "resumed-namesake":
+    # Another session of the same name still open is not the one resumed: it keeps its place.
+    window("w1", "Coord: c", "Agent: b", "Agent: a")
+    own[0] = tab("Coord: c").tty
+    print("before=%s" % screen())
+    resume("Agent: a", "s-other")
+    print("after=%s" % screen())
+elif scenario == "by-session":
+    # Resumed under another title, a session is still the one closed: its id says so.
+    identified()
+    window("w1", "Coord: c", "Agent: a", "Agent: b", "Agent: c")
+    own[0] = tab("Coord: c").tty
+    session = session_of(tab("Agent: b").tty)
+    close("Agent: b")
+    print("before=%s" % screen())
+    resume("Agent: b2", session)
+    print("after=%s" % screen())
+elif scenario == "renamed-open":
+    # The open tab the closed one followed is renamed: its session id keeps it the same.
+    identified()
+    window("w1", "Coord: c", "Orch: A", "Orch: B", "Orch: C")
+    own[0] = tab("Coord: c").tty
+    launcher("list")
+    close("Orch: B")
+    names[tab("Orch: A").tty] = "Orch: A2"
+    launcher("list")
+    print("before=%s" % screen())
+    wake("Orch: B")
+    print("after=%s" % screen())
+elif scenario == "moved-renamed":
+    # A session renamed and moved to another window is open, not closed: no place is kept for it.
+    one = tab_order.merge([], [{"window": "w1", "tabs": [entry("c", "", "1"), entry("a", "sid", "2")]}], 1)
+    two = tab_order.merge(one, [{"window": "w1", "tabs": [entry("c", "", "1")]},
+                                {"window": "w2", "tabs": [entry("a2", "sid", "3")]}], 2)
+    print("record=%s" % kept(two))
+elif scenario == "hand-move-then-close":
+    # C dragged before A after B was closed, then A closed: B goes back after C, where the newer
+    # reading leaves it. The order read before the drag would put it after A.
+    window("w1", "Coord: c", "Orch: A", "Orch: B", "Orch: C")
+    own[0] = tab("Coord: c").tty
+    close("Orch: B")
+    drag("Orch: C", 1)
+    launcher("list")
+    close("Orch: A")
+    print("before=%s" % screen())
+    wake("Orch: B")
+    print("after=%s" % screen())
+elif scenario == "restarted-unknown":
+    # Everything closed: the new app's only tab is one the record never saw.
+    said_after = []
+    for round_, order in enumerate((("Orch: C", "Orch: A", "Orch: B"), ("Orch: B", "Orch: C", "Orch: A"))):
+        ia.ORDER_FILE = os.path.join(ia.STATE_DIR, "order-%d.json" % round_)
+        app.windows.clear()
+        window("w1", "Orch: A", "Orch: B", "Orch: C")
+        launcher("list")
+        app.windows.clear()
+        window("w2", "Coord: x")
+        own[0] = tab("Coord: x").tty
+        launcher("list")
+        for name in order:
+            wake(name)
+        said_after.append(screen())
+    print("after=%s" % "|".join(said_after))
+elif scenario == "first-closed":
+    # A tab that followed none goes back left of the one it preceded.
+    window("w1", "Orch: A", "Orch: B", "Orch: C")
+    own[0] = tab("Orch: C").tty
+    print("before=%s" % screen())
+    close("Orch: A")
+    wake("Orch: A")
+    print("after=%s" % screen())
+elif scenario == "bad-record":
+    # A record that does not read as one is dropped, and the places are kept again.
+    os.makedirs(ia.STATE_DIR, exist_ok=True)
+    with open(ia.ORDER_FILE, "w", encoding="utf-8") as fh:
+        json.dump({"version": 1, "at": 1, "windows": [], "places": [{"window": 3, "tabs": "x"}]}, fh)
+    window("w1", "Orch: A", "Orch: B", "Orch: C")
+    own[0] = tab("Orch: C").tty
+    print("before=%s" % screen())
+    close("Orch: B")
+    wake("Orch: B")
+    print("after=%s" % screen())
+elif scenario == "capped":
+    # More closed tabs than a window keeps: the oldest are dropped, the last closed keeps its place.
+    older = ["Orch: n%d" % i for i in range(tab_order.KEPT_GONE + 1)]
+    window("w1", "Coord: c", *older, "Orch: z", "Orch: last")
+    own[0] = tab("Coord: c").tty
+    for name in older + ["Orch: last"]:
+        close(name)
+    print("gone=%d" % sum(1 for w in ia.kept_places() for e in w["tabs"] if e.get("gone")))
+    wake("Orch: last")
+    print("after=%s" % screen())
+elif scenario == "kept-windows":
+    # Of the windows left with no tab open, the newest are kept.
+    record = []
+    for n in range(1, tab_order.KEPT_WINDOWS + 3):
+        record = tab_order.merge(record, [{"window": "w%d" % n, "tabs": [entry("s%d" % n, "", str(n))]}], n)
+    record = tab_order.merge(record, [], 99)
+    print("record=%s" % kept(record))
+elif scenario == "locked":
+    # Another process holds the record's lock: nothing is read and written over its change.
+    ia.LOCK_WAIT_S = 0.2
+    window("w1", "Orch: A")
+    os.makedirs(ia.STATE_DIR, exist_ok=True)
+    with open(ia.ORDER_FILE + ia.STORE["lock_suffix"], "w", encoding="utf-8") as fh:
+        fh.write("1\n")
+    quiet(lambda: ia.keep_order(ia.app_layout()))
+    print("written=%s" % ("yes" if os.path.exists(ia.ORDER_FILE) else "no"))
+elif scenario == "auditor-other":
+    # An auditor that closes a tab of another name keeps its own place.
+    window("w1", "Audit: x", "Orch: A", "Audit: y")
+    own[0] = tab("Audit: x").tty
+    print("before=%s" % tab_ids())
+    launcher("close", "--tty", tab("Audit: y").tty, "--keep-checkout")
+    print("after=%s" % tab_ids())

@@ -2266,8 +2266,11 @@ def seen_session(session):
             name = done.stdout.strip() if done.returncode == 0 else ""
         elif session["tty"]:
             pid = host_cli_on(session["tty"])
-            key = ((host_registry(pid) if pid else None) or {}).get("sessionId") or ""
-            name = session_name_on(session["tty"]) or ""
+            # Under the tab's own plan, whose registry holds it: this command may have moved to
+            # another one.
+            with on_plan(process_config(pid) if str(pid).isdigit() else None):
+                key = ((host_registry(pid) if pid else None) or {}).get("sessionId") or ""
+                name = session_name_on(session["tty"]) or ""
     if name == UNREADABLE_NAME:
         name = ""
     return {"name": stable_title(name or session.get("title") or ""), "session": key,
@@ -2395,6 +2398,15 @@ def predecessor_of_caller(own, tty):
     if role == COORD:
         return registered_coord_on(tty) is not None
     return role == AUDIT and stable_title(audit_name_on(tty) or "") == stable_title(mine)
+
+
+def take_predecessors_place(tty, what):
+    """Put the caller's tab beside the tab of `tty` when that is its own predecessor's, and keep
+    the order: a successor takes its predecessor's place, however its tab was opened."""
+    own = self_tty() or ""
+    if predecessor_of_caller(own, tty) and terminal_for(tty) is ITERM:
+        put_beside(own, tty, "right", what)
+        read_order()
 
 
 def kept_order():
@@ -5282,6 +5294,21 @@ def use_config(config):
         os.path.join(config, "projects") if config else os.path.expanduser("~/.claude/projects"))
 
 
+@contextlib.contextmanager
+def on_plan(config):
+    """The launcher's readings on the plan (configuration directory) of another process; None, a
+    plan that cannot be read, leaves them on the command's own."""
+    if config is None:
+        yield
+        return
+    before = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    use_config(config)
+    try:
+        yield
+    finally:
+        use_config(before)
+
+
 def sleeper_config(title):
     """The configuration directory the orchestrator `title` slept on, from the sleeping record
     (`config`; absent is plan 1, ""), or None when no record names it or the record cannot be
@@ -6300,6 +6327,11 @@ def cmd_verify(args):
     else:
         pid = str(args.pid) if str(args.pid) in every else None
     if not pid:
+        # With no --pid, nothing runs on the tty at all: the proof of a successor whose close of
+        # its predecessor the host refused. The tab left on a shell keeps the place, so the
+        # successor takes it here, no close ever running.
+        if args.pid is None and not DRY_RUN:
+            take_predecessors_place(args.tty, "verify")
         sys.exit(1)
     print("%s running on %s (pid %s)" % (HOST_CLI, args.tty, pid))
 
@@ -6551,10 +6583,7 @@ def cmd_close(args):
     args.tty = pane_tab_tty(args.tty)
     socket, listed, host_tty = close_host_tty(args.tty)
     if socket or terminal_for(args.tty) is ITERM:
-        # A successor takes its predecessor's place, however its tab was opened.
-        own = self_tty() or ""
-        if predecessor_of_caller(own, args.tty):
-            put_beside(own, args.tty, "right", "close")
+        take_predecessors_place(args.tty, "close")
         # Once the tab is gone nothing says where it was.
         read_order()
     # Read BEFORE the close: what the proof below is a proof ABOUT.

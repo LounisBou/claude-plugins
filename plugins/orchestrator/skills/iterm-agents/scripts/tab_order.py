@@ -22,14 +22,19 @@ def same(a, b):
                 or a["name"] and a["name"] == b["name"])
 
 
-def twins_of(old, base):
+def twins_of(old, base, same_window):
     """`{index in old: entry of base}`, each entry of `base` claimed once, the closest first: the
     same tab under the same name (a nameless tab is known by nothing else), the same session id,
-    the same name."""
+    the same name and, in the window of the same id, the same tab for an entry with no session
+    id: a shell retitles itself. The app gives new ids when it starts again."""
     found, claimed = {}, set()
-    for match in (lambda a, b: bool(a["tab"]) and a["tab"] == b["tab"] and a["name"] == b["name"],
-                  lambda a, b: bool(a["session"]) and a["session"] == b["session"],
-                  lambda a, b: bool(a["name"]) and a["name"] == b["name"]):
+    matches = [lambda a, b: bool(a["tab"]) and a["tab"] == b["tab"] and a["name"] == b["name"],
+               lambda a, b: bool(a["session"]) and a["session"] == b["session"],
+               lambda a, b: bool(a["name"]) and a["name"] == b["name"]]
+    if same_window:
+        matches.append(lambda a, b: not (a["session"] or a.get("gone"))
+                       and bool(a["tab"]) and a["tab"] == b["tab"])
+    for match in matches:
         for i, entry in enumerate(old):
             if i in found:
                 continue
@@ -40,10 +45,10 @@ def twins_of(old, base):
     return found
 
 
-def woven(old, base, live, now):
+def woven(old, base, live, now, same_window=False):
     """`base`, in its own order, with the entries of `old` it lacks and no tab of `live` shows,
     each marked closed and put after the one it followed, else before the one it preceded."""
-    result, twins = list(base), twins_of(old, base)
+    result, twins = list(base), twins_of(old, base, same_window)
     previous, leading = None, []
 
     def place(entries, at):
@@ -88,13 +93,13 @@ def merge(record, windows, now):
     rest, result = list(record), []
     for window in windows:
         base = next((w for w in rest if window["window"] and w["window"] == window["window"]), None)
-        if base is None:
-            best = max(rest, key=lambda w: shared(w, window["tabs"]), default=None)
-            base = best if best and shared(best, window["tabs"]) else None
         if base is not None:
             rest.remove(base)
         result.append({"window": window["window"],
-                       "tabs": woven(base["tabs"] if base else [], window["tabs"], live, now)})
+                       "tabs": woven(base["tabs"] if base else [], window["tabs"], live, now,
+                                     base is not None)})
+    # Only once every window the app shows has its own record, whatever order it lists them in,
+    # is a record left over given to another one.
     closed_windows = []
     for recorded in rest:
         # The app gives a window a new id when it starts again: a recorded one whose session a
