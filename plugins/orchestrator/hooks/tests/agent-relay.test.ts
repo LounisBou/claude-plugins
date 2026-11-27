@@ -9,10 +9,10 @@ import { DECLARATIONS } from '../wait.ts'
 import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, hostStopOf, stopInTail, stopText, chainOwnerTty, RELAY_CAP, heldReport, readDeliveryFacts, keptCi, factsLine, falseClaims, type DeliveryFacts, type FactsRun, type KeptGate } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
 import { register } from '../register.ts'
-import { KEPT_RETRY_MS, KEPT_RETRY_CAP_MS, BACKSTOP_MS, BACKSTOP_AGE_MS } from '../supervision.ts'
+import { drainKept, KEPT_RETRY_MS, BACKSTOP_MS, BACKSTOP_AGE_MS, CLAIM_MS } from '../supervision.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hooksOn, hostOf, type Captured, type HostParts } from '../../core/capture.ts'
-import { fieldsOf, type Events, type Host, type Noun, type SessionSendResult } from '../../core/host.ts'
+import { fieldsOf, type Events, type Host, type Noun, type SessionSendResult, type FsEntry } from '../../core/host.ts'
 
 const HOME = '/tmp/h'
 const STATE = `${HOME}/.claude/claude-orchestrator`
@@ -1035,8 +1035,9 @@ test('a waiting status is reported once, however many turns repeat it, and again
 
 // --- a turn end never lost on its way -----------------------------------------------------
 
-// The host's timers, held: a test runs each when it chooses, and its delay names it.
-function heldClock(now = { ms: Date.parse('2026-11-27T16:30:17.000Z') }) {
+// The host's timers, held: a test runs those of a delay when it chooses.
+function heldClock(start = Date.parse('2026-11-27T16:30:17.000Z')) {
+  const now = { ms: start }
   const timers: { ms: number; run: () => unknown }[] = []
   const clock = {
     after: (ms: number, run: () => unknown) => { timers.push({ ms, run }); return { cancel: () => undefined } },
@@ -1044,7 +1045,6 @@ function heldClock(now = { ms: Date.parse('2026-11-27T16:30:17.000Z') }) {
     sleep: async () => undefined,
     every: () => ({ cancel: () => undefined }),
   }
-  // The timers of that delay armed so far, taken out and run.
   const fire = async (ms: number) => {
     const due = timers.filter(timer => timer.ms === ms)
     for (const timer of due) timers.splice(timers.indexOf(timer), 1)
@@ -1054,128 +1054,327 @@ function heldClock(now = { ms: Date.parse('2026-11-27T16:30:17.000Z') }) {
   return { clock, timers, fire, now }
 }
 
+const KEPT_DIR = `${STATE}/store/relays/s-one`
+const ROUND_WAKE = 30_000
 const START = { cwd: '/w/agent' }
-const KEPT_FILE = `${STATE}/store/relays/s-one`
 const DELIVERY = 'geonative-api#1942 6cd8050 — 1 finding — blocking: a.ts:3 — report: /r.md\nstatus: done — review of #1942'
+const keptFiles = (files: Map<string, string>) => [...files.keys()].filter(p => p.startsWith(`${KEPT_DIR}/`) && !p.endsWith('.lock') && !p.includes('.tmp-'))
 
-test("a turn end whose own name the walk could not read in time is kept, said, and relayed once the name reads", async () => {
+// A send the test opens and closes: refused while `refuse`, recorded once accepted.
+function sender(fx: ReturnType<typeof fake>, refuse = { on: true }) {
+  return async (args: { to: unknown; text: string }): Promise<SessionSendResult> => {
+    if (refuse.on) return { isDelivered: false, reason: 'nobody by that name' }
+    fx.sent.push(args)
+    return { isDelivered: true }
+  }
+}
+
+// The fake's listing gives files only; the backstop lists the directories under the kept turn ends too.
+function withDirs(fx: ReturnType<typeof fake>, list = fx.dollar.fs.list) {
+  return async (dir: string): Promise<FsEntry[]> => {
+    const under = [...fx.files.keys()].filter(p => p.startsWith(`${dir}/`)).map(p => p.slice(dir.length + 1))
+    const dirs = [...new Set(under.filter(rest => rest.includes('/')).map(rest => rest.split('/')[0]!))].sort()
+    const files: FsEntry[] = (await list(dir)).map(entry => ({ ...entry, kind: 'file' }))
+    return [...files, ...dirs.map((name): FsEntry => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false }))]
+  }
+}
+
+test('a turn end whose own name the walk could not read in time is kept, said, and relayed once the name reads', async () => {
   const chains = mounted()
   const walkHangs = { on: true }
   const fx = fake({ walk: 'agent', walkHangs })
   const held = heldClock()
   const dollar = { ...fx.dollar, clock: held.clock }
   await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
-  // Nothing reached the orchestrator, and nothing of it is silent: the turn end is kept and the log says why.
   expect(fx.sent.length).toBe(0)
-  expect(fx.files.has(KEPT_FILE)).toBe(true)
+  expect(keptFiles(fx.files).length).toBe(1)
   expect(fx.logged.some(l => l.includes("s-one's own name was not read in time"))).toBe(true)
-  // The first try again fails the same way: logged, kept, armed again.
+  // Nothing of the session's wait is written while it is not named.
+  expect(fx.files.has(WAIT)).toBe(false)
   expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
   expect(fx.sent.length).toBe(0)
-  expect(fx.logged.some(l => l.includes('is not delivered at try 1'))).toBe(true)
-  // The machine answers again: the next try relays it, once, and keeps nothing.
   walkHangs.on = false
   expect(await held.fire(KEPT_RETRY_MS * 2)).toBe(1)
   expect(fx.sent.map(s => s.to)).toEqual([ORCH])
   expect(fx.sent[0]!.text).toContain(`[module] ${AGENT} reports its delivery`)
-  expect(fx.files.has(KEPT_FILE)).toBe(false)
-  // Delivered: no third try is armed.
-  expect(held.timers.some(t => t.ms === Math.min(KEPT_RETRY_MS * 4, KEPT_RETRY_CAP_MS))).toBe(false)
+  expect(keptFiles(fx.files)).toEqual([])
+  expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBe('delivered')
+  // No try of the kept turn ends is armed any more (the round's wake of a session not told yet is its own).
+  expect(held.timers.filter(t => t.ms !== ROUND_WAKE).length).toBe(0)
 })
 
-test('a turn end refused by its orchestrator is kept and tried again until delivered, and never sent twice', async () => {
+test('a headless run started from an agent\'s shell keeps nothing: its walk said it has no name', async () => {
+  const chains = mounted()
+  const fx = fake({ walk: 'underneath' })
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: heldClock().clock }, turnEnd(DELIVERY, 'turn-1'))
+  expect(keptFiles(fx.files)).toEqual([])
+  expect(fx.sent).toEqual([])
+})
+
+test('two turn ends refused one after the other are both kept and go in their order once accepted', async () => {
   const chains = mounted()
   const fx = fake()
   const held = heldClock()
-  let refuse = true
-  const send = async (args: { to: unknown; text: string }): Promise<SessionSendResult> => {
-    if (refuse) return { isDelivered: false, reason: 'nobody by that name' }
-    fx.sent.push(args)
-    return { isDelivered: true }
-  }
-  const dollar = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send } }
-  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  const refuse = { on: true }
+  const dollar = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send: sender(fx, refuse) } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(QUESTION, 'turn-1'))
+  held.now.ms += 1000
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-2'))
+  expect(keptFiles(fx.files).length).toBe(2)
   expect(fx.logged.some(l => l.includes(`relay: not delivered to ${ORCH}: nobody by that name — ${AGENT}'s turn end`))).toBe(true)
-  expect(fx.files.has(KEPT_FILE)).toBe(true)
-  refuse = false
-  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
-  expect(fx.sent.length).toBe(1)
-  expect(fx.files.has(KEPT_FILE)).toBe(false)
+  refuse.on = false
+  await held.fire(KEPT_RETRY_MS)
+  expect(fx.sent.map(s => s.text.split('\n')[0])).toEqual([`[module] ${AGENT} asks — merge order`, expect.stringContaining('reports its delivery')])
+  expect(keptFiles(fx.files)).toEqual([])
   // A restart finds nothing kept: no timer, no second send.
   await drive(chains, 'session.start', dollar, START)
   expect(await held.fire(KEPT_RETRY_MS)).toBe(0)
-  expect(fx.sent.length).toBe(1)
+  expect(fx.sent.length).toBe(2)
 })
 
-test('a turn end relayed at once keeps nothing and arms no retry', async () => {
+test('a delivered replay of an older turn end leaves the wait the later turn wrote', async () => {
   const chains = mounted()
   const fx = fake()
   const held = heldClock()
-  await drive(chains, 'turn.complete', { ...fx.dollar, clock: held.clock }, turnEnd(DELIVERY, 'turn-1'))
+  const refuse = { on: true }
+  const dollar = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send: sender(fx, refuse) } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(QUESTION, 'turn-1'))
+  expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBe('question')
+  // The next turn clears the wait and leaves nothing to send: its work is in flight.
+  await drive(chains, 'classic.Stop', dollar, stopOf('Running the suite.', { background_tasks: [{ type: 'bash', command: 'npm test', status: 'running' }] }))
+  await drive(chains, 'turn.complete', dollar, turnEnd('Running the suite.', 'turn-2'))
+  expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBeNull()
+  refuse.on = false
+  await held.fire(KEPT_RETRY_MS)
   expect(fx.sent.length).toBe(1)
-  expect(fx.files.has(KEPT_FILE)).toBe(false)
-  expect(held.timers.some(t => t.ms === KEPT_RETRY_MS)).toBe(false)
+  expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBeNull()
 })
 
-// The orchestrator's side: its row on its tty, with the chain's owner; the agent's kept turn end,
-// older than the agent's own tries are given; the host's record of the agent, which names it.
-function backstopWorld(keptAt: string, over: { tty?: string | null; reportsTo?: string | null } = {}) {
+test('a try that throws arms the next one, which delivers', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const held = heldClock()
+  const refuse = { on: true }
+  let failWrites = false
+  const write = async (p: string, text: string) => {
+    if (failWrites && p.includes('/relays/')) { failWrites = false; throw new Error('EIO: the disk refused') }
+    return fx.dollar.fs.write(p, text)
+  }
+  const dollar = { ...fx.dollar, clock: held.clock, fs: { ...fx.dollar.fs, write }, session: { ...fx.dollar.session, send: sender(fx, refuse) } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  failWrites = true
+  refuse.on = false
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
+  expect(fx.sent.length).toBe(0)
+  expect(fx.logged.some(l => l.includes('EIO: the disk refused'))).toBe(true)
+  expect(held.timers.length).toBe(1)
+  await held.fire(held.timers[0]!.ms)
+  expect(fx.sent.length).toBe(1)
+})
+
+test('a turn end the store refuses is held in memory and still delivered', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const held = heldClock()
+  const refuse = { on: true }
+  let failWrites = true
+  const write = async (p: string, text: string) => {
+    if (failWrites && p.includes('/relays/')) throw new Error('ENOSPC: no space left')
+    return fx.dollar.fs.write(p, text)
+  }
+  const dollar = { ...fx.dollar, clock: held.clock, fs: { ...fx.dollar.fs, write }, session: { ...fx.dollar.session, send: sender(fx, refuse) } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  expect(fx.logged.some(l => l.includes('is held in memory'))).toBe(true)
+  failWrites = false
+  refuse.on = false
+  await held.fire(KEPT_RETRY_MS)
+  expect(fx.sent.length).toBe(1)
+  expect(keptFiles(fx.files)).toEqual([])
+})
+
+test('a relay that throws keeps its turn end, tried again until delivered', async () => {
+  const chains = mounted()
+  const fx = fake({ send: 'reject' })
+  const held = heldClock()
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: held.clock }, turnEnd(DELIVERY, 'turn-1'))
+  expect(keptFiles(fx.files).length).toBe(1)
+  await held.fire(KEPT_RETRY_MS)
+  const ok = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send: sender(fx, { on: false }) } }
+  await drainKept(hostOf(ok), 's-one')
+  expect(fx.sent.length).toBe(1)
+})
+
+test('a stop the host wrote, refused, is kept and told once accepted', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const held = heldClock()
+  const refuse = { on: true }
+  const dollar = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send: sender(fx, refuse) } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(LIMIT, 'turn-1'))
+  expect(keptFiles(fx.files).length).toBe(1)
+  refuse.on = false
+  await held.fire(KEPT_RETRY_MS)
+  expect(fx.sent.map(s => s.text)).toEqual([LIMIT_LINE])
+})
+
+test('a send in flight is the only one: a second pass asked meanwhile sends nothing more', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const held = heldClock()
+  const refuse = { on: true }
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send: sender(fx, refuse) } }, turnEnd(DELIVERY, 'turn-1'))
+  let open: (r: SessionSendResult) => void = () => undefined
+  let sends = 0
+  const slow = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send: () => { sends++; return new Promise<SessionSendResult>(resolve => { open = resolve }) } } }
+  const first = drainKept(hostOf(slow), 's-one')
+  await new Promise(resolve => setTimeout(resolve, 20))
+  const second = drainKept(hostOf(slow), 's-one')
+  // The second pass is given the time to reach its own send, were it let run beside the first.
+  await new Promise(resolve => setTimeout(resolve, 20))
+  open({ isDelivered: true })
+  await Promise.all([first, second])
+  expect(sends).toBe(1)
+  expect(keptFiles(fx.files)).toEqual([])
+})
+
+test("a restart tries again what the session kept", async () => {
+  const chains = mounted()
+  const fx = fake()
+  const held = heldClock()
+  const refuse = { on: true }
+  const dollar = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send: sender(fx, refuse) } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  // A load forgets the timers: only the start's arms one.
+  const reloaded = mounted()
+  refuse.on = false
+  held.timers.length = 0
+  await drive(reloaded, 'session.start', dollar, START)
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
+  expect(fx.sent.length).toBe(1)
+})
+
+// The orchestrator's side: its row with the chain's owner, the agent's kept turn end older than its
+// own tries are given, and the host's record of the agent.
+function backstopWorld(over: { age?: number; status?: string; tty?: string | null; reportsTo?: string | null; relayed?: boolean; successor?: boolean; record?: boolean } = {}) {
   const fx = fake()
   const held = heldClock()
   const submitted: string[] = []
+  let answer: unknown = {}
   fx.files.set(`${STATE}/store/sessions/s-orch`, JSON.stringify({
     role: 'orchestrator', name: ORCH, pid: '400', tty: '/dev/ttys001', repo: null, chain_owner: 'own',
     context_percent: 5, context_tokens: 50000, window: 1000000, model: 'a-model', busy: false, updated_at: '2026-10-14T09:00:00.000Z',
   }) + '\n')
-  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: AGENT, startedAt: 1, kind: 'interactive', entrypoint: 'cli', status: 'idle' }))
-  fx.files.set(KEPT_FILE, JSON.stringify({ answer: DELIVERY, turn_id: 'turn-1', reason: 'answer', at: keptAt, tty: over.tty === undefined ? '/dev/ttys005' : over.tty, reports_to: over.reportsTo ?? null, tries: 2 }) + '\n')
+  if (over.successor) fx.files.set(`${STATE}/store/successors/s-orch`, JSON.stringify({ name: 'Orch: belt-2', session: 's-next' }))
+  if (over.record !== false) fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: AGENT, startedAt: 1, kind: 'interactive', entrypoint: 'cli', status: over.status ?? 'idle' }))
+  const at = new Date(held.now.ms - (over.age ?? BACKSTOP_AGE_MS + 1000)).toISOString()
+  const key = 'k-1'
+  fx.files.set(`${KEPT_DIR}/000000000000001-000000`, JSON.stringify({ id: '000000000000001-000000', at, answer: DELIVERY, reason: 'answer', kind: 'status', key, since: at, stop: null, tty: over.tty === undefined ? '/dev/ttys005' : over.tty, reports_to: over.reportsTo ?? null, claim: null, tries: 2, wait_written: true }) + '\n')
+  if (over.relayed) fx.files.set(WAIT, JSON.stringify({ name: AGENT, pid: '501', waiting: 'delivered', relayed: key }) + '\n')
   const orch = {
     ...fx.dollar,
     clock: held.clock,
+    fs: { ...fx.dollar.fs, list: withDirs(fx) },
     session: { ...fx.dollar.session, id: async () => 's-orch' },
-    prompt: { submit: async (p: { text: string }) => { submitted.push(p.text); return {} } },
+    prompt: { submit: async (p: { text: string }) => { submitted.push(p.text); return answer } },
   }
-  return { fx, held, submitted, orch }
+  return { fx, held, submitted, orch, drop: (why: string | null) => { answer = why ? { drop: why } : {} } }
 }
 
-test("an agent's kept turn end its own tries did not deliver is relayed by its orchestrator's backstop once, never twice", async () => {
-  const chains = mounted()
-  const { fx, held, submitted, orch } = backstopWorld(new Date(Date.parse('2026-11-27T16:30:17.000Z') - BACKSTOP_AGE_MS - 1000).toISOString())
-  // The orchestrator's start arms its backstop; the agent's own retry, armed by its restart, is pending beside it.
-  // (One module serves both sessions here: the backstop's timer is the first start's, as each session's module arms its own.)
-  const agent = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send: async (): Promise<SessionSendResult> => ({ isDelivered: false, reason: 'busy' }) } }
-  await drive(chains, 'session.start', orch, START)
-  await drive(chains, 'session.start', agent, START)
-  expect(await held.fire(BACKSTOP_MS)).toBeGreaterThan(0)
-  expect(submitted.length).toBe(1)
-  expect(submitted[0]).toContain(`[module] ${AGENT} reports its delivery`)
-  expect(submitted[0]).toContain(`reply with SendMessage to: ${AGENT}`)
-  expect(fx.files.has(KEPT_FILE)).toBe(false)
-  expect(fx.logged.some(l => l.includes(`relay: backstop: ${AGENT}'s turn end`))).toBe(true)
-  // The next tick, and the agent's own retry after it, send nothing more.
-  expect(await held.fire(BACKSTOP_MS)).toBe(1)
-  await held.fire(KEPT_RETRY_MS)
-  expect(submitted.length).toBe(1)
-  expect(fx.sent.length).toBe(0)
+const backstopRun = async (world: ReturnType<typeof backstopWorld>) => {
+  await drive(mounted(), 'session.start', world.orch, START)
+  await world.held.fire(BACKSTOP_MS)
+  await new Promise(resolve => setTimeout(resolve, 10))
+}
+
+test("the backstop relays an idle agent's kept turn end once, removed and marked before the prompt goes, never twice", async () => {
+  const world = backstopWorld()
+  await backstopRun(world)
+  expect(world.submitted.length).toBe(1)
+  expect(world.submitted[0]).toContain(`[module] ${AGENT} reports its delivery`)
+  expect(world.submitted[0]).toContain(`reply with SendMessage to: ${AGENT}`)
+  expect(keptFiles(world.fx.files)).toEqual([])
+  expect(JSON.parse(world.fx.files.get(WAIT)!).relayed).toBe('k-1')
+  // The next tick, and the agent's own pass with a send that accepts, send nothing more.
+  await world.held.fire(BACKSTOP_MS)
+  await drainKept(hostOf({ ...world.fx.dollar, clock: world.held.clock, session: { ...world.fx.dollar.session, send: sender(world.fx, { on: false }) } }), 's-one')
+  expect(world.submitted.length).toBe(1)
+  expect(world.fx.sent.length).toBe(0)
 })
 
-test("the backstop leaves a kept turn end younger than the agent's own tries, and one of another orchestrator's agent", async () => {
-  let chains = mounted()
-  const young = backstopWorld(new Date(Date.parse('2026-11-27T16:30:17.000Z') - 1000).toISOString())
-  await drive(chains, 'session.start', young.orch, START)
-  await young.held.fire(BACKSTOP_MS)
-  expect(young.submitted.length).toBe(0)
-  expect(young.fx.files.has(KEPT_FILE)).toBe(true)
-  const old = new Date(Date.parse('2026-11-27T16:30:17.000Z') - BACKSTOP_AGE_MS - 1000).toISOString()
-  chains = mounted()
-  const other = backstopWorld(old, { tty: '/dev/ttys099', reportsTo: 'Orch: other [a1b2c3]' })
-  await drive(chains, 'session.start', other.orch, START)
-  await other.held.fire(BACKSTOP_MS)
-  expect(other.submitted.length).toBe(0)
-  // The launch record names this orchestrator: its agent is its own, whatever its tty.
-  chains = mounted()
-  const named = backstopWorld(old, { tty: null, reportsTo: `${ORCH} [a1b2c3]` })
-  await drive(chains, 'session.start', named.orch, START)
-  await named.held.fire(BACKSTOP_MS)
+test('a kept turn end its wait already marks relayed goes from neither side', async () => {
+  const world = backstopWorld({ relayed: true })
+  const agent = { ...world.fx.dollar, clock: world.held.clock, session: { ...world.fx.dollar.session, send: sender(world.fx, { on: false }) } }
+  await drainKept(hostOf(agent), 's-one')
+  expect(world.fx.sent.length).toBe(0)
+  const again = backstopWorld({ relayed: true })
+  await backstopRun(again)
+  expect(again.submitted.length).toBe(0)
+  expect(keptFiles(again.fx.files)).toEqual([])
+})
+
+test("an agent's claim in force holds off the backstop, and a claim run out does not", async () => {
+  const world = backstopWorld()
+  const path = keptFiles(world.fx.files)[0]!
+  const record = JSON.parse(world.fx.files.get(path)!)
+  world.fx.files.set(path, JSON.stringify({ ...record, claim: { by: 'agent', until: world.held.now.ms + CLAIM_MS } }) + '\n')
+  await backstopRun(world)
+  expect(world.submitted.length).toBe(0)
+  world.fx.files.set(path, JSON.stringify({ ...record, claim: { by: 'agent', until: world.held.now.ms - 1 } }) + '\n')
+  await world.held.fire(BACKSTOP_MS)
+  expect(world.submitted.length).toBe(1)
+})
+
+test('the backstop leaves a busy agent, a young turn end, an orchestrator that handed over, and another orchestrator\'s agent', async () => {
+  for (const over of [{ status: 'busy' }, { age: 1000 }, { successor: true }, { tty: '/dev/ttys099', reportsTo: 'Orch: other [a1b2c3]' }]) {
+    const world = backstopWorld(over)
+    await backstopRun(world)
+    expect(world.submitted.length).toBe(0)
+    expect(keptFiles(world.fx.files).length).toBe(1)
+  }
+  // An agent that ended (no record of it) is still delivered, once.
+  const ended = backstopWorld({ record: false })
+  await backstopRun(ended)
+  expect(ended.submitted.length).toBe(1)
+})
+
+test("the launch record wins over a chain that names the agent's tty, as the agent's own relay routes it", async () => {
+  // Orch: belt's chain names the tty; the launch record names Orch: other, live.
+  const world = backstopWorld({ reportsTo: 'Orch: other [a1b2c3]' })
+  world.fx.files.set(`${HOME}/.claude/sessions/700.json`, JSON.stringify({ pid: 700, sessionId: 's-other', name: 'Orch: other', startedAt: 5, kind: 'interactive', entrypoint: 'cli' }))
+  await backstopRun(world)
+  expect(world.submitted.length).toBe(0)
+  // Its own launch record names this orchestrator: taken, whatever its tty.
+  const named = backstopWorld({ tty: null, reportsTo: `${ORCH} [a1b2c3]` })
+  named.fx.files.set(`${HOME}/.claude/sessions/400.json`, JSON.stringify({ pid: 400, sessionId: 's-orch', name: ORCH, startedAt: 5, kind: 'interactive', entrypoint: 'cli' }))
+  await backstopRun(named)
   expect(named.submitted.length).toBe(1)
+})
+
+test('a prompt the host drops puts the turn end and its mark back, and the next reading relays it', async () => {
+  const world = backstopWorld()
+  world.drop('the session is closing')
+  await backstopRun(world)
+  expect(world.submitted.length).toBe(1)
+  expect(keptFiles(world.fx.files).length).toBe(1)
+  expect(JSON.parse(world.fx.files.get(WAIT)!).relayed ?? null).toBeNull()
+  expect(world.fx.logged.some(l => l.includes('not taken by the host: the session is closing'))).toBe(true)
+  world.drop(null)
+  await world.held.fire(BACKSTOP_MS)
+  await new Promise(resolve => setTimeout(resolve, 10))
+  expect(world.submitted.length).toBe(2)
+  expect(keptFiles(world.fx.files)).toEqual([])
+})
+
+test('a kept file the backstop cannot read, or cannot lock, is said and holds no other one back', async () => {
+  const world = backstopWorld()
+  world.fx.files.set(`${STATE}/store/relays/s-bad/000000000000000-000000`, 'not json')
+  // Another process holds this one's lock: its claim fails, the next file still goes.
+  const locked = `${STATE}/store/relays/s-held/000000000000000-000000`
+  world.fx.files.set(locked, world.fx.files.get(`${KEPT_DIR}/000000000000001-000000`)!.replace('/dev/ttys005', '/dev/ttys005'))
+  world.fx.files.set(`${locked}.lock`, '1\n')
+  await backstopRun(world)
+  await world.held.fire(BACKSTOP_MS)
+  expect(world.submitted.length).toBe(1)
+  expect(world.fx.logged.filter(l => l.includes('is no kept turn end it can read')).length).toBe(1)
+  expect(world.fx.logged.some(l => l.includes("relay: backstop: session s-held's turn end"))).toBe(true)
 })
