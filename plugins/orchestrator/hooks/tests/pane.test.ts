@@ -2138,6 +2138,136 @@ test('a turn that starts, and a start, drop the record of a pane that is gone be
   expect(fx.written.some(l => l.includes('the record could not be checked'))).toBe(true)
 })
 
+// --- the record follows the pane the host shows ---------------------------------------------------
+
+const KEPT_OPEN = `${HOME}/.claude/claude-orchestrator/pane-open-Coord__main`
+const OWN_PANE = ['s-one', '501', '/dev/ttys001']
+const recorded = (fx: Fx): unknown[] => {
+  const record = JSON.parse(String(fx.files.get(PANE_FILE) ?? '{}'))
+  return [record.session, record.pid, record.tty]
+}
+const logged = (fx: Fx, words: string): boolean => fx.written.some(l => l.includes(words))
+
+// Two successors of one name started together: each put the pane back and wrote the one record, and
+// the one that withdrew removed it at its end, as its own. The other's pane stayed on screen.
+test('a pane put back at startup whose record a twin wrote over and removed at its end is recorded again before anything is due', async () => {
+  const fx = coordinatorSession()
+  fx.files.set(KEPT_OPEN, 'open\n')
+  const asked = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(askedOf(asked)) + '\n')
+  fx.files.set(`${SESSIONS}/${asked.session}`, JSON.stringify(row({ role: 'orchestrator', name: asked.from })) + '\n')
+  const { handlers } = mounted(registerSupervision)
+  await handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  expect(recorded(fx)).toEqual(OWN_PANE)
+  await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  // The twin's record over this one, then its end: no file is left.
+  fx.files.delete(PANE_FILE)
+  await fx.later.filter(t => t.ms === 30000)[0]!.fn()
+  expect(fx.submitted).toEqual([])
+  expect(recorded(fx)).toEqual(OWN_PANE)
+  expect(logged(fx, 'pane: recorded open')).toBe(true)
+})
+
+test('a shown pane under another session\'s dead record, a twin killed with no end, is recorded again and holds its questions', async () => {
+  const young = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([young])
+  fx.files.set(PANE_FILE, staleRecord({ session: 's-two', pid: '999' }))
+  await tick()
+  expect(fx.submitted).toEqual([])
+  expect(recorded(fx)).toEqual(OWN_PANE)
+})
+
+test('open on a pane already shown writes its record again when it is missing or no live one, answers that it is open, and leaves a live one', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const fx = coordinatorSession()
+  await handlers['tool.call'](fx.dollar, toolCall('open'))
+  for (const left of [undefined, '{ torn', staleRecord({ pid: '999' }), staleRecord({ session: 's-two', pid: '999' })]) {
+    if (left === undefined) fx.files.delete(PANE_FILE)
+    else fx.files.set(PANE_FILE, left)
+    expect(await handlers['tool.call'](fx.dollar, toolCall('open'))).toEqual({ result: 'The supervision pane is already open.' })
+    expect(recorded(fx)).toEqual(OWN_PANE)
+  }
+  const live = staleRecord({ session: 's-two', pid: '777', tty: null })
+  fx.files.set(PANE_FILE, live)
+  await handlers['tool.call'](fx.dollar, toolCall('open'))
+  expect(fx.files.get(PANE_FILE)).toBe(live)
+  expect(fx.opened.length).toBe(1)
+})
+
+test('the wake leaves another live session\'s record over a pane this one shows', async () => {
+  const young = entry('Orch: a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([young])
+  const live = staleRecord({ session: 's-two', pid: '777', tty: null })
+  fx.files.set(PANE_FILE, live)
+  await tick()
+  expect(fx.files.get(PANE_FILE)).toBe(live)
+})
+
+// The machine's listing as it fails: a call that rejects, a non-zero exit, a listing with no pid.
+const FAILED_LISTINGS: readonly [string, () => Promise<{ exitCode: number; stdout: string; stderr: string }>][] = [
+  ['rejects', async () => { throw new Error('timed out') }],
+  ['exits 1', async () => ({ exitCode: 1, stdout: '', stderr: 'denied' })],
+  ['lists no pid', async () => ({ exitCode: 0, stdout: '', stderr: '' })],
+]
+
+for (const [how, listing] of FAILED_LISTINGS) {
+  test(`a listing that ${how} leaves another session's record over a shown pane, at the wake, a turn's start and the tool's open; one that needs no listing is written again`, async () => {
+    const { fx, handlers, tick } = await wakingCoordinator([])
+    const run = fx.dollar.process.run
+    fx.dollar.process.run = async (argv: readonly string[], init?: object) =>
+      argv[0] === 'ps' && argv[1] === '-A' ? listing() : run(argv, init)
+    const theirs = staleRecord({ session: 's-two', pid: '777', tty: null })
+    for (const read of [
+      () => tick(),
+      () => handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x),
+      () => handlers['tool.call'](fx.dollar, toolCall('open')),
+    ]) {
+      fx.files.set(PANE_FILE, theirs)
+      await read()
+      expect(fx.files.get(PANE_FILE)).toBe(theirs)
+    }
+    // No record, a torn one, one naming no pid: nothing to ask the listing.
+    for (const left of [undefined, '{ torn', staleRecord({ session: 's-two', pid: null })]) {
+      for (const read of [() => tick(), () => handlers['tool.call'](fx.dollar, toolCall('open'))]) {
+        if (left === undefined) fx.files.delete(PANE_FILE)
+        else fx.files.set(PANE_FILE, left)
+        await read()
+        expect(recorded(fx)).toEqual(OWN_PANE)
+      }
+    }
+  })
+}
+
+test('a pane the host still shows when the module starts over is taken back: drawn, its clock running, recorded, not opened twice', async () => {
+  const fx = coordinatorSession()
+  fx.files.set(KEPT_OPEN, 'open\n')
+  await fx.dollar.ui.open({ id: 'supervision' })
+  const { handlers } = mounted(registerSupervision)
+  await handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  expect(recorded(fx)).toEqual(OWN_PANE)
+  expect(fx.opened.length).toBe(1)
+  expect(fx.timers.map(t => t.ms)).toEqual([2000])
+  const drawn = JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
+  expect(drawn).toContain('Orchestrators')
+  expect(drawn).not.toContain('to open the pane again')
+})
+
+test('the record\'s removal is said, and nothing writes it again for a pane closed or for an orchestrator\'s', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const fx = coordinatorSession()
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  expect(logged(fx, 'pane: the record removed')).toBe(true)
+  await handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  expect(fx.files.has(PANE_FILE)).toBe(false)
+  const orch = fakeDollar({ launchName: 'Orch: belt' })
+  const theirs = mounted(registerSupervision).handlers
+  await theirs['command.run'](orch.dollar, supervisionRun)
+  await theirs['turn.start'](orch.dollar, { turnId: 't' }, (x: unknown) => x)
+  await theirs['tool.call'](orch.dollar, toolCall('open'))
+  expect(orch.files.has(PANE_FILE)).toBe(false)
+})
+
 // --- one readable block -----------------------------------------------------------------------
 
 test('the questions are drawn first, above the orchestrators, the title counting them once', async () => {
