@@ -5349,7 +5349,7 @@ def trust_dialog_on(made):
 
 
 # How much of a screen a refusal quotes: the last lines are where a dialog or a prompt sits.
-SCREEN_LINES = 6
+SCREEN_LINES = 12
 SCREEN_WIDTH = 160
 # What a quoted screen may not carry: escape sequences and other controls would reach the
 # reader's terminal and the logs that keep the refusal.

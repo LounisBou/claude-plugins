@@ -7136,7 +7136,7 @@ m.transcript_of = lambda sid: (None, 0)
 m.tmux_on = lambda socket, args, what: 'Resume this session? 1. Yes'
 m.verify_resumed('s', 0, 'auto', 'a-model', dict(home='x', tty='/dev/ttys9'), timeout=1, sleep=lambda s: None, dir_='/checkout')" 2>&1 | tee "$WORK/resume-screen.txt" | grep -c 'The tab showed: Resume this session? 1. Yes\.')|$(grep -c 'workspace-trust dialog' "$WORK/resume-screen.txt")"
 check "a long screen is quoted by its last lines only" "1|0" \
-  "$(screen_refusal "$(seq 1 20)" | grep -c 'The tab showed: 15 | 16 | 17 | 18 | 19 | 20\.')|$(screen_refusal "$(seq 1 20)" | grep -c '| 14 |')"
+  "$(screen_refusal "$(seq 1 20)" | grep -c 'The tab showed: 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20\.')|$(screen_refusal "$(seq 1 20)" | grep -c '| 8 |')"
 out_mismatch=$(verify_mode_run /checkout/t.jsonl default auto 2>/dev/null)
 check "a mismatch is still refused, the made tab still closed" "exit=1|True" \
   "$(printf '%s' "$out_mismatch" | sed -n '1p')|$(printf '%s' "$out_mismatch" | sed -n '2p' | sed 's/closed=//')"
