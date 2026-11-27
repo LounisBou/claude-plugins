@@ -81,7 +81,10 @@ test('a brief whose reader confirms the takeover to its predecessor carries the 
 const TEMPLATES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'templates')
 for (const name of ['coordinator-succession-brief.md', 'auditor-succession-brief.md']) {
   test(`the ${name.replace('.md', '')} template, filled, carries the predecessor's close the lint holds it to`, () => {
-    const filled = readFileSync(join(TEMPLATES, name), 'utf8').replace(/\{\{[A-Z_]+\}\}/g, 'x')
+    // The close step is the printer's (brief.ts closeStep): a predecessor's tab, closed.
+    const filled = readFileSync(join(TEMPLATES, name), 'utf8')
+      .replace('{{CLOSE_STEP}}', '**Close its tab**:\n\n   ```\n   x close --tty x --expect-title "x"\n   ```')
+      .replace(/\{\{[A-Z_]+\}\}/g, 'x')
     assert.deepEqual(texts(filled), [])
     const open = filled.split('\n').filter(line => !line.includes('--expect-title')).join('\n')
     assert.equal(open.length < filled.length, true)
