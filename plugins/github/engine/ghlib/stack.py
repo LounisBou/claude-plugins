@@ -33,6 +33,24 @@ def _same_repo(pull, owner, name):
     return head_repo.lower() == ("%s/%s" % (owner, name)).lower()
 
 
+# The statuses GitHub answers a branch's rules with when there are no rules to read: a private repository
+# without them answers 403 « Upgrade to GitHub Pro », and a branch with none may answer 404.
+NO_RULES_STATUSES = (403, 404)
+
+
+def rules_or_none(read):
+    """What `read()` gives, the rules of a branch, or [] when GitHub refuses them as no rules (NO_RULES_STATUSES).
+    A rate limit is no refusal of the rules: it is raised as it was, a 403 too. Any other error is raised as it was."""
+    try:
+        return read() or []
+    except errors.GhError as exc:
+        if isinstance(exc, errors.RateLimited):
+            raise
+        if exc.status in NO_RULES_STATUSES:
+            return []
+        raise
+
+
 def _long_lived(owner, name, branch, default, reads):
     """Whether a branch can be no stack base: the default branch, a protected one, one under a ruleset. A read
     that fails says why on stderr and counts as long-lived, as the gate reads a pull request not stacked then."""
@@ -42,7 +60,9 @@ def _long_lived(owner, name, branch, default, reads):
     try:
         if "protected:" + branch not in reads:
             info = http.rest("GET", "/repos/%s/%s/branches/%s" % (owner, name, quoted)) or {}
-            rules = http.rest("GET", "/repos/%s/%s/rules/branches/%s" % (owner, name, quoted), paginate=True) or []
+            rules = rules_or_none(
+                lambda: http.rest("GET", "/repos/%s/%s/rules/branches/%s" % (owner, name, quoted), paginate=True)
+            )
             reads["protected:" + branch] = bool(info.get("protected")) or bool(rules)
         return reads["protected:" + branch]
     except (errors.GhError, OSError) as exc:
