@@ -45,7 +45,7 @@
 #     an auditor: immediately left of the orchestrator it audits (the caller, else the one --of
 #     names; a coordinator names it), its model and effort (the pair given, else the caller's),
 #     remote control on, no chain; `move` places an auditor its own launcher made without --force
-#   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord: <subject>" (--prompt <text> | --prompt-file <path>)
+#   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord: <subject>" [--plan 1|2|auto] (--prompt <text> | --prompt-file <path>)
 #     the coordinator's own successor: first place of the caller's window, its model and effort,
 #     remote control on, no chain
 #   iterm-agent.sh spawn --dir <path> --wake --title "Orch: <subject>" [--model <id> --effort <level>] [--resume <session id>] [--plan 1|2|auto] (--prompt <text> | --prompt-file <path>)
