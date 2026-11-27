@@ -234,6 +234,8 @@ the orchestrator and every agent, once the tab's client is attached; a successor
 takeover moved into window 0 ends the same way. The
 auditor and the coordinator stay iTerm2 tabs.
 
+A home server refuses every client's `kill-window`, `kill-pane`, `kill-session` and `unlink-window`, so a view ends nothing; known limitation: the host's tmux backend for teammates closes its panes with `kill-pane`, refused there too.
+
 The tab bar's legend, one row per state. The icon keeps its colour on the selected
 tab, where it is drawn in a small dark block.
 
