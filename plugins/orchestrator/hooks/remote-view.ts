@@ -267,7 +267,10 @@ async function checkAndOpen($: ViewHost, root: string, view: Wanted, memory: Vie
   const made = await $.process.run(['mkdir', '-p', dir], { timeoutMs: PS_TIMEOUT_MS })
   if (made.exitCode !== 0) throw new Error(`${dir} could not be made`)
   await writeAtomic($, path, launchScript(view.dest, view.socket))
-  const opened = await $.process.run(['osascript', '-e', openScript(path)], { timeoutMs: OPEN_TIMEOUT_MS }).catch(() => null)
+  // ORCHESTRATOR_OSASCRIPT, the launcher's own stand-in (iterm_agent.py OSASCRIPT): a run that must
+  // never move the operator's screen names one that opens nothing.
+  const osascript = (await $.env.get('ORCHESTRATOR_OSASCRIPT')) || 'osascript'
+  const opened = await $.process.run([osascript, '-e', openScript(path)], { timeoutMs: OPEN_TIMEOUT_MS }).catch(() => null)
   await logLine($, 'views', opened?.exitCode === 0
     ? `opened a view of ${view.socket} (${view.name}) on ${view.dest}`
     : `iTerm2 did not open the view of ${view.socket} on ${view.dest}${opened?.stderr ? `: ${String(opened.stderr).trim().slice(0, 200)}` : ''}`)

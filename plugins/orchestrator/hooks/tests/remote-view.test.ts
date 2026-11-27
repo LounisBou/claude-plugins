@@ -36,14 +36,14 @@ const psLine = (pid: number, dest: string, socket: string) => `${pid} ${viewArgv
 
 type World = { live: string[]; servers: Set<string>; unreachable: Set<string>; psFails?: boolean; osaFails?: boolean }
 
-function fake(world: Partial<World> = {}, file: string | null = machines()) {
+function fake(world: Partial<World> = {}, file: string | null = machines(), env: Record<string, string> = {}) {
   const w: World = { live: [], servers: new Set([`izno|${SOCKET}`, `me@minitech|${OTHER}`]), unreachable: new Set(), ...world }
   const files = new Map<string, string>()
   if (file !== null) files.set(FILE, file)
   const runs: string[][] = []
   const logged: string[] = []
   const dollar = hostOf({
-    env: { get: async (name: string) => ({ HOME } as Record<string, string>)[name] },
+    env: { get: async (name: string) => ({ HOME, ...env } as Record<string, string>)[name] },
     plugin: { root: '/plugins/orch-root' },
     clock: { after: () => ({ cancel: () => undefined }), sleep: async () => undefined },
     fs: {
@@ -272,6 +272,13 @@ test('a bench names its own socket shape: a test server is opened, a home server
   await syncViews(fx.dollar, [row({ home: 'remoteview-b-e2e' }), row({ name: 'Orch: other' })], newViewsMemory(), { now: NOW, socketShape: /^remoteview-b-[0-9a-z]+$/ })
   expect(opens(fx.runs).length).toBe(1)
   expect(checks(fx.runs).length).toBe(1)
+})
+
+test('the opening runs the launcher\'s osascript stand-in when one is named', async () => {
+  const fx = fake({}, machines(), { ORCHESTRATOR_OSASCRIPT: '/usr/bin/false' })
+  await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
+  expect(opens(fx.runs)).toEqual([])
+  expect(fx.runs.filter(argv => argv[0] === '/usr/bin/false').length).toBe(1)
 })
 
 // --- the row's home ----------------------------------------------------------------------
