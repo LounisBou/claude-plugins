@@ -117,6 +117,10 @@ export function ghRequest(raw: ToolInput): GhRequest | string {
   return { command, args: args ?? undefined, repo: repo ?? undefined }
 }
 
+// The session's own calls of GitHub, the one thing that makes an outage its business: how many wait for their answer, and
+// whether one was refused by an unreachable GitHub with no answer of GitHub since (an engine call of gh.py going through).
+const ownCalls = { inFlight: 0, refused: false }
+
 // The request travels as JSON on stdin: gh.py maps it onto its own parser,
 // refuses what that parser does not declare, and writes the bodies to a
 // private directory it removes. No argv is built and no file written here.
@@ -130,6 +134,7 @@ async function runGhRaw(
     { stdin: JSON.stringify({ command, args, repo, ...(full ? { full: true } : {}) }), timeoutMs: 120_000 },
   )
   if (r.exitCode !== 0) throw new Error(r.stderr || 'gh.py exited ' + r.exitCode)
+  ownCalls.refused = false
   const out = r.isStdoutTruncated ? r.stdout + '\n[output cut at 4 MiB]' : r.stdout
   return { out, err: r.stderr?.trim() ?? '' }
 }
@@ -1388,7 +1393,7 @@ type Reconciler = {
   held: Map<string, { fingerprint: string; until: number; unpublished: string; since: number }>
   edgeSeen: number
   counts: Counts
-  // The lines said and not yet forgotten, and whether this beat said one: a beat that said none lets the same failures be said again.
+  // The lines said and not yet forgotten, each with where it went, and whether this beat said one: a beat that said none lets the same failures be said again.
   said: Set<string>
   saidNow: boolean
   // The reasons said of each failing step (a listing, a copy, a post), by step: said once each until the step goes through.
@@ -1460,18 +1465,20 @@ async function localOf($: Mod, root: string, data: string, repo: string, row: Li
 
 // A line the reconciler says once, however many other lines are said between: a failure that repeats at every beat is not repeated.
 // It asks nothing of the session the reconciler happens to run in, so it is the debug log's unless `to` says otherwise (sinkOf).
+// Once for each place it goes: a line the debug log alone had is still shown once the pull request is the session's own.
 function sayOnce($: Mod, rec: Reconciler, line: string, step?: string, to: Sink = 'debug'): void {
+  const key = to + ' ' + line
   if (step !== undefined) {
     // A step that fails keeps its line said until it goes through (told): other failures speaking at every beat change nothing.
     const reasons = rec.told.get(step) ?? new Set<string>()
-    if (reasons.has(line)) return
-    rec.told.set(step, reasons.add(line))
+    if (reasons.has(key)) return
+    rec.told.set(step, reasons.add(key))
     note($, line, to)
     return
   }
   rec.saidNow = true
-  if (rec.said.has(line)) return
-  rec.said.add(line)
+  if (rec.said.has(key)) return
+  rec.said.add(key)
   note($, line, to)
 }
 
@@ -1484,10 +1491,6 @@ function forgeAwaited(rec: Reconciler, repo: string, now: number): boolean {
 // A failure of the forge's call that shows GitHub cannot be reached at all: name resolution, a connection refused or reset, no route, a handshake or connection timeout, the engine's line for a socket timeout of its request (« gave no answer within »), the call's own timeout.
 const UNREACHABLE = /gaierror|nodename nor servname|name or service not known|temporary failure in name resolution|connection (refused|reset|aborted)|network is unreachable|no route to host|handshake|timed out|gave no answer within|still running after/i
 const REASON_MAX = 200
-
-// The session's own calls of GitHub, the one thing that makes an outage its business: how many wait for their answer, and
-// whether one was refused by an unreachable GitHub with no answer of GitHub since.
-const ownCalls = { inFlight: 0, refused: false }
 
 // Shows the session the outage the debug log alone holds, once it waits on GitHub.
 function showOutage($: Mod): void {
@@ -1507,12 +1510,11 @@ function failureOf(answer: unknown): string | undefined {
 
 // A GitHub call of the session's own, from its start to its answer. `failure`: what its answer failed with, undefined when it went through.
 async function ownCall<T>($: Mod, call: () => Promise<T>, failure: (answer: T) => string | undefined = failureOf): Promise<T> {
+  // The whole last line is read: a cause can stand past what a shown reason keeps.
   const heard = (why: string | undefined): void => {
-    if (why === undefined) ownCalls.refused = false
-    else if (UNREACHABLE.test(shortReason(why))) {
-      ownCalls.refused = true
-      showOutage($)
-    }
+    if (why === undefined || !UNREACHABLE.test(lastLine(why))) return
+    ownCalls.refused = true
+    showOutage($)
   }
   ownCalls.inFlight += 1
   try {
@@ -1527,9 +1529,12 @@ async function ownCall<T>($: Mod, call: () => Promise<T>, failure: (answer: T) =
   }
 }
 
-// The last meaningful line of an error's text (the exception line of a traceback, the engine's `error: …`), bounded.
+// The last meaningful line of an error's text: the exception line of a traceback, the engine's `error: …`.
+const lastLine = (why: string): string => why.split('\n').map((line) => line.trim()).filter(Boolean).pop() ?? why
+
+// That line, bounded.
 function shortReason(why: string): string {
-  const last = why.split('\n').map((line) => line.trim()).filter(Boolean).pop() ?? why
+  const last = lastLine(why)
   return (last.length > REASON_MAX ? last.slice(0, REASON_MAX - 1) + '…' : last).replace(/^github:\s*/i, '')
 }
 
@@ -1559,7 +1564,6 @@ async function listRepo($: Mod, rec: Reconciler, repo: string, now: number): Pro
     return 'failed'
   }
   rec.told.delete('list ' + repo)
-  ownCalls.refused = false
   if (rec.outage) {
     const { shown } = rec.outage
     const since = rec.outage.answeringSince ?? now

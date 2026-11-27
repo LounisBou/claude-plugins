@@ -58,7 +58,8 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     said: [] as string[],
     // The lines the session is shown, in the transcript: those not sent to the debug log alone.
     shown: [] as string[],
-    // A call of the session's own (pr-status): the text it fails with, and what holds its answer while it is in flight.
+    // A call of the session's own (pr-status, pr-checks, pr-threads, light_ci.py): the text it fails with, and what holds
+    // the engine's answer while it is in flight.
     ownFails: undefined as string | undefined,
     ownWaits: undefined as Promise<void> | undefined,
     // With `gateFails`, the text the gate fails with.
@@ -66,8 +67,11 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     // Removing a file fails; the gate's second read of the head finds another one.
     rmFails: false,
     headMoves: false,
-    // The permission check denies pr-ready.
+    // The permission check denies pr-ready; pr-ready itself fails.
     denied: false,
+    readyFails: false,
+    // The head of the session's checkout, clean; none, git answers nothing.
+    checkout: undefined as string | undefined,
     // pr-fingerprint's answer; none, the commits cannot be fingerprinted.
     fingerprint: undefined as string | undefined,
     gateFails: false,
@@ -162,6 +166,11 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
       return done()
     }
     const flag = (name: string) => String(argv[argv.indexOf(name) + 1] ?? '')
+    if (argv[0] === 'git' && state.checkout !== undefined) return done(argv[1] === 'rev-parse' ? state.checkout + '\n' : '')
+    if (String(argv[1] ?? '').endsWith('/engine/light_ci.py')) return done('', 1, state.ownFails)
+    if (String(argv[1] ?? '').endsWith('/engine/record.py') && argv.includes('--status')) {
+      return done(JSON.stringify({ what: flag('--kind'), state: 'success', description: 'v1 2026-11-19T10:00:00Z pass ' + flag('--producer') }))
+    }
     if (String(argv[1] ?? '').endsWith('/engine/forge_status.py')) {
       state.postedRepos.push(flag('--repo'))
       state.posted.push(flag('--what') + ' ' + flag('--head').slice(0, 1) + ' ' + flag('--description'))
@@ -183,7 +192,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     const args = fieldsOf(request['args']) ?? {}
     const command = String(request['command'] ?? '')
     state.runs.push(command + (args['head-only'] ? ' head' : '') + (args['state'] ? ' ' + String(args['state']) : '') + (args['for-ci'] ? ' for-ci' : ''))
-    if (command === 'pr-status') {
+    if (['pr-status', 'pr-checks', 'pr-threads'].includes(command)) {
       const answer = () => (state.ownFails === undefined ? done('{}') : done('', 1, state.ownFails))
       return state.ownWaits ? state.ownWaits.then(answer) : answer()
     }
@@ -205,6 +214,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
         ci: pull.ci ?? { result: pull.rollup === 'SUCCESS' ? 'SUCCESS' : 'PENDING', failed: [], running: pull.rollup === 'SUCCESS' ? 0 : 1, skipped: [], total: 1, checks: [{ name: 'ci', bucket: 'pass' }] },
       }))
     }
+    if (command === 'pr-ready' && state.readyFails) return done('', 1, 'gh: HTTP 403 draft')
     if (command === 'pr-ready' && pull) {
       pull.draft = false
       return done('ok')
@@ -1578,3 +1588,95 @@ test('a record that does not parse is shown to the session whose own read of the
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-gate', args: { pr: 7 }, repo: 'acme/app' })
   expect(lines(state, 'does not parse')).toEqual(SHOWN)
 })
+
+// A line logged before the pull request was the session's own is still shown to it once it is.
+const NEXT = 'c'.repeat(40)
+for (const [what, part, pulls, files, fail] of [
+  ['a post refused', 'could not post readiness/plan', pullWith([]), { [PLAN]: planAt('2026-11-19T09:00:00Z') }, 'postFails'],
+  ['a gate that cannot be read', 'label of acme/app#7 is left as it is', undefined, {}, 'gateFails'],
+] as const) {
+  test(what + ', logged at a head the session did not push, is shown to it at the one it pushed', async ($, on) => {
+    const { clock, state, put } = await started($, on, {
+      ...(pulls ? { pulls: pulls.map((pull) => ({ ...pull })), viewer: 'operator' } : {}),
+      files: { ...files, [CFG + '/pushed-heads/' + NEXT]: 'session-r\n' },
+    })
+    state[fail] = true
+    await beat(clock)
+    expect(lines(state, part)).toEqual(LOGGED)
+    const pull = state.pulls[0]
+    if (pull) pull.head = NEXT
+    put(EDGE, '', T0 + 2 * TICK_MS - 1)
+    await beat(clock)
+    expect(lines(state, part)).toEqual({ said: 2, shown: 1 })
+  })
+}
+
+// An act that reads nothing on GitHub is no answer of it: a call the outage refused still waits.
+for (const [by, act] of [
+  ['gh pr create', ($: Engine) => $.tool.call({ tool: 'Bash', command: 'gh pr create --draft -R acme/app' })],
+  ['gh pr ready --undo', ($: Engine) => $.tool.call({ tool: 'Bash', command: 'gh pr ready 7 --undo -R acme/app' })],
+  ['a command answered from this machine', ($: Engine) => $.tool.call({ tool: 'mcp__github__gh', command: 'auto-merge-list', args: {} })],
+] as const) {
+  test('a call the outage refused still waits on GitHub after ' + by, async ($, on) => {
+    on('tool.call', () => ({ result: 'ran' }))
+    const w = await started($, on)
+    w.state.ownFails = NO_DNS
+    await ownCall($)
+    await act($)
+    await outageBeats(w).run(NO_DNS)
+    expect(lines(w.state, OFFLINE_LINE)).toEqual(SHOWN)
+  })
+}
+
+test('a record whose status the outage refused, its cause past the length of a shown reason, leaves the session waiting', async ($, on) => {
+  const w = await started($, on)
+  w.state.checkout = HEAD
+  w.state.postFails = true
+  w.state.postRefusal = 'error: cannot post readiness/e2e at aaaaaaa: <urlopen error [Errno 8] nodename nor servname provided, or not known>'
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 7, repo: 'acme/app', result: 'pass', detail: 'ran on the other machine: ' + 'claude plugin test plugins/github '.repeat(4) })
+  expect(String(fieldsOf(out)?.['result'])).toContain('the forge refused its status')
+  await outageBeats(w).run(NO_DNS)
+  expect(lines(w.state, OFFLINE_LINE)).toEqual(SHOWN)
+})
+
+for (const [by, call] of [
+  ['mcp__github__light_ci', ($: Engine) => $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 7, repo: 'acme/app' })],
+  ['/checks', ($: Engine) => $.command.run({ command: 'checks', args: '7' })],
+  ['/threads', ($: Engine) => $.command.run({ command: 'threads', args: '7' })],
+] as const) {
+  test('an outage that refused ' + by + ' is shown to the session', async ($, on) => {
+    const w = await started($, on)
+    w.state.ownFails = NO_DNS
+    await call($)
+    await outageBeats(w).run(NO_DNS)
+    expect(lines(w.state, OFFLINE_LINE)).toEqual(SHOWN)
+  })
+}
+
+for (const [whose, files, expected] of [['another\'s', {}, LOGGED], ['the session\'s own', PUSHED, SHOWN]] as const) {
+  test('records of an earlier head that cannot be listed on ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const unlisted = RECORDS + '/acme/app/' + 'd'.repeat(40)
+    const { clock, state } = await started($, on, { files: { ...earlierPass(), [unlisted + '/review.x.json']: '{}', ...files } })
+    state.listFails = unlisted
+    await beat(clock)
+    expect(lines(state, 'record carried to aaaaaaa: ')).toEqual(expected)
+  })
+
+  test('a plan that cannot be copied on ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const pulls = pullWith([status('readiness/plan', 'success', 'v1 2026-11-19T09:00:00Z e2e=none norms=required review=required/2')])
+    const { clock, state } = await started($, on, { pulls, files, viewer: 'operator' })
+    state.writeFails = /check-plans\//
+    await beat(clock)
+    expect(lines(state, 'could not copy readiness/plan')).toEqual(expected)
+  })
+
+  test('a draft of ' + whose + ' that GitHub refuses to take out of draft for its CI: shown only when it is its own', async ($, on) => {
+    const { clock, state } = await started($, on, {
+      pulls: [{ number: 7, draft: true, head: HEAD, base: 'main', labels: [], rollup: null, ci: { result: 'PENDING', failed: [], running: 0, skipped: [], total: 0, checks: [] } }],
+      files: { ...passingRecords(), ...files },
+    })
+    state.readyFails = true
+    await beat(clock)
+    expect(lines(state, 'not taken out of draft for its CI')).toEqual(expected)
+  })
+}
