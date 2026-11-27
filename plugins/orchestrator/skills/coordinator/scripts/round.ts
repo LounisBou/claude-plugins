@@ -10,6 +10,7 @@ import { ROUND_DIR } from '../../../core/orchestration.ts'
 import { setting } from '../../../core/paths.ts'
 import { isTemporary } from '../../../core/store-io.ts'
 import { update } from '../../../core/store.ts'
+import { REMOTE_ROWS_DIR } from '../../../hooks/remote-row.ts'
 import { ArchiveError, archiveSettled, DAY_MS } from '../../orchestrator/scripts/lib/round-archive.ts'
 import { dataOf, die, moduleOf, say, type Context } from './context.ts'
 import { recordedCoordinator } from './record.ts'
@@ -189,7 +190,7 @@ function liveSessions(module: string): Set<string> {
 /** The machine each remote row of the module's store names, by its orchestrator's name. */
 function remoteMachines(module: string): Map<string, string> {
   const machines = new Map<string, string>()
-  const store = join(module, 'store', 'remote')
+  const store = join(module, 'store', REMOTE_ROWS_DIR)
   for (const name of namesOf(store)) {
     if (name.includes('.tmp-') || !isFileAt(join(store, name))) continue
     const row = readJson(join(store, name))

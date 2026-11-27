@@ -211,7 +211,7 @@ describe('round', () => {
     put(f, 'q', v2)
     put(f, 'r', { ...v2, id: 'r', origin: { machine: 'box' }, sender: { session: 's-r', name: 'Orch: r' }, urgent: false })
     put(f, 'g', { ...v2, id: 'g', origin: { machine: 'box' }, sender: { session: 's-g', name: 'Orch: g' }, urgent: false })
-    const remote = join(moduleOf(f), 'store', 'remote')
+    const remote = join(moduleOf(f), 'store', 'remote-rows')
     mkdirSync(remote, { recursive: true })
     writeFileSync(join(remote, 'Orch_r'), JSON.stringify({ name: 'Orch: r', machine: 'bench' }))
     writeFileSync(join(remote, 'Orch_x'), 'not json')

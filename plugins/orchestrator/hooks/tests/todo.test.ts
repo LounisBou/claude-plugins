@@ -182,7 +182,7 @@ test('add to the caller\'s own name records once and sends nothing', async () =>
 
 test('add to a session on another machine sends the message and says it is not recorded there', async () => {
   const remote = JSON.stringify({ name: 'Orch: elsewhere', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100, waiting: null, blocks: null, waiting_since: null, updated_at: new Date().toISOString(), machine: 'iznoserver', repo: null, prs: [], held: null })
-  const { dollar, files, sent } = world({ files: { [`${MODULE}/store/remote/Orch__elsewhere`]: remote } })
+  const { dollar, files, sent } = world({ files: { [`${MODULE}/store/remote-rows/Orch__elsewhere`]: remote } })
   const answered = await call(dollar, { action: 'add', words: 'rebase it', said_at: SAID, to: 'Orch: elsewhere [ref-3]' })
   expect(answered.isError).toBe(undefined)
   expect(answered.result).toContain('not recorded there')

@@ -38,7 +38,7 @@ import { answerAskedFromPane, askedAsEntry, clearFailed, closeRound, moveAsked, 
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow, type Fleet,
-  remoteKey, withRemote, isRemoteStale, homeOf, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS, UNREACHED_RETRY_MS,
+  remoteKey, withRemote, isRemoteStale, isDeadRow, REMOTE_ROWS_DIR, homeOf, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS, UNREACHED_RETRY_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLines, splitLines, seqOf, type QAck, type QEvent } from './remote-round.ts'
@@ -1914,7 +1914,7 @@ let shownPane: PaneMemory = freshPane()
 // directory the module writes in is listed at a session's start, which spawns nothing, and those
 // older than core's STALE_MS are removed in one process, none when there are none. The readers of
 // the store and of the round sweep their own directory at each read the same way.
-export const WRITTEN_DIRS = ['sessions', 'waits', 'gates', 'rows', 'answered', 'successors', 'remote']
+export const WRITTEN_DIRS = ['sessions', 'waits', 'gates', 'rows', 'answered', 'successors', REMOTE_ROWS_DIR]
 export async function sweepTemporaries($: Host<'env' | 'fs' | 'process'>): Promise<string[]> {
   const store = await storeOf($)
   const state = await dataDir($)
@@ -3751,14 +3751,14 @@ async function receiveWithdrawal($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pr
   return { consumed: 'coordinator: a remote withdrawal, applied' }
 }
 
-// The rows received from other machines, each checked again as it is read; a stale or
-// malformed one is removed, so the directory never outgrows the live set. A row met dead is read
-// again under the lock its writer takes (receiveRow), and removed only when it is still dead: a
-// sender's newer row landing between the first read and the removal, or a read that failed once,
+// The rows received from other machines, each checked again as it is read; only a dead one
+// (isDeadRow) is removed, and one this release cannot read stays, never returned. A row met not live
+// is read again under the lock its writer takes (receiveRow), and removed only when it is dead then:
+// a sender's newer row landing between the first read and the removal, or a read that failed once,
 // never loses a live row.
 const REMOTE_READ_CAP = 64
 export async function readRemoteRows($: Host<'clock' | 'env' | 'fs' | 'process'>): Promise<RemoteRow[]> {
-  const dir = `${await storeOf($)}/remote`
+  const dir = `${await storeOf($)}/${REMOTE_ROWS_DIR}`
   const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
   const rows: RemoteRow[] = []
   const now = Date.now()
@@ -3775,7 +3775,7 @@ export async function readRemoteRows($: Host<'clock' | 'env' | 'fs' | 'process'>
     const kept = await withLockOver(io, path, async () => {
       const text = await io.read(path)
       const again = live(text)
-      if (!again && text !== undefined) await io.run(removeArgv(path))
+      if (!again && text !== undefined && isDeadRow(text, now, REMOTE_STALE_AFTER_MS)) await io.run(removeArgv(path))
       return again
     }, { tries: 5 }).catch(() => null)
     if (kept) rows.push(kept)

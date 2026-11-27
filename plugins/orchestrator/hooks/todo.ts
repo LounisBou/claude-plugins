@@ -16,7 +16,7 @@ import {
 import { todoOpen, type DeclaredWait } from './stop-gate.ts'
 import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf, walkedName } from './supervision.ts'
 import { roleOf } from './session-name.ts'
-import { parseRemoteRow, ROW_MARKER } from './remote-row.ts'
+import { parseRemoteRow, REMOTE_ROWS_DIR, ROW_MARKER } from './remote-row.ts'
 import { dataDir, logLine, storeIo } from './module-io.ts'
 import { messageOf, type Host, type On, type Timer } from './host.ts'
 
@@ -114,13 +114,13 @@ const shown = (item: TodoItem): string => {
 async function onAnotherMachine($: Held, to: string): Promise<boolean> {
   const holder = holderOf(to)
   const store = await storeOf($)
-  for (const dir of ['sessions', 'remote']) {
+  for (const dir of ['sessions', REMOTE_ROWS_DIR]) {
     const entries = await $.fs.list(`${store}/${dir}`).catch(() => [])
     for (const entry of entries) {
       if (entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
       const text = String(await $.fs.read(`${store}/${dir}/${entry.name}`).catch(() => ''))
       const name = dir === 'sessions' ? parseSessionRow(text)?.name : parseRemoteRow(`${ROW_MARKER}${text}`)?.name
-      if (name && holderOf(name) === holder) return dir === 'remote'
+      if (name && holderOf(name) === holder) return dir === REMOTE_ROWS_DIR
     }
   }
   const coordinator = await coordinatorAddress($)

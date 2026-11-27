@@ -23,7 +23,7 @@
 // staleness rule and the pane's row shaper cross as plain imports from the
 // supervision domain.
 import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, runsLive, livePidsArgv, livePids, sessionKey, type SessionRow, type ProcessTable } from './supervision.ts'
-import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow } from './remote-row.ts'
+import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_ROWS_DIR, REMOTE_STALE_AFTER_MS, type RemoteRow } from './remote-row.ts'
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { recordsRegistryPath } from '../core/orchestration.ts'
@@ -85,7 +85,7 @@ async function readRows($: Held): Promise<Record<string, SessionRow>> {
 // file's own read of the store's remote directory, each checked again; the supervision
 // domain's reader removes the stale ones, this one only skips them.
 async function readRemote($: Held): Promise<RemoteRow[]> {
-  const dir = `${await moduleDir($)}/store/remote`
+  const dir = `${await moduleDir($)}/store/${REMOTE_ROWS_DIR}`
   const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
   const rows: RemoteRow[] = []
   for (const entry of entries.slice(0, 64)) {

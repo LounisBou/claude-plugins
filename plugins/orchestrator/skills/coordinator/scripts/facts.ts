@@ -9,6 +9,7 @@ import { setting } from '../../../core/paths.ts'
 import { parseQuota, planOfConfig, QUOTA_DIR, quotaLine, type Quota } from '../../../core/quota.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, repoOfOrigin } from '../../../hooks/pr-file-format.ts'
+import { REMOTE_ROWS_DIR } from '../../../hooks/remote-row.ts'
 import { dataOf, die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
 import { lostModuleLines } from './module-lost.ts'
 import { fieldsOf, readSleeping } from './sleeping.ts'
@@ -552,14 +553,14 @@ export function remoteRow(text: string): (Remote & { readonly at: number | undef
 
 /**
  * The rows the hooks module received from orchestrators on other machines, one JSON row per file
- * in store/remote under the module's directory. A row is kept while its updated_at is at most a
+ * in store/remote-rows under the module's directory. A row is kept while its updated_at is at most a
  * day old and no local session names it as title or orchestrator (local wins); a stale row is
  * skipped silently, since the module deletes it and this script never does. Its pull requests are
  * matched to a repository read here by its address without the host, and kept only when that
  * repository's open list has them; one in a repository not read here keeps branch « - ».
  */
 function remoteRows(ctx: Context, facts: Facts): void {
-  const store = join(moduleOf(ctx.env), 'store', 'remote')
+  const store = join(moduleOf(ctx.env), 'store', REMOTE_ROWS_DIR)
   if (!isDir(store)) return
   const now = Math.floor(ctx.now().getTime() / 1000)
   const names = new Set(facts.sessions.flatMap(s => [s.title, s.orch]))

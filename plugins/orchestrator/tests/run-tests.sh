@@ -12592,7 +12592,7 @@ SLCMD="$ROOT/commands/sleeping.md"
 # local session names and a temporary file are passed over; a malformed file is unread (exit 2).
 # Its pull requests join owners where the chain gives « unknown », and count as one more
 # orchestrator on a collision; a repository this machine did not read is said so.
-CRCFG="$WORK/coord-remote-config"; RREM="$CRCFG/claude-orchestrator/store/remote"
+CRCFG="$WORK/coord-remote-config"; RREM="$CRCFG/claude-orchestrator/store/remote-rows"
 mkdir -p "$RREM" "$CRCFG/claude-orchestrator/store/waits"
 RNOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z); ROLD=2020-01-01T00:00:00.000Z
 cat > "$RREM/Orch___far" <<EOF
@@ -12788,14 +12788,14 @@ check "round reads no temporary file beside the sessions files as a sender's" \
 # doing: its header names the machine its remote row says, and « sender gone » is left to a sender
 # with neither a row nor a session.
 RSTATE="$WORK/coord-remote"; RMOD="$WORK/coord-remote-module"
-mkdir -p "$RSTATE/round" "$RMOD/store/sessions" "$RMOD/store/remote"
+mkdir -p "$RSTATE/round" "$RMOD/store/sessions" "$RMOD/store/remote-rows"
 cp "$CS/pane.json" "$RSTATE/pane.json"
 for who in far lost; do
   jq -n --arg id "$who" '{id:$id, from:("Orch: " + $id), session:("s-" + $id), kind:"operator", since:"2026-10-18T10:01:00.000Z",
     blocks:"phase 3", question:"Ship it?", choices:[], recommendation:null, status:"open", at:"T", answer:null,
     origin:{machine:"bench-mac", address:"uds:/tmp/x.sock"}}' > "$RSTATE/round/$who.json"
 done
-jq -n '{name:"Orch: far", role:"orchestrator", machine:"bench-mac", updated_at:"2026-11-14T10:00:00.000Z"}' > "$RMOD/store/remote/Orch__far"
+jq -n '{name:"Orch: far", role:"orchestrator", machine:"bench-mac", updated_at:"2026-11-14T10:00:00.000Z"}' > "$RMOD/store/remote-rows/Orch__far"
 check "round names the machine of a sender on another machine whose remote row is stored, and says gone of one with no row" \
   "round far | operator | from Orch: far | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | remote on bench-mac|round lost | operator | from Orch: lost | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone" \
   "$(ORCHESTRATOR_STATE_DIR="$RSTATE" ORCHESTRATOR_MODULE_DIR="$RMOD" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round ' | paste -sd'|' -)"

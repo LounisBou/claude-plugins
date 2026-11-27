@@ -366,10 +366,10 @@ test('a marked delivery is consumed and written as a remote row; an unmarked one
   const marked = await receive(chains, fx.dollar, envelope(rowText(remote())))
   expect(typeof marked.result?.['consumed']).toBe('string')
   expect(marked.queued.length).toBe(0)
-  expect(JSON.parse(fx.files.get(`${STORE}/remote/Orch__far`)!).name).toBe('Orch: far')
+  expect(JSON.parse(fx.files.get(`${STORE}/remote-rows/Orch__far`)!).name).toBe('Orch: far')
   const bare = await receive(chains, fx.dollar, rowText(remote({ name: 'Orch: bare' })))
   expect(bare.queued.length).toBe(0)
-  expect(fx.files.has(`${STORE}/remote/Orch__bare`)).toBe(true)
+  expect(fx.files.has(`${STORE}/remote-rows/Orch__bare`)).toBe(true)
   const plain = await receive(chains, fx.dollar, envelope('a [module-row] mention inside a sentence'))
   expect(plain.queued).toEqual([envelope('a [module-row] mention inside a sentence')])
 })
@@ -381,8 +381,8 @@ test('a message of several marked lines is read line by line, each consumed and 
   const { result, queued } = await receive(chains, fx.dollar, envelope(batch, 'Orch: one'))
   expect(typeof result?.['consumed']).toBe('string')
   expect(queued.length).toBe(0)
-  expect(JSON.parse(fx.files.get(`${STORE}/remote/Orch__one`)!).name).toBe('Orch: one')
-  expect(JSON.parse(fx.files.get(`${STORE}/remote/Orch__two`)!).context_percent).toBe(30)
+  expect(JSON.parse(fx.files.get(`${STORE}/remote-rows/Orch__one`)!).name).toBe('Orch: one')
+  expect(JSON.parse(fx.files.get(`${STORE}/remote-rows/Orch__two`)!).context_percent).toBe(30)
 })
 
 test('a message that mixes a marked line with other text is no batch: refused whole, nothing written', async () => {
@@ -392,7 +392,7 @@ test('a message that mixes a marked line with other text is no batch: refused wh
   const { result, queued } = await receive(chains, fx.dollar, envelope(mixed, 'Orch: one'))
   expect(typeof result?.['consumed']).toBe('string')
   expect(queued.length).toBe(0)
-  expect(fx.files.has(`${STORE}/remote/Orch__one`)).toBe(false)
+  expect(fx.files.has(`${STORE}/remote-rows/Orch__one`)).toBe(false)
 })
 
 for (const [label, body] of [
@@ -410,7 +410,7 @@ for (const [label, body] of [
     const { result, queued } = await receive(chains, fx.dollar, envelope(body))
     expect(typeof result?.['consumed']).toBe('string')
     expect(queued.length).toBe(0)
-    expect([...fx.files.keys()].some(p => p.startsWith(`${STORE}/remote/`))).toBe(false)
+    expect([...fx.files.keys()].some(p => p.startsWith(`${STORE}/remote-rows/`))).toBe(false)
     expect(fx.logged.some(l => l.includes('receive: a marked row was refused'))).toBe(true)
   })
 }
@@ -444,14 +444,55 @@ test('a received row is read back from the store, and a stale one is swept as it
   await receive(chains, fx.dollar, envelope(rowText(remote())))
   const read = await readRemoteRows(fx.dollar)
   expect(read.map(r => r.name)).toEqual(['Orch: far'])
-  fx.files.set(`${STORE}/remote/Orch__old`, JSON.stringify(remote({ name: 'Orch: old', updated_at: '2020-01-01T00:00:00.000Z' })))
+  fx.files.set(`${STORE}/remote-rows/Orch__old`, JSON.stringify(remote({ name: 'Orch: old', updated_at: '2020-01-01T00:00:00.000Z' })))
   expect((await readRemoteRows(fx.dollar)).map(r => r.name)).toEqual(['Orch: far'])
-  expect(fx.files.has(`${STORE}/remote/Orch__old`)).toBe(false)
+  expect(fx.files.has(`${STORE}/remote-rows/Orch__old`)).toBe(false)
+})
+
+// `store/remote/` is what the earlier releases read, removing a row they cannot read: a received row
+// is kept where none of them looks, and that directory is read no more.
+test('a received row is written outside the directory the earlier releases read, and that one is read no more', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await receive(chains, fx.dollar, envelope(rowText(remote())))
+  expect([...fx.files.keys()].filter(path => path.startsWith(`${STORE}/remote/`))).toEqual([])
+  expect(fx.files.has(`${STORE}/remote-rows/Orch__far`)).toBe(true)
+  const earlier = `${STORE}/remote/Orch__other`
+  fx.files.set(earlier, JSON.stringify(remote({ name: 'Orch: other' })))
+  expect((await readRemoteRows(fx.dollar)).map(r => r.name)).toEqual(['Orch: far'])
+  expect(fx.files.has(earlier)).toBe(true)
+})
+
+// The store is shared by every session of the machine, each running the release it loaded: a row a
+// later release wrote is one this release cannot read, and it is another reader's live row.
+for (const [label, text] of [
+  ['a field this release does not know', JSON.stringify({ ...remote(), added_later: 1 })],
+  ['no JSON', '{"name":"Orch: far",'],
+  ['no object', 'null'],
+  ['no update time', JSON.stringify({ name: 'Orch: far' })],
+  ['an update time that is no time', JSON.stringify({ name: 'Orch: far', updated_at: 'soon' })],
+] as const) {
+  test(`a stored row this release cannot read (${label}) stays in the store and is not drawn`, async () => {
+    const fx = fake()
+    const path = `${STORE}/remote-rows/Orch__far`
+    fx.files.set(path, text)
+    expect(await readRemoteRows(fx.dollar)).toEqual([])
+    expect(fx.files.get(path)).toBe(text)
+  })
+}
+
+test('a stored row this release cannot read is swept once its update time is past a day', async () => {
+  const fx = fake()
+  const path = `${STORE}/remote-rows/Orch__far`
+  const updated = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()
+  fx.files.set(path, JSON.stringify({ ...remote({ updated_at: updated }), added_later: 1 }))
+  expect(await readRemoteRows(fx.dollar)).toEqual([])
+  expect(fx.files.has(path)).toBe(false)
 })
 
 test('a row written again between its stale read and the sweep is kept, never removed', async () => {
   const fx = fake()
-  const path = `${STORE}/remote/Orch__far`
+  const path = `${STORE}/remote-rows/Orch__far`
   fx.files.set(path, JSON.stringify(remote({ updated_at: '2020-01-01T00:00:00.000Z' })))
   const fresh = JSON.stringify(remote({ context_percent: 40 }))
   const read = fx.dollar.fs.read
@@ -472,7 +513,7 @@ test('a row written again between its stale read and the sweep is kept, never re
 // sweep that took no lock would read the stale row again at once and remove it.
 test('a row its writer holds locked during the sweep is kept: the sweep waits for the lock and reads the newer row', async () => {
   const fx = fake()
-  const path = `${STORE}/remote/Orch__far`
+  const path = `${STORE}/remote-rows/Orch__far`
   const lock = `${path}.lock`
   fx.files.set(path, JSON.stringify(remote({ updated_at: '2020-01-01T00:00:00.000Z' })))
   fx.files.set(lock, '1\n')
@@ -498,7 +539,7 @@ test('a row its writer holds locked during the sweep is kept: the sweep waits fo
 
 test('a live row whose read fails once is not swept', async () => {
   const fx = fake()
-  const path = `${STORE}/remote/Orch__far`
+  const path = `${STORE}/remote-rows/Orch__far`
   fx.files.set(path, JSON.stringify(remote()))
   const read = fx.dollar.fs.read
   let failed = false
@@ -513,7 +554,7 @@ test('a live row whose read fails once is not swept', async () => {
 test('a received row is written under the lock the sweep takes, and the lock is no row', async () => {
   const chains = mounted()
   const fx = fake()
-  const path = `${STORE}/remote/Orch__far`
+  const path = `${STORE}/remote-rows/Orch__far`
   fx.files.set(`${path}.lock`, '1\n')
   fx.mtimes.set(`${path}.lock`, Date.now())
   const run = fx.dollar.process.run
@@ -535,7 +576,7 @@ test('a received row is written under the lock the sweep takes, and the lock is 
 test('a received row whose lock stays held is consumed, with one log line, and never reaches the model', async () => {
   const chains = mounted()
   const fx = fake()
-  const path = `${STORE}/remote/Orch__far`
+  const path = `${STORE}/remote-rows/Orch__far`
   // Another writer holds the row's lock past every try.
   fx.files.set(`${path}.lock`, '1\n')
   fx.mtimes.set(`${path}.lock`, Date.now())
@@ -559,11 +600,11 @@ test('a remote orchestrator waiting on the operator stays drawn for hours; past 
   const hour = 60 * 60 * 1000
   const fx = fake()
   const waiting = { waiting: 'operator' as const, blocks: 'phase 3', waiting_since: new Date(Date.now() - 3 * hour).toISOString() }
-  fx.files.set(`${STORE}/remote/Orch__waits`, JSON.stringify(remote({ name: 'Orch: waits', ...waiting, updated_at: new Date(Date.now() - 3 * hour).toISOString() })))
-  fx.files.set(`${STORE}/remote/Orch__gone`, JSON.stringify(remote({ name: 'Orch: gone', ...waiting, updated_at: new Date(Date.now() - 25 * hour).toISOString() })))
+  fx.files.set(`${STORE}/remote-rows/Orch__waits`, JSON.stringify(remote({ name: 'Orch: waits', ...waiting, updated_at: new Date(Date.now() - 3 * hour).toISOString() })))
+  fx.files.set(`${STORE}/remote-rows/Orch__gone`, JSON.stringify(remote({ name: 'Orch: gone', ...waiting, updated_at: new Date(Date.now() - 25 * hour).toISOString() })))
   const read = await readRemoteRows(fx.dollar)
   expect(read.map(r => r.name)).toEqual(['Orch: waits'])
-  expect(fx.files.has(`${STORE}/remote/Orch__gone`)).toBe(false)
+  expect(fx.files.has(`${STORE}/remote-rows/Orch__gone`)).toBe(false)
   const rows = paneRows(withRemote({}, read, Date.now(), REMOTE_STALE_AFTER_MS))
   expect(rows.length).toBe(1)
   expect(rows[0]!.label).toContain('Orch: waits · orchestrator · remote bench-mac')
@@ -758,9 +799,9 @@ test('a received row keeps its repository and pull requests, and an old row is s
   const fx = fake()
   await receive(chains, fx.dollar, envelope(rowText(remote({ name: 'Orch: far', repo: 'acme/app', prs: ['acme/app#7'] }))))
   await receive(chains, fx.dollar, envelope(oldRowText(remote({ name: 'Orch: old' }))))
-  const stored = JSON.parse(fx.files.get(`${STORE}/remote/Orch__far`)!)
+  const stored = JSON.parse(fx.files.get(`${STORE}/remote-rows/Orch__far`)!)
   expect([stored.repo, stored.prs]).toEqual(['acme/app', ['acme/app#7']])
-  const old = JSON.parse(fx.files.get(`${STORE}/remote/Orch__old`)!)
+  const old = JSON.parse(fx.files.get(`${STORE}/remote-rows/Orch__old`)!)
   expect([old.repo, old.prs]).toEqual([null, []])
 })
 

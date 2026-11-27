@@ -3,7 +3,7 @@
 // and /orchestrator:status read the local store alone, so an orchestrator whose session
 // runs elsewhere never showed. Its module sends the row as one marked line, and the
 // coordinator's module takes that line out of the delivery before any model reads it:
-// the row lands in the coordinator's store (`remote/<name>`), and no turn on either side
+// the row lands in the coordinator's store (`remote-rows/<name>`), and no turn on either side
 // spends a token on it. Sent at a turn's end, and again by a timer while it was not delivered, only
 // when what the pane shows changed since the last send — the wait, the fill crossing a band, the
 // pull requests, the questions held — in the one message that turn's end sends (remote-round.ts joinLines). Pure on purpose: the
@@ -354,9 +354,14 @@ function sameKeys(keys: readonly string[], fields: readonly string[]): boolean {
   return keys.length === fields.length && fields.every(f => keys.includes(f))
 }
 
-// A remote row's file under the store: `remote/<the name, sanitised>`.
+// The directory of the store the remote rows are kept in. Every session of a machine shares the store
+// and runs the release it loaded, and the releases that read `remote/` remove a row they cannot read:
+// none of them reads this one.
+export const REMOTE_ROWS_DIR = 'remote-rows'
+
+// A remote row's file under the store: `remote-rows/<the name, sanitised>`.
 export function remoteKey(name: string): string {
-  return `remote/${name.replace(/[^A-Za-z0-9._-]/g, '_')}`
+  return `${REMOTE_ROWS_DIR}/${name.replace(/[^A-Za-z0-9._-]/g, '_')}`
 }
 
 // A remote row as a store row the pane draws: no pid, so it is judged by its stamp alone
@@ -387,6 +392,19 @@ export function withRemote(local: Record<string, SessionRow>, remote: readonly R
 export function isRemoteStale(row: RemoteRow, now: number, staleAfterMs: number): boolean {
   const at = Date.parse(row.updated_at)
   return !Number.isFinite(at) || now - at > staleAfterMs
+}
+
+// Whether the sweep removes a stored row, by its file's text: only one whose update time is read and
+// past the stale bound. A row this release cannot read may be another release's live one: it stays.
+export function isDeadRow(text: string, now: number, staleAfterMs: number): boolean {
+  let stored: unknown
+  try {
+    stored = JSON.parse(text)
+  } catch {
+    return false
+  }
+  const updated = (stored as { updated_at?: unknown } | null)?.updated_at
+  return typeof updated === 'string' && now - Date.parse(updated) > staleAfterMs
 }
 
 // The coordinator a session learnt from a peer delivery (`store/coordinator-learnt`): the

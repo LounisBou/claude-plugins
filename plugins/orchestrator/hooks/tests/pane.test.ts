@@ -2506,7 +2506,7 @@ test('a dim rule line, the pane\'s width wide, stands between the questions and 
 
 // --- a remote orchestrator's question, drawn and answered from the pane -----------------------
 
-const REMOTE_DIR = `${HOME}/.claude/claude-orchestrator/store/remote`
+const REMOTE_DIR = `${HOME}/.claude/claude-orchestrator/store/remote-rows`
 const FAR = 'uds:/tmp/cc-socks/far.sock'
 const remoteEntry = (over: Partial<RoundEntry> = {}) => entry('Orch: belt', '2026-10-30T10:03:00.000Z', {
   session: 's-far', choices: CHOICES, recommendation: 'A', origin: { machine: 'far', address: FAR }, ...over,
@@ -3415,7 +3415,7 @@ test('a row with no chain owner counts no agent of a tty whose chain names two o
 // A remote row with neither figure: each gap is logged once, naming the machine, however often the pane draws.
 test('a remote row with no account and no count logs each gap once, naming its machine, however often the pane draws', async () => {
   const pane = fleet({}, {})
-  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__r`, JSON.stringify({
+  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote-rows/Orch__r`, JSON.stringify({
     name: 'Orch: r', role: 'orchestrator', context_tokens: 47000, context_percent: 30, window: 1000000,
     waiting: null, blocks: null, waiting_since: null, updated_at: AGO(), machine: 'mini',
     repo: null, prs: [], held: null,
@@ -3431,7 +3431,7 @@ test('a remote row with no account and no count logs each gap once, naming its m
 test('a remote row draws the account and the agent count its sender sent', async () => {
   const pane = fleet({}, {})
   // The row as its sender sends it, read back from the store's remote directory.
-  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__r`, JSON.stringify({
+  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote-rows/Orch__r`, JSON.stringify({
     name: 'Orch: r', role: 'orchestrator', context_tokens: 47000, context_percent: 30, window: 1000000,
     waiting: null, blocks: null, waiting_since: null, updated_at: AGO(), machine: 'mini',
     repo: null, prs: [], held: null, account: 'plan 2', agents: 2,
@@ -3546,7 +3546,7 @@ test('the coordinator\'s wake opens a remote orchestrator\'s view once, and a sy
   const fx = coordinatorSession()
   const state = `${HOME}/.claude/claude-orchestrator`
   fx.files.set(`${state}/remote-machines.json`, JSON.stringify({ version: 1, machines: { iznoserver: 'izno' } }))
-  fx.files.set(`${state}/store/remote/Orch__far`, JSON.stringify({
+  fx.files.set(`${state}/store/remote-rows/Orch__far`, JSON.stringify({
     name: 'Orch: far', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100, waiting: null, blocks: null,
     waiting_since: null, updated_at: new Date().toISOString(), machine: 'IznoServer', repo: null, prs: [], held: null, account: null, agents: null, home: 'orch-0a0b0c0d',
   }) + '\n')
