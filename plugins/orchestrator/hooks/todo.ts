@@ -14,7 +14,7 @@ import {
   isImageList, waitTodo, TODO_CONTRACT, TODO_IMAGES_MAX, type DueTodo, type TodoItem,
 } from './todo-format.ts'
 import { todoOpen, type DeclaredWait } from './stop-gate.ts'
-import { coordinatorAddress, parseSessionRow, sessionKey, sessionRole, storeOf, walkedName } from './supervision.ts'
+import { coordinatorAddress, parseSessionRow, readOldRemoteRows, sessionKey, sessionRole, storeOf, walkedName } from './supervision.ts'
 import { roleOf } from './session-name.ts'
 import { parseRemoteRow, REMOTE_ROWS_DIR, ROW_MARKER } from './remote-row.ts'
 import { dataDir, logLine, storeIo } from './module-io.ts'
@@ -114,8 +114,10 @@ const shown = (item: TodoItem): string => {
 async function onAnotherMachine($: Held, to: string): Promise<boolean> {
   const holder = holderOf(to)
   const store = await storeOf($)
+  let remote: string[] = []
   for (const dir of ['sessions', REMOTE_ROWS_DIR]) {
     const entries = await $.fs.list(`${store}/${dir}`).catch(() => [])
+    if (dir === REMOTE_ROWS_DIR) remote = entries.map(entry => entry.name)
     for (const entry of entries) {
       if (entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
       const text = String(await $.fs.read(`${store}/${dir}/${entry.name}`).catch(() => ''))
@@ -123,6 +125,7 @@ async function onAnotherMachine($: Held, to: string): Promise<boolean> {
       if (name && holderOf(name) === holder) return dir === REMOTE_ROWS_DIR
     }
   }
+  if ((await readOldRemoteRows($, remote)).some(row => holderOf(row.name) === holder)) return true
   const coordinator = await coordinatorAddress($)
   return coordinator !== null && !coordinator.local && holderOf(coordinator.name) === holder
 }

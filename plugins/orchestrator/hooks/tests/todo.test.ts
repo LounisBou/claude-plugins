@@ -191,6 +191,19 @@ test('add to a session on another machine sends the message and says it is not r
   expect([...files.keys()].filter(path => path.startsWith(LISTS))).toEqual([])
 })
 
+test('add to a session whose row is still in the earlier releases\' directory is only sent, and a row a day old there names no machine', async () => {
+  const at = (updated_at: string) => JSON.stringify({ name: 'Orch: elsewhere', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100, waiting: null, blocks: null, waiting_since: null, updated_at, machine: 'iznoserver', repo: null, prs: [], held: null })
+  const path = `${MODULE}/store/remote/Orch__elsewhere`
+  const { dollar, files, sent } = world({ files: { [path]: at(new Date().toISOString()) } })
+  const answered = await call(dollar, { action: 'add', words: 'rebase it', said_at: SAID, to: 'Orch: elsewhere [ref-3]' })
+  expect(answered.result).toContain('not recorded there')
+  expect(sent).toHaveLength(1)
+  expect([...files.keys()].filter(file => file.startsWith(LISTS))).toEqual([])
+  const dead = world({ files: { [path]: at('2020-01-01T00:00:00.000Z') } })
+  await call(dead.dollar, { action: 'add', words: 'rebase it', said_at: SAID, to: 'Orch: elsewhere' })
+  expect(listOf(dead.files, 'Orch: elsewhere')).toHaveLength(1)
+})
+
 test('add to a coordinator whose address a peer taught, on another machine, is also only sent', async () => {
   const learnt = JSON.stringify({ name: 'Coord: far', from: 'bridge:session_01', at: 'T' })
   const { dollar, files, sent } = world({ files: { [`${MODULE}/store/coordinator-learnt`]: learnt + '\n' } })

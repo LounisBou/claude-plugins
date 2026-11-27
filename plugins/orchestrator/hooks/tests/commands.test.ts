@@ -413,6 +413,17 @@ test('status lists the orchestrator on another machine whose row this one receiv
   expect(await status.handler(fx.dollar, { command: 'orchestrator:orchestrator-status', args: '' })).toMatchObject({ text: expect.stringContaining('Orch: far') })
 })
 
+test('status lists the orchestrator whose row is still in the earlier releases\' directory', async () => {
+  const { registrations } = mounted()
+  const status = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-status')!
+  const fx = fakeDollar()
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__earlier`, JSON.stringify({
+    name: 'Orch: earlier', role: 'orchestrator', context_tokens: 120000, context_percent: 12, window: 1000000,
+    waiting: null, blocks: null, waiting_since: null, updated_at: new Date().toISOString(), machine: 'bench-mac',
+  }) + '\n')
+  expect(await status.handler(fx.dollar, { command: 'orchestrator:orchestrator-status', args: '' })).toMatchObject({ text: expect.stringContaining('Orch: earlier') })
+})
+
 test('status reads no temporary file as a row: a write in flight is no second session', async () => {
   const { registrations } = mounted()
   const status = registrations.find(r => r.matcher?.['command'] === 'orchestrator:orchestrator-status')!

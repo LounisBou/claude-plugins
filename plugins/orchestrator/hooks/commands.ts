@@ -22,7 +22,7 @@
 // spells its own store read and its own record read, while the row parser, the
 // staleness rule and the pane's row shaper cross as plain imports from the
 // supervision domain.
-import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, runsLive, livePidsArgv, livePids, sessionKey, type SessionRow, type ProcessTable } from './supervision.ts'
+import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, runsLive, livePidsArgv, livePids, sessionKey, readOldRemoteRows, type SessionRow, type ProcessTable } from './supervision.ts'
 import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_ROWS_DIR, REMOTE_STALE_AFTER_MS, type RemoteRow } from './remote-row.ts'
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
@@ -93,7 +93,7 @@ async function readRemote($: Held): Promise<RemoteRow[]> {
     const row = parseRemoteRow(`${ROW_MARKER}${String(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))}`)
     if (row) rows.push(row)
   }
-  return rows
+  return [...rows, ...await readOldRemoteRows($, entries.map(entry => entry.name))]
 }
 
 // One line of the sessions table: the four columns, and what follows them unaligned

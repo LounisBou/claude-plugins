@@ -10,7 +10,7 @@ import { ROUND_DIR } from '../../../core/orchestration.ts'
 import { setting } from '../../../core/paths.ts'
 import { isTemporary } from '../../../core/store-io.ts'
 import { update } from '../../../core/store.ts'
-import { REMOTE_ROWS_DIR } from '../../../hooks/remote-row.ts'
+import { OLD_REMOTE_ROWS_DIR, oldRemoteRow, REMOTE_ROWS_DIR } from '../../../hooks/remote-row.ts'
 import { ArchiveError, archiveSettled, DAY_MS } from '../../orchestrator/scripts/lib/round-archive.ts'
 import { dataOf, die, moduleOf, say, type Context } from './context.ts'
 import { recordedCoordinator } from './record.ts'
@@ -188,13 +188,27 @@ function liveSessions(module: string): Set<string> {
 }
 
 /** The machine each remote row of the module's store names, by its orchestrator's name. */
-function remoteMachines(module: string): Map<string, string> {
+function remoteMachines(ctx: Context, module: string): Map<string, string> {
   const machines = new Map<string, string>()
   const store = join(module, 'store', REMOTE_ROWS_DIR)
-  for (const name of namesOf(store)) {
+  const current = namesOf(store)
+  for (const name of current) {
     if (name.includes('.tmp-') || !isFileAt(join(store, name))) continue
     const row = readJson(join(store, name))
     if (isObject(row) && typeof row['name'] === 'string' && typeof row['machine'] === 'string') machines.set(row['name'], row['machine'])
+  }
+  const old = join(module, 'store', OLD_REMOTE_ROWS_DIR)
+  const held = new Set(current)
+  for (const name of namesOf(old)) {
+    if (!isFileAt(join(old, name))) continue
+    let text: string
+    try {
+      text = readFileSync(join(old, name), 'utf8')
+    } catch {
+      continue
+    }
+    const row = oldRemoteRow(name, text, held, ctx.now().getTime(), line => say(ctx, line))
+    if (row) machines.set(row.name, row.machine)
   }
   return machines
 }
@@ -328,7 +342,7 @@ export function round(ctx: Context, args: readonly string[]): number {
   // One read of the round for the print and its record: an entry opened between two reads would
   // be recorded as shown though it was never printed.
   const entries = roundEntries(dir)
-  const view = { pane: paneOpen(ctx, state), text: full, live: liveSessions(module), remote: remoteMachines(module) }
+  const view = { pane: paneOpen(ctx, state), text: full, live: liveSessions(module), remote: remoteMachines(ctx, module) }
   // The settled entries are counted in one line, and printed only on --all.
   const settled = (['answered', 'withdrawn'] as const)
     .map(status => [status, entries.filter(e => e['status'] === status).length] as const)
@@ -383,7 +397,7 @@ function decideRound(ctx: Context, me: string): number {
   }
   if (roleOf(me) !== 'orchestrator') die(`round: --decide with no coordinator live runs in an Orch: session, and ${me} is not one`)
   const module = moduleOf(ctx.env)
-  const view = { pane: paneOpen(ctx, state), text: true, live: liveSessions(module), remote: remoteMachines(module) }
+  const view = { pane: paneOpen(ctx, state), text: true, live: liveSessions(module), remote: remoteMachines(ctx, module) }
   ctx.out(`decide: machine | ${open.length} open — no coordinator is live: ${ROUND_LINE}, each answer closed by settle (answered-here) only, which no other outcome of yours passes`)
   for (const entry of open) entryLines(entry, view).forEach(line => ctx.out(line))
   return 0

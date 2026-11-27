@@ -10,6 +10,7 @@
 // handlers hold the $ (supervision.ts) and pass their reads in here.
 import { roleOf } from './session-name.ts'
 import { watchNumberOf } from '../core/orchestration.ts'
+import { isTemporary } from '../core/store-io.ts'
 import type { SessionRow } from './supervision.ts'
 import { confirmsTakeover, type HeldQuestion, type WaitKind } from './relay.ts'
 
@@ -358,6 +359,21 @@ function sameKeys(keys: readonly string[], fields: readonly string[]): boolean {
 // and runs the release it loaded, and the releases that read `remote/` remove a row they cannot read:
 // none of them reads this one.
 export const REMOTE_ROWS_DIR = 'remote-rows'
+
+// The directory the earlier releases write. Read, never changed, for what was received before the switch
+// or by a coordinator still on such a release. Goes once none is left.
+export const OLD_REMOTE_ROWS_DIR = 'remote'
+
+// The row every reader takes from a file of that directory: none when `current`, the file names of
+// `remote-rows/`, holds its name, nor for a write in flight, a row not read or one past the stale
+// bound. `used` says each row taken.
+export function oldRemoteRow(file: string, text: string, current: ReadonlySet<string>, now: number, used: (line: string) => void): RemoteRow | null {
+  if (current.has(file) || isTemporary(file)) return null
+  const row = parseRemoteRow(`${ROW_MARKER}${text}`)
+  if (!row || isRemoteStale(row, now, REMOTE_STALE_AFTER_MS)) return null
+  used(`the remote row of ${row.name} is read from store/${OLD_REMOTE_ROWS_DIR}/, which an earlier release writes`)
+  return row
+}
 
 // A remote row's file under the store: `remote-rows/<the name, sanitised>`.
 export function remoteKey(name: string): string {

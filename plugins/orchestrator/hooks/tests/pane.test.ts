@@ -2519,6 +2519,23 @@ function remoteRow(fx: Fx, name: string, machine: string, updatedAt = new Date()
   }) + '\n')
 }
 
+// What a coordinator stored before the switch, or stores while it still runs an earlier release.
+test('a question from another machine whose sender\'s row is only in the earlier releases\' directory is drawn: pending, being delivered, not delivered', async () => {
+  const replica = askedObject('s-far', 'Orch: belt', '2026-10-30T10:04:00.000Z', { origin: { machine: 'far', address: FAR } })
+  const { fx, render } = await askedPane([replica])
+  const drawnNow = async () => texts(await render())
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__belt`, JSON.stringify({
+    name: 'Orch: belt', role: 'orchestrator', context_tokens: 1, context_percent: 30, window: 100, waiting: 'operator', blocks: 'phase 3',
+    waiting_since: '2026-10-30T10:03:00.000Z', updated_at: new Date().toISOString(), machine: 'far', repo: null, prs: [],
+  }) + '\n')
+  expect(await drawnNow()).toContain('Questions for you — 1 pending')
+  const answered = { ...replica, status: 'answered', answer: { text: 'A : acme/app#1 first', by: 'pane', at: '2026-10-30T10:05:00.000Z', settler: 'Coord: main' } }
+  fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'sent', at: '2026-10-30T10:05:00.000Z', attempts: 1 } }) + '\n')
+  expect(await drawnNow()).toContain('being delivered: the answer to Orch: belt on far (blocks: acme/app#1) — sent 1 of 3, not acknowledged yet')
+  fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'failed', at: '2026-10-30T10:05:00.000Z', attempts: 1, reason: 'no answer' } }) + '\n')
+  expect(await drawnNow()).toContain('not delivered: no answer — the answer to Orch: belt on far (blocks: acme/app#1)')
+})
+
 test('a replica of a question asked with ask on another machine is drawn only while a live remote row of its asker was measured on that machine', async () => {
   const replica = askedObject('s-far', 'Orch: belt', '2026-10-30T10:04:00.000Z', { origin: { machine: 'far', address: FAR } })
   const { fx, render } = await askedPane([replica])

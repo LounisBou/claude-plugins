@@ -450,8 +450,8 @@ test('a received row is read back from the store, and a stale one is swept as it
 })
 
 // `store/remote/` is what the earlier releases read, removing a row they cannot read: a received row
-// is kept where none of them looks, and that directory is read no more.
-test('a received row is written outside the directory the earlier releases read, and that one is read no more', async () => {
+// is kept where none of them looks. That directory is still read, never changed, for what they hold.
+test('a received row is written outside the directory the earlier releases read, and that one is only read', async () => {
   const chains = mounted()
   const fx = fake()
   await receive(chains, fx.dollar, envelope(rowText(remote())))
@@ -459,8 +459,36 @@ test('a received row is written outside the directory the earlier releases read,
   expect(fx.files.has(`${STORE}/remote-rows/Orch__far`)).toBe(true)
   const earlier = `${STORE}/remote/Orch__other`
   fx.files.set(earlier, JSON.stringify(remote({ name: 'Orch: other' })))
-  expect((await readRemoteRows(fx.dollar)).map(r => r.name)).toEqual(['Orch: far'])
+  expect((await readRemoteRows(fx.dollar)).map(r => r.name)).toEqual(['Orch: far', 'Orch: other'])
   expect(fx.files.has(earlier)).toBe(true)
+})
+
+test('the earlier releases\' directory gives the rows of the names the new one lacks, within a day, and is never changed', async () => {
+  const fx = fake()
+  const hour = 60 * 60 * 1000
+  const row = (name: string, over: Partial<RemoteRow> = {}) => JSON.stringify(remote({ name, ...over }))
+  const old = new Map([
+    ['Orch__cut', row('Orch: cut', { updated_at: new Date(Date.now() - 23 * hour).toISOString() })],
+    ['Orch__both', row('Orch: both', { context_percent: 90 })],
+    // The new directory holds this name's file, unread by this release: the old row never stands in for it.
+    ['Orch__newer', row('Orch: newer')],
+    ['Orch__day', row('Orch: day', { updated_at: new Date(Date.now() - 25 * hour).toISOString() })],
+    ['Orch__torn', '{"name":'],
+    ['Orch__half.tmp-1', row('Orch: half')],
+  ])
+  for (const [file, text] of old) fx.files.set(`${STORE}/remote/${file}`, text)
+  fx.files.set(`${STORE}/remote-rows/Orch__both`, row('Orch: both', { context_percent: 40 }))
+  fx.files.set(`${STORE}/remote-rows/Orch__newer`, JSON.stringify({ ...remote({ name: 'Orch: newer' }), added_later: 1 }))
+  const ran: string[] = []
+  const run = fx.dollar.process.run
+  fx.dollar.process.run = async (argv: readonly string[]) => { ran.push(argv.join(' ')); return run(argv) }
+  for (let read = 0; read < 2; read++) {
+    expect((await readRemoteRows(fx.dollar)).map(r => [r.name, r.context_percent])).toEqual([['Orch: both', 40], ['Orch: cut', 12]])
+  }
+  for (const [file, text] of old) expect(fx.files.get(`${STORE}/remote/${file}`)).toBe(text)
+  expect(ran.filter(line => line.includes(`${STORE}/remote/`))).toEqual([])
+  // One line for the row taken, however often it is read.
+  expect(fx.logged.filter(l => l.includes('is read from store/remote/')).map(l => l.includes('Orch: cut'))).toEqual([true])
 })
 
 // The store is shared by every session of the machine, each running the release it loaded: a row a
@@ -506,6 +534,24 @@ test('a row written again between its stale read and the sweep is kept, never re
   const rows = await readRemoteRows(fx.dollar)
   expect(fx.files.get(path)).toBe(fresh)
   expect(rows.map(r => r.context_percent)).toEqual([40])
+})
+
+// The sweep judges the text it reads under the lock: what it first read may be another release's row by then.
+test('a live row this release cannot read, landing over a stale one before the sweep, is kept', async () => {
+  const fx = fake()
+  const path = `${STORE}/remote-rows/Orch__far`
+  fx.files.set(path, JSON.stringify(remote({ updated_at: '2020-01-01T00:00:00.000Z' })))
+  const later = JSON.stringify({ ...remote(), added_later: 1 })
+  const read = fx.dollar.fs.read
+  let landed = false
+  fx.dollar.fs.read = async (p: string) => {
+    const text = await read(p)
+    if (p === path && !landed) { landed = true; fx.files.set(path, later) }
+    return text
+  }
+  expect(await readRemoteRows(fx.dollar)).toEqual([])
+  expect(landed).toBe(true)
+  expect(fx.files.get(path)).toBe(later)
 })
 
 // The writer holds the row's lock while the sweep meets the row stale: the sweep waits for that

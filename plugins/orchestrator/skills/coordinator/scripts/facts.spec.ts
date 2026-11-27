@@ -393,6 +393,34 @@ describe('facts', () => {
     assert.ok(!existsSync(join(f.state, 'prs.wanted')))
   })
 
+  it('shows the rows of the earlier releases\' directory for the names the new one lacks, said and never removed', () => {
+    const { f } = bench()
+    const store = join(f.ctx.env['ORCHESTRATOR_MODULE_DIR'] ?? '', 'store')
+    const put = (sub: string, name: string, text: string) => {
+      mkdirSync(join(store, sub), { recursive: true })
+      writeFileSync(join(store, sub, name), text)
+    }
+    const fresh = '2026-10-18T10:00:00.000Z'
+    const row = (name: string, machine: string, updated_at = fresh) => JSON.stringify({
+      name, role: 'orchestrator', context_tokens: 5, context_percent: 1, window: 100, waiting: null, blocks: null, waiting_since: null, updated_at, machine,
+    })
+    put('remote', 'Orch__cut', row('Orch: cut', 'bench'))
+    put('remote', 'Orch__both', row('Orch: both', 'earlier'))
+    put('remote', 'Orch__day', row('Orch: day', 'bench', '2026-10-17T09:00:00.000Z'))
+    put('remote', 'Orch__torn', 'not json')
+    const remoteLines = () => f.out.filter(l => /^(remote|unread remote)/.test(l)).map(l => l.split(' | ').slice(0, 2).join(' | '))
+    // At the switch the new directory does not exist yet.
+    run(f, 'facts')
+    assert.deepEqual(remoteLines(), ['remote Orch: both | on earlier', 'remote Orch: cut | on bench'])
+    f.out.length = 0
+    f.err.length = 0
+    put('remote-rows', 'Orch__both', row('Orch: both', 'now'))
+    run(f, 'facts')
+    assert.deepEqual(remoteLines(), ['remote Orch: both | on now', 'remote Orch: cut | on bench'])
+    assert.deepEqual(f.err.filter(l => l.includes('store/remote/')), ['coordinator: the remote row of Orch: cut is read from store/remote/, which an earlier release writes'])
+    for (const name of ['Orch__cut', 'Orch__both', 'Orch__day', 'Orch__torn']) assert.ok(existsSync(join(store, 'remote', name)))
+  })
+
   it('shows the live waits, the unattended lines and the fresh remote rows', () => {
     const { f } = bench()
     const module = f.ctx.env['ORCHESTRATOR_MODULE_DIR'] ?? ''

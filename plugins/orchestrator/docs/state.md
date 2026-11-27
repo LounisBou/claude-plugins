@@ -35,6 +35,7 @@ Python launcher.
 | `store/sessions/<id>` | module | the session's own hooks (measure, usage); any reader removes a dead row | one writer, one rename |
 | `store/gates/<id>`, `store/rows/<id>`, `store/answered/<id>`, `store/successors/<id>` | module | the session's own hooks | one writer, one rename |
 | `store/remote-rows/<name>` | module | the receiving session; any reader removes a row whose update time is read and past a day, and leaves one it cannot read | one rename under `<name>.lock`; a reader removes a row met stale only after reading it again, still stale, under that lock |
+| `store/remote/<name>` | module | sessions of the earlier releases; read only, for a name `store/remote-rows/` has no file of, while its row is within a day | none of this release writes or removes it |
 | `round/<id>.json` | data | the hooks of every session (sender, pane, delivery, successor move); the coordinator's `settle` (hooks too), `round-archive` and `succession.sh takeover` | read-modify-write under the entry's lock |
 | `store/waits/<id>` | module | the session's own relay; the coordinator's hooks and its `settle`, forgetting a fingerprint | under the file's lock; a write merged with what another process changed since this one read it (`mergeWait`) |
 | `chains/<tty>.jsonl` | data | every launcher process (spawn, close, move, takeover) | read-modify-write under the chain's lock (`chain_change`), a unique temporary name |

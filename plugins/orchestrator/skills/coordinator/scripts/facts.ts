@@ -9,7 +9,7 @@ import { setting } from '../../../core/paths.ts'
 import { parseQuota, planOfConfig, QUOTA_DIR, quotaLine, type Quota } from '../../../core/quota.ts'
 import { writeAtomic } from '../../../core/store.ts'
 import { parsePrFile, prFilePath, prsOfRepo, repoOfOrigin } from '../../../hooks/pr-file-format.ts'
-import { REMOTE_ROWS_DIR } from '../../../hooks/remote-row.ts'
+import { OLD_REMOTE_ROWS_DIR, oldRemoteRow, REMOTE_ROWS_DIR } from '../../../hooks/remote-row.ts'
 import { dataOf, die, moduleOf, Refusal, say, stateOf, type Context } from './context.ts'
 import { lostModuleLines } from './module-lost.ts'
 import { fieldsOf, readSleeping } from './sleeping.ts'
@@ -553,28 +553,34 @@ export function remoteRow(text: string): (Remote & { readonly at: number | undef
 
 /**
  * The rows the hooks module received from orchestrators on other machines, one JSON row per file
- * in store/remote-rows under the module's directory. A row is kept while its updated_at is at most a
+ * in store/remote-rows under the module's directory, and in the old store/remote for a name the
+ * first has no file of (oldRemoteRow). A row is kept while its updated_at is at most a
  * day old and no local session names it as title or orchestrator (local wins); a stale row is
  * skipped silently, since the module deletes it and this script never does. Its pull requests are
  * matched to a repository read here by its address without the host, and kept only when that
  * repository's open list has them; one in a repository not read here keeps branch « - ».
  */
 function remoteRows(ctx: Context, facts: Facts): void {
-  const store = join(moduleOf(ctx.env), 'store', REMOTE_ROWS_DIR)
-  if (!isDir(store)) return
+  const store = join(moduleOf(ctx.env), 'store')
   const now = Math.floor(ctx.now().getTime() / 1000)
   const names = new Set(facts.sessions.flatMap(s => [s.title, s.orch]))
-  for (const file of filesOf(store)) {
+  const keep = (row: ReturnType<typeof remoteRow>): void => {
+    if (row === undefined || row.at === undefined || now - row.at > REMOTE_STALE_AFTER_MS / 1000 || names.has(row.name)) return
+    facts.remote.push(row)
+  }
+  const current = filesOf(join(store, REMOTE_ROWS_DIR))
+  for (const file of current) {
     if (isTemporary(file)) continue
-    let row
     try {
-      row = remoteRow(readFile(file) ?? '')
+      keep(remoteRow(readFile(file) ?? ''))
     } catch {
       facts.unread.push(`remote ${file}: not a JSON row`)
-      continue
     }
-    if (row === undefined || row.at === undefined || now - row.at > REMOTE_STALE_AFTER_MS / 1000 || names.has(row.name)) continue
-    facts.remote.push(row)
+  }
+  const held = new Set(current.map(file => basename(file)))
+  for (const file of filesOf(join(store, OLD_REMOTE_ROWS_DIR))) {
+    const text = readFile(file) ?? ''
+    if (oldRemoteRow(basename(file), text, held, ctx.now().getTime(), line => say(ctx, line))) keep(remoteRow(text))
   }
   const ownerName = (repo: string): string => repo.replace(/^[^/]+\//, '')
   const on = new Map<string, string>()

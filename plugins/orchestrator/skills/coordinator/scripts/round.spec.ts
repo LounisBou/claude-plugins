@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 import { main } from './coordinator.ts'
-import { fixture, type Fixture } from './fixture.ts'
+import { fixture, NOW, type Fixture } from './fixture.ts'
 import { entryOf, paneOpen, parseEntry } from './round.ts'
 
 function entry(id: string, fields: Record<string, unknown> = {}): Record<string, unknown> {
@@ -222,6 +222,19 @@ describe('round', () => {
       'round g | operator | from Orch: g | since T | blocks: - | open | due | sender gone',
       'round r | operator | from Orch: r | since T | blocks: - | open | due | remote on bench',
     ])
+  })
+
+  it('heads a remote entry by its row in the earlier releases\' directory while the new one lacks the name, within a day', () => {
+    const f = withModule()
+    for (const id of ['cut', 'day']) put(f, id, { v: 2, id, sender: { session: `s-${id}`, name: `Orch: ${id}` }, origin: { machine: 'box' }, subject: 's', context: 'c', ask: 'a?', choices: [], recommended: null, why: 'w', urgent: true, status: 'open', at: 'T' })
+    const old = join(moduleOf(f), 'store', 'remote')
+    mkdirSync(old, { recursive: true })
+    for (const [id, updated_at] of [['cut', NOW.toISOString()], ['day', '2020-01-01T00:00:00.000Z']] as const) {
+      writeFileSync(join(old, `Orch__${id}`), JSON.stringify({ name: `Orch: ${id}`, role: 'orchestrator', context_tokens: 5, context_percent: 1, window: 100, waiting: null, blocks: null, waiting_since: null, updated_at, machine: 'bench' }))
+    }
+    assert.equal(main(f.ctx, ['round', '--by-urgency']), 0)
+    assert.deepEqual(f.out.filter(l => l.startsWith('round ')).map(l => l.replace(/^round (\S+) .* \| /, '$1 ')), ['cut remote on bench', 'day sender gone'])
+    assert.deepEqual(f.err, ['coordinator: the remote row of Orch: cut is read from store/remote/, which an earlier release writes'])
   })
 
   it('reads the pane open from the machine\'s ps: listed, not exiting nor a zombie, on its tty', () => {
