@@ -14,6 +14,7 @@ import { capture, hostOf, type Captured } from '../../core/capture.ts'
 import { fieldsOf, type Events, type FsEntry, type Host, type Noun, type On, type ProcessRunInit, type UiElements } from '../../core/host.ts'
 import { agentPaneRows, paneRows, parseSessionRow, readRound, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
 import { readAsked, settle } from '../question.ts'
+import { receiveReplyAck, resendReplies } from '../remote-asked.ts'
 import { type RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
@@ -2489,6 +2490,63 @@ test('a replica of a question asked with ask on another machine is drawn only wh
   // Withdrawn here by the coordinator, its withdrawal never acknowledged: its asker still waits, so it stays drawn.
   fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...replica, status: 'withdrawn', answer: { text: 'moot', by: 'coordinator', at: '2026-10-30T10:06:00.000Z', settler: 'Coord: main' }, delivery: { state: 'failed', at: '2026-10-30T10:06:00.000Z', attempts: 3, reason: 'no acknowledgment after 3 sends' } }) + '\n')
   expect(await drawnNow()).toContain('not delivered: no acknowledgment after 3 sends — the answer to Orch: belt on far (blocks: acme/app#1)')
+})
+
+// A replica whose answer given here failed after its sends, its asker's row measured on its machine.
+const failedReplica = () => askedObject('s-far', 'Orch: belt', '2026-10-30T10:04:00.000Z', {
+  origin: { machine: 'far', address: FAR }, status: 'answered',
+  answer: { text: 'A : acme/app#1 first', by: 'pane', at: '2026-10-30T10:05:00.000Z', settler: 'Coord: main' },
+  delivery: { state: 'failed', at: '2026-10-30T10:06:00.000Z', attempts: 3, reason: 'no acknowledgment after 3 sends' },
+})
+const LISTED_ANEW = ['This session is Coord: main [abc] — the name other sessions use to message it', '', 'Peer sessions (1):',
+  '  Orch: belt [ref-live]  ·  Remote Control  ·  idle'].join('\n')
+const NOT_DELIVERED = 'not delivered: no acknowledgment after 3 sends — the answer to Orch: belt on far (blocks: acme/app#1)'
+
+test('a failed answer sent again is said sent again to its asker, and is drawn no more once delivered', async () => {
+  const replica = failedReplica()
+  const { fx, sent, render } = await askedPane([replica])
+  remoteRow(fx, 'Orch: belt', 'far')
+  fx.dollar.tool.call = async () => ({ text: LISTED_ANEW })
+  const drawnNow = async () => texts(await render())
+  expect(await drawnNow()).toContain(NOT_DELIVERED)
+  await resendReplies(fx.dollar)
+  expect(sent.map(s => s.to)).toEqual(['Orch: belt [ref-live]'])
+  const during = await drawnNow()
+  expect(during).toContain('being delivered: the answer to Orch: belt on far (blocks: acme/app#1) — sent again to Orch: belt, 1 of 3, not acknowledged yet')
+  expect(during.some(t => t.startsWith('not delivered:'))).toBe(false)
+  await receiveReplyAck(fx.dollar, 'bridge:session_new', 'Orch: belt', { id: replica.id, seq: 1, of: 'reply' })
+  expect((await drawnNow()).some(t => t.startsWith('not delivered:') || t.startsWith('being delivered:'))).toBe(false)
+})
+
+test('the lines not delivered are cleared from the pane: recorded on each entry, logged, drawn and sent no more', async () => {
+  const replicas = [failedReplica(), { ...failedReplica(), id: 'q-s-far-second', blocks: 'acme/app#2' }]
+  const { fx, sent, render } = await askedPane(replicas)
+  remoteRow(fx, 'Orch: belt', 'far')
+  const tree = await render()
+  // The line stays the section's foot, its action over it.
+  const kids = kidsOf(elAt(tree, 0))
+  expect(saidBy(kids.at(-2))).toBe(`${NOT_DELIVERED} · no acknowledgment after 3 sends — the answer to Orch: belt on far (blocks: acme/app#2)`)
+  expect(kids.at(-3)).toBe(button(tree, 'clear-failed'))
+  expect(button(tree, 'clear-failed').props['hotkey']).toBe('x')
+  await button(tree, 'clear-failed').props.onPress!()
+  for (const replica of replicas) {
+    const stored = JSON.parse(String(fx.files.get(`${ROUND}/${replica.id}.json`)))
+    expect(stored.delivery).toMatchObject({ state: 'failed', reason: 'no acknowledgment after 3 sends' })
+    expect(typeof stored.delivery.cleared).toBe('string')
+    expect(fx.written.filter(l => l.endsWith(`the answer to ${replica.id} not delivered: its line cleared in the pane`)).length).toBe(1)
+  }
+  const cleared = await render()
+  expect(texts(cleared).some(t => t.startsWith('not delivered:'))).toBe(false)
+  expect(findAll(cleared, n => n.type === 'Button' && n.props.key === 'clear-failed')).toEqual([])
+  fx.dollar.tool.call = async () => ({ text: LISTED_ANEW })
+  await resendReplies(fx.dollar)
+  expect(sent).toEqual([])
+})
+
+test('the action clearing the lines not delivered counts its row', async () => {
+  const { fx, render } = await askedPane([failedReplica()])
+  remoteRow(fx, 'Orch: belt', 'far')
+  expect(await countedRows(render)).toBe(drawScreen(await render({ bodyColumns: 200 }), 198).length)
 })
 
 // --- a remote orchestrator's open questions, reconciled with its latest row --------------------
