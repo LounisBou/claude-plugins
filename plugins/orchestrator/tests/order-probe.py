@@ -141,7 +141,7 @@ ia.in_home_session = lambda: False
 # A woken orchestrator's home server, stood in for: its tab is the app's.
 ia.make_home = lambda socket, title, cwd, program, what: "/dev/pts9"
 ia.client_on = lambda socket, tty: True
-ia.arm_home = lambda socket, what: True
+ia.arm_home = lambda socket, what, owners=(): True
 ia.start_home_watch = lambda socket, tty: None
 ia.sleeper_config = lambda title: None
 ia.opener_name = lambda: "Coord: c"
