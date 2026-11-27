@@ -148,13 +148,13 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     #   up under remote control, keeps your plugin set (the enabledPlugins of your --settings,
     #   with or without a plugin directory) and takes and hands NO chain (chain=none): an
     #   auditor has none, and written into one it would anchor the orchestrator's next agent.
-    #   --no-remote-control is refused there too; a typed audit title still is, off --auditor.
+    #   There alone --plan 1|2|auto moves it to that plan.
     # --auditor [--of <tty>|self]: the auditor of an orchestrator, `--title "Audit: <subject>"`.
     #   Lands immediately LEFT of the orchestrator it audits, ahead of that orchestrator's
     #   agents: this session, else the tab --of names (a session that is no orchestrator must
     #   name it). The place is read after the spawn and repaired once;
     #   the launch records the auditor as this session's, so `move` places it without --force.
-    #   --of is refused without --auditor.
+    #   --plan runs it there.
     # --wake: a paused orchestrator relaunched on the operator's word, its predecessor already
     #   gone. Needs --title "Orch: <subject>", the one recorded at its pause. Its pair: the one
     #   the transcript of --resume <session> holds, else the recorded --model <id> --effort

@@ -308,6 +308,41 @@ elif scenario in ("coordinator", "duplicate", "auditor"):
     print("before=%s" % " ".join(t.tab_id for t in app.windows[0].tabs))
     launcher("close", "--tty", target, "--keep-checkout")
     print("after=%s" % " ".join(t.tab_id for t in app.windows[0].tabs))
+elif scenario in ("moved-coordinator", "moved-auditor"):
+    # An account move of the coordinator or of an auditor: its successor, launched from its tab on
+    # the other plan, reads the pair on the caller's own plan, then takes its place on closing it.
+    os.environ["HOME"] = os.path.join(work, "home")
+    for name in ("CLAUDE_CONFIG_DIR", "ORCHESTRATOR_PROJECTS_DIR"):
+        os.environ.pop(name)
+    ia.use_config("")
+    os.environ["CLAUDE_CODE_SESSION_ID"] = "s-pred"
+    os.makedirs(os.path.join(work, "home", ia.PLAN1_DIRNAME, "projects", "p"))
+    with open(os.path.join(work, "home", ia.PLAN1_DIRNAME, "projects", "p", "s-pred.jsonl"), "w",
+              encoding="utf-8") as fh:
+        fh.write(json.dumps({"type": "api-request", "sessionId": "s-pred", "querySource": "repl_main_thread",
+                             "params": {"model": "m", "output_config": {"effort": "low"}}}) + "\n")
+    role = "Coord: g" if scenario == "moved-coordinator" else "Audit: x"
+    if scenario == "moved-coordinator":
+        window("w1", "Orch: A", role, "Orch: B")
+        line = ("--coordinator-successor", "--title", role)
+    else:
+        os.environ["ORCHESTRATOR_AUDITOR"] = "1"
+        window("w1", "Coord: c", role, "Orch: A")
+        line = ("--successor",)
+    first = tab(role)
+    own[0] = first.tty
+    made[0] = role
+    before = {t.tty for t in app.windows[0].tabs}
+    print("before=%s" % screen())
+    said = launcher("spawn", *line, "--plan", "2", "--dir", work, "--prompt", "p", "--no-verify")
+    new = [t for w in app.windows for t in w.tabs if t.tty not in before]
+    if new:
+        own[0], registered[0] = new[0].tty, first.tty
+        launcher("close", "--tty", first.tty, "--keep-checkout")
+        print("after=%s" % screen())
+        print("successor=%s|%s" % (ia.plan_of_config(plans[new[0].tty]) or "?",
+                                   "same" if app.windows[0].tabs[1] is new[0] else "elsewhere"))
+    print("said=%s" % " ".join(said.split()))
 elif scenario == "rotate":
     # The replacement is made at the end of its orchestrator's group, then takes the old tab's
     # place; the close that follows is the rotation's own.
