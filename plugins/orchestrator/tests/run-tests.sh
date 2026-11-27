@@ -9770,6 +9770,111 @@ else
   echo "  skip the conf is not loaded: no tmux"
 fi
 
+echo "== iterm-agents: a home server refuses its clients' kills =="
+# Closing a view's tab, iTerm2 can be answered « Terminate », which sends kill-window, kill-pane or
+# kill-session to the server: a home server refuses them from its creation (home.conf), and the
+# launcher's closes go through killw. Real throwaway servers of the suite's own, no tab and no app;
+# each is ended by the launcher's kill_home, which takes its socket file too.
+if command -v tmux >/dev/null 2>&1; then
+  RKSRV="remoteview-c-$$-new"; RKOLD="remoteview-c-$$-old"
+  RKMARK=$((7700 + $$ % 1000))
+  rk() { env -u TMUX -u TMUX_PANE tmux -u -L "$RKSRV" "$@"; }
+  rkold() { env -u TMUX -u TMUX_PANE tmux -u -L "$RKOLD" "$@"; }
+  rkwindows() { "$1" list-panes -a -F '#{window_id}#{pane_id}' 2>/dev/null | paste -sd' ' -; }
+  # One client command: its exit code and whether its answer names the refusal.
+  rkrefused() { local out rc what=$1; out=$(rk "$@" 2>&1); rc=$?; echo "$rc:$(printf '%s' "$out" | grep -c "home-server-refuses-a-clients-$what")"; }
+  # The launcher run as from window 0 of the server `$1`, its python `$2`.
+  rklauncher() { TMUX="$(env -u TMUX -u TMUX_PANE tmux -L "$1" display-message -p '#{socket_path}'),0,0" TMUX_PANE=%0 \
+    ORCHESTRATOR_TMUX="$(command -v tmux)" ORCHESTRATOR_STATE_DIR="$WORK/rkstate" ipy "$2" 2>/dev/null; }
+  # A client in control mode, as a view's: each argument typed as a line, its answers printed.
+  printf '%s\n' 'import os, pty, select, signal, sys, time' \
+    'pid, fd = pty.fork()' \
+    'if pid == 0:' \
+    '    os.execvp("tmux", ["tmux", "-u", "-L", sys.argv[1], "-CC", "attach", "-t", "home"])' \
+    'out = b""' \
+    'def read(done, seconds):' \
+    '    global out' \
+    '    end = time.time() + seconds' \
+    '    while not done() and time.time() < end:' \
+    '        if select.select([fd], [], [], 0.1)[0]:' \
+    '            try: out += os.read(fd, 4096)' \
+    '            except OSError: return' \
+    'read(lambda: b"%session-changed" in out, 10)' \
+    'for n, line in enumerate(sys.argv[2:], 1):' \
+    '    seen = out.count(b"\n%end") + out.count(b"\n%error")' \
+    '    os.write(fd, (line + "\n").encode())' \
+    '    read(lambda: out.count(b"\n%end") + out.count(b"\n%error") > seen, 5)' \
+    'os.kill(pid, signal.SIGKILL)' \
+    'sys.stdout.write(out.decode(errors="replace"))' > "$WORK/ccclient.py"
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$RKSRV', 'Orch: x', '$WORK', 'sleep $RKMARK', 'suite')" >/dev/null 2>&1
+  for n in a b c; do rk new-window -d -t home: -n "Agent: $n" "sleep $RKMARK" 2>/dev/null; done
+  rk split-window -d -t home:2 "sleep $RKMARK" 2>/dev/null
+  rkall=$(rkwindows rk)
+  check "the throwaway home server holds its four windows" "@0%0 @1%1 @2%2 @2%4 @3%3" "$rkall"
+  check "a client's kill-window is refused, one window or every other, and nothing is killed" "1:1|1:1|$rkall" \
+    "$(rkrefused kill-window -t @1)|$(rkrefused kill-window -a -t @0)|$(rkwindows rk)"
+  check "a client's kill-pane is refused, one pane or every other, and nothing is killed" "1:1|1:1|$rkall" \
+    "$(rkrefused kill-pane -t %4)|$(rkrefused kill-pane -a -t %0)|$(rkwindows rk)"
+  check "a client's kill-session is refused, and the server keeps every window" "1:1|$rkall" \
+    "$(rkrefused kill-session -t home)|$(rkwindows rk)"
+  # The three lines iTerm2 sends, from a control-mode client; tmux's messages keep each refusal.
+  rk kill-server 2>/dev/null
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$RKSRV', 'Orch: x', '$WORK', 'sleep $RKMARK', 'suite')" >/dev/null 2>&1
+  for n in a b c; do rk new-window -d -t home: -n "Agent: $n" "sleep $RKMARK" 2>/dev/null; done
+  rk split-window -d -t home:2 "sleep $RKMARK" 2>/dev/null
+  out=$("$py" "$WORK/ccclient.py" "$RKSRV" 'kill-window -t @1' 'kill-pane -t "%4"' 'kill-session -t "$0"')
+  check "a control-mode client's three kills are answered with an error each, nothing is killed, and tmux logs each refusal" \
+    "3|$rkall|kill-pane kill-session kill-window" \
+    "$(printf '%s\n' "$out" | grep -c '^%error')|$(rkwindows rk)|$(rk show-messages 2>/dev/null | grep -F ' message: ' | grep -oE 'refuses-a-clients-kill-(window|pane|session)' | sed 's/refuses-a-clients-//' | sort -u | paste -sd' ' -)"
+  # The launcher's closes on that server. The window of an agent, closed as a close, a rotation and
+  # a stand-down close it (the same kill ends a takeover's predecessor).
+  rktty=$(rk display-message -p -t @1 '#{pane_tty}')
+  rklauncher "$RKSRV" "ia.TmuxTerminal().close('$rktty', 'Agent: a')" >/dev/null
+  check "the launcher's close ends its agent's window" "@0%0 @2%2 @2%4 @3%3" "$(rkwindows rk)"
+  res=$(rklauncher "$RKSRV" "print(ia.TmuxTerminal().close_made({'window': '@2'}))")
+  check "the launcher ends the window of a spawn it refused, its panes with it" "True|@0%0 @3%3" "$res|$(rkwindows rk)"
+  res=$(rklauncher "$RKSRV" "
+real = ia.tmux_out
+ia.tmux_out = lambda args, what: ' '.join(real(args, what).split()[:2]) if args[0] == 'new-window' else real(args, what)
+made = {}
+try:
+    ia.TmuxTerminal().create('sleep $RKMARK', 'Agent: half', ia.Place('anywhere', '', 'right', False), '', made)
+except SystemExit:
+    print(made.get('window'), made.get('window_killed'))")
+  check "the launcher ends a window tmux made and answered badly" "@4 True|@0%0 @3%3" "$res|$(rkwindows rk)"
+  # Closing the home tab while an agent runs ends window 0 alone: no tab and no app here, another
+  # tab stands as the server's owner.
+  rklauncher "$RKSRV" "
+class Tab:
+    def close(self, tty, expect): pass
+    def find(self, tty): return False
+ia.ITERM = Tab()
+ia.home_clients = ia.home_owners = lambda socket: ['/dev/ttys-other']
+listed = ia.home_panes('$RKSRV')
+ia.window0_session = lambda *a: (listed[0], '')
+ia.keep_home('/dev/ttys-tab', '$RKSRV', listed)" >/dev/null
+  check "the launcher's close of a home tab ends window 0 and keeps the agents'" "@3%3" "$(rkwindows rk)"
+  res=$(rklauncher "$RKSRV" "print(ia.kill_home('$RKSRV'))")
+  check "the launcher still ends a whole home server, as a restart and the close of its tab do" "True|down" \
+    "$res|$(rk has-session -t home 2>/dev/null && echo up || echo down)"
+  # A server made before the refusal reads the new conf at a deploy (home-reload): it keeps taking
+  # the kill-window of its older launcher, and the new launcher's close ends its windows too.
+  rkold -f /dev/null new-session -d -s home "sleep $RKMARK" 2>/dev/null
+  for n in a b; do rkold new-window -d -t home: -n "Agent: $n" "sleep $RKMARK" 2>/dev/null; done
+  rkold source-file "$ROOT/skills/iterm-agents/tmux/home.conf" 2>/dev/null
+  old=$(rkold kill-window -t @1 >/dev/null 2>&1; echo "$?:$(rkwindows rkold)")
+  rklauncher "$RKOLD" "ia.TmuxTerminal().kill('@2', 'close')" >/dev/null
+  check "a server made before the refusal, reading the new conf, still takes kill-window and the launcher's close" \
+    "0:@0%0 @2%2|@0%0|0" "$old|$(rkwindows rkold)|$(rkold show-options -s command-alias 2>/dev/null | grep -c refuses)"
+  rklauncher "$RKOLD" "ia.kill_home('$RKOLD')" >/dev/null
+  pkill -fx "sleep $RKMARK" 2>/dev/null
+  # A server still leaving as it was asked keeps its socket file: taken once nothing answers.
+  sleep 0.5
+  rklauncher "$RKOLD" "ia.remove_exited_home_socket('$RKSRV'); ia.remove_exited_home_socket('$RKOLD')"
+else
+  echo "  skip a home server's refusal of its clients' kills is not checked: no tmux"
+fi
+
 echo "== iterm-agents: an orchestrator moves into its home session =="
 # The one way an orchestrator gets a home session: at the end of the turn that named it, the
 # module runs `home`, which starts a server of its own whose window 0 resumes the SAME
