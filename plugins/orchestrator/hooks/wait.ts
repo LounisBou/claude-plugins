@@ -2,8 +2,9 @@
 // The declared wait: `declare_wait({kind, blocks})`, the structured act by which a turn says
 // what will wake it, read at the turn's end in place of the wording of its last line
 // (docs/conventions.md, « Guards and consent »). A declaration belongs to the turn that made
-// it: the next turn's start makes it stale, and a stale one is never read. One reader asks for the
-// last one all the same: the turn end's refusal (guards.ts), while nothing new reached the session.
+// it: the next turn's start makes it stale, and a stale one is never read. One wait outlives its turn,
+// through a turn opened by a wake the module said brings nothing new (`keepsThrough`), while nothing
+// else reaches the session: the turn end's refusal (guards.ts) takes it for that turn's own (`keep`).
 //
 // An operator wait is refused while a row of the record is ready with nobody on it (unattended.ts, `readyRefusal`).
 // The refusals of a done or deferred wait live in stop-gate.ts; the turn's end reads the declaration
@@ -79,14 +80,30 @@ export class Declarations {
   private declared: { wait: DeclaredWait; turn: number } | null = null
   private handed: string | null = null
   private last: DeclaredWait | null = null
+  // The text of a wake that brings nothing new, from its submit to the turn it opens.
+  private wake: string | null = null
+  // The words the declared wait was first reported with.
+  private words: string | null = null
+  // The turn that took the standing wait for its own.
+  private keptTurn: number | null = null
 
-  turnStarted(): void {
+  // `prompt`: the text the turn opens with, the host's frame around a module's own. Any turn but
+  // that of the awaited wake brings something new, a prompt queued behind an earlier turn among them.
+  turnStarted(prompt = ''): void {
     this.turn += 1
+    if (this.wake !== null && prompt.includes(this.wake)) this.wake = null
+    else this.last = null
   }
 
   declare(wait: DeclaredWait): void {
     this.declared = { wait, turn: this.turn }
     this.last = wait
+    this.words = null
+  }
+
+  // A wake that brings the session nothing new is about to be submitted: the turn it opens keeps the last wait.
+  keepsThrough(wake: string): void {
+    this.wake = wake
   }
 
   // Something the module did not submit reached the session: the last wait stands no longer.
@@ -94,10 +111,24 @@ export class Declarations {
     this.last = null
   }
 
-  // The last wait declared, of any turn, while nothing new has reached the session since: what a
-  // turn the module alone started still waits on.
+  // The last wait declared, while the turns since brought nothing new.
   standing(): DeclaredWait | null {
     return this.last
+  }
+
+  // The standing wait taken for the current turn's own: its end reports it again.
+  keep(): void {
+    if (this.last === null) return
+    this.declared = { wait: this.last, turn: this.turn }
+    this.keptTurn = this.turn
+  }
+
+  // The words a turn's end reports its wait with: a kept wait's are those it was first reported
+  // with, so a closing proposal entered again is the same proposal. `answer`: the turn's own.
+  reportedWith(answer: string): string {
+    if (this.keptTurn === this.turn && this.words !== null) return this.words
+    if (this.current() !== null) this.words = answer
+    return answer
   }
 
   // The session that handed over (it spawned its successor): not a turn's
@@ -260,7 +291,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   })
 
   on('turn.start', {}, async ($, e, next) => {
-    if (e.agentId === undefined) declarations.turnStarted()
+    if (e.agentId === undefined) declarations.turnStarted(String(fieldsOf(e)?.['text'] ?? ''))
     return next(e)
   }).catch(async ($, e, next) => {
     await logLine($, 'wait', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)

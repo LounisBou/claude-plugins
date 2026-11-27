@@ -272,8 +272,8 @@ async function changesRuntime($: Held, newer: Newer): Promise<boolean> {
   return run.exitCode === 1 && runtimeChanges(String(run.stdout ?? ''), newer, await loadedPlugins($)).length > 0
 }
 
-// Whether the last declared wait still stands for a turn that declared none: nothing new has reached
-// the session since (wait.ts, `heard`), and every question it waits on is still open.
+// Whether the last declared wait still stands for a turn that declared none: the turns since brought
+// nothing new (wait.ts, `standing`), and every question it waits on is still open.
 async function stillWaits($: Held, wait: DeclaredWait | null, sessionId: string): Promise<boolean> {
   if (wait === null) return false
   const asked = wait.asked ?? []
@@ -435,9 +435,9 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 
   // The turn end. An orchestrator, an auditor or a coordinator that declared no wait and has
   // nothing of its own running (no busy agent, no task or wake-up the host lists) is refused once;
-  // a session that handed over is not, nor one whose last wait still stands (stillWaits: a turn the
-  // module alone started), nor one whose task list, launcher listing or chain owner is unread, or
-  // whose round does not answer in time. An orchestrator's acts run at the stop that passes: the module arms the tick on the
+  // a session that handed over is not, nor one whose last wait still stands (stillWaits, in a turn
+  // the coordinator's round wake opened: that wait is then the turn's own), nor one whose task
+  // list, launcher listing or chain owner is unread, or whose round does not answer in time. An orchestrator's acts run at the stop that passes: the module arms the tick on the
   // session's busy agents and on its pull requests, shows each idle agent's pull request on its
   // window, and sweeps the checkouts. The classic events carry the settings payload's own fields —
   // the transcript path among them — so the scope is read off the event itself. Every read races
@@ -513,11 +513,15 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const agents = ownAgents(rows, entries, owner, hostStatus)
       // With no owner, a chain that has entries says nothing of which of them runs.
-      if (resting && (owner !== '' || entries.length === 0) && !agents.some(agent => agent.state === 'busy')
-        && !await quietly($, () => stillWaits($, declarations.standing(), sessionId), until, true)) {
-        refused = sessionId
-        const below = await next(e)
-        return fieldsOf(below)?.['block'] ? below : { ...fieldsOf(below), block: NOTHING_WAKES }
+      if (resting && (owner !== '' || entries.length === 0) && !agents.some(agent => agent.state === 'busy')) {
+        if (!await quietly($, () => stillWaits($, declarations.standing(), sessionId), until, true)) {
+          refused = sessionId
+          const below = await next(e)
+          const theirs = fieldsOf(below)?.['block']
+          return { ...fieldsOf(below), block: theirs ? `${theirs}\n\n${NOTHING_WAKES}` : NOTHING_WAKES }
+        }
+        // The turn's start cleared the row's wait and withdrew its closing proposal: the turn's end puts both back.
+        declarations.keep()
       }
       if (role !== 'orchestrator') return next(e)
       // Past its bound in one turn, a busy agent wakes the session at the tick, as a pull request
