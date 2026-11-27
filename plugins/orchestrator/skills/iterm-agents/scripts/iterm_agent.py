@@ -2778,6 +2778,12 @@ class Terminal:
         """The last `lines` lines the session on `tty` shows."""
         raise NotImplementedError
 
+    def prompt_lines(self, tty):
+        """The lines the session on `tty` shows, its faint cells left out: the host draws its
+        placeholder and its suggestions faint, and what the operator types plain; none when no
+        session is there, nor on a terminal that draws no host (the app's and tmux's do)."""
+        return []
+
     def close(self, tty, expect):
         """Close the session on `tty`, after checking its name holds `expect`: its stable id,
         or "" when the terminal cannot name what it closed."""
@@ -2936,6 +2942,16 @@ class ItermTerminal(Terminal):
             every = [contents.line(i).string.rstrip()
                      for i in range(contents.number_of_lines)]
             return last_lines(every, lines)
+        return run(go)
+
+    def prompt_lines(self, tty):
+        async def go(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            _, _, sess = await find_tab(app, tty)
+            if sess is None:
+                return []
+            contents = await sess.async_get_screen_contents()
+            return [plain_cells(contents.line(i)) for i in range(contents.number_of_lines)]
         return run(go)
 
     def close(self, tty, expect):
@@ -3293,6 +3309,10 @@ class TmuxTerminal(Terminal):
         out = tmux_out(["capture-pane", "-p", "-t", pane.pane, "-S", "-%d" % max(lines, 0)],
                        "screen")
         return last_lines([l.rstrip() for l in out.split("\n")], lines)
+
+    def prompt_lines(self, tty):
+        pane = self.lookup(tty)
+        return captured(pane.pane) if pane else []
 
     def close_refusals(self, what, tty, expect):
         """What a close of the window on `tty` refuses, read before anything is killed or
@@ -4386,6 +4406,10 @@ def cmd_takeover(args):
     # The predecessor may still be writing its last turn: its « handed over », or a transcript
     # left idle, comes before the kill, and the line says which was seen.
     print(await_handover(args.tty))
+    sys.stdout.flush()
+    # What the operator typed in its prompt and has not sent is never destroyed (cmd_close).
+    await_unsent("takeover", args.tty,
+                 lambda: prompt_text(lambda: captured(pred.pane)))
     tail = conversation_of(args.tty)
     if tail:
         print(tail)
@@ -5826,6 +5850,12 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
 
     script = write_launch_script(launch, title)
     command = "%s -l %s" % (LOGIN_SHELL, script)
+    # A successor closes the tab this command runs in, where the operator may be typing: he
+    # reads it first, in that tab.
+    if args.successor or args.coordinator_successor or auditor_successor:
+        print("succession: this tab is closed once its successor takes over, never while its "
+              "prompt holds text you typed and have not sent: what you type here is kept",
+              file=sys.stderr)
     print("spawn: model %s, effort %s, from %s" % (model or "the host's default",
                                                     effort or "the host's default", pair_source),
           file=sys.stderr)
@@ -6275,6 +6305,138 @@ KILL_SENT = set()
 # after, that line's own write included, fails after the session was closed.
 CLOSE_DONE = set()
 
+# How long a close waits for what the operator typed in the session's prompt, and has not
+# sent, to be sent or cleared, reading the prompt every INPUT_POLL seconds; under the bound of
+# the module's close of an agent (60 s) and of a host's command (120 s).
+INPUT_WAIT = int(os.environ.get("ORCHESTRATOR_INPUT_WAIT", "45"))
+INPUT_POLL = 2
+# The host's prompt box: a rule above and below, its first line marked.
+PROMPT_RULE = re.compile("^\\s*\u2500{8,}")
+PROMPT_MARK = "\u276f"
+# The escape sequences a pane's capture carries: a style (SGR), any other CSI, an OSC (a link).
+ESCAPE = re.compile(r"\x1b(?:\[([0-9;:?<>=]*)([ -/]*[@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)?|.)")
+# SGR parameters that take arguments: a colour of 256 (5;n) or of the RGB (2;r;g;b).
+SGR_COLOURS = ("38", "48", "58")
+
+
+def faint_after(params, faint):
+    """Whether text is faint after an SGR whose parameters are `params`: 2 sets it, 0, 22 and
+    an empty list reset it; a colour's own arguments are skipped, a 2 among them is no faint."""
+    words = params.split(";") if params else [""]
+    i = 0
+    while i < len(words):
+        word = words[i]
+        if word in ("", "0", "22"):
+            faint = False
+        elif word == "2":
+            faint = True
+        elif word in SGR_COLOURS and i + 1 < len(words):
+            i += {"5": 2, "2": 4}.get(words[i + 1], 0)
+        i += 1
+    return faint
+
+
+def unfaint(text):
+    """A pane's capture with its escape sequences (`capture-pane -e`) as plain text, its faint
+    runs left out."""
+    out, faint, at = [], False, 0
+    for found in ESCAPE.finditer(text):
+        if not faint:
+            out.append(text[at:found.start()])
+        if found.group(2) == "m":
+            faint = faint_after(found.group(1) or "", faint)
+        at = found.end()
+    if not faint:
+        out.append(text[at:])
+    return "".join(out)
+
+
+def plain_cells(line):
+    """An iTerm2 screen line as text, its faint cells left out and its empty cells, which the
+    app answers as NUL where the host moved the cursor over them, as spaces."""
+    cells = []
+    x = 0
+    while True:
+        try:
+            cell = line.string_at(x)
+        except IndexError:
+            break
+        style = line.style_at(x)
+        if not (style is not None and style.faint):
+            cells.append(cell.replace("\x00", " "))
+        x += 1
+    return "".join(cells).rstrip()
+
+
+def typed_input(lines):
+    """What the host's prompt box among `lines` (faint cells left out) holds: the text after
+    its mark and the lines down to the rule below; "" when the box is empty or not drawn."""
+    for start in range(len(lines) - 2, -1, -1):
+        if not (PROMPT_RULE.match(lines[start]) and lines[start + 1].startswith(PROMPT_MARK)):
+            continue
+        body = [lines[start + 1][len(PROMPT_MARK):]]
+        for line in lines[start + 2:]:
+            if PROMPT_RULE.match(line):
+                break
+            body.append(line)
+        return "\n".join(line.replace("\u00a0", " ").strip() for line in body).strip()
+    return ""
+
+
+def captured(pane, socket=""):
+    """The capture of the tmux pane `pane`, of the home server `socket` when one is named, its
+    faint runs left out, as lines."""
+    where = ["-L", socket] if socket else []
+    return unfaint(tmux_out(where + ["capture-pane", "-p", "-e", "-t", pane],
+                            "close")).split("\n")
+
+
+def prompt_text(lines_of):
+    """What the operator typed in a host's prompt and has not sent, on the lines `lines_of()`
+    reads: "" when nothing; raises, its reason said, when they cannot be read."""
+    try:
+        lines = lines_of()
+    except SystemExit:
+        raise RuntimeError("the reading died, its reason above")
+    return typed_input(lines or [])
+
+
+def await_unsent(what, tty, read, bound=None, sleep=time.sleep, clock=time.time):
+    """Wait, before a close kills the session on `tty`, until `read()` says its prompt holds
+    nothing the operator typed: what he typed is sent or cleared, never destroyed. Answers
+    whether text was seen, so the caller prints what he sent. A prompt that cannot be read is
+    not known empty: the close refuses at once. Past `bound` seconds with text still there,
+    or unread since, it refuses too, the line carrying his text for the caller to show him.
+    A refusal keeps the tab: nothing was killed."""
+    bound = INPUT_WAIT if bound is None else bound
+    end = clock() + bound
+    seen, last = False, ""
+    while True:
+        try:
+            text = read()
+        except Exception as exc:
+            if not seen:
+                die("%s: refused: the prompt on %s cannot be read (%s), so whether it holds text "
+                    "the operator typed and has not sent is not known: the tab is kept, nothing "
+                    "was closed" % (what, tty, str(exc) or type(exc).__name__))
+            text = None
+        if text == "":
+            return seen
+        if text is not None and not seen:
+            print("%s: the prompt on %s holds text the operator typed and has not sent: "
+                  "waiting up to %ds for it to be sent or cleared" % (what, tty, bound),
+                  file=sys.stderr)
+            sys.stderr.flush()
+        if text is not None:
+            seen, last = True, text
+        if clock() >= end:
+            shown = "\n".join(UNPRINTABLE.sub("?", line) for line in last.split("\n"))
+            die("%s: refused: the prompt on %s still holds text the operator typed and has not "
+                "sent, after %ds: the tab is kept, nothing was closed. Show him his text "
+                "verbatim, say it waits in that tab, and run this close again once he has sent "
+                "or cleared it. His text: «%s»" % (what, tty, bound, shown))
+        sleep(INPUT_POLL)
+
 
 def close_tab(tty, expect):
     """The ordinary close of a tab or a window, proved on the process table and, where the
@@ -6414,8 +6576,17 @@ def cmd_close(args):
     # And the host pids the hooks module's store records on it: the close's proof reads the
     # tty, and these are named afterwards when the process table still lists them.
     recorded = recorded_pids({host_tty, args.tty})
-    # An orchestrator's conversation is read before the kill and printed after the contract line.
-    tail = conversation_of(host_tty) if args.expect.startswith(ORCH_ROLE) else ""
+    # What the operator typed in its prompt and has not sent is never destroyed: the close
+    # waits for it to be sent or cleared, and past its bound refuses, the tab kept.
+    lines_of = ((lambda: captured(HOME_SESSION + ":0", socket)) if socket
+                else (lambda: terminal_for(host_tty).prompt_lines(host_tty)))
+    typed = bool(was_running) and await_unsent("close", args.tty, lambda: prompt_text(lines_of))
+    # An orchestrator's conversation is read before the kill and printed after the contract
+    # line, and any session's where the operator typed during the close: what he sent is in it.
+    tail = conversation_of(host_tty) if args.expect.startswith(ORCH_ROLE) or typed else ""
+    if typed:
+        print("close: the operator sent or cleared what he typed in the prompt on %s: show him "
+              "what the conversation section below leaves pending" % args.tty, file=sys.stderr)
 
     note = close_note(host_tty, was_running)
     if socket:
