@@ -7,8 +7,9 @@
 // it while the question is open and acknowledges it, or, settled first in its own tab, acknowledges
 // it `already` and pushes its own state again. A push or a reply not acknowledged is sent again
 // every ANSWER_RESEND_MS, ANSWER_SENDS times in all, then failed, said in the log and, for a reply,
-// in the pane. An open question's failed push is tried again every UNREACHED_RETRY_MS, and one that
-// is delivered starts its sends over: no question is dropped while it waits.
+// in the pane. An open question's push that failed with its last send reaching nobody (refused, or
+// thrown) is tried again every UNREACHED_RETRY_MS, and one that is delivered starts its sends over;
+// one delivered and never acknowledged stays failed.
 // A reply's address may be gone while its asker's name runs on: a reply refused or not
 // acknowledged goes to the one live remote session of that name the host lists, and a refused one is
 // not failed while one is listed, until that same address has refused ANSWER_SENDS sends in a row.
@@ -69,9 +70,10 @@ export async function replicate($: Pushing, entry: Asked): Promise<void> {
       if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
     }
     const stays = retried !== null && reason !== null
+    const unreached = line !== null && reason !== null
     const replica: Replica = {
       seq: entry.seq, state: line === null || stays ? 'failed' : 'sent', attempts: stays ? retried.attempts : attempts,
-      at: new Date().toISOString(), ...(reason !== null ? { reason } : {}),
+      at: new Date().toISOString(), ...(reason !== null ? { reason } : {}), ...(unreached ? { unreached: true as const } : {}),
     }
     // A retry refused as the send before it was is not said again.
     if (reason !== null && reason !== retried?.reason) await logLine($, 'question', `${entry.id} not pushed to the coordinator ${coordinator.name}: ${reason}`)
@@ -105,10 +107,24 @@ export function forgetResendTimer(): void {
   resendArmed = false
 }
 
-// A push this machine's timer still has to read: one not acknowledged yet, or an open question's that failed.
+// An open question's failed push whose last send reached nobody: it is tried again.
+function retriable(entry: Asked): boolean {
+  return entry.status === 'open' && entry.replica?.state === 'failed' && entry.replica.unreached === true
+}
+
+// A push this machine's timer still has to read: one not acknowledged yet, or one to try again.
 function awaitsResend(entry: Asked): boolean {
-  if (entry.origin !== undefined) return false
-  return entry.replica?.state === 'sent' || (entry.replica?.state === 'failed' && entry.status === 'open')
+  return entry.origin === undefined && (entry.replica?.state === 'sent' || retriable(entry))
+}
+
+/**
+ * The resend timer armed again at a start, which a module loaded again reaches with no turn: a push
+ * `session` asked still awaits its resend to a coordinator on another machine.
+ */
+export async function rearmResend($: Pushing, session: string): Promise<void> {
+  const coordinator = await coordinatorAddress($)
+  if (!coordinator || coordinator.local) return
+  if ((await readAsked($)).some(entry => entry.sender.session === session && awaitsResend(entry))) armResend($)
 }
 
 // A push sent after the timer was armed is younger than ANSWER_RESEND_MS at its tick: armed again
@@ -129,8 +145,8 @@ async function resendTick($: Pushing): Promise<void> {
  * The pushes not acknowledged, read at a turn's end on the owner's machine and by the timer each push
  * arms: one whose last send is
  * ANSWER_RESEND_MS old is sent again, or, sent ANSWER_SENDS times already, failed; an open question's
- * failed one is tried again UNREACHED_RETRY_MS after it; an open question never pushed, or changed
- * since its last push, is pushed now.
+ * failed one that reached nobody is tried again UNREACHED_RETRY_MS after it, the timer armed until
+ * then; an open question never pushed, or changed since its last push, is pushed now.
  */
 export async function resendReplicas($: Pushing, now: number = Date.now()): Promise<void> {
   const coordinator = await coordinatorAddress($)
@@ -142,8 +158,9 @@ export async function resendReplicas($: Pushing, now: number = Date.now()): Prom
       await replicate($, entry)
       continue
     }
-    if (replica?.state === 'failed' && entry.status === 'open' && now - Date.parse(replica.at) >= UNREACHED_RETRY_MS) {
-      await replicate($, entry)
+    if (replica !== undefined && retriable(entry)) {
+      if (now - Date.parse(replica.at) >= UNREACHED_RETRY_MS) await replicate($, entry)
+      else armResend($)
       continue
     }
     if (replica?.state !== 'sent' || now - Date.parse(replica.at) < ANSWER_RESEND_MS) continue

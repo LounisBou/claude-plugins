@@ -32,7 +32,7 @@ import {
   hostStopOf, stopInTail, stopKey, stopText, type HostStop, type KeptGate, type WaitKind,
   confirmsTakeover,
 } from './relay.ts'
-import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
+import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, rearmResend, resendReplies } from './remote-asked.ts'
 import { planOlder, planWithdrawal } from './settle.ts'
 import { answerAskedFromPane, askedAsEntry, clearFailed, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
@@ -1814,6 +1814,26 @@ export function registerWake(on: On<Held>): void {
       armFor($, wake, isDegradedPass(self) ? 'untold' : self)
     } catch (err) {
       await logLine($, 'supervision', `round wake: ${messageOf(err)}`)
+    }
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+}
+
+// The retries' timers are the module's memory: at each start, a reload's too, an orchestrator's row
+// is sent if it is news (a send that fails arms its retry), and a question this session asked whose
+// push still awaits its resend arms that timer, so a session that takes no turn is still heard.
+export function registerRetries(on: On<Held>): void {
+  on('session.start', {}, async ($, e, next) => {
+    try {
+      const sessionId = await $.session.id()
+      await rearmResend($, sessionId)
+      const sent = await withDeadline(sendRow($, sessionId), RELAY_BOUND_MS)
+      if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
+    } catch (err) {
+      await logLine($, 'supervision', `retries: ${messageOf(err)}`)
     }
     return next(e)
   }).catch(async ($, e, next) => {
