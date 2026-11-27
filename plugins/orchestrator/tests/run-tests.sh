@@ -7522,9 +7522,9 @@ check "list names no orphan when the process table cannot be read" "0|4" \
   "$(sfield "$res" rows | tr '~' '\n' | grep -c '^orphan:')|$(sfield "$res" rows | tr '~' '\n' | grep -c '^w1/t')"
 
 # Chain files of dead or recycled ttys piled up. The next chain write removes every file
-# whose owner (the tty that names it) no longer carries an orchestrator host: not one whose
+# whose owner (the tty that names it) carries no host, or an agent's: not one whose
 # agents' ttys were recycled by strangers, not an ended orchestrator's with an agent still
-# running; never the caller's own, a live orchestrator's, nor the client of a live home
+# running; never the caller's own, a live orchestrator's, auditor's or coordinator's, nor the client of a live home
 # server whose window 0 holds one, and nothing at all when the process table cannot be read.
 PRSTATE="$WORK/prunestate"
 prune_seed() { rm -rf "$PRSTATE"; mkdir -p "$PRSTATE/chains"
@@ -7550,6 +7550,13 @@ check "a file whose owner tty now carries an agent is pruned, though its own age
 prune_seed
 check "a file whose owner carries a host with no readable name is kept" "present" \
   "$(printf '/dev/ttys016 claude\n' > "$WORK/ps-prune-bare.txt"; prune_run "$WORK/ps-prune-bare.txt" >/dev/null; [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent)"
+# An auditor and a coordinator launch agents of their own: their pane's count reads these files.
+prune_seed
+check "a file whose owner carries an auditor is kept" "present" \
+  "$(printf '/dev/ttys016 claude --name Audit: home\n' > "$WORK/ps-prune-audit.txt"; prune_run "$WORK/ps-prune-audit.txt" >/dev/null; [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent)"
+prune_seed
+check "a file whose owner carries a coordinator is kept" "present" \
+  "$(printf '/dev/ttys016 claude --name Coord: home\n' > "$WORK/ps-prune-coord.txt"; prune_run "$WORK/ps-prune-coord.txt" >/dev/null; [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent)"
 # A home orchestrator's tab carries only the tmux client; its host runs on the server's pane.
 prune_seed
 printf '/dev/ttys016 tmux -L orch-abc123 attach\n/dev/ttys950 claude --name Orch: home\n' > "$WORK/ps-prune-home.txt"
