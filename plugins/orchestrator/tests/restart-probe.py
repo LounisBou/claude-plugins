@@ -71,7 +71,8 @@ if scenario in ("no-stop-elsewhere", "unkillable"):
 # A view attached over ssh from another machine beside the tab of orch-b: on no tab of the app, and
 # no owner, whether the server lists its owners (view) or was armed the old way (view-old), with
 # iTerm2 frozen at the snapshot and the launcher's order kept (view-old-frozen) or none
-# (view-old-wedged).
+# (view-old-wedged); or a client of this machine that no tab shows, beside the tab of a server armed
+# the old way (view-local-old).
 VIEW = "/dev/ttys097"
 if scenario.startswith("view"):
     servers["orch-b"]["clients"] = ["/dev/ttys002", VIEW]
@@ -191,7 +192,7 @@ def run(coro):
     if scenario == "mute":
         signal.pause()
     if APP not in alive and NEW_APP not in alive or scenario in FROZEN and APP in alive \
-            or scenario == "deaf" and NEW_APP in alive:
+            or scenario in ("deaf", "deaf-unread") and NEW_APP in alive:
         raise RuntimeError("iTerm2 does not answer")
     ia.ANSWERED = True
     return asyncio.run(coro(Api(), None))
@@ -344,9 +345,11 @@ ia.live_homes = lambda: sorted(servers)
 ia.kill_home = lambda socket: not (scenario == "unkillable" and socket == "orch-b") \
     and tmux_call(["-L", socket, "kill-server"]).returncode == 0
 ia.app_pid = lambda: next((p for p in (APP, NEW_APP) if p in alive), "")
-# The view's client holds the SSH_CONNECTION of its ssh login; every other process is of this machine.
-ia.kernel_procargs = lambda pid: ([HOST], json.loads(os.environ["ORCHESTRATOR_HOST_ENV"])
-                                  + (["SSH_CONNECTION=10.0.0.2 50000 10.0.0.1 22"] if pid == "5" + VIEW[-3:] else []))
+# The view's client holds the SSH_CONNECTION of its ssh login (view-local-old: none); every other process
+# is of this machine. deaf-unread: the environments of the tabs' clients cannot be read.
+ia.kernel_procargs = lambda pid: (None, None) if scenario == "deaf-unread" and pid in ("5001", "5002") else \
+    ([HOST], json.loads(os.environ["ORCHESTRATOR_HOST_ENV"])
+     + (["SSH_CONNECTION=10.0.0.2 50000 10.0.0.1 22"] if pid == "5" + VIEW[-3:] and scenario != "view-local-old" else []))
 ia.self_tty = lambda: "/dev/ttys999" if scenario in ("stranger", "run-stranger") else "/dev/ttys031"
 ia.registered_coord_on = lambda tty: "Coord: c" if tty == "/dev/ttys031" else None
 ia.host_cli_on = lambda tty: next((p for p, t in hosts.items() if t == tty and p in alive), None)
@@ -377,6 +380,22 @@ if scenario == "unreadable-home":
     argv_of = ia.host_argv
     ia.host_argv = lambda pid: None if pid == "12" else argv_of(pid)
 r.processes, r.open_app = processes, open_app
+if scenario == "ps-miss":
+    # The first read of the re-arm misses orch-b's tab: its tty, read on a `ps` that failed, is empty.
+    real_layout, real_rearm, reads = r.layout, r.Run.rearm, []
+    def layout_missed():
+        read = real_layout()
+        if reads == ["rearm"]:
+            reads.append("missed")
+            for tabs in read:
+                for tab in tabs:
+                    for s in tab:
+                        s["tty"] = "" if s["tty"] == "/dev/ttys002" else s["tty"]
+        return read
+    def rearm(self):
+        reads.append("rearm")
+        return real_rearm(self)
+    r.layout, r.Run.rearm = layout_missed, rearm
 r.output_of = lambda *words: "1" if scenario == "no-restore" and words[-1] == "OpenNoWindowsAtStartup" else ""
 own_os = {"kill": kill, "getppid": os.getpid}
 if scenario == "run-owner":

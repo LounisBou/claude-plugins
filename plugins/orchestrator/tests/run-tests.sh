@@ -9979,6 +9979,18 @@ for rview in view-old-frozen view-old-wedged; do
     "0|0|orch-a+orch-b|orch-a:/dev/ttys001+orch-b:/dev/ttys002" \
     "$(sfield "$res" acts | grep -c 'attach orch-b')|$(rsays 'ttys097')|$(sfield "$res" armed)|$(sfield "$res" owners)"
 done
+res=$(restarted view-local-old)
+check "a client of this machine no tab shows, beside the tab of a server armed the old way, gets no tab and owns nothing" \
+  "0|0|0|orch-a+orch-b|orch-a:/dev/ttys001+orch-b:/dev/ttys002" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'attach orch-b')|$(rsays 'ttys097')|$(sfield "$res" armed)|$(sfield "$res" owners)"
+res=$(restarted deaf-unread)
+check "a deaf iTerm2 whose tabs' clients' environments cannot be read takes none of them as remote: every server armed again, every session alive" \
+  "1|orch-a+orch-b|$RALL|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" armed)|$(sfield "$res" alive)|$(rsays 'was ended')"
+res=$(restarted ps-miss)
+check "one read of the app that misses a tab, its tty unread on a failed ps, ends no server the tab shows" \
+  "0|0|orch-a+orch-b|orch-a:/dev/ttys001+orch-b:/dev/ttys002|$RALL" \
+  "$(sfield "$res" exit)|$(sfield "$res" acts | grep -c 'end orch-b')|$(sfield "$res" armed)|$(sfield "$res" owners)|$(sfield "$res" alive)"
 res=$(restarted ghost)
 check "a server whose tab the answering app does not show is ended, its client still held by iTermServer, and said with the session it held" \
   "1|1|orch-a|orch-a:/dev/ttys001|1|0" \

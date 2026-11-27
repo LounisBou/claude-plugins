@@ -477,10 +477,14 @@ class Run:
     def seen(self):
         """The ttys of this machine's tabs: those the app shows, when it runs and answers; else the
         snapshot's own tabs of a home server, which iTermServer keeps on the same ttys. A tab the
-        answering app does not show is no tab, whatever client iTermServer still holds on it."""
+        answering app does not show in two reads is no tab, whatever client iTermServer still
+        holds on it: a restored tab's tty is read on `ps`, and one failed read never ends a server
+        a tab shows."""
         if ia.app_pid():
             with contextlib.suppress(Exception, SystemExit):
-                return set(shown(layout()))
+                first = set(shown(layout()))
+                time.sleep(1)
+                return first | set(shown(layout()))
         return {self.now(c) for server in self.s["servers"].values() for c in server.get("local", [])}
 
     def rearm(self):
