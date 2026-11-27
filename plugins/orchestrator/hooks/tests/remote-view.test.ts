@@ -122,7 +122,19 @@ function fake(world: Partial<World> = {}, file: string | null = machines(), env:
 
 const opens = (runs: string[][]) => runs.filter(argv => argv[0] === 'osascript')
 const kills = (runs: string[][]) => runs.filter(argv => argv[0] === 'kill')
-const checks = (runs: string[][]) => runs.filter(argv => argv[0] === '/usr/bin/ssh' && argv[argv.length - 1]!.includes(' has-session '))
+// Whether an ssh run is the client list asked right after the check of the same server.
+const listsWhatWasChecked = (argv: string[], before: string[] | undefined) => {
+  const socket = /-L (\S+)/.exec(before?.[before.length - 1] ?? '')?.[1]
+  if (before === undefined || socket === undefined) return false
+  const dest = before[before.length - 2]!
+  return before.join(' ') === checkArgv(dest, socket).join(' ') && argv.join(' ') === clientsArgv(dest, socket).join(' ')
+}
+// Every ssh run, so that none goes unseen. An opening asks its server twice: the client list that
+// directly follows its server's check counts with it, any other one counts of its own.
+const checks = (runs: string[][]) => {
+  const ssh = runs.filter(argv => argv[0] === '/usr/bin/ssh')
+  return ssh.filter((argv, i) => !listsWhatWasChecked(argv, ssh[i - 1]))
+}
 
 // --- the command -------------------------------------------------------------------------
 
@@ -360,13 +372,35 @@ function lockedFor(age: number) {
   return fx
 }
 
-// 45 s: past core's own 30 s, within the holder's bounds summed (a table read, a check, an opening).
+// 45 s: past core's own 30 s, within the holder's bounds summed (a table read, a check, a client
+// list, an opening).
 test('a lock its holder may still hold is left to it: nothing is opened', async () => {
   const fx = lockedFor(45000)
   await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
   expect(checks(fx.runs)).toEqual([])
   expect(opens(fx.runs)).toEqual([])
   expect(fx.logged.filter(line => line.includes('is being opened by another session')).length).toBe(1)
+})
+
+test('every run under the lock is bounded, and a lock aged by the bounds through the opening is left to its holder', async () => {
+  const holder = fake()
+  const lock = `${STATE}/views/IznoServer-${SOCKET}.sh.lock`
+  const run = holder.dollar.process.run
+  const under: { program: string; timeoutMs: number | undefined }[] = []
+  Object.assign(holder.dollar.process, {
+    run: async (argv: readonly string[], init?: { timeoutMs?: number }) => {
+      if (holder.files.has(lock)) under.push({ program: argv[0]!, timeoutMs: init?.timeoutMs })
+      return run(argv, init)
+    },
+  })
+  await syncViews(holder.dollar, [row()], newViewsMemory(), { now: NOW })
+  const opening = under.slice(0, under.findIndex(u => u.program === 'osascript') + 1)
+  expect(opening.map(u => u.program)).toEqual(['ps', '/usr/bin/ssh', '/usr/bin/ssh', 'mv', 'osascript'])
+  expect(under.filter(u => !(u.timeoutMs! > 0))).toEqual([])
+  const fx = lockedFor(opening.reduce((sum, u) => sum + u.timeoutMs!, 0))
+  await syncViews(fx.dollar, [row()], newViewsMemory(), { now: NOW })
+  expect(checks(fx.runs)).toEqual([])
+  expect(opens(fx.runs)).toEqual([])
 })
 
 test('a lock a killed holder left is taken over, and its view opened', async () => {
