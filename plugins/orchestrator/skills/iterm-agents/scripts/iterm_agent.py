@@ -527,7 +527,7 @@ def closed_clause(closed, tty):
     return "the tab was NOT closed: find it with list and close it"
 
 
-def refuse_made(made, msg):
+def refuse_made(made, msg, shown=""):
     """Refuse a spawn whose tab exists: close that tab, print its tty on stdout, and die
     saying whether the close happened.
 
@@ -536,6 +536,9 @@ def refuse_made(made, msg):
     operator was told of a failure over a tab still open, possibly holding a running agent
     nobody would now stop.
 
+    `shown` is what the screen showed, read by the caller before the close: said last, by this
+    refusal or, inside a rotation, by the rotation's line.
+
     The refusal is recorded in `made` before the close: an interrupt during that close then
     finds what it interrupted, and a rotation does not take the session being closed for a
     replacement it keeps.
@@ -543,7 +546,7 @@ def refuse_made(made, msg):
     The tty's write is guarded as `settle_stdout` guards it: a reader gone from stdout must not
     lose the refusal to a traceback. Inside a rotation (`made["creating"]`) the refusal is the
     rotation's to say, on its one line: it is raised, not printed."""
-    made["refusing"] = msg
+    made["refusing"], made["shown"] = msg, shown
     closed = close_made(made)
     made["refused_closed"] = closed
     tty = made.get("tty") or ""
@@ -555,7 +558,14 @@ def refuse_made(made, msg):
             mute_stdout()
     if made.get("creating"):
         raise SpawnFailed(msg)
-    die("%s; %s" % (msg, closed_clause(closed, tty)))
+    said = "%s; %s" % (msg, closed_clause(closed, tty))
+    die(then_shown(said, made))
+
+
+def then_shown(line, made):
+    """A refused spawn's `line`, then what its screen showed when that was read apart."""
+    shown = made.get("shown")
+    return "%s. %s" % (line, shown) if shown else line
 
 
 def await_host(tty, dir_, launch_epoch, made, what):
@@ -581,7 +591,8 @@ def await_host(tty, dir_, launch_epoch, made, what):
     transcript = find_transcript(dir_, launch_epoch)
     if not transcript:
         refuse_made(made, "%s: %s never started on %s after %ss"
-                    % (what, HOST_CLI, tty, SPAWN_TIMEOUT))
+                    % (what, HOST_CLI, tty, SPAWN_TIMEOUT),
+                    screen_clause(screen_text(made), "ORCHESTRATOR_SPAWN_TIMEOUT"))
     print("%s: no process on %s matched %s, but the session wrote %s since the launch: it "
           "started" % (what, tty, HOST_CLI, transcript), file=sys.stderr)
 
@@ -5289,6 +5300,60 @@ def route_plan(choice):
     return None
 
 
+# The key either answer to the host's browser extension dialog writes in the account's record,
+# and the host's command whose default toggle writes it too, with no dialog.
+BROWSER_DIALOG_ANSWER = 'claudeInChromeDefaultEnabled'
+BROWSER_SETTINGS_COMMAND = '/chrome'
+
+
+def unpassed_first_start(record, mode):
+    """The first-start step of the host that a session launched in `mode` on the account of
+    `record`, its own state file, would stop on, named with its key, or "". Read on the host's own
+    code: the onboarding shows until `hasCompletedOnboarding` is true; the browser extension
+    dialog is offered, outside bypassPermissions, while neither answer is recorded, the record
+    carries the extension and the host's cached gate is on. The host then looks for the extension
+    again and offers nothing when the record is stale, which only its own run can tell."""
+    if record.get("hasCompletedOnboarding") is not True:
+        return "the onboarding (hasCompletedOnboarding)"
+    if mode == "bypassPermissions":
+        return ""
+    paired, gates = record.get("chromeExtension"), record.get("cachedGrowthBookFeatures")
+    detected = (record.get("cachedChromeExtensionInstalled") is True
+                or (isinstance(paired, dict) and bool(paired.get("pairedDeviceId"))))
+    offered = isinstance(gates, dict) and gates.get("tengu_chrome_auto_enable") is True
+    if detected and offered and BROWSER_DIALOG_ANSWER not in record:
+        return "the browser extension dialog (%s absent)" % BROWSER_DIALOG_ANSWER
+    return ""
+
+
+def refuse_unpassed_account(config, mode):
+    """Refuse a launch onto the account of configuration directory `config` ("" is plan 1's) that
+    would stop on a first-start dialog nobody answers. A record that cannot be read, or carries
+    neither key the host writes from its first starts, says nothing: a warning, and the launch
+    goes on, its own verification reporting a dialog that blocks it. Read only."""
+    path = os.path.join(config or os.path.expanduser("~"), ".claude.json")
+    try:
+        with open(path) as fh:
+            record = json.load(fh)
+        if not isinstance(record, dict) \
+                or not {"hasCompletedOnboarding", "numStartups"} & set(record):
+            raise ValueError("it carries neither hasCompletedOnboarding nor numStartups")
+    except (OSError, ValueError) as exc:
+        print("spawn: warning: whether the account of %s passed its first-start dialogs is "
+              "unknown (%s); launching anyway" % (path, exc), file=sys.stderr)
+        return
+    missing = unpassed_first_start(record, mode)
+    if missing:
+        environment = ("CLAUDE_CONFIG_DIR=%s" % shq(config) if config
+                       else "env -u CLAUDE_CONFIG_DIR")
+        unshown = ("; if it shows none, type %s there and select « Turn on by default », which "
+                   "records the answer" % BROWSER_SETTINGS_COMMAND
+                   if BROWSER_DIALOG_ANSWER in missing else "")
+        die("spawn: refused: the account of %s has not passed %s: run once by hand on this "
+            "machine `%s %s --permission-mode %s` and answer the dialog%s"
+            % (path, missing, environment, HOST_CLI, mode, unshown))
+
+
 def process_config(pid):
     """The CLAUDE_CONFIG_DIR in the environment of process `pid`, "" when it has none (plan 1),
     None when it cannot be read: the plan a session runs on is a fact of its own process, whoever
@@ -5335,29 +5400,29 @@ def trust_dialog_on(made):
 
 
 # How much of a screen a refusal quotes: the last lines are where a dialog or a prompt sits.
-SCREEN_LINES = 6
+SCREEN_LINES = 12
 SCREEN_WIDTH = 160
 # What a quoted screen may not carry: escape sequences and other controls would reach the
 # reader's terminal and the logs that keep the refusal.
 UNPRINTABLE = re.compile(r"[^\x20-\x7e\u00a0-\uffff]")
 
 
-def screen_clause(screen):
+def screen_clause(screen, knob="ORCHESTRATOR_MODE_TIMEOUT"):
     """What a refused spawn's tab showed, said instead of advising a retry in the dark: the last
     lines of its screen, or that it was blank, or that it could not be read, each with what
-    to do on the next spawn (the tab is closed by the refusal, so nothing is done on it)."""
+    to do on the next spawn (the tab is closed by the refusal, so nothing is done on it).
+    `knob` is the variable of the wait that ran out."""
     if screen is None:
-        return ("The screen could not be read. Next time, raise ORCHESTRATOR_MODE_TIMEOUT if "
-                "the machine is only slow")
+        return ("The screen could not be read. Next time, raise %s if the machine is only slow"
+                % knob)
     lines = [UNPRINTABLE.sub("?", ln.strip())[:SCREEN_WIDTH] for ln in screen.split("\n")
              if ln.strip()]
     if not lines:
         return ("The tab showed nothing: the host had not drawn its screen, so it was hung at "
-                "start or the machine is slow. Next time, raise ORCHESTRATOR_MODE_TIMEOUT to "
-                "wait longer")
+                "start or the machine is slow. Next time, raise %s to wait longer" % knob)
     return ("The tab showed: %s. A dialog there is one this launch cannot answer; a start "
             "banner or an empty prompt means the session was up and slow, so next time raise "
-            "ORCHESTRATOR_MODE_TIMEOUT" % " | ".join(lines[-SCREEN_LINES:]))
+            "%s" % (" | ".join(lines[-SCREEN_LINES:]), knob))
 
 
 def directory_is_trusted(path):
@@ -5702,6 +5767,7 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
                     "model and effort, read on your transcript" % flag)
     # The caller's launch is read in the caller's own plan, before a routed plan replaces it.
     plugin_dirs, caller_plugins = caller_plugin_launch(auditor_successor)
+    caller_config = os.environ.get("CLAUDE_CONFIG_DIR", "")
     routed = route_plan(args.plan) if args.plan else None
     if args.wake:
         # A woken orchestrator runs on the plan it slept on, whoever wakes it: its transcripts
@@ -5726,6 +5792,10 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
     if args.resume and not (args.wake or args.open_):
         refuse_stale_resume(args.resume)
         settle_resume_plan(args.resume, routed)
+    # Routed to an account, by --plan or by a move across plans: before anything is written.
+    config = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    if routed is not None or not same_plan(caller_config, config):
+        refuse_unpassed_account(config, args.mode)
     model, effort, pair_source = pair_of_launch(args, auditor_successor, pair_from)
     if anchor == "self" and defaulted and not own and not DRY_RUN:
         # The default must not turn a spawn that worked into a refusal: a caller with no
@@ -7040,9 +7110,9 @@ def spawn_failed(spawned, old, exc):
             why = why[len(prefix):]
     refused = bool(spawned.get("refusing"))
     if refused and spawned.get("refused_closed"):
-        die("rotate: the spawn refused the replacement it made%s (%s) and closed it; the old "
-            "session on %s was not touched, and nothing is left to close"
-            % (" on %s" % tty if tty else "", why, old["tty"]))
+        die(then_shown("rotate: the spawn refused the replacement it made%s (%s) and closed it; "
+                       "the old session on %s was not touched, and nothing is left to close"
+                       % (" on %s" % tty if tty else "", why, old["tty"]), spawned))
     if tty:
         refuse_recycled(spawned, old, None)
         lead = ("the spawn refused the replacement it made on %s (%s) and could not close it"
@@ -7091,10 +7161,11 @@ def refused_interrupted(made, old, name):
     step = ("close it with close --tty %s --expect-title %s --keep-checkout"
             % (shlex.quote(tty), shlex.quote(title)) if re.search(r"\w", title) else
             "no close of it is named, for its title holds no word a close could be guarded on")
-    die("rotate: the rotation was interrupted by %s while the spawn closed the replacement it "
+    die(then_shown(
+        "rotate: the rotation was interrupted by %s while the spawn closed the replacement it "
         "made on %s, which it refused (%s): whether that close went through is not known: if "
         "list still shows a session on %s, %s; the old session on %s was not touched"
-        % (name, tty, why, tty, step, old["tty"]))
+        % (name, tty, why, tty, step, old["tty"]), made))
 
 
 def refuse_recycled(made, old, after):
@@ -7213,7 +7284,7 @@ def late_refusal(made, old, refused, error, interrupted=False, lead="", reading=
     steps = old_steps(old, reading)
     if unverified:
         steps = "%s before ending the old session: %s" % (replacement_check(made or {}), steps)
-    die("rotate: %s; %s; %s" % (lead, kept, steps))
+    die(then_shown("rotate: %s; %s; %s" % (lead, kept, steps), made or {}))
 
 
 def replacement_check(made):
