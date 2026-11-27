@@ -3076,7 +3076,7 @@ test('an agent ending between two draws of the pane lowers the count at the next
   expect(await pane.lineOf('Orch: a')).toContain(' · 2 agents · ')
   pane.table.delete('902')
   expect(await pane.lineOf('Orch: a')).toContain(' · 1 agent · ')
-  pane.table.set('901', '?Es ??')
+  pane.table.set('901', 'Z+ ttys003')
   expect(await pane.lineOf('Orch: a')).toContain(' · 0 agents · ')
 })
 
@@ -3135,5 +3135,5 @@ test('at a phone\'s width the line wraps with the account and the count whole, a
   await pane.open()
   const lines = shown(await pane.draw(), 40)
   expect(lines.join(' ')).toContain('plan 2 · 1 agent')
-  expect(await countedRows(pane.draw)).toBe(drawScreen(await pane.draw({ bodyColumns: 200 }), 198).length)
+  expect(await countedRows(pane.draw, 40)).toBe(drawScreen(await pane.draw({ bodyColumns: 40 }), 38).length)
 })
