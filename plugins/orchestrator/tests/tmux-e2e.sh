@@ -13,7 +13,8 @@
 # the way the home command will make it: window 0 holds the caller (a shell here, where the
 # orchestrator would run), and the session carries the mark (`@orchestrator-home` = 1). Every
 # launcher command is typed into window 0 and runs there, so its TMUX, its TMUX_PANE and its
-# tty are a real pane's and nothing stands in for them. Nothing is ever attached.
+# tty are a real pane's and nothing stands in for them. Nothing is ever attached, but to the
+# server of its own where a home server's owners are checked, ended there.
 #
 # The hosts are the one logged in on this machine, on its subscription: the script makes no
 # credential, asks for none and writes none. Before any host starts it asks the host for its
@@ -283,6 +284,68 @@ audit_rc() {
 
 echo "== the switch =="
 check "the session carries the mark" "1" "$(tm show -qv -t home @orchestrator-home)"
+
+echo "== a home server ends with its last client of this machine, never with a view =="
+# The operator's rule (2026-11-27): a home server ends when the last client of its own machine
+# leaves, never when a view attached over ssh from another machine leaves, and none runs with no
+# client of its own machine. A server of its own, made and armed by the launcher, an agent window
+# beside window 0; its clients are real ones, each in a pty of its own, a view one started with
+# SSH_CONNECTION set as sshd sets it. The only clients the run attaches, each ended here.
+OWSRV="$SERVER-owner"
+HOMES+=("$OWSRV")
+OWMARK=$((7600 + $$ % 1000))
+py=$(command -v python3 || echo python3)
+owsrv() { env -u TMUX -u TMUX_PANE tmux -L "$OWSRV" "$@"; }
+owup() { owsrv has-session -t home 2>/dev/null && echo up || echo down; }
+owwait() { local i=0; while [ "$(owup)" = up ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done; }
+owcount() { owsrv list-clients 2>/dev/null | wc -l | tr -d ' '; }
+owners() { owsrv show-options -sqv @home-owners 2>/dev/null | wc -w | tr -d ' '; }
+owwindows() { pgrep -fx "sleep $OWMARK" | wc -l | tr -d ' '; }
+owia() { ORCHESTRATOR_TMUX="$(command -v tmux)" "$py" -c "
+import sys
+sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+$1" >/dev/null 2>&1; }
+printf '%s\n' 'import os, pty, sys, time' 'pid, fd = pty.fork()' 'if pid == 0:' \
+  '    os.execvp(sys.argv[1], sys.argv[1:])' 'while True:' '    try:' '        os.read(fd, 4096)' '    except OSError:' \
+  '        time.sleep(0.2)' > "$SANDBOX/run/ptyclient.py"
+owclient() { # <local|view>: a client of the server in a pty of its own; prints its pid
+  local n i=0
+  n=$(owcount)
+  if [ "$1" = view ]; then
+    env SSH_CONNECTION="192.0.2.1 50000 192.0.2.2 22" TERM=xterm-256color "$py" "$SANDBOX/run/ptyclient.py" tmux -L "$OWSRV" attach -t home >/dev/null 2>&1 &
+  else
+    env -u SSH_CONNECTION TERM=xterm-256color "$py" "$SANDBOX/run/ptyclient.py" tmux -L "$OWSRV" attach -t home >/dev/null 2>&1 &
+  fi
+  echo $!
+  while [ "$(owcount)" -le "$n" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+}
+owgone() { { kill "$1"; wait "$1"; } 2>/dev/null; sleep 0.5; }
+owhome() { # the server, an agent window beside window 0, its first local client attached and armed
+  owia "ia.make_home('$OWSRV', 'Orch: e2e owner', '$WORKDIR', 'sleep $OWMARK', 'e2e')"
+  owsrv new-window -d -t home: -n 'Agent: e2e owner' "sleep $OWMARK" 2>/dev/null
+  OWTAB=$(owclient local)
+  owia "ia.arm_home('$OWSRV', 'e2e', ['$(owsrv list-clients -F '#{client_tty}' 2>/dev/null)'])"
+}
+owhome
+OWVIEW=$(owclient view)
+check "an owner and a view attached: the view is never an owner" "2|1" "$(owcount)|$(owners)"
+owgone "$OWVIEW"
+check "the view leaving ends nothing: the server runs on, window 0 and the agent's window with it" "up|2|1" \
+  "$(owup)|$(owwindows)|$(owners)"
+OWVIEW=$(owclient view)
+owgone "$OWTAB"; owwait
+check "the owner leaving ends the server, a view still attached, and every window it held" "down|0" "$(owup)|$(owwindows)"
+owgone "$OWVIEW"; owsrv kill-server 2>/dev/null
+owhome
+OWSECOND=$(owclient local)
+check "two clients of this machine: both own the server" "2" "$(owners)"
+owgone "$OWTAB"
+check "the first of them leaving ends nothing" "up|2" "$(owup)|$(owwindows)"
+owgone "$OWSECOND"; owwait
+check "the last of them leaving ends the server and every window it held" "down|0" "$(owup)|$(owwindows)"
+owsrv kill-server 2>/dev/null
+pkill -fx "sleep $OWMARK" 2>/dev/null
 
 echo "== spawn: two agents, each a window of the home session =="
 agent "Agent: e2e one" E2E-ONE-READY

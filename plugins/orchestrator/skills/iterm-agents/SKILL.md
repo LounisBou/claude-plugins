@@ -28,7 +28,7 @@ An orchestrator's tab is a real terminal that holds a tmux session of its own, i
 - **The auditor stays an iTerm2 tab.** It is read beside the build, not part of it, and its place directly right of the orchestrator it audits is a tab position that means nothing in a window bar.
 - **The operator switches** by clicking a block of the tab bar, or with `C-b n` and `C-b p` (next and previous window). The windows keep their numbers, 0 for the orchestrator and 1, 2, … after it, though the bar shows none, so `C-b <digit>` still selects one. `C-b C-b` sends a Ctrl-B to the program in the pane, which is how the host's « run in background » key is typed.
 - **The bar** is one padded block per window, the current one bold on yellow, with no index, no session name and nothing on the right; the state is an icon after the name, written by the module on the window when it changes (the legend is the table of the plugin's README, « Where agents run »).
-- **Closing the iTerm2 tab ends the orchestration.** Once the tab's client is proved attached, the server is set to exit when no client is left, so the tab's close ends the server, the orchestrator and every agent window. A server shown by no tab is never set so, and a takeover kills a window with the tab still attached. The launcher's `close` on the tab does the same and proves every window gone.
+- **Closing the iTerm2 tab ends the orchestration.** Once the tab's client is proved attached, the server is set to exit when no client of this machine is left (a view over ssh never counts), so the tab's close ends the server, the orchestrator and every agent window. A server shown by no tab is never set so. The launcher's `close` on the tab does the same and proves every window gone.
 
 ## Reading the placement
 

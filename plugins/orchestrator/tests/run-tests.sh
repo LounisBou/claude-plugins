@@ -10111,7 +10111,7 @@ export LIFE_NEW_TTY=/dev/ttys983
 agent_home
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "closing a home tab whose server runs an agent keeps the server with no flag: it is never disarmed, window 0 alone is killed, never the server" "0|0|1|0|1" \
-  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-hook][-gu]')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -c 'kill-window')"
+  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-hook][-gu]')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(hcalls | grep -cF '[kill-server]')|$(hcalls | grep -c 'kill-window')"
 check "and says the server is kept, the tab that shows it now, then each agent with its attach line" "closed 1 session on /dev/ttys970|home: kept the server orch-abcdef12 for 1 agent(s), session abcdef12-3456-4789-8abc-def012345678, shown on /dev/ttys983|agent: Agent: m1a on /dev/ttys962: $HR/tmux -L orch-abcdef12 attach -t home:1" \
   "$(sfield "$res" OUT)"
 check "and a new tab is opened right of the old one, proved and made an owner beside it before window 0 is killed" "1|@home-owners][ /dev/ttys970 /dev/ttys983 ],kill-window" \
@@ -10131,7 +10131,7 @@ check "a server another tab of this machine owns stays that tab's: no tab is ope
 agent_home; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a new tab that shows no client is closed, and nothing is killed, armed or closed" "1|1|0|0|0|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close_made')|$(hcalls | grep -c 'kill-')|$(hcalls | grep -c '@home-owners')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'shows no client of the home server orch-abcdef12.*the server orch-abcdef12 keeps its tab /dev/ttys970 and nothing was closed')"
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close_made')|$(hcalls | grep -c 'kill-')|$(hcalls | grep -c '@home-owners\]\[ ')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'shows no client of the home server orch-abcdef12.*the server orch-abcdef12 keeps its tab /dev/ttys970 and nothing was closed')"
 unset LIFE_NEW_TTY
 agent_home; printf '0 /dev/ttys961\n' > "$HR/panes"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
