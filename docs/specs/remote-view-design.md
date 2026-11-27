@@ -25,10 +25,27 @@ Nothing this Mac does or stops doing changes a remote orchestrator or its agents
 tab or window, quitting iTerm2, sleep, shutdown, network loss. A view is a tmux client and nothing
 else; the remote home server's life is decided on the remote alone.
 
+## The operator's rule
+
+2026-11-27, his answer A to question q-26db8cb7-75c-mwz1fewe-3ypq:
+
+« On n'a le droit à aucun agent, aucun orchestrateur 100% headless. […] si toutes les fenêtres sont
+fermées sur la machine sur laquelle tourne le serveur, alors il meurt. Par contre, si c'est une
+distant, alors non. »
+
+Requirement: a home server runs only while a window on its own machine is open. When its last local
+window goes, the server ends. A window on another machine (a remote view) neither holds a server nor
+counts as a local window. No path may leave a server running without a local window: a restart
+suspends the arm and re-arms it, and closing the owner window ends the server or hands it to another
+local window of the same machine.
+
 ## Findings
 
+The two remotes are named by placeholders: `<izno>` (reached by its ssh alias) and `<minitech>`
+(reached as `<user>@<minitech>`). No user name, address or host name is written in this document.
+
 Throwaway servers only (`-L remoteview-study`, `-L remoteview-study-armed`,
-`-L remoteview-study-owner`), on IznoServer (macOS, tmux 3.4) and Minitech (macOS, tmux 3.8). This
+`-L remoteview-study-owner`), on `<izno>` (macOS, tmux 3.4) and `<minitech>` (macOS, tmux 3.8). This
 Mac: iTerm2 3.7.9, tmux 3.8.
 
 ### 1. How remote orchestrators run today
@@ -38,7 +55,7 @@ makes a home server per orchestrator (`-L orch-<8 hex>`, `home.conf`), window 0 
 one window per agent:
 
 ```
-$ ssh izno 'zsh -lc "tmux -L orch-cdc52505 list-windows -a -F \"#{session_name}:#{window_index} #{window_name} #{pane_tty}\"; tmux -L orch-cdc52505 list-clients; tmux -L orch-cdc52505 show -sv exit-unattached"'
+$ ssh <izno> 'zsh -lc "tmux -L orch-cdc52505 list-windows -a -F \"#{session_name}:#{window_index} #{window_name} #{pane_tty}\"; tmux -L orch-cdc52505 list-clients; tmux -L orch-cdc52505 show -sv exit-unattached"'
 home:0 Orch: TorrentMate /dev/ttys002
 home:1 Agent: TorrentMate Bugs /dev/ttys001
 home:3 Agent: k3-v1-reads /dev/ttys004
@@ -47,7 +64,7 @@ on
 ```
 
 ```
-$ ssh geonative@<minitech> 'zsh -lc "… same for orch-79cd22ce and orch-5af6af6f …"'
+$ ssh <user>@<minitech> 'zsh -lc "… same for orch-79cd22ce and orch-5af6af6f …"'
 server orch-79cd22ce
 home:0 Orch: geo-git-flow /dev/ttys002
 off
@@ -58,12 +75,16 @@ home:2 Agent: m5o memory budget /dev/ttys005
 off
 ```
 
-- The server is a daemon (parent pid 1): it survives its tab. Minitech's two servers have no client
-  at all (iTerm2 restarted after them, `iterm_restart.py` disarmed them), and run.
-- IznoServer's server is **armed**: `exit-unattached on`, set by `arm_home`
+- The server is a daemon (parent pid 1): it survives its tab. `<minitech>`'s two servers, `orch-79cd22ce`
+  and `orch-5af6af6f`, have no client at all and run: headless, against « The operator's rule ». Two
+  code paths disarm a server with no local window left, and both are defects: `iterm_restart.py:339`
+  (restart sets `exit-unattached off`) and the `close` of window 0 at `iterm_agent.py:4217`, which
+  disarms a server still running other windows. The two live servers are the operator's to decide
+  on; nothing is done to them here.
+- `<izno>`'s server is **armed**: `exit-unattached on`, set by `arm_home`
   (`iterm_agent.py`) so that closing the orchestrator's tab ends it, the operator's order. Its one
   client is the remote's own iTerm2 tab.
-- `tmux` is not on the PATH of a non-login ssh command on IznoServer (`zsh:1: command not found:
+- `tmux` is not on the PATH of a non-login ssh command on `<izno>` (`zsh:1: command not found:
   tmux`); `zsh -lc` finds `/opt/homebrew/bin/tmux` on both hosts, and every view goes through it.
 - The socket directory is `/private/tmp/tmux-501/` on both: an ssh command reaches the same servers
   with `-L <name>`.
@@ -111,7 +132,7 @@ no server running on /private/tmp/tmux-501/remoteview-study-armed
 no-sleep-process
 ```
 
-On IznoServer this is a real path to loss: the Mac attaches, the remote's own tab is closed (the
+On `<izno>` this is a real path to loss: the Mac attaches, the remote's own tab is closed (the
 server stays up, the Mac is still attached), then the Mac's view closes, sleeps or loses the
 network, and the orchestrator and its agents end. **The invariant requires the arm to be scoped to
 the owner's client.**
@@ -131,7 +152,7 @@ no server running on /private/tmp/tmux-501/remoteview-study-owner
 no-sleep-process
 ```
 
-Same result on IznoServer (3.4) and Minitech (3.8). The operator's order (closing the
+Same result on `<izno>` (3.4) and `<minitech>` (3.8). The operator's order (closing the
 orchestrator's own tab ends it all) holds, and no viewer can end anything by leaving.
 
 **d. Losing the view leaves the remote untouched.** The viewer's ssh killed with `-9` (iTerm2
@@ -200,12 +221,12 @@ shrink the Mac's view to the remote's console tab; `latest` is kept.
 
   ```
   $ ls ~/.claude-shared/orchestrator-data/store/remote
-  Orch__TorrentMate        (machine IznoServer, updated 2026-11-27T13:06:26Z)
-  Orch__refacto_firmware   (machine mini-tech2, updated 2026-11-27T13:26:59Z)
+  Orch__TorrentMate        (machine <izno>, updated 2026-11-27T13:06:26Z)
+  Orch__refacto_firmware   (machine <minitech>, updated 2026-11-27T13:26:59Z)
   ```
 
   It lacks two things a view needs: the home server's socket (`orch-<id>`) and an ssh destination
-  (`IznoServer` is `ssh izno`; `mini-tech2` has no alias, it is `geonative@<address>`).
+  (`<izno>` is `ssh <izno>`; `<minitech>` has no alias, it is `<user>@<minitech>`).
 - **Chosen:** the row carries the socket name (8 hex characters, no path, no secret), and a file
   on this Mac maps a machine label to an ssh destination. On a row whose socket has no live view,
   the coordinator's module opens one; a view is live when this Mac's process table holds an
@@ -236,7 +257,9 @@ writes crosses the network once per view.
 
 1. **On each remote, a viewer can never end a server**: the home server's arm becomes the
    `client-detached` hook scoped to the owner's tty (2c), in place of `exit-unattached on`. The
-   remote's own tab keeps its meaning; a view, a lost view or a stale one changes nothing.
+   remote's own tab keeps its meaning; a view, a lost view or a stale one changes nothing. The arm
+   also carries « The operator's rule »: no path leaves a server running without a local window, the
+   two disarm paths of the findings included.
 2. **Kills from a view are refused on the remote**: home servers alias `kill-window`, `kill-pane`
    and `kill-session` to a refusal (2f), and the launcher kills through a path the alias does not
    cover. Closing a tab on the Mac then hides it at worst, whatever is clicked.
@@ -268,7 +291,7 @@ writes crosses the network once per view.
 
 | | Pull request | Size | Risk | E2E |
 |---|---|---|---|---|
-| (a) | `fix(orchestrator)`: a home server's arm scoped to its owner's client (`client-detached` hook on the tab's tty, in `arm_home`; `home-release`, `close`, `iterm_restart.py` read and clear the hook instead of `exit-unattached`) | M | High: every home server's end goes through it | `tests/tmux-e2e.sh`: an owner and a second client on a throwaway server; the second leaves, the server lives; the owner leaves, the server ends |
+| (a) | `fix(orchestrator)`: a home server's arm scoped to its owner's client (`client-detached` hook on the tab's tty, in `arm_home`; `home-release`, `close`, `iterm_restart.py` read and clear the hook instead of `exit-unattached`); no path leaves a server without a local window: restart suspends the arm and re-arms it, the close of the owner window ends the server or hands it to another local window; the two disarm paths of the findings are removed | M | High: every home server's end goes through it | `tests/tmux-e2e.sh`: an owner and a second client on a throwaway server; the second leaves, the server lives; the owner leaves, the server ends; a restart and a close of the owner window leave no headless server |
 | (b) | `feat(orchestrator)`: remote views — the row carries its socket; a machine-to-destination file; the coordinator's module opens, deduplicates and reopens one window per remote home server | L | Medium: new process on this Mac, nothing on the remote | a fixture remote row and a local throwaway server reached by `ssh localhost`, the view opened once, reopened after its process is killed, never twice |
 | (c) | `feat(orchestrator)`: home servers refuse `kill-window`, `kill-pane`, `kill-session` from their clients (command aliases in `home.conf`), the launcher's own close moved to an unaliased path | S | Medium: the launcher's close and takeover change path | `tests/tmux-e2e.sh`: a client's `kill-window` refused, the launcher's `close` still ends its window |
 | (d) | `docs(orchestrator)`: the README's « Where agents run » gains the remote views, the iTerm2 settings to set once, and what a view never does | S | Low | none: documentation |
@@ -282,12 +305,15 @@ independent.
    remote guard (c) covers a « Terminer » anyway.
 2. **Tabs or windows.** Recommended: « Open tmux windows as: tabs in the attaching window », the
    gateway tab buried, so one window per remote orchestrator holds it and its agents.
-3. **Which machines.** Recommended: IznoServer (`izno`) and Minitech (`geonative@<address>`), in a
+3. **Which machines.** Recommended: `<izno>` and `<minitech>` (`<user>@<minitech>`), in a
    file of this Mac, the coordinator opening every orchestrator they run.
 
 ## Left behind
 
-- On Minitech, the default tmux socket holds a session `0` (one idle `zsh`, created 14:37 CET), made
+- On `<minitech>`, the default tmux socket holds a session `0` (one idle `zsh`, created 14:37 CET), made
   by the first, badly quoted attach. Its removal (`tmux kill-session -t 0`) was refused to this
   session and is the operator's to order.
+- On `<minitech>`, two headless servers run with no local window: `orch-79cd22ce` and
+  `orch-5af6af6f` (see « The operator's rule »). Ending them or keeping them is the operator's
+  decision; nothing is done to them.
 - Throwaway servers, ended by name at the study's end: see the report.
