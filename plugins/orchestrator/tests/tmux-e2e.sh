@@ -5,7 +5,7 @@
 #
 #   ORCHESTRATOR_TIER_LIGHT=<model> tests/tmux-e2e.sh [--keep]
 #
-# NOT part of `run-tests.sh`, like `e2e.sh` and `pane-e2e.sh`: it starts six host sessions in
+# NOT part of `run-tests.sh`, like `e2e.sh` and `pane-e2e.sh`: it starts seven host sessions in
 # detached tmux servers of its own and kills every one at the end. The moved, opened and
 # woken orchestrators run with ORCHESTRATOR_HOME_NO_TAB (honoured beside the test marker
 # ORCHESTRATOR_TEST_RUN, which this script sets), their servers shown by no tab: the
@@ -13,8 +13,10 @@
 # the way the home command will make it: window 0 holds the caller (a shell here, where the
 # orchestrator would run), and the session carries the mark (`@orchestrator-home` = 1). Every
 # launcher command is typed into window 0 and runs there, so its TMUX, its TMUX_PANE and its
-# tty are a real pane's and nothing stands in for them. Nothing is ever attached, but to the
-# server of its own where a home server's owners are checked, ended there.
+# tty are a real pane's and nothing stands in for them. Before the takeover, the shell of window 0
+# gives way to a real host, the predecessor the takeover ends. Nothing is ever attached, but to the
+# server of its own where a home server's owners and its refusal of a view's kill are checked,
+# ended there.
 #
 # The hosts are the one logged in on this machine, on its subscription: the script makes no
 # credential, asks for none and writes none. Before any host starts it asks the host for its
@@ -172,8 +174,8 @@ OWN_TTY=$(tm display -p -t home:0 '#{pane_tty}')
 
 # One launcher command, typed into window 0 and waited for: its stdout, its stderr and its exit
 # code land in the run directory under the step's name.
-# LT names the pane it is typed into (window 0 of the home session unless set), LENV the
-# variables it runs with, as `NAME=value` words.
+# LT names the pane it is typed into (window 0 of the home session unless set; a home server's
+# is `<server>::<pane>`), LENV the variables it runs with, as `NAME=value` words.
 n=0
 LT=home:0
 LENV=()
@@ -184,7 +186,7 @@ launcher() { # <timeout> <subcommand and options>
   { [ ${#LENV[@]} -gt 0 ] && printf 'env'; [ ${#LENV[@]} -gt 0 ] && printf ' %q' "${LENV[@]}"
     printf ' bash %q' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"; printf ' %q' "$@"
     printf ' > %q 2> %q; echo $? > %q\n' "$step.out" "$step.err" "$step.rc"; } > "$step.sh"
-  tm send-keys -t "$LT" "bash $step.sh" Enter
+  type_line "$LT" "bash $step.sh"
   local i=0
   while [ ! -s "$step.rc" ] && [ $i -lt $((wait * 2)) ]; do sleep 0.5; i=$((i + 1)); done
   [ -s "$step.rc" ] || { echo "timeout" > "$step.rc"; }
@@ -193,6 +195,7 @@ launcher() { # <timeout> <subcommand and options>
 rc() { cat "$STEP.rc"; }
 out() { cat "$STEP.out"; }
 # A pane of this server, or `<server>::<pane>` for one of a home server's.
+type_line() { case "$1" in *::*) tmux -L "${1%%::*}" send-keys -t "${1#*::}" "$2" Enter ;; *) tm send-keys -t "$1" "$2" Enter ;; esac; }
 screen_of() { case "$1" in *::*) tmux -L "${1%%::*}" capture-pane -p -t "${1#*::}" ;; *) tm capture-pane -p -t "$1" ;; esac; }
 windows() { tm list-windows -t home -F '#{window_index} #{window_id} #{window_name} #{window_active}'; }
 hosts_on() { ps -t "${1#/dev/}" -o command= 2>/dev/null | grep -c -- "--setting-sources project"; }
@@ -211,20 +214,23 @@ wait_for() { # <pane> <text> <seconds>
 REPLY_RE() { printf '^[[:space:]]*⏺.*%s' "$1"; }
 # A wait that ends without the reply leaves the pane as it stood then in the sandbox, under
 # the word, with the times (UTC) the wait started and the capture was taken.
-wait_reply() { # <pane> <word> <seconds>
-  local i=0 started
+wait_until() { # <pane> <word> <seconds> <test> [args...]
+  local pane="$1" word="$2" seconds="$3" i=0 started
+  shift 3
   started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  while [ $i -lt $(($3 * 2)) ]; do
-    screen_of "$1" | grep -qiE "$(REPLY_RE "$2")" && return 0
+  while [ $i -lt $((seconds * 2)) ]; do
+    "$@" && return 0
     sleep 0.5; i=$((i + 1))
   done
   mkdir -p "$SANDBOX/missed"
-  { printf 'pane: %s\nword: %s\nwait started: %s\ncaptured: %s\n\n' "$1" "$2" "$started" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    case "$1" in *::*) tmux -L "${1%%::*}" capture-pane -p -S - -t "${1#*::}" ;; *) tm capture-pane -p -S - -t "$1" ;; esac
-  } > "$SANDBOX/missed/$2.txt" 2>&1
-  echo "missed reply: $1 captured in $SANDBOX/missed/$2.txt"
+  { printf 'pane: %s\nword: %s\nwait started: %s\ncaptured: %s\n\n' "$pane" "$word" "$started" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    history_of "$pane"
+  } > "$SANDBOX/missed/$word.txt" 2>&1
+  echo "missed reply: $pane captured in $SANDBOX/missed/$word.txt"
   return 1
 }
+replied() { screen_of "$1" | grep -qiE "$(REPLY_RE "$2")"; }
+wait_reply() { wait_until "$1" "$2" "$3" replied "$1" "$2"; } # <pane> <word> <seconds>
 
 # The subscription, read on a host's own banner: its first rows name the product and the plan,
 # and the API billing line anywhere on that screen refuses.
@@ -347,6 +353,44 @@ check "the last of them leaving ends the server and every window it held" "down|
 owsrv kill-server 2>/dev/null
 pkill -fx "sleep $OWMARK" 2>/dev/null
 
+echo "== a home server refuses a view's kill-window, and the launcher's close still ends the window =="
+# The same server, made with the real home.conf, no host: the agent's window runs a sleep. The
+# view is a client in control mode, as iTerm2's, its environment set as sshd sets it, and it
+# types what iTerm2 sends when its close dialog is answered « Terminate ».
+kwindow_of() { owsrv list-windows -t home -F '#{window_id} #{window_name}' | awk '/ Agent: e2e owner$/ { print $1 }'; }
+kwindows() { owsrv list-windows -t home -F '#{window_id}' | grep -cxF -- "$1"; }
+viewkill() { # <window id>: prints `<errors>|<errors naming the refusal>`
+  local answers
+  answers=$({ printf 'kill-window -t %s\n' "$1"; sleep 1; } |
+    env -u TMUX -u TMUX_PANE SSH_CONNECTION="192.0.2.1 50000 192.0.2.2 22" tmux -L "$OWSRV" -C attach -t home 2>&1)
+  printf '%s|%s' "$(printf '%s\n' "$answers" | grep -c '^%error')" \
+    "$(printf '%s\n' "$answers" | grep -c 'home-server-refuses-a-clients-kill-window')"
+}
+owhome
+KWIN=$(kwindow_of)
+KANSWER=$(viewkill "$KWIN")
+check "a view's kill-window is refused by name, and the agent's window and its program stay" "1|1|1|2" \
+  "$KANSWER|$(kwindows "$KWIN")|$(owwindows)"
+owgone "$OWTAB"; owwait; owsrv kill-server 2>/dev/null; pkill -fx "sleep $OWMARK" 2>/dev/null
+# On a server of its own again: the launcher's close, typed into a shell window of that server,
+# ends the very window a view has just been refused, so its TMUX and its TMUX_PANE are that
+# server's own. The shell starts from an empty environment, as the home session's does.
+owhome
+KWIN=$(kwindow_of)
+KTTY=$(owsrv display -p -t "$KWIN" '#{pane_tty}')
+KSHELL=$(owsrv new-window -d -P -F '#{pane_id}' -t home: -n caller -c "$WORKDIR" \
+  "exec env -i HOME=\"\$HOME\" USER=\"$USER\" PATH=$EPATH TERM=xterm-256color TMUX=\"\$TMUX\" TMUX_PANE=\"\$TMUX_PANE\" /bin/bash --noprofile --norc")
+KHELD="$(viewkill "$KWIN")|$(kwindows "$KWIN")"
+LT="$OWSRV::$KSHELL"
+LENV=(ORCHESTRATOR_STATE_DIR="$STATE" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" ORCHESTRATOR_OSASCRIPT=/usr/bin/false)
+launcher 30 close --tty "$KTTY" --expect-title "Agent: e2e owner" --keep-checkout
+LT=home:0; LENV=()
+check "the launcher's close ends the window a view could not kill, and the server runs on" \
+  "1|1|1|0|closed 1 session on $KTTY|0|1|up" \
+  "$KHELD|$(rc)|$(out)|$(kwindows "$KWIN")|$(owwindows)|$(owup)"
+owgone "$OWTAB"; owwait; owsrv kill-server 2>/dev/null
+pkill -fx "sleep $OWMARK" 2>/dev/null
+
 echo "== spawn: two agents, each a window of the home session =="
 agent "Agent: e2e one" E2E-ONE-READY
 ONE_RC=$(rc); ONE=$(out | tail -1); ONE_ERR=$(cat "$STEP.err")
@@ -462,6 +506,22 @@ wait_host() { # <tty> <seconds>: a host comes up on the tty
 # The proof a resumed session holds its earlier exchange: an answer only that exchange gives,
 # the words of its first reply in reverse order, which no prompt of the run spells.
 recall() { printf 'Take the words of the reply you gave to my first message, put them in reverse order, and reply with them joined by hyphens, in lower case, and nothing else. Do not use any tool.'; }
+# The recall answered, whatever order the model puts the words in: one reply line below the
+# recall's own prompt carries every one. The first reply, which the resume draws again above that
+# prompt, is never read as the answer.
+recalled() { # <pane> <word>...
+  local pane="$1"
+  shift
+  history_of "$pane" | awk -v words="$*" '
+    BEGIN { n = split(words, want, " ") }
+    index($0, "Take the words of the reply") { asked = 1; next }
+    asked && /^[[:space:]]*⏺/ {
+      line = tolower($0)
+      for (i = 1; i <= n; i++) if (!index(line, want[i])) next
+      found = 1
+    }
+    END { exit !found }'
+}
 
 # A session the operator made by hand, unmarked: where the coordinator's tab and a tab that
 # runs an orchestrator not yet at home stand in this run.
@@ -487,8 +547,8 @@ CONV_PAIR=$(jq -r 'select(.type == "api-request" and .querySource == "repl_main_
 LT=plain:0; LENV=(ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 "ORCHESTRATOR_HOST_CLI=$REAL_HOST")
 launcher 30 home --session "$CSID" --name "Orch: e2e conv" --prompt "$(recall)"
 check "the move starts the home server named after the session, window 0 named after the orchestrator, the mark set by the conf" \
-  "0|moved: $CHOME (no tab: attach with tmux -L $CHOME attach)|Orch: e2e conv|1" \
-  "$(rc)|$(out)|$(tmux -L "$CHOME" display -p -t home:0 '#{window_name}' 2>/dev/null)|$(tmux -L "$CHOME" show -qv -t home @orchestrator-home 2>/dev/null)"
+  "0|moved: $CHOME (no tab: attach with tmux -L $CHOME attach)|wait: <n>|Orch: e2e conv|1" \
+  "$(rc)|$(out | sed 's/^wait: [0-9][0-9]*$/wait: <n>/' | paste -sd'|' -)|$(tmux -L "$CHOME" display -p -t home:0 '#{window_name}' 2>/dev/null)|$(tmux -L "$CHOME" show -qv -t home @orchestrator-home 2>/dev/null)"
 check "the session still runs in its old place until it ends there" "1" "$(hosts_on "$CONV_TTY")"
 # The module ends the session through its own exit; the host's own command is that exit here.
 tm send-keys -t plain:conv '/exit' Enter
@@ -541,7 +601,7 @@ WAKE_TTY=$(out | tail -1)
 check "the wake resumes the recorded session in window 0 of a new home server" "0|$WAKE_TTY|1" \
   "$(rc)|$(home_tty "$OHOME")|$(ps -t "${WAKE_TTY#/dev/}" -o command= 2>/dev/null | grep -c -- "--resume $OSID")"
 resumed_or_exit "$OHOME::home:0"
-if wait_reply "$OHOME::home:0" ready-open-e2e 120; then ORECALL=1; else ORECALL=0; fi
+if wait_until "$OHOME::home:0" recall-open-e2e 120 recalled "$OHOME::home:0" e2e open ready; then ORECALL=1; else ORECALL=0; fi
 audit_rc
 check "the woken orchestrator answers from its earlier exchange, one live session under its name, its transcript gone on" \
   "1|1 Orch: e2e open|1" \
@@ -575,16 +635,29 @@ check "the successor is a window of the same session, under the caller's name" "
 check "the chain is handed over keyed on the successor's pane" "tmux:$SOCKET:$W3 $THREE tmux:$SOCKET:$HEIR_PANE|0" \
   "$(jq -r '"\(.tab_id) \(.tty) \(.owner)"' "$STATE/chains/${HEIR#/dev/}.jsonl" 2>/dev/null | paste -sd'|' -)|$(chain | grep -c .)"
 W0=$(tm display -p -t home:0 '#{window_id}')
+# The predecessor the takeover ends is a real host: window 0's shell, done with the successor's
+# spawn, gives way to it in the same pane, so on the same tty in the same window. It says
+# « handed over », which the takeover reads on its transcript, and its empty prompt box is what
+# the guard of unsent text reads before the kill.
+printf '#!/bin/sh\nclear\nexec %q --model %q --permission-mode acceptEdits %q\n' "$WRAPPER" "$MODEL" \
+  'Reply with these two words, a space between them and no hyphen, in lower case, and nothing else: handed over. Do not use any tool.' \
+  > "$SANDBOX/run/lead.sh"
+tm clear-history -t "$OWN_PANE"
+tm send-keys -t "$OWN_PANE" "exec /bin/sh $SANDBOX/run/lead.sh" Enter
+banner_or_exit "$OWN_PANE"
+if wait_reply "$OWN_PANE" 'handed over' 90; then PRED_REPLIED=1; else PRED_REPLIED=0; fi
+audit_rc
+PRED_SID=$(sid_on "$OWN_TTY")
+check "window 0 holds a real predecessor host, which said it handed over" "1|1|1" \
+  "$(hosts_on "$OWN_TTY")|$PRED_REPLIED|$([ -n "$PRED_SID" ] && echo 1 || echo 0)"
 # The takeover runs in the successor's own window: a shell beside it there stands in for it.
 SHELL_PANE=$(tm split-window -d -P -F '#{pane_id}' -t "$HEIR_WIN" -c "$WORKDIR" '/bin/bash --noprofile --norc')
 LT="$SHELL_PANE"
-launcher 30 takeover --tty "$OWN_TTY" --expect-title "Orch: e2e lead"
-# Window 0 here is a shell with no host and so no session: the takeover has no transcript to wait
-# on and says so before it kills (615f887e, « wait for the predecessor's handed over »).
-check "the takeover kills window 0 and gives the successor index 0, the operator's view with it" \
-  "0|takeover: no transcript of the session on $OWN_TTY was found: no « handed over » read
-took window 0: the predecessor's window $W0 on $OWN_TTY was closed|0 $HEIR_WIN Orch: e2e lead 1|0" \
-  "$(rc)|$(out)|$(windows | awk '$1 == 0')|$(windows | grep -c " $W0 ")"
+# Waited for past the guard's own 45 s, so a refusal is read as the launcher words it.
+launcher 120 takeover --tty "$OWN_TTY" --expect-title "Orch: e2e lead"
+check "the takeover reads the predecessor's « handed over », ends window 0 and its host, and gives the successor index 0, the operator's view with it" \
+  "0|1|1|0|0 $HEIR_WIN Orch: e2e lead 1|0" \
+  "$(rc)|$(out | head -1 | grep -c "^takeover: « handed over » read on .*/${PRED_SID:-none}\.jsonl\$")|$(out | grep -cxF "took window 0: the predecessor's window $W0 on $OWN_TTY was closed")|$(hosts_on "$OWN_TTY")|$(windows | awk '$1 == 0')|$(windows | grep -c " $W0 ")"
 # The server started from a deploy's conf stays the successor's: its home leaves it in place, and
 # the agent, busy through the takeover, is in the same window of the same server, the same process.
 LENV=(ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1)
