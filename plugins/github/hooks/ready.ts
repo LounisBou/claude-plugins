@@ -703,6 +703,11 @@ export function notReadyRefusal(act: string, repo: string, pr: number, head: str
     + '. What Ready needs is core\'s readiness contract (core/readiness.ts).'
 }
 
+// Why an act is refused on a pull request that is no longer open: it names that state, not a readiness the act cannot have.
+export function closedRefusal(act: string, repo: string, pr: number, head: string, state: string): string {
+  return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': the pull request is already ' + state + '.'
+}
+
 // The readiness label a pull request carries, as pr-readiness's answer names it.
 function carriedLabel(labels: string[]): string {
   if (labels.some((label) => label.toLowerCase() === READY)) return 'Ready'
