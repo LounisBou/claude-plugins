@@ -76,7 +76,7 @@ export type Asked = AskFields & {
    * answer given here on its way to the owner (pending, then sent), delivered once acknowledged.
    */
   delivery?: { state: 'pending' | 'sent' | 'delivered' | 'failed'; at: string; attempts: number; reason?: string }
-  /** A replica (remote-asked.ts): the owner's machine, and the address its last push came from. */
+  /** A replica (remote-asked.ts): the owner's machine, and the address its last push came from, or the one the host's listing gave since. */
   origin?: { machine: string; address: string }
   /** On the owner's machine: the push of this `seq` to the coordinator on another machine, and how it went. */
   replica?: { seq: number; state: 'sent' | 'acked' | 'failed'; attempts: number; at: string; reason?: string }
