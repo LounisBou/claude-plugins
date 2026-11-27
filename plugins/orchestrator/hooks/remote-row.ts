@@ -4,9 +4,9 @@
 // runs elsewhere never showed. Its module sends the row as one marked line, and the
 // coordinator's module takes that line out of the delivery before any model reads it:
 // the row lands in the coordinator's store (`remote/<name>`), and no turn on either side
-// spends a token on it. Sent at a turn's end alone, and only when what the pane shows changed
-// since the last send — the wait, the fill crossing a band, the pull requests, the questions held —
-// in the one message that turn's end sends (remote-round.ts joinLines). Pure on purpose: the
+// spends a token on it. Sent at a turn's end, and again by a timer while it was not delivered, only
+// when what the pane shows changed since the last send — the wait, the fill crossing a band, the
+// pull requests, the questions held — in the one message that turn's end sends (remote-round.ts joinLines). Pure on purpose: the
 // handlers hold the $ (supervision.ts) and pass their reads in here.
 import { roleOf } from './session-name.ts'
 import { watchNumberOf } from '../core/orchestration.ts'
@@ -25,6 +25,11 @@ export const ROW_BAND_PERCENT = 5
 // sends no refresh, and the store's one-hour rule would drop it exactly while it waits.
 // The pane's age says how old the reading is.
 export const REMOTE_STALE_AFTER_MS = 24 * 60 * 60 * 1000
+
+// How long after a send that reached nobody the module tries again, a row's or an open question's:
+// a session waiting on the operator ends no turn, and the host reaches only the sessions of its own
+// account, so a coordinator not yet moved to it is out of reach for as long as that lasts.
+export const UNREACHED_RETRY_MS = 2 * 60 * 1000
 
 // A row whose content did not change is sent again, at a turn's end, only once its last send is
 // half the stale bound old: a live orchestrator whose state holds still is never dropped as stale,

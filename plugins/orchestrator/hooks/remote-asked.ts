@@ -7,9 +7,14 @@
 // it while the question is open and acknowledges it, or, settled first in its own tab, acknowledges
 // it `already` and pushes its own state again. A push or a reply not acknowledged is sent again
 // every ANSWER_RESEND_MS, ANSWER_SENDS times in all, then failed, said in the log and, for a reply,
-// in the pane. A reply's address may be gone while its asker's name runs on: a reply refused or not
+// in the pane. An open question's push that failed with its last send reaching nobody (refused, or
+// thrown) is tried again every UNREACHED_RETRY_MS, and one that is delivered starts its sends over;
+// one delivered and never acknowledged stays failed.
+// A reply's address may be gone while its asker's name runs on: a reply refused or not
 // acknowledged goes to the one live remote session of that name the host lists, and a refused one is
 // not failed while one is listed, until that same address has refused ANSWER_SENDS sends in a row.
+// A failed reply is sent again once its asker has a row on its machine and the listing gives its name
+// an address it was never sent to.
 // The handlers' `$` is the supervision's.
 import { peersOf, roundEntryPath } from '../core/orchestration.ts'
 import { updateOver } from '../core/store-io.ts'
@@ -18,7 +23,8 @@ import { dataDir, logLine, storeIo } from './module-io.ts'
 import { fieldsOf, messageOf, type Host } from './host.ts'
 import { isDegradedPass, withDeadline } from './stop-gate.ts'
 import { askedAsEntry, parseAsked, readAsked, type Asked } from './question.ts'
-import { ALREADY_ANSWERED, ANSWER_RESEND_MS, ANSWER_SENDS, closesItself, coordinatorAddress, readSessions, selfOf, sendToCoordinator, sessionKey, tellSettled } from './supervision.ts'
+import { ALREADY_ANSWERED, ANSWER_RESEND_MS, ANSWER_SENDS, closesItself, coordinatorAddress, readRemoteRows, readSessions, selfOf, sendToCoordinator, sessionKey, tellSettled } from './supervision.ts'
+import { remoteKey, UNREACHED_RETRY_MS } from './remote-row.ts'
 import { ASKED_LINE_CAP, qAckLine, qAskedLine, qReplyLine, type QAck, type QReply } from './remote-round.ts'
 import { settledMessage } from './settle.ts'
 
@@ -53,7 +59,9 @@ export async function replicate($: Pushing, entry: Asked): Promise<void> {
     const coordinator = await coordinatorAddress($)
     if (!coordinator || coordinator.local) return
     const { replica: was, delivery: _delivery, ...object } = entry
-    const attempts = (was?.seq === entry.seq ? was.attempts : 0) + 1
+    // A failed push tried again: refused, it stays failed; delivered, its sends start over.
+    const retried = was?.seq === entry.seq && was.state === 'failed' ? was : null
+    const attempts = (was?.seq === entry.seq && retried === null ? was.attempts : 0) + 1
     const line = qAskedLine(object)
     let reason: string | null = null
     if (line === null) reason = `past the line's cap of ${ASKED_LINE_CAP} characters`
@@ -61,17 +69,21 @@ export async function replicate($: Pushing, entry: Asked): Promise<void> {
       const sent = await sendToCoordinator($, coordinator, line).catch((err: unknown) => ({ isDelivered: false, reason: messageOf(err) }))
       if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
     }
+    const stays = retried !== null && reason !== null
+    const unreached = line !== null && reason !== null
     const replica: Replica = {
-      seq: entry.seq, state: line === null ? 'failed' : 'sent', attempts, at: new Date().toISOString(), ...(reason !== null ? { reason } : {}),
+      seq: entry.seq, state: line === null || stays ? 'failed' : 'sent', attempts: stays ? retried.attempts : attempts,
+      at: new Date().toISOString(), ...(reason !== null ? { reason } : {}), ...(unreached ? { unreached: true as const } : {}),
     }
-    if (reason !== null) await logLine($, 'question', `${entry.id} not pushed to the coordinator ${coordinator.name}: ${reason}`)
+    // A retry refused as the send before it was is not said again.
+    if (reason !== null && reason !== retried?.reason) await logLine($, 'question', `${entry.id} not pushed to the coordinator ${coordinator.name}: ${reason}`)
     // Written while the push it replaces is still there: an acknowledgment that landed during the send is kept.
     await updateOver(storeIo($), await pathOf($, entry.id), current => {
       const now = current === undefined ? null : parseAsked(current)
       const same = now !== null && now.origin === undefined && now.seq === entry.seq && JSON.stringify(now.replica ?? null) === JSON.stringify(was ?? null)
       return same ? `${JSON.stringify({ ...now, replica })}\n` : undefined
     })
-    if (replica.state === 'sent') armResend($)
+    if (awaitsResend({ ...entry, replica })) armResend($)
   } catch (err) {
     await logLine($, 'question', `${entry.id} not pushed: ${messageOf(err)}`)
   }
@@ -95,14 +107,34 @@ export function forgetResendTimer(): void {
   resendArmed = false
 }
 
+// An open question's failed push whose last send reached nobody: it is tried again.
+function retriable(entry: Asked): boolean {
+  return entry.status === 'open' && entry.replica?.state === 'failed' && entry.replica.unreached === true
+}
+
+// A push this machine's timer still has to read: one not acknowledged yet, or one to try again.
+function awaitsResend(entry: Asked): boolean {
+  return entry.origin === undefined && (entry.replica?.state === 'sent' || retriable(entry))
+}
+
+/**
+ * The resend timer armed again at a start, which a module loaded again reaches with no turn: a push
+ * `session` asked still awaits its resend to a coordinator on another machine.
+ */
+export async function rearmResend($: Pushing, session: string): Promise<void> {
+  const coordinator = await coordinatorAddress($)
+  if (!coordinator || coordinator.local) return
+  if ((await readAsked($)).some(entry => entry.sender.session === session && awaitsResend(entry))) armResend($)
+}
+
 // A push sent after the timer was armed is younger than ANSWER_RESEND_MS at its tick: armed again
-// while any push still waits for its acknowledgment from a coordinator still on another machine.
+// while any push still awaits its resend to a coordinator still on another machine.
 async function resendTick($: Pushing): Promise<void> {
   resendArmed = false
   try {
     await resendReplicas($)
     const coordinator = await coordinatorAddress($)
-    const waiting = (await readAsked($)).some(entry => entry.origin === undefined && entry.replica?.state === 'sent')
+    const waiting = (await readAsked($)).some(awaitsResend)
     if (waiting && coordinator !== null && !coordinator.local) armResend($)
   } catch (err) {
     await logLine($, 'question', `pushes: ${messageOf(err)}`)
@@ -112,8 +144,9 @@ async function resendTick($: Pushing): Promise<void> {
 /**
  * The pushes not acknowledged, read at a turn's end on the owner's machine and by the timer each push
  * arms: one whose last send is
- * ANSWER_RESEND_MS old is sent again, or, sent ANSWER_SENDS times already, failed; an open question
- * never pushed, or changed since its last push, is pushed now.
+ * ANSWER_RESEND_MS old is sent again, or, sent ANSWER_SENDS times already, failed; an open question's
+ * failed one that reached nobody is tried again UNREACHED_RETRY_MS after it, the timer armed until
+ * then; an open question never pushed, or changed since its last push, is pushed now.
  */
 export async function resendReplicas($: Pushing, now: number = Date.now()): Promise<void> {
   const coordinator = await coordinatorAddress($)
@@ -123,6 +156,11 @@ export async function resendReplicas($: Pushing, now: number = Date.now()): Prom
     const replica = entry.replica
     if (replica === undefined ? entry.status === 'open' : replica.seq !== entry.seq) {
       await replicate($, entry)
+      continue
+    }
+    if (replica !== undefined && retriable(entry)) {
+      if (now - Date.parse(replica.at) >= UNREACHED_RETRY_MS) await replicate($, entry)
+      else armResend($)
       continue
     }
     if (replica?.state !== 'sent' || now - Date.parse(replica.at) < ANSWER_RESEND_MS) continue
@@ -337,37 +375,42 @@ const LIVE_REMOTE_ROW = /·\s+Remote Control\s+·\s+(?!offline\b)\S/
 
 /**
  * The address a send reaches the one live session of another machine named `name` by, as the host
- * lists it now: its name and reference. Null when none or several are listed, or no listing is had.
+ * lists it now: its name and reference. Null when none or several are listed, or no listing is had,
+ * which `say` leaves out of the log for a reading repeated at every wake.
  */
-async function liveAddress($: Replying, name: string): Promise<string | null> {
+async function liveAddress($: Replying, name: string, say: boolean = true): Promise<string | null> {
+  const said = async (text: string) => { if (say) await logLine($, 'question', text) }
   try {
     const answered = await withDeadline($.tool!.call({ tool: 'ListAgents' }), LISTING_BOUND_MS)
     const answer = isDegradedPass(answered) ? undefined : fieldsOf(answered)
     if (answer === undefined || answer['deny'] !== undefined || answer['isError']) {
-      await logLine($, 'question', `no listing to find ${name} by`)
+      await said(`no listing to find ${name} by`)
       return null
     }
     const result = answer['result']
     const listing = String(answer['text'] ?? (typeof result === 'string' ? result : ''))
     const live = listing.split('\n').filter(line => LIVE_REMOTE_ROW.test(line))
       .flatMap(line => peersOf(`\n${line}`)).filter(peer => bare(peer.name) === bare(name))
-    if (live.length > 1) await logLine($, 'question', `${live.length} live sessions are named ${name}: none is chosen`)
+    if (live.length > 1) await said(`${live.length} live sessions are named ${name}: none is chosen`)
     return live.length === 1 ? live[0]!.full : null
   } catch (err) {
-    await logLine($, 'question', `no listing to find ${name} by: ${messageOf(err)}`)
+    await said(`no listing to find ${name} by: ${messageOf(err)}`)
     return null
   }
 }
 
 // Every replica of that machine's sender holding the address gone takes the one that replaces it, so
-// that no later answer of theirs is sent to it.
+// that no later answer of theirs is sent to it. A failed answer that kept no address it was sent to
+// keeps the one it held: the new one is not taken for one it was sent to.
 async function readdress($: Held, sender: { machine: string; name: string }, gone: string, address: string): Promise<void> {
   const holds = (entry: Asked) => entry.origin?.machine === sender.machine && entry.origin.address === gone && bare(entry.sender.name) === bare(sender.name)
   for (const entry of (await readAsked($)).filter(holds)) {
     try {
       await updateOver(storeIo($), await pathOf($, entry.id), current => {
         const now = current === undefined ? null : parseAsked(current)
-        return now !== null && holds(now) ? `${JSON.stringify({ ...now, origin: { ...now.origin, address } })}\n` : undefined
+        if (now === null || !holds(now)) return undefined
+        const unkept = now.delivery?.state === 'failed' && now.delivery.tried === undefined
+        return `${JSON.stringify({ ...now, origin: { ...now.origin, address }, ...(unkept ? { delivery: { ...now.delivery, tried: [gone] } } : {}) })}\n`
       })
     } catch (err) {
       await logLine($, 'question', `the address of ${entry.id} not written: ${messageOf(err)}`)
@@ -378,12 +421,12 @@ async function readdress($: Held, sender: { machine: string; name: string }, gon
 /**
  * One send of the answer a replica holds to its owner: at the address the replica holds, or, once a
  * send was refused or not acknowledged, at the one the listing gives its asker's name now, which
- * every replica of that sender then takes. The delivery is written `sent` with one more attempt (the
- * first of an address newly reached), the host's refusal kept as its reason, with the address that
- * refused and its refusals in a row, while it is still the one this send moves. Answers the refusal,
- * or null.
+ * every replica of that sender then takes. `at` is the address the listing just gave, taken as it is.
+ * The delivery is written `sent` with one more attempt (the first of an address newly reached), every
+ * address it was sent to, the host's refusal kept as its reason, with the address that refused and its
+ * refusals in a row, while it is still the one this send moves. Answers the refusal, or null.
  */
-export async function sendReply($: Replying, id: string): Promise<string | null> {
+export async function sendReply($: Replying, id: string, at?: string): Promise<string | null> {
   const path = await pathOf($, id)
   let read = ''
   try {
@@ -404,7 +447,9 @@ export async function sendReply($: Replying, id: string): Promise<string | null>
     by: entry.answer.by === 'coordinator' ? 'coordinator' : 'pane', at: entry.answer.at, settler: entry.answer.settler,
   }
   const line = qReplyLine(id, entry.seq, reply)
+  const tried = new Set(was.tried)
   const refusalAt = async (to: string): Promise<string | null> => {
+    tried.add(to)
     try {
       const sent = await $.session.send({ to, text: line })
       return sent?.isDelivered ? null : sent?.reason ?? 'no answer'
@@ -413,7 +458,7 @@ export async function sendReply($: Replying, id: string): Promise<string | null>
     }
   }
   const recorded = entry.origin.address
-  let to = (was.attempts > 0 ? await liveAddress($, entry.sender.name) : null) ?? recorded
+  let to = at ?? (was.attempts > 0 ? await liveAddress($, entry.sender.name) : null) ?? recorded
   let reason = await refusalAt(to)
   if (reason !== null && was.attempts === 0) {
     const live = await liveAddress($, entry.sender.name)
@@ -429,7 +474,10 @@ export async function sendReply($: Replying, id: string): Promise<string | null>
     await logLine($, 'question', `the answer to ${id} goes to ${to}: ${recorded} gave way to the live session of its asker's name`)
   }
   const refusal = reason === null ? {} : { reason, refused: { to, sends: was.refused?.to === to ? was.refused.sends + 1 : 1 } }
-  const delivery = { state: 'sent' as const, at: new Date().toISOString(), attempts: moved ? 1 : Math.min(was.attempts + 1, ANSWER_SENDS), ...refusal }
+  const delivery = {
+    state: 'sent' as const, at: new Date().toISOString(), attempts: moved ? 1 : Math.min(was.attempts + 1, ANSWER_SENDS), ...refusal,
+    tried: [...tried], ...(was.again ? { again: true as const } : {}),
+  }
   try {
     await updateOver(storeIo($), path, current => {
       const now = current === undefined ? null : parseAsked(current)
@@ -447,13 +495,18 @@ export async function sendReply($: Replying, id: string): Promise<string | null>
  * The replicas' answers not acknowledged, read at each round wake: sent again ANSWER_RESEND_MS after
  * the last send, then failed. A refused send reached nobody: it is sent again while a live session of
  * the asker's name is listed, and failed with its refusal once the address listed is the one that
- * refused the last ANSWER_SENDS sends.
+ * refused the last ANSWER_SENDS sends. A failed one is read by sendAgain.
  */
 export async function resendReplies($: Replying, now: number = Date.now()): Promise<void> {
   for (const entry of await readAsked($)) {
     const delivery = entry.delivery
-    if (entry.origin === undefined || (delivery?.state !== 'pending' && delivery?.state !== 'sent') || now - Date.parse(delivery.at) < ANSWER_RESEND_MS) continue
+    if (entry.origin === undefined || delivery === undefined || delivery.state === 'delivered') continue
+    if (delivery.state !== 'failed' && now - Date.parse(delivery.at) < ANSWER_RESEND_MS) continue
     try {
+      if (delivery.state === 'failed') {
+        await sendAgain($, entry)
+        continue
+      }
       const live = delivery.attempts >= ANSWER_SENDS && delivery.reason !== undefined ? await liveAddress($, entry.sender.name) : null
       const spent = delivery.refused !== undefined && delivery.refused.to === live && delivery.refused.sends >= ANSWER_SENDS
       if (delivery.attempts < ANSWER_SENDS || (live !== null && !spent)) {
@@ -465,7 +518,8 @@ export async function resendReplies($: Replying, now: number = Date.now()): Prom
       await updateOver(storeIo($), await pathOf($, entry.id), current => {
         const read = current === undefined ? null : parseAsked(current)
         written = read?.delivery?.state === delivery.state && read.delivery.attempts === delivery.attempts
-        return written ? `${JSON.stringify({ ...read, delivery: { state: 'failed', at: new Date().toISOString(), attempts: delivery.attempts, reason } })}\n` : undefined
+        const kept = delivery.tried === undefined ? {} : { tried: delivery.tried }
+        return written ? `${JSON.stringify({ ...read, delivery: { state: 'failed', at: new Date().toISOString(), attempts: delivery.attempts, reason, ...kept } })}\n` : undefined
       })
       if (!written) continue
       await logLine($, 'question', `the answer to ${entry.id} on ${entry.origin.machine} failed: ${reason}`)
@@ -474,6 +528,30 @@ export async function resendReplies($: Replying, now: number = Date.now()): Prom
       await logLine($, 'question', `the answer to ${entry.id} not sent again: ${messageOf(err)}`)
     }
   }
+}
+
+// A failed answer given here, neither cleared nor answered first by its asker, whose asker has a row
+// on its machine: sent again, as a new delivery, to the live session of its asker's name when that is
+// an address it was never sent to. Each such address takes its own sends, none a second time.
+async function sendAgain($: Replying, entry: Asked): Promise<void> {
+  const { origin, delivery, answer } = entry
+  if (origin === undefined || delivery?.state !== 'failed' || delivery.cleared !== undefined || delivery.reason === ALREADY_ANSWERED) return
+  if (answer === null || !REPLICA_ANSWERS.includes(answer.by)) return
+  const rows = await readRemoteRows($)
+  if (!rows.some(row => remoteKey(row.name) === remoteKey(entry.sender.name) && row.machine === origin.machine)) return
+  const live = await liveAddress($, entry.sender.name, false)
+  if (live === null || (delivery.tried ?? [origin.address]).includes(live)) return
+  let written = false
+  await updateOver(storeIo($), await pathOf($, entry.id), current => {
+    const read = current === undefined ? null : parseAsked(current)
+    const was = read?.delivery
+    written = was?.state === 'failed' && was.at === delivery.at && was.cleared === undefined
+    return written ? `${JSON.stringify({ ...read, delivery: { state: 'pending', at: new Date().toISOString(), attempts: 0, tried: was!.tried ?? [origin.address], again: true } })}\n` : undefined
+  })
+  if (!written) return
+  await logLine($, 'question', `the answer to ${entry.id} is sent again to ${entry.sender.name} on ${origin.machine}, at ${live}`)
+  await sendReply($, entry.id, live)
+  $.ui.invalidate('ui.render')
 }
 
 // The sender is the coordinator on another machine this one pushes to: the address it learnt.

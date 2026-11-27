@@ -6,8 +6,8 @@
 // the same rows, opened on the person's word (/orchestrator-supervision or the supervision
 // tool's `open`) and left as he left it: the role keeps whether its pane is open (paneStatePath),
 // so a successor puts it as it was — open stays open, what he closed stays closed — and nothing
-// else opens it, on a start, a turn or a wake. In a coordinator session it lists the orchestrators, and under them
-// the first question of its round (round.ts); in an orchestrator session,
+// else opens it, on a start, a turn or a wake. In a coordinator session it shows the first question of its
+// round (round.ts), then lists the orchestrators, auditors and coordinators; in an orchestrator session,
 // that orchestrator's own agents, read from the launcher's chain and the host's
 // session records; in any other role it opens nothing. The commands hold no $ of
 // the writing side and read the same files through their own $.fs calls plus
@@ -32,13 +32,13 @@ import {
   hostStopOf, stopInTail, stopKey, stopText, type HostStop, type KeptGate, type WaitKind,
   confirmsTakeover,
 } from './relay.ts'
-import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
+import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, rearmResend, resendReplies } from './remote-asked.ts'
 import { planOlder, planWithdrawal } from './settle.ts'
-import { answerAskedFromPane, askedAsEntry, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
+import { answerAskedFromPane, askedAsEntry, clearFailed, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
-  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS,
+  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS, UNREACHED_RETRY_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLines, splitLines, seqOf, type QAck, type QEvent } from './remote-round.ts'
@@ -50,6 +50,7 @@ import { unattendedPaneLines, type Unattended, type UnattendedPaneLine } from '.
 import { isDeckUsage, parseDeck } from '../core/deck.ts'
 import { ciGatePath, ROUND_DIR } from '../core/orchestration.ts'
 import { orchForm } from '../core/names.ts'
+import { planOfConfig } from '../core/quota.ts'
 import { fieldsOf, messageOf, type Events, type Host, type On, type SessionSendResult, type Timer, type UiOpenResult } from './host.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
 import type { DeclaredWait } from './stop-gate.ts'
@@ -94,6 +95,11 @@ export type SessionRow = {
   tty?: string | null
   // The session's window, `<session>:@N.%N`, when it runs in a home session (the deck's focus).
   tmux?: string | null
+  // The session's configuration directory, which names its account (fleetLabel), and the owner its launcher
+  // writes on the chain entries of the agents it spawns (chainOwner): both read by the session's own module, so
+  // the coordinator's pane counts a session's agents as an orchestrator's own pane does.
+  config?: string | null
+  chain_owner?: string | null
   repo: string | null
   context_percent: number
   context_tokens: number
@@ -198,7 +204,7 @@ export function livePids(result: unknown): Map<string, ProcessState> | null {
 // lists, by the role it was opened in. The id's spelling is the shipped type's
 // own contract — letters, digits, `_` and `-`.
 const PANE_ID = 'supervision'
-const PANE_TITLES = { coordinator: 'Orchestrators', orchestrator: 'Agents' } as const
+const PANE_TITLES = { coordinator: 'Sessions', orchestrator: 'Agents' } as const
 
 // The commands that toggle the pane, as the host hands them to command.run (short-names.ts):
 // the 0.80.0 form of the short name, the plugin's `supervision` file, and the bare short name of
@@ -261,6 +267,10 @@ const PANE_ROUND_POLL_MS = 2000
 const OTHER_KEY = 'other'
 const OTHER_HOTKEY = 'o'
 
+// The action over the line of the answers not delivered, which clears them. No letter is A to E.
+const CLEAR_KEY = 'clear-failed'
+const CLEAR_HOTKEY = 'x'
+
 // The words the coordinator's pane draws, in one table: the operator reads them at a glance, so
 // each says one thing and says it the same way wherever it is drawn. Where the surface draws a
 // text field, the last option is that field (`other`): its text answers the entry.
@@ -268,8 +278,9 @@ const WORDS = {
   questions: 'Questions for you',
   pending: 'pending',
   none: 'none',
-  orchestrators: 'Orchestrators',
-  noOrchestrator: 'no live orchestrator',
+  sessions: 'Sessions',
+  noSession: 'no live session',
+  self: 'this session',
   status: 'Status',
   blocks: 'Blocks',
   other: 'Other answer',
@@ -280,7 +291,9 @@ const WORDS = {
   choose: 'Choose',
   recommended: 'recommended',
   notDelivered: 'not delivered',
+  clearNotDelivered: 'clear « not delivered »',
   delivering: 'being delivered',
+  sentAgain: 'sent again to',
 } as const
 const OTHER_LABEL = WORDS.other
 
@@ -407,6 +420,8 @@ export function parseSessionRow(text: string): SessionRow | null {
     ...(isTextOrNull(read['pid']) ? { pid: read['pid'] } : isFigure(read['pid']) ? { pid: String(read['pid']) } : {}),
     ...optional('tty', isTextOrNull),
     ...optional('tmux', isTextOrNull),
+    ...optional('config', isTextOrNull),
+    ...optional('chain_owner', isTextOrNull),
     ...optional('waiting', (value): value is WaitKind | null => value === null || isWaitKind(value)),
     ...optional('blocks', isTextOrNull),
     ...optional('waiting_since', isTextOrNull),
@@ -749,6 +764,7 @@ export type PaneRow = {
   // The label's pieces, for the block the coordinator's pane draws: the name, what comes
   // before the fill, the fill with its gate words, the age and the wait, the wait split into
   // its status words and what it blocks.
+  role: SessionRow['role']
   name: string
   head: string
   fill: string
@@ -812,7 +828,7 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
       if (wait !== null) parts.push(wait)
       return {
         label: parts.join(' · '), urgency: (past ? GATE_URGENCY_FLOOR : 0) + row.context_percent,
-        key, name, head, fill, percent, past, age, wait, status: split?.status ?? null, blocked: split?.blocks ?? null,
+        key, role: row.role, name, head, fill, percent, past, age, wait, status: split?.status ?? null, blocked: split?.blocks ?? null,
         waiting: wait !== null ? row.waiting ?? null : null,
         unattended: unattendedOfRow(row),
       }
@@ -857,18 +873,31 @@ async function agentViews($: Host<'env' | 'fs' | 'process'>, tty: string): Promi
   return (await chainAgents($, tty, owner)).map(({ name, status, row }) => ({ name, status, row }))
 }
 
+// The pids on an agent's tty.
+type PidsOn = (tty: string) => Promise<readonly string[]>
+
+// Asked of ps, one listing a tty.
+const pidsAsked = ($: Host<'process'>): PidsOn => async tty => {
+  const ps = await $.process.run(['ps', '-t', tty, '-o', 'pid='])
+  if (ps.exitCode !== 0) return []
+  return String(ps.stdout ?? '').split('\n').map((line: string) => line.trim().split(/\s+/)[0] ?? '').filter((pid: string) => /^\d+$/.test(pid))
+}
+
+// Read in a process table already taken: the pids it shows on that tty that still run a session (runsLive).
+const pidsListed = (table: ProcessTable): PidsOn => async tty =>
+  [...table].filter(([pid, state]) => state.tty === tty && runsLive(table, pid, tty)).map(([pid]) => pid)
+
 // The live agents of the chain kept under `tty` (those `owner` launched, or every one when null),
-// each by the host's record of the session on its tty.
-async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner: string | null): Promise<(AgentView & { sessionId: string; startedAt: number | null })[]> {
-  const config = await configDir($)
+// each by the record of the session on its tty that the host keeps in `config`.
+async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner: string | null,
+  host: { config: string; pidsOn: PidsOn } | null = null): Promise<(AgentView & { sessionId: string; startedAt: number | null })[]> {
+  const { config, pidsOn } = host ?? { config: await configDir($), pidsOn: pidsAsked($) }
   const state = await dataDir($)
   const chain = String(await $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`).catch(() => ''))
   const views: (AgentView & { sessionId: string; startedAt: number | null })[] = []
   for (const entry of chainEntries(chain)) {
     if (owner !== null && entry.owner !== owner) continue
-    const ps = await $.process.run(['ps', '-t', entry.tty.replace(/^\/dev\//, ''), '-o', 'pid='])
-    if (ps.exitCode !== 0) continue
-    for (const pid of String(ps.stdout ?? '').split('\n').map((line: string) => line.trim().split(/\s+/)[0] ?? '').filter((pid: string) => /^\d+$/.test(pid))) {
+    for (const pid of await pidsOn(entry.tty.replace(/^\/dev\//, ''))) {
       const record = hostRecordOf(String(await $.fs.read(`${config}/sessions/${pid}.json`).catch(() => '')))
       if (!record || !record.sessionId) continue
       const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(record.sessionId)}`).catch(() => '')))
@@ -878,6 +907,24 @@ async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner
     }
   }
   return views
+}
+
+// The accounts by the launcher's `--plan` numbers, over core's naming of a configuration directory.
+const ACCOUNTS: Readonly<Record<string, string>> = { plan1: 'plan 1', plan2: 'plan 2' }
+
+// What a session's line says of its account and its live agents, `plan 2 · 3 agents`: the account of the
+// configuration directory its row names, and the agents of its chain alive at this drawing, each session once,
+// over the process table this drawing read, no count drawn at none. « ? » for whatever the facts do not carry
+// (a remote row, a row written before rows carried them, a listing that failed or an agent list not read
+// within the bound).
+async function fleetLabel($: Host<'env' | 'fs' | 'process'>, row: SessionRow, home: string, table: ProcessTable | null | undefined): Promise<string> {
+  const account = (row.config ? ACCOUNTS[planOfConfig(row.config, home)] : undefined) ?? '?'
+  let count: number | null = null
+  if (row.config && row.tty && row.chain_owner && table) {
+    const agents = await withDeadline(chainAgents($, row.tty, row.chain_owner, { config: row.config, pidsOn: pidsListed(table) }), await sideReadBoundMs($))
+    if (!isDegradedPass(agents)) count = new Set(agents.map(agent => agent.sessionId)).size
+  }
+  return count === 0 ? account : `${account} · ${count ?? '?'} agent${count === 1 ? '' : 's'}`
 }
 
 // The line an agent is sent when its orchestrator's successor confirmed the takeover.
@@ -1775,6 +1822,26 @@ export function registerWake(on: On<Held>): void {
   })
 }
 
+// The retries' timers are the module's memory: at each start, a reload's too, an orchestrator's row
+// is sent if it is news (a send that fails arms its retry), and a question this session asked whose
+// push still awaits its resend arms that timer, so a session that takes no turn is still heard.
+export function registerRetries(on: On<Held>): void {
+  on('session.start', {}, async ($, e, next) => {
+    try {
+      const sessionId = await $.session.id()
+      await rearmResend($, sessionId)
+      const sent = await withDeadline(sendRow($, sessionId), RELAY_BOUND_MS)
+      if (isDegradedPass(sent)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
+    } catch (err) {
+      await logLine($, 'supervision', `retries: ${messageOf(err)}`)
+    }
+    return next(e)
+  }).catch(async ($, e, next) => {
+    await logLine($, 'supervision', `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+}
+
 // The supervision tool registered at each start, mounted beside the supervision like the wake:
 // a registration, never an open. Every session gets it, the tool.call refusing those that
 // supervise nothing, so a role read later than the start is never missed.
@@ -1889,6 +1956,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
           ...(walked.pid ? { pid: walked.pid } : {}),
           ...(walked.tty ? { tty: walked.tty } : {}),
           tmux: await windowAddress($),
+          config: await configDir($),
+          chain_owner: (await chainOwner($)) || null,
           repo: isDegradedPass(origin) ? null : origin,
           context_percent: reading.context_percent,
           context_tokens: reading.context_tokens,
@@ -2117,7 +2186,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 
   // The pane opens on the person's own command alone — the shipped types' «
   // asked » open, placed at any width — in the two supervising roles: a
-  // coordinator's lists the orchestrators, an orchestrator's its own agents.
+  // coordinator's lists the orchestrators, auditors and coordinators, an orchestrator's its own agents.
   // Anywhere else the command says so and opens nothing. Every form of the
   // command answers, the same toggle on the same pane; a bare short name only when its user
   // command is this plugin's copy, the operator's own command of that name run as he wrote it.
@@ -2129,7 +2198,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     const { tty, name, pid } = await walkWithinBound($, await $.session.id())
     const role = roleOf(name)
     if (name === null || (role !== 'coordinator' && role !== 'orchestrator')) {
-      return { text: 'The supervision pane opens in a coordinator session (« Coord: … »), listing the orchestrators, or in an orchestrator session (« Orch: … »), listing its agents; /orchestrator:status lists the sessions here.' }
+      return { text: 'The supervision pane opens in a coordinator session (« Coord: … »), listing the orchestrators, auditors and coordinators, or in an orchestrator session (« Orch: … »), listing its agents; /orchestrator:status lists the sessions here.' }
     }
     // A toggle: the same command closes the pane it opened (Escape does not —
     // the pane holds no focus), beside the pane's own ✕.
@@ -2230,8 +2299,10 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       pane.ticksSinceDraw = 0
       let rows: { label: string; name: string; rest: string; urgency: number }[] = []
       let blocks: PaneRow[] = []
+      // Each listed session's account and live agent count (fleetLabel), by its block's key, read at this drawing.
+      let fleet = new Map<string, string>()
       let failed: { entry: RoundEntry; reason: string }[] = []
-      let delivering: RoundEntry[] = []
+      let delivering: Asked[] = []
       let pending = 0
       // The open questions asked with `ask` (question.ts), drawn from their fields.
       let asked: Asked[] = []
@@ -2243,11 +2314,16 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         const store = await readStore($)
         const local = store.rows
         const merged = withRemote(local, await readRemoteRows($), Date.now(), REMOTE_STALE_AFTER_MS)
-        blocks = paneRows(Object.fromEntries(Object.entries(merged).filter(([, row]) => row.role === 'orchestrator')))
+        // Every session of a role but the implementer agents, the pane's own marked as itself.
+        const supervised = Object.entries(merged).filter(([, row]) => row.role !== null && row.role !== 'agent')
+        const ownKey = sessionKey(await $.session.id())
+        blocks = paneRows(Object.fromEntries(supervised)).map(row => (row.key === ownKey ? { ...row, head: `${row.head} (${WORDS.self})` } : row))
+        const home = (await $.env.get('HOME') ?? '').replace(/\/+$/, '')
+        fleet = new Map(await Promise.all(supervised.map(async ([key, row]) => [key, await fleetLabel($, row, home, store.alive)] as const)))
         const repo = await (ownRepo ??= repoRead($))
         if (repo === undefined) ownRepo = null
         owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : []), ...(row.unattended?.prs.map(u => u.repo) ?? [])])])
-        none = WORDS.noOrchestrator
+        none = WORDS.noSession
         // Stat before the read: a write landing between the two is seen by the next tick.
         pane.roundSeen = await roundMtime($)
         // A question asked with `ask` is drawn while its asker has a live row on this machine, as an entry is.
@@ -2262,11 +2338,12 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         pending = asked.length
         // An answer to a question asked with `ask` not delivered, while its asker has a row here;
         // none for an entry its sender withdrew, whose answer nobody waits for any more (a
-        // withdrawal by the coordinator not delivered stays drawn: its asker still waits).
-        failed = localAsked.filter(entry => !(entry.status === 'withdrawn' && entry.answer?.by === 'sender') && (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed')
+        // withdrawal by the coordinator not delivered stays drawn: its asker still waits), and none
+        // the operator cleared.
+        failed = localAsked.filter(entry => !(entry.status === 'withdrawn' && entry.answer?.by === 'sender') && (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed' && entry.delivery.cleared === undefined)
           .map(entry => ({ entry: askedAsEntry(entry), reason: entry.delivery!.reason ?? 'no answer' }))
         // A replica's answer on its way to its owner's machine, until the owner acknowledges it.
-        delivering = localAsked.filter(entry => entry.origin !== undefined && (entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')).map(askedAsEntry)
+        delivering = localAsked.filter(entry => entry.origin !== undefined && (entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent'))
       } else if (pane.opened?.role === 'orchestrator') {
         // Bounded like every side read: an agent list that cannot be read in
         // time draws as none, never a held render.
@@ -2334,18 +2411,19 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const takesRows = (text: string): string => typeof el.Link === 'function'
         ? prPieces(plainText(text), owners).map(piece => (typeof piece === 'string' ? piece : `${piece.text} ${piece.href}`)).join('')
         : plainText(text)
-      // Each orchestrator is a block: one line, a dot in its state's colour, its bold name and
+      // Each listed session is a block: one line, a dot in its state's colour, its bold name and
       // its figures in the normal colour. A wait adds a Status line and, on the operator, a Blocks
       // line, each label in a column of its own so a long text wraps under its own first
       // character. A blank line between two blocks.
       const block = (row: PaneRow, i: number): Drawn => {
         const state = row.waiting === 'operator' ? 'warning' : row.waiting === 'done' ? 'success' : 'suggestion'
+        const head = `${row.head} · ${fleet.get(row.key)}`
         const line = el.Text({
           children: [
             el.Text({ color: state, children: '●' }),
             el.Text({ children: ' ' }),
             el.Text({ bold: true, children: row.name }),
-            el.Text({ children: ` · ${row.head} · ` }),
+            el.Text({ children: ` · ${head} · ` }),
             el.Text(row.past ? { color: 'error', children: row.fill } : { children: row.fill }),
             ...(row.age !== null ? [el.Text({ children: ` · ${row.age}` })] : []),
           ],
@@ -2372,7 +2450,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             ],
           }),
           rows: (i > 0 ? 1 : 0)
-            + rowsOf(`● ${row.name} · ${row.head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
+            + rowsOf(`● ${row.name} · ${head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
             + (row.status !== null ? rowsOf(row.status, textWidth) : 0)
             + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0)
             + (row.unattended ?? []).reduce((sum, said) => sum + (said.wraps ? rowsOf(takesRows(said.text), unattendedWidth) : width > 0 ? 1 : 0), 0),
@@ -2382,7 +2460,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // A waiting row whose question asked with `ask` the pane holds, drawn or next in line, is not one
       // the operator is left without.
       const askedHere = new Set(asked.map(entry => sessionKey(entry.sender.session)))
-      const waiting = blocks.filter(row => row.waiting === 'operator' && !askedHere.has(row.key)).length
+      const waiting = blocks.filter(row => row.role === 'orchestrator' && row.waiting === 'operator' && !askedHere.has(row.key)).length
       const waitsFor = `${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
       const says = waiting === 0 ? WORDS.none : asked.length > 0 ? waitsFor : `${WORDS.none} in the pane — ${waitsFor}`
       // Where the surface draws a picker, the choices are one Select: it holds the arrows while it
@@ -2429,13 +2507,31 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // notice never stands between the title and the next question.
       const answerTo = (entry: RoundEntry) => `the answer to ${entry.from}${entry.origin ? ` on ${entry.origin.machine}` : ''} (blocks: ${entry.blocks})`
       const noticeText = `${WORDS.notDelivered}: ${failed.map(notice => `${notice.reason} — ${answerTo(notice.entry)}`).join(' · ')}`
-      // An answer on its way to another machine, dim, until its sender acknowledges it.
-      const deliveringText = `${WORDS.delivering}: ${delivering.map(entry => `${answerTo(entry)} — ${entry.delivery!.state === 'pending'
-        ? 'not sent yet'
-        : `sent ${entry.delivery!.attempts} of ${ANSWER_SENDS}, not acknowledged yet`}`).join(' · ')}`
+      // An answer on its way to another machine, dim, until its sender acknowledges it; one sent
+      // again after a failure says to whom.
+      const onItsWay = (entry: Asked): string => {
+        const { state, attempts, again } = entry.delivery!
+        const to = again ? `${WORDS.sentAgain} ${entry.sender.name}` : null
+        if (state === 'pending') return to ?? 'not sent yet'
+        return `${to === null ? 'sent' : `${to},`} ${attempts} of ${ANSWER_SENDS}, not acknowledged yet`
+      }
+      const deliveringText = `${WORDS.delivering}: ${delivering.map(entry => `${answerTo(askedAsEntry(entry))} — ${onItsWay(entry)}`).join(' · ')}`
+      // The action clearing the lines not delivered the operator no longer wants, all those drawn at once.
+      const clearAction = (): Drawn => {
+        const ids = failed.map(notice => notice.entry.id)
+        return {
+          node: el.Button({
+            key: CLEAR_KEY, label: WORDS.clearNotDelivered, hotkey: CLEAR_HOTKEY,
+            onPress: () => clearFailed($, ids)
+              .catch(err => logLine($, 'supervision', `round: ${messageOf(err)}`))
+              .finally(() => $.ui.invalidate('ui.render')),
+          }),
+          rows: rowsOf(WORDS.clearNotDelivered, width),
+        }
+      }
       const notices: Drawn[] = [
         ...(delivering.length === 0 ? [] : [{ node: el.Text({ dimColor: true, children: deliveringText }), rows: rowsOf(deliveringText, width) }]),
-        ...(failed.length === 0 ? [] : [{ node: el.Text({ color: 'error', children: noticeText }), rows: rowsOf(noticeText, width) }]),
+        ...(failed.length === 0 ? [] : [clearAction(), { node: el.Text({ color: 'error', children: noticeText }), rows: rowsOf(noticeText, width) }]),
       ]
       const title = pending === 0 ? WORDS.questions : `${WORDS.questions} — ${pending} ${WORDS.pending}`
       // A rule, dim, closes the questions, a blank line below them: one row, cut at the pane's width.
@@ -2558,7 +2654,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         ...notices,
         rule,
       ]
-      const heading: Drawn = { node: el.Text({ bold: true, children: WORDS.orchestrators }), rows: rowsOf(WORDS.orchestrators, width) }
+      const heading: Drawn = { node: el.Text({ bold: true, children: WORDS.sessions }), rows: rowsOf(WORDS.sessions, width) }
       // The key line, dim, at the foot: once the pane holds the keys, how to give them is no
       // longer said.
       const keyLine = answering === null ? null : picker
@@ -2575,7 +2671,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it. While the « Other answer » field is drawn the track alone is left
       // out: its right margin would take columns the field counts as its own (see ANSWER_ROWS).
-      const drawnKey = JSON.stringify([answering?.id ?? null, pending, asked.map(entry => entry.id), blocks, failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([answering?.id ?? null, pending, asked.map(entry => entry.id), blocks, [...fleet], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
@@ -3227,10 +3323,11 @@ async function pullRequestsOf($: Host<'env' | 'fs'>, sessionId: string, row: Ses
 
 // An orchestrator's row, for a coordinator on another machine when it is news
 // (remote-row.ts): a coordinator on this machine reads the store itself, and none known
-// is nobody to send to. It is sent at a turn's end alone, with the figures the host has at that
+// is nobody to send to. It is sent at a turn's end, with the figures the host has at that
 // instant, in the turn's one message (flushOutbox); what was sent is kept only once delivered, a
-// failure is one log line, and the next turn's end sends it again.
-export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, outbox?: Outgoing[]): Promise<void> {
+// failure is one log line, and the next turn's end, or the retry it arms, sends it again.
+// `refused` is the reason of the send a retry follows: the same one is not said again.
+export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, outbox?: Outgoing[], refused?: string): Promise<void> {
   const store = await storeOf($)
   const read = parseSessionRow(String(await $.fs.read(`${store}/${sessionKey(sessionId)}`).catch(() => '')))
   if (read?.role !== 'orchestrator') return
@@ -3249,12 +3346,38 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const item: Outgoing = {
     to, line: rowText(row),
     settle: async sent => {
-      if (sent?.isDelivered) await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
-      else await logLine($, 'supervision', `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
+      if (sent?.isDelivered) {
+        await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
+        return
+      }
+      const reason = sent?.reason ?? 'no answer'
+      armRowRetry($, sessionId, reason)
+      if (reason !== refused) await logLine($, 'supervision', `row: not delivered to ${to.name}: ${reason}`)
     },
   }
   if (outbox) outbox.push(item)
   else await flushOutbox($, [item])
+}
+
+// One retry of a row that reached nobody, UNREACHED_RETRY_MS on, armed once at a time; it reads the
+// row again, and arms the next one when that send fails too.
+let rowRetryArmed = false
+function armRowRetry($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, sessionId: string, refused: string): void {
+  if (rowRetryArmed) return
+  try {
+    $.clock.after(UNREACHED_RETRY_MS, async () => {
+      rowRetryArmed = false
+      await sendRow($, sessionId, undefined, refused).catch((err: unknown) => logLine($, 'supervision', `row: ${messageOf(err)}`))
+    })
+    rowRetryArmed = true
+  } catch {
+    // A host with no timer: the next turn's end sends it again.
+  }
+}
+
+/** The row's retry forgotten, as at a module load: the next failed send arms one. */
+export function forgetRowRetry(): void {
+  rowRetryArmed = false
 }
 
 // The context fill as the host states it at this instant, none when it states none.

@@ -656,3 +656,17 @@ test('a wait written from an older read keeps what another process changed since
   expect(mergeWait(undefined, now, { ...seen })).toEqual(seen)
   expect(mergeWait(seen, null, { ...seen })).toEqual(seen)
 })
+
+test('a measure writes the session\'s configuration directory and the owner its agents\' chain entries name', async () => {
+  const fx = fakeDollar({})
+  fx.env['CLAUDE_CONFIG_DIR'] = '/tmp/h/.claude-bis'
+  fx.env['ORCHESTRATOR_MODULE_DIR'] = '/tmp/h/.claude/claude-orchestrator'
+  fx.env['TMUX'] = '/tmp/tmux-501/orch-a,1,0'
+  fx.env['TMUX_PANE'] = '%0'
+  const chains = mounted(register)
+  await drive(chains, 'session.measure', fx.dollar, MEASURED)
+  const written = [...fx.files].find(([path]) => path.includes('/store/sessions/'))
+  const row = parseSessionRow(String(written?.[1]))
+  expect(row?.config).toBe(['/tmp/h', '.claude'].join('/') + '-bis')
+  expect(row?.chain_owner).toBe('tmux:/tmp/tmux-501/orch-a:%0')
+})

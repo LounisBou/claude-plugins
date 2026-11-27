@@ -76,7 +76,8 @@ test('phase: the brief is printed from the row, the plan and the spec goals.md n
   assert.equal(w.text(), `phase brief: ${path}\nreport: ${join(w.briefs, 'report-routes.md')}\n`)
   const brief = readFileSync(path, 'utf8')
   assert.ok(brief.startsWith('# app — Phase 2: the routes\n'))
-  for (const part of ['Mode: build\n', 'Row: 2 API: routes — note: reuse the router\n', `Spec: \`${w.spec}\`\n`, `Plan: \`${w.plan}\``, `Checkout: \`${w.worktree}\``,
+  assert.ok(!/^Mode:/m.test(brief), 'no mode line')
+  for (const part of ['Row: 2 API: routes — note: reuse the router\n', `Spec: \`${w.spec}\`\n`, `Plan: \`${w.plan}\``, `Checkout: \`${w.worktree}\``,
     'Branch: `feat/routes`, from `origin/main`, which stood at abc123def456', 'Tier: standard\n', `Orchestrator: \`${ORCH}\``, `Report: ${join(w.briefs, 'report-routes.md')}\n`])
     assert.ok(brief.includes(part), `the brief holds ${part}`)
   assert.ok(!brief.includes('Scope from the orchestrator'))
@@ -87,38 +88,39 @@ test('phase: the brief is printed from the row, the plan and the spec goals.md n
   assert.ok(brief.length < 5000, `a short brief: ${brief.length} characters`)
 })
 
-test('phase: the scope, the mode, the base and the spec given replace what the state says', () => {
+test('phase: the scope, the base and the spec given replace what the state says', () => {
   const w = world()
   const spec = join(dir, 'other.md')
   writeFileSync(spec, 'x')
-  assert.equal(w.phase('--scope', 'only the GET routes', '--mode', 'investigate', '--base', 'feat/schema', '--spec', spec, '--report', join(dir, 'r.md')), 0)
+  assert.equal(w.phase('--scope', 'only the GET routes', '--base', 'feat/schema', '--spec', spec, '--report', join(dir, 'r.md')), 0)
   const brief = readFileSync(join(w.briefs, 'routes.md'), 'utf8')
-  for (const part of ['Mode: investigate\n', 'Scope from the orchestrator: only the GET routes\nCheckout:', 'from `feat/schema`, which stood at a head this command could not read', `Spec: \`${spec}\``, `Report: ${join(dir, 'r.md')}`])
+  for (const part of ['Scope from the orchestrator: only the GET routes\nCheckout:', 'from `feat/schema`, which stood at a head this command could not read', `Spec: \`${spec}\``, `Report: ${join(dir, 'r.md')}`])
     assert.ok(brief.includes(part), `the brief holds ${part}`)
 })
 
-test('phase, build mode: the brief carries the push, the draft pull request and the turn\'s last line, filled', () => {
+test('phase: the brief carries the push, the draft pull request and the turn\'s last line, filled', () => {
   const w = world()
-  assert.equal(w.phase('--mode', 'build'), 0)
+  assert.equal(w.phase(), 0)
   const brief = readFileSync(join(w.briefs, 'routes.md'), 'utf8')
   for (const part of ['git push -u origin feat/routes`', 'Draft pull request on `origin/main`', 'pr-create --draft', '`<repo>#<pr> <head7> — <verdict>', `report: ${join(w.briefs, 'report-routes.md')}`, 'then the status line.',
     'tested in a real browser with Playwright', 'its screenshots in the pull request\'s description', 'E2E as the pull request\'s check plan requires',
-    'The report names the Playwright run.', 'No secret, token, personal data, internal host or local path is visible in a capture.'])
-    assert.ok(brief.includes(part), `the build brief holds ${part}`)
+    'The report names the Playwright run.', 'No secret, token, personal data, internal host or local path is visible in a capture.',
+    'A row whose delivery is a report is an investigation', 'no commit, push or pull request, whatever the lines below say of one'])
+    assert.ok(brief.includes(part), `the brief holds ${part}`)
   assert.ok(!/\{\{[A-Z_?]+\}\}/.test(brief))
   assert.deepEqual(lintOf(brief), [])
 })
 
-test('phase, investigate mode: the brief carries no delivery line, and still says it reads and reports only', () => {
+// `--mode` is what a dispatch line written before still passes: accepted and ignored for one release.
+test('phase: a line that still passes --mode, build or investigate, is not refused, and its brief is the one printed without it', () => {
   const w = world()
-  assert.equal(w.phase('--mode', 'investigate'), 0)
-  const brief = readFileSync(join(w.briefs, 'routes.md'), 'utf8')
-  for (const part of ['git push', 'pr-create', 'Draft pull request', '`<repo>#<pr>', 'Push with one bare command', 'You may be closed when your pull request is Ready',
-    'Playwright', 'screenshots in the pull request\'s description', 'E2E as the pull request\'s check plan requires', 'Audit each capture'])
-    assert.ok(!brief.includes(part), `the investigate brief holds no ${part}`)
-  assert.ok(brief.includes('In `investigate` mode you read and report only: no commit, no push, no pull request.'))
-  assert.ok(!/\{\{[A-Z_?]+\}\}/.test(brief))
-  assert.deepEqual(lintOf(brief), [])
+  assert.equal(w.phase(), 0)
+  const bare = w.text() + readFileSync(join(w.briefs, 'routes.md'), 'utf8')
+  for (const mode of ['build', 'investigate']) {
+    w.out.length = 0
+    assert.equal(w.phase('--mode', mode), 0)
+    assert.equal(w.text() + readFileSync(join(w.briefs, 'routes.md'), 'utf8'), bare)
+  }
 })
 
 test('phase: a row missing, closed, a plan or checkout absent, or no spec anywhere, is refused with its reason', () => {
@@ -246,14 +248,13 @@ test('rotation: the rotate line carries --expect-title for a window of a home se
   }
 })
 
-test('the command line: a flag unknown, a value missing, a relative path, a bad mode or row is refused', () => {
+test('the command line: a flag unknown, a value missing, a relative path, a bad row is refused', () => {
   assert.ok('error' in parseArgs([]))
   assert.ok('error' in parseArgs(['phase', '--nope', 'x']))
   assert.ok('error' in parseArgs(['phase', '--record']))
   assert.ok('error' in parseArgs(['coordinator-takeover', '--name', 'Coord: m']))
   assert.ok('error' in parseArgs(['auditor-takeover', '--name', 'a', '--tty', 't', '--report', 'rel.md', '--repository', '/r']))
   const phase = ['phase', '--record', '/r', '--plan', '/p', '--worktree', '/w', '--branch', 'b', '--orchestrator', 'o', '--out', '/o']
-  assert.ok('error' in parseArgs([...phase, '--row', '2', '--mode', 'fix']))
   assert.ok('error' in parseArgs([...phase, '--row', 'two']))
   assert.deepEqual(parseArgs([...phase, '--row', '2']), { command: 'phase', fields: { record: '/r', plan: '/p', worktree: '/w', branch: 'b', orchestrator: 'o', out: '/o', row: '2' } })
 })

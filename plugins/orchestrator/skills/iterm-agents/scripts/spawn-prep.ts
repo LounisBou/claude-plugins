@@ -183,7 +183,7 @@ export async function prepareSpawn(given: Options, deps: PrepDeps): Promise<Opti
   if (!deps.isDir(dir)) refuse(`spawn: directory not found: ${dir}`)
   if (prompt && promptFile) refuse('spawn: --prompt and --prompt-file are exclusive')
   if (successor && brief) {
-    refuse("spawn: refused: --successor takes its prompt, not --brief: give succeed's prompt with --prompt, which loads the rulebook with its mode and runs the takeover")
+    refuse("spawn: refused: --successor takes its prompt, not --brief: give succeed's prompt with --prompt, which loads the rulebook and runs the takeover")
   }
   if (brief && (prompt || promptFile)) refuse('spawn: --brief and --prompt/--prompt-file are mutually exclusive')
   if (brief && !orchestrator) refuse('spawn: --brief without --orchestrator is refused: pass --orchestrator "<name [ref]>"')

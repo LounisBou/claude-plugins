@@ -285,11 +285,20 @@ async def main(connection):
                 if await s.async_get_variable("tty") == tty:
                     sib = await s.async_split_pane(vertical=True)
                     await asyncio.sleep(1)
-                    await t.async_select()
-                    await sib.async_activate()
-                    ident = iterm2.MainMenu.View.MAXIMIZE_ACTIVE_PANE.value.identifier
-                    await iterm2.MainMenu.async_select_menu_item(connection, ident)
-                    await asyncio.sleep(1)
+                    # The menu acts on the selected tab of the window in front: that window
+                    # and the probe window's tab are read first, and put back.
+                    front, shown = app.current_window, w.current_tab
+                    try:
+                        await t.async_activate()
+                        await sib.async_activate()
+                        ident = iterm2.MainMenu.View.MAXIMIZE_ACTIVE_PANE.value.identifier
+                        await iterm2.MainMenu.async_select_menu_item(connection, ident)
+                        await asyncio.sleep(1)
+                    finally:
+                        if shown is not None:
+                            await shown.async_activate(order_window_front=False)
+                        if front is not None:
+                            await front.async_activate()
                     print(await sib.async_get_variable("tty"))
                     return
 iterm2.run_until_complete(main)

@@ -529,7 +529,7 @@ def closed_clause(closed, tty):
     return "the tab was NOT closed: find it with list and close it"
 
 
-def refuse_made(made, msg):
+def refuse_made(made, msg, shown=""):
     """Refuse a spawn whose tab exists: close that tab, print its tty on stdout, and die
     saying whether the close happened.
 
@@ -538,6 +538,9 @@ def refuse_made(made, msg):
     operator was told of a failure over a tab still open, possibly holding a running agent
     nobody would now stop.
 
+    `shown` is what the screen showed, read by the caller before the close: said last, by this
+    refusal or, inside a rotation, by the rotation's line.
+
     The refusal is recorded in `made` before the close: an interrupt during that close then
     finds what it interrupted, and a rotation does not take the session being closed for a
     replacement it keeps.
@@ -545,7 +548,7 @@ def refuse_made(made, msg):
     The tty's write is guarded as `settle_stdout` guards it: a reader gone from stdout must not
     lose the refusal to a traceback. Inside a rotation (`made["creating"]`) the refusal is the
     rotation's to say, on its one line: it is raised, not printed."""
-    made["refusing"] = msg
+    made["refusing"], made["shown"] = msg, shown
     closed = close_made(made)
     made["refused_closed"] = closed
     tty = made.get("tty") or ""
@@ -557,7 +560,14 @@ def refuse_made(made, msg):
             mute_stdout()
     if made.get("creating"):
         raise SpawnFailed(msg)
-    die("%s; %s" % (msg, closed_clause(closed, tty)))
+    said = "%s; %s" % (msg, closed_clause(closed, tty))
+    die(then_shown(said, made))
+
+
+def then_shown(line, made):
+    """A refused spawn's `line`, then what its screen showed when that was read apart."""
+    shown = made.get("shown")
+    return "%s. %s" % (line, shown) if shown else line
 
 
 def await_host(tty, dir_, launch_epoch, made, what):
@@ -583,7 +593,8 @@ def await_host(tty, dir_, launch_epoch, made, what):
     transcript = find_transcript(dir_, launch_epoch)
     if not transcript:
         refuse_made(made, "%s: %s never started on %s after %ss"
-                    % (what, HOST_CLI, tty, SPAWN_TIMEOUT))
+                    % (what, HOST_CLI, tty, SPAWN_TIMEOUT),
+                    screen_clause(screen_text(made), "ORCHESTRATOR_SPAWN_TIMEOUT"))
     print("%s: no process on %s matched %s, but the session wrote %s since the launch: it "
           "started" % (what, tty, HOST_CLI, transcript), file=sys.stderr)
 
@@ -1676,16 +1687,47 @@ def as_close(tty, expect):
     return name
 
 
+# A window the app makes activates it, and macOS switches Space to it: the application frontmost
+# before is read, then put back. Each is a script of its own, bounded and its failure ignored, so
+# neither can lose what the creation between them answered.
+FRONT_READ = '''
+set frontPath to ""
+try
+  set frontPath to path to frontmost application as text
+end try
+return frontPath'''
+FRONT_BACK = '''
+set frontPath to %s
+if frontPath is not "" and frontPath is not (path to application id "com.googlecode.iterm2" as text) then
+  tell application frontPath to activate
+end if'''
+
+
+@contextlib.contextmanager
+def front_kept():
+    """The frontmost application put back after the block, however it ends. A block that learns
+    it made no window sets `window` False, and nothing is put back."""
+    status, front = osascript_run(FRONT_READ)
+    kept = {"window": True}
+    try:
+        yield kept
+    finally:
+        if kept["window"] and status == "ok" and front:
+            osascript_run(FRONT_BACK % as_quote(front))
+
+
 def as_spawn(command):
     # `create tab` selects the tab it makes, where the API rung creates it unselected: the
     # operator's tab is remembered and selected again, so a launch does not pull them away.
     # A new window has no tab to go back to. The re-selection is guarded: the agent's tab
     # already runs, so the operator's tab closing meanwhile must not fail the spawn.
-    return as_run('''
+    # The script says « window » before the tty of a window it made.
+    with front_kept() as kept:
+        said = as_run('''
         tell application "iTerm2"
           if (count of windows) is 0 then
             set w to (create window with default profile command %s)
-            return tty of current session of current tab of w
+            return "window " & (tty of current session of current tab of w)
           end if
           set w to current window
           tell w
@@ -1698,7 +1740,9 @@ def as_spawn(command):
             return newTty
           end tell
         end tell''' % (as_quote(command), as_quote(command)), "a new tab")
-
+        tty = said.removeprefix("window ")
+        kept["window"] = tty != said
+    return tty
 
 
 # --- the tier map ----------------------------------------------------------------
@@ -1954,33 +1998,34 @@ def live_host_ttys():
 _PRUNED = []
 
 
-def orchestrator_host_on(tty, live):
-    """Whether a host that can be an orchestrator runs on `tty`: a live host whose name does
-    not read as an agent's, an auditor's or the coordinator's. A host with no readable name
-    counts, so that a name the table cannot give back never costs a chain."""
+def chain_host_on(tty, live):
+    """Whether a host that can own a chain runs on `tty`: a live host whose name does not read
+    as an agent's, an orchestrator, an auditor and a coordinator each launching agents of their
+    own. A host with no readable name counts, so that a name the table cannot give back never
+    costs a chain."""
     if tty not in live:
         return False
     role = ROLE_PREFIX.match(session_name_on(tty) or "")
-    return role is None or role.group(1) == ORCH
+    return role is None or role.group(1) != AGENT
 
 
 def chain_owner_lives(tty, live):
-    """Whether the owner of the chain file named after `tty` still runs: an orchestrator host
-    on that tty, or the tmux client of a home server on it whose window 0 holds one. A tty is
-    recycled within minutes, so an agent's tty carrying some host proves nothing about the
-    orchestrator that wrote the file."""
-    if orchestrator_host_on(tty, live):
+    """Whether the owner of the chain file named after `tty` still runs: a host that can own a
+    chain on that tty, or the tmux client of a home server on it whose window 0 holds one. A tty
+    is recycled within minutes, so an agent's tty carrying some host proves nothing about the
+    session that wrote the file."""
+    if chain_host_on(tty, live):
         return True
     socket = home_of_tab(tty)
     if not socket:
         return False
     panes, _ = home_panes(socket)
-    return any(index == "0" and orchestrator_host_on(pane, live) for index, pane in panes or [])
+    return any(index == "0" and chain_host_on(pane, live) for index, pane in panes or [])
 
 
 def chain_prune(keep):
     """Remove the chain files whose owner no longer runs, once per run. The owner is the tty
-    the file is named after: a file is kept while an orchestrator host runs there (or the
+    the file is named after: a file is kept while a host that can own a chain runs there (or the
     client of a home server whose window 0 holds one), whatever its agents' ttys carry now.
     Those piled up under dead and recycled ttys, and a file kept because one of its agents'
     ttys had been recycled by a stranger was read, and rewritten, as a live chain.
@@ -2927,6 +2972,12 @@ class Terminal:
         """The last `lines` lines the session on `tty` shows."""
         raise NotImplementedError
 
+    def prompt_lines(self, tty):
+        """The lines the session on `tty` shows, what the host draws faint left out (its
+        placeholder and its suggestions; what the operator types is plain); none when no session
+        is there. A terminal that cannot read them raises: its prompt is never taken for empty."""
+        raise RuntimeError("this terminal reads no screen")
+
     def close(self, tty, expect):
         """Close the session on `tty`, after checking its name holds `expect`: its stable id,
         or "" when the terminal cannot name what it closed."""
@@ -3085,6 +3136,16 @@ class ItermTerminal(Terminal):
             every = [contents.line(i).string.rstrip()
                      for i in range(contents.number_of_lines)]
             return last_lines(every, lines)
+        return run(go)
+
+    def prompt_lines(self, tty):
+        async def go(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            _, _, sess = await find_tab(app, tty)
+            if sess is None:
+                return []
+            contents = await sess.async_get_screen_contents()
+            return [plain_cells(contents.line(i)) for i in range(contents.number_of_lines)]
         return run(go)
 
     def close(self, tty, expect):
@@ -3442,6 +3503,10 @@ class TmuxTerminal(Terminal):
         out = tmux_out(["capture-pane", "-p", "-t", pane.pane, "-S", "-%d" % max(lines, 0)],
                        "screen")
         return last_lines([l.rstrip() for l in out.split("\n")], lines)
+
+    def prompt_lines(self, tty):
+        pane = self.lookup(tty)
+        return captured(pane.pane) if pane else []
 
     def close_refusals(self, what, tty, expect):
         """What a close of the window on `tty` refuses, read before anything is killed or
@@ -4024,7 +4089,7 @@ def open_home_tab(socket, title, anchor, what):
         die("%s: the tab on %s shows no client of the home server %s after %ds; %s; %s"
             % (what, tty, socket, SPAWN_TIMEOUT, closed_clause(closed, tty),
                ended_clause(socket)))
-    if not arm_home(socket, what):
+    if not arm_home(socket, what, [tty]):
         closed = ITERM.close_made(made)
         die("%s: the home server %s could not be told to exit with its tab, so closing the tab "
             "would not end it; %s; %s" % (what, socket, closed_clause(closed, tty),
@@ -4033,20 +4098,102 @@ def open_home_tab(socket, title, anchor, what):
     return tty, made
 
 
-def arm_home(socket, what):
-    """Tell the home server `socket` to exit once no client is attached: closing its tab then
-    ends the server, its orchestrator and every agent window (the operator's order: the tab's
-    close ends them all). Called only once the tab's client is proved attached. Set at the
-    start, the option would end the server before its tab attached; a takeover kills a window
-    with the tab still attached, and a server shown by no tab is never armed. True when tmux
-    took the option."""
+# The arm of a home server: the clients of this machine that own it, and the two hooks that keep
+# the list and end the server once its last owner leaves. A client attached over ssh from another
+# machine (a remote view) is never an owner: its leaving ends nothing, and no owner left ends the
+# server, so no server runs with no window of its own machine (the operator's rule, 2026-11-27).
+# Local is read on the attaching client's own environment: tmux copies its SSH_CONNECTION into the
+# session's at the attach (update-environment), set over ssh and removed otherwise. The list is
+# written with a space on each side of every tty, so a match is never part of another tty. Only
+# the format operators of tmux 3.4 are used (`#{!:…}` is not one: it reads as text there).
+# `exit-unattached` stays on with the hooks, and the hook ends the server only while it is on: a
+# launcher of before, which reads the arm on that option alone and suspends it by turning it off,
+# sees the server armed and its suspension holds, the server never ended under it.
+HOME_OWNERS = "@home-owners"
+HOME_ATTACHED_HOOK = (
+    'if -F "#{&&:#{==:#{SSH_CONNECTION},},#{==:#{m:* #{hook_client} *,#{%s}},0}}" '
+    '"set -sF %s \\"#{%s}#{hook_client} \\""' % (HOME_OWNERS, HOME_OWNERS, HOME_OWNERS))
+HOME_DETACHED_HOOK = (
+    'if -F "#{m:* #{hook_client} *,#{%s}}" '
+    '"set -sF %s \\"#{s/ #{hook_client} / :%s}\\" ; '
+    'if -F \\"#{||:#{m/r:[^ ],#{%s}},#{==:#{exit-unattached},0}}\\" \\"\\" kill-server"'
+    % (HOME_OWNERS, HOME_OWNERS, HOME_OWNERS, HOME_OWNERS))
+# The arm suspended, a restart's alone: no hook, no owner, and the option off.
+HOME_DISARM = ["set-hook", "-gu", "client-attached", ";", "set-hook", "-gu", "client-detached",
+               ";", "set-option", "-s", HOME_OWNERS, "", ";",
+               "set-option", "-s", "exit-unattached", "off"]
+
+
+def home_arm_words(owners):
+    """The tmux words that arm a home server for `owners`, one call: the owners, the hooks, and
+    the option, which also ends at once a server no client is attached to."""
+    return ["set-option", "-s", HOME_OWNERS, " %s " % " ".join(owners), ";",
+            "set-hook", "-g", "client-attached", HOME_ATTACHED_HOOK, ";",
+            "set-hook", "-g", "client-detached", HOME_DETACHED_HOOK, ";",
+            "set-option", "-s", "exit-unattached", "on"]
+
+
+def home_drop_words(tty):
+    """The tmux words that take `tty` off the owners of a home server and end it when no owner is
+    left: the detached hook's own, for an owner that left before the arm listed it. The slash ends
+    the substitution's pattern, so each one of the tty is matched as any character."""
+    return ["set-option", "-sF", HOME_OWNERS,
+            "#{s/ %s / :%s}" % (re.escape(tty).replace("/", "."), HOME_OWNERS), ";",
+            "if-shell", "-F", "#{m/r:[^ ],#{%s}}" % HOME_OWNERS, "", "kill-server"]
+
+
+def home_armed(said):
+    """Whether a home server ends with its tab, from its answer to HOME_ARM_READ: the option on,
+    which the arm sets with its hooks and an older launcher set alone."""
+    return said.split("\n")[0].strip() == "on"
+
+
+HOME_ARM_READ = ["show-options", "-sv", "exit-unattached", ";", "show-options", "-sqv", HOME_OWNERS]
+
+
+def home_listed(said):
+    """The owners a home server lists, from its answer to HOME_ARM_READ."""
+    lines = said.split("\n")
+    return lines[1].split() if len(lines) > 1 else []
+
+
+def home_owners(socket):
+    """The ttys that own the home server `socket`, as its arm lists them; [] when it lists none
+    or cannot be read."""
     try:
-        done = tmux_call(["-L", socket, "set-option", "-s", "exit-unattached", "on"])
+        done = tmux_call(["-L", socket, "show-options", "-sqv", HOME_OWNERS])
+    except TmuxError:
+        return []
+    return done.stdout.split() if done.returncode == 0 else []
+
+
+def arm_home(socket, what, owners):
+    """Tell the home server `socket` to end once the last of `owners`, the ttys of its tabs on
+    this machine, leaves: closing its tab then ends the server, its orchestrator and every agent
+    window (the operator's order: the tab's close ends them all), and a client of another machine
+    leaving ends nothing. A client of this machine that attaches later becomes an owner too.
+    An owner that left before the arm listed it never leaves again: once armed, every listed
+    owner no longer attached is taken off, and a server left with none is ended, as a server
+    with no client is by the option. True when tmux took the arm and an owner is attached."""
+    if not owners:
+        print("%s: no tab of this machine to arm the home server %s with" % (what, socket),
+              file=sys.stderr)
+        return False
+    try:
+        done = tmux_call(["-L", socket] + home_arm_words(owners))
     except TmuxError as exc:
-        print("%s: tmux set-option: %s" % (what, exc), file=sys.stderr)
+        print("%s: tmux set-hook: %s" % (what, exc), file=sys.stderr)
         return False
     if done.returncode != 0:
-        print("%s: tmux refused exit-unattached: %s" % (what, tmux_refusal(done)),
+        print("%s: tmux refused the arm: %s" % (what, tmux_refusal(done)), file=sys.stderr)
+        return False
+    attached = home_clients(socket, None)
+    for tty in [t for t in owners if attached is not None and t not in attached]:
+        with contextlib.suppress(TmuxError):
+            tmux_call(["-L", socket] + home_drop_words(tty))
+    if not set(home_owners(socket)) & set(home_clients(socket)):
+        print("%s: no tab of this machine is attached to the home server %s: %s"
+              % (what, socket, "it is still up" if home_answers(socket) else "it ended"),
               file=sys.stderr)
         return False
     return True
@@ -4091,8 +4238,8 @@ def cmd_home_watch(args):
     if os.path.exists(marker):
         os.remove(marker)
         return
-    trace_home(args.socket, "server", "exit-unattached (its tab closed; no launcher command "
-               "ended it)", args.tty)
+    trace_home(args.socket, "server", "tab-closed (its last tab of this machine closed; no "
+               "launcher command ended it)", args.tty)
 
 
 def home_of_tab(tty, strict=False):
@@ -4117,7 +4264,7 @@ def home_client_of_pane(tty):
     from the servers' own files and panes. The client is "" with `why` empty when `tty` is no
     window 0 of a server; "" with the reason when it is one and its tab cannot be told (the
     clients cannot be listed, none is attached, or several are: which tab is meant is not
-    guessed); else the one client's tty. `unread` names the servers whose panes could not be
+    guessed); else the one client's tty, a server's owners alone counted when it lists some. `unread` names the servers whose panes could not be
     listed, whether or not another matched."""
     unread = []
     if not tty:
@@ -4144,6 +4291,9 @@ def home_client_of_pane(tty):
             return "", "the clients of %s cannot be listed (%s)" % (socket, tmux_refusal(done)), \
                 unread
         clients = done.stdout.split()
+        # A server that lists its owners is shown by them, a view from another machine never.
+        owners = home_owners(socket)
+        clients = [c for c in clients if c in owners] if owners else clients
         if len(clients) != 1:
             return "", ("%s has %d tmux clients (%s): which tab is meant is not guessed"
                         % (socket, len(clients), ", ".join(clients) or "none")), unread
@@ -4351,49 +4501,87 @@ def refuse_home_agents(what, socket, panes, tty=""):
                " ".join(agent_line(socket, a) for a in agents)))
 
 
+def home_clients(socket, unread=()):
+    """The ttys of the clients the home server `socket` lists; `unread` when it cannot be read."""
+    try:
+        done = tmux_call(["-L", socket, "list-clients", "-F", "#{client_tty}"])
+    except TmuxError:
+        return unread
+    return done.stdout.split() if done.returncode == 0 else unread
+
+
+def home_heir(socket, tty, agents):
+    """A new tab of this machine right of `tty`, showing the home server `socket`, proved by its
+    client: the tab its agents stay on once `tty` closes. `(its tty, what was made)`. Any failure
+    closes what it made and dies; the server is not touched."""
+    title = agents[0][2] if agents and agents[0][2] else "Home: %s" % socket
+    made = {"terminal": ITERM}
+    nothing = "the server %s keeps its tab %s and nothing was closed" % (socket, tty)
+    try:
+        new, _ = ITERM.create(attach_program(socket, title), title,
+                              Place("beside", tty, "right", False), "", made)
+    except SystemExit:
+        print("close: the tab its agents would stay on could not be opened; %s" % nothing,
+              file=sys.stderr)
+        raise
+    if made.get("error") or not new:
+        closed = ITERM.close_made(made)
+        die("close: the tab its agents would stay on %s; %s; %s"
+            % ("failed: %s" % made["error"] if made.get("error") else "returned no tty",
+               closed_clause(closed, new), nothing))
+    if not client_on(socket, new):
+        closed = ITERM.close_made(made)
+        die("close: the tab on %s shows no client of the home server %s after %ds; %s; %s"
+            % (new, socket, SPAWN_TIMEOUT, closed_clause(closed, new), nothing))
+    return new, made
+
+
 def keep_home(tty, socket, listed):
     """Close a home tab and window 0 and keep the server for its agents (what every close of a
-    home tab does while an agent runs, a takeover's included): the server told to stay
-    when no client is attached (`exit-unattached off`), window 0 killed and its host proved gone,
-    then the tab closed, whose client detaches and leaves the server running. A failure after
-    the server was told to stay arms it again, so the server is never left unarmed with its
-    tab. Prints the close's contract line and one line per agent, with its attach command."""
+    home tab does while an agent runs, a takeover's included), never with no tab of this machine
+    to show it: a server runs with no window of its own machine nowhere (the operator's rule,
+    2026-11-27). While another tab of this machine owns the server, it is that tab's; else a new
+    tab is opened right of the old one, proved attached and made an owner before anything is
+    killed. Then window 0 is killed and its host proved gone, and the old tab closed, whose
+    client leaves the owners. A failure before the old tab closes closes the new tab and nothing
+    else. Prints the close's contract line and one line per agent, with its attach command."""
     panes, session_id = window0_session("close", socket, listed)
     agents = home_agents("close", socket, panes)
     ttys = [t for i, t in panes or [] if i == "0"]
     host = host_identity(ttys[0]) if ttys else None
-    try:
-        done = tmux_call(["-L", socket, "set-option", "-s", "exit-unattached", "off"])
-    except TmuxError as exc:
-        die("close: refused: tmux could not be told to keep the home server %s (%s); it was "
-            "NOT ended and nothing was closed" % (socket, exc))
-    if done.returncode != 0:
-        die("close: refused: tmux refused to keep the home server %s (%s); it was NOT ended "
-            "and nothing was closed" % (socket, tmux_refusal(done)))
+    attached = home_clients(socket)
+    others = [t for t in home_owners(socket) if t != tty and t in attached]
+    heir, made = "", {}
+    if not others:
+        heir, made = home_heir(socket, tty, agents)
 
-    def rearm(why):
-        armed = arm_home(socket, "close")
-        die("close: %s; the server %s %s and nothing else was closed"
-            % (why, socket, "was armed again" if armed else
-               "could NOT be armed again (exit-unattached stays off, its tab stays attached)"))
+    def refuse(why):
+        tab = ""
+        if heir:
+            tab = "; the tab opened on %s %s" % (heir, "was closed" if ITERM.close_made(made)
+                                                 else "was NOT closed: close it by hand")
+        die("close: %s%s; the server %s keeps its tab %s and nothing else was closed"
+            % (why, tab, socket, tty))
+    if heir and not arm_home(socket, "close", [tty, heir]):
+        refuse("the tab on %s could not be made an owner of the home server %s" % (heir, socket))
     if ttys:
         KILL_SENT.add(ttys[0])
         try:
             done = tmux_call(["-L", socket, "kill-window", "-t", "%s:0" % HOME_SESSION])
         except TmuxError as exc:
-            rearm("tmux could not kill window 0 (%s)" % exc)
+            refuse("tmux could not kill window 0 (%s)" % exc)
         if done.returncode != 0:
-            rearm("tmux refused to kill window 0 (%s)" % tmux_refusal(done))
+            refuse("tmux refused to kill window 0 (%s)" % tmux_refusal(done))
         if host:
             if not end_host(host[0], host[1], ttys[0], "close"):
-                rearm("%s still runs on %s" % (host[0], ttys[0]))
+                refuse("%s still runs on %s" % (host[0], ttys[0]))
         else:
             survivor = wait_gone(ttys[0])
             if survivor is not None:
-                rearm("%s still runs on %s" % (survivor, ttys[0]))
+                refuse("%s still runs on %s" % (survivor, ttys[0]))
     trace_home(socket, "window 0 of", "close", tty)
     # The client of the tab moves to a surviving agent window and does not exit by itself: the
-    # tab is closed at once, which detaches it, and the server stays for its agents.
+    # tab is closed at once, which detaches it, and the server stays with its other owner.
     ITERM.close(tty, "")
     deadline = time.time() + CLOSE_TIMEOUT
     while ITERM.find(tty):
@@ -4404,8 +4592,9 @@ def keep_home(tty, socket, listed):
         time.sleep(0.3)
     CLOSE_DONE.add(tty)
     print("closed 1 session on %s" % tty)
-    print("home: kept the server %s for %d agent(s)%s"
-          % (socket, len(agents), ", session %s" % session_id if session_id else ""))
+    print("home: kept the server %s for %d agent(s)%s, shown on %s"
+          % (socket, len(agents), ", session %s" % session_id if session_id else "",
+             heir or " ".join(others)))
     for agent in agents:
         print(agent_line(socket, agent))
     sys.stdout.flush()
@@ -4535,6 +4724,10 @@ def cmd_takeover(args):
     # The predecessor may still be writing its last turn: its « handed over », or a transcript
     # left idle, comes before the kill, and the line says which was seen.
     print(await_handover(args.tty))
+    sys.stdout.flush()
+    # What the operator typed in its prompt and has not sent is never destroyed (cmd_close).
+    await_unsent("takeover", args.tty,
+                 lambda: prompt_text(lambda: captured(pred.pane)))
     tail = conversation_of(args.tty)
     if tail:
         print(tail)
@@ -4639,6 +4832,19 @@ def cmd_home(args):
                 "place; the session stays where it is" % own)
     if DRY_RUN and not no_tab:
         old_id = "<old-tab-session-id>"
+    # The move ends this session in its tab, and with it what the operator typed in its prompt
+    # and has not sent: a prompt holding text, or one that cannot be read, keeps it there.
+    if old_id and not DRY_RUN:
+        try:
+            held = prompt_text(lambda: ITERM.prompt_lines(own))
+            why = "shows no prompt box" if held is None else "holds text"
+        except Exception as exc:
+            held, why = None, "cannot be read (%s)" % (
+                str(exc) or type(exc).__name__).replace("\n", " ")
+        if held != "":
+            print("stay: the prompt on %s %s, so the move, which ends the session there, would "
+                  "destroy what the operator typed and has not sent" % (own, why))
+            return
     # The plan the session runs on, read on its own process: the home server starts with it, so
     # window 0 and every window after resume on it, whoever runs the move.
     config = process_config(pid)
@@ -5419,6 +5625,60 @@ def route_plan(choice):
     return None
 
 
+# The key either answer to the host's browser extension dialog writes in the account's record,
+# and the host's command whose default toggle writes it too, with no dialog.
+BROWSER_DIALOG_ANSWER = 'claudeInChromeDefaultEnabled'
+BROWSER_SETTINGS_COMMAND = '/chrome'
+
+
+def unpassed_first_start(record, mode):
+    """The first-start step of the host that a session launched in `mode` on the account of
+    `record`, its own state file, would stop on, named with its key, or "". Read on the host's own
+    code: the onboarding shows until `hasCompletedOnboarding` is true; the browser extension
+    dialog is offered, outside bypassPermissions, while neither answer is recorded, the record
+    carries the extension and the host's cached gate is on. The host then looks for the extension
+    again and offers nothing when the record is stale, which only its own run can tell."""
+    if record.get("hasCompletedOnboarding") is not True:
+        return "the onboarding (hasCompletedOnboarding)"
+    if mode == "bypassPermissions":
+        return ""
+    paired, gates = record.get("chromeExtension"), record.get("cachedGrowthBookFeatures")
+    detected = (record.get("cachedChromeExtensionInstalled") is True
+                or (isinstance(paired, dict) and bool(paired.get("pairedDeviceId"))))
+    offered = isinstance(gates, dict) and gates.get("tengu_chrome_auto_enable") is True
+    if detected and offered and BROWSER_DIALOG_ANSWER not in record:
+        return "the browser extension dialog (%s absent)" % BROWSER_DIALOG_ANSWER
+    return ""
+
+
+def refuse_unpassed_account(config, mode):
+    """Refuse a launch onto the account of configuration directory `config` ("" is plan 1's) that
+    would stop on a first-start dialog nobody answers. A record that cannot be read, or carries
+    neither key the host writes from its first starts, says nothing: a warning, and the launch
+    goes on, its own verification reporting a dialog that blocks it. Read only."""
+    path = os.path.join(config or os.path.expanduser("~"), ".claude.json")
+    try:
+        with open(path) as fh:
+            record = json.load(fh)
+        if not isinstance(record, dict) \
+                or not {"hasCompletedOnboarding", "numStartups"} & set(record):
+            raise ValueError("it carries neither hasCompletedOnboarding nor numStartups")
+    except (OSError, ValueError) as exc:
+        print("spawn: warning: whether the account of %s passed its first-start dialogs is "
+              "unknown (%s); launching anyway" % (path, exc), file=sys.stderr)
+        return
+    missing = unpassed_first_start(record, mode)
+    if missing:
+        environment = ("CLAUDE_CONFIG_DIR=%s" % shq(config) if config
+                       else "env -u CLAUDE_CONFIG_DIR")
+        unshown = ("; if it shows none, type %s there and select « Turn on by default », which "
+                   "records the answer" % BROWSER_SETTINGS_COMMAND
+                   if BROWSER_DIALOG_ANSWER in missing else "")
+        die("spawn: refused: the account of %s has not passed %s: run once by hand on this "
+            "machine `%s %s --permission-mode %s` and answer the dialog%s"
+            % (path, missing, environment, HOST_CLI, mode, unshown))
+
+
 def process_config(pid):
     """The CLAUDE_CONFIG_DIR in the environment of process `pid`, "" when it has none (plan 1),
     None when it cannot be read: the plan a session runs on is a fact of its own process, whoever
@@ -5465,29 +5725,29 @@ def trust_dialog_on(made):
 
 
 # How much of a screen a refusal quotes: the last lines are where a dialog or a prompt sits.
-SCREEN_LINES = 6
+SCREEN_LINES = 12
 SCREEN_WIDTH = 160
 # What a quoted screen may not carry: escape sequences and other controls would reach the
 # reader's terminal and the logs that keep the refusal.
 UNPRINTABLE = re.compile(r"[^\x20-\x7e\u00a0-\uffff]")
 
 
-def screen_clause(screen):
+def screen_clause(screen, knob="ORCHESTRATOR_MODE_TIMEOUT"):
     """What a refused spawn's tab showed, said instead of advising a retry in the dark: the last
     lines of its screen, or that it was blank, or that it could not be read, each with what
-    to do on the next spawn (the tab is closed by the refusal, so nothing is done on it)."""
+    to do on the next spawn (the tab is closed by the refusal, so nothing is done on it).
+    `knob` is the variable of the wait that ran out."""
     if screen is None:
-        return ("The screen could not be read. Next time, raise ORCHESTRATOR_MODE_TIMEOUT if "
-                "the machine is only slow")
+        return ("The screen could not be read. Next time, raise %s if the machine is only slow"
+                % knob)
     lines = [UNPRINTABLE.sub("?", ln.strip())[:SCREEN_WIDTH] for ln in screen.split("\n")
              if ln.strip()]
     if not lines:
         return ("The tab showed nothing: the host had not drawn its screen, so it was hung at "
-                "start or the machine is slow. Next time, raise ORCHESTRATOR_MODE_TIMEOUT to "
-                "wait longer")
+                "start or the machine is slow. Next time, raise %s to wait longer" % knob)
     return ("The tab showed: %s. A dialog there is one this launch cannot answer; a start "
             "banner or an empty prompt means the session was up and slow, so next time raise "
-            "ORCHESTRATOR_MODE_TIMEOUT" % " | ".join(lines[-SCREEN_LINES:]))
+            "%s" % (" | ".join(lines[-SCREEN_LINES:]), knob))
 
 
 def directory_is_trusted(path):
@@ -5832,6 +6092,7 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
                     "model and effort, read on your transcript" % flag)
     # The caller's launch is read in the caller's own plan, before a routed plan replaces it.
     plugin_dirs, caller_plugins = caller_plugin_launch(auditor_successor)
+    caller_config = os.environ.get("CLAUDE_CONFIG_DIR", "")
     routed = route_plan(args.plan) if args.plan else None
     if args.wake:
         # A woken orchestrator runs on the plan it slept on, whoever wakes it: its transcripts
@@ -5856,6 +6117,10 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
     if args.resume and not (args.wake or args.open_):
         refuse_stale_resume(args.resume)
         settle_resume_plan(args.resume, routed)
+    # Routed to an account, by --plan or by a move across plans: before anything is written.
+    config = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    if routed is not None or not same_plan(caller_config, config):
+        refuse_unpassed_account(config, args.mode)
     model, effort, pair_source = pair_of_launch(args, auditor_successor, pair_from)
     if anchor == "self" and defaulted and not own and not DRY_RUN:
         # The default must not turn a spawn that worked into a refusal: a caller with no
@@ -5990,6 +6255,12 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
 
     script = write_launch_script(launch, title)
     command = "%s -l %s" % (LOGIN_SHELL, script)
+    # A successor closes the tab this command runs in, where the operator may be typing: he
+    # reads it first, in that tab.
+    if args.successor or args.coordinator_successor or auditor_successor:
+        print("succession: this tab is closed once its successor takes over, never while its "
+              "prompt holds text you typed and have not sent: what you type here is kept",
+              file=sys.stderr)
     print("spawn: model %s, effort %s, from %s" % (model or "the host's default",
                                                     effort or "the host's default", pair_source),
           file=sys.stderr)
@@ -6455,6 +6726,206 @@ KILL_SENT = set()
 # after, that line's own write included, fails after the session was closed.
 CLOSE_DONE = set()
 
+# How long a close waits for what the operator typed in the session's prompt, and has not
+# sent, to be sent or cleared, reading the prompt every INPUT_POLL seconds; under the bound of
+# the module's close of an agent (60 s) and of a host's command (120 s). The module's close
+# runs with 0: text there refuses at once, and the close is tried again at a later tick.
+INPUT_WAIT = int(os.environ.get("ORCHESTRATOR_INPUT_WAIT", "45"))
+INPUT_POLL = 2
+# The exit code of a close refused for the session's prompt, one holding his text or one that
+# cannot be read: nothing was closed, and the same close can be run again later.
+UNSENT_EXIT = 3
+# What every such refusal says of the way out.
+UNSENT_WAY = ("Run this close again once he has sent or cleared it and the prompt can be read; "
+              "this refusal is the launcher's, no refusal of the host's: never ask the session "
+              "to call end_session, which would destroy his text")
+UNSENT_KEPT = "the tab is kept, nothing was closed"
+# The host's prompt box: a rule above and below, its first line led by its mark and a no-break
+# space: ❯, ! in bash mode, or no mark where it is drawn faint (a busy host on a theme of ANSI
+# colours).
+PROMPT_RULE = re.compile("^\\s*\u2500{8,}")
+PROMPT_FIRST = re.compile("^\\S?\u00a0")
+# The escape sequences a pane's capture carries: a style (SGR), any other CSI, an OSC (a link).
+ESCAPE = re.compile(r"\x1b(?:\[([0-9;:?<>=]*)([ -/]*[@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)?|.)")
+# SGR parameters that take arguments: a colour of 256 (5;n) or of the RGB (2;r;g;b).
+SGR_COLOURS = ("38", "48", "58")
+
+
+def sgr_words(params):
+    """The attribute words of an SGR whose parameters are `params`, a colour's own arguments
+    left out; an empty list is one reset."""
+    words = params.split(";") if params else [""]
+    i = 0
+    while i < len(words):
+        word = words[i]
+        yield word
+        if word in SGR_COLOURS and i + 1 < len(words):
+            i += {"5": 2, "2": 4}.get(words[i + 1], 0)
+        i += 1
+
+
+def faint_after(params, faint):
+    """Whether text is faint after an SGR whose parameters are `params`: 2 sets it, 0, 22 and
+    an empty list reset it; a colour's own arguments are skipped, a 2 among them is no faint."""
+    for word in sgr_words(params):
+        if word in ("", "0", "22"):
+            faint = False
+        elif word == "2":
+            faint = True
+    return faint
+
+
+def inverse_after(params, inverse):
+    """Whether text is inverse after an SGR whose parameters are `params`: 7 sets it, 0, 27
+    and an empty list reset it."""
+    for word in sgr_words(params):
+        if word in ("", "0", "27"):
+            inverse = False
+        elif word == "7":
+            inverse = True
+    return inverse
+
+
+def placeholder_cursor(cells):
+    """`cells`, as `(text, faint, inverse)`, with what the host draws faint left out: its
+    placeholder and its suggestions, and the inverse cell right before one, its cursor on the
+    placeholder's first letter (the rest of it faint)."""
+    out = []
+    for i, (text, faint, inverse) in enumerate(cells):
+        if faint:
+            continue
+        if inverse and text and not text.endswith("\n"):
+            after = next((cell for cell in cells[i + 1:] if cell[0]), None)
+            if after is not None and after[1] and not after[0].startswith("\n"):
+                text = text[:-1]
+        out.append(text)
+    return "".join(out)
+
+
+def unfaint(text):
+    """A pane's capture with its escape sequences (`capture-pane -e`) as plain text, what the
+    host draws faint left out (`placeholder_cursor`)."""
+    runs, faint, inverse, at = [], False, False, 0
+    for found in ESCAPE.finditer(text):
+        runs.append((text[at:found.start()], faint, inverse))
+        if found.group(2) == "m":
+            params = found.group(1) or ""
+            faint, inverse = faint_after(params, faint), inverse_after(params, inverse)
+        at = found.end()
+    runs.append((text[at:], faint, inverse))
+    return placeholder_cursor(runs)
+
+
+def plain_cells(line):
+    """An iTerm2 screen line as text, what the host draws faint left out (`placeholder_cursor`)
+    and its empty cells, which the app answers as NUL where the host moved the cursor over
+    them, as spaces."""
+    cells = []
+    x = 0
+    while True:
+        try:
+            cell = line.string_at(x)
+        except IndexError:
+            break
+        style = line.style_at(x)
+        cells.append((cell.replace("\x00", " "), bool(style is not None and style.faint),
+                      bool(style is not None and getattr(style, "inverse", False))))
+        x += 1
+    # Spaces alone: the no-break space after the mark is what tells an empty box.
+    return placeholder_cursor(cells).rstrip(" ")
+
+
+def typed_input(lines):
+    """What the host's prompt box among `lines` (faint cells left out) holds: the text after
+    its mark and the lines down to the rule below, "" when the box is empty; None when no box
+    is drawn (a dialog in its place, a host still drawing, a shell), never taken for empty."""
+    for start in range(len(lines) - 2, -1, -1):
+        first = PROMPT_FIRST.match(lines[start + 1])
+        if not (first and PROMPT_RULE.match(lines[start])):
+            continue
+        body = [lines[start + 1][first.end():]]
+        for line in lines[start + 2:]:
+            if PROMPT_RULE.match(line):
+                break
+            body.append(line)
+        return "\n".join(line.replace("\u00a0", " ").strip() for line in body).strip()
+    return None
+
+
+def captured(pane, socket=""):
+    """The capture of the tmux pane `pane`, of the home server `socket` when one is named, its
+    faint runs left out, as lines."""
+    where = ["-L", socket] if socket else []
+    return unfaint(tmux_out(where + ["capture-pane", "-p", "-e", "-t", pane],
+                            "close")).split("\n")
+
+
+def prompt_text(lines_of):
+    """What the operator typed in a host's prompt and has not sent, on the lines `lines_of()`
+    reads: "" when nothing, None when they show no prompt box; raises, its reason said, when
+    they cannot be read."""
+    try:
+        lines = lines_of()
+    except SystemExit:
+        raise RuntimeError("the reading died, its reason above")
+    return typed_input(lines or [])
+
+
+def refuse_unsent(msg, text=None):
+    """A close's refusal for its session's prompt, nothing closed (UNSENT_EXIT), on one line:
+    `msg`, the way out, then that the tab is kept, or, with his `text`, that text last, its line
+    breaks shown as ⏎ (`msg` then says the tab is kept)."""
+    if text is None:
+        line = "%s. %s: %s" % (msg, UNSENT_WAY, UNSENT_KEPT)
+    else:
+        line = "%s. %s. His text: «%s»" % (msg, UNSENT_WAY, " ⏎ ".join(
+            UNPRINTABLE.sub("?", part) for part in text.split("\n")))
+    print("ERROR: " + line, file=sys.stderr)
+    sys.exit(UNSENT_EXIT)
+
+
+def await_unsent(what, tty, read, bound=None, sleep=time.sleep, clock=time.time):
+    """Wait, before a close kills the session on `tty`, until `read()` says its prompt holds
+    nothing the operator typed: what he typed is sent or cleared, never destroyed. Answers
+    whether text was seen, so the caller prints what he sent. A prompt that cannot be read is
+    not known empty: the close refuses at once. A screen with no prompt box (`read()` None) is
+    not known empty either: waited for as text is. Past `bound` seconds with text still there,
+    or unread since, it refuses too, the line carrying his text, on one line, for the caller to
+    show him. A refusal keeps the tab: nothing was killed."""
+    bound = INPUT_WAIT if bound is None else bound
+    end = clock() + bound
+    seen, last, said = False, "", set()
+    while True:
+        try:
+            text = read()
+        except Exception as exc:
+            if not seen:
+                refuse_unsent("%s: refused: the prompt on %s cannot be read (%s), so whether it "
+                              "holds text the operator typed and has not sent is not known"
+                              % (what, tty, (str(exc) or type(exc).__name__).replace("\n", " ")))
+            text = None
+        if text == "":
+            return seen
+        kind = "box" if text is None else "text"
+        if kind not in said and not (kind == "box" and seen):
+            print("%s: the prompt on %s %s: waiting up to %ds for it to be sent or cleared"
+                  % (what, tty, "shows no prompt box (a dialog, or a host still drawing), so "
+                     "what it holds is not known" if kind == "box" else
+                     "holds text the operator typed and has not sent", bound), file=sys.stderr)
+            sys.stderr.flush()
+            said.add(kind)
+        if text is not None:
+            seen, last = True, text
+        if clock() >= end:
+            if not seen:
+                refuse_unsent("%s: refused: the screen on %s showed no prompt box for %ds (a "
+                              "dialog, or a host that draws none), so whether it holds text the "
+                              "operator typed and has not sent is not known" % (what, tty, bound))
+            refuse_unsent("%s: refused: the prompt on %s still holds text the operator typed and "
+                          "has not sent, after %ds: %s. Show him his text verbatim and say it "
+                          "waits in that tab" % (what, tty, bound, UNSENT_KEPT), last)
+        sleep(INPUT_POLL)
+
 
 def close_tab(tty, expect):
     """The ordinary close of a tab or a window, proved on the process table and, where the
@@ -6598,8 +7069,26 @@ def cmd_close(args):
     # And the host pids the hooks module's store records on it: the close's proof reads the
     # tty, and these are named afterwards when the process table still lists them.
     recorded = recorded_pids({host_tty, args.tty})
-    # An orchestrator's conversation is read before the kill and printed after the contract line.
-    tail = conversation_of(host_tty) if args.expect.startswith(ORCH_ROLE) else ""
+    # What the operator typed in its prompt and has not sent is never destroyed: the close
+    # waits for it to be sent or cleared, and past its bound refuses, the tab kept.
+    lines_of = ((lambda: captured(HOME_SESSION + ":0", socket)) if socket
+                else (lambda: terminal_for(host_tty).prompt_lines(host_tty)))
+    # Read strictly: a process table that cannot be read is no proof that no host is there.
+    try:
+        guarded = bool(host_clis_on(host_tty, strict=True))
+    except Exception:
+        guarded = True
+    # A window's own refusals (window 0, its name, another session's window) come before the
+    # wait: a close they refuse waits for nothing, and reads no stranger's prompt.
+    if guarded and not socket and isinstance(terminal_for(host_tty), TmuxTerminal):
+        terminal_for(host_tty).close_refusals("close", args.tty, args.expect)
+    typed = guarded and await_unsent("close", args.tty, lambda: prompt_text(lines_of))
+    # An orchestrator's conversation is read before the kill and printed after the contract
+    # line, and any session's where the operator typed during the close: what he sent is in it.
+    tail = conversation_of(host_tty) if args.expect.startswith(ORCH_ROLE) or typed else ""
+    if typed:
+        print("close: the operator sent or cleared what he typed in the prompt on %s: show him "
+              "what the conversation section below leaves pending" % args.tty, file=sys.stderr)
 
     note = close_note(host_tty, was_running)
     if socket:
@@ -7190,9 +7679,9 @@ def spawn_failed(spawned, old, exc):
             why = why[len(prefix):]
     refused = bool(spawned.get("refusing"))
     if refused and spawned.get("refused_closed"):
-        die("rotate: the spawn refused the replacement it made%s (%s) and closed it; the old "
-            "session on %s was not touched, and nothing is left to close"
-            % (" on %s" % tty if tty else "", why, old["tty"]))
+        die(then_shown("rotate: the spawn refused the replacement it made%s (%s) and closed it; "
+                       "the old session on %s was not touched, and nothing is left to close"
+                       % (" on %s" % tty if tty else "", why, old["tty"]), spawned))
     if tty:
         refuse_recycled(spawned, old, None)
         lead = ("the spawn refused the replacement it made on %s (%s) and could not close it"
@@ -7241,10 +7730,11 @@ def refused_interrupted(made, old, name):
     step = ("close it with close --tty %s --expect-title %s --keep-checkout"
             % (shlex.quote(tty), shlex.quote(title)) if re.search(r"\w", title) else
             "no close of it is named, for its title holds no word a close could be guarded on")
-    die("rotate: the rotation was interrupted by %s while the spawn closed the replacement it "
+    die(then_shown(
+        "rotate: the rotation was interrupted by %s while the spawn closed the replacement it "
         "made on %s, which it refused (%s): whether that close went through is not known: if "
         "list still shows a session on %s, %s; the old session on %s was not touched"
-        % (name, tty, why, tty, step, old["tty"]))
+        % (name, tty, why, tty, step, old["tty"]), made))
 
 
 def refuse_recycled(made, old, after):
@@ -7366,7 +7856,7 @@ def late_refusal(made, old, refused, error, interrupted=False, lead="", reading=
     steps = old_steps(old, reading)
     if unverified:
         steps = "%s before ending the old session: %s" % (replacement_check(made or {}), steps)
-    die("rotate: %s; %s; %s" % (lead, kept, steps))
+    die(then_shown("rotate: %s; %s; %s" % (lead, kept, steps), made or {}))
 
 
 def replacement_check(made):
