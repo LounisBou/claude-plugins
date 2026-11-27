@@ -9,9 +9,10 @@ import { DECLARATIONS } from '../wait.ts'
 import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, hostStopOf, stopInTail, stopText, chainOwnerTty, RELAY_CAP, heldReport, readDeliveryFacts, keptCi, factsLine, falseClaims, type DeliveryFacts, type FactsRun, type KeptGate } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
 import { register } from '../register.ts'
+import { KEPT_RETRY_MS, KEPT_RETRY_CAP_MS, BACKSTOP_MS, BACKSTOP_AGE_MS } from '../supervision.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hooksOn, hostOf, type Captured, type HostParts } from '../../core/capture.ts'
-import { fieldsOf, type Events, type Host, type Noun } from '../../core/host.ts'
+import { fieldsOf, type Events, type Host, type Noun, type SessionSendResult } from '../../core/host.ts'
 
 const HOME = '/tmp/h'
 const STATE = `${HOME}/.claude/claude-orchestrator`
@@ -270,7 +271,7 @@ test('a chain whose owner is not live is not counted, however recently it was wr
 // agent's record carrying another.
 // `reportsTo`: the orchestrator the launch recorded. `alive`: the pids the process table lists,
 // none read when absent. `registry`: the host's registry records of other sessions.
-type Over = { kept?: string; repo?: Record<string, string>; elsewhere?: Record<string, string>; checkout?: string; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
+type Over = { kept?: string; repo?: Record<string, string>; elsewhere?: Record<string, string>; checkout?: string; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; walkHangs?: { on: boolean }; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
 
 // The tab and the run: the agent's host process (501) on ttys005, launched with its
 // --name; its shell (850) and the run (900) on no tty. The module's shell is a child of
@@ -293,6 +294,8 @@ function fake(over: Over = {}) {
   // The gate's last answer ci-watch kept for owner/app#12, which the facts read CI from.
   if (over.kept !== undefined) files.set(KEPT, over.kept)
   if (over.reportsTo) env['ORCHESTRATOR_REPORTS_TO'] = over.reportsTo
+  // A walk that hangs (a machine under load) loses the race against a short bound.
+  if (over.walkHangs) env['ORCHESTRATOR_SIDE_READ_MS'] = '20'
   for (const r of over.registry ?? []) files.set(`${HOME}/.claude/sessions/${r.pid}.json`, JSON.stringify({ pid: Number(r.pid), sessionId: r.sessionId, name: r.name, startedAt: r.startedAt, kind: 'interactive', entrypoint: 'cli' }))
   const name = over.name ?? AGENT
   if (!over.walk) files.set(ROW, JSON.stringify({
@@ -358,6 +361,9 @@ function fake(over: Over = {}) {
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         // The walk: the session's own tty, and its host process on it by name.
+        if (over.walkHangs?.on && argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$') {
+          return new Promise(resolve => setTimeout(() => resolve({ exitCode: 1, stdout: '', stderr: '' }), 200))
+        }
         if (argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$') return { exitCode: 0, stdout: `${seed}\n`, stderr: '' }
         const under = verb === 'ps' && first === '-p' ? UNDERNEATH[second] : undefined
         if (under) return { exitCode: 0, stdout: `${under.ppid} ${under.tty}\n`, stderr: '' }
@@ -1025,4 +1031,151 @@ test('a waiting status is reported once, however many turns repeat it, and again
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(waiting('the suite'), 'turn-3'))
   expect(fx.sent.length).toBe(2)
   expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBe('waiting')
+})
+
+// --- a turn end never lost on its way -----------------------------------------------------
+
+// The host's timers, held: a test runs each when it chooses, and its delay names it.
+function heldClock(now = { ms: Date.parse('2026-11-27T16:30:17.000Z') }) {
+  const timers: { ms: number; run: () => unknown }[] = []
+  const clock = {
+    after: (ms: number, run: () => unknown) => { timers.push({ ms, run }); return { cancel: () => undefined } },
+    now: async () => now.ms,
+    sleep: async () => undefined,
+    every: () => ({ cancel: () => undefined }),
+  }
+  // The timers of that delay armed so far, taken out and run.
+  const fire = async (ms: number) => {
+    const due = timers.filter(timer => timer.ms === ms)
+    for (const timer of due) timers.splice(timers.indexOf(timer), 1)
+    for (const timer of due) await timer.run()
+    return due.length
+  }
+  return { clock, timers, fire, now }
+}
+
+const START = { cwd: '/w/agent' }
+const KEPT_FILE = `${STATE}/store/relays/s-one`
+const DELIVERY = 'geonative-api#1942 6cd8050 — 1 finding — blocking: a.ts:3 — report: /r.md\nstatus: done — review of #1942'
+
+test("a turn end whose own name the walk could not read in time is kept, said, and relayed once the name reads", async () => {
+  const chains = mounted()
+  const walkHangs = { on: true }
+  const fx = fake({ walk: 'agent', walkHangs })
+  const held = heldClock()
+  const dollar = { ...fx.dollar, clock: held.clock }
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  // Nothing reached the orchestrator, and nothing of it is silent: the turn end is kept and the log says why.
+  expect(fx.sent.length).toBe(0)
+  expect(fx.files.has(KEPT_FILE)).toBe(true)
+  expect(fx.logged.some(l => l.includes("s-one's own name was not read in time"))).toBe(true)
+  // The first try again fails the same way: logged, kept, armed again.
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
+  expect(fx.sent.length).toBe(0)
+  expect(fx.logged.some(l => l.includes('is not delivered at try 1'))).toBe(true)
+  // The machine answers again: the next try relays it, once, and keeps nothing.
+  walkHangs.on = false
+  expect(await held.fire(KEPT_RETRY_MS * 2)).toBe(1)
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(fx.sent[0]!.text).toContain(`[module] ${AGENT} reports its delivery`)
+  expect(fx.files.has(KEPT_FILE)).toBe(false)
+  // Delivered: no third try is armed.
+  expect(held.timers.some(t => t.ms === Math.min(KEPT_RETRY_MS * 4, KEPT_RETRY_CAP_MS))).toBe(false)
+})
+
+test('a turn end refused by its orchestrator is kept and tried again until delivered, and never sent twice', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const held = heldClock()
+  let refuse = true
+  const send = async (args: { to: unknown; text: string }): Promise<SessionSendResult> => {
+    if (refuse) return { isDelivered: false, reason: 'nobody by that name' }
+    fx.sent.push(args)
+    return { isDelivered: true }
+  }
+  const dollar = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  expect(fx.logged.some(l => l.includes(`relay: not delivered to ${ORCH}: nobody by that name — ${AGENT}'s turn end`))).toBe(true)
+  expect(fx.files.has(KEPT_FILE)).toBe(true)
+  refuse = false
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
+  expect(fx.sent.length).toBe(1)
+  expect(fx.files.has(KEPT_FILE)).toBe(false)
+  // A restart finds nothing kept: no timer, no second send.
+  await drive(chains, 'session.start', dollar, START)
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(0)
+  expect(fx.sent.length).toBe(1)
+})
+
+test('a turn end relayed at once keeps nothing and arms no retry', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const held = heldClock()
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: held.clock }, turnEnd(DELIVERY, 'turn-1'))
+  expect(fx.sent.length).toBe(1)
+  expect(fx.files.has(KEPT_FILE)).toBe(false)
+  expect(held.timers.some(t => t.ms === KEPT_RETRY_MS)).toBe(false)
+})
+
+// The orchestrator's side: its row on its tty, with the chain's owner; the agent's kept turn end,
+// older than the agent's own tries are given; the host's record of the agent, which names it.
+function backstopWorld(keptAt: string, over: { tty?: string | null; reportsTo?: string | null } = {}) {
+  const fx = fake()
+  const held = heldClock()
+  const submitted: string[] = []
+  fx.files.set(`${STATE}/store/sessions/s-orch`, JSON.stringify({
+    role: 'orchestrator', name: ORCH, pid: '400', tty: '/dev/ttys001', repo: null, chain_owner: 'own',
+    context_percent: 5, context_tokens: 50000, window: 1000000, model: 'a-model', busy: false, updated_at: '2026-10-14T09:00:00.000Z',
+  }) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: AGENT, startedAt: 1, kind: 'interactive', entrypoint: 'cli', status: 'idle' }))
+  fx.files.set(KEPT_FILE, JSON.stringify({ answer: DELIVERY, turn_id: 'turn-1', reason: 'answer', at: keptAt, tty: over.tty === undefined ? '/dev/ttys005' : over.tty, reports_to: over.reportsTo ?? null, tries: 2 }) + '\n')
+  const orch = {
+    ...fx.dollar,
+    clock: held.clock,
+    session: { ...fx.dollar.session, id: async () => 's-orch' },
+    prompt: { submit: async (p: { text: string }) => { submitted.push(p.text); return {} } },
+  }
+  return { fx, held, submitted, orch }
+}
+
+test("an agent's kept turn end its own tries did not deliver is relayed by its orchestrator's backstop once, never twice", async () => {
+  const chains = mounted()
+  const { fx, held, submitted, orch } = backstopWorld(new Date(Date.parse('2026-11-27T16:30:17.000Z') - BACKSTOP_AGE_MS - 1000).toISOString())
+  // The orchestrator's start arms its backstop; the agent's own retry, armed by its restart, is pending beside it.
+  // (One module serves both sessions here: the backstop's timer is the first start's, as each session's module arms its own.)
+  const agent = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send: async (): Promise<SessionSendResult> => ({ isDelivered: false, reason: 'busy' }) } }
+  await drive(chains, 'session.start', orch, START)
+  await drive(chains, 'session.start', agent, START)
+  expect(await held.fire(BACKSTOP_MS)).toBeGreaterThan(0)
+  expect(submitted.length).toBe(1)
+  expect(submitted[0]).toContain(`[module] ${AGENT} reports its delivery`)
+  expect(submitted[0]).toContain(`reply with SendMessage to: ${AGENT}`)
+  expect(fx.files.has(KEPT_FILE)).toBe(false)
+  expect(fx.logged.some(l => l.includes(`relay: backstop: ${AGENT}'s turn end`))).toBe(true)
+  // The next tick, and the agent's own retry after it, send nothing more.
+  expect(await held.fire(BACKSTOP_MS)).toBe(1)
+  await held.fire(KEPT_RETRY_MS)
+  expect(submitted.length).toBe(1)
+  expect(fx.sent.length).toBe(0)
+})
+
+test("the backstop leaves a kept turn end younger than the agent's own tries, and one of another orchestrator's agent", async () => {
+  let chains = mounted()
+  const young = backstopWorld(new Date(Date.parse('2026-11-27T16:30:17.000Z') - 1000).toISOString())
+  await drive(chains, 'session.start', young.orch, START)
+  await young.held.fire(BACKSTOP_MS)
+  expect(young.submitted.length).toBe(0)
+  expect(young.fx.files.has(KEPT_FILE)).toBe(true)
+  const old = new Date(Date.parse('2026-11-27T16:30:17.000Z') - BACKSTOP_AGE_MS - 1000).toISOString()
+  chains = mounted()
+  const other = backstopWorld(old, { tty: '/dev/ttys099', reportsTo: 'Orch: other [a1b2c3]' })
+  await drive(chains, 'session.start', other.orch, START)
+  await other.held.fire(BACKSTOP_MS)
+  expect(other.submitted.length).toBe(0)
+  // The launch record names this orchestrator: its agent is its own, whatever its tty.
+  chains = mounted()
+  const named = backstopWorld(old, { tty: null, reportsTo: `${ORCH} [a1b2c3]` })
+  await drive(chains, 'session.start', named.orch, START)
+  await named.held.fire(BACKSTOP_MS)
+  expect(named.submitted.length).toBe(1)
 })
