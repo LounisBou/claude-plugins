@@ -1,10 +1,10 @@
 // hooks/stop-gate.ts
 // The pure parts of an orchestrator's turn end, over plain values: the launcher's
 // listing and the orchestrator's own agents, the busy wake the module's tick
-// says, and the refusals of a declared done or deferred wait (wait.ts). Pure on
-// purpose — the engine fences $ to the file that received it, so every read
-// happens in the handler that holds $ and its answer passes in here. The stop
-// itself is never held: guards.ts's handler only acts at it.
+// says, the refusal of a turn nothing will wake, and the refusals of a declared
+// done or deferred wait (wait.ts). Pure on purpose — the engine fences $ to the
+// file that received it, so every read happens in the handler that holds $ and
+// its answer passes in here.
 
 import { withDeadline as cancelAtDeadline, DeadlineExceeded } from '../core/deadline.ts'
 import type { WaitKind } from '../core/orchestration.ts'
@@ -38,6 +38,15 @@ export async function withDeadline<T>(work: ((signal: AbortSignal) => Promise<T>
     throw err
   }
 }
+
+// --- a turn end with nothing to wake the session (guards.ts) -------------------------------------
+
+// The refusal of an orchestrator's, an auditor's or a coordinator's turn that ends with no wait
+// declared and nothing of its own running: what he is asked for is then a question of the round,
+// which the pane shows, never words left in a tab.
+export const NOTHING_WAKES = 'Nothing will wake this session: no wait was declared this turn, and nothing it started is running '
+  + '(no busy agent, background command, monitor or subagent). If you wait on the operator, ask with `ask`, then call '
+  + '`declare_wait` operator. If all is done, call `declare_wait` done.'
 
 // --- the declared wait (hooks/wait.ts) ----------------------------------------------------------
 

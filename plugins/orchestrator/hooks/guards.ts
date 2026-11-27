@@ -7,9 +7,10 @@
 // refused, since a session kills only what it started, by pid. A forced push is
 // the forge's to refuse (github's `/github:protect`), never a reading of the
 // command's text here. And
-// an orchestrator's turn end, which decides nothing of the stop: it arms the
-// module's tick on the busy agents and the pull requests, shows the idle
-// agents' pull requests on their windows, and sweeps the checkouts.
+// the turn end: an orchestrator's, an auditor's or a coordinator's that nothing
+// will wake is refused once; an orchestrator's then arms the module's tick on the
+// busy agents and the pull requests, shows the idle agents' pull requests on their
+// windows, and sweeps the checkouts.
 //
 // The engine fences $ to the file that received it — never passed across an
 // import, a noun of it never read as a value — so the transcript block reader
@@ -27,7 +28,7 @@ import { detectPatternKills, type Own } from './pattern-kills.ts'
 import {
   withDeadline, isDegradedPass, type DegradedPass,
   listing, chainOwner, ownAgents, hostStatusOf, pullRequestOf, isSuccessorSpawn,
-  orchestrationOf, ownerOf, isOwnRecord, busyWake, type BusyAgent, type OwnAgent,
+  orchestrationOf, ownerOf, isOwnRecord, busyWake, hostTasks, NOTHING_WAKES, type BusyAgent, type OwnAgent,
 } from './stop-gate.ts'
 import { launcherOf, recordsRegistryPath } from '../core/orchestration.ts'
 import { chainPath, parseChain } from '../core/chain-entries.ts'
@@ -289,6 +290,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   // The module's tick (moduleTick): armed by a stop a busy agent released or that leaves a pull
   // request of the orchestration open, it stands across the turns until a later stop arms it again.
   const tick: TickMemory = { timer: null, told: new Map(), own: null, busy: [], busyAt: null, watch: false, anomalies: new Set() }
+  // The session whose turn end this module refused, until the host fires its stop again: one refusal a turn.
+  let refused: string | null = null
   on('prompt.submit', async ($, e, next) => {
     if (typedByOperator(String(e.origin?.kind ?? ''))) {
       try {
@@ -419,21 +422,27 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     return fallback ?? next(e)
   })
 
-  // An orchestrator's turn end: the module acts and decides nothing of the stop, which always
-  // passes. It arms the tick on the session's busy agents and on its pull requests, shows each
-  // idle agent's pull request on its window, and sweeps the checkouts. The classic events carry
-  // the settings payload's own fields — the transcript path among them — so the scope is read off
-  // the event itself. Every read races one deadline; a read that fails is a log line, and the stop
-  // passes all the same.
+  // The turn end. An orchestrator, an auditor or a coordinator that declared no wait and has
+  // nothing of its own running (no busy agent, no task or wake-up the host lists) is refused once;
+  // a session that handed over is not, nor one whose task list, launcher listing or chain owner is
+  // unread. An orchestrator's acts run at the stop that passes: the module arms the tick on the session's busy agents and on its pull
+  // requests, shows each idle agent's pull request on its window, and sweeps the checkouts. The
+  // classic events carry the settings payload's own fields — the transcript path among them — so
+  // the scope is read off the event itself. Every read races one deadline; a read that fails is a
+  // log line, and the stop passes all the same.
   on('classic.Stop', async ($, e, next) => {
     // The sweep's one shot, armed once the stop is known an orchestrator's: every exit below
     // calls it before next(e), the catch too. Null until the scope is settled, so a failure
     // before it sweeps nothing.
     let sweepAtStop: (() => Promise<void>) | null = null
     try {
-      // A stop another hook already held this turn is re-fired with the marker set: its acts already ran.
-      if (e.stop_hook_active) return next(e)
       const sessionId = String(e.session_id ?? '')
+      const refired = e.stop_hook_active === true
+      // A stop another hook already held this turn is re-fired with the marker set: its acts already
+      // ran. This module's own refusal ran none: they run at the stop after it.
+      if (refired && refused !== sessionId) return next(e)
+      refused = null
+      if (refired) await logLine($, 'guards', 'stop gate: the stop after the refusal passes')
       // The scope first, from the session itself: the launcher's listing is a call to
       // the terminal, and every agent's, auditor's and hand-started session would pay it.
       const transcript = String(e.transcript_path ?? '') || await transcriptPathOf($, sessionId)
@@ -448,16 +457,21 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         await logLine($, 'guards', `stop gate: the session's name cannot be read on ${tty}`)
         return next(e)
       }
-      if (roleOf(name) !== 'orchestrator') return next(e)
+      const role = roleOf(name)
+      if (!role || role === 'agent') return next(e)
+      // Nothing but an agent of its own could wake it. A host that lists no tasks says nothing of them.
+      const resting = !refired && declarations.current() === null && !declarations.handedOver(sessionId)
+        && hostTasks(e.background_tasks, e.session_crons)?.length === 0
+      if (role !== 'orchestrator' && !resting) return next(e)
       const state = await dataDir($)
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
       let swept = false
-      sweepAtStop = async () => {
+      if (role === 'orchestrator') sweepAtStop = async () => {
         if (swept) return
         swept = true
         await runSweep($, state, root, until)
       }
-      // The agents of this orchestrator are the chain entries its own session wrote, still
+      // The agents of this session are the chain entries its own session wrote, still
       // running one by the listing's glyph.
       const rows = listing(await mustRun($, ['bash', launcherOf(root), 'list'], "the launcher's listing", until))
       const chain = await quietly($, () => $.fs.read(chainPath(state, tty)), until, '')
@@ -486,6 +500,13 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const ledgerOf = async () => (ledgerOnce ??= (await recordsOf()).flatMap(record => ledgerLines(record.text)))
       const hostStatus = await hostStatuses($, entries.filter(entry => entry.owner === owner).map(entry => entry.tty), until)
       const agents = ownAgents(rows, entries, owner, hostStatus)
+      // With no owner, a chain that has entries says nothing of which of them runs.
+      if (resting && (owner !== '' || entries.length === 0) && !agents.some(agent => agent.state === 'busy')) {
+        refused = sessionId
+        const below = await next(e)
+        return fieldsOf(below)?.['block'] ? below : { ...fieldsOf(below), block: NOTHING_WAKES }
+      }
+      if (role !== 'orchestrator') return next(e)
       // Past its bound in one turn, a busy agent wakes the session at the tick, as a pull request
       // of the orchestration merged, closed or entering the anomaly does.
       const busyNow = agents.filter(agent => agent.state === 'busy')
@@ -512,7 +533,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         if (together) read.push({ tty: agent.tty, pr: together })
       }
       await inTime($, () => showPrStates($, read), until)
-      await sweepAtStop()
+      await sweepAtStop?.()
       return next(e)
     } catch (err) {
       // A read that failed lets the stop pass — one line, already written where it failed;
