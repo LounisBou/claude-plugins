@@ -259,6 +259,16 @@ sits immediately left of its implementer's tab. `--right-of self` resolves the c
 `--left-of <tty>` covers the mirror case, and `move` repairs the layout after
 the fact.
 
+An orchestrator that runs on another machine keeps its home session on that machine's own home server, with its agents as windows of it; its agents never run here. You see it here through a view: the coordinator's module opens one iTerm2 window per remote home server, a tmux client attached over ssh to that server's `home` session. It finds each machine's ssh destination in `remote-machines.json`, in the state directory (see « The state directory and the data root »). Each tick, a live view is kept, a view that dropped is opened again while its server still runs, and if a second view of one server appears, the module's next tick closes it and keeps the first. Closing a view only detaches your client: nothing ends on the remote, and the orchestrator and its agents keep running. A remote server ends only when its own tab on its own machine is closed. A view holds and kills nothing on the remote.
+
+To add a machine, add its label and its ssh destination (an alias of `~/.ssh/config`, or `user@host`) to `remote-machines.json`:
+
+```json
+{ "version": 1, "machines": { "<label>": "<destination>" } }
+```
+
+The label is the machine's host name up to its first dot, as the pane shows it; once an orchestrator of that machine runs in its home server, the next tick opens its view. A machine the file does not name gets no view, and the coordinator's module log says so.
+
 ## Uninstall
 
 ```
