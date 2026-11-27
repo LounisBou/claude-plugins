@@ -9461,6 +9461,9 @@ class FakeIterm(ia.Terminal):
     def close_made(self, made):
         calls.append("close_made %s" % made.get("session_id")); return True
     def prompt_lines(self, tty):
+        # A dialog in the box's place; an app that cannot show the screen.
+        if scenario == "nobox": return ['Do you want to proceed?', '❯ 1. Yes', '  2. No']
+        if scenario == "unreadable": raise ia.Unreachable("the API is not enabled")
         return ['─' * 40, '❯\u00a0' + ("je réponds" if scenario == "typed" else ""), '─' * 40]
 ia.ITERM = FakeIterm()
 ia.time.sleep = lambda s: None
@@ -9495,6 +9498,17 @@ reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(hprobe typed)
 check "a move whose tab's prompt holds his text stays: no server, no tab, the old tab read alone" \
   "0|identity /dev/ttys900|OUT:stay: the prompt on /dev/ttys900 holds text, so the move, which ends the session there, would destroy what the operator typed and has not sent|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(printf '%s\n' "$res" | grep '^OUT:')|$(hcalls | grep -c 'new-session')"
+# A screen with no prompt box (a dialog), or one that cannot be read, is not known empty: it stays too.
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(hprobe nobox)
+check "a move whose tab shows no prompt box stays: no server, no tab" \
+  "0|identity /dev/ttys900|OUT:stay: the prompt on /dev/ttys900 shows no prompt box, so the move, which ends the session there, would destroy what the operator typed and has not sent|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(printf '%s\n' "$res" | grep '^OUT:')|$(hcalls | grep -c 'new-session')"
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(hprobe unreadable)
+check "a move whose tab's prompt cannot be read stays, the reason said: no server, no tab" \
+  "0|identity /dev/ttys900|OUT:stay: the prompt on /dev/ttys900 cannot be read (the API is not enabled), so the move, which ends the session there, would destroy what the operator typed and has not sent|0" \
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(printf '%s\n' "$res" | grep '^OUT:')|$(hcalls | grep -c 'new-session')"
 check "the server's environment is the operator's, without the caller's session or nesting marks" "none" \
   "$(homecmd env CLAUDECODE=1 ITERM_SESSION_ID=w0t0p0:X "$py" -c "
