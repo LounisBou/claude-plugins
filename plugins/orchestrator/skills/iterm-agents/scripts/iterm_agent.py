@@ -5260,21 +5260,24 @@ def route_plan(choice):
     return None
 
 
+# The key either answer to the host's browser extension dialog writes in the account's record.
+BROWSER_DIALOG_ANSWER = 'claudeInChromeDefaultEnabled'
+
+
 def unpassed_first_start(record):
     """The first-start step of the host that a session launched on the account of `record`, its
-    `.claude.json`, would stop on, named with its key, or "". Read on the host's own code
-    (2.1.332): the onboarding shows until `hasCompletedOnboarding` is true; « Claude in Chrome
-    extension detected » (`ChromeAutoEnableDialog`, shown in every permission mode, its text
-    naming the mode) is offered while either answer's key `claudeInChromeDefaultEnabled` is
-    absent, the record carries the extension and its cached gate is on."""
+    own state file, would stop on, named with its key, or "". Read on the host's own code: the
+    onboarding shows until `hasCompletedOnboarding` is true; the browser extension dialog, shown
+    in every permission mode with a text naming the mode, is offered while neither answer is
+    recorded, the record carries the extension and the host's cached gate is on."""
     if record.get("hasCompletedOnboarding") is not True:
         return "the onboarding (hasCompletedOnboarding)"
     paired, gates = record.get("chromeExtension"), record.get("cachedGrowthBookFeatures")
     detected = (record.get("cachedChromeExtensionInstalled") is True
                 or (isinstance(paired, dict) and bool(paired.get("pairedDeviceId"))))
     offered = isinstance(gates, dict) and gates.get("tengu_chrome_auto_enable") is True
-    if detected and offered and "claudeInChromeDefaultEnabled" not in record:
-        return "the Claude in Chrome first start (claudeInChromeDefaultEnabled absent)"
+    if detected and offered and BROWSER_DIALOG_ANSWER not in record:
+        return "the browser extension dialog (%s absent)" % BROWSER_DIALOG_ANSWER
     return ""
 
 

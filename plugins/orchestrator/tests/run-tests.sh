@@ -318,7 +318,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types --exclude-dir=core \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_GITHUB_ROOT|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|CLAUDE_CODE_CHILD_SESSION|CLAUDE_CODE_CHILD_NOTES_DIR|CLAUDE_CODE_BRIDGE_SESSION_ID|CLAUDE_CODE_MESSAGING_SOCKET|CLAUDE_CODE_MESSAGING_TOKEN|CLAUDE_CODE_SESSION_ATTENDED|CLAUDE_PID|CLAUDECODE|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_SESSION_KIND|CLAUDE_JOB_DIR|syncClaudeAiSkills' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_GITHUB_ROOT|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|CLAUDE_CODE_CHILD_SESSION|CLAUDE_CODE_CHILD_NOTES_DIR|CLAUDE_CODE_BRIDGE_SESSION_ID|CLAUDE_CODE_MESSAGING_SOCKET|CLAUDE_CODE_MESSAGING_TOKEN|CLAUDE_CODE_SESSION_ATTENDED|CLAUDE_PID|CLAUDECODE|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_SESSION_KIND|CLAUDE_JOB_DIR|'"'"'claudeInChromeDefaultEnabled'"'"'|syncClaudeAiSkills' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
@@ -3448,11 +3448,11 @@ acopn() { HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --open --title 'Orch: rou
 acrefused() { acopn | grep -c "spawn: refused: the account of $ACFILE has not passed $1"; }
 acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,'"$ACGATE"
 check "an account with the extension and no answer to its first start is refused, the key and the hand step named" "1|0|1" \
-  "$(acrefused 'the Claude in Chrome first start (claudeInChromeDefaultEnabled absent)')|$(acopn | grep -c '^launch=')|$(acopn | grep -cF "CLAUDE_CONFIG_DIR=$ACHOME/.claude-bis claude --permission-mode auto\` and answer the dialog")"
+  "$(acrefused 'the browser extension dialog (claudeInChromeDefaultEnabled absent)')|$(acopn | grep -c '^launch=')|$(acopn | grep -cF "CLAUDE_CONFIG_DIR=$ACHOME/.claude-bis claude --permission-mode auto\` and answer the dialog")"
 acrec '"hasCompletedOnboarding":true,"chromeExtension":{"pairedDeviceId":"d1"},'"$ACGATE"
-check "a paired browser is the extension detected too" "1" "$(acrefused 'the Claude in Chrome first start')"
+check "a paired browser is the extension detected too" "1" "$(acrefused 'the browser extension dialog')"
 check "the host shows that dialog in every mode, so another mode is refused too" "1" \
-  "$(acopn --permission-mode acceptEdits | grep -c 'has not passed the Claude in Chrome first start')"
+  "$(acopn --permission-mode acceptEdits | grep -c 'has not passed the browser extension dialog')"
 ACPASS=''
 for ACANSWER in true false; do
   acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,"claudeInChromeDefaultEnabled":'"$ACANSWER,$ACGATE"
