@@ -1,5 +1,5 @@
 // Generated from packages/core/src by `npm run core`: edit the source, never this copy.
-// The method's formats, owned by the method plugin (decision 0006) and read by every role:
+// The method's formats, owned by the method plugin (decision 0008) and read by every role:
 // the state file of a plan (`IMPLEMENTATION.md`), the status line that ends a report and the
 // operator's question block (`**Question i of N**`). Defined here once; a role parses them
 // through these functions, never with its own regex.

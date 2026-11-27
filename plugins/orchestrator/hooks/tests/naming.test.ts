@@ -518,7 +518,7 @@ test('the move is the launcher with the session, its name and the resume prompt'
 
 // A successor the launcher opened has no rename: the end of the turn that ran its takeover makes
 // the same move, without a name (the launcher reads the session's own on its tty).
-const TAKEOVER_LINE = '/p/skills/orchestrator/scripts/succession.sh takeover /w/dispatch-record.jsonl --mode build --tty /dev/ttys009'
+const TAKEOVER_LINE = '/p/skills/orchestrator/scripts/succession.sh takeover /w/dispatch-record.jsonl --tty /dev/ttys009'
 
 test("a successor's takeover turn moves it into its home session, then ends it there", async () => {
   const { handlers } = mounted()

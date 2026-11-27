@@ -9,9 +9,9 @@ import { expect, test } from 'claude-code/testing'
 import { DECLARATIONS } from '../wait.ts'
 import {
   ROW_MARKER, ROW_REFRESH_MS, ROW_TEXT_CAP, REMOTE_STALE_AFTER_MS, PRS_CAP, parseRemoteRow, rowText, deliveryOf, remoteRowOf, withRemote,
-  prsInFlight, rowIsNews, rowSent, type RemoteRow,
+  prsInFlight, rowIsNews, rowSent, UNREACHED_RETRY_MS, type RemoteRow,
 } from '../remote-row.ts'
-import { paneRows, sendRow, readRemoteRows, type SessionRow } from '../supervision.ts'
+import { paneRows, sendRow, readRemoteRows, forgetRowRetry, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { fingerprint } from '../relay.ts'
 import { parseQ } from '../remote-round.ts'
@@ -47,6 +47,7 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
   const sent: { to: unknown; text: string }[] = []
   const logged: string[] = []
   const mtimes = new Map<string, number>()
+  const later: { ms: number; fn: () => unknown }[] = []
   files.set(ROW, storeRow())
   if (over.learnt !== false) files.set(LEARNT, JSON.stringify({ name: 'Coord: ops', from: COORD_FROM, at: 'T' }) + '\n')
   if (over.local) files.set(RECORD, JSON.stringify({ name: 'Coord: here', tty: '/dev/ttys9' }))
@@ -66,6 +67,7 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
     },
     env: { get: async (name: string) => ({ HOME } as Record<string, string>)[name] },
     plugin: { root: '/plugins/orch-root' },
+    clock: { after: (ms: number, fn: () => unknown) => { later.push({ ms, fn }); return { cancel: () => undefined } } },
     fs: {
       read: async (p: string) => {
         const text = files.get(p)
@@ -113,7 +115,7 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
       }),
     },
   })
-  return { dollar, files, sent, logged, mtimes }
+  return { dollar, files, sent, logged, mtimes, later }
 }
 
 function mounted() {
@@ -220,6 +222,37 @@ test('no coordinator known: nothing is sent; an address that refuses falls back 
   const fx = fake({ refuseAddress: true })
   await sendRow(fx.dollar, 's-one')
   expect(fx.sent.map(s => s.to)).toEqual(['Coord: ops'])
+})
+
+test('a row the coordinator did not take is sent again by its own timer: a session waiting on the operator, ending no turn, is still heard', async () => {
+  forgetRowRetry()
+  const fx = fake()
+  const reachable = fx.dollar.session.send
+  const UNREACHED = 'No agent named \'Coord: ops\' is reachable.'
+  fx.dollar.session.send = async () => ({ isDelivered: false, reason: UNREACHED })
+  const since = new Date().toISOString()
+  fx.files.set(WAIT, JSON.stringify({ waiting: 'operator', blocks: 'phase 3', waiting_since: since, relayed: null, name: 'Orch: belt', pid: '501' }) + '\n')
+  await sendRow(fx.dollar, 's-one')
+  // A second failure while the retry is armed arms no second one.
+  await sendRow(fx.dollar, 's-one')
+  expect(fx.later.map(t => t.ms)).toEqual([UNREACHED_RETRY_MS])
+  const said = () => fx.logged.filter(l => l.includes('row: not delivered')).length
+  // The address that refused is forgotten at the first send: the first retry's refusal, by the name alone, may differ.
+  await fx.later[0]!.fn()
+  const before = said()
+  await fx.later[1]!.fn()
+  expect(fx.later.length).toBe(3)
+  // A retry refused as the send before it was is not said again.
+  expect(said()).toBe(before)
+  expect(fx.files.has(SENT)).toBe(false)
+  fx.dollar.session.send = reachable
+  await fx.later[2]!.fn()
+  expect(fx.sent.length).toBe(1)
+  const row = parseRemoteRow(fx.sent[0]!.text)!
+  expect([row.waiting, row.blocks, row.waiting_since]).toEqual(['operator', 'phase 3', since])
+  expect(fx.files.has(SENT)).toBe(true)
+  // Delivered: no other retry.
+  expect(fx.later.length).toBe(3)
 })
 
 test('the wait relay uses the learnt coordinator when none is registered here', async () => {

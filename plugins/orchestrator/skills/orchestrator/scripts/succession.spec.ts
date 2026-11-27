@@ -73,7 +73,7 @@ function world(over: { rows?: string; deck?: object; round?: object[]; todo?: st
   const err: string[] = []
   const io = { out: (t: string) => { out.push(t) }, err: (t: string) => { err.push(t) } }
   const prs = over.prs ?? { 'acme/app#12': 'MERGED' }
-  const run = (...argv: string[]) => main(['takeover', record, '--mode', 'build', ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`], paneWindow: tty => over.windows?.[tty], list: () => over.listed, homes: () => over.homes ?? [], ...(over.readyHead === undefined ? {} : { readyHead: over.readyHead }), journal: event => { journaled.push(event) }, movesHome: over.movesHome ?? false })
+  const run = (...argv: string[]) => main(['takeover', record, ...argv], env, io, { cwd: dir, now: () => NOW, prState: (repo, pr) => prs[`${repo}#${pr}`], paneWindow: tty => over.windows?.[tty], list: () => over.listed, homes: () => over.homes ?? [], ...(over.readyHead === undefined ? {} : { readyHead: over.readyHead }), journal: event => { journaled.push(event) }, movesHome: over.movesHome ?? false })
   return { state, briefs, record, out, err, run, journaled, text: () => out.join('') }
 }
 
@@ -81,7 +81,7 @@ test('takeover prints the fixed instructions filled from the state, and writes n
   const w = world()
   assert.equal(w.run('--tty', '/dev/ttys009'), 0)
   const text = w.text()
-  assert.ok(text.startsWith('# Orchestrator succession brief — belt\n\nMode: build\n'))
+  assert.ok(text.startsWith('# Orchestrator succession brief — belt\n\n# Instructions\n'))
   assert.ok(text.includes('You are the SUCCESSOR ORCHESTRATOR of `Orch: belt`.'))
   assert.ok(text.includes(`State directory: \`${w.state}\``))
   assert.match(text, /iterm-agents\/scripts\/iterm-agent\.sh close --tty \/dev\/ttys009 --expect-title "Orch: belt"/)
@@ -119,7 +119,6 @@ test('an orchestrator closed with no handover is taken up from the state alone: 
   assert.equal(w.run('--tty', '/dev/ttys009'), 0)
   const text = w.text()
   const needs: Record<string, string> = {
-    'its mode': 'Mode: build\n',
     'whom it succeeds': 'SUCCESSOR ORCHESTRATOR of `Orch: belt`',
     'the predecessor\'s close': 'close --tty /dev/ttys009 --expect-title "Orch: belt"',
     'the open rows': 'open=4 label=DOCS: guide blocker=row 1 closed note=start from the old guide',
@@ -254,23 +253,35 @@ test('the name is the record\'s owner unless given; a record without one, or non
   assert.equal(w.run(), 2)
   assert.match(w.err.at(-1) ?? '', /names no orchestration: pass --name/)
   assert.equal(w.run('--name', NAME), 0)
-  assert.equal(main(['takeover', join(dir, 'none.jsonl'), '--mode', 'build'], {}, { out: () => {}, err: t => { w.err.push(t) } }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW }), 2)
+  assert.equal(main(['takeover', join(dir, 'none.jsonl')], {}, { out: () => {}, err: t => { w.err.push(t) } }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW }), 2)
   assert.match(w.err.at(-1) ?? '', /no dispatch record at/)
 })
 
-test('the command line: takeover, a record and the mode, flags checked', () => {
-  assert.deepEqual(parseArgs(['takeover', 'r.jsonl', '--mode', 'investigate', '--tty', '/dev/ttys1'], '/w'), { record: '/w/r.jsonl', mode: 'investigate', tty: '/dev/ttys1', name: '', session: '', worktree: '/w' })
+// `--mode` is what an older successor or wake line still passes: accepted and ignored for one release.
+test('a takeover whose line still passes --mode, build or investigate, is not refused, and prints what one without it prints', () => {
+  const w = world()
+  assert.equal(w.run(), 0)
+  const bare = w.text()
+  assert.ok(!/^Mode:/m.test(bare), 'no mode line')
+  for (const mode of ['build', 'investigate']) {
+    w.out.length = 0
+    assert.equal(w.run('--mode', mode), 0)
+    assert.equal(w.text(), bare)
+  }
+})
+
+test('the command line: takeover and a record, flags checked', () => {
+  const read = { record: '/w/r.jsonl', tty: '/dev/ttys1', name: '', session: '', worktree: '/w' }
+  assert.deepEqual(parseArgs(['takeover', 'r.jsonl', '--tty', '/dev/ttys1'], '/w'), read)
+  assert.deepEqual(parseArgs(['takeover', 'r.jsonl', '--mode', 'investigate', '--tty', '/dev/ttys1'], '/w'), read)
   assert.match((parseArgs(['live', 'b.md'], '/w') as { error: string }).error, /^usage:/)
   assert.match((parseArgs(['takeover'], '/w') as { error: string }).error, /^usage:/)
   const fromPlugin = '/Users/x/.claude/deploys/lounisbou/' + 'a'.repeat(40) + '/plugins/orchestrator/skills/orchestrator'
-  assert.match((parseArgs(['takeover', 'r.jsonl', '--mode', 'build'], fromPlugin) as { error: string }).error, /from the project's directory/)
-  assert.match((parseArgs(['takeover', 'r.jsonl', '--mode', 'build'], '/Users/x/.claude/plugins/cache/lounisbou/orchestrator/1.0.0') as { error: string }).error, /from the project's directory/)
-  assert.equal((parseArgs(['takeover', 'r.jsonl', '--mode', 'build', '--worktree', '/w'], fromPlugin) as { worktree: string }).worktree, '/w')
-  assert.match((parseArgs(['takeover', 'r', '--mode', 'other'], '/w') as { error: string }).error, /--mode build\|investigate is required/)
-  assert.match((parseArgs(['takeover', 'r', '--mode'], '/w') as { error: string }).error, /--mode needs a value/)
+  assert.match((parseArgs(['takeover', 'r.jsonl'], fromPlugin) as { error: string }).error, /from the project's directory/)
+  assert.match((parseArgs(['takeover', 'r.jsonl'], '/Users/x/.claude/plugins/cache/lounisbou/orchestrator/1.0.0') as { error: string }).error, /from the project's directory/)
+  assert.equal((parseArgs(['takeover', 'r.jsonl', '--worktree', '/w'], fromPlugin) as { worktree: string }).worktree, '/w')
+  assert.match((parseArgs(['takeover', 'r', '--tty'], '/w') as { error: string }).error, /--tty needs a value/)
   assert.match((parseArgs(['takeover', 'r', '--next', 'x'], '/w') as { error: string }).error, /unknown argument: --next/)
-  const w = world()
-  assert.equal(main(['takeover', w.record], {}, { out: () => {}, err: t => { w.err.push(t) } }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW }), 2)
 })
 
 test('a blocker is checked on its artifact: a row closed, a pull request merged, the release installed; what cannot be read says so', () => {
@@ -707,7 +718,7 @@ test('the successor\'s prompt names no script directory of the predecessor: it r
   // The succession of 2026-11-15 loaded the new skill and ran every script of the predecessor's copy, 116 commits older.
   const succeed = readFileSync(join(import.meta.dirname, '..', '..', '..', 'commands', 'succeed.md'), 'utf8')
   const prompt = /--prompt '([^']*)'/.exec(succeed)?.[1] ?? ''
-  assert.ok(prompt.includes('succession.sh takeover <dispatch record> --mode <your mode> --tty <your tty>'), prompt)
+  assert.ok(prompt.includes('succession.sh takeover <dispatch record> --tty <your tty>'), prompt)
   assert.ok(prompt.includes('from your working directory (do not cd), run <the base directory that skill load printed>/scripts/succession.sh'), prompt)
   assert.ok(!/<scripts>|CLAUDE_PLUGIN_ROOT|\/skills\/orchestrator\/scripts/.test(prompt), prompt)
   const w = world()
@@ -776,14 +787,14 @@ test('a takeover in a worktree names its project by origin, prints the not-insta
   const w = world({ rows: JSON.stringify({ id: 1, label: 'SHIP: it', state: 'open', blocker: 'release installed' }) + '\n', todo: '' })
   const out: string[] = []
   const env = { ...i.env, ORCHESTRATOR_STATE_DIR: w.state }
-  assert.equal(main(['takeover', w.record, '--mode', 'build', '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => new Date(i.merged.getTime() + 3_600_000), prState: () => undefined }), 0)
+  assert.equal(main(['takeover', w.record, '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => new Date(i.merged.getTime() + 3_600_000), prState: () => undefined }), 0)
   assert.ok(out.join('').startsWith('# Orchestrator succession brief — acme/belt\n'))
   assert.match(out.join(''), /- Row owners: it \(1\): blocked: release installed\n/)
   assert.match(out.join(''), /; installed: 1 merged PRs not installed, oldest 1 h\n/)
   const tip = execFileSync('git', ['-C', i.repo, 'rev-parse', 'origin/main'], { encoding: 'utf8' }).trim()
   writeFileSync(join(i.env['CLAUDE_CONFIG_DIR'] ?? '', 'plugins', 'installed_plugins.json'), JSON.stringify({ plugins: { 'orchestrator@acme': [{ gitCommitSha: tip }] } }))
   out.length = 0
-  assert.equal(main(['takeover', w.record, '--mode', 'build', '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined }), 0)
+  assert.equal(main(['takeover', w.record, '--worktree', i.repo], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined }), 0)
   assert.match(out.join(''), /- Row owners: it \(1\): READY NOT STARTED\n/)
 })
 
@@ -792,7 +803,7 @@ test('a takeover that finds its pull requests missing from the machine\'s file s
   const w = world({ rows, deck: deckOf([orchestrator(NAME, 'acme/flow')]), round: [], todo: '' })
   const out: string[] = []
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW }), 0)
+  assert.equal(main(['takeover', w.record], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW }), 0)
   assert.match(out.join(''), /acme\/flow open pull requests unread/)
   assert.ok(!existsSync(join(w.state, 'prs.wanted')))
 })
@@ -819,7 +830,7 @@ function flowWorld() {
   const asked: string[] = []
   const takeover = (openPrs?: (repo: string) => { repo: string; pr: number; head: string }[] | undefined) => {
     w.out.length = 0
-    const code = main(['takeover', w.record, '--mode', 'build'], env, { out: t => { w.out.push(t) }, err: t => { w.err.push(t) } }, {
+    const code = main(['takeover', w.record], env, { out: t => { w.out.push(t) }, err: t => { w.err.push(t) } }, {
       cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: openPrs ?? (repo => { asked.push(repo); return forge[repo] ?? [] }),
     })
     return { code, text: w.text() }
@@ -845,7 +856,7 @@ test('an owner file that names no orchestration falls back to the session\'s own
   writeFileSync(`${f.record}.owner`, 'a hand-written note\n')
   assert.ok(f.takeover().text.includes('of `Orch: flow`.'))
   f.w.out.length = 0
-  assert.equal(main(['takeover', f.record, '--mode', 'build', '--name', 'Orch: other'], f.env, { out: t => { f.w.out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: () => [] }), 0)
+  assert.equal(main(['takeover', f.record, '--name', 'Orch: other'], f.env, { out: t => { f.w.out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: () => [] }), 0)
   assert.ok(f.w.text().includes('of `Orch: other`.') && !f.w.text().includes('of `Orch: flow`.'))
 })
 
@@ -869,7 +880,7 @@ test('a short repository name two known repositories share names no pull request
   }
   const out: string[] = []
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: repo => forge[repo] }), 0)
+  assert.equal(main(['takeover', w.record], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: repo => forge[repo] }), 0)
   assert.match(out.join(''), /- Row owners: AMBIG flow#5 two flows \(1\): NO OWNER; recorded abbreviated \(2\): acme\/flow#7 open, no agent; recorded longer than the forge \(3\): acme\/flow#9 open, no agent; too short to tell \(4\): NO OWNER; named there \(5\): acme\/flow#6 open, no agent; api has it \(6\): agent\n/)
 })
 
@@ -885,7 +896,7 @@ test('a row\'s pull request named in its label by a short or a full repository, 
   const out: string[] = []
   const forge = (repo: string) => (repo === 'acme/flow' ? [{ repo, pr: 30, head: 'a'.repeat(40) }] : undefined)
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: forge }), 0)
+  assert.equal(main(['takeover', w.record], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: () => undefined, openPrs: forge }), 0)
   const text = out.join('')
   assert.match(text, /- Row owners: FIX flow#30 tokens \(1\): acme\/flow#30 en cours \(agent Agent: tokens\); LATER acme\/site#7 footer \(2\): NO OWNER; NOTE other#9 not a known repository \(3\): NO OWNER\n/)
   assert.match(text, /- Pull requests open \(number, head, where each stands\): acme\/flow#30 en cours \(agent Agent: tokens\); acme\/site open pull requests unread\n/)
@@ -901,11 +912,11 @@ test('a blocker still standing keeps its word over an open pull request the row 
   const w = world({ rows, deck, round: [], todo: '', prs: { 'acme/flow#30': 'OPEN' } })
   const out: string[] = []
   const env = { ORCHESTRATOR_STATE_DIR: w.state, HOME: dir, CLAUDE_CONFIG_DIR: join(dir, 'config') }
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: (_repo, pr) => (pr === 31 ? 'MERGED' : 'OPEN'), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
+  assert.equal(main(['takeover', w.record], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: (_repo, pr) => (pr === 31 ? 'MERGED' : 'OPEN'), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
   assert.match(out.join(''), /- Row owners: after flow#30 \(1\): blocked: PR acme\/flow#30 merged; FIX acme\/flow#31 merged since \(2\): NO OWNER\n/)
   // Opened since the file's last reading: absent from its open list, its ledger line still owns the row.
   out.length = 0
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: (_repo, pr) => (pr === 30 ? 'OPEN' : undefined), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
+  assert.equal(main(['takeover', w.record], env, { out: t => { out.push(t) }, err: () => {} }, { cwd: dir, list: () => undefined, homes: () => [], now: () => NOW, prState: (_repo, pr) => (pr === 30 ? 'OPEN' : undefined), openPrs: () => [{ repo: 'acme/flow', pr: 30, head: 'a'.repeat(40) }] }), 0)
   assert.match(out.join(''), /- Row owners: after flow#30 \(1\): blocked: PR acme\/flow#30 merged; FIX acme\/flow#31 merged since \(2\): acme\/flow#31 en cours \(agent Agent: gone\)\n/)
 })
 
@@ -1136,13 +1147,13 @@ test('the record passes to the successor at the takeover, its title being other 
   assert.equal(before.code, 1)
   assert.match(before.err, /belongs to Orch: refonte firmware, and this session is Orch: refacto firmware/)
   const errs: string[] = []
-  assert.equal(main(['takeover', w.record, '--mode', 'build', '--name', 'Orch: refonte firmware'], env, { out: () => {}, err: t => { errs.push(t) } }, { cwd: dir, list: () => [], homes: () => [], now: () => NOW, prState: () => undefined }), 0)
+  assert.equal(main(['takeover', w.record, '--name', 'Orch: refonte firmware'], env, { out: () => {}, err: t => { errs.push(t) } }, { cwd: dir, list: () => [], homes: () => [], now: () => NOW, prState: () => undefined }), 0)
   assert.equal(readFileSync(`${w.record}.owner`, 'utf8'), 'Orch: refacto firmware\n')
   assert.match(errs.join(''), /passed from Orch: refonte firmware to Orch: refacto firmware/)
   assert.deepEqual(await answer('agent', w.record, '1', 'Agent: m1a memory'), { code: 0, err: '' })
   // A second takeover by the same session changes nothing and says nothing of it.
   errs.length = 0
-  assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: () => {}, err: t => { errs.push(t) } }, { cwd: dir, list: () => [], homes: () => [], now: () => NOW, prState: () => undefined }), 0)
+  assert.equal(main(['takeover', w.record], env, { out: () => {}, err: t => { errs.push(t) } }, { cwd: dir, list: () => [], homes: () => [], now: () => NOW, prState: () => undefined }), 0)
   assert.ok(!errs.join('').includes('passed from'))
 })
 
@@ -1188,7 +1199,7 @@ function successorWorld(own?: string) {
   const errs: string[] = []
   const takeover = (): string => {
     const out: string[] = []
-    assert.equal(main(['takeover', w.record, '--mode', 'build'], env, { out: t => { out.push(t) }, err: t => { errs.push(t) } }, { cwd: dir, list: () => [], homes: () => [], now: () => NOW, prState: () => undefined }), 0)
+    assert.equal(main(['takeover', w.record], env, { out: t => { out.push(t) }, err: t => { errs.push(t) } }, { cwd: dir, list: () => [], homes: () => [], now: () => NOW, prState: () => undefined }), 0)
     return out.join('')
   }
   return { w, takeover, errs, old: join(w.state, 'todo', `${NAME}.jsonl`), own: join(w.state, 'todo', 'Orch: refacto firmware.jsonl') }

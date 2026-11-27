@@ -318,7 +318,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types --exclude-dir=core \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_GITHUB_ROOT|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|CLAUDE_CODE_CHILD_SESSION|CLAUDE_CODE_CHILD_NOTES_DIR|CLAUDE_CODE_BRIDGE_SESSION_ID|CLAUDE_CODE_MESSAGING_SOCKET|CLAUDE_CODE_MESSAGING_TOKEN|CLAUDE_CODE_SESSION_ATTENDED|CLAUDE_PID|CLAUDECODE|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_SESSION_KIND|CLAUDE_JOB_DIR|syncClaudeAiSkills' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_GITHUB_ROOT|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|CLAUDE_CODE_CHILD_SESSION|CLAUDE_CODE_CHILD_NOTES_DIR|CLAUDE_CODE_BRIDGE_SESSION_ID|CLAUDE_CODE_MESSAGING_SOCKET|CLAUDE_CODE_MESSAGING_TOKEN|CLAUDE_CODE_SESSION_ATTENDED|CLAUDE_PID|CLAUDECODE|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_SESSION_KIND|CLAUDE_JOB_DIR|'"'"'claudeInChromeDefaultEnabled'"'"'|syncClaudeAiSkills' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
@@ -2013,21 +2013,8 @@ check "the second address is named" "1" "$(bash "$LINT" "$B/twoaddr.md" 2>&1 | g
 check "the same references in an implementer brief are still refused" "1" \
   "$(ok_brief "$B/succaddr-impl.md"; printf 'Peers `Agent: a [a1b2c3]` and `Agent: b [d4e5f6]`.\n' >> "$B/succaddr-impl.md"; bash "$LINT" "$B/succaddr-impl.md" 2>&1 | grep -c 'more than one session reference')"
 
-# The succession template's mode line, quoted in a brief that describes it, is a mention: a
-# placeholder inside an inline code span, only that name. The line itself, any other name, and
-# the name outside a span are holes still.
-ok_brief "$B/modemention.md"; printf 'Succession fills `Mode: {{MODE}}` from the predecessor, and `{{MODE}}` is never left.\n' >> "$B/modemention.md"
-check_status "the mode placeholder quoted in a code span is a mention, not a hole" 0 bash "$LINT" "$B/modemention.md"
-ok_brief "$B/modeline.md"; printf 'Mode: {{MODE}}\n' >> "$B/modeline.md"
-check "the mode placeholder left as a line is still a finding" "1" "$(bash "$LINT" "$B/modeline.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
-ok_brief "$B/modeprose.md"; printf 'Your mode is {{MODE}}, and `Mode: {{MODE}}` is the line.\n' >> "$B/modeprose.md"
-check "the mode placeholder in prose beside a quoted one is one finding" "1" "$(bash "$LINT" "$B/modeprose.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
-ok_brief "$B/modestray.md"; printf 'A stray ` before {{MODE}} and none after.\n' >> "$B/modestray.md"
-check "a backtick left open before the mode placeholder keeps it a finding" "1" "$(bash "$LINT" "$B/modestray.md" 2>&1 | grep -c 'unfilled placeholder {{MODE}}')"
 ok_brief "$B/spanother.md"; printf 'The branch is `{{BRANCH}}`.\n' >> "$B/spanother.md"
 check "another placeholder in a code span is still a finding" "1" "$(bash "$LINT" "$B/spanother.md" 2>&1 | grep -c 'unfilled placeholder {{BRANCH}}')"
-check "the succession template, unfilled, still fails on its mode line" "1" \
-  "$(bash "$LINT" "$ROOT/templates/orchestrator-succession-brief.md" 2>&1 | grep -c ':3: unfilled placeholder {{MODE}}')"
 
 printf '# nothing\n\nYou are the implementer for this phase.\n' > "$B/noaddr.md"
 check_status "an implementer brief without an address is a finding" 1 bash "$LINT" "$B/noaddr.md"
@@ -2865,18 +2852,18 @@ check "and a successor's, with the remote-control flag behind it" "Orch: f" \
   "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
 # A successor reads the state through `succession.sh takeover` (decision 0007): no brief is
 # written, so the launcher reads none; the prompt `/orchestrator:succeed` writes carries the load
-# of the rulebook with its mode and the takeover command, and is passed as given.
-SUCCB="$WORK/succession-brief.md"; printf '# Orchestrator succession brief — scratch\n\nMode: build\n' > "$SUCCB"
-TAKEOVER_PROMPT='Load the skill orchestrator:orchestrator with the argument "build", then run /p/succession.sh takeover /r.jsonl --mode build --tty /dev/ttys900 and execute what it prints.'
+# of the rulebook and the takeover command, and is passed as given.
+SUCCB="$WORK/succession-brief.md"; printf '# Orchestrator succession brief — scratch\n' > "$SUCCB"
+TAKEOVER_PROMPT='Load the skill orchestrator:orchestrator, then run /p/succession.sh takeover /r.jsonl --tty /dev/ttys900 and execute what it prints.'
 check "a successor spawns on the takeover prompt, and on a prompt naming a brief, which it no longer reads" "1|0|1|0" \
   "$(succ "$PSTAB" --successor --prompt "$TAKEOVER_PROMPT" | grep -c '^launch=')|$(succ "$PSTAB" --successor --prompt "$TAKEOVER_PROMPT" | grep -c 'refused')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c '^launch=')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c 'refused')"
 # `--brief` builds the spawn's prompt from the brief and the successor's prompt, which carries the
-# mode, would be dropped: the combination is refused, before any tab opens, and says why.
+# takeover, would be dropped: the combination is refused, before any tab opens, and says why.
 succ_brief() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
   ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$PSTAB" bash "$AGENT" spawn --dir "$WORK" --successor \
   --brief "$SUCCB" --orchestrator "Orch: f [abc123]" 2>&1; }
-check "a successor spawned with --brief is refused, before any tab, rather than losing its mode" "1|1|0" \
-  "$(succ_brief | grep -c 'spawn: refused: --successor takes its prompt, not --brief')|$(succ_brief | grep -c 'loads the rulebook with its mode and runs the takeover')|$(succ_brief | grep -c '^launch=')"
+check "a successor spawned with --brief is refused, before any tab, rather than losing its takeover" "1|1|0" \
+  "$(succ_brief | grep -c 'spawn: refused: --successor takes its prompt, not --brief')|$(succ_brief | grep -c 'loads the rulebook and runs the takeover')|$(succ_brief | grep -c '^launch=')"
 check "the launch puts the prompt before the name" "1" \
   "$(printf '%s' "$d1launch" | grep -cE '"\$\(cat [^"]+\)" --name ')"
 
@@ -3343,7 +3330,7 @@ OPSTATE="$WORK/opstate"; mkdir -p "$OPSTATE/chains"; OPPS="$WORK/ps-open.txt"
 opn() { local caller="$1"; shift
   if [ "$caller" = - ]; then printf '/dev/ttys900 /opt/x/claude\n' > "$OPPS"
   else printf '/dev/ttys900 /opt/x/claude --name %s\n' "$caller" > "$OPPS"; fi
-  ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="${OPST:-$OPSTATE}" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="${OPST:-$OPSTATE}" CLAUDE_CONFIG_DIR="${OPCFG:-$CRDCFG}" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd ORCHESTRATOR_PS_TABLE="$OPPS" ORCHESTRATOR_TIER_DEEP=deep-model \
   bash "$AGENT" spawn --dir "$WORK" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 OPOUT=$(opn 'Coord: ops' --open --title 'Orch: sync logs')
@@ -3437,6 +3424,72 @@ OPRECOLD="$WORK/opstate-rec-former"; mkdir -p "$OPRECOLD/chains"
 printf '{"name":"Coord : hand","tty":"/dev/ttys900"}\n' > "$OPRECOLD/coordinator.json"
 check "a coordinator whose record reads the former « Coord : hand » opens one too" "1" \
   "$(OPST="$OPRECOLD" opn - --open --title 'Orch: x' | grep -c '^open=yes$')"
+# A launch routed to an account is refused when the host would stop it on a first-start dialog:
+# read in the account's own `.claude.json`, which is never written. A record that cannot be read
+# is warned of, and the launch goes on.
+ACHOME="$WORK/achome"; ACST="$WORK/acstate"; ACFILE="$ACHOME/.claude-bis/.claude.json"
+mkdir -p "$ACHOME/.claude-bis" "$ACST"
+ACGATE='"cachedGrowthBookFeatures":{"tengu_chrome_auto_enable":true}'
+acrec() { printf '{%s}' "$1" > "$ACFILE"; }
+acopn() { HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --open --title 'Orch: routed' --plan 2 --permission-mode auto "$@"; }
+acrefused() { acopn | grep -c "spawn: refused: the account of $ACFILE has not passed $1"; }
+acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,'"$ACGATE"
+check "an account with the extension and no answer to its first start is refused, the key and the hand step named" "1|0|1" \
+  "$(acrefused 'the browser extension dialog (claudeInChromeDefaultEnabled absent)')|$(acopn | grep -c '^launch=')|$(acopn | grep -cF "CLAUDE_CONFIG_DIR=$ACHOME/.claude-bis claude --permission-mode auto\` and answer the dialog")"
+acrec '"hasCompletedOnboarding":true,"chromeExtension":{"pairedDeviceId":"d1"},'"$ACGATE"
+check "a paired browser is the extension detected too" "1" "$(acrefused 'the browser extension dialog')"
+check "the host shows that dialog in another mode than auto too, which is refused" "1" \
+  "$(acopn --permission-mode acceptEdits | grep -c 'has not passed the browser extension dialog')"
+check "a bypassPermissions launch is offered no such dialog, and passes" "1|0" \
+  "$(acopn --permission-mode bypassPermissions | grep -c '^launch=')|$(acopn --permission-mode bypassPermissions | grep -c 'has not passed')"
+check "the refusal names the step that records the answer when no dialog shows, which lifts it" "1" \
+  "$(acopn | grep -cF 'and answer the dialog; if it shows none, type /chrome there and select « Turn on by default », which records the answer')"
+acrec '"numStartups":1'
+check "a bypassPermissions launch is still refused on an onboarding not passed" "1|0" \
+  "$(acopn --permission-mode bypassPermissions | grep -c 'has not passed the onboarding')|$(acopn --permission-mode bypassPermissions | grep -c '^launch=')"
+check "an onboarding refusal names no step of the browser dialog" "0" "$(acopn | grep -cF '/chrome')"
+ACPASS=''
+for ACANSWER in true false; do
+  acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,"claudeInChromeDefaultEnabled":'"$ACANSWER,$ACGATE"
+  ACPASS="$ACPASS$(acopn | grep -c '^launch=')|$(acopn | grep -c 'first.start');"
+done
+check "either answer to the dialog passes, with no warning" "1|0;1|0;" "$ACPASS"
+acrec '"hasCompletedOnboarding":true,'"$ACGATE"
+check "an account whose extension is not recorded is offered nothing, and passes" "1|0" \
+  "$(acopn | grep -c '^launch=')|$(acopn | grep -c 'first.start')"
+acrec '"hasCompletedOnboarding":true,"cachedChromeExtensionInstalled":true,"cachedGrowthBookFeatures":{"tengu_chrome_auto_enable":false}'
+check "an account the host's gate offers nothing passes" "1" "$(acopn | grep -c '^launch=')"
+acrec '"numStartups":1'
+check "an account that has not passed the onboarding is refused naming it" "1|0" \
+  "$(acrefused 'the onboarding (hasCompletedOnboarding)')|$(acopn | grep -c '^launch=')"
+ACWARN=''
+for ACBROKEN in absent 'not json' '[1]' '{"projects":{}}'; do
+  if [ "$ACBROKEN" = absent ]; then rm -f "$ACFILE"; else printf '%s' "$ACBROKEN" > "$ACFILE"; fi
+  ACWARN="$ACWARN$(acopn | grep -c '^launch=')|$(acopn | grep -c "spawn: warning: whether the account of $ACFILE passed its first-start dialogs is unknown");"
+done
+check "a record absent, unreadable or of another shape is warned of, and the launch goes on" "1|1;1|1;1|1;1|1;" "$ACWARN"
+acrec '"numStartups":1'
+printf '[{"name":"Orch: routed","config":"%s"}]' "$ACHOME/.claude-bis" > "$ACST/sleeping.json"
+check "a wake onto a plan other than its caller's is checked with no --plan" "1" \
+  "$(HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --wake --title 'Orch: routed' --model m --effort high | grep -c 'has not passed the onboarding')"
+rm -f "$ACST/sleeping.json"
+check "--plan is checked even when its caller already runs on that plan" "1|0" \
+  "$(OPCFG="$ACHOME/.claude-bis" acrefused 'the onboarding')|$(OPCFG="$ACHOME/.claude-bis" acopn | grep -c '^launch=')"
+printf '{"numStartups":1}' > "$ACHOME/.claude.json"
+check "a route to plan 1 reads the record in the home directory, and the hand step unsets the plan variable" "1|1|0" \
+  "$(acopn --plan 1 | grep -cF "the account of $ACHOME/.claude.json has not passed the onboarding")|$(acopn --plan 1 | grep -cF 'env -u CLAUDE_CONFIG_DIR claude --permission-mode auto')|$(acopn --plan 1 | grep -c '^launch=')"
+rm -f "$ACHOME/.claude.json"
+# The account is read before anything is written: a directory the host never opened, which a
+# launch is refused for, is not reached when the account is.
+ACSUM=$(cksum < "$ACFILE")
+check "the account is refused before the directory's trust is read, its record left as it was" "1|0|same" \
+  "$(acopn --dir "$UNTRUSTED" | grep -c 'has not passed the onboarding')|$(acopn --dir "$UNTRUSTED" | grep -c 'has not been told to trust')|$([ "$(cksum < "$ACFILE")" = "$ACSUM" ] && echo same || echo changed)"
+acrec '"hasCompletedOnboarding":true'
+check "and that directory is refused on its trust once the account passes" "1" \
+  "$(acopn --dir "$UNTRUSTED" | grep -c 'has not been told to trust')"
+acrec '"numStartups":1'
+check "a launch that stays on its caller's plan reads no account record" "1|0" \
+  "$(HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --open --title 'Orch: routed' | grep -c '^launch=')|$(HOME="$ACHOME" OPST="$ACST" opn 'Coord: ops' --open --title 'Orch: routed' | grep -c 'first.start')"
 check "an opening needs an orchestrator's title, with no reference" "1|1" \
   "$(opn 'Coord: ops' --open --title 'Agent: x' | grep -c -- "--open needs the new orchestrator's name")|$(opn 'Coord: ops' --open --title 'Orch: x [abc123]' >/dev/null 2>&1; echo $?)"
 for OPFLAG in --successor --auditor --wake '--right-of self' '--left-of /dev/ttys555' --title-free --resident --no-remote-control; do
@@ -4282,6 +4335,10 @@ check "an agent that lived on plan 1 is resumed on plan 1 from a caller on plan 
   "$(rsl "$BIS" --resume s-rs-one --tier light | grep -cF 'export CLAUDE_CONFIG_DIR')|$(rsl "$BIS" --resume s-rs-one --tier light | grep -cE "'--resume' s-rs-one ")|$(rsm "$BIS" --resume s-rs-one --tier light | grep -c 'spawn: the resume runs on plan 1, the one session s-rs-one lived on')"
 check "an agent that lived on plan 2 is resumed on plan 2 from a caller on plan 1" "1|1" \
   "$(rsl '' --resume s-rs-two --tier light | grep -cF "export CLAUDE_CONFIG_DIR=$BIS &&")|$(rsm '' --resume s-rs-two --tier light | grep -c 'spawn: the resume runs on plan 2, the one session s-rs-two lived on')"
+printf '{"numStartups":1,"oauthAccount":{"organizationUuid":"org-two"}}' > "$RSHOME/.claude-bis/.claude.json"
+check "a resume that moves to a plan with no --plan is checked on the account it moves to" "1|0" \
+  "$(rsm '' --resume s-rs-two --tier light | grep -cF "the account of $BIS/.claude.json has not passed the onboarding")|$(rsm '' --resume s-rs-two --tier light | grep -c '^launch=')"
+printf '{"oauthAccount":{"organizationUuid":"org-two"}}' > "$RSHOME/.claude-bis/.claude.json"
 check "a resume on the plan it lived on says nothing of a move" "0|1" \
   "$(rsm "$BIS" --resume s-rs-two --tier light | grep -c 'lived on')|$(rsl "$BIS" --resume s-rs-two --tier light | grep -cF "export CLAUDE_CONFIG_DIR=$BIS &&")"
 check "a resume runs on its transcript's pair with no --tier, and says where the pair came from" "1|0|0|transcript $ORCHESTRATOR_PROJECTS_DIR/p/s-rs-two.jsonl" \
@@ -6025,6 +6082,7 @@ import iterm_agent as ia
 class Accepting:
     def close(self, tty, expect): return ''
     def survives(self, closed_id): return False
+    def prompt_lines(self, tty): return ['─' * 40, '❯\u00a0', '─' * 40]
 ia.terminal_for = lambda tty: Accepting()
 ia.os.kill = lambda pid, sig: (_ for _ in ()).throw(AssertionError('signalled %s' % pid))
 ia.process_state = lambda pid: $1
@@ -6265,7 +6323,7 @@ class Home:
 ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
-ia.tmux_out = lambda args, what: '0'
+ia.tmux_out = lambda args, what: ('─' * 40 + '\n❯\u00a0\n' + '─' * 40) if 'capture-pane' in args else '0'
 ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" 2>&1)
 check "a successor's takeover ends its predecessor's host before it takes window 0" "1|1|gone" \
   "$(printf '%s' "$out" | grep -c "SIGKILL sent to $st")|$(printf '%s' "$out" | grep -c '^took window 0')|$(alive "$st")"
@@ -6382,7 +6440,7 @@ def sid(tty):
 ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
-ia.tmux_out = lambda args, what: '0'
+ia.tmux_out = lambda args, what: ('─' * 40 + '\n❯\u00a0\n' + '─' * 40) if 'capture-pane' in args else '0'
 ia.host_identity = lambda tty: None
 ia.wait_gone = lambda *a, **k: None
 ia.await_handover = lambda tty: 'takeover: « handed over » read'
@@ -6408,6 +6466,252 @@ check "step 1 of the succession brief has its reader show the operator, verbatim
   "$(awk '/^1\. /{f=1} /^2\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ' | grep -oF -- 'Show him verbatim what any `conversation:` section leaves pending' | wc -l | tr -d ' ')"
 kill -9 "$sh0" "$sh1" "$st" "$sp" "$pp" 2>/dev/null
 export ORCHESTRATOR_HOST_CLI="$host_cli_kept"
+
+echo "== iterm-agents: a close never destroys what the operator typed and has not sent =="
+# A succession closed the predecessor's tab while the operator was typing in its prompt, and his
+# text was lost. A close reads the host's prompt box first (faint cells left out: the host draws
+# its placeholder and its suggestions faint), waits for what he typed to be sent or cleared, and
+# past its bound refuses, the tab kept and his text on the refusal's line.
+PRULE="$(printf '\033[38;5;244m')$(printf '─%.0s' $(seq 1 40))$(printf '\033[39m')"
+PEMPTY="$PRULE Orch: x
+$(printf '\033[39m❯\302\240\033[2mTry "write a test"\033[0m')
+$PRULE
+  x │ Opus"
+PTYPED="$PRULE Orch: x
+$(printf '\033[39m❯\302\240')je réponds
+  sur deux lignes
+$PRULE
+  x │ Opus"
+check "the prompt box: a faint placeholder is nothing typed, the operator's lines are his text, no box is never an empty one" \
+  "||je réponds⏎sur deux lignes|None|" \
+  "$(PE="$PEMPTY" PT="$PTYPED" ipy "
+import os
+print('|' + ia.typed_input(ia.unfaint(os.environ['PE']).split(chr(10))) + '|' + ia.typed_input(ia.unfaint(os.environ['PT']).split(chr(10))) + '|' + str(ia.typed_input(['\$ ls', 'a'])) + '|')" | nl_join)"
+# Bash mode draws ! as the mark; a busy host on a theme of ANSI colours draws ❯ faint, so it is
+# left out with the faint cells; a dialog (a permission, a question) draws no box at all.
+check "bash mode's ! box holds his command, a faint mark's box his text; a dialog shows no box, never an empty one" \
+  "git push --force|je tape|None" \
+  "$(ipy "
+R = '─' * 40
+bash = [R, '!\u00a0git push --force', R]
+faint = ia.unfaint(R + '\n\x1b[2m❯\x1b[22m\u00a0je tape\n' + R).split('\n')
+dialog = [R, ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', R]
+print('|'.join(str(ia.typed_input(lines)) for lines in (bash, faint, dialog)))")"
+# The host draws its placeholder, when it draws its own cursor, as an inverse first letter then
+# the rest faint: that letter is no text; the cursor on a letter of his text keeps it.
+PINVERSE="$PRULE Orch: x
+$(printf '\033[39m❯\302\240\033[7mT\033[27m\033[2mry \"write a test\"\033[0m')
+$PRULE"
+check "an inverse first letter before a faint placeholder is nothing typed, in a pane and in an iTerm2 line; his text under the cursor is kept" \
+  "|je tape||je tape" \
+  "$(PI="$PINVERSE" ipy "
+import os
+class Style:
+    def __init__(self, faint, inverse): self.faint, self.inverse = faint, inverse
+class Line:
+    def __init__(self, cells): self.cells = cells
+    def string_at(self, x): return self.cells[x][0]
+    def style_at(self, x): return Style(*self.cells[x][1:]) if x < len(self.cells) else None
+R = '─' * 40
+hint = Line([('❯', False, False), ('\u00a0', False, False), ('T', False, True)] + [(c, True, False) for c in 'ry this'])
+typed = Line([('❯', False, False), ('\u00a0', False, False)] + [(c, False, c == 'a') for c in 'je tape'])
+cursor = ia.unfaint(R + '\n❯\u00a0je t\x1b[7ma\x1b[27mpe\n' + R).split('\n')
+print('|'.join([ia.typed_input(ia.unfaint(os.environ['PI']).split('\n')), ia.typed_input(cursor), ia.typed_input([R, ia.plain_cells(hint), R]), ia.typed_input([R, ia.plain_cells(typed), R])]))")"
+# The app answers a cell the host moved the cursor over as NUL, and says which cells are faint.
+check "an iTerm2 line: its NUL cells are spaces, its faint cells left out" "❯ je tape|❯" \
+  "$(ipy "
+class Style:
+    def __init__(self, faint): self.faint = faint
+class Line:
+    def __init__(self, cells): self.cells = cells
+    def string_at(self, x): return self.cells[x][0]
+    def style_at(self, x): return Style(self.cells[x][1]) if x < len(self.cells) else None
+typed = Line([('❯', False), ('\\u00a0', False)] + [(c, False) for c in 'je'] + [('\\x00', False)] + [(c, False) for c in 'tape'] + [('\\x00', False)] * 3)
+hint = Line([('❯', False), ('\\u00a0', False)] + [(c, True) for c in 'Try this'])
+print(ia.plain_cells(typed).replace(chr(0xa0), ' ') + '|' + ia.plain_cells(hint).strip())")"
+check "a colour's own arguments are no faint; 2 sets it, 22, 0 and an empty style reset it" "False|True|False|False|False" \
+  "$(ipy "print('|'.join(str(ia.faint_after(p, f)) for p, f in (('38;5;2', False), ('1;2', False), ('22', True), ('0', True), ('', True))))")"
+# await_unsent on a read that answers in turn, its clock a step per read: nothing typed closes at
+# once; text then sent goes on after it and says so; text kept past the bound, or unread once
+# seen, refuses with nothing closed; a prompt that cannot be read refuses at once.
+unsent() { READS="$1" ipy "
+import os
+reads = os.environ['READS'].split(',')
+t = [0]
+def read():
+    r = reads.pop(0) if len(reads) > 1 else reads[0]
+    if r == 'NONE':
+        raise RuntimeError('no API')
+    return '' if r == 'EMPTY' else None if r == 'NOBOX' else r.replace('/', chr(10))
+def clock():
+    t[0] += 1
+    return t[0]
+try:
+    print(ia.await_unsent('close', '/dev/ttys901', read, bound=5, sleep=lambda s: None, clock=clock))
+except SystemExit as e:
+    print('exit=%s' % e.code)" 2>&1; }
+res=$(unsent EMPTY)
+check "an empty prompt closes as before, nothing said" "False" "$res"
+res=$(unsent 'mon texte,mon texte,EMPTY')
+check "text typed, then sent or cleared: the close goes on, having said it waited" "1|True" \
+  "$(printf '%s\n' "$res" | grep -c '^close: the prompt on /dev/ttys901 holds text the operator typed and has not sent: waiting up to 5s')|$(printf '%s\n' "$res" | tail -1)"
+res=$(unsent 'mon texte')
+check "text still there at the bound: refused, the tab kept, his text on the line" "1|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the prompt on /dev/ttys901 still holds text the operator typed and has not sent, after 5s: the tab is kept, nothing was closed.*His text: «mon texte»$')|$(printf '%s\n' "$res" | tail -1)"
+res=$(unsent 'mon texte,NONE')
+check "text seen, then a prompt that cannot be read: never taken for sent, refused at the bound with his text" "1|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: .*His text: «mon texte»$')|$(printf '%s\n' "$res" | tail -1)"
+res=$(unsent NONE)
+check "a prompt that cannot be read is never taken for an empty one: refused at once, the tab kept" "1|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the prompt on /dev/ttys901 cannot be read (no API), so whether it holds text .*: the tab is kept, nothing was closed$')|$(printf '%s\n' "$res" | tail -1)"
+# A screen with no box (a dialog, a host still drawing) is waited for as text is: a box drawn
+# empty then closes; none drawn by the bound refuses, with nothing to show.
+res=$(unsent 'NOBOX,EMPTY')
+check "no prompt box, then an empty one: the close waits, then goes on, no text seen" "1|False" \
+  "$(printf '%s\n' "$res" | grep -c '^close: the prompt on /dev/ttys901 shows no prompt box (a dialog, or a host still drawing), so what it holds is not known: waiting up to 5s')|$(printf '%s\n' "$res" | tail -1)"
+res=$(unsent NOBOX)
+check "no prompt box by the bound: refused, the tab kept" "1|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the screen on /dev/ttys901 showed no prompt box for 5s .*: the tab is kept, nothing was closed$')|$(printf '%s\n' "$res" | tail -1)"
+# The refusal is one line: the module's close keeps the last line, and a successor reads it as
+# the launcher's, never the host's, so no end_session ends the tab over his text.
+res=$(unsent 'je réponds/sur deux lignes')
+check "his text on several lines is on the refusal's one line, after the way out" "1|0|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: .*this refusal is the launcher.s, no refusal of the host.s: never ask the session to call end_session, which would destroy his text\. His text: «je réponds ⏎ sur deux lignes»$')|$(printf '%s\n' "$res" | grep -c '^sur deux lignes')|$(printf '%s\n' "$res" | tail -1)"
+# A takeover reads its predecessor's pane before the kill: text there keeps window 0 as it is.
+unsent_takeover() { SCREEN="$1" SCREEN2="${2:-}" ORCHESTRATOR_INPUT_WAIT="${TWAIT:-0}" ORCHESTRATOR_STATE_DIR="$ESTATE" ipy "
+import os
+P = ia.Pane
+killed = []
+class Home:
+    def window_of(self, tty, what):
+        return P('home', '0', '@1', '%1', tty, 'Orch: x', '') if tty == '/dev/ttys966' \\
+            else P('home', '2', '@3', '%3', tty, 'Orch: x', '')
+    def kill(self, window, what): killed.append(window)
+    def survives(self, stable_id): return False
+    def stable_id(self, window): return 'tmux:s:' + window
+    def session(self): return 'home'
+ia.TmuxTerminal = Home
+ia.in_home_session = lambda: True
+ia.self_tty = lambda: '/dev/ttys967'
+# The pane's capture: SCREEN, then SCREEN2 once read (what he left: sent or cleared).
+reads = []
+def tmux_out(args, what):
+    if 'capture-pane' not in args:
+        return '0'
+    reads.append(1)
+    return os.environ['SCREEN2'] if len(reads) > 1 and os.environ['SCREEN2'] else os.environ['SCREEN']
+ia.tmux_out = tmux_out
+ia.INPUT_POLL = 0
+ia.host_identity = lambda tty: None
+ia.wait_gone = lambda *a, **k: None
+ia.await_handover = lambda tty: 'takeover: « handed over » read'
+# Read once the wait is over: what he sent during it is in the conversation.
+ia.conversation_of = lambda tty: 'conversation: read after %d prompt reads' % len(reads)
+try:
+    ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))
+finally:
+    print('killed=%s' % ','.join(killed))" 2>&1; }
+res=$(unsent_takeover "$PTYPED")
+check "a takeover whose predecessor holds typed text refuses before the kill: window 0 is kept" "1|killed=|0" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: takeover: refused: the prompt on /dev/ttys966 still holds text .*His text: «je réponds')|$(printf '%s\n' "$res" | tail -1)|$(printf '%s\n' "$res" | grep -c '^took window 0')"
+res=$(unsent_takeover "$PEMPTY")
+check "and one whose prompt shows only the placeholder takes window 0 as before" "1|killed=@1" \
+  "$(printf '%s\n' "$res" | grep -c '^took window 0')|$(printf '%s\n' "$res" | tail -1)"
+res=$(TWAIT=10 unsent_takeover "$PTYPED" "$PEMPTY")
+check "a takeover whose predecessor's text is sent during its wait waits, then takes window 0, its conversation read after the wait" \
+  "1|1|1|killed=@1" \
+  "$(printf '%s\n' "$res" | grep -c '^takeover: the prompt on /dev/ttys966 holds text the operator typed and has not sent: waiting up to 10s')|$(printf '%s\n' "$res" | grep -c '^conversation: read after 2 prompt reads$')|$(printf '%s\n' "$res" | grep -c '^took window 0')|$(printf '%s\n' "$res" | tail -1)"
+
+# The close of a home tab, an orchestrator's or a coordinator's, reads window 0 of its server,
+# where the host runs: text there keeps the server and every window, nothing ended.
+hometab_close() { SCREEN="$1" ORCHESTRATOR_INPUT_WAIT=0 ORCHESTRATOR_STATE_DIR="$ESTATE" ipy "
+import os
+calls = []
+ia.DRY_RUN = False
+ia.pane_tab_tty = lambda tty: tty
+ia.close_host_tty = lambda tty, strict=False: ('orch-suite', ([['0', '/dev/ttys905']], ''), '/dev/ttys905')
+ia.host_clis_on = lambda tty, strict=False: ['4242']
+ia.host_cli_cwd = lambda tty: None
+ia.recorded_pids = lambda ttys: []
+ia.name_lingering = lambda pids: None
+ia.conversation_of = lambda tty: ''
+def tmux_out(args, what):
+    calls.append(' '.join(args))
+    return os.environ['SCREEN']
+ia.tmux_out = tmux_out
+def close_home_tab(tty, socket, expect, listed, end_agents):
+    calls.append('end ' + socket)
+    print('closed 1 session on ' + tty)
+ia.close_home_tab = close_home_tab
+try:
+    ia.cmd_close(ia.args_from_line('close', ['--tty', '/dev/ttys904', '--expect-title', 'Orch: x', '--keep-checkout']))
+except SystemExit as e:
+    print('exit=%s' % e.code)
+print('calls=' + '|'.join(calls))" 2>&1; }
+res=$(hometab_close "$PTYPED")
+check "close of a home tab whose window 0 holds his text: refused on window 0's capture, the server and its windows kept" \
+  "1|calls=-L orch-suite capture-pane -p -e -t home:0|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the prompt on /dev/ttys904 still holds text .*His text: «je réponds ⏎ sur deux lignes»$')|$(printf '%s\n' "$res" | grep '^calls=')|$(printf '%s\n' "$res" | grep '^exit=')"
+res=$(hometab_close "$PEMPTY")
+check "and one whose window 0 shows the placeholder alone ends its server as before" \
+  "closed 1 session on /dev/ttys904|calls=-L orch-suite capture-pane -p -e -t home:0|end orch-suite" \
+  "$(printf '%s\n' "$res" | grep '^closed')|$(printf '%s\n' "$res" | grep '^calls=')"
+# The close of an iTerm2 tab reads the app's screen through its API, styles included: his text
+# refuses it, nothing closed; the placeholder alone closes it. Where the API cannot serve (the
+# module missing, the app not answering), the prompt cannot be read: the close refuses, the
+# reason and the way out on its line, and no rung below closes the tab over his text.
+iterm_close() { MODE="$1" ORCHESTRATOR_INPUT_WAIT=0 ORCHESTRATOR_STATE_DIR="$ESTATE" ipy "
+import asyncio, os
+mode = os.environ['MODE']
+closed = []
+class Style:
+    def __init__(self, faint): self.faint, self.inverse = faint, False
+class Line:
+    def __init__(self, cells): self.cells = cells
+    def string_at(self, x): return self.cells[x][0]
+    def style_at(self, x): return Style(self.cells[x][1]) if x < len(self.cells) else None
+class Contents:
+    def __init__(self, lines): self.lines, self.number_of_lines = lines, len(lines)
+    def line(self, i): return self.lines[i]
+R = Line([('─', False)] * 40)
+box = Line([('❯', False), ('\u00a0', False)] + ([(c, False) for c in 'ma réponse'] if mode == 'typed' else [(c, True) for c in 'Try this']))
+class Sess:
+    async def async_get_screen_contents(self): return Contents([R, box, R])
+async def find_tab(app, tty): return None, None, Sess()
+class Api:
+    @staticmethod
+    async def async_get_app(connection): return None
+ia.find_tab = find_tab
+if mode == 'noapi':
+    def api_ready(): raise ia.Unreachable('the iterm2 module is not installed for py; run /orchestrator:install')
+    ia.api_ready = api_ready
+else:
+    ia.run = lambda go: asyncio.run(go(Api, None))
+ia.as_close = lambda tty, expect: closed.append('applescript ' + tty)
+ia.DRY_RUN = False
+ia.pane_tab_tty = lambda tty: tty
+ia.close_host_tty = lambda tty, strict=False: ('', None, tty)
+ia.host_clis_on = lambda tty, strict=False: ['4242']
+ia.host_cli_on = lambda tty: '4242'
+ia.host_cli_cwd = lambda tty: None
+ia.recorded_pids = lambda ttys: []
+ia.name_lingering = lambda pids: None
+ia.terminal_for = lambda tty: ia.ITERM
+ia.close_tab = lambda tty, expect: closed.append(tty)
+try:
+    ia.cmd_close(ia.args_from_line('close', ['--tty', '/dev/ttys906', '--expect-title', 'Agent: x', '--keep-checkout']))
+except SystemExit as e:
+    print('exit=%s' % e.code)
+print('closed=' + ','.join(closed))" 2>&1; }
+res=$(iterm_close typed)
+check "close of an iTerm2 tab whose prompt holds his text: refused, nothing closed" "1|exit=3|closed=" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the prompt on /dev/ttys906 still holds text .*His text: «ma réponse»$')|$(printf '%s\n' "$res" | grep '^exit=')|$(printf '%s\n' "$res" | grep '^closed=')"
+res=$(iterm_close empty)
+check "and one whose prompt shows the faint placeholder alone is closed as before" "closed 1 session on /dev/ttys906|closed=/dev/ttys906" \
+  "$(printf '%s\n' "$res" | grep '^closed 1')|$(printf '%s\n' "$res" | grep '^closed=')"
+res=$(iterm_close noapi)
+check "where the app's API cannot serve, the close refuses with its reason and the way out, and no rung closes the tab" "1|exit=3|closed=" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the prompt on /dev/ttys906 cannot be read (the iterm2 module is not installed for py; run /orchestrator:install), .* Run this close again once he has sent or cleared it and the prompt can be read; .*: the tab is kept, nothing was closed$')|$(printf '%s\n' "$res" | grep '^exit=')|$(printf '%s\n' "$res" | grep '^closed=')"
 
 echo "== iterm-agents: closing a home tab ends its server =="
 # The operator closes the tab of an orchestrator's home session and expects the orchestrator
@@ -6730,6 +7034,27 @@ mode = sys.argv[2]
 tty = '/dev/ttys901'
 table = os.environ['ORCHESTRATOR_CWD_TABLE']
 ia.host_cli_on = lambda t: '4242'
+ia.host_clis_on = lambda t, strict=False: ['4242']
+# The host's prompt box, empty unless PROMPT_SEQ gives what each read shows, the last one again:
+# once it reads empty after his text, SENT is what he sent, written to the transcript then.
+seq = (os.environ.get('PROMPT_SEQ') or '').split(',')
+def prompt_lines(self, tty):
+    text = seq.pop(0) if len(seq) > 1 else seq[0]
+    if text == '' and os.environ.get('SENT') and os.environ.get('CONV_TRANSCRIPT'):
+        import datetime, json
+        with open(os.environ['CONV_TRANSCRIPT'], 'a') as fh:
+            fh.write(json.dumps({"type": "user", "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z'), "origin": {"kind": "human"}, "message": {"content": os.environ.pop('SENT')}}) + '\n')
+    return ['─' * 40, '❯\u00a0' + text, '─' * 40]
+ia.ItermTerminal.prompt_lines = prompt_lines
+ia.INPUT_POLL = 0
+# A process table that cannot be read: nothing, or with `strict` the failure.
+if os.environ.get('PS_FAIL'):
+    def failing(t, strict=False):
+        if strict:
+            raise OSError('ps could not be run')
+        return []
+    ia.host_clis_on = failing
+    ia.host_cli_on = lambda t: None
 ia.wait_gone = lambda t, timeout=None: '4242' if mode == 'survivor' else None
 ia.served_by = (lambda *a, **k: open(table, 'w').close()) if mode == 'vanish' else (lambda *a, **k: None)
 ia.cmd_spawn = lambda argv, pair_from='', old_tty='', made=None: None
@@ -6835,6 +7160,17 @@ res=$(CONV_TRANSCRIPT="$CVT_CLOSE" CONV_BOOM=1 cprobe close --keep-checkout --ex
 check "a close whose conversation cannot be read still closes, its first line the contract's, the reason on stderr only" \
   "exit=0|closed 1 session on /dev/ttys901|0|1" \
   "$(printf '%s\n' "$res" | head -1)|$(field "$res" OUT)|$(printf '%s\n' "$res" | grep -c '^conversation:')|$(field "$res" ERR | grep -c '^conversation: not read (no table)$')"
+# The operator types in the agent's prompt during the close, then sends it: the close waits for
+# it, then goes on, and prints the conversation read after the wait, his message in it.
+cp "$CVT_CLOSE" "$WORK/conv-close-sent.jsonl"
+res=$(ORCHESTRATOR_INPUT_WAIT=10 PROMPT_SEQ='mon message,' SENT=MON-MESSAGE-SENT CONV_TRANSCRIPT="$WORK/conv-close-sent.jsonl" cprobe close --keep-checkout --expect-title 'Agent: x')
+check "a close whose prompt holds his text waits, then closes once he sends it, and prints the conversation that holds it" \
+  "exit=0|1|1|1|1" \
+  "$(printf '%s\n' "$res" | head -1)|$(printf '%s\n' "$res" | grep -c 'close: the prompt on /dev/ttys901 holds text the operator typed and has not sent: waiting up to 10s')|$(printf '%s\n' "$res" | grep -c 'close: the operator sent or cleared what he typed in the prompt on /dev/ttys901: show him what the conversation section below leaves pending')|$(printf '%s\n' "$res" | grep -c '^conversation: ')|$(printf '%s\n' "$res" | grep -c 'MON-MESSAGE-SENT')"
+# A process table that cannot be read is no proof that no host is there: the prompt is read.
+res=$(ORCHESTRATOR_INPUT_WAIT=0 PS_FAIL=1 PROMPT_SEQ='mon texte' cprobe close --keep-checkout --expect-title 'Agent: x')
+check "a close whose process table cannot be read still reads the prompt: his text there refuses it, nothing closed" "exit=3|1|0" \
+  "$(printf '%s\n' "$res" | head -1)|$(printf '%s\n' "$res" | grep -c 'refused: the prompt on /dev/ttys901 still holds text .*His text: «mon texte»')|$(printf '%s\n' "$res" | grep -c '^OUT:closed')"
 res=$(cprobe rotate)
 check "a rotation deletes nothing: its replacement works in the same checkout" "1|0" \
   "$(exists "$CL")|$(field "$res" ERR | grep -c 'deleted')"
@@ -7176,7 +7512,7 @@ m.transcript_of = lambda sid: (None, 0)
 m.tmux_on = lambda socket, args, what: 'Resume this session? 1. Yes'
 m.verify_resumed('s', 0, 'auto', 'a-model', dict(home='x', tty='/dev/ttys9'), timeout=1, sleep=lambda s: None, dir_='/checkout')" 2>&1 | tee "$WORK/resume-screen.txt" | grep -c 'The tab showed: Resume this session? 1. Yes\.')|$(grep -c 'workspace-trust dialog' "$WORK/resume-screen.txt")"
 check "a long screen is quoted by its last lines only" "1|0" \
-  "$(screen_refusal "$(seq 1 20)" | grep -c 'The tab showed: 15 | 16 | 17 | 18 | 19 | 20\.')|$(screen_refusal "$(seq 1 20)" | grep -c '| 14 |')"
+  "$(screen_refusal "$(seq 1 20)" | grep -c 'The tab showed: 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20\.')|$(screen_refusal "$(seq 1 20)" | grep -c '| 8 |')"
 out_mismatch=$(verify_mode_run /checkout/t.jsonl default auto 2>/dev/null)
 check "a mismatch is still refused, the made tab still closed" "exit=1|True" \
   "$(printf '%s' "$out_mismatch" | sed -n '1p')|$(printf '%s' "$out_mismatch" | sed -n '2p' | sed 's/closed=//')"
@@ -7271,6 +7607,20 @@ res=$(sprobe never none /dev/ttys801 --title "Agent: x")
 check "a spawn that never started closes its tab, prints its tty, and leaves the chain untouched" \
   "1|['/dev/ttys902']|['1', '2']|[('2', 'S-OWN')]|1" \
   "$(sfield "$res" exit)|$(sfield "$res" stdout)|$(sfield "$res" tabs)|$(sfield "$res" own)|$(sfield "$res" ERR | grep -c 'never started on /dev/ttys902 after 1s; the tab was closed')"
+# The other startup timeout says what the screen showed too, read before the close.
+never_screen() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.SPAWN_TIMEOUT = 1
+m.time.sleep = lambda s: None
+m.cli_pid_on_tty = lambda tty: None
+m.find_transcript = lambda d, since: None
+closed = []
+m.close_made = lambda made: closed.append(1) or True
+m.tmux_on = lambda socket, args, what: '' if closed else 'zsh: command not found: claude'
+m.await_host('/dev/ttys9', '/checkout', 0, dict(home='orch-x', tty='/dev/ttys9'), 'spawn')" 2>&1 >/dev/null; }
+check "a session that never started is refused with what its screen showed before the close" "1|1" \
+  "$(never_screen | grep -c 'never started on /dev/ttys9 after 1s; the tab was closed. The tab showed: zsh: command not found: claude\.')|$(never_screen | grep -c 'ORCHESTRATOR_SPAWN_TIMEOUT')"
 res=$(sprobe succnever none /dev/ttys801 --successor --title "Orch: heir")
 check "a successor that never started takes no chain and re-points no entry" \
   "1|['1', '2']|[('2', 'S-OWN')]|absent" \
@@ -7580,7 +7930,7 @@ class Home:
 ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
-ia.tmux_out = lambda args, what: '0'
+ia.tmux_out = lambda args, what: ('─' * 40 + '\n❯\u00a0\n' + '─' * 40) if 'capture-pane' in args else '0'
 ia.host_identity = lambda tty: None
 ia.wait_gone = lambda tty, timeout=None: None
 ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))" "$ROOT/skills/iterm-agents/scripts" 2>&1)
@@ -7700,7 +8050,11 @@ case "$1" in
       printf '{"permissionMode":"auto"}\n{"cwd":"%s"}\n' "$REC_CWD" > "$d/projects/w/$win.jsonl"
     fi
     cat "$d/new" ;;
-  capture-pane) cat "$d/screen" ;;
+  capture-pane)
+    [ -n "${REC_CAPTURE_ERR:-}" ] && { echo "$REC_CAPTURE_ERR" >&2; exit 1; }
+    cat "$d/screen"
+    # What the operator does after the first read: the screen he leaves (sent or cleared).
+    [ -f "$d/screen.next" ] && mv "$d/screen.next" "$d/screen" ;;
   kill-window)
     tty=$(awk -F'\t' -v w="$3" '$3 == w { print $5 }' "$d/panes")
     [ -z "${REC_KEEP_WINDOW:-}" ] && awk -F'\t' -v w="$3" '$3 != w' "$d/panes" > "$d/panes.tmp" && mv "$d/panes.tmp" "$d/panes"
@@ -7720,8 +8074,10 @@ chmod +x "$TR/osascript"
 TSOCK=/private/tmp/tmux-501/home
 TSTATE="$WORK/tmuxstate"
 reset_home() { # the home session: the orchestrator in window 0, two agents, a stranger's session
-  rm -rf "$TSTATE" "$TR/projects" "$TR/calls" "$TR/panes.moved"
+  rm -rf "$TSTATE" "$TR/projects" "$TR/calls" "$TR/panes.moved" "$TR/screen.next"
   mkdir -p "$TSTATE/chains"
+  # Each host's prompt box, empty: a close reads it before the kill.
+  printf '%s\n' "$PEMPTY" > "$TR/screen"
   printf '1\n' > "$TR/mark"
   printf '%s\n' '$1	0	@0	%0	/dev/ttys900	orch	✳ Orch: home' \
     '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' \
@@ -7807,6 +8163,38 @@ out=$(home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
 check "close: the window killed by its id, proved gone from the process table, its chain entry dropped" \
   "closed 1 session on /dev/ttys901|[-u][kill-window][-t][@1]|0|0|1" \
   "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -F '[kill-window]')|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')|$(chainf | grep -c '@2')"
+# The window's prompt holds what the operator typed and has not sent: the close reads it on the
+# pane's capture, styles included, and refuses at its bound with nothing killed; a rotation keeps
+# its replacement and the old window both.
+reset_home
+printf '%s\n' "$PTYPED" > "$TR/screen"
+out=$(ORCHESTRATOR_INPUT_WAIT=0 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1); rc=$?
+check "close: a window whose prompt holds typed text is refused, nothing killed, its host and chain entry kept" \
+  "1|1|[-u][capture-pane][-p][-e][-t][%1]|0|1|1" \
+  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 still holds text .*His text: «je réponds')|$(calls | grep -F '[capture-pane]')|$(calls | grep -c '\[kill-window\]')|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')"
+reset_home
+printf '%s\n' "$PTYPED" > "$TR/screen"
+out=$(ORCHESTRATOR_INPUT_WAIT=0 home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: one" --prompt p 2>&1); rc=$?
+check "rotate: typed text in the old window keeps it, beside its replacement, which runs" "1|new-window|1|1" \
+  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -oE '\[(new|kill)-window\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(printf '%s' "$out" | grep -c 'rotate: the old session on /dev/ttys901 was not closed: its close refused before it ended anything')|$(grep -c ttys903 "$TR/ps")"
+reset_home
+printf '%s\n' "$PEMPTY" > "$TR/screen"
+out=$(ORCHESTRATOR_INPUT_WAIT=0 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
+check "close: a window whose prompt shows only the host's faint placeholder is closed as before" "closed 1 session on /dev/ttys901|1" \
+  "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[kill-window\]')"
+# He sends or clears his text during the wait: the close, which read it, waits, then kills.
+reset_home
+printf '%s\n' "$PTYPED" > "$TR/screen"; printf '%s\n' "$PEMPTY" > "$TR/screen.next"
+out=$(ORCHESTRATOR_INPUT_WAIT=10 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
+check "close: a window whose prompt holds his text waits for it to be sent or cleared, then is closed" \
+  "1|closed 1 session on /dev/ttys901|2|1|1" \
+  "$(printf '%s\n' "$out" | grep -c '^close: the prompt on /dev/ttys901 holds text the operator typed and has not sent: waiting up to 10s')|$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[capture-pane\]')|$(calls | grep -c '\[kill-window\]')|$(printf '%s\n' "$out" | grep -c '^close: the operator sent or cleared what he typed in the prompt on /dev/ttys901')"
+# A capture tmux refuses is a prompt that cannot be read: refused, nothing killed.
+reset_home
+out=$(REC_CAPTURE_ERR="can't find pane: %1" home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1); rc=$?
+check "close: a window whose pane tmux fails to capture is refused, nothing killed, its host kept" "3|1|0|1" \
+  "$rc|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 cannot be read (.*), so whether it holds text the operator typed and has not sent is not known')|$(calls | grep -c '\[kill-window\]')|$(grep -c ttys901 "$TR/ps")"
+rm -f "$TR/screen"
 reset_home
 out=$(home close --tty /dev/ttys902 --expect-title "Agent: one" 2>&1)
 check "a window whose name does not hold the expected words is not killed" "1|0" \
@@ -7994,6 +8382,8 @@ else:
         WinTerm() if mode == "glyph-window" else None, TITLES.get(mode, "Agent: one"),
         "@1" if mode == "glyph-window" else "")
 ia.terminal_for = lambda tty: ia.ITERM
+# The old session's prompt box, empty: its read is the close's own, before the kill.
+ia.ITERM.prompt_lines = lambda tty: ['─' * 40, '❯\u00a0', '─' * 40]
 # The app's id of the session on the old tab: the old one's before the spawn; after it, gone in
 # « vanished » and once the close began in « sent-gone », another's in « stranger », and in
 # « read-interrupt » a first read after the spawn interrupted.
@@ -8188,7 +8578,9 @@ elif mode in ("create-sigterm", "verify-interrupt", "before-create", "create-rai
             raise KeyboardInterrupt()
         ia.verify_mode = mode_read
     if mode in NEVER:
-        # A replacement that never starts: the spawn refuses it and closes it itself.
+        # A replacement that never starts: the spawn refuses it and closes it itself. Its
+        # screen is stood in for: the app is never read.
+        ia.screen_text = lambda made: "zsh: command not found: claude"
         ia.cli_pid_on_tty = lambda tty: None
         ia.find_transcript = lambda dir_, epoch: ""
     if mode == "refuse-closed-signal":
@@ -8472,6 +8864,18 @@ check "an interrupt during the spawn's own close of a refused replacement says s
 res=$(ORCHESTRATOR_SPAWN_TIMEOUT=2 rprobe refuse-closed-signal)
 check "an interrupt once the spawn closed the replacement it refused says it was closed" "1|close_made /dev/ttys903,drop T903|1|0|0" \
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -cF "rotate: the spawn refused the replacement it made on /dev/ttys903 (claude never started on /dev/ttys903 after 2s) and closed it; the old session on /dev/ttys901 was not touched, and nothing is left to close")|$(sfield "$res" ERR | grep -c 'not known')|$(printf '%s' "$res" | grep -c 'Traceback')"
+# A replacement that never started: what its screen showed, read before the close, ends the
+# rotation's line, whatever became of that close.
+SHOWN='The tab showed: zsh: command not found: claude\.'
+res=$(ORCHESTRATOR_SPAWN_TIMEOUT=2 rprobe refuse-closed)
+check "a rotation whose replacement never started says what its screen showed, the wait to raise named" "1|1" \
+  "$(sfield "$res" ERR | grep -c "nothing is left to close\. $SHOWN")|$(sfield "$res" ERR | grep -c 'ORCHESTRATOR_SPAWN_TIMEOUT')"
+res=$(ORCHESTRATOR_SPAWN_TIMEOUT=2 rprobe refuse-unclosed)
+check "and so does one whose replacement could not be closed" "1|1" \
+  "$(sfield "$res" ERR | grep -c "which still runs\. $SHOWN")|$(sfield "$res" closes)"
+res=$(ORCHESTRATOR_SPAWN_TIMEOUT=2 rprobe refuse-interrupt)
+check "and one interrupted while that replacement was being closed" "1" \
+  "$(sfield "$res" ERR | grep -c "the old session on /dev/ttys901 was not touched\. $SHOWN")"
 # The terminal's own children run apart from the launcher's process group while a rotation's
 # replacement is made: an interrupt sent to the group (a Ctrl-C at the terminal) is held by the
 # launcher until the creation returns, and does not kill the tmux client after the server made
@@ -9133,6 +9537,8 @@ case "$1" in
   list-windows) [ -f "$d/windows" ] && cat "$d/windows"; exit 0 ;;
   kill-window) [ -f "$d/kwin-err" ] && { cat "$d/kwin-err" >&2; exit 1; }; exit 0 ;;
   list-panes) [ -f "$d/panes-err" ] && { cat "$d/panes-err" >&2; exit 1; }; [ -f "$d/panes" ] && cat "$d/panes"; exit 0 ;;
+  # Window 0's host shows its prompt box, empty: nothing the operator typed is waiting.
+  capture-pane) printf '%s\n\xe2\x9d\xaf\xc2\xa0\n%s\n' "$(printf '─%.0s' {1..40})" "$(printf '─%.0s' {1..40})"; exit 0 ;;
 esac
 exit 0
 SH
@@ -9229,6 +9635,11 @@ class FakeIterm(ia.Terminal):
         return "/dev/ttys970", "NEW-TAB"
     def close_made(self, made):
         calls.append("close_made %s" % made.get("session_id")); return True
+    def prompt_lines(self, tty):
+        # A dialog in the box's place; an app that cannot show the screen.
+        if scenario == "nobox": return ['Do you want to proceed?', '❯ 1. Yes', '  2. No']
+        if scenario == "unreadable": raise ia.Unreachable("the API is not enabled")
+        return ['─' * 40, '❯\u00a0' + ("je réponds" if scenario == "typed" else ""), '─' * 40]
 ia.ITERM = FakeIterm()
 ia.time.sleep = lambda s: None
 ia.SPAWN_TIMEOUT = 0
@@ -9257,6 +9668,23 @@ check "the old tab is read first, the new one is made right of it under the orch
 check "window 0 closes the old tab by the id read before the move, and the new tab runs the client of the home server alone" \
   "1|1" \
   "$(grep -c "home-release --tty /dev/ttys900 --session-id OLD-SESSION " "$(ls "$WORK"/homestate/prompts/home-*.sh)")|$(grep -c "exec env -u TMUX -u TMUX_PANE $HR/tmux -u -L orch-abcdef12 attach -t home\$" "$(sed 's/^\/bin\/sh -l //' "$HR/attach")")"
+# The move ends the session in its tab: his text in its prompt keeps the session there, nothing made.
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(hprobe typed)
+check "a move whose tab's prompt holds his text stays: no server, no tab, the old tab read alone" \
+  "0|identity /dev/ttys900|OUT:stay: the prompt on /dev/ttys900 holds text, so the move, which ends the session there, would destroy what the operator typed and has not sent|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(printf '%s\n' "$res" | grep '^OUT:')|$(hcalls | grep -c 'new-session')"
+# A screen with no prompt box (a dialog), or one that cannot be read, is not known empty: it stays too.
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(hprobe nobox)
+check "a move whose tab shows no prompt box stays: no server, no tab" \
+  "0|identity /dev/ttys900|OUT:stay: the prompt on /dev/ttys900 shows no prompt box, so the move, which ends the session there, would destroy what the operator typed and has not sent|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(printf '%s\n' "$res" | grep '^OUT:')|$(hcalls | grep -c 'new-session')"
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(hprobe unreadable)
+check "a move whose tab's prompt cannot be read stays, the reason said: no server, no tab" \
+  "0|identity /dev/ttys900|OUT:stay: the prompt on /dev/ttys900 cannot be read (the API is not enabled), so the move, which ends the session there, would destroy what the operator typed and has not sent|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(printf '%s\n' "$res" | grep '^OUT:')|$(hcalls | grep -c 'new-session')"
 check "the server's environment is the operator's, without the caller's session or nesting marks" "none" \
   "$(homecmd env CLAUDECODE=1 ITERM_SESSION_ID=w0t0p0:X "$py" -c "
 import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
@@ -9846,6 +10274,9 @@ class FakeIterm(ia.Terminal):
         if scenario == "close-raises": raise ia.Unreachable("iTerm2 did not answer a close")
         return "TAB"
     def close_made(self, made): calls.append("close_made %s" % made.get("session_id")); return True
+    def prompt_lines(self, tty):
+        # The old session's prompt box, empty: nothing the operator typed is waiting.
+        return ['─' * 40, '❯\u00a0', '─' * 40]
     def identity(self, tty, fresh=False):
         # The app's id of a session, read by the API alone: it cannot serve 997.
         if tty == "/dev/ttys997": raise ia.Unreachable("the API is not enabled")

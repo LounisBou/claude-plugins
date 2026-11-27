@@ -121,10 +121,10 @@ describe('outcome evals: opening the orchestration', () => {
     assert.deepEqual(request?.pluginDirs, ['/o', '/d'])
     assert.equal(request?.settingsFile, '/s.json')
     assert.equal(request?.model, 'm')
-    assert.ok(request?.prompt.startsWith('/orchestrator:orchestrator build\n'))
+    assert.ok(request?.prompt.startsWith('/orchestrator:orchestrator Brief.'))
     assert.ok(request?.prompt.includes('Brief.'))
     assert.ok(request?.prompt.includes(NO_OPERATOR))
-    assert.equal(startupPrompt('B'), `/orchestrator:orchestrator build\n\nB\n\n${NO_OPERATOR}`)
+    assert.equal(startupPrompt('B'), `/orchestrator:orchestrator B\n\n${NO_OPERATOR}`)
   })
 
   it('tells the orchestrator to keep its agents writing in the graded checkout, one at a time', () => {

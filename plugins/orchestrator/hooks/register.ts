@@ -14,7 +14,7 @@ import { register as registerWait } from './wait.ts'
 import { register as registerUnattended } from './unattended.ts'
 import { register as registerLedger } from './ledger.ts'
 import { register as registerGateRecheck } from './gate-recheck.ts'
-import { register as registerSupervision, registerWake, registerPaneTool, registerStartState } from './supervision.ts'
+import { register as registerSupervision, registerWake, registerRetries, registerPaneTool, registerStartState } from './supervision.ts'
 import { register as registerPermissionWait } from './permission-wait.ts'
 import { register as registerTodo, registerSurface as registerTodoSurface } from './todo.ts'
 import { register as registerQuestion, registerSettle } from './question.ts'
@@ -52,6 +52,7 @@ export function register(on: On<Mod>): void {
   registerUnattended(on)
   registerSupervision(on)
   registerWake(on)
+  registerRetries(on)
   registerPaneTool(on)
   registerStartState(on)
   registerTodo(on)

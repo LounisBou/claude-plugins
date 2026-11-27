@@ -1,6 +1,6 @@
 // succession — the takeover, read from the state alone (decision 0007).
 //
-//   succession.sh takeover <dispatch record> --mode build|investigate [--tty <predecessor's tty>] [--name "<Orch: x>"] [--session <id>] [--worktree <dir>]
+//   succession.sh takeover <dispatch record> [--tty <predecessor's tty>] [--name "<Orch: x>"] [--session <id>] [--worktree <dir>]
 //
 // One owner per fact: the dispatch record's rows hold the work (state, blocker, note, verdict line),
 // the to-do list holds the operator's words and the rows each item turned into, the round his
@@ -71,7 +71,7 @@ export { rowOfBrief }
 import type { Asked } from '../../../hooks/question.ts'
 
 export const USAGE =
-  'usage: succession.sh takeover <dispatch record> --mode build|investigate [--tty <predecessor tty>] [--name "<Orch: x>"] [--session <id>] [--worktree <dir>]'
+  'usage: succession.sh takeover <dispatch record> [--tty <predecessor tty>] [--name "<Orch: x>"] [--session <id>] [--worktree <dir>]'
 
 const here = dirname(fileURLToPath(import.meta.url))
 /** The fixed text of the successor's instructions, in the plugin. */
@@ -79,7 +79,6 @@ export const TEMPLATE = join(here, '..', '..', '..', 'templates', 'orchestrator-
 
 export interface Request {
   readonly record: string
-  readonly mode: string
   readonly tty: string
   readonly name: string
   readonly session: string
@@ -97,16 +96,15 @@ export function parseArgs(argv: readonly string[], cwd: string): Request | { rea
   for (let k = 0; k < rest.length; k += 2) {
     const flag = rest[k] ?? ''
     const value = rest[k + 1]
+    // `--mode` is what an older successor or wake line still passes: accepted and ignored for one release.
     if (!['--mode', '--tty', '--name', '--session', '--worktree'].includes(flag)) return { error: `unknown argument: ${flag} (${USAGE})` }
     if (value === undefined) return { error: `${flag} needs a value` }
     values[flag.slice(2)] = value
   }
-  const mode = values['mode'] ?? ''
-  if (mode !== 'build' && mode !== 'investigate') return { error: '--mode build|investigate is required: the mode the successor was launched in' }
   const worktree = values['worktree'] ?? cwd
   // The project is read from the working directory: run from inside the plugin's own copy, it would be the configuration's repository.
   if (PLUGIN_DIR.test(worktree.replaceAll('\\', '/'))) return { error: `run the takeover from the project's directory, not from the plugin's (${worktree}): call <base dir>/scripts/succession.sh by its path, or pass --worktree <project dir>` }
-  return { record: resolve(cwd, record), mode, tty: values['tty'] ?? 'none', name: values['name'] ?? '', session: values['session'] ?? '', worktree }
+  return { record: resolve(cwd, record), tty: values['tty'] ?? 'none', name: values['name'] ?? '', session: values['session'] ?? '', worktree }
 }
 
 /** One open question of the round, as the takeover prints it. */
@@ -1081,7 +1079,6 @@ export function main(argv: readonly string[], env: Env, io: Io, deps: Deps = { c
   const moves = deps.movesHome ?? movesHome(env)
   const text = fill(template, {
     PROJECT: project,
-    MODE: parsed.mode,
     PREDECESSOR_NAME_PATTERN: name,
     AGENT_NAME_PATTERN: 'Agent: <subject>',
     STATE_DIR: protectedRoot(env),

@@ -1,10 +1,8 @@
 # Orchestrator succession brief — {{PROJECT}}
 
-Mode: {{MODE}}
-
 # Instructions
 
-You are the SUCCESSOR ORCHESTRATOR of `{{PREDECESSOR_NAME_PATTERN}}`. Your launch loaded the rulebook with the mode above. `succession.sh takeover` printed this text from the state, read live at this run: the pull requests, rows, agents and questions below are verified; do not read them again. No other file is read for the takeover.
+You are the SUCCESSOR ORCHESTRATOR of `{{PREDECESSOR_NAME_PATTERN}}`. `succession.sh takeover` printed this text from the state, read live at this run: the pull requests, rows, agents and questions below are verified; do not read them again. No other file is read for the takeover.
 
 Every script below is in `{{SCRIPTS}}`, the copy this takeover ran from. A path your predecessor gave is its older version: run the takeover again from your own base directory before anything else.
 
