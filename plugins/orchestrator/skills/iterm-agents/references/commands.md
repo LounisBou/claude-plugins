@@ -150,7 +150,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     #   auditor has none, and written into one it would anchor the orchestrator's next agent.
     #   --no-remote-control is refused there too; a typed audit title still is, off --auditor.
     # --auditor [--of <tty>|self]: the auditor of an orchestrator, `--title "Audit: <subject>"`.
-    #   Lands immediately RIGHT of the orchestrator it audits, ahead of that orchestrator's
+    #   Lands immediately LEFT of the orchestrator it audits, ahead of that orchestrator's
     #   agents: this session, else the tab --of names (a session that is no orchestrator must
     #   name it). The place is read after the spawn and repaired once;
     #   the launch records the auditor as this session's, so `move` places it without --force.

@@ -27,7 +27,7 @@ Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the
    ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --dir <repository> --auditor --title "Audit: <subject>" --permission-mode auto --trust --prompt "Read and execute <brief path>"
    ```
 
-   `--auditor` places the tab immediately right of the audited orchestrator's; it joins no
+   `--auditor` places the tab immediately left of the audited orchestrator's; it joins no
    chain. The auditor never closes this tab.
    On a non-zero exit, run the `move` the line on stdout prints and never relaunch; on
    « unverified » or « API is not available », read `list` and move the tab only if misplaced.
