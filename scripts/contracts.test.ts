@@ -280,6 +280,7 @@ describe('session names: core owns the shape, the launcher reads it', () => {
     mkdirSync(join(plugin, 'core'))
     copyFileSync(LAUNCHER, join(scripts, 'iterm_agent.py'))
     copyFileSync(LAUNCHER.replace('iterm_agent.py', 'conversation_tail.py'), join(scripts, 'conversation_tail.py'))
+    copyFileSync(LAUNCHER.replace('iterm_agent.py', 'tab_order.py'), join(scripts, 'tab_order.py'))
     copyFileSync('plugins/orchestrator/core/store.json', join(plugin, 'core', 'store.json'))
     copyFileSync('plugins/orchestrator/core/launcher.json', join(plugin, 'core', 'launcher.json'))
     copyFileSync('plugins/orchestrator/core/roots.json', join(plugin, 'core', 'roots.json'))

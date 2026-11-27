@@ -36,6 +36,7 @@ import uuid
 import time
 
 import conversation_tail
+import tab_order
 
 
 class _AsyncioSocketNoise(logging.Filter):
@@ -115,7 +116,8 @@ def open_data_file(path, flags, mode=0o600):
 
 
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
-# The tabs' order of the app as the last read of it found it: what a restart keeps when iTerm2 does not answer.
+# The tabs' order of the app as the last read of it found it, what a restart keeps when iTerm2 does
+# not answer; and the record of each tab's place (tab_order.py), what a reopened session goes back to.
 ORDER_FILE = os.path.join(STATE_DIR, "iterm-order.json")
 # The commands that move, open, close or list a tab: each keeps the order after it, when it reached the app.
 ORDER_CHANGERS = ("spawn", "close", "move", "rotate", "home", "home-release", "list")
@@ -2280,29 +2282,176 @@ def deadline(seconds):
 
 
 def app_layout():
-    """The app's windows, each its tabs in order, each its sessions' ttys and titles."""
+    """The app's windows, each its tabs in order, each its sessions' ttys and titles, with the
+    app's ids of their tab and window."""
     async def go(iterm2, connection):
         app, windows = await iterm2.async_get_app(connection), []
         for window in app.windows:
             windows.append([])
             for tab in window.tabs:
                 windows[-1].append([{"tty": await session_tty(s), "title": await s.async_get_variable(
-                    "autoName") or ""} for s in tab.all_sessions])
+                    "autoName") or "", "tab": tab.tab_id, "window": window.window_id}
+                    for s in tab.all_sessions])
         return windows
     with deadline(LAYOUT_WAIT):
         return run(go)
 
 
+def seen_session(session):
+    """What tells one session of the app from another, tty apart: its name and, for a tab showing
+    a home server, the server's socket and its window 0's name (the tab's title follows the window
+    the operator looks at), else the host's session id."""
+    name = key = ""
+    with contextlib.suppress(Exception, SystemExit):
+        socket = home_of_tab(session["tty"]) if session["tty"] else ""
+        if socket:
+            key = socket
+            done = tmux_call(["-L", socket, "display-message", "-p", "-t", HOME_SESSION + ":0",
+                              "#{window_name}"])
+            name = done.stdout.strip() if done.returncode == 0 else ""
+        elif session["tty"]:
+            pid = host_cli_on(session["tty"])
+            # Under the tab's own plan, whose registry holds it: this command may have moved to
+            # another one.
+            with on_plan(process_config(pid) if str(pid).isdigit() else None):
+                key = ((host_registry(pid) if pid else None) or {}).get("sessionId") or ""
+                name = session_name_on(session["tty"]) or ""
+    if name == UNREADABLE_NAME:
+        name = ""
+    return {"name": stable_title(name or session.get("title") or ""), "session": key,
+            "tab": session.get("tab", "")}
+
+
+def seen_windows(windows):
+    """`app_layout`'s read as the record reads it: a split tab is the session that has an id, else
+    a name."""
+    seen = []
+    for tabs in windows:
+        entries = [[seen_session(s) for s in tab] for tab in tabs if tab]
+        seen.append({"window": next((tab[0].get("window", "") for tab in tabs if tab), ""),
+                     "tabs": [max(tab, key=lambda e: (bool(e["session"]), bool(e["name"])))
+                              for tab in entries]})
+    return seen
+
+
 def keep_order(windows=None):
-    """The app's order of tabs, kept for a restart whose iTerm2 does not answer. `windows` is a read
-    just made; without it, the order is read now, and only when this process's calls reached the app
-    (a dry run keeps nothing). An empty order is not kept over one. Never raises."""
+    """The app's order of tabs, kept for a restart whose iTerm2 does not answer, and woven into the
+    record of each tab's place. `windows` is a read just made; without it, the order is read now, and
+    only when this process's calls reached the app (a dry run keeps nothing). An empty order is not
+    kept over one. Returns `(record, the windows read)`, or None when nothing was kept. Never
+    raises."""
     if DRY_RUN or windows is None and not ANSWERED:
-        return
+        return None
     with contextlib.suppress(Exception, SystemExit):
         windows = app_layout() if windows is None else windows
         if any(windows):
-            write_json(ORDER_FILE, {"version": 1, "at": time.time(), "windows": windows})
+            seen = seen_windows(windows)
+            with path_lock(ORDER_FILE):
+                places = tab_order.merge(kept_places(), seen, time.time())
+                write_json(ORDER_FILE, {"version": 1, "at": time.time(), "windows": windows,
+                                        "places": places})
+            return places, seen
+    return None
+
+
+def kept_places():
+    """The record of the tabs' places kept, empty when there is none that reads."""
+    try:
+        with open(ORDER_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    return tab_order.valid(data.get("places")) if isinstance(data, dict) else []
+
+
+def read_order():
+    """The order on screen read now and kept, before a tab is closed or made: `keep_order`'s
+    answer. Quiet, and by the API alone: a command the app cannot answer this way keeps nothing."""
+    if DRY_RUN:
+        return None
+    with contextlib.suppress(Exception, SystemExit), contextlib.redirect_stderr(io.StringIO()):
+        if "api" in backend_chain():
+            return keep_order(app_layout())
+    return None
+
+
+def put_beside(tty, anchor, side, what):
+    """Put the tab on `tty` on `side` of the tab of `anchor`, a tty or the app's tab id: the
+    window's other tabs keep their order. The place is read back, repaired once, and said on
+    stderr if it is still not the one. Never raises: the session it places is up."""
+    async def go(iterm2, connection):
+        async def read():
+            app = await iterm2.async_get_app(connection)
+            _, tab, _ = await find_tab(app, tty)
+            if anchor.startswith("/dev/"):
+                _, other, _ = await find_tab(app, anchor)
+            else:
+                other = next((t for w in app.windows for t in w.tabs if t.tab_id == anchor), None)
+            window = next((w for w in app.windows if other is not None
+                           and other.tab_id in [t.tab_id for t in w.tabs]), None)
+            return tab, other, window
+
+        def beside(window, tab, other):
+            ids = [t.tab_id for t in window.tabs]
+            return tab.tab_id in ids and \
+                ids.index(tab.tab_id) - ids.index(other.tab_id) == (1 if side == "right" else -1)
+
+        for attempt in range(3):
+            tab, other, window = await read()
+            if tab is None or window is None or tab.tab_id == other.tab_id:
+                return False
+            if beside(window, tab, other):
+                return True
+            if attempt < 2:
+                tabs = [t for t in window.tabs if t.tab_id != tab.tab_id]
+                at = [t.tab_id for t in tabs].index(other.tab_id) + (side == "right")
+                tabs.insert(at, tab)
+                await window.async_set_tabs(tabs)
+        return False
+
+    why = ""
+    try:
+        with deadline(LAYOUT_WAIT):
+            if run(go):
+                return
+    except (Exception, SystemExit) as exc:
+        why = " (%s)" % (" ".join(str(exc).split()) or type(exc).__name__)
+    print("%s: the tab on %s could not be put %s of the tab %s%s: its place is not the one the "
+          "operator's order gives it; see iterm-agent.sh list" % (what, tty, side, anchor, why),
+          file=sys.stderr)
+
+
+def reopened_place(order, title, session, replaces):
+    """The place a new tab takes over the default one, from the order read before it was made:
+    right of the open tab it replaces (`replaces`: a session of its name, still on screen), else
+    where its closed session was. `(tab id, side)` or None."""
+    if not order:
+        return None
+    record, seen = order
+    name = stable_title(title)
+    replaced = tab_order.open_tab_named(seen, name) if replaces else ""
+    return (replaced, "right") if replaced else tab_order.place_of(record, name, session)
+
+
+def predecessor_of_caller(own, tty):
+    """Whether closing the tab on `tty` ends the caller's own predecessor: the registered
+    coordinator's, closed by a coordinator, or an auditor of the caller's name, by that auditor."""
+    if not own or own == tty:
+        return False
+    mine = session_name_on(own) or ""
+    role = title_role(mine)
+    if role == COORD:
+        return registered_coord_on(tty) is not None
+    return role == AUDIT and stable_title(audit_name_on(tty) or "") == stable_title(mine)
+
+
+def take_predecessors_place(tty, what):
+    """Put the caller's tab beside the tab of `tty` when that is its own predecessor's, and keep
+    the order: a successor takes its predecessor's place, however its tab was opened."""
+    own = self_tty() or ""
+    if predecessor_of_caller(own, tty) and terminal_for(tty) is ITERM:
+        put_beside(own, tty, "right", what)
+        read_order()
 
 
 def kept_order():
@@ -5351,6 +5500,21 @@ def use_config(config):
         os.path.join(config, "projects") if config else os.path.expanduser("~/.claude/projects"))
 
 
+@contextlib.contextmanager
+def on_plan(config):
+    """The launcher's readings on the plan (configuration directory) of another process; None, a
+    plan that cannot be read, leaves them on the command's own."""
+    if config is None:
+        yield
+        return
+    before = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    use_config(config)
+    try:
+        yield
+    finally:
+        use_config(before)
+
+
 def sleeper_config(title):
     """The configuration directory the orchestrator `title` slept on, from the sleeping record
     (`config`; absent is plan 1, ""), or None when no record names it or the record cannot be
@@ -6110,6 +6274,13 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
     else:
         place = Place("anywhere", "", side, args.auditor)
 
+    # The order on screen before the tab is made: where a session replaced or reopened goes. A
+    # successor and an auditor have a place of their own, and so does a line that names one.
+    reopened = None
+    if term is ITERM and not (home and home_no_tab()):
+        order = read_order()
+        if home or (args.resume and not (args.right_of or args.left_of)):
+            reopened = reopened_place(order, title, socket if home else args.resume, bool(home))
     # Before the tab exists, so no transcript older than this launch can be taken for its.
     launch_epoch = time.time()
     _, resumed_from = transcript_of(args.resume) if args.resume else ("", 0)
@@ -6132,6 +6303,8 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
             else:
                 tab_tty, made = open_home_tab(socket, title, place.anchor, "spawn")
                 made.update(home=socket, tty=pane_tty)
+                if reopened:
+                    put_beside(tab_tty, reopened[0], reopened[1], "spawn")
                 print("spawn: home server %s, window 0 on %s, shown in the tab on %s"
                       % (socket, pane_tty, tab_tty), file=sys.stderr)
             new_tty, tab_id = pane_tty, ""
@@ -6157,6 +6330,8 @@ def cmd_spawn(args, pair_from="", old_tty="", made=None):
         if not new_tty:
             refuse_made(made, "spawn: the terminal returned no tty for the new tab")
         made.setdefault("tty", new_tty)
+        if reopened and not home:
+            put_beside(new_tty, reopened[0], reopened[1], "spawn")
 
     # Before the verification below, which may wait or die: an auditor's place is settled as
     # soon as its tab exists, and said on stdout, where the orchestrator reads the launch.
@@ -6423,6 +6598,11 @@ def cmd_verify(args):
     else:
         pid = str(args.pid) if str(args.pid) in every else None
     if not pid:
+        # With no --pid, nothing runs on the tty at all: the proof of a successor whose close of
+        # its predecessor the host refused. The tab left on a shell keeps the place, so the
+        # successor takes it here, no close ever running.
+        if args.pid is None and not DRY_RUN:
+            take_predecessors_place(args.tty, "verify")
         sys.exit(1)
     print("%s running on %s (pid %s)" % (HOST_CLI, args.tty, pid))
 
@@ -6873,6 +7053,10 @@ def cmd_close(args):
     # the close is the home tab's, server and agents handled as for the tab's own tty.
     args.tty = pane_tab_tty(args.tty)
     socket, listed, host_tty = close_host_tty(args.tty)
+    if socket or terminal_for(args.tty) is ITERM:
+        take_predecessors_place(args.tty, "close")
+        # Once the tab is gone nothing says where it was.
+        read_order()
     # Read BEFORE the close: what the proof below is a proof ABOUT.
     was_running = host_cli_on(host_tty)
     # And the same for the checkout the session works in: once it is gone nothing says where.
@@ -7621,6 +7805,9 @@ def finish_rotation(made, old, after):
         close_args.expect = old["expect"]
     elif old["title"] and not (old["window"] or old["session"]) and not DRY_RUN:
         close_args.expect = old["title"]
+    if not DRY_RUN and made.get("terminal") is ITERM and not old["window"]:
+        # The replacement takes the old tab's place, read now: right of it, then the old one goes.
+        put_beside(made["tty"], tty, "right", "rotate")
     old["closing"] = True
     try:
         cmd_close(close_args)
