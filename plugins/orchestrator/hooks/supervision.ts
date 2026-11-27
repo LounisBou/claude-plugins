@@ -6,8 +6,8 @@
 // the same rows, opened on the person's word (/orchestrator-supervision or the supervision
 // tool's `open`) and left as he left it: the role keeps whether its pane is open (paneStatePath),
 // so a successor puts it as it was — open stays open, what he closed stays closed — and nothing
-// else opens it, on a start, a turn or a wake. In a coordinator session it lists the orchestrators, and under them
-// the first question of its round (round.ts); in an orchestrator session,
+// else opens it, on a start, a turn or a wake. In a coordinator session it shows the first question of its
+// round (round.ts), then lists the orchestrators, auditors and coordinators; in an orchestrator session,
 // that orchestrator's own agents, read from the launcher's chain and the host's
 // session records; in any other role it opens nothing. The commands hold no $ of
 // the writing side and read the same files through their own $.fs calls plus
@@ -97,7 +97,7 @@ export type SessionRow = {
   tmux?: string | null
   // The session's configuration directory, which names its account (fleetLabel), and the owner its launcher
   // writes on the chain entries of the agents it spawns (chainOwner): both read by the session's own module, so
-  // the coordinator's pane counts an orchestrator's agents as that orchestrator's own pane does.
+  // the coordinator's pane counts a session's agents as an orchestrator's own pane does.
   config?: string | null
   chain_owner?: string | null
   repo: string | null
@@ -204,7 +204,7 @@ export function livePids(result: unknown): Map<string, ProcessState> | null {
 // lists, by the role it was opened in. The id's spelling is the shipped type's
 // own contract — letters, digits, `_` and `-`.
 const PANE_ID = 'supervision'
-const PANE_TITLES = { coordinator: 'Orchestrators', orchestrator: 'Agents' } as const
+const PANE_TITLES = { coordinator: 'Sessions', orchestrator: 'Agents' } as const
 
 // The commands that toggle the pane, as the host hands them to command.run (short-names.ts):
 // the 0.80.0 form of the short name, the plugin's `supervision` file, and the bare short name of
@@ -278,8 +278,9 @@ const WORDS = {
   questions: 'Questions for you',
   pending: 'pending',
   none: 'none',
-  orchestrators: 'Orchestrators',
-  noOrchestrator: 'no live orchestrator',
+  sessions: 'Sessions',
+  noSession: 'no live session',
+  self: 'this session',
   status: 'Status',
   blocks: 'Blocks',
   other: 'Other answer',
@@ -763,6 +764,7 @@ export type PaneRow = {
   // The label's pieces, for the block the coordinator's pane draws: the name, what comes
   // before the fill, the fill with its gate words, the age and the wait, the wait split into
   // its status words and what it blocks.
+  role: SessionRow['role']
   name: string
   head: string
   fill: string
@@ -826,7 +828,7 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
       if (wait !== null) parts.push(wait)
       return {
         label: parts.join(' · '), urgency: (past ? GATE_URGENCY_FLOOR : 0) + row.context_percent,
-        key, name, head, fill, percent, past, age, wait, status: split?.status ?? null, blocked: split?.blocks ?? null,
+        key, role: row.role, name, head, fill, percent, past, age, wait, status: split?.status ?? null, blocked: split?.blocks ?? null,
         waiting: wait !== null ? row.waiting ?? null : null,
         unattended: unattendedOfRow(row),
       }
@@ -910,10 +912,11 @@ async function chainAgents($: Host<'env' | 'fs' | 'process'>, tty: string, owner
 // The accounts by the launcher's `--plan` numbers, over core's naming of a configuration directory.
 const ACCOUNTS: Readonly<Record<string, string>> = { plan1: 'plan 1', plan2: 'plan 2' }
 
-// What an orchestrator's line says of its account and its live agents, `plan 2 · 3 agents`: the account of the
+// What a session's line says of its account and its live agents, `plan 2 · 3 agents`: the account of the
 // configuration directory its row names, and the agents of its chain alive at this drawing, each session once,
-// over the process table this drawing read. « ? » for whatever the facts do not carry (a remote row, a row
-// written before rows carried them, a listing that failed or an agent list not read within the bound).
+// over the process table this drawing read, no count drawn at none. « ? » for whatever the facts do not carry
+// (a remote row, a row written before rows carried them, a listing that failed or an agent list not read
+// within the bound).
 async function fleetLabel($: Host<'env' | 'fs' | 'process'>, row: SessionRow, home: string, table: ProcessTable | null | undefined): Promise<string> {
   const account = (row.config ? ACCOUNTS[planOfConfig(row.config, home)] : undefined) ?? '?'
   let count: number | null = null
@@ -921,7 +924,7 @@ async function fleetLabel($: Host<'env' | 'fs' | 'process'>, row: SessionRow, ho
     const agents = await withDeadline(chainAgents($, row.tty, row.chain_owner, { config: row.config, pidsOn: pidsListed(table) }), await sideReadBoundMs($))
     if (!isDegradedPass(agents)) count = new Set(agents.map(agent => agent.sessionId)).size
   }
-  return `${account} · ${count ?? '?'} agent${count === 1 ? '' : 's'}`
+  return count === 0 ? account : `${account} · ${count ?? '?'} agent${count === 1 ? '' : 's'}`
 }
 
 // The line an agent is sent when its orchestrator's successor confirmed the takeover.
@@ -2163,7 +2166,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 
   // The pane opens on the person's own command alone — the shipped types' «
   // asked » open, placed at any width — in the two supervising roles: a
-  // coordinator's lists the orchestrators, an orchestrator's its own agents.
+  // coordinator's lists the orchestrators, auditors and coordinators, an orchestrator's its own agents.
   // Anywhere else the command says so and opens nothing. Every form of the
   // command answers, the same toggle on the same pane; a bare short name only when its user
   // command is this plugin's copy, the operator's own command of that name run as he wrote it.
@@ -2175,7 +2178,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     const { tty, name, pid } = await walkWithinBound($, await $.session.id())
     const role = roleOf(name)
     if (name === null || (role !== 'coordinator' && role !== 'orchestrator')) {
-      return { text: 'The supervision pane opens in a coordinator session (« Coord: … »), listing the orchestrators, or in an orchestrator session (« Orch: … »), listing its agents; /orchestrator:status lists the sessions here.' }
+      return { text: 'The supervision pane opens in a coordinator session (« Coord: … »), listing the orchestrators, auditors and coordinators, or in an orchestrator session (« Orch: … »), listing its agents; /orchestrator:status lists the sessions here.' }
     }
     // A toggle: the same command closes the pane it opened (Escape does not —
     // the pane holds no focus), beside the pane's own ✕.
@@ -2276,7 +2279,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       pane.ticksSinceDraw = 0
       let rows: { label: string; name: string; rest: string; urgency: number }[] = []
       let blocks: PaneRow[] = []
-      // Each orchestrator's account and live agent count (fleetLabel), by its block's key, read at this drawing.
+      // Each listed session's account and live agent count (fleetLabel), by its block's key, read at this drawing.
       let fleet = new Map<string, string>()
       let failed: { entry: RoundEntry; reason: string }[] = []
       let delivering: Asked[] = []
@@ -2291,14 +2294,16 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         const store = await readStore($)
         const local = store.rows
         const merged = withRemote(local, await readRemoteRows($), Date.now(), REMOTE_STALE_AFTER_MS)
-        const orchestrators = Object.entries(merged).filter(([, row]) => row.role === 'orchestrator')
-        blocks = paneRows(Object.fromEntries(orchestrators))
+        // Every session of a role but the implementer agents, the pane's own marked as itself.
+        const supervised = Object.entries(merged).filter(([, row]) => row.role !== null && row.role !== 'agent')
+        const ownKey = sessionKey(await $.session.id())
+        blocks = paneRows(Object.fromEntries(supervised)).map(row => (row.key === ownKey ? { ...row, head: `${row.head} (${WORDS.self})` } : row))
         const home = (await $.env.get('HOME') ?? '').replace(/\/+$/, '')
-        fleet = new Map(await Promise.all(orchestrators.map(async ([key, row]) => [key, await fleetLabel($, row, home, store.alive)] as const)))
+        fleet = new Map(await Promise.all(supervised.map(async ([key, row]) => [key, await fleetLabel($, row, home, store.alive)] as const)))
         const repo = await (ownRepo ??= repoRead($))
         if (repo === undefined) ownRepo = null
         owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : []), ...(row.unattended?.prs.map(u => u.repo) ?? [])])])
-        none = WORDS.noOrchestrator
+        none = WORDS.noSession
         // Stat before the read: a write landing between the two is seen by the next tick.
         pane.roundSeen = await roundMtime($)
         // A question asked with `ask` is drawn while its asker has a live row on this machine, as an entry is.
@@ -2386,7 +2391,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const takesRows = (text: string): string => typeof el.Link === 'function'
         ? prPieces(plainText(text), owners).map(piece => (typeof piece === 'string' ? piece : `${piece.text} ${piece.href}`)).join('')
         : plainText(text)
-      // Each orchestrator is a block: one line, a dot in its state's colour, its bold name and
+      // Each listed session is a block: one line, a dot in its state's colour, its bold name and
       // its figures in the normal colour. A wait adds a Status line and, on the operator, a Blocks
       // line, each label in a column of its own so a long text wraps under its own first
       // character. A blank line between two blocks.
@@ -2435,7 +2440,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // A waiting row whose question asked with `ask` the pane holds, drawn or next in line, is not one
       // the operator is left without.
       const askedHere = new Set(asked.map(entry => sessionKey(entry.sender.session)))
-      const waiting = blocks.filter(row => row.waiting === 'operator' && !askedHere.has(row.key)).length
+      const waiting = blocks.filter(row => row.role === 'orchestrator' && row.waiting === 'operator' && !askedHere.has(row.key)).length
       const waitsFor = `${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
       const says = waiting === 0 ? WORDS.none : asked.length > 0 ? waitsFor : `${WORDS.none} in the pane — ${waitsFor}`
       // Where the surface draws a picker, the choices are one Select: it holds the arrows while it
@@ -2629,7 +2634,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         ...notices,
         rule,
       ]
-      const heading: Drawn = { node: el.Text({ bold: true, children: WORDS.orchestrators }), rows: rowsOf(WORDS.orchestrators, width) }
+      const heading: Drawn = { node: el.Text({ bold: true, children: WORDS.sessions }), rows: rowsOf(WORDS.sessions, width) }
       // The key line, dim, at the foot: once the pane holds the keys, how to give them is no
       // longer said.
       const keyLine = answering === null ? null : picker
