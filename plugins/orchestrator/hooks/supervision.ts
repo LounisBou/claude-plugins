@@ -943,14 +943,27 @@ async function fleetOf($: Host<'env' | 'fs' | 'plugin' | 'process'>, row: Sessio
 // process was started with, that one variable taken from the process listing and nothing else kept. Absent, the
 // host's default directory. Null when the environment cannot be read (no pid, a listing that failed or named no
 // process): never read as absent.
+// The environment is what `ps eww` shows after the command line `ps ww` shows (the words come first, the environment
+// follows): only that rest is searched, its last assignment is the process's own (the reading of the pane's facts
+// and of the iTerm agents' launcher). An empty value is the default directory. A rest that is empty, or a listing
+// that failed, is an environment not read: null.
 async function envConfigOf($: Host<'process'>, row: SessionRow, home: string): Promise<string | null> {
   if (!row.pid || !/^\d+$/.test(String(row.pid))) return null
-  const listed = await $.process.run(['ps', 'eww', '-o', 'command=', '-p', String(row.pid)], { timeoutMs: 5000 }).catch(() => null)
+  const pid = String(row.pid)
+  const words = await commandLineOf($, ['ps', 'ww', '-o', 'command=', '-p', pid])
+  const withEnv = await commandLineOf($, ['ps', 'eww', '-o', 'command=', '-p', pid])
+  if (words === null || withEnv === null || !withEnv.startsWith(words)) return null
+  const environment = withEnv.slice(words.length)
+  if (environment.trim() === '') return null
+  const named = [...environment.matchAll(/(?:^|\s)CLAUDE_CONFIG_DIR=(\S*)/g)].at(-1)?.[1]
+  return named || configDirOf({}, home)
+}
+
+// The command line a `ps` listing shows, trimmed; null when the listing failed or did not answer.
+async function commandLineOf($: Host<'process'>, argv: string[]): Promise<string | null> {
+  const listed = await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null)
   if (!isRecord(listed) || listed['exitCode'] !== 0) return null
-  const text = String(listed['stdout'] ?? '').trim()
-  if (text === '') return null
-  const named = /(?:^|\s)CLAUDE_CONFIG_DIR=(\S+)/.exec(text)
-  return named ? named[1] ?? null : configDirOf({}, home)
+  return String(listed['stdout'] ?? '').trim()
 }
 
 // The distinct owners of the entries the launcher kept under `tty` (none when the chain is not there).
