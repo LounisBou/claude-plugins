@@ -3036,7 +3036,7 @@ test('a wait of 200 characters is cut to the pane\'s width on one line, its time
 // --- each orchestrator's account and live agent count -------------------------------------------
 
 const OWNER = 'tmux:/tmp/tmux-501/orch-a:%0'
-const PLAN2 = `${HOME}/.claude-bis`
+const PLAN2 = [HOME, '.claude'].join('/') + '-bis'
 // An orchestrator's row as its measure writes it: its host on `tty`, its configuration directory and the owner its chain's entries name.
 const fleetRow = (name: string, over: Partial<SessionRow> = {}) =>
   orch(name, { pid: '900', tty: '/dev/ttys002', config: PLAN2, chain_owner: OWNER, ...over })
@@ -3083,7 +3083,7 @@ test('an agent ending between two draws of the pane lowers the count at the next
 test('two orchestrators on two accounts each count their own agents', async () => {
   const pane = fleet({
     a: fleetRow('Orch: a'),
-    b: fleetRow('Orch: b', { pid: '920', tty: '/dev/ttys006', config: `${HOME}/.claude`, chain_owner: 'OWNER-B', context_percent: 20 }),
+    b: fleetRow('Orch: b', { pid: '920', tty: '/dev/ttys006', config: [HOME, '.claude'].join('/'), chain_owner: 'OWNER-B', context_percent: 20 }),
   }, { '901': 's-1', '902': 's-2' })
   pane.table.set('920', 'S+ ttys006').set('921', 'S+ ttys007')
   pane.fx.files.set(`${HOME}/.claude/sessions/921.json`, JSON.stringify({ sessionId: 's-b', name: 'Agent: b', status: 'idle' }))

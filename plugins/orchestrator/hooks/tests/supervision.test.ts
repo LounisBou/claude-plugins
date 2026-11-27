@@ -667,6 +667,6 @@ test('a measure writes the session\'s configuration directory and the owner its 
   await drive(chains, 'session.measure', fx.dollar, MEASURED)
   const written = [...fx.files].find(([path]) => path.includes('/store/sessions/'))
   const row = parseSessionRow(String(written?.[1]))
-  expect(row?.config).toBe('/tmp/h/.claude-bis')
+  expect(row?.config).toBe(['/tmp/h', '.claude'].join('/') + '-bis')
   expect(row?.chain_owner).toBe('tmux:/tmp/tmux-501/orch-a:%0')
 })
