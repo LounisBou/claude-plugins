@@ -3126,7 +3126,7 @@ check "an orchestrator in another window moves nothing: a move does not cross wi
 AUDTRUST="$WORK/aud-trust.json"; printf '{"projects":{}}\n' > "$AUDTRUST"
 spawn_aud() { # <scenario> [backend]: prints the exit code; stdout and stderr land in files
   ORCHESTRATOR_STATE_DIR="$AUDSTATE" CLAUDE_CONFIG_DIR="$AUDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME \
-  CLAUDE_CODE_SESSION_ID=s-aud ORCHESTRATOR_BACKEND="${2:-api}" ORCHESTRATOR_TRUST_FILE="$AUDTRUST" \
+  CLAUDE_CODE_SESSION_ID=s-aud ORCHESTRATOR_BACKEND="${2:-api}" ORCHESTRATOR_TRUST_FILE="$AUDTRUST" ORCHESTRATOR_OSASCRIPT=/usr/bin/false \
   AUD_OUT="$WORK/aud-spawn.out" AUD_ERR="$WORK/aud-spawn.err" "$py" -c "
 import contextlib, sys
 sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
@@ -3140,7 +3140,7 @@ scenario = sys.argv[1]
 WRONG_HOME = rows('/dev/ttys800', '/dev/ttys004', AUD)
 readings = {'misplaced': [WRONG, WRONG], 'unread': ['boom'], 'move-fails': [WRONG, LEFT],
             'api-less': [WRONG, WRONG], 'broken': [['wx/t1 | /dev/ttys950 | t | n']],
-            'home': [WRONG_HOME, WRONG_HOME]}[scenario]
+            'home': [WRONG_HOME, WRONG_HOME], 'split': [WRONG, WRONG]}[scenario]
 if scenario == 'home':
     # The caller is an orchestrator of a home session: its own tty is a pane, and the tab
     # that shows the server runs the tmux client on /dev/ttys004.
@@ -3168,6 +3168,15 @@ m.as_list = next_reading
 # tab that shows it is the one the app made, on AUD.
 m.make_home = lambda socket, title, cwd, program, what: AUD
 m.open_home_tab = lambda socket, title, anchor, what, place=None: (AUD, {'terminal': m.ITERM})
+if scenario == 'split':
+    # Window 0 runs on a pane of its own, which is no tab of the app's: the tab is AUD.
+    asked = open('$WORK/aud-home.asked', 'w')
+    def make_home(socket, title, cwd, program, what):
+        asked.write('make_home %s\\n' % title); return '/dev/ttys960'
+    def open_home_tab(socket, title, anchor, what, place=None):
+        asked.write('open_home_tab %s %s %s %s\\n' % (title, place.at, place.anchor, place.side)); asked.flush()
+        return AUD, {'terminal': m.ITERM}
+    m.make_home, m.open_home_tab = make_home, open_home_tab
 code = 0
 with open('$WORK/aud-spawn.out', 'w') as out, open('$WORK/aud-spawn.err', 'w') as err, \
      contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -3195,6 +3204,11 @@ check "the API-less rung: no placement warning on stderr, the API-not-available 
 # refusals below meet a stranger's auditor.
 check "a spawned auditor is recorded under its tty with the app's session id and its launcher" "1|1" \
   "$(grep -c '"launcher": "S-ME"' "$AUDSTATE/auditors/ttys950.json")|$(grep -c '"session": "sess-aud"' "$AUDSTATE/auditors/ttys950.json")"
+rm -rf "$AUDSTATE/auditors"
+# The auditor runs in window 0 of its home server, on a pane no tab of the app's carries: its
+# place is repaired and recorded on the tab that shows it, the window's tty is the one printed.
+check "an auditor in its home server is placed and recorded by its tab, left of its orchestrator, and its window 0's tty printed" "1|1|1|0|1|make_home Audit: tm⏎open_home_tab Audit: tm beside /dev/ttys900 left" \
+  "$(spawn_aud split)|$(grep -c 'is not immediately left of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --left-of /dev/ttys900' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys960$' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")|$(grep -c '"launcher": "S-ME"' "$AUDSTATE/auditors/ttys950.json")|$(nl_join < "$WORK/aud-home.asked")"
 rm -rf "$AUDSTATE/auditors"
 
 # `rotate` and `move` treat an auditor's tab as not the caller's to replace or place: it is
@@ -3293,6 +3307,19 @@ check "rotate refuses the coordinator's tab before it spawns anything" "0|1|1" \
   "$(printf '%s' "$CRDROT" | grep -c '^launch=')|$(printf '%s' "$CRDROT" | grep -c "rotate: refused: /dev/ttys950 is the coordinator's tab ('Coord: ops')")|$(crdrot --old-tty /dev/ttys950 >/dev/null 2>&1; echo $?)"
 check "--force rotates it, and says so" "1|1" \
   "$(crdrot --old-tty /dev/ttys950 --force | tail -1 | grep -c '^close=/dev/ttys950')|$(crdrot --old-tty /dev/ttys950 --force | grep -c "^rotate: forced: /dev/ttys950 is the coordinator's tab")"
+# The coordinator and an auditor run in window 0 of a home session of their own: their tab runs
+# only its tmux client, and the guards read the role's name on window 0's pane.
+RHT="$WORK/role-home-tab"; mkdir -p "$RHT"
+printf '#!/bin/bash\ncase " $* " in *" list-panes "*) echo "0 /dev/ttys960" ;; esac\nexit 0\n' > "$RHT/tmux"; chmod +x "$RHT/tmux"
+rht() { CLAUDE_CODE_SESSION_ID=s-suite ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_TMUX="$RHT/tmux" ORCHESTRATOR_PS_TABLE="$RHT/ps" \
+  ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME bash "$AGENT" "$@" 2>&1; }
+for role in "Coord: ops|the coordinator's tab" "Audit: tm|an auditor's tab"; do
+  name=${role%%|*}; says=${role#*|}
+  printf '/dev/ttys950 %s -L orch-rht attach -t home\n/dev/ttys960 /opt/x/claude --name %s\n' "$RHT/tmux" "$name" > "$RHT/ps"
+  check "the tab of a home session whose window 0 is '$name' is refused as $says by rotate and move, before anything is made" "0|1|1" \
+    "$(rht rotate --old-tty /dev/ttys950 --dir "$WORK" --title "Agent: rotated" --prompt p --tier light | grep -c '^launch=')|$(rht rotate --old-tty /dev/ttys950 --dir "$WORK" --title "Agent: rotated" --prompt p --tier light | grep -c "rotate: refused: /dev/ttys950 is $says ('$name')")|$(rht move --tty /dev/ttys950 --right-of self | grep -c "move: refused: /dev/ttys950 is $says ('$name')")"
+  check "and --force moves it, saying so" "1" "$(rht move --tty /dev/ttys950 --right-of self --force | grep -c "^move: forced: /dev/ttys950 is $says")"
+done
 # A paused orchestrator is relaunched with --wake: its recorded name, model and effort, right
 # of the caller, in no chain, under remote control. Nothing is guessed: no model, no wake.
 WKOUT=$(crd --wake --title 'Orch: alpha' --model a-model --effort high)
@@ -3685,17 +3712,17 @@ check "the end checks this session is the recorded coordinator before it clears"
 # A coordinator started by hand is closed too, nothing asked: its title is the host's, the
 # host may refuse the close, and the end it then asks for is proved on the tty, not on list.
 COORDFILLED="$WORK/coordinator-brief-filled.md"
+mkdir -p "$WORK/no-tmux"; printf '#!/bin/bash\nexit 1\n' > "$WORK/no-tmux/tmux"; chmod +x "$WORK/no-tmux/tmux"
 mkdir -p "$WORK/coord-fill/coordinator" "$WORK/coord-fill/scratch"; : > "$WORK/coord-fill/coordinator/notes.md"; : > "$WORK/coord-fill/scratch/decision-round.md"
-if [ -f "$COORDTPL" ]; then
-  # The close step is the printer's (brief.ts closeStep): for a predecessor in a tab, the close of it.
-  sed -E -e "s#\{\{CLOSE_STEP\}\}#**CLOSE ITS TAB** with the launcher's close --tty /dev/ttys950 --expect-title \"Coord:\".#g" \
-    -e 's#\{\{PREDECESSOR\}\}#Coord: ops [a1b2c3]#g' -e 's#\{\{PREDECESSOR_TTY\}\}#/dev/ttys950#g' -e 's#\{\{SUBJECT\}\}#ops#g' \
-    -e "s#\{\{STATE_DIR\}\}#$WORK/coord-fill#g" -e "s#\{\{NOTES_FILE\}\}#$WORK/coord-fill/coordinator/notes.md#g" -e "s#\{\{ROUND_FILE\}\}#$WORK/coord-fill/scratch/decision-round.md#g" \
-    -e "s#\{\{COORDINATOR_SH\}\}#$ROOT/skills/coordinator/scripts/coordinator.sh#g" -e "s#\{\{ITERM_AGENT_SH\}\}#$AGENT#g" \
-    -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$COORDTPL" > "$COORDFILLED"
-fi
+# Filled by its printer, as a successor reads it, its predecessor in a tab (tmux answers no window
+# for it): the close step is the printer's own.
+[ -f "$COORDTPL" ] && PATH="$WORK/no-tmux:$PATH" ORCHESTRATOR_STATE_DIR="$WORK/coord-fill" HOME="$WORK/coord-fill" \
+  bash "$ROOT/skills/orchestrator/scripts/brief.sh" coordinator-takeover --name 'Coord: ops [a1b2c3]' --tty /dev/ttys950 > "$COORDFILLED" 2>/dev/null
 check "the coordinator's succession brief, filled with a real predecessor's values, lints clean" "yes|0" \
   "$([ -s "$COORDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$COORDFILLED" >/dev/null 2>&1; echo $?)"
+grep -v -- '--expect-title' "$COORDFILLED" > "$WORK/coordinator-brief-open.md"
+check "and without its close of the predecessor it is a finding" "1" \
+  "$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$WORK/coordinator-brief-open.md" 2>&1 | grep -c "succession brief without the predecessor's close")"
 
 # `/orchestrator-audit` (§52): the brief instantiated and linted, the auditor spawned with
 # the launcher's own flag and verified on the artifact. The spawn line is not only spelled:
@@ -3763,10 +3790,14 @@ AUDSUCCTPL="$ROOT/templates/auditor-succession-brief.md"
 check "no template, command or orchestrator skill teaches --successor --inherit-model" "0" \
   "$(grep -rlE -e '--successor( [^`]*)? --inherit-model' "$ROOT/templates" "$ROOT/commands" "$ROOT/skills/orchestrator" 2>/dev/null | wc -l | tr -d ' ')"
 AUDSUCCFILLED="$WORK/audit-succession-filled.md"
-[ -f "$AUDSUCCTPL" ] && sed -E -e "s#\{\{CLOSE_STEP\}\}#**Close its tab** with the launcher's close --tty /dev/ttys950 --expect-title \"Audit: tm\".#g" \
-  -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDSUCCTPL" > "$AUDSUCCFILLED"
+mkdir -p "$WORK/aud-fill/audits"; : > "$WORK/aud-fill/audits/2026-11-27-tm.md"
+[ -f "$AUDSUCCTPL" ] && PATH="$WORK/no-tmux:$PATH" ORCHESTRATOR_STATE_DIR="$WORK/aud-fill" HOME="$WORK/aud-fill" bash "$ROOT/skills/orchestrator/scripts/brief.sh" \
+  auditor-takeover --name 'Audit: tm [a1b2c3]' --tty /dev/ttys950 --report "$WORK/aud-fill/audits/2026-11-27-tm.md" --repository "$WORK" > "$AUDSUCCFILLED" 2>/dev/null
 check "the auditor's succession brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDSUCCFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDSUCCFILLED" >/dev/null 2>&1; echo $?)"
+grep -v -- '--expect-title' "$AUDSUCCFILLED" > "$WORK/audit-succession-open.md"
+check "and without its close of the predecessor it is a finding" "1" \
+  "$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$WORK/audit-succession-open.md" 2>&1 | grep -c "succession brief without the predecessor's close")"
 # The code cites §52: the section it cites exists.
 check "the design document has the audit's numbered section" "1" \
   "$(grep -c '^## 52\. The audit of an orchestrator$' "$ROOT/docs/design.md")"
@@ -8301,6 +8332,8 @@ d=$(dirname "$0")
 [ "$1" = -u ] && shift
 case "$1" in
   show) [ -f "$d/mark" ] && cat "$d/mark"; exit 0 ;;
+  # The clients of the server: the tab that shows the session, when the case names one.
+  list-clients) [ -f "$d/clients" ] && cat "$d/clients"; exit 0 ;;
   display-message) if [ "${@: -1}" = '#{window_active}' ]; then printf '%s\n' "${REC_ACTIVE:-0}"; else printf '%s\n' "${REC_SESSION:-\$1}"; fi ;;
   list-panes)
     [ -n "${REC_PANES_RAW:-}" ] && { printf '%b' "$REC_PANES_RAW"; exit 0; }
@@ -9527,16 +9560,27 @@ out=$(home spawn --dir "$WORK" --successor --prompt p --no-verify 2>&1 | tail -1
 check "an auditor's successor spawned from its home session is a window of it under the auditor's name, iTerm2 never asked" \
   "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Audit: tm][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Audit--tm-@TIME@.sh]|none" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)"
-for who in "Coord: machine|Coord:" "Audit: tm|Audit: tm"; do
-  name=${who%%|*}; expect=${who#*|}
+# The agent each role launches (an auditor's reader, the coordinator's one-off job) is a window of
+# its home session; its successor is one too, and the takeover its brief prints ends window 0.
+BRIEFTMUX="$WORK/brief-tmux"; mkdir -p "$BRIEFTMUX"
+printf '#!/bin/bash\necho "/dev/ttys900 0"\n' > "$BRIEFTMUX/tmux"; chmod +x "$BRIEFTMUX/tmux"
+for who in "Coord: machine|--coordinator-successor --title Coord:\ machine|coordinator-takeover --name 'Coord: machine' --tty /dev/ttys900" \
+           "Audit: tm|--successor|auditor-takeover --name 'Audit: tm [a1b2c3]' --tty /dev/ttys900 --report $WORK/audits/2026-11-27-tm.md --repository $WORK"; do
+  name=${who%%|*}; rest=${who#*|}; succ=${rest%%|*}; printer=${rest#*|}
   role_home "$name"
-  printf '%s\n' "\$1	9	@4	%4	/dev/ttys903	$name	✳ $name" >> "$TR/panes"
-  printf '/dev/ttys903 claude --name %s\n' "$name" >> "$TR/ps"
+  out=$(home spawn --dir "$WORK" --title "Agent: job" --prompt p --no-verify 2>/dev/null | tail -1)
+  check "an agent the ${name%%:*} session launches from its home session is a window of it, iTerm2 never asked" \
+    "/dev/ttys903|1|none" "$out|$(calls | grep -cF '[new-window][-d][-t][$1:][-n][Agent: job]')|$(asked)"
+  role_home "$name"
+  eval "home spawn --dir \"\$WORK\" $succ --prompt p --no-verify" >/dev/null 2>&1
+  # The brief printed for the successor reads window 0 on tmux, and its takeover line is run as printed.
+  step=$(eval "PATH=\"\$BRIEFTMUX:\$PATH\" ORCHESTRATOR_STATE_DIR=\"\$TSTATE\" bash \"\$ROOT/skills/orchestrator/scripts/brief.sh\" $printer" 2>/dev/null \
+    | sed -n 's/^ *[^ ]*iterm-agent\.sh \(takeover --tty .*\)$/\1/p' | head -1)
   rm -f "$TR/calls"
-  out=$(TMUX="$TSOCK,4242,1" TMUX_PANE=%4 ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_OSASCRIPT="$TR/osascript" ORCHESTRATOR_SAMPLE=/usr/bin/false \
+  out=$(eval "set -- $step"; TMUX="$TSOCK,4242,1" TMUX_PANE=%4 ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_OSASCRIPT="$TR/osascript" ORCHESTRATOR_SAMPLE=/usr/bin/false \
     ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
-    bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" takeover --tty /dev/ttys900 --expect-title "$expect" 2>&1)
-  check "the takeover of the ${name%%:*} successor kills window 0, its name checked, and moves the successor to index 0" \
+    bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" "$@" 2>&1)
+  check "the takeover the ${name%%:*} successor's brief prints kills window 0, its name checked, and moves the successor to index 0" \
     "1|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0" \
     "$(printf '%s' "$out" | grep -c '^took window 0: the predecessor.s window @0 on /dev/ttys900 was closed')|$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')|$(grep -c ttys900 "$TR/ps")"
 done
@@ -10203,6 +10247,116 @@ for who in "Coord: c" "Audit: a"; do
   check "a session named '$who' moves into a home session of its own, window 0 named after it, armed to end with its last tab" "0|1|1|1|1|0" \
     "$(sfield "$res" exit)|$(sfield "$res" OUT | grep -c '^moved: orch-abcdef12')|$(hcalls | grep -cF "[new-session][-d][-s][home][-n][$who]")|$(hcalls | grep -cF '[set-option][-s][@home-owners][ /dev/ttys970 ]')|$(hcalls | grep -cF '[set-option][-s][exit-unattached][on]')|$(sfield "$res" OUT | grep -c '^stay:')"
 done
+
+# Window 0 of the coordinator's or an auditor's home session is shown by the server's tab, which
+# only the app finds: its own move and its successor's place are that tab's; a wake or an opening
+# it launches sits beside it; a successor launched from a tab, and an auditor, start in a home
+# server of their own, armed to end with their last tab. The app is a stand-in, tmux a recorder.
+cat > "$WORK/role_probe.py" <<'PYEOF'
+import contextlib, io, os, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+scenario = sys.argv[2]
+calls = []
+# The app's tabs: the one that shows the caller's home session, a stranger's, and a new one.
+TABS = {"/dev/ttys004", "/dev/ttys800", "/dev/ttys970"}
+if scenario in ("succ-tab", "audit-tab"):
+    # Outside a home session the caller's own tty is a tab of the app's.
+    TABS.add("/dev/ttys900")
+class FakeIterm(ia.Terminal):
+    def find(self, tty):
+        return tty in TABS
+    def can_place(self, anchor, side):
+        return anchor in TABS
+    def move(self, tty, anchor, right, leftmost):
+        calls.append("iterm-move %s %s %s %s" % (tty, anchor, right, leftmost))
+        return 3
+    def create(self, command, title, place, chain, made):
+        calls.append("create %s %s %s %s" % (place.at, place.anchor, place.side, title))
+        made["session_id"] = "NEW-SESSION"
+        return "/dev/ttys970", "NEW-TAB"
+    def close_made(self, made):
+        calls.append("close_made"); return True
+ia.ITERM = FakeIterm()
+ia.time.sleep = lambda s: None
+ia.SPAWN_TIMEOUT = 0
+ia.start_home_watch = lambda socket, tty: None
+ia.read_order = lambda: None
+ia.in_home_session = lambda: scenario not in ("succ-tab", "audit-tab")
+ia.put_beside = lambda tty, anchor, side, what: calls.append("put_beside %s %s %s" % (tty, anchor, side))
+if scenario in ("succ-tab", "wake-home"):
+    # The server is made and shown by a tab: what is asked of each is what is read.
+    def make_home(socket, title, cwd, program, what):
+        calls.append("make_home %s" % title); return "/dev/ttys961"
+    def open_home_tab(socket, title, anchor, what, place=None):
+        calls.append("open_home_tab %s %s %s %s" % (title, place.at, place.anchor, place.side))
+        return "/dev/ttys970", {"terminal": ia.ITERM}
+    ia.make_home, ia.open_home_tab = make_home, open_home_tab
+out, err = io.StringIO(), io.StringIO()
+code = 0
+try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        if scenario.startswith("move"):
+            where = {"move-leftmost": ["--leftmost"], "move-tab": ["--right-of", "/dev/ttys800"],
+                     "move-unread": ["--leftmost"], "move-window": ["--right-of", "/dev/ttys800"]}[scenario]
+            ia.cmd_move(ia.args_from_line("move", ["--tty", os.environ["ORCHESTRATOR_SELF_TTY"]] + where))
+        elif scenario == "place":
+            ia.predecessor_of_caller = lambda own, tty: True
+            ia.take_predecessors_place("/dev/ttys800", "close")
+        elif scenario == "succ-tab":
+            ia.cmd_spawn(ia.args_from_line("spawn", ["--dir", sys.argv[3], "--coordinator-successor", "--title",
+                                                     "Coord: machine", "--prompt", "p", "--no-verify"]))
+        elif scenario == "wake-home":
+            # A wake reads its caller from the real process table: the line is read without the
+            # stand-ins, which the launch then reads as the caller.
+            kept = {k: os.environ.pop(k) for k in ("ORCHESTRATOR_SELF_TTY", "ORCHESTRATOR_PS_TABLE")}
+            args = ia.args_from_line("spawn", ["--dir", sys.argv[3], "--wake", "--title", "Orch: slept",
+                                               "--prompt", "p", "--no-verify"])
+            os.environ.update(kept)
+            ia.cmd_spawn(args)
+        elif scenario == "audit-tab":
+            ia.cmd_spawn(ia.args_from_line("spawn", ["--dir", sys.argv[3], "--auditor", "--title", "Audit: tm",
+                                                     "--prompt", "p", "--no-verify"]))
+except SystemExit as e:
+    code = e.code
+print("exit=%s" % code)
+print("calls=%s" % ",".join(calls))
+print("OUT:" + " ".join(out.getvalue().split()))
+print("ERR:" + " ".join(err.getvalue().split()))
+PYEOF
+roleprobe() { # <scenario> [caller's tty] [caller's name]: the launcher's call, the stand-ins' record
+  local rec="$TR"; [ "$1" = audit-tab ] && rec="$HR"
+  rm -f "$rec/calls" "$rec/clients" "$rec/owners"; printf '1\n' > "$rec/mark"
+  printf '%s\n' '$1	0	@0	%0	/dev/ttys900	home	✳ Coord: machine' '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' > "$TR/panes"
+  case "$1" in move-unread) ;; audit-tab) printf '/dev/ttys970\n' > "$rec/clients" ;; *) printf '/dev/ttys004\n' > "$rec/clients" ;; esac
+  printf '/dev/ttys900 claude --name %s\n' "${3:-Orch: home}" > "$WORK/role-probe-ps"
+  env TMUX="$TSOCK,4242,1" TMUX_PANE=%0 ORCHESTRATOR_TMUX="$rec/tmux" ORCHESTRATOR_OSASCRIPT=/usr/bin/false ORCHESTRATOR_STATE_DIR="$WORK/role-probe-state" \
+    ORCHESTRATOR_SELF_TTY="${2:-/dev/ttys900}" ORCHESTRATOR_PS_TABLE="$WORK/role-probe-ps" ORCHESTRATOR_LOGIN_SHELL=/bin/sh CLAUDE_CODE_SESSION_ID=s-suite REC_CWD="$WORK" \
+    "$py" "$WORK/role_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" "$WORK" 2>&1; }
+cp "$TR/panes" "$WORK/role-probe-panes.kept"
+res=$(roleprobe move-leftmost)
+check "window 0 moved first of its window moves the tab that shows its home session" "0|iterm-move /dev/ttys004 leftmost False True|moved /dev/ttys004 to position 3" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
+res=$(roleprobe move-tab)
+check "and moved beside a tab of the app's, that tab beside it" "0|iterm-move /dev/ttys004 /dev/ttys800 True False" "$(sfield "$res" exit)|$(sfield "$res" calls)"
+res=$(roleprobe move-unread)
+check "a home tab that cannot be read is a refusal, nothing moved" "1||1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -c 'is window 0 of a home session whose tab cannot be read; nothing was moved')"
+res=$(roleprobe move-window /dev/ttys901)
+check "a caller in another window than 0 never moves the home tab" "" "$(sfield "$res" calls)"
+res=$(roleprobe place)
+check "a successor born in window 0 of its own home takes its predecessor's place by that home's tab" "put_beside /dev/ttys004 /dev/ttys800 right" "$(sfield "$res" calls)"
+res=$(roleprobe wake-home /dev/ttys900 "Coord: machine")
+check "an orchestrator the coordinator wakes from its home session sits right of the coordinator's tab" "0|make_home Orch: slept,open_home_tab Orch: slept beside /dev/ttys004 right" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)"
+res=$(roleprobe succ-tab /dev/ttys900 "Coord: machine")
+check "a coordinator's successor launched from a tab starts in window 0 of a home server of its own, its tab first of the window" \
+  "0|make_home Coord: machine,open_home_tab Coord: machine first /dev/ttys900 left|/dev/ttys961" "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
+res=$(roleprobe audit-tab)
+check "an auditor launched from a tab starts in its own home server, left of its orchestrator, armed to end with its last tab" \
+  "create beside /dev/ttys900 left Audit: tm|1|1|1" \
+  "$(sfield "$res" calls)|$(hcalls | grep -cF '[new-session][-d][-s][home][-n][Audit: tm]')|$(hcalls | grep -cF '[set-option][-s][@home-owners][ /dev/ttys970 ]')|$(hcalls | grep -cF '[set-option][-s][exit-unattached][on]')"
+cp "$WORK/role-probe-panes.kept" "$TR/panes"; reset_homerec
 reset_homerec; printf '1\n' > "$HR/mark"
 res=$(HTMUX=/private/tmp/tmux-501/orch-x,1,0 hprobe ok)
 check "an orchestrator already in a home session stays, asking only for the mark" \

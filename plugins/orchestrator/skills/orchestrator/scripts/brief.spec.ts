@@ -349,7 +349,12 @@ test('a coordinator\'s or an auditor\'s takeover closes a predecessor\'s tab, an
     assert.ok(text.includes(`**TAKE WINDOW 0**`), role)
     assert.ok(text.includes(`${launcher} takeover --tty /dev/ttys002 --expect-title "${expect[role]}"`), role)
     assert.ok(!text.includes(' close --tty /dev/ttys002'), `${role}: no close of a window 0`)
-    assert.deepEqual(lintOf(text).filter(f => f.text.includes('predecessor\'s close')), [], role)
+    // The whole brief as printed lints clean in either place, and its close dropped is a finding.
+    for (const printed of [text, inTab.text()]) {
+      assert.deepEqual(lintOf(printed), [], role)
+      const open = printed.split('\n').filter(line => !line.includes('--expect-title')).join('\n')
+      assert.match(lintOf(open).map(f => f.text).join('\n'), /^succession brief without the predecessor's close: /, role)
+    }
     const elsewhere = world({}, () => 2)
     assert.equal(runs[role](elsewhere), 0)
     assert.ok(elsewhere.text().includes(tab[role]), `${role}: a predecessor in another window than 0 is closed`)

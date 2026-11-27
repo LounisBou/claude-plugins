@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import { CHANGED_SHOWN, changedLine, lint, main, USAGE, type Context } from './brief-lint.ts'
+import { closeStep, type Deps } from './brief.ts'
 
 const context = (over: Partial<Context> = {}): Context => ({ expected: [], shortNames: new Set(), exists: () => true, ...over })
 const texts = (text: string, over: Partial<Context> = {}): string[] => lint(text, context(over)).map(f => `${f.line}: ${f.text}`)
@@ -80,16 +81,18 @@ test('a brief whose reader confirms the takeover to its predecessor carries the 
 // clean, and each is refused once its close of the predecessor is dropped, whatever else it holds.
 const TEMPLATES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'templates')
 for (const name of ['coordinator-succession-brief.md', 'auditor-succession-brief.md']) {
-  test(`the ${name.replace('.md', '')} template, filled, carries the predecessor's close the lint holds it to`, () => {
-    // The close step is the printer's (brief.ts closeStep): a predecessor's tab, closed.
-    const filled = readFileSync(join(TEMPLATES, name), 'utf8')
-      .replace('{{CLOSE_STEP}}', '**Close its tab**:\n\n   ```\n   x close --tty x --expect-title "x"\n   ```')
-      .replace(/\{\{[A-Z_]+\}\}/g, 'x')
-    assert.deepEqual(texts(filled), [])
-    const open = filled.split('\n').filter(line => !line.includes('--expect-title')).join('\n')
-    assert.equal(open.length < filled.length, true)
-    assert.match(texts(open).join('\n'), /^1: succession brief without the predecessor's close: /)
-  })
+  // The close step is the printer's own (brief.ts closeStep), for a predecessor in a tab and for one
+  // in window 0 of a home session.
+  for (const [where, window] of [['a tab', undefined], ['window 0', 0]] as const) {
+    test(`the ${name.replace('.md', '')} template, filled, its predecessor in ${where}, carries the predecessor's close the lint holds it to`, () => {
+      const step = closeStep('x', 'x', { paneWindow: () => window } as unknown as Deps, '**Close its tab**:')
+      const filled = readFileSync(join(TEMPLATES, name), 'utf8').replace('{{CLOSE_STEP}}', step).replace(/\{\{[A-Z_]+\}\}/g, 'x')
+      assert.deepEqual(texts(filled), [])
+      const open = filled.split('\n').filter(line => !line.includes('--expect-title')).join('\n')
+      assert.equal(open.length < filled.length, true)
+      assert.match(texts(open).join('\n'), /^1: succession brief without the predecessor's close: /)
+    })
+  }
 }
 
 let dir = ''
