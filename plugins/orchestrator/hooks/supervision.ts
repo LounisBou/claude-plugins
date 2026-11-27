@@ -34,7 +34,7 @@ import {
 } from './relay.ts'
 import { receiveAsked, receiveAskedAck, receiveReply, receiveReplyAck, resendReplies } from './remote-asked.ts'
 import { planOlder, planWithdrawal } from './settle.ts'
-import { answerAskedFromPane, askedAsEntry, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
+import { answerAskedFromPane, askedAsEntry, clearFailed, closeRound, moveAsked, nameMovedAsked, withdrawAsked, withdrawAskedIds, askedGroups, askedLines, askedLook, readAsked, type Asked } from './question.ts'
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
@@ -261,6 +261,10 @@ const PANE_ROUND_POLL_MS = 2000
 const OTHER_KEY = 'other'
 const OTHER_HOTKEY = 'o'
 
+// The action over the line of the answers not delivered, which clears them. No letter is A to E.
+const CLEAR_KEY = 'clear-failed'
+const CLEAR_HOTKEY = 'x'
+
 // The words the coordinator's pane draws, in one table: the operator reads them at a glance, so
 // each says one thing and says it the same way wherever it is drawn. Where the surface draws a
 // text field, the last option is that field (`other`): its text answers the entry.
@@ -280,7 +284,9 @@ const WORDS = {
   choose: 'Choose',
   recommended: 'recommended',
   notDelivered: 'not delivered',
+  clearNotDelivered: 'clear « not delivered »',
   delivering: 'being delivered',
+  sentAgain: 'sent again to',
 } as const
 const OTHER_LABEL = WORDS.other
 
@@ -2231,7 +2237,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       let rows: { label: string; name: string; rest: string; urgency: number }[] = []
       let blocks: PaneRow[] = []
       let failed: { entry: RoundEntry; reason: string }[] = []
-      let delivering: RoundEntry[] = []
+      let delivering: Asked[] = []
       let pending = 0
       // The open questions asked with `ask` (question.ts), drawn from their fields.
       let asked: Asked[] = []
@@ -2262,11 +2268,12 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         pending = asked.length
         // An answer to a question asked with `ask` not delivered, while its asker has a row here;
         // none for an entry its sender withdrew, whose answer nobody waits for any more (a
-        // withdrawal by the coordinator not delivered stays drawn: its asker still waits).
-        failed = localAsked.filter(entry => !(entry.status === 'withdrawn' && entry.answer?.by === 'sender') && (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed')
+        // withdrawal by the coordinator not delivered stays drawn: its asker still waits), and none
+        // the operator cleared.
+        failed = localAsked.filter(entry => !(entry.status === 'withdrawn' && entry.answer?.by === 'sender') && (entry.status === 'answered' || entry.origin !== undefined) && entry.delivery?.state === 'failed' && entry.delivery.cleared === undefined)
           .map(entry => ({ entry: askedAsEntry(entry), reason: entry.delivery!.reason ?? 'no answer' }))
         // A replica's answer on its way to its owner's machine, until the owner acknowledges it.
-        delivering = localAsked.filter(entry => entry.origin !== undefined && (entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')).map(askedAsEntry)
+        delivering = localAsked.filter(entry => entry.origin !== undefined && (entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent'))
       } else if (pane.opened?.role === 'orchestrator') {
         // Bounded like every side read: an agent list that cannot be read in
         // time draws as none, never a held render.
@@ -2429,13 +2436,31 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       // notice never stands between the title and the next question.
       const answerTo = (entry: RoundEntry) => `the answer to ${entry.from}${entry.origin ? ` on ${entry.origin.machine}` : ''} (blocks: ${entry.blocks})`
       const noticeText = `${WORDS.notDelivered}: ${failed.map(notice => `${notice.reason} — ${answerTo(notice.entry)}`).join(' · ')}`
-      // An answer on its way to another machine, dim, until its sender acknowledges it.
-      const deliveringText = `${WORDS.delivering}: ${delivering.map(entry => `${answerTo(entry)} — ${entry.delivery!.state === 'pending'
-        ? 'not sent yet'
-        : `sent ${entry.delivery!.attempts} of ${ANSWER_SENDS}, not acknowledged yet`}`).join(' · ')}`
+      // An answer on its way to another machine, dim, until its sender acknowledges it; one sent
+      // again after a failure says to whom.
+      const onItsWay = (entry: Asked): string => {
+        const { state, attempts, again } = entry.delivery!
+        const to = again ? `${WORDS.sentAgain} ${entry.sender.name}` : null
+        if (state === 'pending') return to ?? 'not sent yet'
+        return `${to === null ? 'sent' : `${to},`} ${attempts} of ${ANSWER_SENDS}, not acknowledged yet`
+      }
+      const deliveringText = `${WORDS.delivering}: ${delivering.map(entry => `${answerTo(askedAsEntry(entry))} — ${onItsWay(entry)}`).join(' · ')}`
+      // The action clearing the lines not delivered the operator no longer wants, all those drawn at once.
+      const clearAction = (): Drawn => {
+        const ids = failed.map(notice => notice.entry.id)
+        return {
+          node: el.Button({
+            key: CLEAR_KEY, label: WORDS.clearNotDelivered, hotkey: CLEAR_HOTKEY,
+            onPress: () => clearFailed($, ids)
+              .catch(err => logLine($, 'supervision', `round: ${messageOf(err)}`))
+              .finally(() => $.ui.invalidate('ui.render')),
+          }),
+          rows: rowsOf(WORDS.clearNotDelivered, width),
+        }
+      }
       const notices: Drawn[] = [
         ...(delivering.length === 0 ? [] : [{ node: el.Text({ dimColor: true, children: deliveringText }), rows: rowsOf(deliveringText, width) }]),
-        ...(failed.length === 0 ? [] : [{ node: el.Text({ color: 'error', children: noticeText }), rows: rowsOf(noticeText, width) }]),
+        ...(failed.length === 0 ? [] : [clearAction(), { node: el.Text({ color: 'error', children: noticeText }), rows: rowsOf(noticeText, width) }]),
       ]
       const title = pending === 0 ? WORDS.questions : `${WORDS.questions} — ${pending} ${WORDS.pending}`
       // A rule, dim, closes the questions, a blank line below them: one row, cut at the pane's width.
