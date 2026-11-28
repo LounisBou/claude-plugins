@@ -218,7 +218,9 @@ language pack loses it in the same pull request (conventions, « One rule, one p
 
 The remedy ladder is the conventions' (« Code decides, the model judges »; decision 0005): a
 guard whose refusal says what to do, a lint, a test, a routing entry; a prompt rule only when
-the remedy needs judgment. The learning system adds two things the ladder lacks today:
+the remedy needs judgment. With a retrospective's eval spend at 0 USD (question 11, answered),
+a prompt rule cannot be proved, so a retrospective proposes none. The learning system adds two
+things the ladder lacks today:
 
 - **A new guard ships in warn.** It reports what it would refuse and lets the call through,
   as github's ready gate does (`register.ts:685`). A later retrospective reads its would-be
@@ -253,7 +255,8 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
   shows an outcome change, this design's own condition, and replaces a rule (conventions,
   « Prompts »); the plugin's budget
   in `ci/prompts.json` does not rise. A plugin with no behaviour suite (every one but the
-  orchestrator) cannot take a learned prompt rule until it has one.
+  orchestrator) cannot take a learned prompt rule until it has one. With question 11 answered
+  at 0 USD, no ablation is run and no prompt rule is proposed: this condition has no case.
 - **Measure cadence (question 4, answered).** The free measure, from the telemetry's events,
   runs weekly, per guard source and per role, never as one total. The paid outcome measure runs
   monthly and before any learned method change merges, about 120 USD a month, not at each minor
@@ -392,7 +395,7 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
 | L3 | Writers | 2, 3, 4 | L2; the orchestrator after its refoundation's state phase | one per plugin: github, norms, pr-review, implement, bugs-bot, orchestrator — 6 | a refusal code table per plugin; journal directory per plugin |
 | L4 | The `learning` plugin and its health | 15, 16 | L3 for one plugin at least | the plugin's skeleton, manifest, suite, `/learning:health` — 1 to 2 | plugin `learning`; `ci/plugins.json`, `ci/prompts.json` entries |
 | L5 | Distiller and retrospective | 6, 7, 8, 13 | L4; outcome pilot run (program phase 8) | clusters and candidates in code — 1; the retrospective's skill, its scenario, the launch from implement's close — 1; from the orchestrator — 1 | contract `candidate` v1 |
-| L6 | Promotion | 9, 10, 14, 17 | L5 | warn-then-enforce in core — 1; rule ablation in the evals harness (`scripts/lib/outcome/`) — 1; `/norms:learn` as an entry to the distiller — 1; a caps entry for retrospectives — with the harness. Built: the outcomes reader of the guards in warn (`plugins/learning/skills/learning/scripts/outcomes.ts`, the forge through `gh`); the rule ablation (`scripts/lib/outcome/ablation.ts`, `npm run ablation`), paired by case with its smallest detectable effect, tested with fakes, no paid run recorded | `evals/` caps entry |
+| L6 | Promotion | 9, 10, 14, 17 | L5 | warn-then-enforce in core — 1; rule ablation in the evals harness (`scripts/lib/outcome/`) — 1; `/norms:learn` as an entry to the distiller — 1; no caps entry for retrospectives is due (question 11, answered: 0 USD). Built: the outcomes reader of the guards in warn (`plugins/learning/skills/learning/scripts/outcomes.ts`, the forge through `gh`); the rule ablation (`scripts/lib/outcome/ablation.ts`, `npm run ablation`), paired by case with its smallest detectable effect, tested with fakes, no paid run recorded, not used while that answer stands | — |
 | L7 | Forget and check | 11, 12 | L6 and two windows of data | 1 to 2. The code is built and tested on fixtures (`afterLanding`, `isSilentGuard`, `FORGET_CONTRACT` in core; `plugins/learning/skills/learning/scripts/forget.ts`); its proof on live data needs two 30-day windows of journals after a remedy merges | — |
 | L8 | Canary after the cutover: not built (question 8, answered: no canary) | — | — | none | — |
 
@@ -408,7 +411,7 @@ under 1,200 tokens.
 | Capture | no prompt token; one file of under 1 KB per event; bounded per plugin | the journal's size, in health |
 | Health | no model token | — |
 | A retrospective | its skill (under 1,200 tokens) and a digest under a fixed ceiling (about 4,000 tokens), then the files its remedies touch; an estimate of 40,000 to 80,000 tokens a run, to be measured | `npm run context` for the start; `deck.json` for the run |
-| A learned prompt rule | one case, two variants, three runs each: about 6 × 0.31–0.42 USD, so 2 to 3 USD (the behaviour suite's per-run cost, `program-design.md`, « Eval spend caps ») | the run's report |
+| A learned prompt rule | none is proposed while a retrospective's eval spend is 0 USD (question 11, answered); its ablation, one case, two variants, three runs each, was estimated at about 6 × 0.31–0.42 USD, so 2 to 3 USD (the behaviour suite's per-run cost, `program-design.md`, « Eval spend caps ») | — |
 | A retrospective's eval spend | 0 USD (question 11, answered): code remedies only, no paid eval | — |
 | A release measure | the outcome measure's cap, 120 USD (`evals/outcome/caps.json`), monthly and before a learned method change merges (question 4), about 120 USD a month | the harness's ledger |
 
