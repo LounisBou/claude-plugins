@@ -205,7 +205,7 @@ test('a row carries the destinations its machine is reached by: its user at the 
     await sendRow(fx.dollar, 's-one')
     expect(parseRemoteRow(fx.sent[0]!.text)!.reach).toEqual(['geo@203.0.113.7', 'geo@192.168.1.20', 'geo@bench-mac.local'])
     // Learnt once per bound: a second send asks the router nothing more.
-    fx.files.set(ROW, storeRow({ context_percent: 60, context_tokens: 600000 }))
+    fx.files.set(ROW, storeRow({ context_percent: 55, context_tokens: 550000 }))
     await sendRow(fx.dollar, 's-one')
     expect(fx.sent.length).toBe(2)
     expect(parseRemoteRow(fx.sent[1]!.text)!.reach).toEqual(['geo@203.0.113.7', 'geo@192.168.1.20', 'geo@bench-mac.local'])

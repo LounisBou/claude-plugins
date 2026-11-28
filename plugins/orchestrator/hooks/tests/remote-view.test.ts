@@ -659,7 +659,7 @@ test('no machine file: the destination a row publishes, proved by its host name,
 test('a machine the file lacks is added beside the others, found by an alias or a login whose name is the machine\'s, never by another host', async () => {
   const fx = fake({ hosts: { izno: 'IznoServer', 'geo@mini-tech2.local': FAR } }, machines({ minitech: 'me@minitech' }))
   fx.files.set(`${HOME}/.ssh/config`, 'Host *\n  ServerAliveInterval 60\nHost prod01 geo-prod01\n  HostName 192.0.2.1\nHost izno\n  User izno\n')
-  fx.files.set(`${HOME}/.env`, 'MINITECH_LOGIN=geo\nMINITECH_PASSWORD=not-a-login\nPROD_LOGIN=root\n')
+  fx.files.set(`${HOME}/.env`, 'MINITECH_LOGIN=geo\nMINITECH_HOST=not-a-login\nPROD_LOGIN=root\n')
   await syncViews(fx.dollar, [row(), row({ name: 'Orch: two', machine: FAR, home: OTHER })], newViewsMemory(), { now: NOW, discover: true })
   expect(probes(fx.runs)).toEqual(['izno', 'geo@mini-tech2', 'geo@mini-tech2.local'])
   expect(parseMachines(fx.files.get(FILE)!)).toEqual(new Map([['iznoserver', 'izno'], ['minitech', 'me@minitech'], [FAR, 'geo@mini-tech2.local']]))
@@ -726,7 +726,7 @@ test('the probe and the listing ask for no password, start nothing and read the 
 
 test('the sources of the candidates: aliases without patterns, logins only, names matched on their letters', () => {
   expect(sshAliases('Host *\nHost staging geo-staging api.example.dev\n  HostName x\nhost izno\nHost !bad -oX\n')).toEqual(['staging', 'geo-staging', 'api.example.dev', 'izno'])
-  expect(envLogins('export A_LOGIN="ann"\nB_PASSWORD=secret\nC_LOGIN=bad value\nD_LOGIN=dee\n')).toEqual([{ name: 'A', login: 'ann' }, { name: 'D', login: 'dee' }])
+  expect(envLogins('export A_LOGIN="ann"\nB_PORT=2222\nC_LOGIN=bad value\nD_LOGIN=dee\n')).toEqual([{ name: 'A', login: 'ann' }, { name: 'D', login: 'dee' }])
   expect([namesMatch('izno', 'IznoServer'), namesMatch('MINITECH', 'mini-tech2'), namesMatch('prod01', 'mini-tech2'), namesMatch('mi', 'mini-tech2')]).toEqual([true, true, false, false])
   expect(candidatesFor(FAR, [FAR_DEST, '-oProxy'], ['minitech', 'izno'], [{ name: 'MINITECH', login: 'geo' }])).toEqual([FAR_DEST, 'minitech', 'geo@mini-tech2', 'geo@mini-tech2.local'])
   expect(machinesText(new Map([['b', 'y'], ['a', 'x']]))).toBe('{\n  "version": 1,\n  "machines": {\n    "a": "x",\n    "b": "y"\n  }\n}\n')
