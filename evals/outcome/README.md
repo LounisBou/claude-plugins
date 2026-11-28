@@ -44,9 +44,11 @@ graded » with its reason, never a figure that measures the bench rather than th
 - a judgment gets at most `judgeUsd`, and none once the case-and-arm cap is spent;
 - a stopped arm is still graded on what it left, and reported as stopped.
 
-`retrospective` is the eval spend of one learning retrospective: `runUsd` for the whole of it,
-`promptRules` the prompt-rule candidates it may prove. A rule's ablation reads it: each of its two
-variants gets `runUsd / promptRules / 2` as its cost ceiling.
+A `retrospective` entry caps the eval spend of one learning retrospective: `runUsd` for the whole
+of it, `promptRules` the prompt-rule candidates it may prove; a rule's ablation gives each of its
+two variants `runUsd / promptRules / 2` as its cost ceiling. The file holds none: that spend is
+0 USD (`docs/specs/learning-design.md`, question 11), so `npm run ablation` refuses and runs no
+eval.
 
 ## A prompt rule's ablation
 

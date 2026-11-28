@@ -352,14 +352,14 @@ describe('outcome evals: inputs', () => {
     assert.throws(() => parseCapsFile({ version: 1, runs: { ...runs, pilot: { ...CAPS, judgeUsd: 5 } } }), /nothing/)
   })
 
-  it('reads the cap of a retrospective where the file holds one, and the repository\'s file holds it', () => {
+  it('reads the cap of a retrospective where the file holds one, and the repository\'s file holds none', () => {
     const runs = { pilot: CAPS, measure: CAPS }
     assert.equal(parseCapsFile({ version: 1, runs }).retrospective, undefined)
     assert.deepEqual(parseCapsFile({ version: 1, runs, retrospective: { runUsd: 10, promptRules: 3 } }).retrospective, { runUsd: 10, promptRules: 3 })
     assert.throws(() => parseCapsFile({ version: 1, runs, retrospective: 10 }), /retrospective: must be an object/)
     assert.throws(() => parseCapsFile({ version: 1, runs, retrospective: { runUsd: 0, promptRules: 3 } }), /positive amount/)
     assert.throws(() => parseCapsFile({ version: 1, runs, retrospective: { runUsd: 10, promptRules: 1.5 } }), /positive count/)
-    assert.deepEqual(parseCapsFile(JSON.parse(readFileSync('evals/outcome/caps.json', 'utf8'))).retrospective, { runUsd: 10, promptRules: 3 })
+    assert.equal(parseCapsFile(JSON.parse(readFileSync('evals/outcome/caps.json', 'utf8'))).retrospective, undefined)
   })
 
   it('selects the named case, or the first ones of the file', () => {
