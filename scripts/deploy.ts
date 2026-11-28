@@ -20,7 +20,8 @@
 //
 // Every run also installs, at the user scope, each plugin of the marketplace `settings.json` enables
 // and the host does not have, the run that installs no commit included: settings arrive on their own.
-// A plugin of INSTALL_STEPS then has its install script run, while what it installs is not there.
+// A plugin of INSTALL_STEPS then has its install script run, while what it installs is not there:
+// outside the deploy's lock, under one of its own, and never by a rollback.
 //
 // Green is a successful run of the `ci` workflow (WORKFLOW_PATH) for a push to `main`: its Linux
 // jobs; the night's macOS run does not hold an install back. `installed.json` (version 1) is what
@@ -50,6 +51,8 @@ const STEP_TIMEOUT_MS = INSTALL_TIMEOUT_MS + 60_000
 const LOCK_STALE_MS = 6 * 60 * 60_000
 const SHA = /^[0-9a-f]{40}$/
 const REPO = /^[\w.-]+\/[\w.-]+$/
+/** Beside the state: what the install steps' own lock is the lock of. */
+const STEP_LOCK = 'install-step'
 /** A write in flight, left only by a run that died, since a run holds the lock. */
 const TEMPORARY = '.tmp-'
 
@@ -289,6 +292,17 @@ function isStale(path: string, host: Host): boolean {
   return stat !== undefined && host.now() - stat.mtimeMs >= LOCK_STALE_MS
 }
 
+/** Whether a live run holds the lock at `path`; one left by a run that died is removed. */
+function isHeld(path: string, host: Host, io: Io): boolean {
+  if (!existsSync(path)) return false
+  const judged = readText(path)
+  if (!isStale(path, host)) return true
+  // Only the lock judged: a run that took it over meanwhile wrote its own pid.
+  if (readText(path) === judged) rmSync(path, { force: true })
+  io.err('deploy: removed the lock of a run that died')
+  return false
+}
+
 function writeState(paths: Paths, state: State): void {
   writeAtomic(paths.state, `${JSON.stringify(state, null, 2)}\n`)
 }
@@ -391,69 +405,110 @@ function enabledIn(config: string): string[] {
   return Object.keys(enabled).filter(id => id.endsWith(`@${MARKETPLACE}`) && enabled[id] === true)
 }
 
-/** The plugins `config` enables with no installation at the user scope among those `installed` lists. */
-function absent(config: string, installed: () => readonly Installed[]): string[] {
-  const enabled = enabledIn(config)
+/** What the settings enable, or why they cannot be read: the deploy then goes on, enabling nothing, and its run fails. */
+interface Enabled {
+  readonly ids: readonly string[]
+  readonly problem?: string
+}
+
+function readEnabled(config: string): Enabled {
+  try {
+    return { ids: enabledIn(config) }
+  } catch (error) {
+    return { ids: [], problem: messageOf(error) }
+  }
+}
+
+/** The ids the host has installed at the user scope, among those `installed` lists. */
+function atUserScope(installed: readonly Installed[]): Set<string> {
+  return new Set(installed.filter(plugin => plugin.scope === 'user').map(plugin => plugin.id))
+}
+
+/** The `enabled` plugins with no installation at the user scope. */
+function absent(enabled: readonly string[], installed: () => readonly Installed[]): string[] {
   if (enabled.length === 0) return []
-  const atUser = new Set(installed().filter(plugin => plugin.scope === 'user').map(plugin => plugin.id))
-  return enabled.filter(id => !atUser.has(id))
+  const present = atUserScope(installed())
+  return enabled.filter(id => !present.has(id))
 }
 
 /** Installs each enabled plugin the host does not have; returns the failures, one never holding back the next. */
-function installAbsent(paths: Paths, host: Host, state: State, installed: readonly Installed[], io: Io): string[] {
+function installAbsent(host: Host, state: State, enabled: readonly string[], present: readonly Installed[], io: Io): string[] {
   const failures: string[] = []
-  try {
-    for (const id of absent(paths.config, () => installed)) {
-      if (!carries(state, id)) {
-        io.err(`deploy: ${id} is enabled and not in ${(state.history[0]?.commit ?? '').slice(0, 7)}: not installed`)
-        continue
-      }
-      try {
-        host.installPlugin(id)
-        io.out(`deploy: installed ${id}, enabled in settings.json`)
-      } catch (error) {
-        failures.push(`${id}: ${messageOf(error)}`)
-      }
+  const tried: string[] = []
+  for (const id of absent(enabled, () => present)) {
+    if (!carries(state, id)) {
+      io.err(`deploy: ${id} is enabled and not in ${(state.history[0]?.commit ?? '').slice(0, 7)}: not installed`)
+      continue
     }
-  } catch (error) {
-    failures.push(messageOf(error))
+    try {
+      host.installPlugin(id)
+      tried.push(id)
+    } catch (error) {
+      failures.push(`${id}: ${messageOf(error)}`)
+    }
+  }
+  if (tried.length === 0) return failures
+  // The host's list, not its exit status, says what it installed.
+  const listed = atUserScope(host.installed())
+  for (const id of tried) {
+    if (listed.has(id)) io.out(`deploy: installed ${id}, enabled in settings.json`)
+    else failures.push(`${id}: the host did not install it (not listed at the user scope)`)
   }
   return failures
+}
+
+type InstallStep = (typeof INSTALL_STEPS)[number]
+
+/** The configuration directory a step installs into: the one that owns the plugins, whose siblings link what it holds. */
+function stepConfig(paths: Paths): string {
+  return sharingConfigs(paths.config)[0] ?? paths.config
+}
+
+function isDone(step: InstallStep, paths: Paths, io: Io): boolean {
+  return step.done({ ...io.env, CLAUDE_CONFIG_DIR: stepConfig(paths) })
+}
+
+/** The steps to run on the installed commit: their plugin carried by it, enabled and installed, and what they install not there. */
+function dueSteps(paths: Paths, host: Host, enabled: readonly string[], io: Io): InstallStep[] {
+  const state = readState(paths)
+  if (state === undefined) return []
+  return INSTALL_STEPS.filter(step => {
+    const id = `${step.plugin}@${MARKETPLACE}`
+    return carries(state, id) && enabled.includes(id) && !isDone(step, paths, io) && host.installed().some(plugin => plugin.id === id)
+  })
 }
 
 /**
- * Runs the install script of each plugin of INSTALL_STEPS that is enabled, installed, in the installed
- * commit and not done, for the configuration directory that owns the plugins (its siblings link what it
- * holds). Run after the plugins, at every run: a failure leaves no update pending and returns here.
+ * Runs the `due` steps under their own lock, so one that hangs holds back no deploy and no rollback.
+ * Returns their failures, one holding back no other and leaving no update pending; undefined when
+ * another run's steps are running.
  */
-function installSteps(paths: Paths, host: Host, io: Io): string[] {
-  let state: State | undefined
-  try {
-    state = readState(paths)
-  } catch {
-    // The run read it first and has said why it cannot.
-    return []
+function runSteps(paths: Paths, host: Host, commit: string, due: readonly InstallStep[], io: Io): string[] | undefined {
+  const guard = join(paths.root, STEP_LOCK)
+  if (isHeld(lockOf(guard), host, io)) {
+    io.out('deploy: an install step is running')
+    return undefined
   }
-  const commit = state?.history[0]?.commit
-  if (state === undefined || commit === undefined) return []
-  const owner = sharingConfigs(paths.config)[0] ?? paths.config
-  const failures: string[] = []
-  for (const step of INSTALL_STEPS) {
-    const id = `${step.plugin}@${MARKETPLACE}`
-    try {
-      if (!carries(state, id) || step.done({ ...io.env, CLAUDE_CONFIG_DIR: owner })) continue
-      if (!enabledIn(paths.config).includes(id) || !host.installed().some(plugin => plugin.id === id)) continue
-      const said = host.installStep(join(paths.root, commit, step.script), owner)
-      io.out(`deploy: ${id} install step: ${said.trim().split('\n').at(-1) ?? ''}`)
-    } catch (error) {
-      failures.push(`${id} install step: ${messageOf(error)}`)
+  return withLock(guard, () => {
+    const failures: string[] = []
+    for (const step of due) {
+      const id = `${step.plugin}@${MARKETPLACE}`
+      try {
+        // Read again under the lock: a run that held it may have done it.
+        if (isDone(step, paths, io)) continue
+        const config = stepConfig(paths)
+        const said = host.installStep(join(paths.root, commit, step.script), config)
+        io.out(`deploy: ${id} install step: ${said.trim().split('\n').at(-1) ?? ''}`)
+      } catch (error) {
+        failures.push(`${id} install step: ${messageOf(error)}`)
+      }
     }
-  }
-  return failures
+    return failures
+  }, { waitMs: 0, staleMs: LOCK_STALE_MS, now: host.now })
 }
 
 /** Points the marketplace and the `current` link at `commit`'s directory, installs the enabled plugins it lacks and updates the others. */
-function install(paths: Paths, host: Host, state: State, io: Io): State {
+function install(paths: Paths, host: Host, state: State, enabled: readonly string[], io: Io): State {
   const commit = state.history[0]?.commit ?? ''
   const dir = join(paths.root, commit)
   try {
@@ -472,7 +527,7 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
   const ours = (): Installed[] => host.installed().filter(plugin => plugin.id.endsWith(`@${MARKETPLACE}`))
   // Listed before the installs: a plugin installed now is at the commit's version already.
   const present = ours()
-  const failures = installAbsent(paths, host, state, present, io)
+  const failures = installAbsent(host, state, enabled, present, io)
   for (const plugin of present) {
     if (!carries(state, plugin.id)) {
       io.err(`deploy: ${plugin.id} is not in ${commit.slice(0, 7)}: left as installed`)
@@ -493,7 +548,7 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
   return done
 }
 
-function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): void {
+function deploy(paths: Paths, host: Host, args: readonly string[], enabled: readonly string[], io: Io): void {
   const repo = optionOf(args, '--repo') ?? REPOSITORY
   if (!REPO.test(repo)) throw new Error(`--repo takes owner/name, not ${JSON.stringify(repo)}`)
   const only = optionOf(args, '--commit')
@@ -508,14 +563,14 @@ function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): void
   }
   const installed = state?.history[0]?.commit === green
   if (installed || (only === undefined && !isNew(state, green))) {
-    if (state?.pending === true) install(paths, host, state, io)
+    if (state?.pending === true) install(paths, host, state, enabled, io)
     else {
       io.out(`deploy: ${green.slice(0, 7)}, the newest green commit, is ${installed ? 'installed' : 'not deployed again (rolled back from)'}`)
       const current = state?.history[0]?.commit
       if (state !== undefined && current !== undefined) {
         refreshLaunchers(paths, join(paths.root, current), io)
         // Settings change without a commit here: a plugin they now enable is installed by this run.
-        if (absent(paths.config, host.installed).some(id => carries(state, id))) install(paths, host, state, io)
+        if (absent(enabled, host.installed).some(id => carries(state, id))) install(paths, host, state, enabled, io)
       }
     }
     return
@@ -540,7 +595,7 @@ function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): void
     pending: true,
     plugins: versionsIn(dir),
   }
-  const done = install(paths, host, next, io)
+  const done = install(paths, host, next, enabled, io)
   try {
     prune(paths, done, host.now())
   } catch (error) {
@@ -548,7 +603,7 @@ function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): void
   }
 }
 
-function rollback(paths: Paths, host: Host, io: Io): void {
+function rollback(paths: Paths, host: Host, enabled: readonly string[], io: Io): void {
   const state = readState(paths)
   const [current, previous] = state?.history ?? []
   if (state === undefined || current === undefined || previous === undefined || !existsSync(join(paths.root, previous.commit))) {
@@ -556,12 +611,87 @@ function rollback(paths: Paths, host: Host, io: Io): void {
   }
   const left = join(paths.root, current.commit)
   if (existsSync(left)) utimesSync(left, new Date(host.now()), new Date(host.now()))
-  install(paths, host, { ...state, history: state.history.slice(1), skipped: [...state.skipped, current.commit], plugins: versionsIn(join(paths.root, previous.commit)) }, io)
+  install(paths, host, { ...state, history: state.history.slice(1), skipped: [...state.skipped, current.commit], plugins: versionsIn(join(paths.root, previous.commit)) }, enabled, io)
 }
 
 function prune(paths: Paths, state: State, now: number): void {
   const dirs = readdirSync(paths.root).filter(name => SHA.test(name)).map(name => ({ name, at: lstatSync(join(paths.root, name)).mtimeMs }))
   for (const dir of prunable(state, dirs, now)) rmSync(join(paths.root, dir), { recursive: true, force: true })
+}
+
+/** What the part of a run made under the deploy's lock leaves to the rest of it. */
+interface Outcome {
+  readonly failures: readonly string[]
+  /** The install steps to run once the lock is released, on the commit installed then. */
+  readonly due: readonly InstallStep[]
+  readonly commit: string
+  /** The last failure the state held when the lock was released. */
+  readonly seen: State['lastError']
+}
+
+/**
+ * The deploy or the rollback, under the deploy's lock. The state's last failure is cleared here only
+ * by a run with no failure and no step to run, and kept while one is to run, across a new commit's
+ * state too. A rollback runs none: the next run does.
+ */
+function underLock(paths: Paths, host: Host, args: readonly string[], io: Io): Outcome {
+  for (const name of readdirSync(paths.root)) if (name.includes(TEMPORARY)) remove(join(paths.root, name))
+  const enabled = readEnabled(paths.config)
+  const failures: string[] = []
+  const back = args.includes('--rollback')
+  let before: State['lastError']
+  try {
+    before = readState(paths)?.lastError
+    if (back) rollback(paths, host, enabled.ids, io)
+    else deploy(paths, host, args, enabled.ids, io)
+  } catch (error) {
+    failures.push(messageOf(error))
+  }
+  if (enabled.problem !== undefined) failures.push(enabled.problem)
+  let due: InstallStep[] = []
+  try {
+    if (!back) due = dueSteps(paths, host, enabled.ids, io)
+  } catch (error) {
+    // What stopped the deploy (an unreadable state, a host that does not answer) stops this too: said once.
+    if (!failures.includes(messageOf(error))) failures.push(messageOf(error))
+  }
+  if (failures.length > 0) recordFailure(paths, failures.join('; '), host.now(), io)
+  else if (due.length === 0) clearFailure(paths)
+  if (due.length === 0) return { failures, due, commit: '', seen: undefined }
+  if (failures.length === 0) keepFailure(paths, before)
+  const state = readState(paths)
+  return { failures, due, commit: state?.history[0]?.commit ?? '', seen: state?.lastError }
+}
+
+/** Writes `failure` back into a state that carries none. */
+function keepFailure(paths: Paths, failure: State['lastError']): void {
+  const state = readState(paths)
+  if (failure !== undefined && state !== undefined && state.lastError === undefined) writeState(paths, { ...state, lastError: failure })
+}
+
+function clearFailure(paths: Paths): void {
+  const state = readState(paths)
+  if (state?.lastError !== undefined) writeState(paths, withoutFailure(state))
+}
+
+/**
+ * Writes what the steps ended on, the deploy's lock taken again: their failures beside the run's, or,
+ * for a run without any, the last failure cleared unless another run recorded one while they ran.
+ */
+function settle(paths: Paths, host: Host, outcome: Outcome, steps: readonly string[], io: Io): void {
+  try {
+    isHeld(lockOf(paths.state), host, io)
+    withLock(paths.state, () => {
+      if (steps.length > 0) recordFailure(paths, [...outcome.failures, ...steps].join('; '), host.now(), io)
+      else if (outcome.failures.length === 0) {
+        const last = readState(paths)?.lastError
+        if (last?.at === outcome.seen?.at && last?.message === outcome.seen?.message) clearFailure(paths)
+      }
+    }, { staleMs: LOCK_STALE_MS })
+  } catch (error) {
+    // The step stays due while it has not succeeded: the next run runs it and records it again.
+    io.err(`deploy: what the install step ended on was not recorded in installed.json: ${messageOf(error)}`)
+  }
 }
 
 export function run(args: readonly string[], io: Io, host: Host = processHost()): number {
@@ -575,39 +705,20 @@ export function run(args: readonly string[], io: Io, host: Host = processHost())
       return 0
     }
     mkdirSync(root, { recursive: true, mode: 0o700 })
-    const lock = lockOf(paths.state)
-    if (existsSync(lock)) {
-      const judged = readText(lock)
-      if (isStale(lock, host)) {
-        // Only the lock judged: a run that took it over meanwhile wrote its own pid.
-        if (readText(lock) === judged) rmSync(lock, { force: true })
-        io.err('deploy: removed the lock of a run that died')
-      } else if (args.includes('--rollback')) {
+    if (isHeld(lockOf(paths.state), host, io)) {
+      if (args.includes('--rollback')) {
         io.err('deploy: another deploy is running: roll back once it ends')
         return 1
-      } else {
-        io.out('deploy: another deploy is running')
-        return 0
       }
-    }
-    return withLock(paths.state, () => {
-      for (const name of readdirSync(root)) if (name.includes(TEMPORARY)) remove(join(root, name))
-      const failures: string[] = []
-      try {
-        if (args.includes('--rollback')) rollback(paths, host, io)
-        else deploy(paths, host, args, io)
-      } catch (error) {
-        failures.push(messageOf(error))
-      }
-      failures.push(...installSteps(paths, host, io))
-      if (failures.length > 0) {
-        recordFailure(paths, failures.join('; '), host.now(), io)
-        throw new Error(failures.join('; '))
-      }
-      const state = readState(paths)
-      if (state?.lastError !== undefined) writeState(paths, withoutFailure(state))
+      io.out('deploy: another deploy is running')
       return 0
-    }, { waitMs: 0, staleMs: LOCK_STALE_MS, now: host.now })
+    }
+    const outcome = withLock(paths.state, () => underLock(paths, host, args, io), { waitMs: 0, staleMs: LOCK_STALE_MS, now: host.now })
+    const steps = outcome.due.length === 0 ? undefined : runSteps(paths, host, outcome.commit, outcome.due, io)
+    if (steps !== undefined) settle(paths, host, outcome, steps, io)
+    const failures = [...outcome.failures, ...(steps ?? [])]
+    if (failures.length > 0) throw new Error(failures.join('; '))
+    return 0
   } catch (error) {
     io.err(`deploy: ${error instanceof Error ? error.message : String(error)}`)
     return 1

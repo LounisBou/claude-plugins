@@ -63,6 +63,8 @@ interface Fake {
   failInstall: string
   /** The install step throws. */
   failStep: boolean
+  /** What happens while the install step runs: another run, started meanwhile. */
+  during: (() => void) | undefined
   /** The configuration directory each install step ran for, in order. */
   readonly steps: string[]
 }
@@ -86,6 +88,7 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
     dead: new Set(),
     failInstall: '',
     failStep: false,
+    during: undefined,
     steps: [],
     host: {
       api: path => {
@@ -131,6 +134,9 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
       // As drift's: what it leaves is the pinned Playwright, whole, in the configuration directory.
       installStep: (script, config) => {
         self.calls.push(`step ${script.slice(script.indexOf('plugins'))}`)
+        const meanwhile = self.during
+        self.during = undefined
+        meanwhile?.()
         if (self.failStep) throw new Error('npm ci failed')
         self.steps.push(config)
         playwrightAt(config, PLAYWRIGHT_VERSION)
@@ -725,6 +731,37 @@ describe('the plugins enabled in settings.json', () => {
     assert.ok(f.calls.includes(`update ${ALPHA}`))
     assert.match(box.err.join('\n'), /settings\.json/)
   })
+
+  it('leave a new commit installed with nothing pending when settings.json cannot be read, and no later run installs it again', () => {
+    const box = sandbox()
+    const f = fake()
+    deploy(box, f.host)
+    writeFileSync(join(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'settings.json'), '<<<<<<< Updated upstream')
+    f.green = B
+    assert.equal(deploy(box, f.host), 1)
+    assert.equal(stateIn(box).history[0]?.commit, B)
+    assert.equal(stateIn(box).pending, false)
+    assert.match(stateIn(box).lastError?.message ?? '', /settings\.json is not JSON/)
+    f.calls.length = 0
+    assert.equal(deploy(box, f.host), 1)
+    assert.equal(f.calls.length, 1)
+  })
+
+  it('are read as not installed when the install exits 0 and the host lists none: said, left pending, at every run', () => {
+    const box = sandbox()
+    const f = fake()
+    f.tree = ['alpha', 'beta']
+    enable(box, { [BETA]: true })
+    const host: Host = { ...f.host, installPlugin: () => {} }
+    for (const _run of [1, 2]) {
+      box.err.length = 0
+      assert.equal(deploy(box, host), 1)
+      assert.match(box.err.join('\n'), /beta@lounisbou: the host did not install it.*run npm run deploy again/)
+      assert.equal(stateIn(box).pending, true)
+      assert.match(stateIn(box).lastError?.message ?? '', /did not install it/)
+    }
+    assert.equal(box.out.some(line => line.includes(`installed ${BETA}`)), false)
+  })
 })
 
 describe('the install step', () => {
@@ -795,6 +832,82 @@ describe('the install step', () => {
     assert.equal(deploy(box, f.host), 1)
     assert.ok(f.calls.includes(STEP))
     assert.match(stateIn(box).lastError?.message ?? '', /update of alpha@lounisbou refused.*drift@lounisbou install step: npm ci failed/)
+  })
+
+  it('does not run for a drift the installed commit does not carry', () => {
+    const { box, f } = withDrift()
+    f.tree = ['alpha']
+    f.versions.set(DRIFT, '1.2.3')
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(f.calls.includes(STEP), false)
+  })
+
+  it('is not run by a rollback, which exits 0, and the next run runs it without going back again', () => {
+    const { box, f, config } = withDrift()
+    deploy(box, f.host)
+    f.green = B
+    deploy(box, f.host)
+    rmSync(join(config, 'playwright'), { recursive: true })
+    f.failStep = true
+    f.calls.length = 0
+    assert.equal(deploy(box, f.host, '--rollback'), 0)
+    assert.equal(f.calls.includes(STEP), false)
+    f.failStep = false
+    assert.equal(deploy(box, f.host), 0)
+    assert.ok(f.calls.includes(STEP))
+    assert.deepEqual(stateIn(box).history.map(entry => entry.commit), [A])
+    assert.deepEqual(stateIn(box).skipped, [B])
+  })
+
+  it('holds no lock of the deploy: a rollback made while it runs is not refused', () => {
+    const { box, f } = withDrift()
+    enable(box, { [DRIFT]: false })
+    deploy(box, f.host)
+    f.green = B
+    deploy(box, f.host)
+    enable(box, { [DRIFT]: true })
+    f.versions.set(DRIFT, '1.2.3+bbbbbbb')
+    let rolledBack: number | undefined
+    f.during = () => { rolledBack = deploy(box, f.host, '--rollback') }
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(rolledBack, 0)
+    assert.equal(stateIn(box).history[0]?.commit, A)
+  })
+
+  it('lets a run made while it runs deploy a new commit, which starts no second one and keeps the last failure', () => {
+    const { box, f } = withDrift()
+    f.failStep = true
+    deploy(box, f.host)
+    let meanwhile: { code: number; steps: number; state: State } | undefined
+    f.during = () => {
+      f.green = B
+      f.calls.length = 0
+      const code = deploy(box, f.host)
+      meanwhile = { code, steps: f.calls.filter(call => call === STEP).length, state: stateIn(box) }
+    }
+    assert.equal(deploy(box, f.host), 1)
+    assert.equal(meanwhile?.code, 0)
+    assert.equal(meanwhile?.state.history[0]?.commit, B)
+    assert.equal(meanwhile?.steps, 0)
+    assert.match(meanwhile?.state.lastError?.message ?? '', /drift@lounisbou install step: npm ci failed/)
+    assert.ok(box.out.includes('deploy: an install step is running'))
+    assert.match(stateIn(box).lastError?.message ?? '', /drift@lounisbou install step: npm ci failed/)
+  })
+
+  it('succeeding, keeps the failure another run recorded while it ran', () => {
+    const { box, f } = withDrift()
+    f.during = () => { deploy(box, f.host, '--rollback') }
+    assert.equal(deploy(box, f.host), 0)
+    assert.match(stateIn(box).lastError?.message ?? '', /no earlier commit/)
+  })
+
+  it('takes over the step lock of a run that died', () => {
+    const { box, f } = withDrift()
+    mkdirSync(box.root, { recursive: true })
+    writeFileSync(join(box.root, 'install-step.lock'), '999999\n')
+    f.dead.add(999999)
+    assert.equal(deploy(box, f.host), 0)
+    assert.ok(f.calls.includes(STEP))
   })
 
   it('installs into the directory that owns the plugins, whichever configuration runs the deploy', () => {

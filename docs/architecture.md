@@ -169,14 +169,19 @@ later run installs one).
 At each run, no-op runs included (a machine's settings change without a commit here), every plugin
 of the marketplace that the `settings.json` of the deploy's configuration directory enables and the
 host does not have at the user scope is installed, when the installed commit carries it; a failed
-install leaves the deploy pending, like a failed update. How `settings.json` reaches a machine is not
+install, one the host's list does not show afterwards included, leaves the deploy pending, like a
+failed update. A `settings.json` that cannot be read installs nothing and fails the run, which
+leaves nothing pending: the commit and the updates go on. How `settings.json` reaches a machine is not
 the deploy's: it pulls nothing.
 
 Of the plugins' `install.sh`, which set up what the host's plugin update does not, `deploy.ts` runs
 only those its `INSTALL_STEPS` lists, each one asking nothing and writing no setting: drift's, for an
 enabled and installed drift, while the Playwright it pins is not installed whole, in the directory
 that owns the `plugins` (a sibling links to it when its launcher next starts). It runs after the
-plugins; a failure holds none of them back, is the run's last failure and is retried by the next
+plugins, the deploy's lock released, under a lock of its own: while it runs, however long, another
+run deploys and rolls back, and starts no second one (a scheduler that starts no run while one is
+running, as launchd does, waits for its deadline). A rollback runs none. A failure holds no plugin
+back, is the run's last failure, kept while the step is still to run, and is retried by the next
 run. The others are not run (the orchestrator's state directory and short commands, the status bar's
 copy of its script in the config directory; github's and pr-review's sign in). One copy it does keep
 current itself: at each run, no-op runs included, it
