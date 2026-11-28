@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { describe, it } from 'node:test'
+import { PLAYWRIGHT_VERSION } from '../packages/core/src/playwright.ts'
 import { DEPLOYS_DIR, greenCommit, isNew, KEEP_MS, MARKETPLACE, parseState, prunable, run, sharingConfigs, stamped, stampTree, statusLine, versionsIn, type Host, type State } from './deploy.ts'
 
 const A = 'a'.repeat(40)
@@ -58,6 +59,14 @@ interface Fake {
   readonly projectVersions: Map<string, string>
   /** The pids that no longer run. */
   readonly dead: Set<number>
+  /** The install of this plugin alone throws. */
+  failInstall: string
+  /** The install step throws. */
+  failStep: boolean
+  /** What happens while the install step runs: another run, started meanwhile. */
+  during: (() => void) | undefined
+  /** The configuration directory each install step ran for, in order. */
+  readonly steps: string[]
 }
 
 /** A host that installs as the real one does: an update takes the version of the directory pointed at. */
@@ -77,6 +86,10 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
     versions: new Map([[ALPHA, '1.2.3']]),
     projectVersions: new Map(),
     dead: new Set(),
+    failInstall: '',
+    failStep: false,
+    during: undefined,
+    steps: [],
     host: {
       api: path => {
         self.calls.push(`api ${path}`)
@@ -113,6 +126,22 @@ function fake(now = Date.UTC(2026, 0, 20)): Fake {
         self.calls.push(at === 'user' ? `update ${id}` : `update ${id} at ${at}`)
         if (!self.idleUpdate) (at === 'user' ? self.versions : self.projectVersions).set(id, versionsIn(pointed)[id.split('@')[0] ?? ''] ?? '')
       },
+      installPlugin: id => {
+        if (self.failInstall === id) throw new Error(`install of ${id} refused`)
+        self.calls.push(`install ${id}`)
+        self.versions.set(id, versionsIn(pointed)[id.split('@')[0] ?? ''] ?? '')
+      },
+      // As drift's: what it leaves is the pinned Playwright, whole, in the configuration directory.
+      installStep: (script, config) => {
+        self.calls.push(`step ${script.slice(script.indexOf('plugins'))}`)
+        const meanwhile = self.during
+        self.during = undefined
+        meanwhile?.()
+        if (self.failStep) throw new Error('npm ci failed')
+        self.steps.push(config)
+        playwrightAt(config, PLAYWRIGHT_VERSION)
+        return `drift: Playwright ${PLAYWRIGHT_VERSION} installed\n`
+      },
       alive: pid => !self.dead.has(pid),
       now: () => now,
     },
@@ -127,6 +156,21 @@ function sandbox(): { env: Record<string, string>; root: string; out: string[]; 
 
 function deploy(box: ReturnType<typeof sandbox>, host: Host, ...args: string[]): number {
   return run(['--repo', 'acme/app', ...args], { env: box.env, out: line => box.out.push(line), err: line => box.err.push(line) }, host)
+}
+
+/** Writes the `settings.json` of the box's configuration directory, its `enabledPlugins` alone. */
+function enable(box: { env: Record<string, string> }, enabledPlugins: Record<string, boolean>): void {
+  writeFileSync(join(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'settings.json'), JSON.stringify({ enabledPlugins }))
+}
+
+/** A whole install of Playwright `version` in the configuration directory `config`, as core's installer leaves it. */
+function playwrightAt(config: string, version: string): void {
+  const dir = join(config, 'playwright', version)
+  mkdirSync(join(dir, 'node_modules', '@playwright', 'test'), { recursive: true })
+  writeFileSync(join(dir, 'node_modules', '@playwright', 'test', 'package.json'), JSON.stringify({ version }))
+  mkdirSync(join(dir, 'browsers', 'chromium_headless_shell-1'), { recursive: true })
+  writeFileSync(join(dir, 'browsers', 'chromium_headless_shell-1', 'INSTALLATION_COMPLETE'), '')
+  writeFileSync(join(dir, '.complete'), `${version}\n`)
 }
 
 function stateIn(box: ReturnType<typeof sandbox>): State {
@@ -603,6 +647,277 @@ describe('the deploy', () => {
     assert.equal(deploy(box, fake().host), 0)
     assert.equal(existsSync(join(box.root, `${B}.tmp-1`)), false)
     assert.throws(() => readlinkSync(join(box.root, 'current.tmp-1')))
+  })
+})
+
+const BETA = `beta@${MARKETPLACE}`
+const GAMMA = `gamma@${MARKETPLACE}`
+const DRIFT = `drift@${MARKETPLACE}`
+const STEP = 'step plugins/drift/install.sh'
+
+describe('the plugins enabled in settings.json', () => {
+  it('are installed when absent, one line each; a disabled one and another marketplace\'s are not', () => {
+    const box = sandbox()
+    const f = fake()
+    f.tree = ['alpha', 'beta', 'gamma']
+    enable(box, { [ALPHA]: true, [BETA]: true, [GAMMA]: false, 'beta@elsewhere': true })
+    assert.equal(deploy(box, f.host), 0)
+    assert.deepEqual(f.calls.filter(call => call.startsWith('install')), [`install ${BETA}`])
+    assert.deepEqual(box.out.filter(line => line.includes(BETA)), [`deploy: installed ${BETA}, enabled in settings.json`])
+    assert.equal(f.calls.filter(call => call === `update ${ALPHA}`).length, 1)
+    assert.equal(stateIn(box).pending, false)
+  })
+
+  it('are installed by a run with no new commit, once settings.json names them', () => {
+    const box = sandbox()
+    const f = fake()
+    f.tree = ['alpha', 'beta']
+    deploy(box, f.host)
+    enable(box, { [BETA]: true })
+    f.calls.length = 0
+    assert.equal(deploy(box, f.host), 0)
+    assert.ok(f.calls.includes(`install ${BETA}`))
+    f.calls.length = 0
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(f.calls.length, 1)
+  })
+
+  it('stay pending when an install fails, the others installed and updated, and are retried by the next run', () => {
+    const box = sandbox()
+    const f = fake()
+    f.tree = ['alpha', 'beta', 'gamma']
+    deploy(box, f.host)
+    enable(box, { [BETA]: true, [GAMMA]: true })
+    f.failInstall = BETA
+    f.calls.length = 0
+    assert.equal(deploy(box, f.host), 1)
+    assert.match(box.err.join('\n'), /beta@lounisbou: install of beta@lounisbou refused.*run npm run deploy again/)
+    assert.ok(f.calls.includes(`install ${GAMMA}`))
+    assert.ok(f.calls.includes(`update ${ALPHA}`))
+    assert.equal(stateIn(box).pending, true)
+    f.failInstall = ''
+    f.calls.length = 0
+    assert.equal(deploy(box, f.host), 0)
+    assert.deepEqual(f.calls.filter(call => call.startsWith('install')), [`install ${BETA}`])
+    assert.equal(stateIn(box).pending, false)
+  })
+
+  it('are left out when the installed commit does not carry them, and make no run install again', () => {
+    const box = sandbox()
+    const f = fake()
+    enable(box, { [GAMMA]: true })
+    assert.equal(deploy(box, f.host), 0)
+    assert.match(box.err.join('\n'), /gamma@lounisbou is enabled and not in aaaaaaa: not installed/)
+    f.calls.length = 0
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(f.calls.length, 1)
+  })
+
+  it('are installed at the user scope when only a project has them', () => {
+    const box = sandbox()
+    const f = fake()
+    f.tree = ['alpha', 'beta']
+    f.projectVersions.set(BETA, '1.2.3')
+    enable(box, { [BETA]: true })
+    assert.equal(deploy(box, f.host), 0)
+    assert.ok(f.calls.includes(`install ${BETA}`))
+  })
+
+  it('do not hold the updates back when settings.json cannot be read, and the run says so', () => {
+    const box = sandbox()
+    writeFileSync(join(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'settings.json'), '<<<<<<< Updated upstream')
+    const f = fake()
+    assert.equal(deploy(box, f.host), 1)
+    assert.ok(f.calls.includes(`update ${ALPHA}`))
+    assert.match(box.err.join('\n'), /settings\.json/)
+  })
+
+  it('leave a new commit installed with nothing pending when settings.json cannot be read, and no later run installs it again', () => {
+    const box = sandbox()
+    const f = fake()
+    deploy(box, f.host)
+    writeFileSync(join(box.env['CLAUDE_CONFIG_DIR'] ?? '', 'settings.json'), '<<<<<<< Updated upstream')
+    f.green = B
+    assert.equal(deploy(box, f.host), 1)
+    assert.equal(stateIn(box).history[0]?.commit, B)
+    assert.equal(stateIn(box).pending, false)
+    assert.match(stateIn(box).lastError?.message ?? '', /settings\.json is not JSON/)
+    f.calls.length = 0
+    assert.equal(deploy(box, f.host), 1)
+    assert.equal(f.calls.length, 1)
+  })
+
+  it('are read as not installed when the install exits 0 and the host lists none: said, left pending, at every run', () => {
+    const box = sandbox()
+    const f = fake()
+    f.tree = ['alpha', 'beta']
+    enable(box, { [BETA]: true })
+    const host: Host = { ...f.host, installPlugin: () => {} }
+    for (const _run of [1, 2]) {
+      box.err.length = 0
+      assert.equal(deploy(box, host), 1)
+      assert.match(box.err.join('\n'), /beta@lounisbou: the host did not install it.*run npm run deploy again/)
+      assert.equal(stateIn(box).pending, true)
+      assert.match(stateIn(box).lastError?.message ?? '', /did not install it/)
+    }
+    assert.equal(box.out.some(line => line.includes(`installed ${BETA}`)), false)
+  })
+})
+
+describe('the install step', () => {
+  /** A box whose settings enable drift, and a host whose commits carry it. */
+  function withDrift(): { box: ReturnType<typeof sandbox>; f: Fake; config: string } {
+    const box = sandbox()
+    enable(box, { [DRIFT]: true })
+    const f = fake()
+    f.tree = ['alpha', 'drift']
+    return { box, f, config: box.env['CLAUDE_CONFIG_DIR'] ?? '' }
+  }
+
+  it('runs after the install, from the installed tree, and its last line is logged', () => {
+    const { box, f, config } = withDrift()
+    assert.equal(deploy(box, f.host), 0)
+    assert.deepEqual(f.calls.filter(call => call.startsWith('install') || call === STEP), [`install ${DRIFT}`, STEP])
+    assert.deepEqual(f.steps, [config])
+    assert.ok(box.out.includes(`deploy: ${DRIFT} install step: drift: Playwright ${PLAYWRIGHT_VERSION} installed`))
+  })
+
+  it('runs once per pinned version: not again by later runs or commits, again when the pin is not installed', () => {
+    const { box, f, config } = withDrift()
+    deploy(box, f.host)
+    deploy(box, f.host)
+    f.green = B
+    deploy(box, f.host)
+    assert.equal(f.steps.length, 1)
+    // A machine holding the previous pin only: what a raised pin finds.
+    rmSync(join(config, 'playwright'), { recursive: true })
+    playwrightAt(config, '1.0.0')
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(f.steps.length, 2)
+  })
+
+  it('does not run for a drift that settings.json does not enable', () => {
+    const { box, f } = withDrift()
+    enable(box, { [DRIFT]: false })
+    f.versions.set(DRIFT, '1.2.3')
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(f.calls.includes(STEP), false)
+  })
+
+  it('does not run while drift is not installed', () => {
+    const { box, f } = withDrift()
+    f.failInstall = DRIFT
+    assert.equal(deploy(box, f.host), 1)
+    assert.equal(f.calls.includes(STEP), false)
+  })
+
+  it('failing, leaves every plugin installed and updated, nothing pending, and is retried by the next run', () => {
+    const { box, f } = withDrift()
+    f.failStep = true
+    assert.equal(deploy(box, f.host), 1)
+    assert.ok(f.calls.includes(`update ${ALPHA}`))
+    assert.equal(stateIn(box).pending, false)
+    assert.match(box.err.join('\n'), /drift@lounisbou install step: npm ci failed/)
+    assert.match(stateIn(box).lastError?.message ?? '', /drift@lounisbou install step: npm ci failed/)
+    f.failStep = false
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(f.steps.length, 1)
+    assert.equal(stateIn(box).lastError, undefined)
+  })
+
+  it('runs when another plugin\'s update fails, and both failures are recorded', () => {
+    const { box, f } = withDrift()
+    f.failOn = ALPHA
+    f.failStep = true
+    assert.equal(deploy(box, f.host), 1)
+    assert.ok(f.calls.includes(STEP))
+    assert.match(stateIn(box).lastError?.message ?? '', /update of alpha@lounisbou refused.*drift@lounisbou install step: npm ci failed/)
+  })
+
+  it('does not run for a drift the installed commit does not carry', () => {
+    const { box, f } = withDrift()
+    f.tree = ['alpha']
+    f.versions.set(DRIFT, '1.2.3')
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(f.calls.includes(STEP), false)
+  })
+
+  it('is not run by a rollback, which exits 0, and the next run runs it without going back again', () => {
+    const { box, f, config } = withDrift()
+    deploy(box, f.host)
+    f.green = B
+    deploy(box, f.host)
+    rmSync(join(config, 'playwright'), { recursive: true })
+    f.failStep = true
+    f.calls.length = 0
+    assert.equal(deploy(box, f.host, '--rollback'), 0)
+    assert.equal(f.calls.includes(STEP), false)
+    f.failStep = false
+    assert.equal(deploy(box, f.host), 0)
+    assert.ok(f.calls.includes(STEP))
+    assert.deepEqual(stateIn(box).history.map(entry => entry.commit), [A])
+    assert.deepEqual(stateIn(box).skipped, [B])
+  })
+
+  it('holds no lock of the deploy: a rollback made while it runs is not refused', () => {
+    const { box, f } = withDrift()
+    enable(box, { [DRIFT]: false })
+    deploy(box, f.host)
+    f.green = B
+    deploy(box, f.host)
+    enable(box, { [DRIFT]: true })
+    f.versions.set(DRIFT, '1.2.3+bbbbbbb')
+    let rolledBack: number | undefined
+    f.during = () => { rolledBack = deploy(box, f.host, '--rollback') }
+    assert.equal(deploy(box, f.host), 0)
+    assert.equal(rolledBack, 0)
+    assert.equal(stateIn(box).history[0]?.commit, A)
+  })
+
+  it('lets a run made while it runs deploy a new commit, which starts no second one and keeps the last failure', () => {
+    const { box, f } = withDrift()
+    f.failStep = true
+    deploy(box, f.host)
+    let meanwhile: { code: number; steps: number; state: State } | undefined
+    f.during = () => {
+      f.green = B
+      f.calls.length = 0
+      const code = deploy(box, f.host)
+      meanwhile = { code, steps: f.calls.filter(call => call === STEP).length, state: stateIn(box) }
+    }
+    assert.equal(deploy(box, f.host), 1)
+    assert.equal(meanwhile?.code, 0)
+    assert.equal(meanwhile?.state.history[0]?.commit, B)
+    assert.equal(meanwhile?.steps, 0)
+    assert.match(meanwhile?.state.lastError?.message ?? '', /drift@lounisbou install step: npm ci failed/)
+    assert.ok(box.out.includes('deploy: an install step is running'))
+    assert.match(stateIn(box).lastError?.message ?? '', /drift@lounisbou install step: npm ci failed/)
+  })
+
+  it('succeeding, keeps the failure another run recorded while it ran', () => {
+    const { box, f } = withDrift()
+    f.during = () => { deploy(box, f.host, '--rollback') }
+    assert.equal(deploy(box, f.host), 0)
+    assert.match(stateIn(box).lastError?.message ?? '', /no earlier commit/)
+  })
+
+  it('takes over the step lock of a run that died', () => {
+    const { box, f } = withDrift()
+    mkdirSync(box.root, { recursive: true })
+    writeFileSync(join(box.root, 'install-step.lock'), '999999\n')
+    f.dead.add(999999)
+    assert.equal(deploy(box, f.host), 0)
+    assert.ok(f.calls.includes(STEP))
+  })
+
+  it('installs into the directory that owns the plugins, whichever configuration runs the deploy', () => {
+    const root = home()
+    const box = { env: { CLAUDE_CONFIG_DIR: join(root, '.claude-bis') }, root: join(root, '.claude-bis', DEPLOYS_DIR, MARKETPLACE), out: [] as string[], err: [] as string[] }
+    enable(box, { [DRIFT]: true })
+    const f = fake()
+    f.tree = ['alpha', 'drift']
+    assert.equal(deploy(box, f.host), 0)
+    assert.deepEqual(f.steps, [join(root, '.claude')])
   })
 })
 
