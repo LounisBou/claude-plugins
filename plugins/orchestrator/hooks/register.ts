@@ -7,6 +7,7 @@
 // reads the figure through the gauge's own module memory — mounted after it,
 // the row would carry one measure behind.
 import { register as registerAudit } from './audit.ts'
+import { register as registerCloseGate } from './close-gate.ts'
 import { register as registerGauge } from './gauge.ts'
 import { register as registerGuards } from './guards.ts'
 import { endIfBackground, register as registerBackground } from './background.ts'
@@ -67,4 +68,5 @@ export function register(on: On<Mod>): void {
   registerShortCommands(on)
   registerLedger(on)
   registerGateRecheck(on)
+  registerCloseGate(on)
 }

@@ -1,0 +1,14 @@
+{
+  "$comment": "Generated from packages/core/src by `npm run core`: edit the source, never this copy.",
+  "version": 1,
+  "dir": "close-gate",
+  "file_version": 1,
+  "ask_suffix": ".ask",
+  "state_suffix": ".state",
+  "here_suffix": ".here",
+  "quiet_ms": 180000,
+  "notice_ms": 60000,
+  "tick_ms": 5000,
+  "fresh_ms": 20000,
+  "ask_stale_ms": 1800000
+}

@@ -6673,6 +6673,14 @@ ia.wait_gone = lambda *a, **k: None
 ia.await_handover = lambda tty: 'takeover: « handed over » read'
 # Read once the wait is over: what he sent during it is in the conversation.
 ia.conversation_of = lambda tty: 'conversation: read after %d prompt reads' % len(reads)
+# The close gate's harness: the session's id when GATE_RS names one, its gate released when GATE_GO.
+if os.environ.get('GATE_RS'):
+    ia.rotated_session = lambda tty: os.environ['GATE_RS']
+    ia.gate_write(ia.gate_paths(os.environ['GATE_RS'])[2], {'v': 1, 'sid': os.environ['GATE_RS'], 'at': '2026-11-28T11:00:00.000Z'})
+if os.environ.get('GATE_GO'):
+    import time
+    ask = ia.gate_ask(os.environ['GATE_RS'], 'test', time.time())
+    ia.gate_write(ia.gate_paths(os.environ['GATE_RS'])[1], {'v': 1, 'sid': os.environ['GATE_RS'], 'ask_at': ask['at'], 'phase': 'go', 'notice_at': None, 'why': 'he said « vas-y »', 'seen_at': ask['at']})
 try:
     ia.cmd_takeover(ia.args_from_line('takeover', ['--tty', '/dev/ttys966', '--expect-title', 'Orch: x']))
 finally:
@@ -6709,6 +6717,14 @@ def close_home_tab(tty, socket, expect, listed, end_agents):
     calls.append('end ' + socket)
     print('closed 1 session on ' + tty)
 ia.close_home_tab = close_home_tab
+# The close gate's harness: the session's id when GATE_RS names one, its gate released when GATE_GO.
+if os.environ.get('GATE_RS'):
+    ia.rotated_session = lambda tty: os.environ['GATE_RS']
+    ia.gate_write(ia.gate_paths(os.environ['GATE_RS'])[2], {'v': 1, 'sid': os.environ['GATE_RS'], 'at': '2026-11-28T11:00:00.000Z'})
+if os.environ.get('GATE_GO'):
+    import time
+    ask = ia.gate_ask(os.environ['GATE_RS'], 'test', time.time())
+    ia.gate_write(ia.gate_paths(os.environ['GATE_RS'])[1], {'v': 1, 'sid': os.environ['GATE_RS'], 'ask_at': ask['at'], 'phase': 'go', 'notice_at': None, 'why': 'he said « vas-y »', 'seen_at': ask['at']})
 try:
     ia.cmd_close(ia.args_from_line('close', ['--tty', '/dev/ttys904', '--expect-title', 'Orch: x', '--keep-checkout']))
 except SystemExit as e:
@@ -6722,6 +6738,96 @@ res=$(hometab_close "$PEMPTY")
 check "and one whose window 0 shows the placeholder alone ends its server as before" \
   "closed 1 session on /dev/ttys904|calls=-L orch-suite capture-pane -p -e -t home:0|end orch-suite" \
   "$(printf '%s\n' "$res" | grep '^closed')|$(printf '%s\n' "$res" | grep '^calls=')"
+# A dictation (/voice) draws the words it still hears faint, as the placeholder is drawn, and says
+# below the box that it records (« REC » in tap mode) or transcribes: that box holds his text.
+PDICTATE="$PRULE Orch: x
+$(printf '\033[39m❯\302\240\033[2mje dicte ma réponse\033[0m')
+$PRULE
+$(printf '  \033[31m● REC\033[39m\033[2m · tap to send\033[0m')"
+PTRANSCRIBE="$PRULE Orch: x
+$(printf '\033[39m❯\302\240\033[2mje dicte\033[0m')
+$PRULE
+$(printf '  \033[33mTranscribing…\033[39m')"
+check "a dictation's faint words under its « REC » or « Transcribing… » are text in the box, never an empty one; the placeholder alone stays empty" \
+  "1|1|0" \
+  "$(PD="$PDICTATE" PT="$PTRANSCRIBE" PE="$PEMPTY" ipy "
+import os
+read = lambda v: ia.typed_input(ia.unfaint(os.environ[v]).split('\n'))
+print('|'.join(str(int(read(v) == ia.DICTATING)) for v in ('PD', 'PT', 'PE')))")"
+res=$(unsent_takeover "$PDICTATE")
+check "a takeover whose predecessor is dictating refuses before the kill: window 0 is kept" "1|killed=" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: takeover: refused: the prompt on /dev/ttys966 still holds text .*His text: «(a dictation in progress')|$(printf '%s\n' "$res" | tail -1)"
+
+# The close gate (his order of 2026-11-28): a close waits for the module of the session it ends
+# to release it; where no module answers, his last prompt in the transcript three minutes old.
+# The clock steps a second a read; the module's state is written by the test's « module ».
+GMOD="$WORK/gate-module"
+gate() { rm -rf "$GMOD"; MODE="$1" ORCHESTRATOR_MODULE_DIR="$GMOD" ORCHESTRATOR_STATE_DIR="$ESTATE" ipy "
+import json, os
+mode = os.environ['MODE']
+t = [1795000000.0]
+def clock():
+    t[0] += 1
+    return t[0]
+def iso(s):
+    import datetime
+    return datetime.datetime.fromtimestamp(s, datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+ask_path, state_path, here_path = ia.gate_paths('sid-1')
+if mode in ('go', 'wait', 'mute'):
+    ia.gate_write(here_path, {'v': 1, 'sid': 'sid-1', 'at': iso(t[0])})
+def module(_s):
+    t[0] += 1
+    if mode in ('go', 'wait'):
+        ask = json.load(open(ask_path))
+        state = {'v': 1, 'sid': 'sid-1', 'ask_at': ask['at'], 'phase': mode, 'notice_at': None,
+                 'why': 'his last prompt is 40s old, under 180s' if mode == 'wait' else 'he said « vas-y »', 'seen_at': iso(t[0])}
+        ia.gate_write(state_path, state)
+tr = os.path.join(os.environ['ORCHESTRATOR_MODULE_DIR'], 't.jsonl')
+os.makedirs(os.path.dirname(tr), exist_ok=True)
+age = {'old': 400, 'young': 30, 'mute': 400}.get(mode, 0)
+with open(tr, 'w') as fh:
+    fh.write(json.dumps({'type': 'user', 'origin': {'kind': 'human'}, 'timestamp': iso(t[0] - age)}) + '\n')
+    fh.write(json.dumps({'type': 'user', 'origin': {'kind': 'peer'}, 'timestamp': iso(t[0])}) + '\n')
+sid = '' if mode == 'nosid' else 'sid-1'
+try:
+    print(ia.await_gate('close', '/dev/ttys901', sid, lambda: tr, bound=60, sleep=module, clock=clock))
+except SystemExit as e:
+    print('exit=%s' % e.code)" 2>&1; }
+res=$(gate go)
+check "the module's « go » releases the close" "go" "$(printf '%s\n' "$res" | tail -1)"
+res=$(gate wait)
+check "a gate its module holds keeps the tab past the bound: refused, its why on the line, nothing closed" "1|1|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^close: the close of the session on /dev/ttys901 waits for its close gate, up to 60s: its module says: his last prompt is 40s old')|$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the close gate of the session on /dev/ttys901 has not released it after 60s .*the tab is kept, nothing was closed$')|$(printf '%s\n' "$res" | tail -1)"
+res=$(gate old)
+check "no module in that session: his last prompt over three minutes old in the transcript lets the close go, nothing asked" "transcript|0" \
+  "$(printf '%s\n' "$res" | tail -1)|$(ls "$GMOD/store/close-gate" 2>/dev/null | grep -c '\.ask$')"
+res=$(gate mute)
+check "a module there that never answers: past its freshness the transcript decides, the wait said" "1|transcript" \
+  "$(printf '%s\n' "$res" | grep -c '^close: the close of the session on /dev/ttys901 waits for its close gate, up to 60s: waiting for its module to answer$')|$(printf '%s\n' "$res" | tail -1)"
+res=$(gate young)
+check "no module and his last prompt under three minutes old (a peer's later message counting for nothing): refused at the bound" "1|1|exit=3" \
+  "$(printf '%s\n' "$res" | grep -c '^close: the close of the session on /dev/ttys901 waits for its close gate, up to 60s: no module answers in that session, so no notice can be shown there, and his last prompt there is [0-9]*s old, under 180s$')|$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused')|$(printf '%s\n' "$res" | tail -1)"
+res=$(gate nosid)
+check "a session whose id is not read has no gate: the check of its prompt alone, nothing asked" "none|0" \
+  "$(printf '%s\n' "$res" | tail -1)|$(ls "$GMOD/store/close-gate" 2>/dev/null | wc -l | tr -d ' ')"
+check "a retried close keeps the ask standing, so the session's module keeps its steps; a stale one is asked anew" "same|new" \
+  "$(rm -rf "$GMOD"; ORCHESTRATOR_MODULE_DIR="$GMOD" ipy "
+first = ia.gate_ask('sid-1', 'close', 1795000000.0)
+again = ia.gate_ask('sid-1', 'close', 1795000100.0)
+late = ia.gate_ask('sid-1', 'close', 1795000000.0 + 31 * 60)
+print('same' if again['at'] == first['at'] else 'other', end='|')
+print('new' if late['at'] != first['at'] else 'kept')")"
+# The two close paths go through it: a takeover (every succession in a home session) and the
+# launcher's close (a succession outside one, a rotation, the module's close of an agent).
+res=$(rm -rf "$GMOD"; ORCHESTRATOR_MODULE_DIR="$GMOD" ORCHESTRATOR_GATE_WAIT=0 GATE_RS=sid-1 unsent_takeover "$PEMPTY")
+check "a takeover whose predecessor's gate has not released it refuses before the kill: window 0 is kept" "1|killed=" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: takeover: refused: the close gate of the session on /dev/ttys966 has not released it')|$(printf '%s\n' "$res" | tail -1)"
+res=$(rm -rf "$GMOD"; ORCHESTRATOR_MODULE_DIR="$GMOD" ORCHESTRATOR_GATE_WAIT=0 GATE_RS=sid-1 GATE_GO=1 unsent_takeover "$PEMPTY")
+check "and one its module released takes window 0, the gate's files cleared" "1|killed=@1|0" \
+  "$(printf '%s\n' "$res" | grep -c '^took window 0')|$(printf '%s\n' "$res" | tail -1)|$(ls "$GMOD/store/close-gate" 2>/dev/null | wc -l | tr -d ' ')"
+res=$(rm -rf "$GMOD"; ORCHESTRATOR_MODULE_DIR="$GMOD" ORCHESTRATOR_GATE_WAIT=0 GATE_RS=sid-1 hometab_close "$PEMPTY")
+check "the launcher's close of a session its gate has not released refuses before any end: nothing ended" "1|exit=3|0" \
+  "$(printf '%s\n' "$res" | grep -c '^ERROR: close: refused: the close gate of the session on /dev/ttys904 has not released it')|$(printf '%s\n' "$res" | grep '^exit=')|$(printf '%s\n' "$res" | grep -c 'end orch-suite')"
 # The close of an iTerm2 tab reads the app's screen through its API, styles included: his text
 # refuses it, nothing closed; the placeholder alone closes it. Where the API cannot serve (the
 # module missing, the app not answering), the prompt cannot be read: the close refuses, the

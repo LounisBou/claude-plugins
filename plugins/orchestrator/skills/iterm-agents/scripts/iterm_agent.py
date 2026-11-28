@@ -197,6 +197,11 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "
 with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "core", "launcher.json"),
           encoding="utf-8") as _fh:
     LAUNCHER_ARGS = json.load(_fh)
+# The close gate's files and bounds (core's close-gate.ts, read here as the generated
+# `close-gate.json`): what a close waits for in the session it ends.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "core", "close-gate.json"),
+          encoding="utf-8") as _fh:
+    CLOSE_GATE = json.load(_fh)
 
 
 def args_of(command, options=None, **given):
@@ -4773,6 +4778,9 @@ def cmd_takeover(args):
     # left idle, comes before the kill, and the line says which was seen.
     print(await_handover(args.tty))
     sys.stdout.flush()
+    # His order of 2026-11-28: the predecessor is closed only once its close gate releases it.
+    sid = gate_sid(args.tty)
+    await_gate("takeover", args.tty, sid, lambda: transcript_on(args.tty))
     # What the operator typed in its prompt and has not sent is never destroyed (cmd_close).
     await_unsent("takeover", args.tty,
                  lambda: prompt_text(lambda: captured(pred.pane)))
@@ -4806,6 +4814,7 @@ def cmd_takeover(args):
     if home:
         trace_home(home, "window 0 of", "takeover", args.tty)
     chain_drop_tab(term.stable_id(pred.window))
+    gate_clear(sid)
     # The predecessor's agents follow it to its successor: what it launched after the
     # succession's spawn handed its chain over would otherwise be nobody's.
     if pred_owner and own_owner:
@@ -6824,6 +6833,11 @@ UNSENT_KEPT = "the tab is kept, nothing was closed"
 # colours).
 PROMPT_RULE = re.compile("^\\s*\u2500{8,}")
 PROMPT_FIRST = re.compile("^\\S?\u00a0")
+# What the host draws below its box while a dictation (/voice) records or is transcribed, in
+# colours that are not faint: « REC » in tap mode, « Transcribing… » once he stops.
+VOICE_SHOWN = re.compile("(?:^|\\s)\\S?\\s?REC(?:\\s|$)|Transcribing\u2026")
+# What a box read empty under a dictation holds, for the refusal that shows him his text.
+DICTATING = "(a dictation in progress: its words are not on the screen yet)"
 # The escape sequences a pane's capture carries: a style (SGR), any other CSI, an OSC (a link).
 ESCAPE = re.compile(r"\x1b(?:\[([0-9;:?<>=]*)([ -/]*[@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)?|.)")
 # SGR parameters that take arguments: a colour of 256 (5;n) or of the RGB (2;r;g;b).
@@ -6917,7 +6931,9 @@ def plain_cells(line):
 def typed_input(lines):
     """What the host's prompt box among `lines` (faint cells left out) holds: the text after
     its mark and the lines down to the rule below, "" when the box is empty; None when no box
-    is drawn (a dialog in its place, a host still drawing, a shell), never taken for empty."""
+    is drawn (a dialog in its place, a host still drawing, a shell), never taken for empty.
+    A dictation in progress holds text even where the box reads empty: the host draws the words
+    it still hears faint, as it draws its placeholder, and says it records below the box."""
     for start in range(len(lines) - 2, -1, -1):
         first = PROMPT_FIRST.match(lines[start + 1])
         if not (first and PROMPT_RULE.match(lines[start])):
@@ -6927,7 +6943,10 @@ def typed_input(lines):
             if PROMPT_RULE.match(line):
                 break
             body.append(line)
-        return "\n".join(line.replace("\u00a0", " ").strip() for line in body).strip()
+        text = "\n".join(line.replace("\u00a0", " ").strip() for line in body).strip()
+        if not text and any(VOICE_SHOWN.search(line) for line in lines[start:]):
+            return DICTATING
+        return text
     return None
 
 
@@ -7004,6 +7023,173 @@ def await_unsent(what, tty, read, bound=None, sleep=time.sleep, clock=time.time)
                           "has not sent, after %ds: %s. Show him his text verbatim and say it "
                           "waits in that tab" % (what, tty, bound, UNSENT_KEPT), last)
         sleep(INPUT_POLL)
+
+
+# --- the close gate --------------------------------------------------------------------
+#
+# His order of 2026-11-28: a close of a session waits three minutes without a prompt of his sent
+# to it and with its box empty, then « succession engagée » shown there, then a minute for his
+# « patiente » or « vas-y ». The session's own hooks module runs those steps (hooks/close-gate.ts)
+# on the ask the launcher writes; the launcher waits for its « go ». A session no module answers
+# for has no notice to show: its transcript's last prompt of his stands for the three minutes.
+
+GATE_WAIT = int(os.environ.get("ORCHESTRATOR_GATE_WAIT", "540"))
+GATE_POLL = 2
+GATE_SID = re.compile(r"[0-9A-Za-z._-]+")
+# The origins a transcript gives a prompt of his: typed at the terminal, or through the bridge.
+OPERATOR_ORIGINS = ("human", "composer", "bridge")
+
+
+def gate_paths(sid):
+    """The ask, the state and the presence files of the gate of session `sid`, under the
+    module's store."""
+    base = os.path.join(module_dir(), "store", CLOSE_GATE["dir"], re.sub(r"[^A-Za-z0-9._-]", "_", sid))
+    return (base + CLOSE_GATE["ask_suffix"], base + CLOSE_GATE["state_suffix"],
+            base + CLOSE_GATE["here_suffix"])
+
+
+def epoch_of(stamp):
+    """An ISO UTC time as epoch seconds, or None when it is none."""
+    if not isinstance(stamp, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def gate_read(path):
+    """A gate file as a dict of the contract's version, or None."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            value = json.loads(fh.read())
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) and value.get("v") == CLOSE_GATE["file_version"] else None
+
+
+def gate_write(path, value):
+    """`value` as the gate file `path`, in one rename."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = "%s.tmp-%d-%s" % (path, os.getpid(), uuid.uuid4().hex[:6])
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(value, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
+
+
+def gate_ask(sid, what, now):
+    """The ask of a close of `sid`: the one standing when it is young enough to be this close's,
+    retried, so the session's module keeps its steps; else a new one."""
+    ask_path = gate_paths(sid)[0]
+    ask = gate_read(ask_path)
+    at = epoch_of((ask or {}).get("at"))
+    if ask and ask.get("sid") == sid and at is not None and now - at < CLOSE_GATE["ask_stale_ms"] / 1000:
+        return ask
+    ask = {"v": CLOSE_GATE["file_version"], "sid": sid, "at": datetime.datetime.fromtimestamp(
+        now, datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"), "by": what}
+    gate_write(ask_path, ask)
+    return ask
+
+
+def gate_sid(tty):
+    """The session id a close gates on `tty`, "" when it cannot be read: a close is never
+    refused for a reading that fails here, the check of its prompt standing."""
+    try:
+        pid = host_cli_on(tty)
+        # Its registry is read under its own plan, which a successor moved to another one is not on.
+        with on_plan(process_config(pid) if str(pid).isdigit() else None):
+            return rotated_session(tty) or ""
+    except Exception:
+        return ""
+
+
+def gate_clear(sid):
+    """The gate's files of a session the close ended: nothing is left to ask of it."""
+    if not sid or not GATE_SID.fullmatch(sid):
+        return
+    for path in gate_paths(sid):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def last_operator_prompt(path):
+    """When the operator last sent a prompt in the transcript `path`, epoch seconds: 0 when he
+    sent none, None when it cannot be read."""
+    last = 0
+    try:
+        with open(path, errors="replace") as fh:
+            for line in fh:
+                if '"origin"' not in line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                origin = entry.get("origin") if isinstance(entry, dict) else None
+                if isinstance(origin, dict) and entry.get("type") == "user" \
+                        and origin.get("kind") in OPERATOR_ORIGINS:
+                    last = max(last, epoch_of(entry.get("timestamp")) or 0)
+    except OSError:
+        return None
+    return last
+
+
+def gate_refuse(msg):
+    """A close's refusal by the gate, nothing closed (UNSENT_EXIT), on one line."""
+    print("ERROR: %s. Run this close again later: its ask stands, and the session's gate keeps "
+          "its steps; this refusal is the launcher's, no refusal of the host's: never ask the "
+          "session to call end_session: %s" % (msg, UNSENT_KEPT), file=sys.stderr)
+    sys.exit(UNSENT_EXIT)
+
+
+def await_gate(what, tty, sid, transcript, bound=None, sleep=time.sleep, clock=time.time):
+    """Wait, before a close ends the session `sid` on `tty`, for its close gate to release it:
+    the « go » of its module, which says it runs there (its presence file); or, where none runs
+    or answers, his last prompt (`transcript()`, its path) three minutes old. Past `bound`
+    seconds unreleased, refuses: the tab is kept, the ask stands for the next try. A session
+    whose id is not read has no gate: the check of its prompt alone. Answers how it was released,
+    printing nothing unless it waits."""
+    bound = GATE_WAIT if bound is None else bound
+    if not sid or not GATE_SID.fullmatch(sid):
+        return "none"
+    start = clock()
+    _, state_path, here_path = gate_paths(sid)
+    ask = gate_ask(sid, what, start) if os.path.exists(here_path) else None
+    asked = epoch_of(ask["at"]) if ask else None
+    fresh, quiet = CLOSE_GATE["fresh_ms"] / 1000, CLOSE_GATE["quiet_ms"] / 1000
+    said = set()
+    while True:
+        now = clock()
+        state = gate_read(state_path) if ask else None
+        seen = epoch_of((state or {}).get("seen_at"))
+        if state and state.get("ask_at") == ask["at"] and seen is not None and now - seen <= fresh:
+            if state.get("phase") == "go":
+                return "go"
+            why = "its module says: %s" % state.get("why", "")
+        elif ask and now - asked < fresh:
+            why = "waiting for its module to answer"
+        else:
+            path = transcript()
+            last = last_operator_prompt(path) if path else None
+            if last is not None and now - last >= quiet:
+                return "transcript"
+            why = ("no module answers in that session, so no notice can be shown there, and its "
+                   "transcript cannot be read" if last is None else "no module answers in that "
+                   "session, so no notice can be shown there, and his last prompt there is %ds "
+                   "old, under %ds" % (now - last, quiet))
+        # Said once a kind: its figures move at every read.
+        kind = re.sub(r"[0-9]+", "#", why)
+        if kind not in said:
+            print("%s: the close of the session on %s waits for its close gate, up to %ds: %s"
+                  % (what, tty, bound, why), file=sys.stderr)
+            sys.stderr.flush()
+            said.add(kind)
+        if now - start >= bound:
+            gate_refuse("%s: refused: the close gate of the session on %s has not released it "
+                        "after %ds (%s)" % (what, tty, bound, why))
+        sleep(GATE_POLL)
 
 
 def close_tab(tty, expect):
@@ -7170,6 +7356,10 @@ def cmd_close(args):
     # wait: a close they refuse waits for nothing, and reads no stranger's prompt.
     if guarded and not socket and isinstance(terminal_for(host_tty), TmuxTerminal):
         terminal_for(host_tty).close_refusals("close", args.tty, args.expect)
+    # His order of 2026-11-28: the session is closed only once its close gate releases it.
+    sid = gate_sid(host_tty) if guarded else ""
+    if guarded:
+        await_gate("close", args.tty, sid, lambda: transcript_on(host_tty))
     typed = guarded and await_unsent("close", args.tty, lambda: prompt_text(lines_of))
     # An orchestrator's conversation is read before the kill and printed after the contract
     # line, and any session's where the operator typed during the close: what he sent is in it.
@@ -7201,6 +7391,7 @@ def cmd_close(args):
         sys.stdout.flush()
     if tail:
         print(tail)
+    gate_clear(sid)
     name_lingering(recorded)
     # The session's purpose is over and its process is proved gone: its checkout goes with
     # it, unless it holds work (`workspace.sh delete` refuses that, and says why), or is an

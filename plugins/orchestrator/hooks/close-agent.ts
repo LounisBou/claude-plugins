@@ -68,7 +68,7 @@ export async function closeFacts($: Held, a: ToClose): Promise<CloseFacts> {
 }
 
 // The launcher's exit for a close refused on the session's prompt (text the operator typed and has not sent, or a
-// prompt it cannot read): nothing was closed, and the close is tried again at a later tick.
+// prompt it cannot read) or by its close gate, not yet released: nothing was closed, and the close is tried again at a later tick.
 export const UNSENT_EXIT = 3
 
 /**
@@ -77,7 +77,7 @@ export const UNSENT_EXIT = 3
  * what he sends is the agent's to answer, never killed while it starts on it.
  */
 export async function closeAgent($: Held, a: ToClose): Promise<{ closed: boolean; why: string | null; later?: true }> {
-  const closed = await $.process.run(['bash', launcherOf($.plugin.root), 'close', '--tty', a.tty, '--expect-title', a.agent], { timeoutMs: CLOSE_BOUND_MS, env: { ORCHESTRATOR_INPUT_WAIT: '0' } })
+  const closed = await $.process.run(['bash', launcherOf($.plugin.root), 'close', '--tty', a.tty, '--expect-title', a.agent], { timeoutMs: CLOSE_BOUND_MS, env: { ORCHESTRATOR_INPUT_WAIT: '0', ORCHESTRATOR_GATE_WAIT: '0' } })
     .catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: messageOf(err) }))
   if (closed.exitCode === UNSENT_EXIT) return { closed: false, why: `left open: ${lastLine(closed) || 'its prompt holds text the operator typed'}`, later: true }
   if (closed.exitCode !== 0) return { closed: false, why: `the launcher's close failed: ${lastLine(closed) || `exit ${closed.exitCode}`}` }
