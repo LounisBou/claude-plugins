@@ -13,7 +13,7 @@ import { messageOf, type Caught, type Next, type On } from './host.ts'
 import { MODELS_DENY } from './models-guard.ts'
 import { configDir, logLine } from './module-io.ts'
 import { write, type Held, type Memory } from './observe.ts'
-import { repositoryOf } from './review-rounds.ts'
+import { githubRepoOf } from './review-rounds.ts'
 import { findingsOf, NOT_ORCHESTRATOR, REVIEW_TOOL, withIndexIds } from './review.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
 
@@ -42,9 +42,10 @@ async function observeTool($: Held, memory: Memory, e: Readonly<Record<string, u
     const tool = String(e['tool'] ?? '')
     const code = refusalCode(tool, result)
     if (code !== null) {
-      // The review call names its repository and pull request; a guard's refusal is the session's checkout's.
-      const cwd = await $.session.cwd().catch(() => undefined)
-      const repo = await repositoryOf($, String(e['repo'] ?? '').trim(), cwd)
+      // The review call names its repository, else its checkout (`dir`); a guard's refusal is the session's checkout's.
+      const named = tool === `mcp__orchestrator__${REVIEW_TOOL}` ? e : {}
+      const repo = String(named['repo'] ?? '').trim()
+        || await githubRepoOf($, String(named['dir'] ?? '').trim() || await $.session.cwd().catch(() => undefined))
       await write($, memory, stamp => refusalEvent(stamp, code, { repo, pr: e['pr'] }))
     }
     const answer = answerText(result)

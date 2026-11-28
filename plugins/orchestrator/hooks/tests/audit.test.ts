@@ -23,7 +23,8 @@ const HEAD = 'a'.repeat(40)
 const AT = '2026-11-14T10:15:00Z'
 const ok = { exitCode: 0, stdout: '', stderr: '' }
 
-function fake(options: { broken?: boolean; name?: string; origin?: string } = {}) {
+// `origin` is the session checkout's (/work); `origins` those of other checkouts, by directory.
+function fake(options: { broken?: boolean; name?: string; origin?: string; origins?: Record<string, string> } = {}) {
   const files: Record<string, string> = {}
   const logged: string[] = []
   const order: string[] = []
@@ -41,8 +42,9 @@ function fake(options: { broken?: boolean; name?: string; origin?: string } = {}
       exists: async (path: string) => path in files,
     },
     process: {
-      run: async (argv: readonly string[]) => {
-        if (argv.join(' ') === 'git remote get-url origin' && options.origin !== undefined) return { ...ok, stdout: `${options.origin}\n` }
+      run: async (argv: readonly string[], init?: { cwd?: string }) => {
+        const origin = init?.cwd === '/work' ? options.origin : options.origins?.[init?.cwd ?? '']
+        if (argv.join(' ') === 'git remote get-url origin' && origin !== undefined) return { ...ok, stdout: `${origin}\n` }
         const line = logLineOf([...argv])
         if (line !== null) logged.push(line)
         else if (argv[0] === 'mv') { files[argv[3]!] = files[argv[2]!]!; delete files[argv[2]!]; order.push(argv[3]!) }
@@ -116,6 +118,25 @@ test('the review tool\'s refusal names the pull request of the call, in the repo
     ['orchestrator.review.not-orchestrator', 'acme/thing', 12],
     ['orchestrator.review.not-orchestrator', 'acme/here', 13],
   ])
+})
+
+test('the review tool\'s refusal reads the origin of the checkout its call names with dir, ahead of the session\'s', async () => {
+  const fx = fake({ origin: 'git@github.com:acme/here.git', origins: { '/review/other': 'git@github.com:acme/other.git' } })
+  const refused = { result: NOT_ORCHESTRATOR, isError: true }
+  const call = { tool: 'mcp__orchestrator__review', verdict: 'pass', dir: '/review/other' }
+  const m = mounted()
+  await m.on('tool.call', fx.dollar, { ...call, pr: 12 }, refused)
+  await m.on('tool.call', fx.dollar, { ...call, pr: 13, repo: 'Acme/Thing' }, refused)
+  await m.on('tool.call', fx.dollar, { ...call, pr: 14, dir: '/no/origin' }, refused)
+  expect(fx.journal().map(e => [e.subject.repo, e.subject.pr])).toEqual([['acme/other', 12], ['acme/thing', 13], [null, 14]])
+})
+
+test('an origin that is no github.com repository gives a refusal none, never its last two segments', async () => {
+  for (const origin of ['/Users/someone/dev/app', '/srv/mirrors/app.git', 'https://gitlab.com/o/app.git', 'https://gitlab.com/g/sub/app.git', '../app']) {
+    const fx = fake({ origin })
+    await mounted().on('tool.call', fx.dollar, { tool: 'Bash', command: 'pkill -f agent' }, killDecision('1', 'pkill -f agent'))
+    expect(fx.journal().map(e => [origin, e.subject.repo])).toEqual([[origin, null]])
+  }
 })
 
 test('a guard that observes writes one version 1 escape under its code; a journal that fails is one log line', async () => {

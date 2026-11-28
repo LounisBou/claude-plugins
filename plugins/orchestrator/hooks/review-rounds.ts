@@ -9,6 +9,7 @@ import { updateOver } from '../core/store-io.ts'
 import { messageOf, type Host } from './host.ts'
 import { ownRecords } from './ledger.ts'
 import { dataDir, logLine, storeIo } from './module-io.ts'
+import { repoOfOrigin } from './pr-file-format.ts'
 import { parseSessionRow, sessionKey, storeOf } from './supervision.ts'
 import { readOr } from './unattended.ts'
 
@@ -62,6 +63,11 @@ export function headOf($: Host<'process'>, cwd: string | undefined): Promise<str
 export async function repositoryOf($: Host<'process'>, given: string, cwd: string | undefined): Promise<string | null> {
   if (given !== '') return given
   return /[:/]([^/:]+\/[^/]+?)(?:\.git)?$/.exec((await git($, cwd, ['remote', 'get-url', 'origin'])) ?? '')?.[1] ?? null
+}
+
+/** The repository `owner/name` of the checkout `cwd`'s github.com origin, or null: any other origin names none. */
+export async function githubRepoOf($: Host<'process'>, cwd: string | undefined): Promise<string | null> {
+  return repoOfOrigin((await git($, cwd, ['remote', 'get-url', 'origin'])) ?? '') ?? null
 }
 
 // Raises `rounds` of the row `id` of `path`: the new count, or 0 when the row is gone.
