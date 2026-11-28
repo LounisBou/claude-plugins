@@ -1119,12 +1119,16 @@ async function sideReadBoundMs($: Host<'env'>): Promise<number> {
 // kept — the pane of an orchestrator reads its agents from the chain its own tty
 // names — and its host pid, the row's life. Every read carries the bound as its
 // timeout, so a walk that loses the race stops with it instead of running on
-// behind the next one; `known` false then, and the row keeps the name it had.
+// behind the next one; `known` false then, and the row keeps the name it had. `late` says the walk
+// ran out of its bound, or left the name unknown after a process the host refused (one past its
+// timeout, or one that could not start) or once its bound was spent, which a later try may beat;
+// `known` false from a walk that answered in time (a foreign tty, a headless run) is an answer.
 async function walkWithinBound($: Host<'env' | 'fs' | 'process'>, sessionId: string):
-Promise<{ tty: string | null; name: string | null; pid: string | null; known: boolean }> {
+Promise<{ tty: string | null; name: string | null; pid: string | null; known: boolean; late: boolean }> {
   const bound = await sideReadBoundMs($)
   const until = Date.now() + bound
   const left = () => Math.max(1, until - Date.now())
+  let refused = false
   const config = await configDir($)
   const readRecord: ReadRecord = async (pid: string) => {
     try {
@@ -1137,14 +1141,20 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
     const host = (await $.env.get('ORCHESTRATOR_HOST_CLI')) ?? 'claude'
     let resolved: string | null = null
     try {
-      const found = await $.process.run(['sh', '-c', 'command -v -- "$1"', 'sh', host], { timeoutMs: left() })
+      const found = await $.process.run(['sh', '-c', 'command -v -- "$1"', 'sh', host], { timeoutMs: left() }).catch((err: unknown) => {
+        refused = true
+        throw err
+      })
       const path = found.exitCode === 0 ? String(found.stdout ?? '').trim() : ''
       if (path.startsWith('/')) resolved = (await $.fs.stat(path, { resolve: true })).realPath ?? path
     } catch { /* unresolved: the spelled name alone */ }
     return hostBasenames(host, resolved)
   }
   const walked = await withDeadline(walkName(
-    (argv: readonly string[]) => $.process.run(argv, { timeoutMs: left() }),
+    (argv: readonly string[]) => $.process.run(argv, { timeoutMs: left() }).catch((err: unknown) => {
+      refused = true
+      throw err
+    }),
     async (path: string) => (await $.fs.stat(path)).size,
     (path: string, index: number) => readBlock($, path, index, left()),
     await transcriptPathOf($, sessionId),
@@ -1152,7 +1162,7 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
     hostNames,
     sessionId,
   ), bound)
-  return isDegradedPass(walked) ? { tty: null, name: null, pid: null, known: false } : walked
+  return isDegradedPass(walked) ? { tty: null, name: null, pid: null, known: false, late: true } : { ...walked, late: !walked.known && (refused || Date.now() >= until) }
 }
 
 // The session's own row: its identity, read by a walk (a walk that did not finish leaves the name,
@@ -2195,8 +2205,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         inFlightAtStop = null
         const sessionId = await $.session.id()
         const declared = { wait: declarations.current(), handedOver: declarations.handedOver(sessionId) }
-        const done = await withDeadline(relayTurnEnd($, declarations.reportedWith(String(e.answer ?? '')), e.turnId, inFlight, e.reason ?? 'answer', declared, outbox), RELAY_BOUND_MS)
-        if (isDegradedPass(done)) await logLine($, 'supervision', `relay: did not finish within ${RELAY_BOUND_MS} ms`)
+        const done = await withDeadline(relayTurnEndTried($, { answer: declarations.reportedWith(String(e.answer ?? '')), turnId: e.turnId, inFlight, reason: e.reason ?? 'answer', declared }, outbox), RELAY_BOUND_MS)
+        if (isDegradedPass(done)) await logLine($, 'supervision', `relay: session ${sessionId}'s turn end did not finish within ${RELAY_BOUND_MS} ms: its next try is armed once it answers`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const queued = await withDeadline(sendRow($, sessionId, outbox), RELAY_BOUND_MS)
         if (isDegradedPass(queued)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
@@ -2831,6 +2841,49 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
 // write, the coordinator's record and the send queued. Well inside a handler's ten seconds.
 const RELAY_BOUND_MS = 5000
 
+// The waits before each try again of a turn end's relay, one try more than waits: a walk or a store
+// read that lost the race to a loaded machine is tried for about four minutes, then given up, said.
+const RELAY_RETRY_MS = [15000, 30000, 60000, 120000]
+
+type RelayArgs = { answer: string; turnId: unknown; inFlight: readonly string[] | null; reason: string; declared: { wait: DeclaredWait | null; handedOver: boolean } }
+
+// A turn end's relay, tried again while a try says why it sent nothing (relayTurnEnd): each failed
+// try is one log line naming the session and the reason, the next one armed on the clock after its
+// wait, the turn end held in this closure only, whatever turns the session takes meanwhile. A try
+// that throws fails the same way. The last one failed says the tries are exhausted. A try that
+// sends marks the wait relayed, so a later one finds it relayed and sends nothing; a later try
+// writes no wait of its own (`replay`): the session's current wait is the newest turn's. Bounded per
+// try by the caller at the first, by RELAY_BOUND_MS at the next, a try past it arming the next once
+// it answers; the first try's outbox is the caller's to flush, a later one's flushed here.
+async function relayTurnEndTried($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, args: RelayArgs,
+  outbox: Outgoing[], attempt = 1): Promise<void> {
+  const sessionId = await $.session.id().catch(() => 'unknown')
+  let why: string | null
+  try {
+    why = await relayTurnEnd($, args.answer, args.turnId, args.inFlight, args.reason, args.declared, outbox, attempt > 1)
+  } catch (err) {
+    why = `session ${sessionId}: ${messageOf(err)}`
+  }
+  if (attempt > 1) await flushOutbox($, outbox).catch((err: unknown) => logLine($, 'supervision', `send: session ${sessionId}: ${messageOf(err)}`))
+  if (why === null) return
+  const tries = RELAY_RETRY_MS.length + 1
+  const wait = RELAY_RETRY_MS[attempt - 1]
+  if (wait === undefined) {
+    await logLine($, 'supervision', `relay: ${why} — try ${attempt} of ${tries}: tries exhausted, the turn end is not sent`)
+    return
+  }
+  try {
+    $.clock.after(wait, async () => {
+      const done = await withDeadline(relayTurnEndTried($, args, [], attempt + 1), RELAY_BOUND_MS)
+      if (isDegradedPass(done)) await logLine($, 'supervision', `relay: session ${sessionId}'s try ${attempt + 1} did not finish within ${RELAY_BOUND_MS} ms: its next try is armed once it answers`)
+    })
+  } catch (err) {
+    await logLine($, 'supervision', `relay: ${why} — try ${attempt} of ${tries}, and the next try cannot be armed: ${messageOf(err)}`)
+    return
+  }
+  await logLine($, 'supervision', `relay: ${why} — try ${attempt} of ${tries}, again in ${wait / 1000} s`)
+}
+
 // The bound on each read of a delivery's facts (git's three and gh's one, run at once): inside the relay's.
 const FACTS_BOUND_MS = 3000
 
@@ -2850,14 +2903,15 @@ export function entersRound(role: string | null): boolean {
 }
 
 // The session's name, host pid and tty, with its row: the row's (the measure's walk named it), else
-// a walk of its own when the row names no role, or an agent without its tty.
-export async function selfOf($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<{ row: SessionRow | null; name: string | null; pid: string | null; tty: string | null }> {
+// a walk of its own when the row names no role, or an agent without its tty. `late`: that walk ran
+// out of its bound.
+export async function selfOf($: Host<'env' | 'fs' | 'process'>, sessionId: string): Promise<{ row: SessionRow | null; name: string | null; pid: string | null; tty: string | null; late: boolean }> {
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
-  if (row?.role && (row.role !== 'agent' || row.tty)) return { row, name: row.name, pid: row.pid ?? null, tty: row.tty ?? null }
+  if (row?.role && (row.role !== 'agent' || row.tty)) return { row, name: row.name, pid: row.pid ?? null, tty: row.tty ?? null, late: false }
   const walked = await walkWithinBound($, sessionId)
   return walked.known
-    ? { row, name: walked.name, pid: walked.pid ?? row?.pid ?? null, tty: walked.tty ?? row?.tty ?? null }
-    : { row, name: row?.name ?? null, pid: row?.pid ?? null, tty: row?.tty ?? null }
+    ? { row, name: walked.name, pid: walked.pid ?? row?.pid ?? null, tty: walked.tty ?? row?.tty ?? null, late: false }
+    : { row, name: row?.name ?? null, pid: row?.pid ?? null, tty: row?.tty ?? null, late: walked.late }
 }
 
 // A turn's end, read and reported. The role comes from the session's row (the measure's
@@ -2880,18 +2934,29 @@ export async function selfOf($: Host<'env' | 'fs' | 'process'>, sessionId: strin
 // An agent's turn the host ended in its own words (its limit or spend text, an API error: relay.ts hostStopOf,
 // read on the answer, else on the transcript's tail) is sent as one stop line (relayStop), work in
 // flight or not: nothing resumes it. Any other end that is no answer is read for that alone.
+// Returns why this try sent nothing when a later one may (its own name not read in time, no
+// orchestrator found, the send refused), for relayTurnEndTried; null when nothing is left to send.
+// Each agent branch that sends nothing on purpose says so in one line.
 export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, answer: string, turnId: unknown, inFlight: readonly string[] | null = null, reason: string = 'answer',
-  declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }, outbox: Outgoing[] = []): Promise<void> {
+  declared: { wait: DeclaredWait | null; handedOver: boolean } = { wait: null, handedOver: false }, outbox: Outgoing[] = [], replay = false): Promise<string | null> {
   const sessionId = await $.session.id()
-  const { row, name, pid, tty } = await selfOf($, sessionId)
+  const { row, name, pid, tty, late } = await selfOf($, sessionId)
+  if (!name && late) return `session ${sessionId}'s own name was not read in time`
   const role = roleOf(name)
   const orchestrating = entersRound(role)
-  if (!name || (!orchestrating && role !== 'agent')) return
+  if (!name || (!orchestrating && role !== 'agent')) {
+    await logLine($, 'supervision', `relay: ${name ?? `session ${sessionId}`} sends nothing: not an agent`)
+    return null
+  }
+  const nothing = async (why: string) => {
+    if (role === 'agent') await logLine($, 'supervision', `relay: ${name} sends nothing: ${why}`)
+    return null
+  }
   if (role === 'agent') {
     const stop = hostStopOf(answer) ?? (reason !== 'answer' || answer.trim() === '' ? await stopAtTail($, sessionId) : null)
-    if (stop) return relayStop($, sessionId, name, pid, tty, stop, turnId)
+    if (stop) return relayStop($, sessionId, name, pid, tty, stop, turnId, replay)
   }
-  if (reason !== 'answer') return
+  if (reason !== 'answer') return nothing(`its turn ended on ${reason}, and no stop was read`)
   // An agent's text goes up held to the verdict limit; an orchestrator's to the coordinator is never cut here.
   const whole = answer
   if (role === 'agent') answer = heldReport(answer)
@@ -2905,22 +2970,22 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   if (successor) await handOver($, sessionId, successor)
   if (!wait && orchestrating) {
     if (before?.waiting) await writeWait($, sessionId, { ...clearedWait(before), relayed, relayed_id: relayedId, name, pid })
-    return
+    return null
   }
   const patch = wait
     ? waitPatch(before, wait, new Date().toISOString())
     : before?.waiting ? clearedWait(before) : null
-  if (patch) await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, name, pid })
-  if (orchestrating && wait?.kind === 'operator') return
-  if (!wait && inFlight !== null && inFlight.length > 0) return
+  if (patch && !replay) await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, name, pid })
+  if (orchestrating && wait?.kind === 'operator') return null
+  if (!wait && inFlight !== null && inFlight.length > 0) return nothing('its work is still in flight')
   const key = wait ? fingerprint(wait) : noStatusKey(turnId, answer)
   let coordinator: Awaited<ReturnType<typeof coordinatorAddress>> = null
   if (relayed === key) {
     // The fingerprint of a question whose entry the coordinator closed (its answer comes by a
     // message, which forgets nothing) or archived blocks nothing: only an entry still open does.
-    if (!orchestrating || !wait || wait.kind !== 'done') return
+    if (!orchestrating || !wait || wait.kind !== 'done') return nothing('this state was relayed already')
     coordinator = await coordinatorAddress($)
-    if (!coordinator?.local || await entryIsOpen($, roundEntryId(sessionId, wait))) return
+    if (!coordinator?.local || await entryIsOpen($, roundEntryId(sessionId, wait))) return null
   } else if (orchestrating) {
     coordinator = await coordinatorAddress($)
   }
@@ -2932,15 +2997,12 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
     await forgetShown($, entry.id)
     await changeEntry($, roundPath(await dataDir($), entry.id), () => entry)
     await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
-    return
+    return null
   }
   const to = orchestrating
     ? coordinator?.to ?? null
     : await orchestratorOn($, tty, name, 'relay')
-  if (!to) {
-    if (role === 'agent') await logLine($, 'supervision', `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
-    return
-  }
+  if (!to) return orchestrating ? null : `no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`
   // A coordinator on another machine is sent the entry itself, to enter in its round: the wait
   // holds it as pending until the acknowledgment, which keeps the fingerprint (receiveAck). The
   // pending mark is written before the send, so an acknowledgment arriving as it returns finds it.
@@ -2957,7 +3019,7 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
       },
     }
     outbox.push(item)
-    return
+    return null
   }
   /*
    * The figure is the host's own at this turn's end: the row is written by the measure, which
@@ -2983,10 +3045,12 @@ export async function relayTurnEnd($: Host<'clock' | 'env' | 'fs' | 'plugin' | '
   const text = wait ? relayText(name, wait, patch!.waiting_since!, context, facts) : noStatusText(name, context, answer)
   const sent = orchestrating ? await sendToCoordinator($, coordinator!, text) : await $.session.send({ to, text })
   if (sent?.isDelivered) {
-    await writeWait($, sessionId, { ...(patch ?? before ?? {}), relayed: key, name, pid })
-  } else {
-    await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+    await markRelayed($, sessionId, replay ? null : patch ?? before ?? {}, key, name, pid)
+    return null
   }
+  const refused = `not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`
+  if (orchestrating) await logLine($, 'supervision', `relay: ${refused}`)
+  return orchestrating ? null : `${refused} (${name}'s turn end)`
 }
 
 // The bytes of the transcript's end read for a stop the host wrote: its last lines, never the whole file.
@@ -3002,20 +3066,34 @@ async function stopAtTail($: Host<'env' | 'fs' | 'process'>, sessionId: string):
 
 // An agent stopped by the host, told to its orchestrator in one line, once per stop (relay.ts
 // stopKey in the wait file's `relayed`); a wait it carried is cleared. Nobody to tell, or a send
-// refused, is one log line, and the next turn's end tries again.
+// refused, is the reason returned for a later try (relayTurnEndTried), which clears no wait (`replay`).
 async function relayStop($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session' | 'ui'>, sessionId: string, name: string,
-  pid: string | null, tty: string | null, stop: HostStop, turnId: unknown): Promise<void> {
+  pid: string | null, tty: string | null, stop: HostStop, turnId: unknown, replay = false): Promise<string | null> {
   const before = await readWait($, sessionId)
   const key = stopKey(turnId, stop)
-  if (before?.relayed === key) return
-  const to = await orchestratorOn($, tty, name, 'relay')
-  if (!to) {
-    await logLine($, 'supervision', `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
-    return
+  if (before?.relayed === key) {
+    await logLine($, 'supervision', `relay: ${name} sends nothing: this stop was relayed already`)
+    return null
   }
+  const to = await orchestratorOn($, tty, name, 'relay')
+  if (!to) return `no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`
   const sent = await $.session.send({ to, text: stopText(name, stop) })
-  if (sent?.isDelivered) await writeWait($, sessionId, { ...(before?.waiting ? clearedWait(before) : before ?? {}), relayed: key, name, pid })
-  else await logLine($, 'supervision', `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+  if (!sent?.isDelivered) return `not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'} (${name}'s stop)`
+  await markRelayed($, sessionId, replay ? null : before?.waiting ? clearedWait(before) : before ?? {}, key, name, pid)
+  return null
+}
+
+// A turn end delivered, its key written to the wait over `wait` (the try's own), or over the wait
+// read now for a later try, whose session may have moved on. A write that fails is one line, and
+// never a try again: what was delivered is never sent twice.
+async function markRelayed($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>, sessionId: string, wait: Partial<WaitRecord> | null | undefined, key: string,
+  name: string, pid: string | null): Promise<void> {
+  try {
+    const over = wait === null ? await readWait($, sessionId) : wait
+    await writeWait($, sessionId, { ...(over ?? {}), relayed: key, name, pid })
+  } catch (err) {
+    await logLine($, 'supervision', `relay: ${name}'s turn end was sent, its relayed mark not written: ${messageOf(err)}`)
+  }
 }
 
 // The session's open entries moved to the successor that confirmed the takeover, within the bound.

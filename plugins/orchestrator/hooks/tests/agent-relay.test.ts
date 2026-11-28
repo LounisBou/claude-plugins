@@ -1026,3 +1026,209 @@ test('a waiting status is reported once, however many turns repeat it, and again
   expect(fx.sent.length).toBe(2)
   expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBe('waiting')
 })
+
+// --- a turn end whose relay failed, tried again in memory ----------------------------------------
+// Seen 2026-11-27: a review's first and only turn ended on its delivery while the machine was loaded,
+// its name walk ran out of its bound, and the relay gave up without a word; nothing tried again.
+
+const DELIVERY = 'owner/app#12 abcdef0 — gate green — blocking: none — report: /r.md\nstatus: done — PR #12'
+
+// The fake host with a clock whose timers the test fires, in the order they were armed.
+function retrying(over: Over = {}) {
+  const fx = fake(over)
+  const later: { ms: number; fn: () => unknown; cancelled: boolean }[] = []
+  Object.assign(fx.dollar, {
+    clock: {
+      after: (ms: number, fn: () => unknown) => {
+        const timer = { ms, fn, cancelled: false }
+        later.push(timer)
+        return { cancel: () => { timer.cancelled = true } }
+      },
+    },
+  })
+  // The next timer still armed, fired and waited for; false when none is.
+  const fire = async (): Promise<boolean> => {
+    const timer = later.find(t => !t.cancelled)
+    if (!timer) return false
+    later.splice(later.indexOf(timer), 1)
+    await timer.fn()
+    return true
+  }
+  return { ...fx, later, fire }
+}
+
+test("a turn end whose name walk ran out of its bound is sent at a later try, once", async () => {
+  const chains = mounted()
+  const fx = retrying({ walk: 'agent' })
+  const { env, process } = fx.dollar
+  const get = env.get
+  env.get = async (n: string) => (n === 'ORCHESTRATOR_SIDE_READ_MS' ? '20' : get(n))
+  // The walk's first read answers past the bound at the first try, in time after it.
+  const run = process.run
+  let slow = true
+  process.run = async (argv, init) => {
+    if (slow && argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$') {
+      slow = false
+      await new Promise(resolve => setTimeout(resolve, 60))
+    }
+    return run(argv, init)
+  }
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(DELIVERY))
+  expect(fx.sent).toEqual([])
+  expect(fx.logged.some(l => l.includes("relay: session s-one's own name was not read in time — try 1 of 5, again in 15 s")), fx.logged.join(' | ')).toBe(true)
+  expect(await fx.fire()).toBe(true)
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(fx.sent[0]!.text.startsWith(`[module] ${AGENT} reports its delivery`)).toBe(true)
+  // Sent, nothing is armed again.
+  expect(await fx.fire()).toBe(false)
+  expect(fx.sent.length).toBe(1)
+})
+
+test('every try refused is one line each, then one line naming the session says the tries are exhausted', async () => {
+  const chains = mounted()
+  const fx = retrying({ send: 'refuse' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(DELIVERY))
+  while (await fx.fire()) { /* every try, to the last */ }
+  const tries = fx.logged.filter(l => l.includes(`relay: not delivered to ${ORCH}: nobody by that name (${AGENT}'s turn end) — try `))
+  expect(tries.length, fx.logged.join(' | ')).toBe(5)
+  expect(tries.slice(0, 4).map(l => l.split(' — ').pop())).toEqual(['try 1 of 5, again in 15 s', 'try 2 of 5, again in 30 s', 'try 3 of 5, again in 60 s', 'try 4 of 5, again in 120 s'])
+  expect(tries[4]).toContain(`(${AGENT}'s turn end) — try 5 of 5: tries exhausted, the turn end is not sent`)
+  expect(fx.later.map(t => t.ms)).toEqual([])
+  expect(fx.sent).toEqual([])
+})
+
+test('a turn end sent is never sent again: a refused first try delivered at the next, then nothing more', async () => {
+  const chains = mounted()
+  const fx = retrying()
+  const { session } = fx.dollar
+  const send = session.send
+  let refuse = true
+  session.send = async args => {
+    if (refuse) {
+      refuse = false
+      return { isDelivered: false, reason: 'busy' }
+    }
+    return send(args)
+  }
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent).toEqual([])
+  expect(await fx.fire()).toBe(true)
+  expect(fx.sent.length).toBe(1)
+  expect(await fx.fire()).toBe(false)
+  // The same turn end again sends nothing, and says so.
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.length).toBe(1)
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT} sends nothing: this state was relayed already`))).toBe(true)
+})
+
+// A send refused once, delivered from the next one on.
+function refusedOnce(fx: ReturnType<typeof retrying>, reason = 'busy') {
+  const { session } = fx.dollar
+  const send = session.send
+  let refuse = true
+  session.send = async args => {
+    if (refuse) {
+      refuse = false
+      return { isDelivered: false, reason }
+    }
+    return send(args)
+  }
+}
+
+test('a turn end whose walk the host refused at its timeout is sent at a later try, once', async () => {
+  const chains = mounted()
+  const fx = retrying({ walk: 'agent' })
+  const { process } = fx.dollar
+  // The host's contract: a process still running at its timeout rejects; the walk's readers catch it.
+  const run = process.run
+  let refuse = true
+  process.run = async (argv, init) => {
+    if (refuse && argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$') {
+      refuse = false
+      throw new Error(`still running after ${init?.timeoutMs} ms`)
+    }
+    return run(argv, init)
+  }
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(DELIVERY))
+  expect(fx.sent).toEqual([])
+  expect(fx.logged.some(l => l.includes('not an agent')), fx.logged.join(' | ')).toBe(false)
+  expect(fx.logged.some(l => l.includes("relay: session s-one's own name was not read in time — try 1 of 5, again in 15 s")), fx.logged.join(' | ')).toBe(true)
+  expect(await fx.fire()).toBe(true)
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(await fx.fire()).toBe(false)
+})
+
+test('a run whose walk answers in time on no tty of its own is no agent, and is not tried again', async () => {
+  const chains = mounted()
+  const run = retrying({ walk: 'underneath' })
+  await drive(chains, 'turn.complete', run.dollar, turnEnd(DELIVERY))
+  // The one timer armed is the round's reading (a session not told it is no coordinator), not a try.
+  expect(run.later.map(t => t.ms)).toEqual([30000])
+  expect(run.logged.some(l => l.includes('try 1 of'))).toBe(false)
+  expect(run.logged.some(l => l.includes('relay: session s-one sends nothing: not an agent'))).toBe(true)
+})
+
+test("a new turn keeps the delivery held for a try again: it is sent at the next try, once, and the new turn's wait is left as it is", async () => {
+  const chains = mounted()
+  const fx = retrying()
+  refusedOnce(fx)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(DELIVERY))
+  expect(fx.later.length).toBe(1)
+  // The orchestrator's message opens a turn; the session works again, its wait cleared.
+  await drive(chains, 'turn.start', fx.dollar, {})
+  expect(fx.later[0]!.cancelled).toBe(false)
+  expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBeNull()
+  expect(await fx.fire()).toBe(true)
+  expect(fx.sent.length).toBe(1)
+  expect(fx.sent[0]!.text.startsWith(`[module] ${AGENT} reports its delivery`)).toBe(true)
+  // The try that sent wrote the key, never the delivery's wait over the turn that is running.
+  const wait = JSON.parse(fx.files.get(WAIT)!)
+  expect(wait.waiting).toBeNull()
+  expect(wait.relayed).not.toBeNull()
+  // The new turn ends without a status line: its own report goes, the delivery is not sent again.
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Noted.', 'turn-2'))
+  expect(fx.sent.map(s => s.text)).toEqual([fx.sent[0]!.text, silent('Noted.')])
+  expect(await fx.fire()).toBe(false)
+})
+
+test('a try that fails after a new turn started is still said, and tried again', async () => {
+  const chains = mounted()
+  const fx = retrying({ send: 'refuse' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  await drive(chains, 'turn.start', fx.dollar, {})
+  expect(await fx.fire()).toBe(true)
+  expect(fx.logged.filter(l => l.includes(`(${AGENT}'s turn end) — try 2 of 5, again in 30 s`)).length, fx.logged.join(' | ')).toBe(1)
+  expect(fx.later.filter(t => !t.cancelled).length).toBe(1)
+})
+
+test('a delivery whose relayed mark cannot be written is never sent again', async () => {
+  const chains = mounted()
+  const fx = retrying()
+  const { fs } = fx.dollar
+  const write = fs.write
+  fs.write = async (p: string, text: string) => {
+    if (fx.sent.length > 0 && p.includes('/store/waits/')) throw new Error('disk full')
+    return write(p, text)
+  }
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.length).toBe(1)
+  expect(fx.later).toEqual([])
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT}'s turn end was sent, its relayed mark not written: disk full`)), fx.logged.join(' | ')).toBe(true)
+})
+
+test('a next try that cannot be armed is said with the session and the reason', async () => {
+  const chains = mounted()
+  // No clock: the host arms no timer.
+  const fx = fake({ send: 'refuse' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.logged.some(l => l.includes(`relay: not delivered to ${ORCH}: nobody by that name (${AGENT}'s turn end) — try 1 of 5, and the next try cannot be armed: `)), fx.logged.join(' | ')).toBe(true)
+  expect(fx.logged.some(l => l.includes('again in'))).toBe(false)
+})
+
+test('a session that is no agent sends nothing, and says so', async () => {
+  const chains = mounted()
+  const fx = fake({ name: 'shell-1', role: null })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(DELIVERY))
+  expect(fx.sent).toEqual([])
+  expect(fx.logged.some(l => l.includes('relay: shell-1 sends nothing: not an agent'))).toBe(true)
+})
