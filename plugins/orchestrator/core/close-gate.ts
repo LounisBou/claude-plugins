@@ -10,14 +10,16 @@
 
 export const CLOSE_GATE_VERSION = 1
 
+const MINUTE = 60_000
+
 /** The gate's directory under the module's store. */
 export const CLOSE_GATE_DIR = 'close-gate'
 
 /** No close before this long without a prompt of his sent to the session, its box empty. */
-export const CLOSE_GATE_QUIET_MS = 3 * 60_000
+export const CLOSE_GATE_QUIET_MS = 3 * MINUTE
 
 /** Once « succession engagée » is shown, this long for his answer: « patiente », « vas-y », or silence. */
-export const CLOSE_GATE_NOTICE_MS = 60_000
+export const CLOSE_GATE_NOTICE_MS = 1 * MINUTE
 
 /** How often the session's module looks at an ask of its own. */
 export const CLOSE_GATE_TICK_MS = 5_000
@@ -26,7 +28,7 @@ export const CLOSE_GATE_TICK_MS = 5_000
 export const CLOSE_GATE_FRESH_MS = 20_000
 
 /** An ask older than this is no close in progress: a new close asks again, from the start. */
-export const CLOSE_GATE_ASK_STALE_MS = 30 * 60_000
+export const CLOSE_GATE_ASK_STALE_MS = 30 * MINUTE
 
 /** The data half, for the launcher (Python). */
 export const CLOSE_GATE_CONTRACT = {
