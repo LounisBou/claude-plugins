@@ -1,8 +1,8 @@
 // hooks/audit.ts
 // The audit trail the hooks module writes into the orchestrator's journal (core's learning.ts):
-// each refusal of this module's guards by its stable code (the kill guard's and the review tool's;
-// the guards that observe write their escape through observe.ts), each review verdict with the decision
-// on each finding, each pull request opened or merged through the github tool, each declared
+// each refusal of this module's guards by its stable code, naming its repository (the kill guard's and
+// the review tool's; the guards that observe write their escape through observe.ts), each review verdict
+// with the decision on each finding, each pull request opened or merged through the github tool, each declared
 // wait from the end of the turn that declared it to the start of the next. Mounted first: every
 // handler here calls `next`, then reads what the chain answered, so the guards and the tools
 // decide as if it were not there. An observer: a journal that cannot be written is one line in
@@ -13,6 +13,7 @@ import { messageOf, type Caught, type Next, type On } from './host.ts'
 import { MODELS_DENY } from './models-guard.ts'
 import { configDir, logLine } from './module-io.ts'
 import { write, type Held, type Memory } from './observe.ts'
+import { repositoryOf } from './review-rounds.ts'
 import { findingsOf, NOT_ORCHESTRATOR, REVIEW_TOOL, withIndexIds } from './review.ts'
 import { DECLARATIONS, type Declarations } from './wait.ts'
 
@@ -40,7 +41,12 @@ async function observeTool($: Held, memory: Memory, e: Readonly<Record<string, u
   try {
     const tool = String(e['tool'] ?? '')
     const code = refusalCode(tool, result)
-    if (code !== null) await write($, memory, stamp => refusalEvent(stamp, code))
+    if (code !== null) {
+      // The review call names its repository and pull request; a guard's refusal is the session's checkout's.
+      const cwd = await $.session.cwd().catch(() => undefined)
+      const repo = await repositoryOf($, String(e['repo'] ?? '').trim(), cwd)
+      await write($, memory, stamp => refusalEvent(stamp, code, { repo, pr: e['pr'] }))
+    }
     const answer = answerText(result)
     if (answer !== null && tool === `mcp__orchestrator__${REVIEW_TOOL}` && e['plan'] === undefined) {
       const verdict = String(e['verdict'] ?? '').trim()

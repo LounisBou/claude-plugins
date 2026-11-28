@@ -23,7 +23,7 @@ const HEAD = 'a'.repeat(40)
 const AT = '2026-11-14T10:15:00Z'
 const ok = { exitCode: 0, stdout: '', stderr: '' }
 
-function fake(options: { broken?: boolean; name?: string } = {}) {
+function fake(options: { broken?: boolean; name?: string; origin?: string } = {}) {
   const files: Record<string, string> = {}
   const logged: string[] = []
   const order: string[] = []
@@ -31,7 +31,7 @@ function fake(options: { broken?: boolean; name?: string } = {}) {
   const dollar = hostOf({
     plugin: { root: '/plugins/orch-root' },
     env: { get: async (key: string) => ({ HOME } as Record<string, string>)[key] },
-    session: { id: async () => 'sess-1' },
+    session: { id: async () => 'sess-1', cwd: async () => '/work' },
     clock: { sleep: async () => undefined },
     fs: {
       write: async (path: string, text: string) => { if (options.broken) throw new Error('disk full'); files[path] = text },
@@ -42,6 +42,7 @@ function fake(options: { broken?: boolean; name?: string } = {}) {
     },
     process: {
       run: async (argv: readonly string[]) => {
+        if (argv.join(' ') === 'git remote get-url origin' && options.origin !== undefined) return { ...ok, stdout: `${options.origin}\n` }
         const line = logLineOf([...argv])
         if (line !== null) logged.push(line)
         else if (argv[0] === 'mv') { files[argv[3]!] = files[argv[2]!]!; delete files[argv[2]!]; order.push(argv[3]!) }
@@ -93,6 +94,28 @@ test('a guard\'s refusal is written once, as a version 1 refusal, and the refusa
   })
   expect(parseJournalEvent(event)).toEqual(event)
   expect(JSON.stringify(fx.journal()).includes('pkill')).toBe(false)
+})
+
+test('a refusal carries the repository of the session\'s checkout, in lower case, and none with no origin', async () => {
+  const refusal = killDecision('1', 'pkill -f agent')
+  for (const [origin, repo] of [['git@github.com:Acme/Widgets.git', 'acme/widgets'], ['https://github.com/Acme/Widgets', 'acme/widgets'], [undefined, null]] as const) {
+    const fx = fake(origin === undefined ? {} : { origin })
+    await mounted().on('tool.call', fx.dollar, { tool: 'Bash', command: 'pkill -f agent' }, refusal)
+    expect(fx.journal().map(e => [e.kind, e.source.code, e.subject])).toEqual([['refusal', 'orchestrator.kill.pattern', { repo, pr: null, head: null }]])
+    expect(parseJournalEvent(fx.journal()[0])).toEqual(fx.journal()[0])
+  }
+})
+
+test('the review tool\'s refusal names the pull request of the call, in the repository it names, else the checkout\'s', async () => {
+  const fx = fake({ origin: 'git@github.com:acme/here.git' })
+  const m = mounted()
+  const refused = { result: NOT_ORCHESTRATOR, isError: true }
+  await m.on('tool.call', fx.dollar, { tool: 'mcp__orchestrator__review', pr: 12, repo: 'Acme/Thing', verdict: 'pass' }, refused)
+  await m.on('tool.call', fx.dollar, { tool: 'mcp__orchestrator__review', pr: 13, verdict: 'pass' }, refused)
+  expect(fx.journal().map(e => [e.source.code, e.subject.repo, e.subject.pr])).toEqual([
+    ['orchestrator.review.not-orchestrator', 'acme/thing', 12],
+    ['orchestrator.review.not-orchestrator', 'acme/here', 13],
+  ])
 })
 
 test('a guard that observes writes one version 1 escape under its code; a journal that fails is one log line', async () => {
