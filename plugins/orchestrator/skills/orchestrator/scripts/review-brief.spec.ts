@@ -362,11 +362,15 @@ test('a refactor that changes an SVG file adds drift svg', () => {
   assert.deepEqual(driftCommands(briefOf(checkoutOf(BUILD, [['refactor!: rename the icon', 'icon.SVG']])).text), ['build', 'shots', 'svg'])
 })
 
-test('a feature or a fix, with a refactor commit or without, names no drift step, and leaves no hole in the brief', () => {
+test('a refactor keeps its drift step once a fix commit follows it', () => {
+  assert.deepEqual(driftCommands(briefOf(checkoutOf(BUILD, [['refactor: prepare', 'a.ts'], ['fix: the list', 'b.ts']])).text), ['build', 'shots'])
+})
+
+test('a feature, with a refactor commit or without, and a delivery with no refactor commit name no drift step, and leave no hole in the brief', () => {
   for (const commits of [
     [['feat: a new list', 'a.ts']],
     [['refactor: prepare', 'a.ts'], ['feat(ui): a new list', 'b.ts']],
-    [['refactor: prepare', 'a.ts'], ['fix: the list', 'b.ts']],
+    [['fix: the list', 'a.ts']],
     [['chore: bump', 'a.ts']],
   ] as const) {
     const { text, err } = briefOf(checkoutOf(BUILD, commits))

@@ -26,7 +26,7 @@
 // Each lens's method (`hooks/lens-method.ts`: its pr-review-toolkit agent's file, or generic, or generic
 // because the toolkit is missing here) is said in the brief, which the review index carries; the
 // review session writes a toolkit method's file into that reader's launch prompt.
-// A refactor (`base..head` holds a `refactor` commit and no `feat` or `fix` one; a rename or a move
+// A refactor (`base..head` holds a `refactor` commit and no `feat` one; a rename or a move
 // is typed so) in a project with a build (a `build` script in the worktree's `package.json`) gets one
 // more check: `drift build` and `drift shots`, and `drift svg` when an SVG file changes, from the
 // merge base to the head. A project with a build whose commits cannot be read is said on stderr.
@@ -167,7 +167,7 @@ export function driftCheck(f: Fields): { readonly text: string; readonly warning
     return { text: '', warning: (error as Error).message }
   }
   const types = new Set(subjects.map(typeOf))
-  if (!types.has('refactor') || types.has('feat') || types.has('fix')) return { text: '' }
+  if (!types.has('refactor') || types.has('feat')) return { text: '' }
   const commands = ['build', 'shots', ...(diffFiles(f.worktree, f.base, f.head).some(file => /\.svg$/i.test(file)) ? ['svg'] : [])]
   const runs = commands.map(command => `drift.sh ${command} --repo '${f.worktree}' --base ${from} --head ${f.head} --out <scratchpad>/drift-${command}`)
   return {
