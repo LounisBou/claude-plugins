@@ -1,5 +1,6 @@
 // The contracts other languages read, by the file name `npm run core` writes each under in a
 // plugin's copy. A contract's data lives in its TypeScript module; this list only names it.
+import { CLOSE_GATE_CONTRACT } from './close-gate.ts'
 import { DECK_READER_CONTRACT } from './deck-reader.ts'
 import { FORGE_CONTRACT } from './forge-status.ts'
 import { AUDIT_CONTRACT, LEARNING_CONTRACT } from './learning.ts'
@@ -13,6 +14,7 @@ import { ROUND_READER_CONTRACT } from './round-question.ts'
 import { STORE_CONTRACT } from './store-io.ts'
 
 export const DATA_FILES: Readonly<Record<string, object>> = {
+  'close-gate.json': CLOSE_GATE_CONTRACT,
   'deck-reader.json': DECK_READER_CONTRACT,
   'forge-status.json': FORGE_CONTRACT,
   'learning-audit.json': AUDIT_CONTRACT,

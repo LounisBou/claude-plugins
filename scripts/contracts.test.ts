@@ -283,6 +283,7 @@ describe('session names: core owns the shape, the launcher reads it', () => {
     copyFileSync(LAUNCHER.replace('iterm_agent.py', 'tab_order.py'), join(scripts, 'tab_order.py'))
     copyFileSync('plugins/orchestrator/core/store.json', join(plugin, 'core', 'store.json'))
     copyFileSync('plugins/orchestrator/core/launcher.json', join(plugin, 'core', 'launcher.json'))
+    copyFileSync('plugins/orchestrator/core/close-gate.json', join(plugin, 'core', 'close-gate.json'))
     copyFileSync('plugins/orchestrator/core/roots.json', join(plugin, 'core', 'roots.json'))
     const lib = join(plugin, 'skills', 'orchestrator', 'scripts', 'lib')
     mkdirSync(lib, { recursive: true })

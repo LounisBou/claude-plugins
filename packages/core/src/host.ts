@@ -77,7 +77,8 @@ type Nouns = {
   }
   state: { get(ref: StateRef): Promise<{ readonly value?: unknown } | undefined>; set(ref: StateRef, value: unknown): Promise<unknown> }
   command: { run(args: { command: string; args?: string }): Promise<unknown>; register(command: CommandSpec): Promise<unknown> }
-  prompt: { submit(input: { text: string }): Promise<unknown> }
+  // `read` answers the box's draft: what he typed, a dictation's words still being heard among it.
+  prompt: { submit(input: { text: string }): Promise<unknown>; read(): Promise<unknown> }
   // The settings merged over every source, as the host reads them.
   settings: { read(): Promise<unknown> }
   clock: { sleep(ms: number): Promise<void>; after(ms: number, run: () => unknown): unknown; now(): Promise<number>; every(ms: number, fn: () => void): Timer }

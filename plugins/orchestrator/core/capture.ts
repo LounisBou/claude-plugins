@@ -70,7 +70,7 @@ export function hostOf(parts: HostParts = {}): Host<Noun> {
     tool: { register: unset('tool.register'), call: unset('tool.call'), check: unset('tool.check'), list: unset('tool.list'), ...parts.tool },
     state: { get: unset('state.get'), set: unset('state.set'), ...parts.state },
     command: { run: unset('command.run'), register: unset('command.register'), ...parts.command },
-    prompt: { submit: unset('prompt.submit'), ...parts.prompt },
+    prompt: { submit: unset('prompt.submit'), read: unset('prompt.read'), ...parts.prompt },
     settings: { read: unset('settings.read'), ...parts.settings },
     clock: { sleep: unset('clock.sleep'), after: unset('clock.after'), now: unset('clock.now'), every: unset('clock.every'), ...parts.clock },
   }
