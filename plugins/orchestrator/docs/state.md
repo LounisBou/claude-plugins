@@ -11,7 +11,9 @@ roots (core's `orchestration.ts` and `roots.ts`):
   "<absolute path>"}`), else the protected root. What any session writes. Nothing read there decides
   what runs, but a remote row (`store/remote-rows/<name>`, under the module root): its `machine` and
   `home` pick the view the coordinator opens, bounded to a destination `remote-machines.json` maps
-  and a socket of a home server's shape (`orch-<8 hex>`), checked again at each read. Every item not named protected above is data, the table's and these: the briefs and
+  and a socket of a home server's shape (`orch-<8 hex>`), checked again at each read; its `reach`, destinations of a
+  `user@host` shape (never a bare alias, nor a host one of this Mac's aliases names), is what the coordinator's hooks probe (BatchMode, no forwarding, `hostname -s`) for a
+  machine `remote-machines.json` lacks or whose destination stopped connecting, one kept only when it answers with that machine's host name. Every item not named protected above is data, the table's and these: the briefs and
   dispatch records, `records/`, `todo/`, `coordinator/` and `coordinator-check.json`, `round/`,
   `round-woken.json`, `round-listed.json`, `chains/`, `auditors/`, `ci-watch/`, `ci-gate/`,
   `draft-guard/`, `stop-gate/`, `prs.json`, `prs.log`, `prs.wanted`, `sweep.stamp`, `deck.json`,
@@ -44,7 +46,7 @@ Python launcher.
 | `pane-open-<name>` | data | the session's own hooks, on his word (the command, the tool, his ✕): present while the role's supervision pane is open, `<name>` the session name without its reference; read by the successor's first turn start | one rename; removed by his close |
 | `deck.json` | data | every session | a view of the store, written only when it differs from the file or the file's stamp is a minute old (`DECK_REFRESH_MS`); format fixed by `hooks/tests/golden-deck.ts` |
 | `sleeping.json`, `coordinator.json` | protected | the coordinator's scripts | under the coordinator's lock |
-| `remote-machines.json` | protected | the operator, by hand; read by the coordinator's hooks | `{"version": 1, "machines": {"<label>": "<ssh destination>"}}`, read whole, refused whole when a label or a destination is not of its shape |
+| `remote-machines.json` | protected | the coordinator's hooks, adding a machine a remote row names once ssh to a candidate destination answers with its host name (remote-view.ts); read by the same hooks | `{"version": 1, "machines": {"<label>": "<ssh destination>"}}`, read whole, refused whole when a label or a destination is not of its shape; a machine added, or its dead destination replaced, under `<path>.lock` over the file as it stands then, a refused file and an entry another writer set meanwhile never written over |
 | `views/<machine>-<socket>.sh` | protected | the coordinator's hooks, opening a remote view | one rename, under `<path>.lock`, held across the process table read again, the server's check and the opening |
 | dispatch records, `records/<session>` | data | `dispatch-record.ts` | under core's lock |
 | `measure/<id>.json` | module | the session's own gauge | one writer, replaced whole in one rename, removed (never emptied) at compaction, kept at session end and pruned by `install.sh` past 90 days; read as unmeasured when empty or partial |

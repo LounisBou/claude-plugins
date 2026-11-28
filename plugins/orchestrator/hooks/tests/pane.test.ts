@@ -12,7 +12,7 @@
 import { expect, test, type Reply } from 'claude-code/testing'
 import { capture, hostOf, type Captured } from '../../core/capture.ts'
 import { fieldsOf, type Events, type FsEntry, type Host, type Noun, type On, type ProcessRunInit, type UiElements } from '../../core/host.ts'
-import { agentPaneRows, paneRows, parseSessionRow, readRound, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
+import { agentPaneRows, paneRows, parseSessionRow, readRound, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, forgetViews, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
 import { readAsked, settle } from '../question.ts'
 import { receiveReplyAck, resendReplies } from '../remote-asked.ts'
 import { type RoundEntry } from '../round.ts'
@@ -3555,6 +3555,62 @@ test('at a phone\'s width each role\'s line wraps with its role, account and cou
   const drawn = shown(await pane.draw(), 40).join(' ')
   for (const said of ['orchestrator · plan 2', 'auditor · plan 1', '(this session)', 'plan 2 · 1 agent', '30%', '21%', '12%']) expect(drawn).toContain(said)
   expect(await countedRows(pane.draw, 40)).toBe(drawScreen(await pane.draw({ bodyColumns: 40 }), 38).length)
+})
+
+// The coordinator's wake over a remote machine whose ssh answers: `hostname -s` through `dest` prints
+// IznoServer, the listing of its home servers prints `homes`. Each such run is in `asked`.
+function wakeOverSsh(dest: string, homes: string) {
+  forgetViews()
+  mounted(registerSupervision)
+  const waking = mounted(registerWake).handlers
+  const fx = coordinatorSession()
+  const asked: string[] = []
+  const run = fx.dollar.process.run
+  Object.assign(fx.dollar.process, {
+    run: (argv: readonly string[], options?: unknown) => {
+      if (argv[0] === '/usr/bin/ssh' && argv.at(-2) === dest && argv.at(-1) === 'hostname -s') {
+        asked.push('probe')
+        return Promise.resolve({ exitCode: 0, stdout: 'IznoServer\n', stderr: '' })
+      }
+      if (argv[0] === '/usr/bin/ssh' && argv.at(-2) === dest && argv.at(-1)!.includes('orch-*(N)')) {
+        asked.push('listing')
+        return Promise.resolve({ exitCode: 0, stdout: homes, stderr: '' })
+      }
+      return (run as (a: readonly string[], o?: unknown) => Promise<unknown>)(argv, options)
+    },
+  })
+  const tick = async () => {
+    await waking['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+    const timer = fx.later.filter(t => t.ms === 30000 && !t.cancelled).at(-1)
+    expect(timer).toBeDefined()
+    await timer!.fn()
+  }
+  return { fx, asked, tick, opened: () => fx.ran.filter(line => line.startsWith('osascript -e ')).length }
+}
+
+test('the coordinator\'s wake maps a machine alone: the destination a row publishes probed, written in the file, its home servers listed, the view opened', async () => {
+  const wake = wakeOverSsh('izno@203.0.113.9', 'orch-0a0b0c0d\n')
+  const state = `${HOME}/.claude/claude-orchestrator`
+  wake.fx.files.set(`${state}/store/remote-rows/Orch__far`, JSON.stringify({
+    name: 'Orch: far', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100, waiting: null, blocks: null,
+    waiting_since: null, updated_at: new Date().toISOString(), machine: 'IznoServer', repo: null, prs: [], held: null, account: null, agents: null,
+    reach: ['izno@203.0.113.9'],
+  }) + '\n')
+  await wake.tick()
+  expect(wake.asked).toEqual(['probe', 'listing'])
+  expect(JSON.parse(wake.fx.files.get(`${state}/remote-machines.json`)!)).toEqual({ version: 1, machines: { iznoserver: 'izno@203.0.113.9' } })
+  expect(wake.opened()).toBe(1)
+  forgetViews()
+})
+
+test('the coordinator\'s wake opens the view of a mapped machine\'s home server that no row names', async () => {
+  const wake = wakeOverSsh('izno', 'orch-0a0b0c0d\n')
+  wake.fx.files.set(`${HOME}/.claude/claude-orchestrator/remote-machines.json`, JSON.stringify({ version: 1, machines: { iznoserver: 'izno' } }))
+  await wake.tick()
+  expect(wake.asked).toEqual(['listing'])
+  expect(wake.fx.ran.some(line => line.includes('tmux -L orch-0a0b0c0d has-session -t home'))).toBe(true)
+  expect(wake.opened()).toBe(1)
+  forgetViews()
 })
 
 test('the coordinator\'s wake opens a remote orchestrator\'s view once, and a sync that throws still arms the next wake', async () => {

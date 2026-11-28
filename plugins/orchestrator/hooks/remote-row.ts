@@ -105,6 +105,10 @@ export type RemoteRow = {
   // The home server its orchestrator runs in (HOME_SHAPE), carried only when it runs in one: a row
   // without it is the fifteen fields a receiver that knows no home still reads.
   home?: string
+  // The ssh destinations its machine may be reached by from another one (reachOf, supervision.ts):
+  // its user at each address it learns of itself. Carried only when there is one; the coordinator's
+  // machine tries each and keeps the one whose host name is the row's machine (remote-view.ts).
+  reach?: string[]
   // The session's account (its plan, as the pane names it) and its live agent count, read by its sender from its
   // own facts (supervision.ts fleetOf): null for a value the sender could not read, and for a sender of an older release.
   account: string | null
@@ -114,17 +118,37 @@ export type RemoteRow = {
 // The ten fields 0.58 and 0.59 sent, still accepted as no repository and no pull request; the twelve that
 // followed, as no word on the questions held; the thirteen of the release in service, carrying the questions
 // held and no account; and the fifteen since, carrying the account and the agent count too, sixteen with the
-// home server.
+// home server, one more with the destinations it is reached by.
 const OLD_FIELDS = ['name', 'role', 'context_tokens', 'context_percent', 'window', 'waiting', 'blocks', 'waiting_since', 'updated_at', 'machine'] as const
 const PRS_FIELDS = [...OLD_FIELDS, 'repo', 'prs'] as const
 const FIELDS = [...PRS_FIELDS, 'held'] as const
 const ACCOUNT_FIELDS = [...FIELDS, 'account', 'agents'] as const
 const HOME_FIELDS = [...ACCOUNT_FIELDS, 'home'] as const
+// Either of those with the destinations its machine is reached by.
+const REACH_FIELDS = [...ACCOUNT_FIELDS, 'reach'] as const
+const HOME_REACH_FIELDS = [...HOME_FIELDS, 'reach'] as const
+
+// An ssh destination: an alias, or `user@host`, each part starting with a letter or a digit so
+// that it can never read as an option (remote-view.ts parseMachines, and a row's reach).
+export const DEST_SHAPE = /^(?:[A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9.-]*$/
+export const DEST_CAP = 120
+// The destinations a row carries, at most this many.
+export const REACH_CAP = 6
+
+export function destShaped(dest: unknown): dest is string {
+  return typeof dest === 'string' && dest.length <= DEST_CAP && DEST_SHAPE.test(dest)
+}
+
+// A destination a row may carry: `user@host` always, never a bare alias, so that a row can never
+// name one of this Mac's ssh aliases (and the keys, users and proxies its block sets).
+export function reachShaped(dest: unknown): dest is string {
+  return destShaped(dest) && dest.includes('@')
+}
 
 // What was last sent (`rows/<id>`, beside the wait file): the deduplication key. A record
 // written before the repository and the pull requests were carried has neither field, nor one
 // written before the account and the agent count.
-export type RowSent = { band: number; waiting: string | null; blocks: string | null; repo?: string | null; prs?: string[]; held?: HeldQuestion[] | null; account?: string | null; agents?: number | null; home?: string | null; sent_at: string }
+export type RowSent = { band: number; waiting: string | null; blocks: string | null; repo?: string | null; prs?: string[]; held?: HeldQuestion[] | null; account?: string | null; agents?: number | null; home?: string | null; reach?: string[] | null; sent_at: string }
 
 // A session's account and live agent count as a remote row carries them (supervision.ts fleetOf).
 export type Fleet = { account: string | null; agents: number | null }
@@ -139,7 +163,7 @@ export function machineLabel(raw: string): string {
 // flight (prsInFlight, and the record's open ones, supervision.ts pullRequestsOf): null for any session that is no named orchestrator — only an
 // orchestrator's row travels. The repository is the store row's own, or none when it is not
 // the receiver's shape.
-export function remoteRowOf(row: SessionRow | null, machine: string, prs: readonly string[] = [], held: readonly HeldQuestion[] | null = null, fleet: Fleet = { account: null, agents: null }, home: string | null = null): RemoteRow | null {
+export function remoteRowOf(row: SessionRow | null, machine: string, prs: readonly string[] = [], held: readonly HeldQuestion[] | null = null, fleet: Fleet = { account: null, agents: null }, home: string | null = null, reach: readonly string[] = []): RemoteRow | null {
   if (!row || row.role !== 'orchestrator' || !row.name || roleOf(row.name) !== 'orchestrator') return null
   const on = row.waiting === 'operator' || row.waiting === 'done'
   const out: RemoteRow = {
@@ -160,9 +184,16 @@ export function remoteRowOf(row: SessionRow | null, machine: string, prs: readon
     agents: fleet.agents === null ? null : clampInt(fleet.agents),
   }
   if (home !== null && HOME_SHAPE.test(home)) out.home = home
+  const dests = [...new Set(reach.filter(reachShaped))].slice(0, REACH_CAP)
+  if (dests.length > 0) out.reach = dests
   // The receiver refuses a line past its cap whole, so the pull requests are dropped from the
   // end of the sorted list until the line fits: the row is sent, with fewer of them.
   while (out.prs.length > 0 && rowText(out).length > ROW_TEXT_CAP) out.prs.pop()
+  // The destinations last, from the end of the list too, the list dropped when none is left.
+  while (out.reach && rowText(out).length > ROW_TEXT_CAP) {
+    out.reach.pop()
+    if (out.reach.length === 0) delete out.reach
+  }
   return out
 }
 
@@ -230,6 +261,7 @@ export function rowIsNews(row: RemoteRow, last: RowSent | null, now: number): bo
   if (last.held === undefined || JSON.stringify(last.held) !== JSON.stringify(row.held)) return true
   if (last.account === undefined || last.agents === undefined || last.account !== row.account || last.agents !== row.agents) return true
   if ((last.home ?? null) !== (row.home ?? null)) return true
+  if (JSON.stringify(last.reach ?? null) !== JSON.stringify(row.reach ?? null)) return true
   const at = Date.parse(last.sent_at)
   return !Number.isFinite(at) || now - at >= ROW_REFRESH_MS
 }
@@ -241,7 +273,7 @@ export function bandOf(percent: number): number {
 export function rowSent(row: RemoteRow, now: number): RowSent {
   return {
     band: bandOf(row.context_percent), waiting: row.waiting, blocks: row.blocks,
-    repo: row.repo, prs: row.prs, held: row.held, account: row.account, agents: row.agents, home: row.home ?? null, sent_at: new Date(now).toISOString(),
+    repo: row.repo, prs: row.prs, held: row.held, account: row.account, agents: row.agents, home: row.home ?? null, reach: row.reach ?? null, sent_at: new Date(now).toISOString(),
   }
 }
 
@@ -288,7 +320,7 @@ export function isMarked(body: string): boolean {
 }
 
 // The receiver's whole check: the marker, the cap, the exact field set (the fifteen with or without the
-// home, the thirteen, the twelve, or the ten of 0.58 and 0.59 read as no repository and no pull request — one of the
+// home, each with or without the reach, the thirteen, the twelve, or the ten of 0.58 and 0.59 read as no repository and no pull request — one of the
 // two new fields alone is refused), each field's type and bounds, an orchestrator's name. Anything
 // else is null.
 export function parseRemoteRow(body: string): RemoteRow | null {
@@ -303,8 +335,9 @@ export function parseRemoteRow(body: string): RemoteRow | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
   const keys = Object.keys(o)
-  const carriesHome = sameKeys(keys, HOME_FIELDS)
-  const carriesAccount = carriesHome || sameKeys(keys, ACCOUNT_FIELDS)
+  const carriesReach = sameKeys(keys, REACH_FIELDS) || sameKeys(keys, HOME_REACH_FIELDS)
+  const carriesHome = sameKeys(keys, HOME_FIELDS) || sameKeys(keys, HOME_REACH_FIELDS)
+  const carriesAccount = carriesHome || carriesReach || sameKeys(keys, ACCOUNT_FIELDS)
   const carriesHeld = carriesAccount || sameKeys(keys, FIELDS)
   const carriesPrs = carriesHeld || sameKeys(keys, PRS_FIELDS)
   if (!carriesPrs && !sameKeys(keys, OLD_FIELDS)) return null
@@ -330,6 +363,7 @@ export function parseRemoteRow(body: string): RemoteRow | null {
   if (carriesAccount && o['account'] !== null && !accountShaped(o['account'])) return null
   if (carriesAccount && o['agents'] !== null && !(typeof o['agents'] === 'number' && Number.isInteger(o['agents']) && num(o['agents'], NUMBER_CAP))) return null
   if (carriesHome && (typeof o['home'] !== 'string' || !HOME_SHAPE.test(o['home']))) return null
+  if (carriesReach && !(Array.isArray(o['reach']) && o['reach'].length > 0 && o['reach'].length <= REACH_CAP && o['reach'].every(reachShaped))) return null
   if (/[\u0000-\u001f]/.test(String(o['name']) + String(o['blocks'] ?? ''))) return null
   return {
     ...(o as unknown as RemoteRow),

@@ -7,6 +7,7 @@
 // The fakes play ssh, the process table and iTerm2.
 import { expect, test } from 'claude-code/testing'
 import {
+  LIST_EVERY_MS, STALE_AFTER, candidatesFor, envLogins, listArgv, listedHomes, machinesText, namesMatch, probeArgv, sshAliases,
   MACHINES_FILE, VIEW_RETRY_MS, VIEW_RETRY_CAP_MS, checkArgv, clientsArgv, launchScript, liveViews, newViewsMemory, parseMachines, planViews,
   syncViews, tried, viewArgv, viewCommand, wantedViews, type Backoff, type LiveView, type ViewsMemory,
 } from '../remote-view.ts'
@@ -44,6 +45,11 @@ type World = {
   live: string[]; servers: Set<string>; unreachable: Set<string>; psFails?: boolean; osaFails?: boolean
   opensShow?: boolean; hold?: string; rejects?: string; failWrite?: string
   clients?: string; clientsRead?: 'fails' | 'rejects'
+  // What `hostname -s` prints through each destination (none: out of reach), and what the listing
+  // of each destination's home servers prints (none: out of reach).
+  hosts?: Record<string, string>; homes?: Record<string, string>
+  // What another writer does to the files while a destination is probed.
+  duringProbe?: (files: Map<string, string>) => void
 }
 
 function fake(world: Partial<World> = {}, file: string | null = machines(), env: Record<string, string> = {}, shared?: Map<string, string>) {
@@ -56,6 +62,8 @@ function fake(world: Partial<World> = {}, file: string | null = machines(), env:
   let pid = 900
   const runs: string[][] = []
   const logged: string[] = []
+  // The lock files taken, in order.
+  const locks: string[] = []
   const dollar = hostOf({
     env: { get: async (name: string) => ({ HOME, ...env } as Record<string, string>)[name] },
     plugin: { root: '/plugins/orch-root' },
@@ -79,7 +87,10 @@ function fake(world: Partial<World> = {}, file: string | null = machines(), env:
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         const locked = lockRun(argv, files)
-        if (locked) return locked
+        if (locked) {
+          locks.push(String(argv[4]))
+          return locked
+        }
         runs.push([...argv])
         const ok = { exitCode: 0, stdout: '', stderr: '' }
         if (argv[0] === 'rm') {
@@ -89,7 +100,12 @@ function fake(world: Partial<World> = {}, file: string | null = machines(), env:
         if (argv[0] === 'ps') return w.psFails ? { exitCode: 1, stdout: '', stderr: 'no' } : { exitCode: 0, stdout: ['1 /sbin/launchd', '77 ssh izno', ...w.live].join('\n') + '\n', stderr: '' }
         if (argv[0] === '/usr/bin/ssh') {
           const dest = argv[argv.length - 2]!
-          const socket = /-L (\S+)/.exec(argv[argv.length - 1]!)![1]!
+          const remote = argv[argv.length - 1]!
+          const answer = (text: string | undefined) => text === undefined ? { exitCode: 255, stdout: '', stderr: 'timeout' } : { ...ok, stdout: text }
+          if (remote === 'hostname -s') w.duringProbe?.(files)
+          if (remote === 'hostname -s') return answer(w.hosts?.[dest] === undefined ? undefined : `${w.hosts[dest]}\n`)
+          if (remote.includes('orch-*(N)')) return answer(w.homes?.[dest])
+          const socket = /-L (\S+)/.exec(remote)![1]!
           if (w.hold === socket) await held
           if (w.rejects === socket) throw new Error('timed out')
           if (w.unreachable.has(dest)) return { exitCode: 255, stdout: '', stderr: 'timeout' }
@@ -117,7 +133,7 @@ function fake(world: Partial<World> = {}, file: string | null = machines(), env:
       },
     },
   })
-  return { dollar, files, runs, logged, world: w, release: () => release() }
+  return { dollar, files, runs, logged, locks, world: w, release: () => release() }
 }
 
 const opens = (runs: string[][]) => runs.filter(argv => argv[0] === 'osascript')
@@ -629,4 +645,178 @@ test('a home the last send did not carry is news', () => {
   const without = remoteRowOf(sessionRow, 'iznoserver', [], null, undefined, null)!
   expect(rowIsNews(carried, rowSent(without, NOW), NOW)).toBe(true)
   expect(rowIsNews(carried, rowSent(carried, NOW), NOW)).toBe(false)
+})
+
+// --- the machine file written by the module, the home servers listed ------------------------
+
+const FAR = 'mini-tech2'
+const FAR_DEST = 'me@203.0.113.7'
+const probes = (runs: string[][]) => runs.filter(argv => argv[0] === '/usr/bin/ssh' && argv.at(-1) === 'hostname -s').map(argv => argv.at(-2))
+const listings = (runs: string[][]) => runs.filter(argv => argv[0] === '/usr/bin/ssh' && argv.at(-1)!.includes('orch-*(N)'))
+const DISCOVER = { now: NOW, discover: true, listHomes: true }
+
+test('no machine file: the destination a row publishes, proved by its host name, is written in it, and the view opens', async () => {
+  const fx = fake({ servers: new Set([`${FAR_DEST}|${SOCKET}`]), hosts: { 'me@198.51.100.9': 'other-mac', [FAR_DEST]: `${FAR}.home` } }, null)
+  await syncViews(fx.dollar, [row({ machine: FAR, reach: ['me@198.51.100.9', FAR_DEST] })], newViewsMemory(), DISCOVER)
+  expect(probes(fx.runs)).toEqual(['me@198.51.100.9', FAR_DEST])
+  expect(parseMachines(fx.files.get(FILE)!)).toEqual(new Map([[FAR, FAR_DEST]]))
+  expect(opens(fx.runs).length).toBe(1)
+  expect(fx.logged.some(line => line.includes(`the machine ${FAR} answers as ${FAR_DEST}`))).toBe(true)
+})
+
+test('a machine the file lacks is added beside the others, found by an alias or a login whose name is the machine\'s, never by another host', async () => {
+  const fx = fake({ hosts: { izno: 'IznoServer', 'geo@mini-tech2.local': FAR } }, machines({ minitech: 'me@minitech' }))
+  fx.files.set(`${HOME}/.ssh/config`, 'Host *\n  ServerAliveInterval 60\nHost prod01 geo-prod01\n  HostName 192.0.2.1\nHost izno\n  User izno\n')
+  fx.files.set(`${HOME}/.env`, 'MINITECH_LOGIN=geo\nMINITECH_HOST=not-a-login\nPROD_LOGIN=root\n')
+  await syncViews(fx.dollar, [row(), row({ name: 'Orch: two', machine: FAR, home: OTHER })], newViewsMemory(), { now: NOW, discover: true })
+  expect(probes(fx.runs)).toEqual(['izno', 'geo@mini-tech2', 'geo@mini-tech2.local'])
+  expect(parseMachines(fx.files.get(FILE)!)).toEqual(new Map([['iznoserver', 'izno'], ['minitech', 'me@minitech'], [FAR, 'geo@mini-tech2.local']]))
+  expect(fx.runs.flat().some(word => word.includes('not-a-login') || word.includes('prod'))).toBe(false)
+})
+
+test('a machine no candidate proves is a line, the file is left absent, and it is looked for again only after its bound', async () => {
+  const fx = fake({ hosts: { [FAR_DEST]: 'someone-else' } }, null)
+  const memory = newViewsMemory()
+  await syncViews(fx.dollar, [row({ machine: FAR, reach: [FAR_DEST] })], memory, DISCOVER)
+  await syncViews(fx.dollar, [row({ machine: FAR, reach: [FAR_DEST] })], memory, { ...DISCOVER, now: NOW + 1000 })
+  expect(probes(fx.runs)).toEqual([FAR_DEST])
+  expect(fx.files.has(FILE)).toBe(false)
+  expect(fx.logged.some(line => line.includes(`no destination answers as ${FAR} (1 tried: ${FAR_DEST}: answered as someone-else)`))).toBe(true)
+  await syncViews(fx.dollar, [row({ machine: FAR, reach: [FAR_DEST] })], memory, { ...DISCOVER, now: NOW + VIEW_RETRY_MS })
+  expect(probes(fx.runs).length).toBe(2)
+})
+
+test('a refused machine file is never written over, and no destination is probed for it', async () => {
+  const fx = fake({ hosts: { [FAR_DEST]: FAR } }, '{')
+  await syncViews(fx.dollar, [row({ machine: FAR, reach: [FAR_DEST] })], newViewsMemory(), DISCOVER)
+  expect(fx.files.get(FILE)).toBe('{')
+  expect(probes(fx.runs)).toEqual([])
+})
+
+test('a machine of the file shows its home servers with no row at all: an idle orchestrator stays visible', async () => {
+  const fx = fake({ homes: { izno: `${SOCKET}\nnot-a-home\n` } }, machines({ iznoserver: 'izno' }))
+  const memory = newViewsMemory()
+  await syncViews(fx.dollar, [], memory, DISCOVER)
+  expect(listings(fx.runs).length).toBe(1)
+  expect(opens(fx.runs).length).toBe(1)
+  expect(fx.runs.some(argv => argv.join(' ') === checkArgv('izno', SOCKET).join(' '))).toBe(true)
+  // Listed again only once its bound has passed.
+  await syncViews(fx.dollar, [], memory, { ...DISCOVER, now: NOW + 1000 })
+  expect(listings(fx.runs).length).toBe(1)
+  await syncViews(fx.dollar, [], memory, { ...DISCOVER, now: NOW + LIST_EVERY_MS })
+  expect(listings(fx.runs).length).toBe(2)
+})
+
+test('a listing that fails is a line and is tried again after its bound; without listHomes no listing runs', async () => {
+  const fx = fake({}, machines({ iznoserver: 'izno' }))
+  const memory = newViewsMemory()
+  await syncViews(fx.dollar, [], memory, DISCOVER)
+  await syncViews(fx.dollar, [], memory, { ...DISCOVER, now: NOW + 1000 })
+  expect(listings(fx.runs).length).toBe(1)
+  expect(opens(fx.runs)).toEqual([])
+  expect(fx.logged.some(line => line.includes('the home servers of iznoserver could not be listed on izno (exit 255: timeout)'))).toBe(true)
+  const quiet = fake({ homes: { izno: `${SOCKET}\n` } }, machines({ iznoserver: 'izno' }))
+  await syncViews(quiet.dollar, [], newViewsMemory(), { now: NOW })
+  expect(listings(quiet.runs)).toEqual([])
+})
+
+test('the probe and the listing ask for no password, start nothing and read the remote only', () => {
+  expect(probeArgv('izno')).toEqual(['/usr/bin/ssh', '-o', 'BatchMode=yes', '-o', 'ForwardAgent=no', '-o', 'ClearAllForwardings=yes',
+    '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=3', '-o', 'ConnectTimeout=8', 'izno', 'hostname -s'])
+  const listing = listArgv('izno').at(-1)!
+  expect(listing).toContain('has-session -t home')
+  // Each dollar escaped from the login shell that hands the line to zsh: expanded there, not before.
+  expect(listing).toContain('for s in \\${TMUX_TMPDIR:-/tmp}/tmux-\\$(id -u)/orch-*(N); do tmux -L \\${s:t} ')
+  expect(listing.match(/(?<!\\)\$/g)).toBeNull()
+  expect(listing).not.toMatch(/new-session|kill|attach/)
+  expect(listedHomes(`${SOCKET}\n${OTHER}\n${SOCKET}\n-oProxyCommand=x\n`)).toEqual([SOCKET, OTHER])
+})
+
+test('the sources of the candidates: aliases without patterns, logins only, names matched on their letters', () => {
+  expect(sshAliases('Host *\nHost staging geo-staging api.example.dev\n  HostName x\nhost izno\nHost !bad -oX\n')).toEqual(['staging', 'geo-staging', 'api.example.dev', 'izno'])
+  expect(envLogins('export A_LOGIN="ann"\nB_PORT=2222\nC_LOGIN=bad value\nD_LOGIN=dee\n')).toEqual([{ name: 'A', login: 'ann' }, { name: 'D', login: 'dee' }])
+  expect([namesMatch('izno', 'IznoServer'), namesMatch('MINITECH', 'mini-tech2'), namesMatch('prod01', 'mini-tech2'), namesMatch('mi', 'mini-tech2')]).toEqual([true, true, false, false])
+  expect(candidatesFor(FAR, [FAR_DEST, '-oProxy'], ['minitech', 'izno'], [{ name: 'MINITECH', login: 'geo' }])).toEqual([FAR_DEST, 'minitech', 'geo@mini-tech2', 'geo@mini-tech2.local'])
+  expect(machinesText(new Map([['b', 'y'], ['a', 'x']]))).toBe('{\n  "version": 1,\n  "machines": {\n    "a": "x",\n    "b": "y"\n  }\n}\n')
+})
+
+const OLD_DEST = 'me@198.51.100.9'
+// The machine file's locks among those taken (each view opening takes its own).
+const fileLocks = (locks: string[]) => locks.filter(lock => lock === `${FILE}.lock`)
+// The ticks at which a listing of a destination that never connects runs: one each bound, doubled.
+const STALE_TICKS = [NOW, NOW + VIEW_RETRY_MS, NOW + 3 * VIEW_RETRY_MS]
+
+test('a destination that stopped connecting is looked for again: a candidate that proves the machine replaces it, under the lock', async () => {
+  const fx = fake({ hosts: { [FAR_DEST]: FAR } }, machines({ [FAR]: OLD_DEST }))
+  const memory = newViewsMemory()
+  const rows = [row({ machine: FAR, reach: [OLD_DEST, FAR_DEST] })]
+  for (const now of STALE_TICKS) await syncViews(fx.dollar, rows, memory, { ...DISCOVER, now })
+  expect(STALE_TICKS.length).toBe(STALE_AFTER)
+  // Fewer failed listings than STALE_AFTER: nothing was probed, the entry held.
+  expect(probes(fx.runs)).toEqual([])
+  await syncViews(fx.dollar, rows, memory, { ...DISCOVER, now: STALE_TICKS.at(-1)! + 1 })
+  // The dead destination is not probed again: only the new one.
+  expect(probes(fx.runs)).toEqual([FAR_DEST])
+  expect(parseMachines(fx.files.get(FILE)!)).toEqual(new Map([[FAR, FAR_DEST]]))
+  expect(fileLocks(fx.locks)).toEqual([`${FILE}.lock`])
+  expect(fx.logged.some(line => line.includes(`the machine ${FAR} answers as ${FAR_DEST}, no more as ${OLD_DEST}`))).toBe(true)
+})
+
+test('a destination that stopped connecting, with no candidate that proves the machine, keeps its entry: the machine may only be down', async () => {
+  const fx = fake({ hosts: { [FAR_DEST]: 'someone-else' } }, machines({ [FAR]: OLD_DEST }))
+  const memory = newViewsMemory()
+  const rows = [row({ machine: FAR, reach: [FAR_DEST] })]
+  for (const now of [...STALE_TICKS, STALE_TICKS.at(-1)! + 1]) await syncViews(fx.dollar, rows, memory, { ...DISCOVER, now })
+  expect(probes(fx.runs)).toEqual([FAR_DEST])
+  expect(parseMachines(fx.files.get(FILE)!)).toEqual(new Map([[FAR, OLD_DEST]]))
+  expect(fileLocks(fx.locks)).toEqual([])
+})
+
+test('a listing that connects again clears the count: a slow link is never replaced', async () => {
+  const fx = fake({ hosts: { [FAR_DEST]: FAR } }, machines({ [FAR]: OLD_DEST }))
+  const memory = newViewsMemory()
+  const rows = [row({ machine: FAR, reach: [FAR_DEST] })]
+  await syncViews(fx.dollar, rows, memory, { ...DISCOVER, now: NOW })
+  await syncViews(fx.dollar, rows, memory, { ...DISCOVER, now: NOW + VIEW_RETRY_MS })
+  fx.world.homes = { [OLD_DEST]: '' }
+  await syncViews(fx.dollar, rows, memory, { ...DISCOVER, now: NOW + 3 * VIEW_RETRY_MS })
+  delete fx.world.homes
+  await syncViews(fx.dollar, rows, memory, { ...DISCOVER, now: NOW + 3 * VIEW_RETRY_MS + LIST_EVERY_MS })
+  await syncViews(fx.dollar, rows, memory, { ...DISCOVER, now: NOW + 3 * VIEW_RETRY_MS + LIST_EVERY_MS + 1 })
+  expect(probes(fx.runs)).toEqual([])
+  expect(parseMachines(fx.files.get(FILE)!)).toEqual(new Map([[FAR, OLD_DEST]]))
+})
+
+test('no production or staging host is ever probed: a bare alias in a row, a row naming an alias\'s host, an alias whose name only begins as the machine\'s', async () => {
+  const fx = fake({ hosts: { izno: 'IznoServer' } }, null)
+  fx.files.set(`${HOME}/.ssh/config`, 'Host iznoserver-prod iznoserver-staging geo-prod01 iznoserver-backup izno-mail\n  HostName 192.0.2.1\nHost prod01\n  HostName 192.0.2.2\nHost izno\n  User izno\n')
+  fx.files.set(`${HOME}/.env`, 'PROD_LOGIN=root\nIZNOSERVERPROD_LOGIN=root\n')
+  const forged = { ...row(), reach: ['prod01', 'root@prod01', 'root@geo-prod01'] }
+  await syncViews(fx.dollar, [forged], newViewsMemory(), DISCOVER)
+  expect(probes(fx.runs)).toEqual(['izno'])
+  expect([namesMatch('iznoserver-prod', 'IznoServer'), namesMatch('iznoserver-staging', 'IznoServer'), namesMatch('geo-prod01', 'geo'), namesMatch('prod01', 'prod'), namesMatch('iznoserver-backup', 'IznoServer'), namesMatch('izno-mail', 'IznoServer')]).toEqual([false, false, false, false, false, false])
+  expect([namesMatch('izno', 'IznoServer'), namesMatch('iznoserver2', 'IznoServer'), namesMatch('MINITECH', 'mini-tech2')]).toEqual([true, true, true])
+  expect(candidatesFor(FAR, ['prod', 'root@prod01', FAR_DEST, 'me@minitech'], ['prod01', 'minitech'], [])).toEqual([FAR_DEST, 'me@minitech', 'minitech'])
+})
+
+test('each candidate\'s answer is in the line of a machine none proves: its host name, or its exit and what ssh said', async () => {
+  const fx = fake({ hosts: { [OLD_DEST]: 'someone-else' } }, null)
+  await syncViews(fx.dollar, [row({ machine: FAR, reach: [OLD_DEST, FAR_DEST] })], newViewsMemory(), DISCOVER)
+  expect(fx.logged.some(line => line.includes(`no destination answers as ${FAR} (2 tried: ${OLD_DEST}: answered as someone-else; ${FAR_DEST}: exit 255: timeout): tried again later`))).toBe(true)
+})
+
+test('the file is written under its lock over what it holds then: a file refused meanwhile, a machine or the same one added meanwhile', async () => {
+  const added = machinesText(new Map([['iznoserver', 'izno']]))
+  const refused = fake({ hosts: { [FAR_DEST]: FAR }, duringProbe: files => files.set(FILE, '{') }, null)
+  await syncViews(refused.dollar, [row({ machine: FAR, reach: [FAR_DEST] })], newViewsMemory(), { now: NOW, discover: true })
+  expect(refused.files.get(FILE)).toBe('{')
+  expect(fileLocks(refused.locks)).toEqual([`${FILE}.lock`])
+  const other = fake({ hosts: { [FAR_DEST]: FAR }, duringProbe: files => files.set(FILE, added) }, null)
+  await syncViews(other.dollar, [row({ machine: FAR, reach: [FAR_DEST] })], newViewsMemory(), { now: NOW, discover: true })
+  expect(parseMachines(other.files.get(FILE)!)).toEqual(new Map([['iznoserver', 'izno'], [FAR, FAR_DEST]]))
+  expect(fileLocks(other.locks)).toEqual([`${FILE}.lock`])
+  const same = fake({ hosts: { [FAR_DEST]: FAR }, duringProbe: files => files.set(FILE, machinesText(new Map([[FAR, 'me@mini-tech2.local']]))) }, null)
+  await syncViews(same.dollar, [row({ machine: FAR, reach: [FAR_DEST] })], newViewsMemory(), { now: NOW, discover: true })
+  expect(parseMachines(same.files.get(FILE)!)).toEqual(new Map([[FAR, 'me@mini-tech2.local']]))
+  expect(fileLocks(same.locks)).toEqual([`${FILE}.lock`])
 })

@@ -9,10 +9,14 @@
 // view is live when this Mac's process table holds its ssh; that same table is what keeps one view
 // per home server, and no view opens while the server lists a control-mode client. The machines
 // are mapped to an ssh destination by one file of the protected root (stateDir), beside the launch
-// files it decides; a machine it does not name is a logged line, never a guess.
-import { HOME_SHAPE, type RemoteRow } from './remote-row.ts'
+// files it decides, and written by the module itself: a machine the rows name and the file does not
+// is looked for among the destinations its rows publish, this Mac's ssh aliases and the logins of
+// ~/.env, each kept only once ssh to it answers with that machine's host name; a machine none
+// proves is a logged line, never a guess. The home servers of every machine the file maps are listed
+// over ssh, so a view rests on its server, not on a fresh row.
+import { DEST_SHAPE, destShaped, HOME_SHAPE, machineLabel, reachShaped, type RemoteRow } from './remote-row.ts'
 import { logLine, stateDir, storeIo, writeAtomic } from './module-io.ts'
-import { withLockOver } from '../core/store-io.ts'
+import { updateOver, withLockOver } from '../core/store-io.ts'
 import { messageOf, type Host } from './host.ts'
 
 // The file that maps a machine label (a row's `machine`) to its ssh destination:
@@ -31,11 +35,6 @@ const SSH_OPTIONS = [
   '-o', 'BatchMode=yes', '-o', 'ForwardAgent=no', '-o', 'ClearAllForwardings=yes',
   '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=3',
 ] as const
-
-// An ssh destination: an alias, or `user@host`, each part starting with a letter or a digit so
-// that it can never read as an option.
-const DEST_SHAPE = /^(?:[A-Za-z0-9][A-Za-z0-9._-]*@)?[A-Za-z0-9][A-Za-z0-9.-]*$/
-const DEST_CAP = 120
 
 // A launch file's path as iTerm2 is handed it: iTerm2 splits a command into words itself, so the
 // path holds no character a word break or a quote could change.
@@ -76,7 +75,7 @@ export function parseMachines(text: string): Machines | string {
   const out = new Map<string, string>()
   for (const [label, dest] of Object.entries(machines as Record<string, unknown>)) {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(label)) return `the label '${label.slice(0, 64)}' is not a machine's`
-    if (typeof dest !== 'string' || dest.length > DEST_CAP || !DEST_SHAPE.test(dest)) return `the destination of ${label} is not an ssh destination`
+    if (!destShaped(dest)) return `the destination of ${label} is not an ssh destination`
     out.set(label.toLowerCase(), dest)
   }
   return out
@@ -105,6 +104,83 @@ export function checkArgv(dest: string, socket: string): string[] {
 // The home server's clients, each by its flags: list-clients starts nothing on the remote either.
 export function clientsArgv(dest: string, socket: string): string[] {
   return readArgv(dest, `tmux -L ${socket} list-clients -F '#{client_flags}'`)
+}
+
+// The home servers a machine runs, each socket name on a line: every `orch-*` tmux server of the
+// user's that holds a `home` session. Listing and has-session start nothing on the remote. Each
+// dollar is escaped from the login shell that hands zsh the line, so that zsh expands it.
+export const LIST_HOMES = 'for s in \\${TMUX_TMPDIR:-/tmp}/tmux-\\$(id -u)/orch-*(N); do tmux -L \\${s:t} has-session -t ' + VIEW_SESSION + ' 2>/dev/null && echo \\${s:t}; done; true'
+
+export function listArgv(dest: string): string[] {
+  return readArgv(dest, LIST_HOMES)
+}
+
+// The home servers a listing names: the lines of a home server's shape, any other line none.
+export function listedHomes(stdout: string, socketShape: RegExp = HOME_SHAPE): string[] {
+  return [...new Set(stdout.split('\n').map(line => line.trim()).filter(line => socketShape.test(line)))]
+}
+
+// The probe of a destination: its host name, through no login shell, with no password asked.
+export function probeArgv(dest: string): string[] {
+  return [SSH, ...SSH_OPTIONS, '-o', 'ConnectTimeout=8', dest, 'hostname -s']
+}
+
+// The Host aliases of an ssh configuration: each word of a `Host` line that names one host, a
+// pattern (`*`, `?`, `!`) none.
+export function sshAliases(text: string): string[] {
+  const aliases: string[] = []
+  for (const line of text.split('\n')) {
+    const m = /^\s*Host\s+(.+?)\s*$/i.exec(line)
+    if (!m) continue
+    for (const word of m[1]!.split(/\s+/)) if (!/[*?!]/.test(word) && destShaped(word)) aliases.push(word)
+  }
+  return [...new Set(aliases)]
+}
+
+// The logins of the credential store: each `<NAME>_LOGIN=<login>` whose login is a user's shape. Its
+// other lines are read for nothing and kept nowhere.
+export function envLogins(text: string): { name: string; login: string }[] {
+  const logins: { name: string; login: string }[] = []
+  for (const line of text.split('\n')) {
+    const m = /^\s*(?:export\s+)?([A-Za-z][A-Za-z0-9]*)_LOGIN=(.*)$/.exec(line)
+    if (!m) continue
+    const login = m[2]!.trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
+    if (/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(login)) logins.push({ name: m[1]!, login })
+  }
+  return logins
+}
+
+// What the longer of two names may hold past the shorter: digits, or `server` and digits.
+const NAME_REST = /^(?:server)?\d*$/
+// A name that is a production or staging host's, never a machine of the operator's orchestrators.
+const SERVER_NAME = /prod|staging/
+
+// Whether a name may be a machine's: their letters and digits, one the start of the other and the
+// rest of NAME_REST, three at least (`izno` and IznoServer, MINITECH and mini-tech2), neither of
+// SERVER_NAME. Only such names are probed, never the other hosts this Mac reaches.
+export function namesMatch(name: string, label: string): boolean {
+  const a = name.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const b = label.toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (a.length < 3 || b.length < 3 || SERVER_NAME.test(a) || SERVER_NAME.test(b)) return false
+  return (a.startsWith(b) && NAME_REST.test(a.slice(b.length))) || (b.startsWith(a) && NAME_REST.test(a.length < b.length ? b.slice(a.length) : ''))
+}
+
+// The destinations tried for a machine, in order: those its rows publish (each `user@host`, its host
+// none of this Mac's aliases but the machine's own, whose block ssh would apply), then the aliases
+// whose name is the machine's, then each such login at the machine's name and at its `.local` name.
+export function candidatesFor(label: string, reach: readonly string[], aliases: readonly string[], logins: readonly { name: string; login: string }[]): string[] {
+  const foreign = new Set(aliases.filter(alias => !namesMatch(alias, label)).map(alias => alias.toLowerCase()))
+  const out = [
+    ...reach.filter(dest => reachShaped(dest) && !foreign.has(dest.slice(dest.indexOf('@') + 1).toLowerCase())),
+    ...aliases.filter(alias => namesMatch(alias, label)),
+    ...logins.filter(({ name }) => namesMatch(name, label)).flatMap(({ login }) => [`${login}@${label}`, `${login}@${label}.local`]),
+  ]
+  return [...new Set(out.filter(destShaped))]
+}
+
+// The machine file's text, its labels in order.
+export function machinesText(machines: Machines): string {
+  return JSON.stringify({ version: 1, machines: Object.fromEntries([...machines].sort(([a], [b]) => a.localeCompare(b))) }, null, 2) + '\n'
 }
 
 // A client's flags as the server prints them: words, some with a value, joined by commas.
@@ -224,15 +300,38 @@ export function tried(backoff: Backoff, key: string, now: number): void {
 // it holds, and what each view needs, kept apart from its row, which is removed 24 h after its
 // last send while an idle orchestrator lives on: forgotten when its server answers that it runs
 // no more.
-export type ViewsMemory = { backoff: Backoff; said: Set<string>; homes: Map<string, ViewHome> }
+// `unreached` counts, per machine, the listings in a row its destination did not connect to (ssh's
+// exit 255): past STALE_AFTER, the destination is looked for again.
+export type ViewsMemory = { backoff: Backoff; said: Set<string>; homes: Map<string, ViewHome>; unreached: Map<string, number> }
 
 export function newViewsMemory(): ViewsMemory {
-  return { backoff: new Map(), said: new Set(), homes: new Map() }
+  return { backoff: new Map(), said: new Set(), homes: new Map(), unreached: new Map() }
 }
 
+// The listings in a row a destination may fail to connect to before another is looked for.
+export const STALE_AFTER = 3
+// ssh's exit when it could not connect or log in, as against the remote command's own.
+const SSH_FAILED = 255
+// How much of a refusal's first line the log keeps.
+const CAUSE_CAP = 200
+
+// A run's cause, for the log: its exit and the first line of what it said, bounded, or no answer.
+function causeOf(run: { exitCode: number; stderr?: unknown } | null): string {
+  if (!run) return 'no answer'
+  const said = String(run.stderr ?? '').trim().split('\n')[0]!.slice(0, CAUSE_CAP)
+  return said ? `exit ${run.exitCode}: ${said}` : `exit ${run.exitCode}`
+}
+
+// How long after a listing of a machine's home servers the next one waits, when it answered.
+export const LIST_EVERY_MS = 60000
+const PROBE_TIMEOUT_MS = 12000
+const LIST_TIMEOUT_MS = 15000
+
 // What a sync is given beside the rows. `socketShape` is a bench's own: a test server that is not
-// a home server and that nothing else on the remote takes for one.
-export type ViewsOptions = { now?: number; socketShape?: RegExp }
+// a home server and that nothing else on the remote takes for one. `discover` writes the machine
+// file for a machine the rows name and it does not; `listHomes` lists each mapped machine's home
+// servers. The coordinator's wake sets both.
+export type ViewsOptions = { now?: number; socketShape?: RegExp; discover?: boolean; listHomes?: boolean }
 
 type ViewHost = Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>
 
@@ -251,7 +350,10 @@ export async function syncViews($: ViewHost, rows: readonly RemoteRow[], memory:
   const shape = options.socketShape ?? HOME_SHAPE
   const root = await stateDir($)
   const file = `${root}/${MACHINES_FILE}`
-  const text = await $.fs.read(file).then(String, () => null)
+  let text = await $.fs.read(file).then(String, () => null)
+  if (options.discover && (text === null || typeof parseMachines(text) !== 'string')) {
+    if (await discoverMachines($, file, rows, text === null ? new Map() : parseMachines(text) as Machines, memory, now)) text = await $.fs.read(file).then(String, () => null)
+  }
   if (text === null) {
     await sayOnce($, memory, `no machine file at ${file}: no remote view is opened`)
     return
@@ -264,6 +366,7 @@ export async function syncViews($: ViewHost, rows: readonly RemoteRow[], memory:
   for (const { name, machine, home } of rows) {
     if (home !== undefined) memory.homes.set(homeKey(machine, home), { name, machine, home })
   }
+  if (options.listHomes) await listHomes($, machines, memory, now, shape)
   const { wanted, unmapped } = wantedViews([...memory.homes.values()], machines, shape)
   for (const row of unmapped) await sayOnce($, memory, `the machine ${row.machine} of ${row.name} is not in ${file}: no view of it is opened`)
   const ps = await $.process.run([...PS_ARGV], { timeoutMs: PS_TIMEOUT_MS }).catch(() => null)
@@ -287,6 +390,86 @@ export async function syncViews($: ViewHost, rows: readonly RemoteRow[], memory:
       await checkAndOpen($, root, view, memory, shape)
     } catch (err) {
       await logLine($, 'views', `the view of ${view.socket} on ${view.dest}: ${messageOf(err)}`)
+    }
+  }
+}
+
+// Each machine the rows name and the file does not, and each whose destination stopped connecting
+// (STALE_AFTER listings in a row), looked for once per bound: the first candidate whose host name is
+// that machine's is written in the file, under its lock, over what the file holds then. A file
+// refused meanwhile is left as it is, and so is an entry another writer set meanwhile; a machine no
+// candidate proves keeps its entry, its destination perhaps only down. Each candidate's answer is
+// logged. Whether the file was written.
+async function discoverMachines($: ViewHost, file: string, rows: readonly RemoteRow[], machines: Machines, memory: ViewsMemory, now: number): Promise<boolean> {
+  const labels = new Map<string, { label: string; reach: string[]; stale?: string }>()
+  for (const row of rows) {
+    const key = row.machine.toLowerCase()
+    const stale = machines.get(key)
+    if (stale !== undefined && (memory.unreached.get(key) ?? 0) < STALE_AFTER) continue
+    const known = labels.get(key) ?? { label: row.machine, reach: [], ...(stale !== undefined ? { stale } : {}) }
+    known.reach.push(...(row.reach ?? []))
+    labels.set(key, known)
+  }
+  const due = [...labels].filter(([key]) => (memory.backoff.get(`find|${key}`)?.nextAt ?? 0) <= now)
+  if (due.length === 0) return false
+  const home = (await $.env.get('HOME') ?? '').replace(/\/+$/, '')
+  const aliases = sshAliases(String(await $.fs.read(`${home}/.ssh/config`).catch(() => '')))
+  const logins = envLogins(String(await $.fs.read(`${home}/.env`).catch(() => '')))
+  let written = false
+  for (const [key, { label, reach, stale }] of due) {
+    tried(memory.backoff, `find|${key}`, now)
+    const candidates = candidatesFor(label, reach, aliases, logins).filter(dest => dest !== stale)
+    const answers: string[] = []
+    let found: string | null = null
+    for (const dest of candidates) {
+      const probed = await $.process.run(probeArgv(dest), { timeoutMs: PROBE_TIMEOUT_MS }).catch(() => null)
+      const answered = probed?.exitCode === 0 ? machineLabel(String(probed.stdout ?? '')) : null
+      if (answered !== null && answered.toLowerCase() === key) {
+        found = dest
+        break
+      }
+      answers.push(`${dest}: ${answered !== null ? `answered as ${answered}` : causeOf(probed)}`)
+    }
+    if (found === null) {
+      await logLine($, 'views', `no destination answers as ${label} (${candidates.length} tried${answers.length ? `: ${answers.join('; ')}` : ''}): tried again later`)
+      continue
+    }
+    const dest = found
+    const wrote = await updateOver(storeIo($), file, current => {
+      const held = current === undefined ? new Map<string, string>() : parseMachines(current)
+      if (typeof held === 'string' || held.get(key) !== stale) return undefined
+      return machinesText(new Map([...held, [key, dest]]))
+    }, { tries: 5 }).catch((err: unknown) => {
+      void logLine($, 'views', `the machine file ${file} could not be written: ${messageOf(err)}`)
+      return undefined
+    })
+    if (wrote === undefined) continue
+    memory.backoff.delete(`find|${key}`)
+    memory.unreached.delete(key)
+    written = true
+    await logLine($, 'views', `the machine ${label} answers as ${dest}${stale !== undefined ? `, no more as ${stale}` : ''}: written in ${file}`)
+  }
+  return written
+}
+
+// The home servers of each mapped machine, listed once per bound: each one listed is remembered,
+// as a row's is, and forgotten the same way, when its check answers that it runs no more
+// (openChecked). A machine out of reach is tried again after its bound.
+async function listHomes($: ViewHost, machines: Machines, memory: ViewsMemory, now: number, shape: RegExp): Promise<void> {
+  for (const [label, dest] of machines) {
+    const key = `list|${dest}`
+    if ((memory.backoff.get(key)?.nextAt ?? 0) > now) continue
+    const listed = await $.process.run(listArgv(dest), { timeoutMs: LIST_TIMEOUT_MS }).catch(() => null)
+    if (listed?.exitCode !== 0) {
+      tried(memory.backoff, key, now)
+      if (listed?.exitCode === SSH_FAILED) memory.unreached.set(label, (memory.unreached.get(label) ?? 0) + 1)
+      await logLine($, 'views', `the home servers of ${label} could not be listed on ${dest} (${causeOf(listed)}): tried again later`)
+      continue
+    }
+    memory.unreached.delete(label)
+    memory.backoff.set(key, { tries: 0, nextAt: now + LIST_EVERY_MS })
+    for (const socket of listedHomes(String(listed.stdout ?? ''), shape)) {
+      if (!memory.homes.has(homeKey(label, socket))) memory.homes.set(homeKey(label, socket), { name: socket, machine: label, home: socket })
     }
   }
 }

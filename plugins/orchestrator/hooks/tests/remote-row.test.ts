@@ -11,7 +11,8 @@ import {
   ROW_MARKER, ROW_REFRESH_MS, ROW_TEXT_CAP, REMOTE_STALE_AFTER_MS, PRS_CAP, parseRemoteRow, rowText, deliveryOf, remoteRowOf, withRemote,
   prsInFlight, rowIsNews, rowSent, UNREACHED_RETRY_MS, type RemoteRow,
 } from '../remote-row.ts'
-import { paneRows, sendRow, readRemoteRows, forgetRowRetry, type SessionRow } from '../supervision.ts'
+import { REACH_WAIT_MS, forgetReach } from '../reach.ts'
+import { paneRows, sendRow, flushOutbox, readRemoteRows, forgetRowRetry, type Outgoing, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { fingerprint } from '../relay.ts'
 import { parseQ } from '../remote-round.ts'
@@ -42,7 +43,7 @@ const RECORD_PATH = '/briefs/belt/dispatch-record.jsonl'
 
 // `record`: the orchestration's dispatch record, registered by the session s-one, with a line saying the operator's merge is awaited
 // on acme/app#8, which the forge (`forge`) lists Ready.
-function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean; record?: boolean; ps?: string | 'fails'; tmux?: string } = {}) {
+function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean; record?: boolean; ps?: string | 'fails'; tmux?: string; user?: string; publicIp?: string; lan?: string; holdPython?: Promise<void> } = {}) {
   const files = new Map<string, string>()
   const sent: { to: unknown; text: string }[] = []
   const logged: string[] = []
@@ -65,7 +66,7 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
         return { isDelivered: true }
       },
     },
-    env: { get: async (name: string) => ({ HOME, ...(over.tmux ? { TMUX: over.tmux } : {}) } as Record<string, string>)[name] },
+    env: { get: async (name: string) => ({ HOME, ...(over.tmux ? { TMUX: over.tmux } : {}), ...(over.user ? { USER: over.user } : {}) } as Record<string, string>)[name] },
     plugin: { root: '/plugins/orch-root' },
     clock: { after: (ms: number, fn: () => unknown) => { later.push({ ms, fn }); return { cancel: () => undefined } } },
     fs: {
@@ -90,6 +91,10 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
         const line = logLineOf(argv)
         if (line !== null) logged.push(line)
         if (argv[0] === 'hostname') return { exitCode: 0, stdout: 'bench-mac.local\n', stderr: '' }
+        if (argv[0] === 'python3' && over.holdPython) await over.holdPython
+        if (argv[0] === 'python3' && over.publicIp !== undefined) return { exitCode: 0, stdout: `${over.publicIp}\n`, stderr: '' }
+        if (argv[0] === 'ipconfig' && argv[2] === 'en0' && over.lan !== undefined) return { exitCode: 0, stdout: `${over.lan}\n`, stderr: '' }
+        if (argv[0] === 'ipconfig') return { exitCode: 1, stdout: '', stderr: 'none' }
         const asked = prQueryRun(argv, repo => (repo === 'acme/app' ? JSON.stringify([{ number: 8, createdAt: '2026-11-14T08:00:00Z', labels: [{ name: 'Ready' }] }]) : null))
         if (asked !== null) return asked
         const [verb, , from = '', to = ''] = argv
@@ -192,6 +197,70 @@ test('an orchestrator in a home server sends its home once: a repeat is no news'
   await sendRow(fx.dollar, 's-one')
   expect(fx.sent.length).toBe(1)
   expect(parseRemoteRow(fx.sent[0]!.text)!.home).toBe('orch-cdc52505')
+})
+
+test('a row carries the destinations its machine is reached by: its user at the router\'s address, its local one, its .local name', async () => {
+  forgetReach()
+  try {
+    const fx = fake({ user: 'geo', publicIp: '203.0.113.7', lan: '192.168.1.20' })
+    await sendRow(fx.dollar, 's-one')
+    expect(parseRemoteRow(fx.sent[0]!.text)!.reach).toEqual(['geo@203.0.113.7', 'geo@192.168.1.20', 'geo@bench-mac.local'])
+    // Learnt once per bound: a second send asks the router nothing more.
+    fx.files.set(ROW, storeRow({ context_percent: 55, context_tokens: 550000 }))
+    await sendRow(fx.dollar, 's-one')
+    expect(fx.sent.length).toBe(2)
+    expect(parseRemoteRow(fx.sent[1]!.text)!.reach).toEqual(['geo@203.0.113.7', 'geo@192.168.1.20', 'geo@bench-mac.local'])
+  } finally {
+    forgetReach()
+  }
+})
+
+test('a router that outlives the wait never holds the row: it goes without its reach, then again with it once learnt', async () => {
+  forgetReach()
+  try {
+    let answer: () => void = () => undefined
+    const fx = fake({ user: 'geo', publicIp: '203.0.113.7', holdPython: new Promise<void>(resolve => { answer = resolve }) })
+    const started = Date.now()
+    await sendRow(fx.dollar, 's-one')
+    expect(Date.now() - started).toBeLessThan(REACH_WAIT_MS + 2000)
+    expect(fx.sent.length).toBe(1)
+    expect(parseRemoteRow(fx.sent[0]!.text)!.reach).toBeUndefined()
+    answer()
+    for (let i = 0; i < 100 && fx.sent.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5))
+    expect(fx.sent.length).toBe(2)
+    expect(parseRemoteRow(fx.sent[1]!.text)!.reach).toEqual(['geo@203.0.113.7', 'geo@bench-mac.local'])
+  } finally {
+    forgetReach()
+  }
+})
+
+test('an item pushed while the message is being made is not settled by its answer: it was not in it', async () => {
+  const fx = fake()
+  const settled: string[] = []
+  const outbox: Outgoing[] = []
+  const to: Outgoing['to'] = { to: COORD_FROM, name: 'Coord: ops', local: false }
+  const late: Outgoing = { to, line: 'late', settle: async () => { settled.push('late') } }
+  outbox.push({ to, get line() { outbox.push(late); return 'first' }, settle: async () => { settled.push('first') } })
+  await flushOutbox(fx.dollar, outbox)
+  expect(settled).toEqual(['first'])
+})
+
+test('a reach is read whole or the row refused: a destination not of its shape, an empty list, too many', () => {
+  const base = { ...JSON.parse(rowText(remoteRowOf(JSON.parse(storeRow()) as SessionRow, 'bench-mac')!).slice(ROW_MARKER.length)) }
+  const line = (reach: unknown) => ROW_MARKER + JSON.stringify({ ...base, reach })
+  expect(parseRemoteRow(line(['geo@203.0.113.7']))!.reach).toEqual(['geo@203.0.113.7'])
+  expect(parseRemoteRow(ROW_MARKER + JSON.stringify({ ...base, home: 'orch-cdc52505', reach: ['geo@izno'] }))!.home).toBe('orch-cdc52505')
+  // A bare alias is refused: a row never names one of the coordinator's machine's ssh aliases.
+  for (const bad of [['-oProxyCommand=x'], [], ['a@b', 'c@d', 'e@f', 'g@h', 'i@j', 'k@l', 'm@n'], 'izno', [7], ['izno'], ['geo@203.0.113.7', 'prod']]) expect(parseRemoteRow(line(bad))).toBeNull()
+  expect(remoteRowOf(JSON.parse(storeRow()) as SessionRow, 'bench-mac', [], null, undefined, null, ['-x', 'geo@h', 'geo@h', 'prod'])!.reach).toEqual(['geo@h'])
+  expect(remoteRowOf(JSON.parse(storeRow()) as SessionRow, 'bench-mac')!.reach).toBeUndefined()
+})
+
+test('a reach that changed is news; the same one is not', () => {
+  const row = remoteRowOf(JSON.parse(storeRow()) as SessionRow, 'bench-mac', [], null, undefined, null, ['geo@h'])!
+  const now = Date.now()
+  expect(rowIsNews(row, rowSent(row, now), now)).toBe(false)
+  expect(rowIsNews({ ...row, reach: ['geo@other'] }, rowSent(row, now), now)).toBe(true)
 })
 
 test('a wait change is sent, and so is a band crossing; a move inside the band is not', async () => {

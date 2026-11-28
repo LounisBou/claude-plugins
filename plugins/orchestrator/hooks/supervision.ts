@@ -43,6 +43,7 @@ import {
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLines, splitLines, seqOf, type QAck, type QEvent } from './remote-round.ts'
 import { newViewsMemory, syncViews } from './remote-view.ts'
+import { reachOf } from './reach.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
@@ -1681,7 +1682,7 @@ async function wakeTick($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 
     await logLine($, 'supervision', `round resend: ${messageOf(err)}`)
   }
   try {
-    await syncViews($, await readRemoteRows($), views)
+    await syncViews($, await readRemoteRows($), views, { discover: true, listHomes: true })
   } catch (err) {
     await logLine($, 'views', messageOf(err))
   }
@@ -1905,6 +1906,14 @@ let inFlightAtStop: readonly string[] | null = null
 let wake: WakeMemory = { timer: null, generation: 0, told: false }
 // The remote views' retries, lines said and homes seen (remote-view.ts), for the module's life.
 const views = newViewsMemory()
+
+/** The remote views' memory forgotten, as at a module load. */
+export function forgetViews(): void {
+  views.backoff.clear()
+  views.said.clear()
+  views.homes.clear()
+  views.unreached.clear()
+}
 
 // The pane's memory, module memory that register and the record's reconciliation share, started
 // afresh by register like the wake's.
@@ -3458,7 +3467,11 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   // The reading is the one of this instant: its stamp is now, not the last measure's.
   const measured = { ...read, updated_at: new Date().toISOString(), ...(fill ? { context_tokens: fill.tokens, context_percent: fill.percent, window: fill.window } : {}) }
   // The home server it runs in travels too: the coordinator's machine opens its view (remote-view.ts).
-  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)), fleet, homeOf(await $.env.get('TMUX')))
+  // And the destinations its machine is reached by, so that the coordinator's machine maps it alone:
+  // a learning that outlives its wait sends the row again once it ends, with what it learnt.
+  const machine = await machineOf($)
+  const again = () => sendRow($, sessionId).catch((err: unknown) => logLine($, 'supervision', `row: ${messageOf(err)}`))
+  const row = remoteRowOf(withWait(measured, waitText), machine, prs, openQuestions(parseWaitRecord(waitText)), fleet, homeOf(await $.env.get('TMUX')), await reachOf($, machine, Date.now(), again))
   if (!row) return
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`
@@ -3517,11 +3530,14 @@ async function hostFill($: Host<'session'>): Promise<{ tokens: number; percent: 
 export type Outgoing = { to: Coordinator; line: string; settle: (sent: SessionSendResult) => Promise<void> }
 
 export async function flushOutbox($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 'session'>, outbox: readonly Outgoing[]): Promise<void> {
-  const [first] = outbox
+  // The items as they stand now: one a late writer pushes meanwhile was not in the message, and is
+  // never settled by its answer.
+  const items = [...outbox]
+  const [first] = items
   if (!first) return
-  const sent = await sendToCoordinator($, first.to, joinLines(outbox.map(item => item.line))).catch((err: unknown): SessionSendResult => ({ isDelivered: false, reason: messageOf(err) }))
+  const sent = await sendToCoordinator($, first.to, joinLines(items.map(item => item.line))).catch((err: unknown): SessionSendResult => ({ isDelivered: false, reason: messageOf(err) }))
   // One item's settling that throws leaves the others' to run: a delivered row is still recorded.
-  for (const item of outbox) await item.settle(sent).catch((err: unknown) => logLine($, 'supervision', `send: ${messageOf(err)}`))
+  for (const item of items) await item.settle(sent).catch((err: unknown) => logLine($, 'supervision', `send: ${messageOf(err)}`))
 }
 
 // A remote orchestrator's ask (remote-round.ts), consumed whatever it holds. In the coordinator's
