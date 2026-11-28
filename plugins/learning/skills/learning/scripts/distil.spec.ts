@@ -21,6 +21,7 @@ interface Shape {
   readonly paths?: readonly string[]
   readonly evidence?: readonly Evidence[]
   readonly trust?: Trust
+  readonly session?: string | null
 }
 
 let serial = 0
@@ -33,7 +34,7 @@ function event(shape: Shape = {}): LearningEvent {
     random: (serial++).toString(16).padStart(8, '0'),
     source: { plugin: code.slice(0, code.indexOf('.')), code },
     subject: { repo: shape.repo === undefined ? 'acme/app' : shape.repo, pr: shape.pr === undefined ? 1 : shape.pr },
-    context: { paths: shape.paths ?? [] },
+    context: { paths: shape.paths ?? [], session: shape.session ?? null },
     evidence: shape.evidence ?? [],
     trust: shape.trust ?? 'computed',
   })
@@ -81,6 +82,38 @@ test('a cluster is a candidate at three events from two pull requests, not under
   assert.deepEqual(signatures(three()), ['refusal:github.writing.rule'])
   assert.deepEqual(signatures(three().slice(1)), [])
   assert.deepEqual(signatures([event(), event(), event()]), [])
+})
+
+// Three refusals of one repository with no pull request, as the guards write them, from two sessions.
+const prLess = (repo: string, shape: Shape = {}): LearningEvent[] => ['sess-1', 'sess-1', 'sess-2'].map(session => event({ repo, pr: null, session, ...shape }))
+
+test('a refusal with no pull request clusters by its repository: two repositories give two candidates, one repository one', () => {
+  const app = prLess('acme/app')
+  const web = prLess('acme/web')
+  const candidates = distil([...app, ...web], NOW)
+  assert.deepEqual(candidates.map(c => [c.v, c.signature, c.events, c.prs, c.repos, c.sessions]), [
+    [2, 'refusal:github.writing.rule:@acme/app', app.map(e => e.id), [], ['acme/app'], ['sess-1', 'sess-2']],
+    [2, 'refusal:github.writing.rule:@acme/web', web.map(e => e.id), [], ['acme/web'], ['sess-1', 'sess-2']],
+  ])
+  assert.deepEqual(candidates.map(c => parseCandidate(JSON.parse(JSON.stringify(c)))), candidates)
+  assert.deepEqual(distil([...app, ...prLess('acme/app')], NOW).map(c => [c.signature, c.events.length]), [['refusal:github.writing.rule:@acme/app', 6]])
+})
+
+test('a repository cluster is a candidate at three events from two sessions, not under either, and an unnamed session is none', () => {
+  const of = (...sessions: (string | null)[]) => signatures(sessions.map(session => event({ pr: null, session })))
+  assert.deepEqual(of('sess-1', 'sess-1', 'sess-2'), ['refusal:github.writing.rule:@acme/app'])
+  assert.deepEqual(of('sess-1', 'sess-2'), [])
+  assert.deepEqual(of('sess-1', 'sess-1', 'sess-1'), [])
+  assert.deepEqual(of('sess-1', null, null), [])
+})
+
+test('a refusal with a pull request clusters as before, beside the same code\'s refusals with none; no other kind clusters by repository', () => {
+  const candidates = distil([...three(), ...prLess('acme/app')], NOW)
+  assert.deepEqual(candidates.map(c => [c.v, c.signature, c.events.length, c.prs, c.sessions]), [
+    [1, 'refusal:github.writing.rule', 3, ['acme/app#1', 'acme/app#2'], undefined],
+    [2, 'refusal:github.writing.rule:@acme/app', 3, [], ['sess-1', 'sess-2']],
+  ])
+  assert.deepEqual(signatures(prLess('acme/app', { kind: 'escape', code: 'orchestrator.kill.foreign' })), [])
 })
 
 test('the same pull request number in two repositories is two pull requests', () => {

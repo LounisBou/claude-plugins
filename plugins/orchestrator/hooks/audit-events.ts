@@ -6,7 +6,7 @@
 // event holds names, numbers and pointers; a finding's point, a reason, a title, a body or a
 // wait's `blocks` never enter one.
 import {
-  auditEvent, learningEvent, prRefsOf, type AuditEvent, type Decision, type Edge, type EventInput, type Facts, type FindingSeverity,
+  auditEvent, learningEvent, prRefsOf, subjectOf, type AuditEvent, type Decision, type Edge, type EventInput, type Facts, type FindingSeverity,
   type LearningEvent, type Verdict,
 } from '../core/learning.ts'
 import type { WaitKind } from '../core/orchestration.ts'
@@ -42,9 +42,10 @@ export function stampOf(date: Date): string {
   return date.toISOString().replace(/\.[0-9]{3}Z$/, 'Z')
 }
 
-/** A guard's refusal: one version 1 event, its code as its source and its evidence. */
-export function refusalEvent(stamp: Stamp, code: string): Built[] {
-  const event = learningEvent({ ...input(stamp, code, { evidence: [{ type: 'refusal', code }] }), kind: 'refusal' })
+/** A guard's refusal: one version 1 event, its code as its source and its evidence, about the repository it refused in and the pull request the call names. */
+export function refusalEvent(stamp: Stamp, code: string, refused: { readonly repo: string | null; readonly pr: unknown }): Built[] {
+  const subject = subjectOf({ repo: refused.repo, pr: prOf(refused.pr) })
+  const event = learningEvent({ ...input(stamp, code, { subject, evidence: [{ type: 'refusal', code }] }), kind: 'refusal' })
   return event === undefined ? [] : [event]
 }
 

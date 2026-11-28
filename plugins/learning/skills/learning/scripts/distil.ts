@@ -5,8 +5,9 @@
 // <dir> is the host's configuration directory, read as the health report reads it. The events of
 // every version (`candidateEvents`) inside the contract's window are grouped by signature
 // (core/learning.ts, `signatureOf`); a group that reaches the contract's thresholds is a candidate
-// (`CANDIDATE_CONTRACT`). The same journals at the same time give the same lines. A journal that
-// cannot be read is said on the error stream and nothing is proposed.
+// (`CANDIDATE_CONTRACT`), a repository's refusals with no pull request counting sessions. The same
+// journals at the same time give the same lines. A journal that cannot be read is said on the error
+// stream and nothing is proposed.
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
@@ -51,9 +52,10 @@ export function candidateEvents(journals: readonly Journal[]): LearningEvent[] {
 
 /**
  * The candidates of `events` at `now`: per signature, the events inside the window that count toward
- * a cluster (`countsInCluster`), kept when they are enough and name enough pull requests. A pull request is named by an
- * event that holds both its repository and its number. In the order of the signatures, whatever the
- * order the events come in.
+ * a cluster (`countsInCluster`), kept when they are enough and name enough pull requests, or, for a
+ * repository's refusals with no pull request, enough sessions. A pull request is named by an event
+ * that holds both its repository and its number. In the order of the signatures, whatever the order
+ * the events come in.
  */
 export function distil(events: readonly LearningEvent[], now: number): Candidate[] {
   const clusters = new Map<string, { readonly parts: SignatureParts; readonly events: LearningEvent[] }>()
@@ -72,11 +74,15 @@ export function distil(events: readonly LearningEvent[], now: number): Candidate
     if (cluster === undefined) continue
     const ids = rising(cluster.events.map(e => e.id))
     const prs = rising(cluster.events.flatMap(({ subject }) => (subject.repo !== null && subject.pr !== null ? [`${subject.repo}#${subject.pr}`] : [])))
-    if (ids.length < CANDIDATE_CONTRACT.min_events || prs.length < CANDIDATE_CONTRACT.min_prs) continue
+    const { repo, ...parts } = cluster.parts
+    const sessions = rising(cluster.events.flatMap(e => e.context.session ?? []))
+    const isSpread = repo === undefined ? prs.length >= CANDIDATE_CONTRACT.min_prs : sessions.length >= CANDIDATE_CONTRACT.min_sessions
+    if (ids.length < CANDIDATE_CONTRACT.min_events || !isSpread) continue
     const candidate = parseCandidate({
-      v: CANDIDATE_VERSION, signature, ...cluster.parts,
+      v: repo === undefined ? CANDIDATE_VERSION : CANDIDATE_CONTRACT.repository_version, signature, ...parts,
       since: iso(now - LEARNING_WINDOW_DAYS * DAY_MS), until: iso(now),
       events: ids, prs, repos: rising(cluster.events.flatMap(e => e.subject.repo ?? [])),
+      ...(repo === undefined ? {} : { sessions }),
     })
     if (candidate === undefined) throw new Error(`the cluster ${signature} is no candidate of the contract`)
     candidates.push(candidate)

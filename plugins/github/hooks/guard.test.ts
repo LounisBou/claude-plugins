@@ -4,6 +4,7 @@
 import { expect, mock as hostMock, test } from 'claude-code/testing'
 import type { Engine, NounEvents, Reply, TestOn } from 'claude-code/testing'
 import { STDIN_REFUSAL } from './ready.js'
+import { bashNetRefusal, DATA_UNDER_HOME, writeNetRefusal } from './register.ts'
 import { FOREIGN_CEILING_MS, FOREIGN_WAIT_MS } from './reconcile.ts'
 import { parseLearningEvent } from '../core/learning.ts'
 // The tests that set the clock themselves, by their event registry: the other worlds get a clock, and their Not Ready is this machine's.
@@ -55,6 +56,9 @@ type World = {
   answer?: string
   // What the Bash tool answers.
   bashResult?: unknown
+  // The Bash tool, or the read of the session's directory, fails with this text: each read when it is called.
+  bashThrows?: string
+  cwdThrows?: string
   // What record.py answers when it fails: its exit code and stderr.
   recordFails?: { exitCode: number; stderr: string }
   // What record.py answers when it writes, its status read and posted first: its exit code and stderr.
@@ -194,7 +198,7 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
   const tree = w.tree ?? {}
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: session }))
-  on('session.cwd', () => ({ value: '/work' }))
+  on('session.cwd', () => (w.cwdThrows ? { deny: w.cwdThrows } : { value: '/work' }))
   on('tool.register', () => ({ value: undefined }))
   on('command.register', () => ({ value: undefined }))
   on('tool.check', (_$, e) => {
@@ -211,6 +215,7 @@ async function world($: Engine, on: TestOn, w: World = {}): Promise<Seen> {
     return { result: { questions: e['questions'], answers: { [question]: w.answer ?? 'Allow' } } }
   })
   on('tool.call', { tool: 'Bash' }, (_$, e) => {
+    if (w.bashThrows) throw new Error(w.bashThrows)
     seen.bash.push(String(e['command']))
     return w.bashResult ?? { result: { stdout: '', stderr: '', interrupted: false } }
   })
@@ -1280,6 +1285,179 @@ test('the event a guard journals is core\'s refusal event under the guard\'s cod
   expect(event?.source).toEqual({ plugin: 'github', code: 'github.auto-deploy.list-touch' })
   expect(event?.evidence).toEqual([{ type: 'refusal', code: 'github.auto-deploy.list-touch' }])
   expect(seen.events[0]).not.toContain('secret-name')
+})
+
+// The code, the repository and the pull request of each event the module journaled, each one an event of core's contract.
+const subjects = (seen: Seen) => seen.events.map((text) => {
+  const event = parseLearningEvent(JSON.parse(text))
+  return [event?.kind, event?.source.code, event?.subject.repo, event?.subject.pr]
+})
+const SESSION_ORIGIN = { 'remote get-url origin': { exitCode: 0, stdout: 'git@github.com:Acme/Here.git\n' } }
+
+test('a refusal of a call that names no repository carries the one of the session\'s checkout, in lower case', async ($, on) => {
+  const seen = await world($, on, { git: SESSION_ORIGIN })
+  await $.tool.call(bash('cat /data/auto-deploy.json'))
+  await $.tool.call({ tool: 'Write', file_path: AUTO_MERGE, content: '{}' })
+  await $.tool.call({ tool: 'Write', file_path: AUTO_DEPLOY, content: '{}' })
+  await $.tool.call({ tool: 'Write', file_path: EXEMPTION, content: '{}' })
+  expect(subjects(seen)).toEqual([
+    ['refusal', 'github.auto-deploy.list-touch', 'acme/here', null],
+    ['refusal', 'github.auto-merge.list-write', 'acme/here', null],
+    ['refusal', 'github.auto-deploy.list-touch', 'acme/here', null],
+    ['refusal', 'github.exemption.write', 'acme/here', null],
+  ])
+})
+
+test('a held pr-merge of the tool carries the repository and the pull request the call names', async ($, on) => {
+  const seen = await world($, on, { ...REVIEW_FAILED, git: SESSION_ORIGIN, autoMerge: ['acme/thing'] })
+  const out = await $.tool.call(gh('pr-merge', { pr: 12 }, 'Acme/Thing'))
+  expect(out.deny).toContain('not ready')
+  expect(subjects(seen)).toEqual([['refusal', 'github.ready.held', 'acme/thing', 12]])
+})
+
+test('a held Bash merge carries the repository and the pull request its words name', async ($, on) => {
+  const seen = await world($, on, { git: SESSION_ORIGIN })
+  await $.tool.call(bash('gh pr merge 12 -R Acme/Thing'))
+  expect(subjects(seen)).toEqual([['refusal', 'github.ready.held', 'acme/thing', 12]])
+})
+
+test('a held Bash merge that names no repository carries the session\'s, and none once its line changes directory', async ($, on) => {
+  const seen = await world($, on, { git: SESSION_ORIGIN })
+  await $.tool.call(bash('gh pr merge 12'))
+  await $.tool.call(bash('cd /elsewhere && gh pr merge 13'))
+  expect(subjects(seen)).toEqual([
+    ['refusal', 'github.ready.held', 'acme/here', 12],
+    ['refusal', 'github.ready.held', null, 13],
+  ])
+})
+
+test('a held act whose line hides what it acts on carries no repository it does not name', async ($, on) => {
+  const seen = await world($, on, { git: SESSION_ORIGIN, autoMerge: ['acme/here'] })
+  await $.tool.call(bash('gh api repos/$REPO/pulls/12/merge -X PUT'))
+  await $.tool.call(bash(ENGINE + ' --stdin-json < request.json'))
+  await $.tool.call(bash('gh api graphql -f query=\'mutation{mergePullRequest(input:{pullRequestId:"x"}){clientMutationId}}\''))
+  expect(subjects(seen)).toEqual([
+    ['refusal', 'github.ready.held', null, null],
+    ['refusal', 'github.ready.held', null, null],
+    ['refusal', 'github.ready.held', null, null],
+  ])
+})
+
+for (const line of [
+  'GH_REPO=o/n gh pr merge 12',
+  'export GH_REPO=o/n && gh pr merge 12',
+  'env GH_REPO=o/n gh pr merge 12',
+  'gh pr merge 12 -R $(cat r.txt)',
+  'gh pr merge 12 --repo="$(cat r.txt)"',
+  // The substitution leaves the argv, so the next word reads as the value of -R.
+  'gh pr merge -R `cat r.txt` team/branch',
+]) {
+  test('a held Bash merge whose line chooses its repository out of sight carries none: ' + line, async ($, on) => {
+    const seen = await world($, on, { git: SESSION_ORIGIN })
+    await $.tool.call(bash(line))
+    expect(subjects(seen).map(([, code, repo]) => [code, repo])).toEqual([['github.ready.held', null]])
+  })
+}
+
+test('a held Bash merge keeps the repository its -R spells out beside a substitution in another word', async ($, on) => {
+  const seen = await world($, on, { git: SESSION_ORIGIN })
+  await $.tool.call(bash('gh pr merge 12 -R Acme/Thing -b "$(cat body.md)"'))
+  expect(subjects(seen)).toEqual([['refusal', 'github.ready.held', 'acme/thing', 12]])
+})
+
+test('an auto-merge or auto-deploy change with no quoted words carries the repository it names', async ($, on) => {
+  const seen = await world($, on, { git: SESSION_ORIGIN })
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'auto-merge-set', args: { repo: 'Acme/Merged', on: true, words: 'yes' } })
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'auto-deploy-set', args: { repo: 'Acme/Shipped', env: 'prod', on: true, words: 'yes' } })
+  expect(subjects(seen)).toEqual([
+    ['refusal', 'github.auto-merge.unproven', 'acme/merged', null],
+    ['refusal', 'github.auto-deploy.unproven', 'acme/shipped', null],
+  ])
+})
+
+test('a refused record carries its repository, from the call or the checkout it names, and the pull request it names', async ($, on) => {
+  const seen = await world($, on, {
+    git: { ...SESSION_ORIGIN, ...CLEAN },
+    gitIn: { [REVIEW_DIR]: { ...CLEAN, ...REVIEW_ORIGIN, 'rev-parse HEAD': { exitCode: 0, stdout: MOVED + '\n' } } },
+    tree: CHECKOUTS,
+  })
+  await $.tool.call({ tool: 'mcp__github__record', pr: 12, kind: 'review', result: 'pass', dir: REVIEW_DIR })
+  await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'Acme/Thing', result: 'pass', dir: REVIEW_DIR })
+  await $.tool.call({ tool: 'mcp__github__record', repo: 'Acme/Thing', exempt: true, detail: 'no words' })
+  expect(subjects(seen)).toEqual([
+    ['refusal', 'github.record.kind', 'acme/thing', 12],
+    ['refusal', 'github.record.off-head', 'acme/thing', 12],
+    ['refusal', 'github.record.unquoted-words', 'acme/thing', null],
+  ])
+})
+
+test('an E2E written as stated is observed with its repository and pull request', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  await $.tool.call({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'pass', detail: 'ran the smoke suite' })
+  expect(subjects(seen)).toEqual([['refusal', 'github.record.e2e-stated', 'acme/thing', 12]])
+})
+
+test('a refused deploy carries the repository the deploy is declared for, not the session\'s', async ($, on) => {
+  const seen = await world($, on, {
+    git: SESSION_ORIGIN,
+    deployList: { repositories: [], commands: [
+      { repo: 'Acme/Api', kind: 'command', argv: ['composer', 'deploy:prod'], env: 'prod' },
+      { repo: 'Acme/Web', kind: 'skill', name: 'ship-web', env: 'prod' },
+    ] },
+  })
+  await $.tool.call(bash('composer deploy:prod'))
+  await $.tool.call({ tool: 'Skill', skill: 'ship-web' })
+  expect(subjects(seen)).toEqual([
+    ['refusal', 'github.deploy.unlisted', 'acme/api', null],
+    ['refusal', 'github.deploy.unlisted', 'acme/web', null],
+  ])
+})
+
+test('a refused line of two deploys carries the repository of the one the list does not grant, not of the first', async ($, on) => {
+  const seen = await world($, on, {
+    git: SESSION_ORIGIN,
+    deployList: { repositories: [{ repo: 'Acme/Api', env: 'prod' }], commands: [
+      { repo: 'Acme/Api', kind: 'command', argv: ['composer', 'deploy:prod'], env: 'prod' },
+      { repo: 'Acme/Web', kind: 'command', argv: ['composer', 'ship:web'], env: 'prod' },
+    ] },
+  })
+  await $.tool.call(bash('composer deploy:prod && composer ship:web'))
+  expect(subjects(seen)).toEqual([['refusal', 'github.deploy.unlisted', 'acme/web', null]])
+})
+
+test('a ready guard that throws holds the act, journaled with the repository and the pull request its words name', async ($, on) => {
+  const seen = await world($, on, { git: SESSION_ORIGIN, gate: BROKEN_GATE, autoMerge: ['acme/other'] })
+  const out = await $.tool.call(bash('gh pr ready 12 -R Acme/Thing'))
+  expect(String(out.deny)).toStartWith('github: readiness of Acme/Thing#12 unverified: ')
+  expect(subjects(seen)).toEqual([['refusal', 'github.ready.held', 'acme/thing', 12]])
+})
+
+test('the Bash net journals its refusal with the repository and the pull request the line names', async ($, on) => {
+  const w: World = { git: SESSION_ORIGIN, autoMerge: ['acme/thing'], labels: ['Ready'] }
+  const seen = await world($, on, w)
+  // The command itself throws once every guard has let it through: the module's net answers.
+  w.bashThrows = 'the shell is gone'
+  const line = 'gh pr merge 12 -R Acme/Thing --squash --match-head-commit ' + HEAD
+  const out = await $.tool.call(bash(line))
+  expect(out.deny).toBe(bashNetRefusal(line))
+  expect(subjects(seen)).toEqual([['refusal', 'github.net.blocked', 'acme/thing', 12]])
+})
+
+test('the Write net journals its refusal with the repository of the session\'s checkout', async ($, on) => {
+  const w: World = { git: SESSION_ORIGIN }
+  const seen = await world($, on, w)
+  // The guard cannot resolve the path it is given: the module's net answers.
+  w.cwdThrows = 'the session has no directory'
+  const out = await $.tool.call({ tool: 'Write', file_path: '/home/x' + DATA_UNDER_HOME + '/auto-merge.json', content: '{}' })
+  expect(out.deny).toBe(writeNetRefusal('/home/x' + DATA_UNDER_HOME + '/auto-merge.json'))
+  expect(subjects(seen)).toEqual([['refusal', 'github.net.blocked', 'acme/here', null]])
+})
+
+test('an origin that cannot be read leaves the refusal standing and journaled with no repository', async ($, on) => {
+  const seen = await world($, on, { gitThrows: 'git is gone' })
+  const out = await $.tool.call(bash('cat /data/auto-deploy.json'))
+  expect(out.deny).toContain('auto-deploy-set')
+  expect(subjects(seen)).toEqual([['refusal', 'github.auto-deploy.list-touch', null, null]])
 })
 
 test('a journal that cannot be written leaves each decision standing: the refusal kept, the write let through, one log line for the refusal', async ($, on) => {
@@ -4318,4 +4496,58 @@ test('light_ci refused by a permission rule runs nothing', async ($, on) => {
   const out = await $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 12 })
   expect(out.deny).toBe('no light CI here')
   expect(lightCiRun(seen)).toBeUndefined()
+})
+
+// ---- the subject of each refusal of the record tool ----
+
+// Each call names its repository, which is not the session checkout's: a subject read from anywhere else shows.
+const NAMED = { repo: 'Acme/Thing' }
+const DIRTY = { ...CLEAN, 'status --porcelain -uno': { exitCode: 0, stdout: ' M a.ts\n' } }
+const MOVED_AT = { 'log -g -1 --date=unix --format=%gd HEAD': { exitCode: 0, stdout: 'HEAD@{1000}\n' } }
+
+// Each of these refusals comes after the repository and the pull request are checked.
+const CHECKED_REFUSALS: Array<[string, World, { tool: string } & Record<string, unknown>]> = [
+  ['waiver-unplanned', { git: CLEAN, plan: planOf({ need: 'none', reason: 'docs only' }) }, { ...waiveCall('no E2E for this docs change, 2026-11-02'), ...NAMED }],
+  ['unquoted-words', { git: CLEAN }, { ...waiveCall(''), ...NAMED }],
+  ['gate-unread', { git: CLEAN, gateFails: 'error: boom' }, { ...e2eCall, ...NAMED }],
+  ['dirty-checkout', { git: DIRTY }, { ...e2eCall, ...NAMED }],
+  ['runtime-not-applicable', { git: CLEAN, files: [{ filename: 'hooks/register.ts' }] }, { ...noneCall('documentation only'), ...NAMED }],
+  ['e2e-unrun', { git: { ...CLEAN, ...MOVED_AT } }, { tool: 'mcp__github__record', pr: 12, ran: 'npm run e2e', ...NAMED }],
+]
+
+for (const [code, w, call] of CHECKED_REFUSALS) {
+  test('the record refusal ' + code + ' carries the repository and the pull request of the record', async ($, on) => {
+    const seen = await world($, on, { ...w, git: { ...SESSION_ORIGIN, ...w.git } })
+    await $.tool.call(call)
+    expect(subjects(seen)).toEqual([['refusal', 'github.record.' + code, 'acme/thing', 12]])
+  })
+}
+
+for (const [code, plugin, records, over] of [
+  // Refused before the repository is checked: the call's own words.
+  ['kind', 'norms', FOUR, { exempt: true, kind: undefined, result: undefined }],
+  ['acceptance-writer', 'pr-review', FAILED_AT_HEAD, {}],
+  ['pass-over-fail', 'orchestrator', FAILED_AT_HEAD, { result: 'pass' }],
+] as const) {
+  test('the record refusal ' + code + ' of the ' + plugin + ' plugin carries the repository and the pull request of the call', reviewing(plugin), async ($, on) => {
+    const seen = await world($, on, { records, git: { ...SESSION_ORIGIN, ...CLEAN } })
+    await verdict($, { ...NAMED, ...over })
+    expect(subjects(seen)).toEqual([['refusal', 'github.record.' + code, 'acme/thing', 12]])
+  })
+}
+
+test('the record refusal self-review carries the repository and the pull request of the record', reviewing('pr-review'), async ($, on) => {
+  const tree: NonNullable<World['tree']> = {}
+  const seen = await world($, on, { git: { ...SESSION_ORIGIN, ...CLEAN }, tree })
+  await $.tool.call(bash('git push origin feat-a'))
+  const kept = '/cfg/pushed-heads/' + HEAD
+  tree[kept] = { kind: 'file', mtimeMs: 1, text: String(seen.writes.find((one) => one.path === kept)?.text) }
+  await verdict($, { ...NAMED, result: 'pass' })
+  expect(subjects(seen)).toEqual([['refusal', 'github.record.self-review', 'acme/thing', 12]])
+})
+
+test('a record refused before its repository is checked carries the one the call names, ahead of the origin of its dir', async ($, on) => {
+  const seen = await world($, on, { git: SESSION_ORIGIN, gitIn: { [REVIEW_DIR]: REVIEW_ORIGIN }, tree: CHECKOUTS })
+  await $.tool.call(planCall({ e2e: 'none: docs only' }, { repo: 'Acme/Named', dir: REVIEW_DIR }))
+  expect(subjects(seen)).toEqual([['refusal', 'github.record.plan-writer', 'acme/named', 12]])
 })

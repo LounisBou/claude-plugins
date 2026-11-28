@@ -1,12 +1,13 @@
 // hooks/observe.ts
 // What a guard of this module no longer refuses, it observes: the call goes through and one
-// refusal event, under the guard's stable code, is written into the module's journal (core's
-// learning contract, the writer the orchestrator's guards already use). Only the irreversible
+// refusal event, under the guard's stable code and naming the repository and the pull request it is
+// about, is written into the module's journal (core's learning contract, the writer the
+// orchestrator's guards already use). Only the irreversible
 // stays refused: a merge whose CI is not green or whose record failed, a force push, a deletion, a
 // production target. An observer: a journal
 // that cannot be written is one line in the log, and the call goes on.
 import { appendEventOver, randomPart, type JournalIo } from '../core/journal.ts'
-import { journalDir, learningEvent } from '../core/learning.ts'
+import { journalDir, learningEvent, subjectOf } from '../core/learning.ts'
 import { reasonOf, type Host } from '../core/host.ts'
 
 export const PLUGIN = 'github'
@@ -82,14 +83,18 @@ function ioOf($: Host<'fs' | 'process' | 'clock'>): JournalIo {
   }
 }
 
-/** Writes the refusal event of `code` into the journal under `config`; never throws. */
-export async function observe($: Host<'fs' | 'process' | 'clock' | 'session' | 'ui'>, config: string | undefined, code: string): Promise<void> {
+/** What a refusal's writer read of its subject; a field the contract does not take is left null. */
+export type Refused = { readonly repo?: unknown; readonly pr?: unknown }
+
+/** Writes the refusal event of `code` about `refused` into the journal under `config`; never throws. */
+export async function observe($: Host<'fs' | 'process' | 'clock' | 'session' | 'ui'>, config: string | undefined, code: string, refused: Refused): Promise<void> {
   try {
     if (!config) throw new Error('no configuration directory')
     const id = String(await $.session.id().catch(() => ''))
     const at = new Date().toISOString().replace(/\.[0-9]{3}Z$/, 'Z')
     const event = learningEvent({
-      kind: 'refusal', at, random: randomPart(), source: { plugin: PLUGIN, code }, context: { session: SESSION.test(id) ? id : null },
+      kind: 'refusal', at, random: randomPart(), source: { plugin: PLUGIN, code }, subject: subjectOf(refused),
+      context: { session: SESSION.test(id) ? id : null },
       evidence: [{ type: 'refusal', code }], trust: 'computed',
     })
     if (event === undefined) throw new Error('the event breaks the learning contract')

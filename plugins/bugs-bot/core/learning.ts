@@ -312,6 +312,7 @@ export interface Foldable {
   readonly at: string
   readonly kind: string
   readonly source: { readonly code: string }
+  readonly subject: { readonly repo: string | null; readonly pr: number | null }
   readonly evidence: readonly Evidence[]
   readonly context: { readonly paths: readonly string[]; readonly languages: readonly string[] }
 }
@@ -323,23 +324,27 @@ export interface SignatureParts {
   readonly severity: Severity | null
   readonly classes: readonly PathClass[]
   readonly languages: readonly string[]
+  /** The repository, of a refusal that names it and no pull request; absent from any other. */
+  readonly repo?: string
 }
 
-/** The parts of an event's signature: its kind, the code that raised it, the severity of its first finding, the classes of its paths, its languages. */
+/** The parts of an event's signature: its kind, the code that raised it, the severity of its first finding, the classes of its paths, its languages, and the repository of a refusal with no pull request. */
 export function signaturePartsOf(event: Foldable): SignatureParts {
   const severity = event.evidence.flatMap(e => (e.type === 'finding' ? [e.severity] : []))[0] ?? null
-  return { kind: event.kind, code: event.source.code, severity, classes: pathClassesOf(event.context.paths), languages: event.context.languages }
+  const repo = event.kind === 'refusal' && event.subject.pr === null ? event.subject.repo : null
+  return { kind: event.kind, code: event.source.code, severity, classes: pathClassesOf(event.context.paths), languages: event.context.languages, ...(repo === null ? {} : { repo }) }
 }
 
-/** The signature its parts give: the kind and the code, then the severity, the classes and the languages there are. */
+/** The signature its parts give: the kind and the code, then the severity, the classes and the languages there are, then the repository after an `@`. */
 export function signatureFrom(parts: SignatureParts): string {
-  return [parts.kind, parts.code, ...(parts.severity ? [parts.severity] : []), ...parts.classes, ...parts.languages].join(':')
+  return [parts.kind, parts.code, ...(parts.severity ? [parts.severity] : []), ...parts.classes, ...parts.languages, ...(parts.repo === undefined ? [] : [`@${parts.repo}`])].join(':')
 }
 
 /**
  * What groups events of one kind of fact: the kind, the code that raised it, then, when the event
- * has them, the severity of its first finding, the classes of its paths and its languages. The same
- * events give the same signature, whoever reads them.
+ * has them, the severity of its first finding, the classes of its paths and its languages, and the
+ * repository of a refusal with no pull request. The same events give the same signature, whoever
+ * reads them.
  */
 export function signatureOf(event: Foldable): string {
   return signatureFrom(signaturePartsOf(event))
@@ -470,7 +475,10 @@ export function foldDropped(dropped: ReadonlyArray<{ readonly id: string; readon
 // signature, inside the window, once they reach the thresholds held here. It carries what code can
 // say of the cluster (its signature's parts, the events by identifier, the pull requests and the
 // repositories they name) and nothing a session judges: the cause, the remedy and its scope are the
-// retrospective's.
+// retrospective's. A refusal that names its repository and no pull request clusters by that
+// repository: where no pull request tells two pieces of work apart, the session does, so such a
+// cluster needs as many sessions as another needs pull requests, and one session retrying a refused
+// call is no candidate.
 
 /**
  * The code of a reviewer's thread that /norms:learn hands to the distiller: written only for a thread
@@ -480,9 +488,13 @@ export const THREAD_CODE = 'norms.thread'
 
 export const CANDIDATE_CONTRACT = {
   version: 1,
+  // The candidate of a repository's refusals with no pull request, which holds their sessions: version 2, read beside version 1.
+  repository_version: 2,
   // A cluster becomes a candidate at this many events, from this many pull requests, within the window.
   min_events: 3,
   min_prs: 2,
+  // In place of `min_prs` for a repository's refusals with no pull request.
+  min_sessions: 2,
   // The trusts whose events form a cluster: an `external` event is a pointer, never a count, except
   // under a code whose writer checked it in code first (a thread acted on, by an author who can write).
   trusts: ['computed', 'operator', 'review'],
@@ -510,6 +522,8 @@ export interface Candidate extends SignatureParts {
   readonly prs: readonly string[]
   /** The repositories the events name, in order. */
   readonly repos: readonly string[]
+  /** The sessions the events name, in order: held by version 2 alone. */
+  readonly sessions?: readonly string[]
 }
 
 const CANDIDATE_FIELDS = ['v', 'signature', 'kind', 'code', 'severity', 'classes', 'languages', 'since', 'until', 'events', 'prs', 'repos'] as const
@@ -526,23 +540,30 @@ function isPrOf(value: unknown): value is string {
 }
 
 /**
- * The candidate `raw` holds, or undefined: exactly the contract's fields, a signature that is the one
+ * The candidate `raw` holds, or undefined: exactly its version's fields, a signature that is the one
  * its parts give, a window that ends after it starts, the thresholds reached, and every pull request
- * in a repository the candidate names.
+ * in a repository the candidate names. Version 2 is one repository's refusals: no pull request, and
+ * the sessions in their place.
  */
 export function parseCandidate(raw: unknown): Candidate | undefined {
-  const top = fieldsOf(raw, CANDIDATE_FIELDS)
+  const isOfRepository = typeof raw === 'object' && raw !== null && (raw as Fields)['v'] === CANDIDATE_CONTRACT.repository_version
+  const top = fieldsOf(raw, isOfRepository ? [...CANDIDATE_FIELDS, 'sessions'] : CANDIDATE_FIELDS)
   if (!top) return undefined
-  const { v, signature, kind, code, severity, classes, languages, since, until, events, prs, repos } = top
-  if (v !== CANDIDATE_VERSION || !isOneOf(contract.kinds, kind) || !matches(PATTERNS.code, code)) return undefined
+  const { v, signature, kind, code, severity, classes, languages, since, until, events, prs, repos, sessions } = top
+  const version = isOfRepository ? CANDIDATE_CONTRACT.repository_version : CANDIDATE_VERSION
+  if (v !== version || !isOneOf(contract.kinds, kind) || !matches(PATTERNS.code, code)) return undefined
   if (!nullable(severity, (s): s is Severity => isOneOf(contract.severities, s))) return undefined
   if (!isRising(classes, (c): c is PathClass => isOneOf(PATH_CLASSES, c)) || !isRising(languages, (l): l is string => typeof l === 'string' && Object.hasOwn(contract.languages, l))) return undefined
-  if (signature !== signatureFrom({ kind, code, severity, classes, languages })) return undefined
   if (!isTime(since) || !isTime(until) || since >= until) return undefined
   if (!isRising(events, isId) || events.length < CANDIDATE_CONTRACT.min_events) return undefined
-  if (!isRising(repos, isRepo) || !isRising(prs, isPrOf) || prs.length < CANDIDATE_CONTRACT.min_prs) return undefined
+  if (!isRising(repos, isRepo) || !isRising(prs, isPrOf)) return undefined
   if (!prs.every(pr => repos.includes(pr.slice(0, pr.indexOf('#'))))) return undefined
-  return { v, signature, kind, code, severity, classes, languages, since, until, events, prs, repos }
+  const parts = { kind, code, severity, classes, languages }
+  const read = { v: version, signature: String(signature), ...parts, since, until, events, prs, repos }
+  if (!isOfRepository) return signature === signatureFrom(parts) && prs.length >= CANDIDATE_CONTRACT.min_prs ? read : undefined
+  const [repo, ...others] = repos
+  if (kind !== 'refusal' || repo === undefined || others.length > 0 || prs.length > 0 || signature !== signatureFrom({ ...parts, repo })) return undefined
+  return isRising(sessions, isSession) && sessions.length >= CANDIDATE_CONTRACT.min_sessions ? { ...read, sessions } : undefined
 }
 
 // ----- the candidate's state -----
@@ -745,9 +766,13 @@ export function candidateStateDir(configDir: string): string {
   return `${configDir}/${stateContract.plugin}/${stateContract.dir}`
 }
 
-/** The file of a signature's state: the signature, its `:` written `_`, which no signature holds. */
+/**
+ * The file of a signature's state: the signature, its `:` written `_` and the `/` of a repository
+ * written `+`. No part before the repository holds a `_`, and no part holds a `+`, so two signatures
+ * are two files.
+ */
 export function candidateStateFile(signature: string): string {
-  return `${signature.replaceAll(':', '_')}.json`
+  return `${signature.replaceAll(':', '_').replaceAll('/', '+')}.json`
 }
 
 // ----- a learned guard: warn, then enforce -----
