@@ -32,6 +32,7 @@ When the delivery creates or substantially modifies a frontend surface, or creat
 
 One more check is fixed on every delivery: its E2E line, from the implementer's report (`{{DELIVERY_REPORT}}`), never from the pull request's description; what is owed is the check plan's to say (github's `check-plan.ts`), never yours. With `E2E: <test path(s)> — <command> — passed`, you replay that command (a targeted run, §5) and report whether it passed at `{{HEAD}}`; a backend test runs against the service in its container, a frontend one is a committed Playwright test, and a manual browser run named in its place is a finding. With `E2E: none — <reason>`, the pull request's check plan settles it when its `e2e` need is `none` or `screenshots`. Otherwise, the plan requiring one or there being no plan, it is a finding. A report with no E2E line is a finding. Your report opens this check with one line, `E2E: replayed passed|replayed failed|none|absent`.
 
+{{DRIFT_CHECK?}}
 The checks of `review-verdict.md`, beside `{{SCREENSHOT_CHECKLIST}}`, are yours too, 1 to 11 and 13, check 10 by reading: a test not shown to fall is a finding. Sub-agents report to you; you consolidate.
 
 ## 4. Report shape — two levels, each finding written once

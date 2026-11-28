@@ -307,3 +307,92 @@ test('the module reads the round off the real brief: its project, pull request a
   assert.equal(isRound(read!, { repo: 'acme/app', pr: 13, head: '0123456789abcdef0123456789abcdef01234567' }), false)
   assert.equal(readingOf(text.replace('You are the REVIEW agent', 'You are the implementer')), null)
 })
+
+/** A checkout on `work`, one commit past `main`: its package.json scripts, then one commit per subject, each writing its file. */
+function checkoutOf(scripts: Record<string, string> | undefined, commits: ReadonlyArray<readonly [string, string]>): { path: string; base: string; head: string } {
+  const path = mkdtempSync(join(dir, 'co-'))
+  const git = (...args: string[]): string => execFileSync('git', ['-C', path, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' }).trim()
+  git('init', '-q', '-b', 'main')
+  if (scripts !== undefined) writeFileSync(join(path, 'package.json'), JSON.stringify({ scripts }))
+  writeFileSync(join(path, 'a.txt'), 'a')
+  git('add', '.')
+  git('commit', '-q', '-m', 'chore: base')
+  const base = git('rev-parse', 'HEAD')
+  git('checkout', '-q', '-b', 'work')
+  for (const [subject, file] of commits) {
+    writeFileSync(join(path, file), subject)
+    git('add', '.')
+    git('commit', '-q', '-m', subject)
+  }
+  const head = git('rev-parse', 'HEAD')
+  // The base moves on after the branch: drift compares against where the branch left it.
+  git('checkout', '-q', 'main')
+  writeFileSync(join(path, 'later.txt'), 'later')
+  git('add', '.')
+  git('commit', '-q', '-m', 'feat: later on the base')
+  return { path, base, head }
+}
+
+function briefOf(co: { path: string; head: string }): { text: string; err: string } {
+  const args = FIELDS()
+  args[args.indexOf('--worktree') + 1] = co.path
+  args[args.indexOf('--head') + 1] = co.head
+  const done = run([...args, '--base', 'main'])
+  assert.equal(done.code, 0, done.err)
+  return { text: readFileSync(join(dir, 'review-12.md'), 'utf8'), err: done.err }
+}
+
+const BUILD = { build: 'vite build' }
+/* The step itself: a bare « drift » would also match a checkout path. */
+const DRIFT_STEP = /drift:drift|drift\.sh/
+const driftCommands = (text: string): string[] => [...text.matchAll(/^drift\.sh (\w+) /gm)].map(match => match[1] ?? '')
+
+test('a refactor in a project with a build: the brief names drift build and shots, from the merge base to the head, one run directory each', () => {
+  const co = checkoutOf(BUILD, [['refactor(ui): move the list', 'list.ts'], ['test: cover the move', 'list.spec.ts']])
+  const { text } = briefOf(co)
+  assert.deepEqual(driftCommands(text), ['build', 'shots'])
+  for (const command of ['build', 'shots']) {
+    assert.ok(text.includes(`\ndrift.sh ${command} --repo '${co.path}' --base ${co.base} --head ${co.head} --out <scratchpad>/drift-${command}\n`), command)
+  }
+  assert.match(text, /`drift:drift`/)
+  assert.deepEqual(placeholdersOf(text), [])
+})
+
+test('a refactor that changes an SVG file adds drift svg', () => {
+  assert.deepEqual(driftCommands(briefOf(checkoutOf(BUILD, [['refactor!: rename the icon', 'icon.SVG']])).text), ['build', 'shots', 'svg'])
+})
+
+test('a refactor keeps its drift step once a fix commit follows it', () => {
+  assert.deepEqual(driftCommands(briefOf(checkoutOf(BUILD, [['refactor: prepare', 'a.ts'], ['fix: the list', 'b.ts']])).text), ['build', 'shots'])
+})
+
+test('a feature, with a refactor commit or without, and a delivery with no refactor commit name no drift step, and leave no hole in the brief', () => {
+  for (const commits of [
+    [['feat: a new list', 'a.ts']],
+    [['refactor: prepare', 'a.ts'], ['feat(ui): a new list', 'b.ts']],
+    [['fix: the list', 'a.ts']],
+    [['chore: bump', 'a.ts']],
+  ] as const) {
+    const { text, err } = briefOf(checkoutOf(BUILD, commits))
+    assert.doesNotMatch(text, DRIFT_STEP, commits.map(([subject]) => subject).join(', '))
+    assert.doesNotMatch(text, /\n\n\n/)
+    assert.equal(err, '')
+  }
+})
+
+test('a refactor in a project with no build names no drift step', () => {
+  for (const scripts of [undefined, { test: 'node --test' }]) {
+    assert.doesNotMatch(briefOf(checkoutOf(scripts, [['refactor: move it', 'a.ts']])).text, DRIFT_STEP)
+  }
+})
+
+test('a project with a build whose package.json or commits cannot be read is said, never silently left without its drift step', () => {
+  const broken = checkoutOf(BUILD, [['refactor: move it', 'a.ts']])
+  writeFileSync(join(broken.path, 'package.json'), '{')
+  assert.match(briefOf(broken).err, /^review-brief: no drift step: .*package\.json does not read/)
+  rmSync(join(dir, 'review-12.md'))
+  const unknown = checkoutOf(BUILD, [['refactor: move it', 'a.ts']])
+  const done = briefOf({ path: unknown.path, head: '0123456789abcdef0123456789abcdef01234567' })
+  assert.match(done.err, /^review-brief: no drift step: the commits of main\.\.0123456789abcdef0123456789abcdef01234567 cannot be read/)
+  assert.doesNotMatch(done.text, DRIFT_STEP)
+})
