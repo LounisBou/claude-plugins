@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { candidateStateDir, candidateStateFile, journalDir, judged, learningEvent, moved, parseCandidate, type CandidateState, type LearningEvent } from '../../../core/learning.ts'
 import { check, FORGET_USAGE, run } from './forget.ts'
+import { failure, writeEntries } from './fixture.ts'
 
 const DAY = 86_400_000
 const CODE = 'github.writing.rule'
@@ -89,6 +90,35 @@ test('the command line keeps the reopened state, says when there is nothing to c
     writeFileSync(candidateStateDir(config), '')
     assert.equal(run(['--config', config], deps), 1)
     assert.match(errs.at(-1) ?? '', /nothing is done/)
+  } finally {
+    rmSync(config, { recursive: true, force: true })
+  }
+})
+
+test("a remedy of a failure of the method is checked against the audit trail's failures after its merge", () => {
+  const config = mkdtempSync(join(tmpdir(), 'learning-forget-'))
+  const outs: string[] = []
+  const errs: string[] = []
+  const deps = { out: (l: string) => outs.push(l), err: (l: string) => errs.push(l), now: () => MERGED + 31 * DAY }
+  const signature = 'escape:orchestrator.review.overridden'
+  try {
+    writeEntries(config, [...[1, 2].map(pr => failure(MERGED - 10 * DAY, pr)), ...[3, 4].map(pr => failure(MERGED + DAY, pr))])
+    const events = ['20261001T101500Z-0a1b2c3d', '20261002T101500Z-0a1b2c3d', '20261003T101500Z-0a1b2c3d']
+    const candidate = parseCandidate({
+      v: 1, signature, kind: 'escape', code: 'orchestrator.review.overridden', severity: null, classes: [], languages: [],
+      since: '2026-09-15T10:00:00Z', until: '2026-10-15T10:00:00Z', events, prs: ['acme/app#7', 'acme/app#8'], repos: ['acme/app'],
+    })
+    assert.ok(candidate)
+    const cause = { resolved: true, first_failure: 'a step', counterfactual: 'it passes', evidence: [events[0]], alternatives: ['another'], confidence: 'low' }
+    const proposed = judged(candidate, { signature, cause, remedy: { scope: 'project', rung: 'test', target: 'acme/app', proof: { type: 'test', path: 'tests/a.test.ts' } } }, '2026-10-20T00:00:00Z')
+    assert.ok(typeof proposed !== 'string', String(proposed))
+    const merged = moved(proposed, { state: 'merged', pr: 'acme/app#9' }, MERGED_AT)
+    assert.ok(typeof merged !== 'string', String(merged))
+    mkdirSync(candidateStateDir(config), { recursive: true })
+    writeFileSync(join(candidateStateDir(config), candidateStateFile(signature)), JSON.stringify(merged))
+    assert.equal(run(['--config', config], deps), 0)
+    assert.match(outs.join('\n'), /escape:orchestrator\.review\.overridden: test acme\/app#9 ineffective, 2 events before its merge, 2 after: reopened/)
+    assert.deepEqual(errs, [])
   } finally {
     rmSync(config, { recursive: true, force: true })
   }

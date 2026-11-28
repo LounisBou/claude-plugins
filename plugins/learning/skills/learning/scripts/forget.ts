@@ -13,6 +13,7 @@
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { afterLanding, isSilentGuard, moved, type CandidateState, type LearningEvent } from '../../../core/learning.ts'
+import { candidateEvents } from './distil.ts'
 import { readJournals } from './health.ts'
 import { keep, readStates } from './retrospective.ts'
 
@@ -69,7 +70,7 @@ export function run(args: readonly string[], deps: Deps): number {
     return 2
   }
   try {
-    const events = readJournals(config).flatMap(journal => journal.events)
+    const events = candidateEvents(readJournals(config))
     const { lines, reopened } = check(readStates(config, deps.err), events, deps.now())
     for (const state of reopened) keep(config, state)
     deps.out(lines.length === 0 ? 'learning forget: no merged remedy to check.' : ['learning forget, the merged remedies:', ...lines, 'A removal is a pull request; this script moved only the reopened candidates.'].join('\n'))

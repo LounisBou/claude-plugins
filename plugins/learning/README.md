@@ -18,9 +18,12 @@ repository; the event's contract is `packages/core/src/learning.ts`.
 ## The distiller
 
 `skills/learning/scripts/distil.ts --config <dir>` computes the candidates of the journals, with no
-model, and prints one JSON line each: the version 1 events of the window, grouped by signature (kind,
+model, and prints one JSON line each: the events of the window, grouped by signature (kind,
 code, the finding's severity, the classes of its paths, its languages), a group being a candidate at
-three events from two pull requests. An event names a pull request when it holds both its repository
+three events from two pull requests. Besides the version 1 events, it reads the audit trail's: a review
+decision that kept its finding is a `finding`, with the severity and the file it names, and a failure of
+the method is an `escape`; the other audit facts form no candidate. The retrospective and forget and
+check read the same events. An event names a pull request when it holds both its repository
 and its number; an `external` event forms no cluster. The same journals at the same time give the same
 lines. The signature, the thresholds and the candidate's validator are core's
 (`packages/core/src/learning.ts`, `signatureOf`, `CANDIDATE_CONTRACT`, `parseCandidate`). A journal

@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { answerEvent, findingEvent, journalDir, learningEvent, parseCandidate, subjectOf, type Evidence, type LearningEvent, type LearningKind, type Trust } from '../../../core/learning.ts'
 import { distil, DISTIL_USAGE, run } from './distil.ts'
+import { decision, earlierDecision, failure, otherFacts, writeEntries, type Entry } from './fixture.ts'
+import { readJournals } from './health.ts'
 
 const NOW = Date.parse('2026-11-14T10:00:00Z')
 const DAY = 86_400_000
@@ -197,4 +199,50 @@ test('the findings and the answers the writers build cluster by what found them 
     ['finding:norms.magic-values.error:source:typescript', ['acme/app#1', 'acme/app#2']],
     ['finding:pr-review.finding:critical:source:typescript', ['acme/app#1', 'acme/app#2', 'acme/app#3']],
   ])
+})
+
+/** The candidates the command line prints over a journal of `entries`, each entry one the contract reads. */
+function candidatesOf(entries: readonly Entry[]): Array<[string, readonly string[]]> {
+  const found: Array<[string, readonly string[]]> = []
+  scratch(config => {
+    writeEntries(config, entries)
+    assert.deepEqual(readJournals(config).map(journal => journal.unreadable), [0])
+    const { outs, errs, deps } = capture()
+    assert.equal(run(['--config', config], deps), 0)
+    assert.deepEqual(errs, [])
+    for (const line of outs) {
+      const candidate = parseCandidate(JSON.parse(line))
+      assert.ok(candidate, line)
+      found.push([candidate.signature, candidate.events])
+    }
+  })
+  return found
+}
+
+const ids = (entries: readonly Entry[]): string[] => entries.map(one => one.id).sort()
+const AGO = NOW - DAY
+
+test('a review decision that kept a finding is a finding, in version 4 and in version 2, its severity and its file read from the fact', () => {
+  const kept = [decision(AGO, 1), earlierDecision(AGO, 1), decision(AGO, 2)]
+  assert.deepEqual(candidatesOf(kept), [['finding:orchestrator.review.decision:important:source:typescript', ids(kept)]])
+})
+
+test('a kept decision of a severity the contract does not point at, or with no file, is a finding without that part', () => {
+  const minor = [1, 1, 2].map(pr => decision(AGO, pr, { severity: 'minor' }))
+  const bare = [1, 1, 2].map(pr => decision(AGO, pr, { file: null, line: null }))
+  assert.deepEqual(candidatesOf([...minor, ...bare]), [
+    ['finding:orchestrator.review.decision', ids(bare)],
+    ['finding:orchestrator.review.decision:source:typescript', ids(minor)],
+  ])
+})
+
+test("a failure of the method is an escape under its code", () => {
+  const failed = [failure(AGO, 1), failure(AGO, 1), failure(AGO, 2)]
+  assert.deepEqual(candidatesOf(failed), [['escape:orchestrator.review.overridden', ids(failed)]])
+})
+
+test('the other audit facts, and a decision that set its finding aside, are read and form nothing beside what does', () => {
+  const kept = [1, 1, 2].map(pr => decision(AGO, pr))
+  const silent = [1, 1, 2].flatMap(pr => [...otherFacts(AGO, pr), decision(AGO, pr, { decision: 'set-aside' })])
+  assert.deepEqual(candidatesOf([...silent, ...kept]), [['finding:orchestrator.review.decision:important:source:typescript', ids(kept)]])
 })

@@ -23,8 +23,8 @@ C="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
    `null`. Never fill a cause in from a summary.
 4. The remedy: `scope` `project` (one repository), `language` (repositories sharing a language),
    `method` (across languages) or `personal` (the operator's answers naming no code); `rung`, the
-   first that holds of `guard`, `lint`, `test`, `routing`, `prompt-rule` only when it needs
-   judgment; `target` `owner/name`; `proof`, a test path or an eval case.
+   first that holds of `guard`, `lint`, `test`, `routing`; `target` `owner/name`; `proof`, a test
+   path.
 5. One call per candidate; a refusal says what to correct:
 
 ```bash
