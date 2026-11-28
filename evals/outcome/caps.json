@@ -1,9 +1,8 @@
 {
-  "$comment": "The outcome evals' spend caps in US dollars, set by the operator; the harness stops at each. runUsd: the whole run; caseArmUsd: one arm on one case, its two judgments included; judgeUsd: one judgment; cases: how many cases of cases.json the run replays, in order. retrospective: the eval spend of one learning retrospective (docs/specs/learning-design.md, question 11), runUsd for the whole of it, promptRules the prompt-rule candidates it may prove.",
+  "$comment": "The outcome evals' spend caps in US dollars, set by the operator; the harness stops at each. runUsd: the whole run; caseArmUsd: one arm on one case, its two judgments included; judgeUsd: one judgment; cases: how many cases of cases.json the run replays, in order.",
   "version": 1,
   "runs": {
     "pilot": { "runUsd": 20, "caseArmUsd": 10, "judgeUsd": 1, "cases": 1 },
     "measure": { "runUsd": 120, "caseArmUsd": 10, "judgeUsd": 1, "cases": 6 }
-  },
-  "retrospective": { "runUsd": 10, "promptRules": 3 }
+  }
 }

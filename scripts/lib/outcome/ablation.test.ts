@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { describe, it } from 'node:test'
+import { dirname, join } from 'node:path'
+import { after, describe, it } from 'node:test'
 import { ablationReport, armRuns, compare, evalArgv, FALLBACK_SIGMA_W2, stageVariants, variantCapUsd, withoutRule, Z_POWER } from './ablation.ts'
+import { CAPS_FILE } from './cases.ts'
 import { run } from '../../ablation.ts'
 
 const arm = (cases: Record<string, readonly boolean[]>) => new Map(Object.entries(cases))
@@ -79,7 +80,12 @@ describe('a prompt rule\'s ablation', () => {
 })
 
 describe('npm run ablation', () => {
-  const root = process.cwd()
+  // A checkout of its own, whose caps file holds a retrospective cap.
+  const root = mkdtempSync(join(tmpdir(), 'ablation-root-'))
+  const caps = { runUsd: 20, caseArmUsd: 10, judgeUsd: 1, cases: 1 }
+  mkdirSync(dirname(join(root, CAPS_FILE)), { recursive: true })
+  writeFileSync(join(root, CAPS_FILE), JSON.stringify({ version: 1, runs: { pilot: caps, measure: caps }, retrospective: { runUsd: 10, promptRules: 3 } }))
+  after(() => rmSync(root, { recursive: true, force: true }))
   const io = () => {
     const outs: string[] = []
     const errs: string[] = []
@@ -136,6 +142,28 @@ describe('npm run ablation', () => {
       writeFileSync(join(plugin, 'SKILL.md'), 'keep\nnever push\n')
       assert.equal(run(root, [...base, '--out', join(work, 'o2')], sink, () => 1), 1)
       assert.match(errs.at(-1) ?? '', /with variant left no result \(exit 1\)/)
+    } finally {
+      rmSync(work, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses on the repository\'s caps file, which holds no retrospective cap, without running an eval', () => {
+    const work = mkdtempSync(join(tmpdir(), 'ablation-repo-'))
+    try {
+      const plugin = join(work, 'plugin')
+      mkdirSync(plugin)
+      writeFileSync(join(plugin, 'SKILL.md'), 'keep\nnever push\n')
+      writeFileSync(join(work, 'rule.txt'), 'never push\n')
+      const calls: string[][] = []
+      const { errs, io: sink } = io()
+      const status = run(process.cwd(), ['--plugin', plugin, '--file', 'SKILL.md', '--rule-file', join(work, 'rule.txt'), '--case', '*', '--out', join(work, 'out'), '--model', 'm', '--judge-model', 'j'], sink, argv => {
+        calls.push([...argv])
+        return 1
+      })
+      assert.deepEqual(calls, [])
+      assert.equal(status, 2)
+      assert.match(errs.at(-1) ?? '', /holds no retrospective cap/)
+      assert.equal(existsSync(join(work, 'out')), false)
     } finally {
       rmSync(work, { recursive: true, force: true })
     }
