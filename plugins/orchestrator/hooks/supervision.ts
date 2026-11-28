@@ -43,6 +43,7 @@ import {
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLines, splitLines, seqOf, type QAck, type QEvent } from './remote-round.ts'
 import { newViewsMemory, syncViews } from './remote-view.ts'
+import { reachOf } from './reach.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
@@ -1681,7 +1682,7 @@ async function wakeTick($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 
     await logLine($, 'supervision', `round resend: ${messageOf(err)}`)
   }
   try {
-    await syncViews($, await readRemoteRows($), views)
+    await syncViews($, await readRemoteRows($), views, { discover: true, listHomes: true })
   } catch (err) {
     await logLine($, 'views', messageOf(err))
   }
@@ -3458,7 +3459,9 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   // The reading is the one of this instant: its stamp is now, not the last measure's.
   const measured = { ...read, updated_at: new Date().toISOString(), ...(fill ? { context_tokens: fill.tokens, context_percent: fill.percent, window: fill.window } : {}) }
   // The home server it runs in travels too: the coordinator's machine opens its view (remote-view.ts).
-  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)), fleet, homeOf(await $.env.get('TMUX')))
+  // And the destinations its machine is reached by, so that the coordinator's machine maps it alone.
+  const machine = await machineOf($)
+  const row = remoteRowOf(withWait(measured, waitText), machine, prs, openQuestions(parseWaitRecord(waitText)), fleet, homeOf(await $.env.get('TMUX')), await reachOf($, machine))
   if (!row) return
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`
