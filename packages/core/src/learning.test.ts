@@ -538,7 +538,7 @@ describe('the candidate of a repository: refusals with no pull request', () => {
 
   it('refuses one under its thresholds, with a pull request, another kind, another repository than its signature\'s, or sessions out of shape', () => {
     const bad = [
-      { sessions: ['sess-1'] }, { sessions: ['sess-2', 'sess-1'] }, { sessions: ['sess-1', 'no session'] }, { sessions: 'sess-1' }, { events: CANDIDATE.events.slice(0, 2) },
+      { sessions: ['sess-1'] }, { sessions: ['sess-2', 'sess-1'] }, { sessions: ['sess-1', 'sess-2 x'] }, { sessions: 'sess-1' }, { events: CANDIDATE.events.slice(0, 2) },
       { prs: ['owner/name#7'] }, { repos: [] }, { repos: ['owner/name', 'owner/other'] }, { repos: ['owner/other'] }, { kind: 'escape', signature: 'escape:github.ready.held:@owner/name' },
       { signature: 'refusal:github.ready.held' }, { v: 1 },
     ]
