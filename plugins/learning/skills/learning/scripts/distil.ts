@@ -2,18 +2,18 @@
 //
 //   distil.ts --config <dir>    the candidates of the journals under <dir>, one JSON line each
 //
-// <dir> is the host's configuration directory, read as the health report reads it. The version 1
-// events of the contract's window are grouped by signature (core/learning.ts, `signatureOf`); a
-// group that reaches the contract's thresholds is a candidate (`CANDIDATE_CONTRACT`). The same
-// journals at the same time give the same lines. A journal that cannot be read is said on the error
-// stream and nothing is proposed.
+// <dir> is the host's configuration directory, read as the health report reads it. The events of
+// every version (`candidateEvents`) inside the contract's window are grouped by signature
+// (core/learning.ts, `signatureOf`); a group that reaches the contract's thresholds is a candidate
+// (`CANDIDATE_CONTRACT`). The same journals at the same time give the same lines. A journal that
+// cannot be read is said on the error stream and nothing is proposed.
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import {
-  CANDIDATE_CONTRACT, CANDIDATE_VERSION, countsInCluster, LEARNING_WINDOW_DAYS, parseCandidate, signatureFrom, signaturePartsOf,
-  type Candidate, type LearningEvent, type SignatureParts,
+  CANDIDATE_CONTRACT, CANDIDATE_VERSION, countsInCluster, LEARNING_CONTRACT, learningEvent, LEARNING_WINDOW_DAYS, parseCandidate, signatureFrom,
+  signaturePartsOf, type AuditEvent, type Candidate, type Evidence, type LearningEvent, type SignatureParts,
 } from '../../../core/learning.ts'
-import { readJournals } from './health.ts'
+import { readJournals, type Journal } from './health.ts'
 
 export const DISTIL_USAGE = 'usage: distil.ts --config <dir>'
 
@@ -21,6 +21,33 @@ const DAY_MS = 86_400_000
 
 const iso = (ms: number): string => `${new Date(ms).toISOString().slice(0, 19)}Z`
 const rising = (values: Iterable<string>): string[] => [...new Set(values)].sort()
+
+/**
+ * An audit event read as one of the four kinds a candidate is made of, under its own identifier: a
+ * review decision that kept its finding is a finding, whose severity and file are the fact's; a
+ * failure of the method is an escape. The audit trail's other facts are none of the four: undefined.
+ */
+function asLearningEvent(event: AuditEvent): LearningEvent | undefined {
+  const read = {
+    at: event.at, random: event.id.slice(-8), source: event.source, subject: event.subject, context: event.context,
+    evidence: event.evidence, trust: event.trust,
+  }
+  if (event.kind === 'failure') return learningEvent({ ...read, kind: 'escape' })
+  if (event.kind !== 'decision' || event.fact.decision !== 'kept') return undefined
+  const { file } = event.fact
+  const severity = LEARNING_CONTRACT.severities.find(known => known === event.fact.severity)
+  const pointer: Evidence[] = file !== null && severity !== undefined ? [{ type: 'finding', severity, file }] : []
+  return learningEvent({
+    ...read, kind: 'finding',
+    context: { ...event.context, paths: file === null ? [] : [file] },
+    evidence: [...pointer, ...event.evidence].slice(0, LEARNING_CONTRACT.evidence_max),
+  })
+}
+
+/** The events the candidates and their checks are computed from, out of every version the journals hold. */
+export function candidateEvents(journals: readonly Journal[]): LearningEvent[] {
+  return journals.flatMap(journal => [...journal.events, ...(journal.audit ?? []).flatMap(event => asLearningEvent(event) ?? [])])
+}
 
 /**
  * The candidates of `events` at `now`: per signature, the events inside the window that count toward
@@ -72,7 +99,7 @@ export function run(args: readonly string[], deps: Deps): number {
   }
   let candidates: Candidate[]
   try {
-    candidates = distil(readJournals(config).flatMap(journal => journal.events), deps.now())
+    candidates = distil(candidateEvents(readJournals(config)), deps.now())
   } catch (error) {
     deps.err(`learning distil: the journals could not be read, so nothing is proposed: ${error instanceof Error ? error.message : String(error)}`)
     return 1

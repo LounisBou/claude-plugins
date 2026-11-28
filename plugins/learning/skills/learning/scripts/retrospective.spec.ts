@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { candidateStateDir, candidateStateFile, journalDir, learningEvent, parseCandidateState, RETROSPECTIVE_CONTRACT, type LearningEvent } from '../../../core/learning.ts'
 import { launchArgv, LOG_FILE, PROMPT, RETROSPECTIVE_USAGE, run, STARTED_FILE, type Deps } from './retrospective.ts'
+import { decision, writeEntries } from './fixture.ts'
 
 const NOW = Date.parse('2026-11-14T10:00:00Z')
 const HOUR = 3_600_000
@@ -217,4 +218,23 @@ test('run refuses a call that is none of its commands, and says what it could no
     assert.deepEqual(broken.launched, [])
   })
   assert.deepEqual(launchArgv('p', '/l').slice(-3), ['learning-retrospective', 'p', '/l'])
+})
+
+test("the digest gives the audit trail's kept findings with their pointers, and their judgment is kept", () => {
+  scratch(config => {
+    const kept = [1, 1, 2].map(pr => decision(NOW - DAY, pr))
+    writeEntries(config, kept)
+    const signature = 'finding:orchestrator.review.decision:important:source:typescript'
+    const shown = capture()
+    assert.equal(run(['digest', '--config', config], shown.deps), 0)
+    const lines = shown.outs.join('\n').split('\n')
+    assert.deepEqual(lines.slice(0, 2), ['learning retrospective: 1 of 1 candidates to judge', `candidate ${signature}`])
+    assert.equal(lines[3], `  event ${kept[0]?.id} trust computed; acme/app#1; head ${HEAD}; role orchestrator; paths src/a.ts; finding important src/a.ts; record pr-records/acme/app/${HEAD}/review.json`)
+    const judging = capture(judgement([], {
+      signature,
+      cause: { resolved: true, first_failure: 'a step', counterfactual: 'it passes', evidence: [kept[0]?.id], alternatives: ['another'], confidence: 'low' },
+    }))
+    assert.equal(run(['judge', '--config', config], judging.deps), 0)
+    assert.deepEqual([judging.outs, judging.errs], [[`${signature}: proposed`], []])
+  })
 })

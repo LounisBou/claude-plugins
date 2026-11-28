@@ -19,7 +19,7 @@ import {
   type Candidate, type CandidateState, type Evidence, type LearningEvent,
 } from '../../../core/learning.ts'
 import { writeAtomic } from '../../../core/store.ts'
-import { distil } from './distil.ts'
+import { candidateEvents, distil } from './distil.ts'
 import { readJournals } from './health.ts'
 
 export const RETROSPECTIVE_USAGE = 'usage: retrospective.ts digest|judge|start --config <dir>, or mark --config <dir> <signature> <state> [--pr <owner/name#n>] [--ruling <text>]'
@@ -85,7 +85,7 @@ export function readStates(config: string, err: (line: string) => void): Candida
 
 /** The candidates of the journals at `now` and those among them that wait; a state file that cannot be read keeps its candidate out, and is said. */
 export function waiting(config: string, now: number, err: (line: string) => void): Waiting {
-  const events = readJournals(config).flatMap(journal => journal.events)
+  const events = candidateEvents(readJournals(config))
   const candidates = distil(events, now)
   const due: Array<{ candidate: Candidate; state: CandidateState | undefined }> = []
   for (const candidate of candidates) {
