@@ -26,6 +26,11 @@
 // Each lens's method (`hooks/lens-method.ts`: its pr-review-toolkit agent's file, or generic, or generic
 // because the toolkit is missing here) is said in the brief, which the review index carries; the
 // review session writes a toolkit method's file into that reader's launch prompt.
+// A refactor (`base..head` holds a `refactor` commit and no `feat` or `fix` one; a rename or a move
+// is typed so) in a project with a build (a `build` script in the worktree's `package.json`) gets one
+// more check: `drift build` and `drift shots`, and `drift svg` when an SVG file changes, from the
+// merge base to the head. A project with a build whose commits cannot be read is said on stderr.
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { isAbsolute, join, dirname } from 'node:path'
@@ -33,6 +38,7 @@ import { fileURLToPath } from 'node:url'
 import { isEntry, processIo, type Io } from './lib/process.ts'
 import { fill } from './succession.ts'
 import { diffFiles, modelOf, tierOf, type Tier } from './lens-model.ts'
+import { typeOf } from './rhythm.ts'
 import { Refused } from '../../iterm-agents/scripts/tier.ts'
 import { LENS_HEAD_CHARS } from '../../../core/lens.ts'
 import { configDirOf } from '../../../core/env.ts'
@@ -129,8 +135,57 @@ export function lensMethods(lenses: readonly string[]): string {
   return lenses.map(lens => methodWords(lens, lensMethod(lens, record, textOf))).join('; ')
 }
 
+/** Whether the worktree's `package.json` names a build; a file that is there and does not parse is thrown. */
+function hasBuild(worktree: string): boolean {
+  const text = textOf(join(worktree, 'package.json'))
+  if (text === undefined) return false
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error(`${join(worktree, 'package.json')} does not read as JSON`)
+  }
+  const scripts = (parsed as { scripts?: unknown } | null)?.scripts
+  return typeof (scripts as { build?: unknown } | undefined)?.build === 'string'
+}
+
+/** The drift check of a refactor in a project with a build, or empty; `warning` says why it could not be decided. */
+export function driftCheck(f: Fields): { readonly text: string; readonly warning?: string } {
+  let from: string
+  let subjects: string[]
+  try {
+    if (!hasBuild(f.worktree)) return { text: '' }
+    const git = (...args: string[]): string => execFileSync('git', ['-C', f.worktree, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    try {
+      subjects = git('log', '--no-merges', '--format=%s', `${f.base}..${f.head}`).split('\n')
+      // drift builds the two refs as given: the base's tip would count what the base gained since.
+      from = git('merge-base', f.base, f.head)
+    } catch {
+      throw new Error(`the commits of ${f.base}..${f.head} cannot be read in ${f.worktree}`)
+    }
+  } catch (error) {
+    return { text: '', warning: (error as Error).message }
+  }
+  const types = new Set(subjects.map(typeOf))
+  if (!types.has('refactor') || types.has('feat') || types.has('fix')) return { text: '' }
+  const commands = ['build', 'shots', ...(diffFiles(f.worktree, f.base, f.head).some(file => /\.svg$/i.test(file)) ? ['svg'] : [])]
+  const runs = commands.map(command => `drift.sh ${command} --repo '${f.worktree}' --base ${from} --head ${f.head} --out <scratchpad>/drift-${command}`)
+  return {
+    text: [
+      "One more check is fixed on this delivery: its commits make it a refactor, in a project with a build, so it is meant to change nothing. Load the `drift:drift` skill and run each line below with the `scripts/drift.sh` of its directory, one call each, with `timeout: 600000`:",
+      '',
+      '```bash',
+      ...runs,
+      '```',
+      '',
+      "Your index quotes each verdict in one line, as the skill's « Quote it » words it; a run that gives none (exit 2) reads `drift <command>: no verdict (<its reason>)`. A verdict is evidence, never a gate or a CI step: write no config and install nothing to get one, and a difference is a finding only where §4 bears it out.",
+      '',
+    ].join('\n'),
+  }
+}
+
 /** What each field of the template reads, from the fields given. */
-function values(f: Fields): Record<string, string> {
+function values(f: Fields, drift: string): Record<string, string> {
   const lensed = f.lenses.length > 0
   // The readers' tier is the diff's class (lens-model.ts) unless `--tier` says otherwise; their model follows the tier.
   const tier = (f.tier !== '' || !lensed ? f.tier : tierOf(diffFiles(f.worktree, f.base, f.head))) as Tier
@@ -155,6 +210,7 @@ function values(f: Fields): Record<string, string> {
     LENS_METHODS: lensMethods(f.lenses),
     LENSES: lensed ? [f.lenses.map(lens => `- ${lens}`).join('\n'), ...(f.scope === '' ? [] : [f.scope])].join('\n\n') : f.scope === '' ? 'none' : `none\n\n${f.scope}`,
     SCREENSHOT_CHECKLIST: CHECKLIST,
+    DRIFT_CHECK: drift,
     REPORT_PATH: f.index,
     DELIVERY_REPORT: f.deliveryReport,
     ORCHESTRATOR_NAME: f.orchestrator,
@@ -184,9 +240,10 @@ export function main(argv: readonly string[], io: Io, template?: string, templat
     }
     text = readFileSync(templatePath, 'utf8')
   }
+  const drift = driftCheck(parsed)
   let known: Record<string, string>
   try {
-    known = values(parsed)
+    known = values(parsed, drift.text)
   } catch (error) {
     if (!(error instanceof Refused)) throw error
     io.err(`review-brief: ${error.message}\n`)
@@ -203,6 +260,7 @@ export function main(argv: readonly string[], io: Io, template?: string, templat
     io.err(`review-brief: ${parsed.out} cannot be written: ${(error as Error).message}\n`)
     return 2
   }
+  if (drift.warning !== undefined) io.err(`review-brief: no drift step: ${drift.warning}\n`)
   io.out(`review brief: ${parsed.out}\n`)
   return 0
 }
