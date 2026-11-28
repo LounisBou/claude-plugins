@@ -9,7 +9,7 @@ import { DECLARATIONS } from '../wait.ts'
 import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, hostStopOf, stopInTail, stopText, chainOwnerTty, RELAY_CAP, heldReport, readDeliveryFacts, keptCi, factsLine, falseClaims, type DeliveryFacts, type FactsRun, type KeptGate } from '../relay.ts'
 import { VERDICT_LIMIT } from '../../core/verdict.ts'
 import { register } from '../register.ts'
-import { drainKept, KEPT_RETRY_MS, BACKSTOP_MS, BACKSTOP_AGE_MS, CLAIM_MS } from '../supervision.ts'
+import { drainKept, KEPT_RETRY_MS, BACKSTOP_MS, BACKSTOP_AGE_MS, CLAIM_MS, BACKSTOP_CLAIM_MS } from '../supervision.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { capture, hooksOn, hostOf, type Captured, type HostParts } from '../../core/capture.ts'
 import { fieldsOf, type Events, type Host, type Noun, type SessionSendResult, type FsEntry } from '../../core/host.ts'
@@ -271,7 +271,7 @@ test('a chain whose owner is not live is not counted, however recently it was wr
 // agent's record carrying another.
 // `reportsTo`: the orchestrator the launch recorded. `alive`: the pids the process table lists,
 // none read when absent. `registry`: the host's registry records of other sessions.
-type Over = { kept?: string; repo?: Record<string, string>; elsewhere?: Record<string, string>; checkout?: string; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; walkHangs?: { on: boolean }; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
+type Over = { kept?: string; repo?: Record<string, string>; elsewhere?: Record<string, string>; checkout?: string; name?: string; role?: string | null; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; walkHangs?: { on: boolean }; walkFails?: { on: boolean }; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
 
 // The tab and the run: the agent's host process (501) on ttys005, launched with its
 // --name; its shell (850) and the run (900) on no tty. The module's shell is a child of
@@ -361,6 +361,8 @@ function fake(over: Over = {}) {
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         // The walk: the session's own tty, and its host process on it by name.
+        // A walk whose first read fails at once (a process table the machine could not give).
+        if (over.walkFails?.on && argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$') return { exitCode: 1, stdout: '', stderr: '' }
         if (over.walkHangs?.on && argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$') {
           return new Promise(resolve => setTimeout(() => resolve({ exitCode: 1, stdout: '', stderr: '' }), 200))
         }
@@ -1286,7 +1288,7 @@ const backstopRun = async (world: ReturnType<typeof backstopWorld>) => {
   await new Promise(resolve => setTimeout(resolve, 10))
 }
 
-test("the backstop relays an idle agent's kept turn end once, removed and marked before the prompt goes, never twice", async () => {
+test("the backstop relays an idle agent's kept turn end once, removed and marked once the host took the prompt, never twice", async () => {
   const world = backstopWorld()
   await backstopRun(world)
   expect(world.submitted.length).toBe(1)
@@ -1377,4 +1379,450 @@ test('a kept file the backstop cannot read, or cannot lock, is said and holds no
   expect(world.submitted.length).toBe(1)
   expect(world.fx.logged.filter(l => l.includes('is no kept turn end it can read')).length).toBe(1)
   expect(world.fx.logged.some(l => l.includes("relay: backstop: session s-held's turn end"))).toBe(true)
+})
+
+// --- nothing lost, nothing twice, nothing silent ----------------------------------------------
+
+const waitOf = (files: Map<string, string>) => (files.has(WAIT) ? JSON.parse(files.get(WAIT)!) : null)
+const settle = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms))
+async function until(holds: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !holds(); i++) await settle(5)
+  expect(holds()).toBe(true)
+}
+// The agent's side of a backstop world: its own module, its sends accepted unless `send` says otherwise.
+const agentOf = (world: ReturnType<typeof backstopWorld>, parts: Partial<HostParts> = {}) =>
+  hostOf({ ...world.fx.dollar, clock: world.held.clock, session: { ...world.fx.dollar.session, send: sender(world.fx, { on: false }) }, ...parts })
+// A directory the fake lists as there: its fs.exists knows files only.
+const existsAlso = (fx: ReturnType<typeof fake>, dir: string) => async (p: string) => p === dir || fx.files.has(p)
+
+test('a wait the store refuses at the turn end loses nothing: the turn end is kept, said, delivered, its wait written then', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const held = heldClock()
+  const refuse = { on: true }
+  let refuseWaits = true
+  const write = async (p: string, text: string) => {
+    if (refuseWaits && p.includes('/waits/')) throw new Error('EIO: waits refused')
+    return fx.dollar.fs.write(p, text)
+  }
+  const dollar = { ...fx.dollar, clock: held.clock, fs: { ...fx.dollar.fs, write }, session: { ...fx.dollar.session, send: sender(fx, refuse) } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  expect(keptFiles(fx.files).length).toBe(1)
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT}'s wait of its turn end of`) && l.includes('EIO: waits refused'))).toBe(true)
+  refuseWaits = false
+  refuse.on = false
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(keptFiles(fx.files)).toEqual([])
+  expect(waitOf(fx.files).waiting).toBe('delivered')
+})
+
+test('a retry whose walk fails at once keeps the turn end, said, and never drops it as no agent', async () => {
+  const chains = mounted()
+  const walkHangs = { on: true }
+  const walkFails = { on: false }
+  const fx = fake({ walk: 'agent', walkHangs, walkFails })
+  const held = heldClock()
+  const dollar = { ...fx.dollar, clock: held.clock }
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  expect(keptFiles(fx.files).length).toBe(1)
+  walkHangs.on = false
+  walkFails.on = true
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
+  expect(fx.sent.length).toBe(0)
+  expect(keptFiles(fx.files).length).toBe(1)
+  expect(fx.logged.some(l => l.includes('is no agent'))).toBe(false)
+  expect(fx.logged.filter(l => l.includes("s-one's own name was not read in time, or a read of it failed")).length).toBe(2)
+  walkFails.on = false
+  expect(await held.fire(KEPT_RETRY_MS * 2)).toBe(1)
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(keptFiles(fx.files)).toEqual([])
+})
+
+test('a first turn end whose walk fails at once is kept, said, and relayed once the name reads', async () => {
+  const chains = mounted()
+  const walkFails = { on: true }
+  const fx = fake({ walk: 'agent', walkFails })
+  const held = heldClock()
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: held.clock }, turnEnd(DELIVERY, 'turn-1'))
+  expect(fx.sent.length).toBe(0)
+  expect(keptFiles(fx.files).length).toBe(1)
+  expect(fx.logged.some(l => l.includes("s-one's own name was not read in time, or a read of it failed"))).toBe(true)
+  walkFails.on = false
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(keptFiles(fx.files)).toEqual([])
+})
+
+test('a headless run says in the log that its turn end goes to no one', async () => {
+  const chains = mounted()
+  const fx = fake({ walk: 'underneath' })
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: heldClock().clock }, turnEnd(DELIVERY, 'turn-1'))
+  expect(keptFiles(fx.files)).toEqual([])
+  expect(fx.logged.some(l => l.includes('relay: session s-one has no name of its own'))).toBe(true)
+})
+
+test('a delivered turn end whose file cannot be removed is never sent again: its key is marked first', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const held = heldClock()
+  let failRm = true
+  const run = async (argv: readonly string[], init?: { cwd?: string; timeoutMs?: number }) => {
+    if (failRm && argv[0] === 'rm' && argv.slice(2).some(p => p.startsWith(`${KEPT_DIR}/`) && !p.endsWith('.lock') && !p.includes('.tmp-'))) {
+      failRm = false
+      throw new Error('EIO: rm refused')
+    }
+    return fx.dollar.process.run(argv, init)
+  }
+  const dollar = { ...fx.dollar, clock: held.clock, process: { run } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  expect(fx.sent.length).toBe(1)
+  expect(keptFiles(fx.files).length).toBe(1)
+  expect(fx.logged.some(l => l.includes('EIO: rm refused'))).toBe(true)
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
+  expect(fx.sent.length).toBe(1)
+  expect(keptFiles(fx.files)).toEqual([])
+})
+
+test('a removal the store answers with a failure is said and tried again, never taken for done', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const held = heldClock()
+  let failRm = true
+  const run = async (argv: readonly string[], init?: { cwd?: string; timeoutMs?: number }) => {
+    if (failRm && argv[0] === 'rm' && argv.slice(2).some(p => p.startsWith(`${KEPT_DIR}/`) && !p.endsWith('.lock') && !p.includes('.tmp-'))) {
+      failRm = false
+      return { exitCode: 1, stdout: '', stderr: 'Operation not permitted' }
+    }
+    return fx.dollar.process.run(argv, init)
+  }
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: held.clock, process: { run } }, turnEnd(DELIVERY, 'turn-1'))
+  expect(fx.sent.length).toBe(1)
+  expect(fx.logged.some(l => l.includes('could not be removed: Operation not permitted'))).toBe(true)
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
+  expect(fx.sent.length).toBe(1)
+  expect(keptFiles(fx.files)).toEqual([])
+})
+
+test('a prompt the host drops while the store refuses the claim back loses nothing: the file stays, said with its agent, and goes once the claim runs out', async () => {
+  const world = backstopWorld()
+  let refuseKept = false
+  let dropWhy: string | null = 'the session is closing'
+  const write = async (p: string, text: string) => {
+    if (refuseKept && p.includes('/relays/')) throw new Error('ENOSPC: no space left')
+    return world.fx.dollar.fs.write(p, text)
+  }
+  world.orch.fs = { ...world.orch.fs, write }
+  world.orch.prompt = {
+    submit: async (p: { text: string }) => {
+      world.submitted.push(p.text)
+      if (dropWhy) refuseKept = true
+      return dropWhy ? { drop: dropWhy } : {}
+    },
+  }
+  await backstopRun(world)
+  expect(world.submitted.length).toBe(1)
+  expect(keptFiles(world.fx.files).length).toBe(1)
+  expect(waitOf(world.fx.files)?.relayed ?? null).toBeNull()
+  expect(world.fx.logged.some(l => l.includes(`relay: backstop: ${AGENT}'s turn end of`) && l.includes('ENOSPC: no space left'))).toBe(true)
+  refuseKept = false
+  dropWhy = null
+  // Its claim not given back holds it until it runs out: then it goes, once.
+  await world.held.fire(BACKSTOP_MS)
+  await settle()
+  expect(world.submitted.length).toBe(1)
+  world.held.now.ms += BACKSTOP_CLAIM_MS
+  await world.held.fire(BACKSTOP_MS)
+  await settle()
+  expect(world.submitted.length).toBe(2)
+  expect(keptFiles(world.fx.files)).toEqual([])
+  expect(waitOf(world.fx.files).relayed).toBe('k-1')
+})
+
+test('a prompt the host drops while the store refuses the wait loses nothing: the next reading relays it', async () => {
+  const world = backstopWorld()
+  let refuseWaits = false
+  let dropWhy: string | null = 'the session is closing'
+  const write = async (p: string, text: string) => {
+    if (refuseWaits && p.includes('/waits/')) throw new Error('EIO: waits refused')
+    return world.fx.dollar.fs.write(p, text)
+  }
+  world.orch.fs = { ...world.orch.fs, write }
+  world.orch.prompt = {
+    submit: async (p: { text: string }) => {
+      world.submitted.push(p.text)
+      if (dropWhy) refuseWaits = true
+      return dropWhy ? { drop: dropWhy } : {}
+    },
+  }
+  await backstopRun(world)
+  expect(world.submitted.length).toBe(1)
+  expect(keptFiles(world.fx.files).length).toBe(1)
+  refuseWaits = false
+  dropWhy = null
+  await world.held.fire(BACKSTOP_MS)
+  await settle()
+  expect(world.submitted.length).toBe(2)
+  expect(keptFiles(world.fx.files)).toEqual([])
+  expect(waitOf(world.fx.files).relayed).toBe('k-1')
+})
+
+test("while the host holds the backstop's prompt the file stays, claimed, and neither the agent nor the next reading sends it; once taken it is marked and removed", async () => {
+  const world = backstopWorld()
+  let take: (answer: unknown) => void = () => undefined
+  world.orch.prompt = {
+    submit: (p: { text: string }) => {
+      world.submitted.push(p.text)
+      return new Promise<unknown>(resolve => { take = resolve })
+    },
+  }
+  await backstopRun(world)
+  expect(world.submitted.length).toBe(1)
+  const path = keptFiles(world.fx.files)[0]
+  expect(path).toBeDefined()
+  expect(JSON.parse(world.fx.files.get(path!)!).claim.by).toBe('backstop:s-orch')
+  expect(waitOf(world.fx.files)?.relayed ?? null).toBeNull()
+  await drainKept(agentOf(world), 's-one')
+  expect(world.fx.sent).toEqual([])
+  expect(world.fx.logged.some(l => l.includes(`relay: ${AGENT}'s turn end of`) && l.includes('is being relayed by backstop:s-orch: it waits'))).toBe(true)
+  await world.held.fire(BACKSTOP_MS)
+  await settle()
+  expect(world.submitted.length).toBe(1)
+  take({})
+  await settle()
+  expect(keptFiles(world.fx.files)).toEqual([])
+  expect(waitOf(world.fx.files).relayed).toBe('k-1')
+  await drainKept(agentOf(world), 's-one')
+  expect(world.fx.sent).toEqual([])
+})
+
+test('a kept directory or file the store refuses to read is said once and tried again, never taken for empty', async () => {
+  for (const refused of ['list', 'read'] as const) {
+    const world = backstopWorld({ age: 0 })
+    mounted()
+    let refuse = true
+    const list = async (dir: string) => {
+      if (refuse && refused === 'list' && dir === KEPT_DIR) throw new Error('EIO: list refused')
+      return world.fx.dollar.fs.list(dir)
+    }
+    const read = async (p: string) => {
+      if (refuse && refused === 'read' && p.startsWith(`${KEPT_DIR}/`) && !p.endsWith('.lock')) throw new Error('EIO: read refused')
+      return world.fx.dollar.fs.read(p)
+    }
+    const agent = agentOf(world, { fs: { ...world.fx.dollar.fs, list, read, exists: existsAlso(world.fx, KEPT_DIR) } })
+    await drainKept(agent, 's-one')
+    await drainKept(agent, 's-one')
+    expect(world.fx.sent.length).toBe(0)
+    expect(world.held.timers.map(t => t.ms)).toEqual([KEPT_RETRY_MS])
+    expect(world.fx.logged.filter(l => l.includes(`EIO: ${refused} refused`)).length).toBe(1)
+    refuse = false
+    expect(await world.held.fire(KEPT_RETRY_MS)).toBe(1)
+    expect(world.fx.sent.length).toBe(1)
+    expect(keptFiles(world.fx.files)).toEqual([])
+  }
+})
+
+test('a kept file another sender delivered meanwhile is said gone, and a claim the backstop finds in force is said', async () => {
+  const world = backstopWorld({ age: 0 })
+  mounted()
+  const path = keptFiles(world.fx.files)[0]!
+  let reads = 0
+  const read = async (p: string) => {
+    const text = await world.fx.dollar.fs.read(p)
+    // The listing reads it; another sender delivers it before the claim.
+    if (p === path && ++reads === 1) world.fx.files.delete(path)
+    return text
+  }
+  await drainKept(agentOf(world, { fs: { ...world.fx.dollar.fs, read } }), 's-one')
+  expect(world.fx.sent.length).toBe(0)
+  expect(world.fx.logged.some(l => l.includes(`relay: ${AGENT}'s turn end of`) && l.includes('is gone: another sender delivered it'))).toBe(true)
+  const held = backstopWorld()
+  const heldPath = keptFiles(held.fx.files)[0]!
+  held.fx.files.set(heldPath, JSON.stringify({ ...JSON.parse(held.fx.files.get(heldPath)!), claim: { by: 'agent', until: held.held.now.ms + CLAIM_MS } }) + '\n')
+  await backstopRun(held)
+  expect(held.submitted.length).toBe(0)
+  expect(held.fx.logged.some(l => l.includes(`relay: backstop: ${AGENT}'s turn end of`) && l.includes('is being relayed by agent: it waits'))).toBe(true)
+})
+
+test('a turn end is kept with the name its session was read by', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: heldClock().clock, session: { ...fx.dollar.session, send: sender(fx) } }, turnEnd(DELIVERY, 'turn-1'))
+  expect(JSON.parse(fx.files.get(keptFiles(fx.files)[0]!)!).name).toBe(AGENT)
+})
+
+test('an ended agent goes up by the name its kept turn end or its wait kept, never as « session <id> »', async () => {
+  for (const where of ['record', 'wait'] as const) {
+    const world = backstopWorld({ record: false })
+    const path = keptFiles(world.fx.files)[0]!
+    if (where === 'record') world.fx.files.set(path, JSON.stringify({ ...JSON.parse(world.fx.files.get(path)!), name: AGENT }) + '\n')
+    else world.fx.files.set(WAIT, JSON.stringify({ name: AGENT, pid: '501', waiting: null }) + '\n')
+    await backstopRun(world)
+    expect(world.submitted.length).toBe(1)
+    expect(world.submitted[0]).toContain(`[module] ${AGENT} reports its delivery`)
+    expect(world.submitted[0]).toContain(REPLY)
+    expect(waitOf(world.fx.files).name).toBe(AGENT)
+  }
+})
+
+test('a registry the store refuses to list is no ended agent: the backstop says so and waits', async () => {
+  const world = backstopWorld()
+  const registry = `${HOME}/.claude/sessions`
+  let refuse = true
+  const inner = world.orch.fs.list
+  const list = async (dir: string) => {
+    if (refuse && dir === registry) throw new Error('EACCES: registry refused')
+    return inner(dir)
+  }
+  world.orch.fs = { ...world.orch.fs, list, exists: existsAlso(world.fx, registry) }
+  await backstopRun(world)
+  expect(world.submitted.length).toBe(0)
+  expect(world.fx.logged.some(l => l.includes("session s-one's record in the host's registry is unread: EACCES: registry refused"))).toBe(true)
+  refuse = false
+  await world.held.fire(BACKSTOP_MS)
+  await settle()
+  expect(world.submitted.length).toBe(1)
+  expect(world.submitted[0]).toContain(`[module] ${AGENT} reports its delivery`)
+})
+
+test("the backstop never relays the turn end of a session that is no agent as an agent's report", async () => {
+  const world = backstopWorld()
+  world.fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: 'notes du matin', startedAt: 1, kind: 'interactive', entrypoint: 'cli', status: 'idle' }))
+  await backstopRun(world)
+  expect(world.submitted).toEqual([])
+  expect(keptFiles(world.fx.files).length).toBe(1)
+  expect(world.fx.logged.some(l => l.includes('relay: backstop: notes du matin is no agent'))).toBe(true)
+})
+
+test("the backstop keeps a session's order: an older turn end claimed holds the newer back, and they go oldest first, one per reading", async () => {
+  const world = backstopWorld()
+  const older = keptFiles(world.fx.files)[0]!
+  const record = JSON.parse(world.fx.files.get(older)!)
+  // The newer listed first: the order is the files' own, not the listing's.
+  world.fx.files.delete(older)
+  world.fx.files.set(`${KEPT_DIR}/000000000000002-000000`, JSON.stringify({ ...record, id: '000000000000002-000000', answer: QUESTION, key: 'k-2' }) + '\n')
+  world.fx.files.set(older, JSON.stringify({ ...record, claim: { by: 'agent', until: world.held.now.ms + CLAIM_MS } }) + '\n')
+  await backstopRun(world)
+  expect(world.submitted).toEqual([])
+  world.fx.files.set(older, JSON.stringify(record) + '\n')
+  await world.held.fire(BACKSTOP_MS)
+  await settle()
+  expect(world.submitted.length).toBe(1)
+  expect(world.submitted[0]).toContain('reports its delivery')
+  await world.held.fire(BACKSTOP_MS)
+  await settle()
+  expect(world.submitted.length).toBe(2)
+  expect(world.submitted[1]).toContain('asks — merge order')
+  expect(keptFiles(world.fx.files)).toEqual([])
+})
+
+test('each end of an agent turn that sends nothing says why in the log', async () => {
+  // No answer and no stop read.
+  let chains = mounted()
+  let fx = fake()
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: heldClock().clock }, { answer: 'Half done.', reason: 'max_turns', isAborted: false, turnId: 'turn-1' })
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT}'s turn ended on « max_turns » with no stop read: nothing to send`))).toBe(true)
+  // No status line, its work in flight.
+  chains = mounted()
+  fx = fake()
+  await drive(chains, 'classic.Stop', fx.dollar, stopOf('Lenses running.', { background_tasks: [{ type: 'local_agent', description: 'lens: tests', status: 'running' }] }))
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: heldClock().clock }, turnEnd('Lenses running.', 'turn-1'))
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT}'s turn ended without a status line, its work in flight`))).toBe(true)
+  // A repeat of what was relayed.
+  chains = mounted()
+  fx = fake()
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: heldClock().clock }, turnEnd(QUESTION, 'turn-1'))
+  await drive(chains, 'turn.complete', { ...fx.dollar, clock: heldClock().clock }, turnEnd(QUESTION, 'turn-2'))
+  expect(fx.sent.length).toBe(1)
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT}'s turn end repeats what was relayed already`))).toBe(true)
+  // A session read as no agent drops what it kept.
+  mounted()
+  fx = fake({ role: 'orchestrator', name: 'Orch: other' })
+  fx.files.set(`${KEPT_DIR}/000000000000001-000000`, JSON.stringify({ id: '000000000000001-000000', at: '2026-10-14T09:00:00.000Z', answer: DELIVERY, reason: 'answer', kind: 'status', key: 'k-1', since: null, stop: null, tty: '/dev/ttys005', reports_to: null, claim: null, tries: 0, wait_written: true }) + '\n')
+  await drainKept(hostOf({ ...fx.dollar, clock: heldClock().clock }), 's-one')
+  expect(fx.sent).toEqual([])
+  expect(keptFiles(fx.files)).toEqual([])
+  expect(fx.logged.some(l => l.includes('relay: Orch: other is no agent: its turn end of 2026-10-14T09:00:00.000Z goes to no orchestrator'))).toBe(true)
+  // Another sender's claim in force.
+  const world = backstopWorld({ age: 0 })
+  mounted()
+  const path = keptFiles(world.fx.files)[0]!
+  world.fx.files.set(path, JSON.stringify({ ...JSON.parse(world.fx.files.get(path)!), claim: { by: 'backstop:s-orch', until: world.held.now.ms + BACKSTOP_CLAIM_MS } }) + '\n')
+  await drainKept(agentOf(world), 's-one')
+  expect(world.fx.sent).toEqual([])
+  expect(world.fx.logged.some(l => l.includes(`relay: ${AGENT}'s turn end of`) && l.includes('is being relayed by backstop:s-orch: it waits'))).toBe(true)
+})
+
+test('the same turn end completed twice while refused is kept once, said', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const dollar = { ...fx.dollar, clock: heldClock().clock, session: { ...fx.dollar.session, send: sender(fx) } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-1'))
+  expect(keptFiles(fx.files).length).toBe(1)
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT}'s turn end is kept already: it goes once`))).toBe(true)
+})
+
+test('two turn ends kept unnamed leave the wait to the newest: the older, delivered first, writes none over it', async () => {
+  const chains = mounted()
+  const walkHangs = { on: true }
+  const fx = fake({ walk: 'agent', walkHangs })
+  const held = heldClock()
+  let accepts = 0
+  const send = async (args: { to: unknown; text: string }): Promise<SessionSendResult> => {
+    if (accepts === 0) return { isDelivered: false, reason: 'nobody by that name' }
+    accepts--
+    fx.sent.push(args)
+    return { isDelivered: true }
+  }
+  const dollar = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(QUESTION, 'turn-1'))
+  held.now.ms += 1000
+  await drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-2'))
+  expect(keptFiles(fx.files).length).toBe(2)
+  walkHangs.on = false
+  accepts = 1
+  expect(await held.fire(KEPT_RETRY_MS)).toBe(1)
+  expect(fx.sent.length).toBe(1)
+  expect(fx.sent[0]!.text).toContain('asks — merge order')
+  expect(waitOf(fx.files)?.waiting ?? null).toBeNull()
+  accepts = 1
+  await held.fire(held.timers.find(t => t.ms !== ROUND_WAKE)!.ms)
+  expect(fx.sent.length).toBe(2)
+  expect(waitOf(fx.files).waiting).toBe('delivered')
+})
+
+test('a turn end kept while an older one is in its send keeps its wait: the older reads what is kept once it is delivered', async () => {
+  const chains = mounted()
+  const walkHangs = { on: true }
+  const fx = fake({ walk: 'agent', walkHangs })
+  const held = heldClock()
+  const refuse = { on: true }
+  let open: ((r: SessionSendResult) => void) | null = null
+  let slow = false
+  const send = async (args: { to: unknown; text: string }): Promise<SessionSendResult> => {
+    if (refuse.on) return { isDelivered: false, reason: 'nobody by that name' }
+    if (slow) {
+      slow = false
+      const answer = await new Promise<SessionSendResult>(resolve => { open = resolve })
+      fx.sent.push(args)
+      return answer
+    }
+    fx.sent.push(args)
+    return { isDelivered: true }
+  }
+  const dollar = { ...fx.dollar, clock: held.clock, session: { ...fx.dollar.session, send } }
+  await drive(chains, 'turn.complete', dollar, turnEnd(QUESTION, 'turn-1'))
+  walkHangs.on = false
+  refuse.on = false
+  slow = true
+  const first = held.fire(KEPT_RETRY_MS)
+  await until(() => open !== null)
+  held.now.ms += 1000
+  const second = drive(chains, 'turn.complete', dollar, turnEnd(DELIVERY, 'turn-2'))
+  await until(() => keptFiles(fx.files).length === 2)
+  open!({ isDelivered: true })
+  await Promise.all([first, second])
+  expect(fx.sent.length).toBe(2)
+  expect(waitOf(fx.files).waiting).toBe('delivered')
 })
