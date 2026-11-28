@@ -512,6 +512,47 @@ describe('the candidate', () => {
   })
 })
 
+describe('the candidate of a repository: refusals with no pull request', () => {
+  const SIGNATURE = 'refusal:github.ready.held:@owner/name'
+  const CANDIDATE = {
+    v: 2, signature: SIGNATURE, kind: 'refusal', code: 'github.ready.held', severity: null, classes: [], languages: [],
+    since: '2026-10-15T10:00:00Z', until: '2026-11-14T10:00:00Z',
+    events: ['20261101T101500Z-0a1b2c3d', '20261102T101500Z-0a1b2c3d', '20261103T101500Z-0a1b2c3d'], prs: [], repos: ['owner/name'], sessions: ['sess-1', 'sess-2'],
+  }
+  const read = (change: Record<string, unknown>) => parseCandidate({ ...CANDIDATE, ...change })
+
+  it('signs a refusal that names its repository and no pull request with that repository, and no other event', () => {
+    const signed = (kind: 'refusal' | 'escape', repo: string | null, pr: number | null) => {
+      const event = learningEvent({ kind, at: '2026-11-14T10:15:00Z', random: '0a1b2c3d', source: { plugin: 'github', code: 'github.ready.held' }, subject: { repo, pr }, trust: 'computed' })
+      assert.ok(event)
+      return signatureOf(event)
+    }
+    assert.equal(signed('refusal', 'owner/name', null), SIGNATURE)
+    assert.deepEqual([signed('refusal', 'owner/name', 7), signed('refusal', null, null), signed('escape', 'owner/name', null)], ['refusal:github.ready.held', 'refusal:github.ready.held', 'escape:github.ready.held'])
+  })
+
+  it('reads one whole, at two sessions in place of two pull requests', () => {
+    assert.equal(CANDIDATE_CONTRACT.min_sessions, 2)
+    assert.deepEqual(parseCandidate(CANDIDATE), CANDIDATE)
+  })
+
+  it('refuses one under its thresholds, with a pull request, another kind, another repository than its signature\'s, or sessions out of shape', () => {
+    const bad = [
+      { sessions: ['sess-1'] }, { sessions: ['sess-2', 'sess-1'] }, { sessions: ['sess-1', 'no session'] }, { sessions: 'sess-1' }, { events: CANDIDATE.events.slice(0, 2) },
+      { prs: ['owner/name#7'] }, { repos: [] }, { repos: ['owner/name', 'owner/other'] }, { repos: ['owner/other'] }, { kind: 'escape', signature: 'escape:github.ready.held:@owner/name' },
+      { signature: 'refusal:github.ready.held' }, { v: 1 },
+    ]
+    for (const change of bad) assert.equal(read(change), undefined, JSON.stringify(change))
+    const { sessions: _sessions, ...without } = CANDIDATE
+    assert.equal(parseCandidate(without), undefined)
+  })
+
+  it('names its state file with no directory separator, two repositories two files', () => {
+    assert.equal(candidateStateFile(SIGNATURE), 'refusal_github.ready.held_@owner+name.json')
+    assert.notEqual(candidateStateFile('refusal:github.ready.held:@owner/a_b'), candidateStateFile('refusal:github.ready.held:@owner_a/b'))
+  })
+})
+
 describe('what a writer names: the subject', () => {
   it('keeps each field that fits the contract, the repository in lower case', () => {
     assert.deepEqual(subjectOf({ repo: ' Owner/Name ', pr: 7, head: HEAD.toUpperCase() }), { repo: 'owner/name', pr: 7, head: HEAD })

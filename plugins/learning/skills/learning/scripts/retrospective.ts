@@ -114,9 +114,10 @@ function eventLine(event: LearningEvent): string {
 function block(candidate: Candidate, state: CandidateState | undefined, events: ReadonlyMap<string, LearningEvent>): string {
   const shown = candidate.events.slice(0, RETROSPECTIVE_CONTRACT.digest_events)
   const more = candidate.events.length - shown.length
+  const from = candidate.sessions === undefined ? `${candidate.prs.length} pull requests (${candidate.prs.join(', ')})` : `${candidate.sessions.length} sessions and no pull request`
   return [
     `candidate ${candidate.signature}`,
-    `  ${candidate.events.length} events from ${candidate.prs.length} pull requests (${candidate.prs.join(', ')}) in ${candidate.repos.length} repositories (${candidate.repos.join(', ')}), ${candidate.since} to ${candidate.until}`,
+    `  ${candidate.events.length} events from ${from} in ${candidate.repos.length} repositories (${candidate.repos.join(', ')}), ${candidate.since} to ${candidate.until}`,
     ...(state === undefined ? [] : [`  ${state.state} at ${state.at} on ${state.candidate.events.length} events${state.ruling === null ? '' : `, ruling: ${state.ruling}`}`]),
     ...shown.flatMap(id => { const event = events.get(id); return event === undefined ? [] : [eventLine(event)] }),
     ...(more > 0 ? [`  and ${more} more events`] : []),

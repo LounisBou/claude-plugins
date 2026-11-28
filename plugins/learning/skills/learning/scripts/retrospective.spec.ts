@@ -1,7 +1,7 @@
 // The retrospective's code: what waits, the judgment kept as the candidate's state, the session started.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { candidateStateDir, candidateStateFile, journalDir, learningEvent, parseCandidateState, RETROSPECTIVE_CONTRACT, type LearningEvent } from '../../../core/learning.ts'
@@ -78,6 +78,34 @@ test('the digest lists each candidate that waits with the pointers of its events
     assert.equal(lines.filter(line => line.startsWith('  event ')).length, RETROSPECTIVE_CONTRACT.digest_events)
     assert.equal(lines.at(-1), '  and 2 more events')
     assert.deepEqual(errs, [])
+  })
+})
+
+test('a repository cluster is digested by its sessions, and its judgment kept under a file of the candidates\' directory', () => {
+  scratch(config => {
+    const code = 'github.ready.held'
+    const list = ['sess-1', 'sess-1', 'sess-2'].map(session => {
+      const event = learningEvent({
+        kind: 'refusal', at: new Date(NOW - DAY).toISOString().replace('.000Z', 'Z'), random: (serial++).toString(16).padStart(8, '0'),
+        source: { plugin: 'github', code }, subject: { repo: 'acme/app_x' }, context: { session }, evidence: [{ type: 'refusal', code }], trust: 'computed',
+      })
+      assert.ok(event)
+      return event
+    })
+    journal(config, list)
+    const read = capture()
+    assert.equal(run(['digest', '--config', config], read.deps), 0)
+    const lines = read.outs.join('\n').split('\n')
+    const signature = 'refusal:github.ready.held:@acme/app_x'
+    assert.equal(lines[1], `candidate ${signature}`)
+    assert.match(lines[2] ?? '', /^ {2}3 events from 2 sessions and no pull request in 1 repositories \(acme\/app_x\), /)
+    const kept = capture(judgement(list, { signature, remedy: { scope: 'project', rung: 'lint', target: 'acme/app_x', proof: { type: 'test', path: 'tests/ready.test.ts' } } }))
+    assert.equal(run(['judge', '--config', config], kept.deps), 0)
+    assert.deepEqual([kept.outs, kept.errs], [[`${signature}: proposed`], []])
+    assert.deepEqual(readdirSync(candidateStateDir(config)), ['refusal_github.ready.held_@acme+app_x.json'])
+    const after = capture()
+    assert.equal(run(['digest', '--config', config], after.deps), 0)
+    assert.deepEqual(after.outs, ['learning retrospective: 0 of 1 candidates to judge'])
   })
 })
 

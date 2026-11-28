@@ -20,7 +20,9 @@ repository; the event's contract is `packages/core/src/learning.ts`.
 `skills/learning/scripts/distil.ts --config <dir>` computes the candidates of the journals, with no
 model, and prints one JSON line each: the events of the window, grouped by signature (kind,
 code, the finding's severity, the classes of its paths, its languages), a group being a candidate at
-three events from two pull requests. Besides the version 1 events, it reads the audit trail's: a review
+three events from two pull requests. A refusal that names its repository and no pull request is grouped
+by that repository too, its signature ending in `@owner/name`, and is a candidate at three events from
+two sessions (version 2 of the candidate, which holds the sessions). Besides the version 1 events, it reads the audit trail's: a review
 decision that kept its finding is a `finding`, with the severity and the file it names, and a failure of
 the method is an `escape`; the other audit facts form no candidate. The retrospective and forget and
 check read the same events. An event names a pull request when it holds both its repository
@@ -39,7 +41,7 @@ skill is `skills/retrospective/SKILL.md`, and its only writes go through
 - `digest --config <dir>`: the candidates that wait, each with its events' pointers (never their
   words), whole candidates only under a ceiling of 16,000 characters; the rest are counted.
 - `judge --config <dir>`, a judgment as JSON on the input: kept as the candidate's state, one file
-  per signature under `<dir>/learning/candidates/`. The cause is a claim (the first upstream failure,
+  per signature under `<dir>/learning/candidates/` (core's `candidateStateFile`). The cause is a claim (the first upstream failure,
   the counterfactual, the events it rests on, the alternatives weighed, a confidence) or unresolved
   with the observation that would have decided; a resolved cause carries a remedy with its scope, its
   rung, its target repository and its proof (a test's path, or an eval case for a prompt rule). A
