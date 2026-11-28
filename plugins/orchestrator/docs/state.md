@@ -5,11 +5,13 @@ roots (core's `orchestration.ts` and `roots.ts`):
 
 - **protected**: `<config dir>/claude-orchestrator/`, or `ORCHESTRATOR_STATE_DIR`. What runs or is
   trusted: `venv/`, the launch files under `prompts/`, `mcp.json`, `models.json`, `routing/`,
-  `config.json`, `quota/` (a reading picks the configuration directory a `--plan auto` spawn runs on), `home-release.log` (the launch script's shell appends to it), the status line tap's files, `sleeping.json`, `coordinator.json` and its lock, `iterm-restart/`, `iterm-order.json`, and
+  `config.json`, `quota/` (a reading picks the configuration directory a `--plan auto` spawn runs on), `home-release.log` (the launch script's shell appends to it), the status line tap's files, `sleeping.json`, `coordinator.json` and its lock, `iterm-restart/`, `iterm-order.json`, `remote-machines.json` (it picks the ssh destination of a remote view), `views/` (the launch files iTerm2 runs), and
   `data-root.json`;
 - **data**: the directory the protected root's `data-root.json` names (`{"version": 1, "dir":
   "<absolute path>"}`), else the protected root. What any session writes. Nothing read there decides
-  what runs. Every item not named protected above is data, the table's and these: the briefs and
+  what runs, but a remote row (`store/remote-rows/<name>`, under the module root): its `machine` and
+  `home` pick the view the coordinator opens, bounded to a destination `remote-machines.json` maps
+  and a socket of a home server's shape (`orch-<8 hex>`), checked again at each read. Every item not named protected above is data, the table's and these: the briefs and
   dispatch records, `records/`, `todo/`, `coordinator/` and `coordinator-check.json`, `round/`,
   `round-woken.json`, `round-listed.json`, `chains/`, `auditors/`, `ci-watch/`, `ci-gate/`,
   `draft-guard/`, `stop-gate/`, `prs.json`, `prs.log`, `prs.wanted`, `sweep.stamp`, `deck.json`,
@@ -32,7 +34,8 @@ Python launcher.
 |---|---|---|---|
 | `store/sessions/<id>` | module | the session's own hooks (measure, usage); any reader removes a dead row | one writer, one rename |
 | `store/gates/<id>`, `store/rows/<id>`, `store/answered/<id>`, `store/successors/<id>` | module | the session's own hooks | one writer, one rename |
-| `store/remote/<name>` | module | the receiving session; any reader removes a stale row | one rename under `<name>.lock`; a reader removes a row met stale only after reading it again, still stale, under that lock |
+| `store/remote-rows/<name>` | module | the receiving session; any reader removes a row whose update time is read and past a day, and leaves one it cannot read | one rename under `<name>.lock`; a reader removes a row met stale only after reading it again, still stale, under that lock |
+| `store/remote/<name>` | module | sessions of the earlier releases; read only, for a name `store/remote-rows/` has no file of, while its row is within a day | none of this release writes or removes it |
 | `round/<id>.json` | data | the hooks of every session (sender, pane, delivery, successor move); the coordinator's `settle` (hooks too), `round-archive` and `succession.sh takeover` | read-modify-write under the entry's lock |
 | `store/waits/<id>` | module | the session's own relay; the coordinator's hooks and its `settle`, forgetting a fingerprint | under the file's lock; a write merged with what another process changed since this one read it (`mergeWait`) |
 | `chains/<tty>.jsonl` | data | every launcher process (spawn, close, move, takeover) | read-modify-write under the chain's lock (`chain_change`), a unique temporary name |
@@ -41,6 +44,8 @@ Python launcher.
 | `pane-open-<name>` | data | the session's own hooks, on his word (the command, the tool, his ✕): present while the role's supervision pane is open, `<name>` the session name without its reference; read by the successor's first turn start | one rename; removed by his close |
 | `deck.json` | data | every session | a view of the store, written only when it differs from the file or the file's stamp is a minute old (`DECK_REFRESH_MS`); format fixed by `hooks/tests/golden-deck.ts` |
 | `sleeping.json`, `coordinator.json` | protected | the coordinator's scripts | under the coordinator's lock |
+| `remote-machines.json` | protected | the operator, by hand; read by the coordinator's hooks | `{"version": 1, "machines": {"<label>": "<ssh destination>"}}`, read whole, refused whole when a label or a destination is not of its shape |
+| `views/<machine>-<socket>.sh` | protected | the coordinator's hooks, opening a remote view | one rename, under `<path>.lock`, held across the process table read again, the server's check and the opening |
 | dispatch records, `records/<session>` | data | `dispatch-record.ts` | under core's lock |
 | `measure/<id>.json` | module | the session's own gauge | one writer, replaced whole in one rename, removed (never emptied) at compaction, kept at session end and pruned by `install.sh` past 90 days; read as unmeasured when empty or partial |
 | module log | module | every process | appends, refusing a link |

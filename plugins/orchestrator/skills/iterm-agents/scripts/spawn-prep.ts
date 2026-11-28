@@ -140,7 +140,10 @@ export async function prepareSpawn(given: Options, deps: PrepDeps): Promise<Opti
   const plan = text(o, 'plan')
   if (plan) {
     if (!['1', '2', 'auto'].includes(plan)) refuse(`spawn: refused: --plan is 1, 2 or auto, got '${plan}'`)
-    if (!(open || wake || (resume && title.startsWith('Agent:')))) refuse("spawn: refused: --plan routes an orchestrator at its birth, with --open or --wake, or a closed agent's resume: an orchestrator's agents, its successor and an auditor run on the plan of the session that spawns them")
+    // An auditor's successor types no title: the marker its caller's launch exported lets the line
+    // through, and the adapter, which reads the caller's name, refuses any other successor.
+    const auditSuccessor = successor && !title && deps.env['ORCHESTRATOR_AUDITOR'] === '1'
+    if (!(open || wake || auditor || coordinator || auditSuccessor || (resume && title.startsWith('Agent:')))) refuse("spawn: refused: --plan routes an orchestrator at its birth, with --open or --wake, a closed agent's resume, an auditor, or the successor of an auditor or of the coordinator: an orchestrator's agents and its successor run on the plan of the session that spawns them")
   }
   if (resume && !wake && (!title.startsWith('Agent:') || successor || auditor || coordinator || open)) refuse("spawn: refused: --resume is a wake's or an agent's: it names the session a paused orchestrator or a closed agent of the same checkout resumes")
   if (resume && !/^[0-9A-Za-z-]+$/.test(resume)) refuse(`spawn: refused: --resume needs a session id, letters, digits and hyphens, got '${resume}'`)
@@ -160,7 +163,7 @@ export async function prepareSpawn(given: Options, deps: PrepDeps): Promise<Opti
   if (auditor) {
     noneOf([['--successor', successor], ['--right-of', !!rightOf], ['--left-of', !!leftOf], ['--title-free', titleFree],
       ['--tier', !!tier], ['--no-remote-control', noRemote]],
-    flag => `spawn: refused: ${flag} is not an auditor's: an auditor lands immediately right of the orchestrator it audits (its caller, or the one --of names), reads "Audit: <subject>", runs on the pair given with --model and --effort, else on its caller's, and comes up under remote control`)
+    flag => `spawn: refused: ${flag} is not an auditor's: an auditor lands immediately left of the orchestrator it audits (its caller, or the one --of names), reads "Audit: <subject>", runs on the pair given with --model and --effort, else on its caller's, and comes up under remote control`)
     if (of && of !== 'self' && !of.startsWith('/dev/')) refuse(`spawn: refused: --of names the audited orchestrator's tty (/dev/ttysNNN) or self, got '${of}'`)
     if (!!model !== !!effort) refuse("spawn: refused: an auditor takes --model and --effort together, or neither (the caller's pair): half a pair is a guess at the other half")
     if (!title) refuse('spawn: refused: --auditor needs --title "Audit: <subject>"')

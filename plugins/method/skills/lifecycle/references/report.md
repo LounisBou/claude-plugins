@@ -17,7 +17,7 @@ status:    done|blocked|question — <one line>
 - `done`: delivered. `blocked`: it cannot go on without what the line
   names. `question`: a decision only the operator can take. `waiting`, never a report's
   end: background work runs.
-- An exit code is the one read from the run. A section with nothing to say says `none`.
+- A section with nothing to say says `none`.
 - Name items as `questions.md` says.
 - A defect names its installed version (`claude plugin list --json`).
 - A role may add lines it owns (a pull request, `E2E:`) after `files:`, never drop one.

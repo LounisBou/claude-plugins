@@ -88,7 +88,11 @@ it. `/github:doctor` then confirms everything is ready.
   less often, up to every five minutes; a low quota waits for its reset; touching
   `<config>/pr-reconcile/.edge` lists at the next beat. A GitHub that cannot be reached is one
   line an outage, with its first reason; the outage is over, said in one line, at a listing that goes
-  through five minutes or more after the first that did, none having found it unreachable between. Each reading is kept in
+  through five minutes or more after the first that did, none having found it unreachable between. Those two
+  lines are shown to the holder only when it waits on GitHub (a call of its own in flight, or refused by the
+  outage). Its other lines go to the host's debug log (`claude --debug`), except a failure on a pull request
+  whose head the holder pushed. An archived repository and a head that cannot be fingerprinted are the debug
+  log's in every case. A line a session's own call leads to is shown to it. Each reading is kept in
   `<config>/pr-reconcile/<owner>/<name>/<pr>.json` (core's `pr-reconcile.ts`), where the
   orchestrator reads CI; the lease file counts its beats, listings, gates, label moves and statuses
   posted, and a renewal of the lease journals the first four since the previous one at most once an

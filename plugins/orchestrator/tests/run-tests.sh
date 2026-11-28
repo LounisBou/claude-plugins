@@ -2914,7 +2914,7 @@ check "no anchor at all is refused, naming all three forms" "1|1" \
 check "--leftmost moves a tab out of the caller's chain too, with the warning naming it" "0|1" \
   "$(mv_ --tty /dev/ttys901 --leftmost >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --leftmost | grep -c "^move: warning: /dev/ttys901 is not in this session's chain: moved anyway$")"
 
-# An AUDITOR is neither a successor nor an agent (§52). It is placed immediately RIGHT of
+# An AUDITOR is neither a successor nor an agent (§52). It is placed immediately LEFT of
 # the orchestrator it audits (its caller, or the tab --of names), the chain ignored — on the
 # caller's model and under remote control under its own title; but it takes no chain and
 # joins none: the orchestrator it audits keeps its agents, and the auditor is nobody's agent.
@@ -2940,12 +2940,12 @@ check "and without the setting that turns remote control off" "0" "$(printf '%s'
 check "an auditor runs on the caller's model with no flag to ask for it" "1" "$(printf '%s' "$AUDLAUNCH" | grep -c -- '--model aud-model')"
 check "an auditor anchors on self, past no agent, and the dry run says what it is" "1|1|1" \
   "$(printf '%s' "$AUDOUT" | grep -c '^anchor=self$')|$(printf '%s' "$AUDOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDOUT" | grep -c '^successor=no$')"
-check "an auditor sits on the RIGHT of the orchestrator it audits, as a successor and a plain anchor do" "right|right|right" \
+check "an auditor sits on the LEFT of the orchestrator it audits; a successor and a plain anchor sit on its RIGHT" "left|right|right" \
   "$(printf '%s' "$AUDOUT" | sed -n 's/^side=//p')|$(aud --title 'Orch: f' --successor | sed -n 's/^side=//p')|$(aud --title 'Agent: x' --right-of self | sed -n 's/^side=//p')"
 # The audited orchestrator is the caller, or the tab --of names; a coordinator is no orchestrator.
 AUDCOORDPS="$WORK/ps-audcoord.txt"; printf '/dev/ttys900 claude --name Coord: c\n' > "$AUDCOORDPS"
 audc() { ORCHESTRATOR_PS_TABLE="$AUDCOORDPS" aud "$@"; }
-check "an auditor given --of anchors on that tab, on its right, in no chain" "1|right|none" \
+check "an auditor given --of anchors on that tab, on its left, in no chain" "1|left|none" \
   "$(aud --auditor --of /dev/ttys555 --title 'Audit: tm' | grep -c '^anchor=/dev/ttys555$')|$(aud --auditor --of /dev/ttys555 --title 'Audit: tm' | sed -n 's/^side=//p')|$(aud --auditor --of /dev/ttys555 --title 'Audit: tm' | sed -n 's/^chain=//p')"
 check "--of self is the caller's own tab, as no --of is" "1" \
   "$(aud --auditor --of self --title 'Audit: tm' | grep -c '^anchor=self$')"
@@ -2953,7 +2953,7 @@ check "--of is an auditor's: refused without --auditor, and refused when it name
   "$(aud --of /dev/ttys555 --title 'Agent: x' >/dev/null 2>&1; echo $?)|$(aud --of /dev/ttys555 --title 'Agent: x' | grep -c -- '--of names the orchestrator an auditor audits')|$(aud --auditor --of nowhere --title 'Audit: tm' >/dev/null 2>&1; echo $?)|$(aud --auditor --of nowhere --title 'Audit: tm' | grep -c -- "--of names the audited orchestrator's tty")"
 check "a coordinator's auditor must name the orchestrator it audits: refused with no --of, and with its own tab" "1|1|1" \
   "$(audc --auditor --title 'Audit: tm' >/dev/null 2>&1; echo $?)|$(audc --auditor --title 'Audit: tm' | grep -c "the coordinator's own tab is not an orchestrator's")|$(audc --auditor --of /dev/ttys900 --title 'Audit: tm' >/dev/null 2>&1; echo $?)"
-check "and with --of an orchestrator's tab it is launched, right of that tab" "0|1|right" \
+check "and with --of an orchestrator's tab it is launched, left of that tab" "0|1|left" \
   "$(audc --auditor --of /dev/ttys555 --title 'Audit: tm' >/dev/null 2>&1; echo $?)|$(audc --auditor --of /dev/ttys555 --title 'Audit: tm' | grep -c '^anchor=/dev/ttys555$')|$(audc --auditor --of /dev/ttys555 --title 'Audit: tm' | sed -n 's/^side=//p')"
 check "where a plain spawn from the same caller anchors after its last agent" "1" \
   "$(aud --title 'Agent: x' --right-of self | grep -c '^anchor=/dev/ttys901$')"
@@ -3037,15 +3037,15 @@ import iterm_agent as m
 AUD, CALLER = '/dev/ttys950', '/dev/ttys900'
 def rows(*order):
     return [m.row_for(1, i, tty, 't', None, False, False) for i, tty in enumerate(order, 1)]
-RIGHT = rows('/dev/ttys800', CALLER, AUD, '/dev/ttys901')
-WRONG = rows(AUD, '/dev/ttys800', CALLER, '/dev/ttys901')
+LEFT = rows('/dev/ttys800', AUD, CALLER, '/dev/ttys901')
+WRONG = rows('/dev/ttys800', CALLER, AUD, '/dev/ttys901')
 OTHER_WINDOW = [m.row_for(2, 1, AUD, 't', None, False, False), m.row_for(1, 2, CALLER, 't', None, False, False)]
-HIDDEN = [m.row_for(1, 1, '/dev/ttys777', 't', None, False, False), m.row_for(1, 1, CALLER, 't', None, False, True),
-          m.row_for(1, 2, AUD, 't', None, False, False)]  # the audited orchestrator is a hidden pane of tab 1
+HIDDEN = [m.row_for(1, 1, AUD, 't', None, False, False), m.row_for(1, 2, '/dev/ttys777', 't', None, False, False),
+          m.row_for(1, 2, CALLER, 't', None, False, True)]  # the audited orchestrator is a hidden pane of tab 2
 scenario = sys.argv[1]
 reads, moves = [], []
-if scenario == 'placed': seq = [RIGHT]
-elif scenario == 'repaired': seq = [WRONG, RIGHT]
+if scenario == 'placed': seq = [LEFT]
+elif scenario == 'repaired': seq = [WRONG, LEFT]
 elif scenario == 'stuck': seq = [WRONG, WRONG]
 elif scenario == 'unread': seq = [None]
 elif scenario == 'unread-after-move': seq = [WRONG, None]
@@ -3054,7 +3054,7 @@ elif scenario == 'elsewhere': seq = [OTHER_WINDOW, OTHER_WINDOW]
 else:
     seq = None
 if seq is None:
-    print(m.placed_right_of({'window': OTHER_WINDOW, 'hidden': HIDDEN}[scenario], AUD, CALLER))
+    print(m.placed_left_of({'window': OTHER_WINDOW, 'hidden': HIDDEN}[scenario], AUD, CALLER))
     sys.exit(0)
 def read():
     reads.append(1)
@@ -3065,11 +3065,11 @@ def move(tty, anchor):
 line, code = m.settle_auditor(read, move, AUD, CALLER)
 print('%d|%d|%s|%d|%s' % (len(reads), len(moves), ','.join('%s>%s' % t for t in moves), code, line))
 " "$1"; }
-check "an auditor already immediately right of its orchestrator is read once and moved never" "1|0||0|" "$(settle placed)"
-check "a misplaced auditor is moved right of its orchestrator, then read again, and nothing is said" \
+check "an auditor already immediately left of its orchestrator is read once and moved never" "1|0||0|" "$(settle placed)"
+check "a misplaced auditor is moved left of its orchestrator, then read again, and nothing is said" \
   "2|1|/dev/ttys950>/dev/ttys900|0|" "$(settle repaired)"
 check "an auditor still misplaced after one move is said on one line naming both ttys and the remedy, exit 1" \
-  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is not immediately right of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --right-of /dev/ttys900" \
+  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is not immediately left of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --left-of /dev/ttys900" \
   "$(settle stuck)"
 check "a listing that cannot be read is said unverified, with the way to read it, and the session stays" \
   "1|0||1|spawn: could not read the tab order, so the auditor's place on /dev/ttys950 is unverified; check with: iterm-agent.sh list" \
@@ -3078,13 +3078,13 @@ check "a listing lost after the move is unverified too, not reported as misplace
   "2|1|/dev/ttys950>/dev/ttys900|1|spawn: could not read the tab order, so the auditor's place on /dev/ttys950 is unverified; check with: iterm-agent.sh list" \
   "$(settle unread-after-move)"
 check "a move the terminal cannot serve says its API is not available, and offers no move command" \
-  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is not immediately right of /dev/ttys900, and could not be moved because the terminal's API is not available; read iterm-agent.sh list and move the tab by hand only if it is misplaced" \
+  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is not immediately left of /dev/ttys900, and could not be moved because the terminal's API is not available; read iterm-agent.sh list and move the tab by hand only if it is misplaced" \
   "$(settle unserved)"
 check "an auditor in another window than its caller says so, since a move cannot cross windows" \
   "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is in another window than its orchestrator on /dev/ttys900; see iterm-agent.sh list" \
   "$(settle elsewhere)"
-check "the same tab number in another window is not right of the orchestrator" "False" "$(settle window)"
-check "an orchestrator that is a hidden pane is placed by its tab: the auditor in the tab after it counts" "True" \
+check "the same tab number in another window is not left of the orchestrator" "False" "$(settle window)"
+check "an orchestrator that is a hidden pane is placed by its tab: the auditor in the tab before it counts" "True" \
   "$(settle hidden)"
 
 # The move finds its anchor by ANY pane of a tab, as the anchor probe does, and never across
@@ -3112,11 +3112,11 @@ if sys.argv[1] == 'split':
     w = W('w1', T('a', AUD), T('b', '/dev/ttys800'), split, T('d', '/dev/ttys801')); api = API(App(w))
 else:
     w = W('w1', T('a', AUD), T('b', '/dev/ttys800')); api = API(App(w, W('w2', split)))
-asyncio.run(m.move_right_of(api, None, AUD, CALLER))
+asyncio.run(m.move_beside(api, None, AUD, CALLER, False))
 print(w.set)
 " "$1"; }
-check "an auditor moves immediately after an orchestrator whose current pane is another pane of its tab" \
-  "['b', 'c', 'a', 'd']" "$(mvright split)"
+check "an auditor moves immediately before an orchestrator whose current pane is another pane of its tab" \
+  "['b', 'a', 'c', 'd']" "$(mvright split)"
 check "an orchestrator in another window moves nothing: a move does not cross windows" "None" "$(mvright window)"
 
 # The wiring is a decision of its own: the repair is called, the line goes to STDOUT, the tty
@@ -3126,7 +3126,7 @@ check "an orchestrator in another window moves nothing: a move does not cross wi
 AUDTRUST="$WORK/aud-trust.json"; printf '{"projects":{}}\n' > "$AUDTRUST"
 spawn_aud() { # <scenario> [backend]: prints the exit code; stdout and stderr land in files
   ORCHESTRATOR_STATE_DIR="$AUDSTATE" CLAUDE_CONFIG_DIR="$AUDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME \
-  CLAUDE_CODE_SESSION_ID=s-aud ORCHESTRATOR_BACKEND="${2:-api}" ORCHESTRATOR_TRUST_FILE="$AUDTRUST" \
+  CLAUDE_CODE_SESSION_ID=s-aud ORCHESTRATOR_BACKEND="${2:-api}" ORCHESTRATOR_TRUST_FILE="$AUDTRUST" ORCHESTRATOR_OSASCRIPT=/usr/bin/false \
   AUD_OUT="$WORK/aud-spawn.out" AUD_ERR="$WORK/aud-spawn.err" "$py" -c "
 import contextlib, sys
 sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
@@ -3134,13 +3134,13 @@ import iterm_agent as m
 AUD, CALLER = '/dev/ttys950', '/dev/ttys900'
 def rows(*order):
     return [m.row_for(1, i, tty, 't', None, False, False) for i, tty in enumerate(order, 1)]
-RIGHT = rows('/dev/ttys800', CALLER, AUD)
-WRONG = rows(AUD, '/dev/ttys800', CALLER)
+LEFT = rows('/dev/ttys800', AUD, CALLER)
+WRONG = rows('/dev/ttys800', CALLER, AUD)
 scenario = sys.argv[1]
-WRONG_HOME = rows(AUD, '/dev/ttys800', '/dev/ttys004')
-readings = {'misplaced': [WRONG, WRONG], 'unread': ['boom'], 'move-fails': [WRONG, RIGHT],
+WRONG_HOME = rows('/dev/ttys800', '/dev/ttys004', AUD)
+readings = {'misplaced': [WRONG, WRONG], 'unread': ['boom'], 'move-fails': [WRONG, LEFT],
             'api-less': [WRONG, WRONG], 'broken': [['wx/t1 | /dev/ttys950 | t | n']],
-            'home': [WRONG_HOME, WRONG_HOME]}[scenario]
+            'home': [WRONG_HOME, WRONG_HOME], 'split': [WRONG, WRONG]}[scenario]
 if scenario == 'home':
     # The caller is an orchestrator of a home session: its own tty is a pane, and the tab
     # that shows the server runs the tmux client on /dev/ttys004.
@@ -3164,6 +3164,19 @@ def stub_run(fn):
 m.run = stub_run
 m.as_spawn = lambda command: AUD
 m.as_list = next_reading
+# The auditor starts in window 0 of a home server of its own: no server is made here, and the
+# tab that shows it is the one the app made, on AUD.
+m.make_home = lambda socket, title, cwd, program, what: AUD
+m.open_home_tab = lambda socket, title, anchor, what, place=None: (AUD, {'terminal': m.ITERM})
+if scenario == 'split':
+    # Window 0 runs on a pane of its own, which is no tab of the app's: the tab is AUD.
+    asked = open('$WORK/aud-home.asked', 'w')
+    def make_home(socket, title, cwd, program, what):
+        asked.write('make_home %s\\n' % title); return '/dev/ttys960'
+    def open_home_tab(socket, title, anchor, what, place=None):
+        asked.write('open_home_tab %s %s %s %s\\n' % (title, place.at, place.anchor, place.side)); asked.flush()
+        return AUD, {'terminal': m.ITERM}
+    m.make_home, m.open_home_tab = make_home, open_home_tab
 code = 0
 with open('$WORK/aud-spawn.out', 'w') as out, open('$WORK/aud-spawn.err', 'w') as err, \
      contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -3175,9 +3188,9 @@ with open('$WORK/aud-spawn.out', 'w') as out, open('$WORK/aud-spawn.err', 'w') a
 print(code)
 " "$1"; }
 check "a misplaced auditor: the line on stdout, the tty still printed, exit 1" "1|1|1" \
-  "$(spawn_aud misplaced)|$(grep -c 'is not immediately right of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --right-of /dev/ttys900' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
+  "$(spawn_aud misplaced)|$(grep -c 'is not immediately left of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --left-of /dev/ttys900' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
 check "an orchestrator of a home session is audited from the tab that shows it, not from its pane" "1|1" \
-  "$(spawn_aud home)|$(grep -c 'is not immediately right of /dev/ttys004; repair it with: iterm-agent.sh move --tty /dev/ttys950 --right-of /dev/ttys004' "$WORK/aud-spawn.out")"
+  "$(spawn_aud home)|$(grep -c 'is not immediately left of /dev/ttys004; repair it with: iterm-agent.sh move --tty /dev/ttys950 --left-of /dev/ttys004' "$WORK/aud-spawn.out")"
 check "a listing that cannot be read: one line on stderr, the unverified line, the tty printed, exit 1" "1|1|1|1" \
   "$(spawn_aud unread)|$(grep -c 'could not be read: the listing failed' "$WORK/aud-spawn.err")|$(grep -c "the auditor's place on /dev/ttys950 is unverified; check with: iterm-agent.sh list" "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
 check "an exception in the move: one line on stderr, the tty printed, the second reading decides" "0|1|1|0" \
@@ -3191,6 +3204,11 @@ check "the API-less rung: no placement warning on stderr, the API-not-available 
 # refusals below meet a stranger's auditor.
 check "a spawned auditor is recorded under its tty with the app's session id and its launcher" "1|1" \
   "$(grep -c '"launcher": "S-ME"' "$AUDSTATE/auditors/ttys950.json")|$(grep -c '"session": "sess-aud"' "$AUDSTATE/auditors/ttys950.json")"
+rm -rf "$AUDSTATE/auditors"
+# The auditor runs in window 0 of its home server, on a pane no tab of the app's carries: its
+# place is repaired and recorded on the tab that shows it, the window's tty is the one printed.
+check "an auditor in its home server is placed and recorded by its tab, left of its orchestrator, and its window 0's tty printed" "1|1|1|0|1|make_home Audit: tm⏎open_home_tab Audit: tm beside /dev/ttys900 left" \
+  "$(spawn_aud split)|$(grep -c 'is not immediately left of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --left-of /dev/ttys900' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys960$' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")|$(grep -c '"launcher": "S-ME"' "$AUDSTATE/auditors/ttys950.json")|$(nl_join < "$WORK/aud-home.asked")"
 rm -rf "$AUDSTATE/auditors"
 
 # `rotate` and `move` treat an auditor's tab as not the caller's to replace or place: it is
@@ -3289,6 +3307,19 @@ check "rotate refuses the coordinator's tab before it spawns anything" "0|1|1" \
   "$(printf '%s' "$CRDROT" | grep -c '^launch=')|$(printf '%s' "$CRDROT" | grep -c "rotate: refused: /dev/ttys950 is the coordinator's tab ('Coord: ops')")|$(crdrot --old-tty /dev/ttys950 >/dev/null 2>&1; echo $?)"
 check "--force rotates it, and says so" "1|1" \
   "$(crdrot --old-tty /dev/ttys950 --force | tail -1 | grep -c '^close=/dev/ttys950')|$(crdrot --old-tty /dev/ttys950 --force | grep -c "^rotate: forced: /dev/ttys950 is the coordinator's tab")"
+# The coordinator and an auditor run in window 0 of a home session of their own: their tab runs
+# only its tmux client, and the guards read the role's name on window 0's pane.
+RHT="$WORK/role-home-tab"; mkdir -p "$RHT"
+printf '#!/bin/bash\ncase " $* " in *" list-panes "*) echo "0 /dev/ttys960" ;; esac\nexit 0\n' > "$RHT/tmux"; chmod +x "$RHT/tmux"
+rht() { CLAUDE_CODE_SESSION_ID=s-suite ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_TMUX="$RHT/tmux" ORCHESTRATOR_PS_TABLE="$RHT/ps" \
+  ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME bash "$AGENT" "$@" 2>&1; }
+for role in "Coord: ops|the coordinator's tab" "Audit: tm|an auditor's tab"; do
+  name=${role%%|*}; says=${role#*|}
+  printf '/dev/ttys950 %s -L orch-rht attach -t home\n/dev/ttys960 /opt/x/claude --name %s\n' "$RHT/tmux" "$name" > "$RHT/ps"
+  check "the tab of a home session whose window 0 is '$name' is refused as $says by rotate and move, before anything is made" "0|1|1" \
+    "$(rht rotate --old-tty /dev/ttys950 --dir "$WORK" --title "Agent: rotated" --prompt p --tier light | grep -c '^launch=')|$(rht rotate --old-tty /dev/ttys950 --dir "$WORK" --title "Agent: rotated" --prompt p --tier light | grep -c "rotate: refused: /dev/ttys950 is $says ('$name')")|$(rht move --tty /dev/ttys950 --right-of self | grep -c "move: refused: /dev/ttys950 is $says ('$name')")"
+  check "and --force moves it, saying so" "1" "$(rht move --tty /dev/ttys950 --right-of self --force | grep -c "^move: forced: /dev/ttys950 is $says")"
+done
 # A paused orchestrator is relaunched with --wake: its recorded name, model and effort, right
 # of the caller, in no chain, under remote control. Nothing is guessed: no model, no wake.
 WKOUT=$(crd --wake --title 'Orch: alpha' --model a-model --effort high)
@@ -3346,8 +3377,8 @@ check "an orchestrator opens one too, and a model it names wins over the tier" "
 check "an agent, an auditor or a session with no name never opens one" "1|1|1|1" \
   "$(opn 'Agent: x' --open --title 'Orch: x' >/dev/null 2>&1; echo $?)|$(opn 'Agent: x' --open --title 'Orch: x' | grep -c 'an agent never opens an orchestrator')|$(opn 'Audit: x' --open --title 'Orch: x' | grep -c 'an agent never opens an orchestrator')|$(opn - --open --title 'Orch: x' | grep -c "this session reads 'no name'")"
 # A new orchestrator is born on the plan asked with --plan: 1, 2, or auto by the quota files of
-# the state directory; the caller's own plan when auto has no fresh reading of both. Only a
-# birth is routed: an agent, a successor and an auditor take no --plan.
+# the state directory; the caller's own plan when auto has no fresh reading of both. An agent and
+# an orchestrator's successor take no --plan; an auditor, its successor and the coordinator's do.
 PLHOME="$WORK/plhome"; PLST="$WORK/plstate"; mkdir -p "$PLHOME" "$PLST/quota"
 plq() { printf '{"version":1,"account":"%s","config":"%s","five_hour":{"used_percentage":%s,"resets_at":1},"seven_day":{"used_percentage":%s,"resets_at":2},"at":"%s"}' "$1" "$2" "$3" "$4" "$5" > "$PLST/quota/$1.json"; }
 plopn() { HOME="$PLHOME" OPST="$PLST" opn 'Coord: ops' --open --title 'Orch: routed' "$@"; }
@@ -3369,8 +3400,15 @@ check "--plan auto with a stale reading keeps the caller's plan" "1" \
 rm -f "$PLST/quota/acc1.json"
 check "--plan auto with a plan unread keeps the caller's plan" "1" \
   "$(plopn --plan auto | sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$CRDCFG &&")"
-check "--plan 3 is refused, and so is --plan on an agent, a successor and an auditor" "1|1|1|1|1" \
-  "$(plopn --plan 3 | grep -c -- '--plan is 1, 2 or auto')|$(opn 'Orch: gateway' --title 'Agent: a' --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --successor --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --auditor --title 'Audit: a' --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --title 'Agent: a' --plan 2 >/dev/null 2>&1; echo $?)"
+check "--plan 3 is refused, and so is --plan on an agent and an orchestrator's successor" "1|1|1|1" \
+  "$(plopn --plan 3 | grep -c -- '--plan is 1, 2 or auto')|$(opn 'Orch: gateway' --title 'Agent: a' --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --successor --plan 2 | grep -c -- '--plan routes an orchestrator at its birth')|$(opn 'Orch: gateway' --title 'Agent: a' --plan 2 >/dev/null 2>&1; echo $?)"
+plrole() { HOME="$PLHOME" OPST="$PLST" opn "$@" --plan 2; }
+plon() { sed -n 's/^launch=//p' | grep -cF "export CLAUDE_CONFIG_DIR=$PLHOME/.claude-bis &&"; }
+check "--plan 2 routes an auditor, still left of its orchestrator, the coordinator's successor and an auditor's own" \
+  "1|left|1|1" \
+  "$(plrole 'Orch: gateway' --auditor --title 'Audit: a' | plon)|$(plrole 'Orch: gateway' --auditor --title 'Audit: a' | sed -n 's/^side=//p')|$(plrole 'Coord: ops' --coordinator-successor --title 'Coord: ops' | plon)|$(ORCHESTRATOR_AUDITOR=1 plrole 'Audit: a' --successor | plon)"
+check "an auditor's marker routes no other successor: the caller's name is read" "1|0" \
+  "$(ORCHESTRATOR_AUDITOR=1 plrole 'Orch: gateway' --successor | grep -c -- "--plan is not an orchestrator's successor's")|$(ORCHESTRATOR_AUDITOR=1 plrole 'Orch: gateway' --successor | grep -c '^launch=')"
 # A move across plans is a wake with --plan: the sleeper's record names the plan it slept on, --plan
 # the one it wakes on, and the conversation of the former, which lives in that plan's directory, is
 # not resumed on the latter.
@@ -3681,15 +3719,17 @@ check "the end checks this session is the recorded coordinator before it clears"
 # A coordinator started by hand is closed too, nothing asked: its title is the host's, the
 # host may refuse the close, and the end it then asks for is proved on the tty, not on list.
 COORDFILLED="$WORK/coordinator-brief-filled.md"
+mkdir -p "$WORK/no-tmux"; printf '#!/bin/bash\nexit 1\n' > "$WORK/no-tmux/tmux"; chmod +x "$WORK/no-tmux/tmux"
 mkdir -p "$WORK/coord-fill/coordinator" "$WORK/coord-fill/scratch"; : > "$WORK/coord-fill/coordinator/notes.md"; : > "$WORK/coord-fill/scratch/decision-round.md"
-if [ -f "$COORDTPL" ]; then
-  sed -E -e 's#\{\{PREDECESSOR\}\}#Coord: ops [a1b2c3]#g' -e 's#\{\{PREDECESSOR_TTY\}\}#/dev/ttys950#g' -e 's#\{\{SUBJECT\}\}#ops#g' \
-    -e "s#\{\{STATE_DIR\}\}#$WORK/coord-fill#g" -e "s#\{\{NOTES_FILE\}\}#$WORK/coord-fill/coordinator/notes.md#g" -e "s#\{\{ROUND_FILE\}\}#$WORK/coord-fill/scratch/decision-round.md#g" \
-    -e "s#\{\{COORDINATOR_SH\}\}#$ROOT/skills/coordinator/scripts/coordinator.sh#g" -e "s#\{\{ITERM_AGENT_SH\}\}#$AGENT#g" \
-    -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$COORDTPL" > "$COORDFILLED"
-fi
+# Filled by its printer, as a successor reads it, its predecessor in a tab (tmux answers no window
+# for it): the close step is the printer's own.
+[ -f "$COORDTPL" ] && PATH="$WORK/no-tmux:$PATH" ORCHESTRATOR_STATE_DIR="$WORK/coord-fill" HOME="$WORK/coord-fill" \
+  bash "$ROOT/skills/orchestrator/scripts/brief.sh" coordinator-takeover --name 'Coord: ops [a1b2c3]' --tty /dev/ttys950 > "$COORDFILLED" 2>/dev/null
 check "the coordinator's succession brief, filled with a real predecessor's values, lints clean" "yes|0" \
   "$([ -s "$COORDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$COORDFILLED" >/dev/null 2>&1; echo $?)"
+grep -v -- '--expect-title' "$COORDFILLED" > "$WORK/coordinator-brief-open.md"
+check "and without its close of the predecessor it is a finding" "1" \
+  "$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$WORK/coordinator-brief-open.md" 2>&1 | grep -c "succession brief without the predecessor's close")"
 
 # `/orchestrator-audit` (§52): the brief instantiated and linted, the auditor spawned with
 # the launcher's own flag and verified on the artifact. The spawn line is not only spelled:
@@ -3757,9 +3797,14 @@ AUDSUCCTPL="$ROOT/templates/auditor-succession-brief.md"
 check "no template, command or orchestrator skill teaches --successor --inherit-model" "0" \
   "$(grep -rlE -e '--successor( [^`]*)? --inherit-model' "$ROOT/templates" "$ROOT/commands" "$ROOT/skills/orchestrator" 2>/dev/null | wc -l | tr -d ' ')"
 AUDSUCCFILLED="$WORK/audit-succession-filled.md"
-[ -f "$AUDSUCCTPL" ] && sed -E -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDSUCCTPL" > "$AUDSUCCFILLED"
+mkdir -p "$WORK/aud-fill/audits"; : > "$WORK/aud-fill/audits/2026-11-27-tm.md"
+[ -f "$AUDSUCCTPL" ] && PATH="$WORK/no-tmux:$PATH" ORCHESTRATOR_STATE_DIR="$WORK/aud-fill" HOME="$WORK/aud-fill" bash "$ROOT/skills/orchestrator/scripts/brief.sh" \
+  auditor-takeover --name 'Audit: tm [a1b2c3]' --tty /dev/ttys950 --report "$WORK/aud-fill/audits/2026-11-27-tm.md" --repository "$WORK" > "$AUDSUCCFILLED" 2>/dev/null
 check "the auditor's succession brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDSUCCFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDSUCCFILLED" >/dev/null 2>&1; echo $?)"
+grep -v -- '--expect-title' "$AUDSUCCFILLED" > "$WORK/audit-succession-open.md"
+check "and without its close of the predecessor it is a finding" "1" \
+  "$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$WORK/audit-succession-open.md" 2>&1 | grep -c "succession brief without the predecessor's close")"
 # The code cites §52: the section it cites exists.
 check "the design document has the audit's numbered section" "1" \
   "$(grep -c '^## 52\. The audit of an orchestrator$' "$ROOT/docs/design.md")"
@@ -6770,7 +6815,7 @@ if command -v tmux >/dev/null 2>&1; then
   check "the client of the home tab attaches, and the server is armed" "1|True" \
     "$(hsrv list-clients 2>/dev/null | wc -l | tr -d ' ')|$(ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "print(ia.arm_home('$HSRV', 'suite', ['$(hsrv list-clients -F '#{client_tty}' 2>/dev/null)']))")"
   # A takeover kills window 0 while the tab stays attached: the server stays.
-  hsrv kill-window -t home:0 2>/dev/null
+  hsrv killw -t home:0 2>/dev/null
   sleep 1
   check "a takeover's kill of window 0 leaves the attached server running" "up|2" "$(hserver)|$(hpanes)"
   { kill "$hclient"; wait "$hclient"; } 2>/dev/null
@@ -6809,7 +6854,7 @@ if command -v tmux >/dev/null 2>&1; then
   mvclient=$!
   i=0; while [ "$(mvsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
   ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.arm_home('$MVSRV', 'suite', ['$(mvsrv list-clients -F '#{client_tty}' 2>/dev/null)'])" >/dev/null 2>&1
-  mvsrv kill-window -t home:0 2>/dev/null
+  mvsrv killw -t home:0 2>/dev/null
   mvsrv move-window -d -s "home:1" -t "home:0" 2>/dev/null
   mvpids=$(mvsrv list-panes -s -t home -F '#{pane_pid}' 2>/dev/null | tr '\n' ' ')
   check "the successor's window is window 0, and the server still runs it beside the agent" "Orch: new|2" \
@@ -6822,6 +6867,39 @@ if command -v tmux >/dev/null 2>&1; then
   mvsrv kill-server 2>/dev/null
 else
   echo "  skip a moved session's end is not checked: no tmux"
+fi
+echo "== iterm-agents: an agent window goes after its orchestrator's, the orchestrator first =="
+# A window made without an index takes the lowest free one: with window 0 free (a takeover closed
+# it) an agent landed on index 0, before the orchestrator on 1. The agent goes after the session's
+# last window, and the orchestrator stays where it is. Throwaway servers of the suite's own, with
+# the default configuration left out (-f /dev/null) so no base index of the operator's is read.
+if command -v tmux >/dev/null 2>&1; then
+  AWSRV="windowzero-after-$$"
+  AWHOME="windowzero-move-$$"
+  AWMARK=$((9100 + $$ % 800))
+  awsrv() { env -u TMUX -u TMUX_PANE tmux -L "$AWSRV" "$@"; }
+  awhome() { env -u TMUX -u TMUX_PANE tmux -L "$AWHOME" "$@"; }
+  awsrv -f /dev/null new-session -d -s home -n 'Orch: old' "sleep $AWMARK" 2>/dev/null
+  awsrv set-option -g automatic-rename off 2>/dev/null
+  awsrv new-window -d -t home:1 -n 'Orch: x' "sleep $AWMARK" 2>/dev/null
+  awsrv kill-window -t home:0 2>/dev/null
+  AWSOCK=$(awsrv display-message -p '#{socket_path}' 2>/dev/null)
+  AWPANE=$(awsrv display-message -p -t home:1 '#{pane_id}' 2>/dev/null)
+  awplace() { ORCHESTRATOR_OSASCRIPT=/usr/bin/false TMUX="$AWSOCK,$$,0" TMUX_PANE="$AWPANE" ipy "ia.TmuxTerminal().create('sleep $AWMARK', '$1', ia.Place('anywhere', '', 'right', False), '', {})" >/dev/null 2>&1; }
+  awlist() { awsrv list-windows -t home -F '#{window_index}=#{window_name}' 2>/dev/null | paste -sd' ' -; }
+  awplace 'Agent: a'
+  awplace 'Agent: b'
+  check "with window 0 free, the agents go after the orchestrator's window, in the order they were made" \
+    "1=Orch: x 2=Agent: a 3=Agent: b" "$(awlist)"
+  awsrv kill-server 2>/dev/null
+  # The move into a home session: a home server made for it starts its orchestrator on window 0.
+  ORCHESTRATOR_OSASCRIPT=/usr/bin/false ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$AWHOME', 'Orch: moved', '$WORK', 'sleep $AWMARK', 'suite')" >/dev/null 2>&1
+  check "the home server made for a move holds its orchestrator on window 0" "0=Orch: moved" \
+    "$(awhome list-windows -t home -F '#{window_index}=#{window_name}' 2>/dev/null | paste -sd' ' -)"
+  awhome kill-server 2>/dev/null
+  pkill -fx "sleep $AWMARK" 2>/dev/null
+else
+  echo "  skip an agent window's place is not checked: no tmux"
 fi
 echo "== iterm-agents: a home server ends with its last tab of this machine, never with a view =="
 # The operator's rule (2026-11-27): a server ends when the last client of its own machine leaves,
@@ -8135,8 +8213,8 @@ check "an auditor's wake of an orchestrator is refused with a message naming the
 printf '/dev/ttys900 claude\n' > "$WORK/ps-unnamed.txt"
 check "an auditor whose name cannot be read is refused all the same, by the marker its launch exports" "1|1|0" \
   "$(ORCHESTRATOR_AUDITOR=1 orchp "$WORK/ps-unnamed.txt" --title 'Orch: x' --wake --model a-model --effort high | grep -c "this session is not an orchestrator's or a coordinator's")|$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^launch=.*export ORCHESTRATOR_AUDITOR=1 && ')|$(orchp "$ORCHPS" --title 'Agent: x' | grep -c 'ORCHESTRATOR_AUDITOR')"
-check "an auditor's spawn stays out of the chain and right of its caller, a woken orchestrator's out of the chain" "1|1|1" \
-  "$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^chain=none$')|$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^side=right$')|$(orchp "$ORCHPS" --title 'Orch: x' --wake --model a-model --effort high | grep -c '^chain=none$')"
+check "an auditor's spawn stays out of the chain and left of its caller, a woken orchestrator's out of the chain" "1|1|1" \
+  "$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^chain=none$')|$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^side=left$')|$(orchp "$ORCHPS" --title 'Orch: x' --wake --model a-model --effort high | grep -c '^chain=none$')"
 NEUTRALPS="$WORK/ps-neutralcaller.txt"; AGENTPS="$WORK/ps-agentcaller.txt"
 printf '/dev/ttys900 claude --name Audit neutre : f\n' > "$NEUTRALPS"
 printf '/dev/ttys900 claude --name Agent: f\n' > "$AGENTPS"
@@ -8294,6 +8372,8 @@ d=$(dirname "$0")
 [ "$1" = -u ] && shift
 case "$1" in
   show) [ -f "$d/mark" ] && cat "$d/mark"; exit 0 ;;
+  # The clients of the server: the tab that shows the session, when the case names one.
+  list-clients) [ -f "$d/clients" ] && cat "$d/clients"; exit 0 ;;
   display-message) if [ "${@: -1}" = '#{window_active}' ]; then printf '%s\n' "${REC_ACTIVE:-0}"; else printf '%s\n' "${REC_SESSION:-\$1}"; fi ;;
   list-panes)
     [ -n "${REC_PANES_RAW:-}" ] && { printf '%b' "$REC_PANES_RAW"; exit 0; }
@@ -8319,7 +8399,7 @@ case "$1" in
     cat "$d/screen"
     # What the operator does after the first read: the screen he leaves (sent or cleared).
     [ -f "$d/screen.next" ] && mv "$d/screen.next" "$d/screen" ;;
-  kill-window)
+  killw)
     tty=$(awk -F'\t' -v w="$3" '$3 == w { print $5 }' "$d/panes")
     [ -z "${REC_KEEP_WINDOW:-}" ] && awk -F'\t' -v w="$3" '$3 != w' "$d/panes" > "$d/panes.tmp" && mv "$d/panes.tmp" "$d/panes"
     case "${REC_KEEP_HOST:-}" in 1|"$tty") ;; *) grep -v "^$tty " "$d/ps" > "$d/ps.tmp"; mv "$d/ps.tmp" "$d/ps" ;; esac
@@ -8360,6 +8440,9 @@ home() { # <subcommand and options>: the launcher, called from window 0 of the h
     ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_PROJECTS_DIR="$TR/projects" REC_CWD="$(cd "$WORK" && pwd -P)" \
     ORCHESTRATOR_CLOSE_TIMEOUT=1 ORCHESTRATOR_SPAWN_TIMEOUT=2 ORCHESTRATOR_MODE_TIMEOUT=3 \
     bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" "$@" $pair; }
+# Every word that kills a window, a pane or a session, as a recorded call writes it: the counts of
+# « no kill » and of « this one kill » read them all, so a kill under another word never passes.
+KILLS='kill-window|kill-pane|kill-session|killw|killp'
 calls() { sed "s#$TSTATE#@STATE@#g; s#-[0-9]\{13\}\.#-@TIME@.#g" "$TR/calls" 2>/dev/null; }
 asked() { [ -f "$TR/iterm-asked" ] && echo iterm || echo none; }
 chainf() { cat "$TSTATE/chains/ttys900.jsonl" 2>/dev/null; }
@@ -8409,7 +8492,7 @@ rm -f "$TR/iterm-asked"
 reset_home
 out=$(home spawn --dir "$WORK" --title "Agent: three" --prompt p --right-of self --no-verify 2>"$WORK/tspawn.err")
 check "spawn: a window of the home session, detached, named, its ids and tty printed back, the launch file as its program" \
-  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Agent: three][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Agent--three-@TIME@.sh]|none" \
+  "/dev/ttys903|[-u][new-window][-d][-a][-t][\$1:{end}][-n][Agent: three][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Agent--three-@TIME@.sh]|none" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)"
 check "and the chain entry names the window by the server's socket and its id, owned by the caller's pane" \
   "{\"tab_id\": \"tmux:$TSOCK:@4\", \"tty\": \"/dev/ttys903\", \"owner\": \"tmux:$TSOCK:%0\"}" "$(chainf | tail -1)"
@@ -8425,8 +8508,8 @@ check "screen: the pane's capture with its scrollback, read from the bottom" \
 reset_home
 out=$(home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
 check "close: the window killed by its id, proved gone from the process table, its chain entry dropped" \
-  "closed 1 session on /dev/ttys901|[-u][kill-window][-t][@1]|0|0|1" \
-  "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -F '[kill-window]')|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')|$(chainf | grep -c '@2')"
+  "closed 1 session on /dev/ttys901|[-u][killw][-t][@1]|0|0|1" \
+  "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -E "\[($KILLS)\]")|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')|$(chainf | grep -c '@2')"
 # The window's prompt holds what the operator typed and has not sent: the close reads it on the
 # pane's capture, styles included, and refuses at its bound with nothing killed; a rotation keeps
 # its replacement and the old window both.
@@ -8435,46 +8518,46 @@ printf '%s\n' "$PTYPED" > "$TR/screen"
 out=$(ORCHESTRATOR_INPUT_WAIT=0 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1); rc=$?
 check "close: a window whose prompt holds typed text is refused, nothing killed, its host and chain entry kept" \
   "1|1|[-u][capture-pane][-p][-e][-t][%1]|0|1|1" \
-  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 still holds text .*His text: «je réponds')|$(calls | grep -F '[capture-pane]')|$(calls | grep -c '\[kill-window\]')|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')"
+  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 still holds text .*His text: «je réponds')|$(calls | grep -F '[capture-pane]')|$(calls | grep -cE "\[($KILLS)\]")|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')"
 reset_home
 printf '%s\n' "$PTYPED" > "$TR/screen"
 out=$(ORCHESTRATOR_INPUT_WAIT=0 home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: one" --prompt p 2>&1); rc=$?
 check "rotate: typed text in the old window keeps it, beside its replacement, which runs" "1|new-window|1|1" \
-  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -oE '\[(new|kill)-window\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(printf '%s' "$out" | grep -c 'rotate: the old session on /dev/ttys901 was not closed: its close refused before it ended anything')|$(grep -c ttys903 "$TR/ps")"
+  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -oE "\[(new-window|$KILLS)\]" | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(printf '%s' "$out" | grep -c 'rotate: the old session on /dev/ttys901 was not closed: its close refused before it ended anything')|$(grep -c ttys903 "$TR/ps")"
 reset_home
 printf '%s\n' "$PEMPTY" > "$TR/screen"
 out=$(ORCHESTRATOR_INPUT_WAIT=0 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
 check "close: a window whose prompt shows only the host's faint placeholder is closed as before" "closed 1 session on /dev/ttys901|1" \
-  "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -cE "\[($KILLS)\]")"
 # He sends or clears his text during the wait: the close, which read it, waits, then kills.
 reset_home
 printf '%s\n' "$PTYPED" > "$TR/screen"; printf '%s\n' "$PEMPTY" > "$TR/screen.next"
 out=$(ORCHESTRATOR_INPUT_WAIT=10 home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
 check "close: a window whose prompt holds his text waits for it to be sent or cleared, then is closed" \
   "1|closed 1 session on /dev/ttys901|2|1|1" \
-  "$(printf '%s\n' "$out" | grep -c '^close: the prompt on /dev/ttys901 holds text the operator typed and has not sent: waiting up to 10s')|$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[capture-pane\]')|$(calls | grep -c '\[kill-window\]')|$(printf '%s\n' "$out" | grep -c '^close: the operator sent or cleared what he typed in the prompt on /dev/ttys901')"
+  "$(printf '%s\n' "$out" | grep -c '^close: the prompt on /dev/ttys901 holds text the operator typed and has not sent: waiting up to 10s')|$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -c '\[capture-pane\]')|$(calls | grep -cE "\[($KILLS)\]")|$(printf '%s\n' "$out" | grep -c '^close: the operator sent or cleared what he typed in the prompt on /dev/ttys901')"
 # A capture tmux refuses is a prompt that cannot be read: refused, nothing killed.
 reset_home
 out=$(REC_CAPTURE_ERR="can't find pane: %1" home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1); rc=$?
 check "close: a window whose pane tmux fails to capture is refused, nothing killed, its host kept" "3|1|0|1" \
-  "$rc|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 cannot be read (.*), so whether it holds text the operator typed and has not sent is not known')|$(calls | grep -c '\[kill-window\]')|$(grep -c ttys901 "$TR/ps")"
+  "$rc|$(printf '%s' "$out" | grep -c 'close: refused: the prompt on /dev/ttys901 cannot be read (.*), so whether it holds text the operator typed and has not sent is not known')|$(calls | grep -cE "\[($KILLS)\]")|$(grep -c ttys901 "$TR/ps")"
 rm -f "$TR/screen"
 reset_home
 out=$(home close --tty /dev/ttys902 --expect-title "Agent: one" 2>&1)
 check "a window whose name does not hold the expected words is not killed" "1|0" \
-  "$(printf '%s' "$out" | grep -c "close: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "close: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$(calls | grep -cE "\[($KILLS)\]")"
 reset_home
 out=$(home close --tty /dev/ttys901 --expect-title '' 2>&1)
 check "an empty title to expect is refused before anything is closed, a blank one too" "1|0|1|0" \
-  "$(printf '%s' "$out" | grep -c 'close: refused: --expect-title is empty: give the title `list` printed for /dev/ttys901')|$(calls | grep -c '\[kill-window\]')|$(home close --tty /dev/ttys901 --expect-title '  ' 2>&1 | grep -c 'expect-title is empty')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'close: refused: --expect-title is empty: give the title `list` printed for /dev/ttys901')|$(calls | grep -cE "\[($KILLS)\]")|$(home close --tty /dev/ttys901 --expect-title '  ' 2>&1 | grep -c 'expect-title is empty')|$(calls | grep -cE "\[($KILLS)\]")"
 reset_home
 out=$(home close --tty /dev/ttys950 2>&1)
 check "nor is a window of another session" "1|0" \
-  "$(printf '%s' "$out" | grep -c 'close: refused: /dev/ttys950 is a window of another tmux session')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'close: refused: /dev/ttys950 is a window of another tmux session')|$(calls | grep -cE "\[($KILLS)\]")"
 rm -f "$TR/iterm-asked"
 out=$(home close --tty /dev/ttys999 2>&1)
 check "and a tty no window of the server runs on is an iTerm2 tab's, asked of the app" "iterm|0|0" \
-  "$(asked)|$(printf '%s' "$out" | grep -c 'no window of this home session runs on')|$(calls | grep -c '\[kill-window\]')"
+  "$(asked)|$(printf '%s' "$out" | grep -c 'no window of this home session runs on')|$(calls | grep -cE "\[($KILLS)\]")"
 rm -f "$TR/iterm-asked"
 
 reset_home
@@ -8509,15 +8592,15 @@ check "a window whose id the caller's chain does not hold is moved with a warnin
 reset_home
 out=$(home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: one" --prompt p 2>"$WORK/trot.err")
 check "rotate: the replacement's window first, verified on the process table and its transcript, then the old window killed" \
-  "/dev/ttys903⏎closed 1 session on /dev/ttys901|new-window kill-window|1|1" \
-  "$(printf '%s' "$out" | nl_join)|$(calls | grep -oE '\[(new|kill)-window\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(grep -c 'running on /dev/ttys903' "$WORK/trot.err")|$(grep -c 'mode auto read on the transcript' "$WORK/trot.err")"
+  "/dev/ttys903⏎closed 1 session on /dev/ttys901|new-window killw|1|1" \
+  "$(printf '%s' "$out" | nl_join)|$(calls | grep -oE "\[(new-window|$KILLS)\]" | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(grep -c 'running on /dev/ttys903' "$WORK/trot.err")|$(grep -c 'mode auto read on the transcript' "$WORK/trot.err")"
 check "and the chain trades the old window's entry for the new one's" "@2|@4" \
   "$(chainf | sed -n 's/.*:\(@[0-9]*\)".*/\1/p' | tr '\n' '|' | sed 's/|$//')"
 reset_home
 out=$(REC_NO_HOST=1 home spawn --dir "$WORK" --title "Agent: dud" --prompt p --right-of self 2>&1)
 check "a window whose session never started is killed by its own id, and the chain is left as it was" \
-  "1|[-u][kill-window][-t][@4]|2" \
-  "$(printf '%s' "$out" | grep -c 'never started on /dev/ttys903 after 2s; the tab was closed')|$(calls | grep -F '[kill-window]')|$(chainf | wc -l | tr -d ' ')"
+  "1|[-u][killw][-t][@4]|2" \
+  "$(printf '%s' "$out" | grep -c 'never started on /dev/ttys903 after 2s; the tab was closed')|$(calls | grep -E "\[($KILLS)\]")|$(chainf | wc -l | tr -d ' ')"
 check "nothing of iTerm2 was asked by any of these, in a marked session" "none" "$(asked)"
 
 # A rotation spawns the replacement first and closes the old window after, so whatever the close
@@ -8527,24 +8610,24 @@ reset_home
 out=$(home rotate --old-tty /dev/ttys950 --dir "$WORK" --title "Agent: rotated" --prompt p 2>&1)
 rc=$?
 check "rotate of a window of another tmux session is refused before anything is spawned or killed" "1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'rotate: refused: /dev/ttys950 is a window of another tmux session')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'rotate: refused: /dev/ttys950 is a window of another tmux session')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -cE "\[($KILLS)\]")"
 reset_home
 out=$(home rotate --old-tty /dev/ttys902 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>&1)
 rc=$?
 check "rotate of a window whose name does not hold the expected words is refused before anything is spawned or killed" "1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c "rotate: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "rotate: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -cE "\[($KILLS)\]")"
 # A tty a brief printed may be another agent's by the time the rotation runs: a window's name is
 # fixed at its making, so a rotation of a window must say whose it expects, and is refused without.
 reset_home
 out=$(home rotate --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: rotated" --prompt p 2>&1)
 rc=$?
 check "rotate of a window with no --expect-title is refused before anything is spawned or killed" "1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c "rotate: refused: --expect-title is required for a window of a home session: give the name .list. printed for /dev/ttys901")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "rotate: refused: --expect-title is required for a window of a home session: give the name .list. printed for /dev/ttys901")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -cE "\[($KILLS)\]")"
 reset_home
 out=$(home rotate --old-tty /dev/ttys900 --dir "$WORK" --title "Agent: rotated" --prompt p 2>&1)
 rc=$?
 check "rotate of window 0 stays refused before anything is spawned, through the check close shares" "1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'rotate: refused: the window on /dev/ttys900 is window 0')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'rotate: refused: the window on /dev/ttys900 is window 0')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -cE "\[($KILLS)\]")"
 # What only the close can know comes after the spawn, and once spawned the replacement is never
 # closed: two agents can be recovered by hand, none cannot. A close of the old session that
 # refused, failed or raised, and a read of it that failed, end on one `rotate:` line that names
@@ -8553,13 +8636,13 @@ check "rotate of window 0 stays refused before anything is spawned, through the 
 reset_home
 out=$(REC_KEEP_WINDOW=1 REC_KEEP_HOST=1 REC_KILL_ERR="server busy" home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
-check "a close whose kill tmux refused keeps the replacement, and names the close of the old window that still stands, guarded on its name" "1|1|1|[-u][kill-window][-t][@1]|1|1|/dev/ttys903" \
-  "$(printf '%s' "$err" | grep -c 'ERROR: close: tmux refused kill-window: server busy')|$(printf '%s' "$err" | grep -cF 'ERROR: rotate: the close of the old session on /dev/ttys901 failed; the replacement runs on /dev/ttys903 and is kept; its window or tab is still there, the same window @1 as before the spawn: close it with close --tty /dev/ttys901 --expect-title '"'"'Agent: one'"'"' --keep-checkout (its chain entry is left for that close)')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -F '[kill-window]' | paste -sd'|' -)|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
+check "a close whose kill tmux refused keeps the replacement, and names the close of the old window that still stands, guarded on its name" "1|1|1|[-u][killw][-t][@1]|1|1|/dev/ttys903" \
+  "$(printf '%s' "$err" | grep -c 'ERROR: close: tmux refused kill-window: server busy')|$(printf '%s' "$err" | grep -cF 'ERROR: rotate: the close of the old session on /dev/ttys901 failed; the replacement runs on /dev/ttys903 and is kept; its window or tab is still there, the same window @1 as before the spawn: close it with close --tty /dev/ttys901 --expect-title '"'"'Agent: one'"'"' --keep-checkout (its chain entry is left for that close)')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -E "\[($KILLS)\]" | paste -sd'|' -)|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
 reset_home
 out=$(REC_KEEP_HOST=1 home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
-check "a close that took the old window but not its host keeps the replacement, and names neither a kill of a host never identified nor a close of a window that is gone" "1|1|0|1|[-u][kill-window][-t][@1]|1|1|/dev/ttys903" \
-  "$(printf '%s' "$err" | grep -c 'ERROR: close: the request was accepted but .* is still running on /dev/ttys901')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the close of the old session on /dev/ttys901 failed; the replacement runs on /dev/ttys903 and is kept; a host runs on /dev/ttys901, but the old one's pid was not read before the spawn, so it cannot be told from another session's: no kill is named; its window or tab is gone, and its chain entry is left")|$(printf '%s' "$err" | grep '^ERROR: rotate:' | grep -c 'close --tty /dev/ttys901')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -F '[kill-window]' | paste -sd'|' -)|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
+check "a close that took the old window but not its host keeps the replacement, and names neither a kill of a host never identified nor a close of a window that is gone" "1|1|0|1|[-u][killw][-t][@1]|1|1|/dev/ttys903" \
+  "$(printf '%s' "$err" | grep -c 'ERROR: close: the request was accepted but .* is still running on /dev/ttys901')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the close of the old session on /dev/ttys901 failed; the replacement runs on /dev/ttys903 and is kept; a host runs on /dev/ttys901, but the old one's pid was not read before the spawn, so it cannot be told from another session's: no kill is named; its window or tab is gone, and its chain entry is left")|$(printf '%s' "$err" | grep '^ERROR: rotate:' | grep -c 'close --tty /dev/ttys901')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -E "\[($KILLS)\]" | paste -sd'|' -)|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
 # A window renamed during the spawn: the close refuses it by its name, before any kill, and the
 # replacement stays beside it, its window never killed and its chain entry kept. The window is
 # still the one read before the spawn (its id, not its name), so the line names its close.
@@ -8567,7 +8650,7 @@ reset_home
 out=$(REC_RENAME_ON_NEW='@1 Agent: renamed' home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
 check "a close refused by its name before any kill keeps the replacement, and names the close of the old window that still stands, guarded on the name it has now" "1|1|1|0|1|1|/dev/ttys903" \
-  "$(printf '%s' "$err" | grep -c "ERROR: close: refused: the window on /dev/ttys901 is named 'Agent: renamed'")|$(printf '%s' "$err" | grep -cF 'ERROR: rotate: the old session on /dev/ttys901 was not closed: its close refused before it ended anything; the replacement runs on /dev/ttys903 and is kept; its window or tab is still there, the same window @1 as before the spawn: close it with close --tty /dev/ttys901 --expect-title '"'"'Agent: renamed'"'"' --keep-checkout (its chain entry is left for that close)')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
+  "$(printf '%s' "$err" | grep -c "ERROR: close: refused: the window on /dev/ttys901 is named 'Agent: renamed'")|$(printf '%s' "$err" | grep -cF 'ERROR: rotate: the old session on /dev/ttys901 was not closed: its close refused before it ended anything; the replacement runs on /dev/ttys903 and is kept; its window or tab is still there, the same window @1 as before the spawn: close it with close --tty /dev/ttys901 --expect-title '"'"'Agent: renamed'"'"' --keep-checkout (its chain entry is left for that close)')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -cE "\[($KILLS)\]")|$(chainf | grep -c '@4')|$(chainf | grep -c '@1')|$out"
 # The old window gone during the spawn: it is read by its id before the spawn and looked for
 # again before the close, so nothing is killed; the replacement is kept, and the one line names
 # it and the host left behind.
@@ -8575,7 +8658,7 @@ reset_home
 out=$(REC_GONE_ON_NEW=@1 home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
 check "an old window gone during the spawn keeps the replacement, and one line names it and the host left" "0|1|1|1|0|1|/dev/ttys903" \
-  "$(printf '%s' "$err" | grep -c 'no window of this home session runs on /dev/ttys901')|$(printf '%s' "$err" | grep -c '^ERROR:')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the old session on /dev/ttys901 was not closed: its window or tab is gone since the spawn; the replacement runs on /dev/ttys903 and is kept; a host runs on /dev/ttys901, but the old one's pid was not read before the spawn, so it cannot be told from another session's: no kill is named; its window or tab is gone, and its chain entry is left")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(chainf | grep -c '@4')|$out"
+  "$(printf '%s' "$err" | grep -c 'no window of this home session runs on /dev/ttys901')|$(printf '%s' "$err" | grep -c '^ERROR:')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the old session on /dev/ttys901 was not closed: its window or tab is gone since the spawn; the replacement runs on /dev/ttys903 and is kept; a host runs on /dev/ttys901, but the old one's pid was not read before the spawn, so it cannot be told from another session's: no kill is named; its window or tab is gone, and its chain entry is left")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -cE "\[($KILLS)\]")|$(chainf | grep -c '@4')|$out"
 # Another window given the old window's tty during the spawn is no « still there »: the old
 # window is read by its id before the spawn, the window on its tty by the close is another's,
 # and that one is neither closed nor named in a close step.
@@ -8583,7 +8666,7 @@ reset_home
 out=$(REC_GONE_ON_NEW=@1 REC_ADD_ON_NEW='$1\t5\t@7\t%7\t/dev/ttys901\tstranger\t✳ Agent: stranger' home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: rotated" --prompt p 2>"$WORK/rot-err")
 rc=$?; err=$(cat "$WORK/rot-err")
 check "a stranger on the old window's tty after the spawn is never closed, and no close of its tty is printed" "1|0|1|0|1|/dev/ttys903" \
-  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the old session on /dev/ttys901 was not closed: /dev/ttys901 now holds another session (window @7, named 'stranger'), not the window @1 read before the spawn; the replacement runs on /dev/ttys903 and is kept; ")|$(printf '%s' "$err" | grep -c 'close --tty /dev/ttys901')|$(chainf | grep -c '@4')|$out"
+  "$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -cE "\[($KILLS)\]")|$(printf '%s' "$err" | grep -cF "ERROR: rotate: the old session on /dev/ttys901 was not closed: /dev/ttys901 now holds another session (window @7, named 'stranger'), not the window @1 read before the spawn; the replacement runs on /dev/ttys903 and is kept; ")|$(printf '%s' "$err" | grep -c 'close --tty /dev/ttys901')|$(chainf | grep -c '@4')|$out"
 # The tab that shows the caller's own home server: the replacement would be a window of that
 # server, and the close of the tab ends the server, the replacement and the caller with it.
 # Refused before anything is spawned.
@@ -9228,7 +9311,7 @@ for m in create-raises tmux-killed; do
 done
 # A window tmux made and answered badly: its id is kept from the creation and named, and no step
 # ends the old session; once killed, nothing of the replacement is left.
-printf 'import os, sys\nif "new-window" in sys.argv:\n    print("@4 %%4")\nelif "kill-window" in sys.argv:\n    sys.exit(0 if os.environ.get("PROBE_KILL_OK") else 1)\n' > "$WORK/half-tmux.py"
+printf 'import os, sys\nif "new-window" in sys.argv:\n    print("@4 %%4")\nelif "killw" in sys.argv:\n    sys.exit(0 if os.environ.get("PROBE_KILL_OK") else 1)\n' > "$WORK/half-tmux.py"
 printf '#!/bin/bash\nexec "%s" "%s" "$@"\n' "$py" "$WORK/half-tmux.py" > "$WORK/half-tmux"
 chmod +x "$WORK/half-tmux"
 res=$(PROBE_TMUX="$WORK/half-tmux" TMUX="$TSOCK,4242,1" TMUX_PANE=%0 rprobe tmux-window-left)
@@ -9322,7 +9405,7 @@ for c in "close --tty /dev/ttys777" "screen --tty /dev/ttys777 --lines 5" \
   reset_home; rm -f "$TR/iterm-asked"
   out=$(home $c 2>&1)
   check "from a home session, ${c%% *} on an iTerm2 tab's tty goes to the app, tmux touching no window" "0|0" \
-    "$(calls | grep -cE '\[(kill-window|capture-pane|move-window)\]')|$(printf '%s' "$out" | grep -c 'of this home session\|window of another tmux')"
+    "$(calls | grep -cE "\[($KILLS|capture-pane|move-window)\]")|$(printf '%s' "$out" | grep -c 'of this home session\|window of another tmux')"
   case "$c" in close*) check "and the app is what close asked" "iterm" "$(asked)";; esac
 done
 rm -f "$TR/iterm-asked"
@@ -9447,11 +9530,11 @@ check "one unparsable line among good ones is one warning, the good ones still l
 # A window whose answer does not split is killed by its id before the death.
 reset_home
 out=$(REC_NEW_RAW='@7 %7' home spawn --dir "$WORK" --title "Agent: odd" --prompt p --right-of self --no-verify 2>&1)
-check "a window made and answered in too few fields is killed by its id, then the spawn dies" "1|1" \
-  "$(calls | grep -c '^\[-u\]\[kill-window\]\[-t\]\[@7\]$')|$(printf '%s' "$out" | grep -c 'ERROR: spawn: tmux made a window and answered')"
+check "a window made and answered in too few fields is killed by its id, then the spawn dies" "[-u][killw][-t][@7]|1" \
+  "$(calls | grep -E "\[($KILLS)\]" | paste -sd'|' -)|$(printf '%s' "$out" | grep -c 'ERROR: spawn: tmux made a window and answered')"
 reset_home
 out=$(REC_NEW_RAW='weird' home spawn --dir "$WORK" --title "Agent: odd" --prompt p --right-of self --no-verify 2>&1)
-check "an answer with no window id kills nothing" "0" "$(calls | grep -c '\[kill-window\]')"
+check "an answer with no window id kills nothing" "0" "$(calls | grep -cE "\[($KILLS)\]")"
 
 # A window already gone is closed; any other refusal is a failure with its message.
 reset_home
@@ -9487,18 +9570,104 @@ check "a window still in the server after its process is gone is a close that di
   "$(printf '%s' "$out" | grep -c 'ERROR: close: the request was accepted but tmux:.*:@1 is still there')|$(printf '%s' "$out" | grep -c '^closed')"
 
 # An agent and an orchestrator's successor are windows: the successor takes the predecessor's
-# window 0 in the same session, where the agents are. An auditor, the coordinator's successor,
-# a woken or an opened orchestrator are made as tabs, as they always were.
+# window 0 in the same session, where the agents are. So are the successors of a coordinator and of
+# an auditor in their own home session (below). An auditor, a woken or an opened orchestrator start
+# in a home server of their own, shown by a tab.
 reset_home; rm -f "$TR/iterm-asked"
 ORCHESTRATOR_PROJECTS_DIR="$TR/projects" pair_transcript s-suite s-model high
 out=$(home spawn --dir "$WORK" --successor --prompt p 2>"$WORK/tsucc.err")
 check "a successor spawned from a home session is a window of that session under the caller's name, and iTerm2 is never asked" \
-  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Orch: home][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Orch--home-@TIME@.sh]|none" \
+  "/dev/ttys903|[-u][new-window][-d][-a][-t][\$1:{end}][-n][Orch: home][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Orch--home-@TIME@.sh]|none" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)"
 check "the chain is handed over keyed on the successor's pane: its tty's file, the successor's tmux owner, never an app id" \
   "{\"tab_id\": \"tmux:$TSOCK:@1\", \"tty\": \"/dev/ttys901\", \"owner\": \"tmux:$TSOCK:%4\"}|{\"tab_id\": \"tmux:$TSOCK:@2\", \"tty\": \"/dev/ttys902\", \"owner\": \"tmux:$TSOCK:%4\"}|0|1" \
   "$(paste -sd'|' "$TSTATE/chains/ttys903.jsonl")|$(chainf | grep -c .)|$(grep -c 'chain of 2 agent(s) handed to the successor on /dev/ttys903' "$WORK/tsucc.err")"
 rm -f "$TR/iterm-asked"
+
+# The coordinator and an auditor run in a home server of their own, like an orchestrator (the
+# operator's order, 2026-11-27): from window 0 there, the successor of each is a window of the same
+# session, never an iTerm2 tab, and its takeover takes window 0, guarded by the role's name.
+role_home() { # <window 0's name>: the home session of a coordinator or an auditor, an agent beside it
+  reset_home
+  printf '%s\n' "\$1	0	@0	%0	/dev/ttys900	$1	✳ $1" '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' > "$TR/panes"
+  printf '%s\n' "/dev/ttys900 claude --name $1" '/dev/ttys901 claude --name Agent: one' > "$TR/ps"
+  ORCHESTRATOR_PROJECTS_DIR="$TR/projects" pair_transcript s-suite s-model high
+  rm -f "$TR/iterm-asked"; }
+role_home "Coord: machine"
+out=$(home spawn --dir "$WORK" --coordinator-successor --title "Coord: machine" --prompt p --no-verify 2>"$WORK/trole.err")
+check "a coordinator's successor spawned from its home session is a window of it under its name, iTerm2 never asked" \
+  "/dev/ttys903|[-u][new-window][-d][-a][-t][\$1:{end}][-n][Coord: machine][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Coord--machine-@TIME@.sh]|none|0" \
+  "$out|$(calls | grep -F '[new-window]')|$(asked)|$(grep -c 'is not placed first' "$WORK/trole.err")"
+role_home "Audit: tm"
+out=$(home spawn --dir "$WORK" --successor --prompt p --no-verify 2>&1 | tail -1)
+check "an auditor's successor spawned from its home session is a window of it under the auditor's name, iTerm2 never asked" \
+  "/dev/ttys903|[-u][new-window][-d][-a][-t][\$1:{end}][-n][Audit: tm][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Audit--tm-@TIME@.sh]|none" \
+  "$out|$(calls | grep -F '[new-window]')|$(asked)"
+# The agent each role launches (an auditor's reader, the coordinator's one-off job) is a window of
+# its home session; its successor is one too, and the takeover its brief prints ends window 0.
+BRIEFTMUX="$WORK/brief-tmux"; mkdir -p "$BRIEFTMUX"
+printf '#!/bin/bash\necho "/dev/ttys900 0"\n' > "$BRIEFTMUX/tmux"; chmod +x "$BRIEFTMUX/tmux"
+for who in "Coord: machine|--coordinator-successor --title Coord:\ machine|coordinator-takeover --name 'Coord: machine' --tty /dev/ttys900" \
+           "Audit: tm|--successor|auditor-takeover --name 'Audit: tm [a1b2c3]' --tty /dev/ttys900 --report $WORK/audits/2026-11-27-tm.md --repository $WORK"; do
+  name=${who%%|*}; rest=${who#*|}; succ=${rest%%|*}; printer=${rest#*|}
+  role_home "$name"
+  out=$(home spawn --dir "$WORK" --title "Agent: job" --prompt p --no-verify 2>/dev/null | tail -1)
+  check "an agent the ${name%%:*} session launches from its home session is a window of it, iTerm2 never asked" \
+    "/dev/ttys903|1|none" "$out|$(calls | grep -cF '[new-window][-d][-a][-t][$1:{end}][-n][Agent: job]')|$(asked)"
+  role_home "$name"
+  eval "home spawn --dir \"\$WORK\" $succ --prompt p --no-verify" >/dev/null 2>&1
+  # The brief printed for the successor reads window 0 on tmux, and its takeover line is run as printed.
+  step=$(eval "PATH=\"\$BRIEFTMUX:\$PATH\" ORCHESTRATOR_STATE_DIR=\"\$TSTATE\" bash \"\$ROOT/skills/orchestrator/scripts/brief.sh\" $printer" 2>/dev/null \
+    | sed -n 's/^ *[^ ]*iterm-agent\.sh \(takeover --tty .*\)$/\1/p' | head -1)
+  rm -f "$TR/calls"
+  out=$(eval "set -- $step"; TMUX="$TSOCK,4242,1" TMUX_PANE=%4 ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_OSASCRIPT="$TR/osascript" ORCHESTRATOR_SAMPLE=/usr/bin/false \
+    ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
+    bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" "$@" 2>&1)
+  check "the takeover the ${name%%:*} successor's brief prints kills window 0, its name checked, and moves the successor to index 0" \
+    "1|[-u][killw][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0" \
+    "$(printf '%s' "$out" | grep -c '^took window 0: the predecessor.s window @0 on /dev/ttys900 was closed')|$(calls | grep -E "\[($KILLS)\]")|$(calls | grep -F '[move-window]')|$(grep -c ttys900 "$TR/ps")"
+done
+# Their account move is the same succession with --plan: the window runs on the plan asked.
+MVHOME="$WORK/mvhome"; mkdir -p "$MVHOME/.claude-bis"
+moved_launch() { cat "$TSTATE"/prompts/launch-*.sh | grep '^cd '; }
+for who in "Coord: machine||--coordinator-successor --title Coord:\ machine" "Audit: tm|1|--successor"; do
+  name=${who%%|*}; rest=${who#*|}; marker=${rest%%|*}; succ=${rest#*|}
+  role_home "$name"
+  out=$(eval "HOME=\"\$MVHOME\" ORCHESTRATOR_AUDITOR=$marker home spawn --dir \"\$WORK\" $succ --plan 2 --prompt p --no-verify" 2>/dev/null | tail -1)
+  check "the ${name%%:*} successor moved to plan 2 from its home session is a window of it on that plan, iTerm2 never asked" \
+    "/dev/ttys903|1|1|none" \
+    "$out|$(calls | grep -cF "[new-window][-d][-a][-t][\$1:{end}][-n][$name]")|$(moved_launch | grep -cF "export CLAUDE_CONFIG_DIR=$MVHOME/.claude-bis &&")|$(asked)"
+  rm -f "$TR/calls"
+  out=$(TMUX="$TSOCK,4242,1" TMUX_PANE=%4 ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_OSASCRIPT="$TR/osascript" ORCHESTRATOR_SAMPLE=/usr/bin/false \
+    ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
+    bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" takeover --tty /dev/ttys900 --expect-title "$name" 2>&1)
+  check "and its takeover gives it window 0, the predecessor's place" "[-u][killw][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]" \
+    "$(calls | grep -E "\[($KILLS)\]")|$(calls | grep -F '[move-window]')"
+  # Back to plan 1: the window inherits its server's plan 2, so the launch itself unsets it. The
+  # launch is run up to the host, as a window of that server would run it.
+  role_home "$name"
+  eval "HOME=\"\$MVHOME\" CLAUDE_CONFIG_DIR=\"\$MVHOME/.claude-bis\" ORCHESTRATOR_AUDITOR=$marker home spawn --dir \"\$WORK\" $succ --plan 1 --prompt p --no-verify" >/dev/null 2>&1
+  check "the ${name%%:*} successor moved back to plan 1 runs on it, in a window of a server started on plan 2" "config=unset" \
+    "$(env CLAUDE_CONFIG_DIR=/plan/two bash -c "$(moved_launch | sed 's/ && exec .*$/ \&\& echo "config=${CLAUDE_CONFIG_DIR-unset}"/')" 2>/dev/null | grep -o 'config=.*')"
+done
+rm -f "$TR/iterm-asked"
+# The takeover waits for the predecessor's « handed over » where the predecessor's plan keeps its
+# session and its transcript, and prints the end of that conversation.
+mkdir -p "$WORK/hand/.claude/sessions" "$WORK/hand/.claude/projects/p" "$WORK/hand/.claude-bis"
+printf '{"sessionId":"s-old","name":"Coord: machine"}' > "$WORK/hand/.claude/sessions/4000001.json"
+printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"handed over"}]}}' \
+  > "$WORK/hand/.claude/projects/p/s-old.jsonl"
+check "a takeover reads the « handed over » of a predecessor on the other plan, on that plan" "1|s-old" \
+  "$(env -u ORCHESTRATOR_PROJECTS_DIR HOME="$WORK/hand" CLAUDE_CONFIG_DIR="$WORK/hand/.claude-bis" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+ia.host_cli_on = lambda tty: '4000001'
+ia.process_config = lambda pid: ''
+read = []
+ia.conversation_tail.section = lambda path, now: read.append(path) or 'tail'
+print(ia.await_handover('/dev/ttys900', idle=3600, sleep=lambda s: sys.exit('waited')).count('« handed over » read'))
+ia.conversation_of('/dev/ttys900')
+print(''.join(p.rsplit('/', 1)[1][:-6] for p in read))" 2>&1 | paste -sd'|' -)"
 
 # The successor's takeover, from its own window: the predecessor's window 0 killed, guarded by
 # its name, proved gone, then the successor moved to index 0 without taking the operator's view.
@@ -9517,8 +9686,8 @@ out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 # No transcript of the predecessor is found here: the line says no « handed over » was read.
 check "takeover kills window 0 by its id, proved gone, and moves the successor to index 0 detached" \
   "takeover: no transcript of the session on /dev/ttys900 was found: no « handed over » read
-took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
-  "$out|$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')|$(calls | grep -c '\[select-window\]')|$(grep -c ttys900 "$TR/ps")"
+took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][killw][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
+  "$out|$(calls | grep -E "\[($KILLS)\]")|$(calls | grep -F '[move-window]')|$(calls | grep -c '\[select-window\]')|$(grep -c ttys900 "$TR/ps")"
 check "a takeover writes its dated line: the socket, the cause takeover and the predecessor's tty" "1" \
   "$(grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: window 0 of home ended: cause=takeover tty=/dev/ttys900$' "$TSTATE/close.log")"
 # A TMUX value that names no socket gives the takeover no socket to write: no line, rather than a
@@ -9543,22 +9712,22 @@ printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch: home	✳ Orch: home' '$1	1	@1	%1	/d
 rm -f "$TR/calls"
 out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: other" 2>&1)
 check "a window 0 whose name does not hold the expected words is not killed" "1|0" \
-  "$(printf '%s' "$out" | grep -c "takeover: refused: the window on /dev/ttys900 is named 'Orch: home', which does not contain 'Orch: other'")|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "takeover: refused: the window on /dev/ttys900 is named 'Orch: home', which does not contain 'Orch: other'")|$(calls | grep -cE "\[($KILLS)\]")"
 rm -f "$TR/calls"
 out=$(heir takeover --tty /dev/ttys901 2>&1)
 check "an agent's window is not the predecessor's place" "1|0" \
-  "$(printf '%s' "$out" | grep -c 'takeover: refused: the window on /dev/ttys901 is window 1, not window 0')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'takeover: refused: the window on /dev/ttys901 is window 1, not window 0')|$(calls | grep -cE "\[($KILLS)\]")"
 rm -f "$TR/calls"
 out=$(heir takeover --tty /dev/ttys903 2>&1)
 check "nor is the successor's own window" "1|0" \
-  "$(printf '%s' "$out" | grep -c "takeover: refused: /dev/ttys903 is this session's own window")|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "takeover: refused: /dev/ttys903 is this session's own window")|$(calls | grep -cE "\[($KILLS)\]")"
 # close is the wrong command for window 0 of a home session: refused before anything is killed
 # or moved, and the refusal names takeover, the one command that puts a successor at index 0.
 rm -f "$TR/calls"
 out=$(heir close --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 rc=$?
 check "close on window 0 of a home session is refused before anything is killed, and names takeover" "1|1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'close: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title .Orch: home., which also puts its own window at index 0')|$(printf '%s' "$out" | grep -cF -e "--expect-title 'Orch: home',")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+  "$(printf '%s' "$out" | grep -c 'close: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title .Orch: home., which also puts its own window at index 0')|$(printf '%s' "$out" | grep -cF -e "--expect-title 'Orch: home',")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -cE "\[($KILLS)\]")|$(calls | grep -c '\[move-window\]')"
 # rotate closes the old window only after its replacement has spawned, so a close that refuses
 # window 0 would leave the replacement running with nothing to close: the rotation refuses window
 # 0 first, before anything is spawned or killed, with the refusal close gives and the same command.
@@ -9566,7 +9735,7 @@ rm -f "$TR/calls"
 out=$(heir rotate --old-tty /dev/ttys900 --expect-title "Orch: home" --dir "$WORK" --title "Agent: rotated" --tier light --prompt p 2>&1)
 rc=$?
 check "rotate on window 0 of a home session is refused before anything is spawned or killed, and names takeover" "1|1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'rotate: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title .Orch: home., which also puts its own window at index 0')|$(printf '%s' "$out" | grep -cF -e "--expect-title 'Orch: home',")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'rotate: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title .Orch: home., which also puts its own window at index 0')|$(printf '%s' "$out" | grep -cF -e "--expect-title 'Orch: home',")|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -cE "\[($KILLS)\]")"
 # The coordinator's pause close is a close on a home tab's tty, which is not a pane of this
 # server: it takes the home server's road, never window 0's refusal, and kills no window. The
 # whole close (tab and server ended) is pinned beside the home close tests.
@@ -9574,7 +9743,7 @@ printf '/dev/ttys970 tmux -u -L orch-tsuite attach -t home\n' >> "$TR/ps"
 rm -f "$TR/calls"
 out=$(heir close --tty /dev/ttys970 2>&1)
 check "a close on a home tab's tty is not window 0's refusal, and kills no window" "0|0" \
-  "$(printf '%s' "$out" | grep -c 'close: refused: the window on')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'close: refused: the window on')|$(calls | grep -cE "\[($KILLS)\]")"
 grep -v '^/dev/ttys970 ' "$TR/ps" > "$TR/ps.tmp" && mv "$TR/ps.tmp" "$TR/ps"
 # The successor's takeover proves what it did before it takes the index: a host that outlives
 # the kill, or a window still listed, stops it; the name guard is required; the chain entry of
@@ -9589,15 +9758,15 @@ takeover_setup() {
 takeover_setup
 out=$(REC_KEEP_HOST=1 heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 check "a host still on the tty after the kill stops the takeover: it dies and window 0 is not taken" "1|1|0" \
-  "$(printf '%s' "$out" | grep -c 'takeover: the window @0 was killed and .* still runs on /dev/ttys900; window 0 was not taken')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+  "$(printf '%s' "$out" | grep -c 'takeover: the window @0 was killed and .* still runs on /dev/ttys900; window 0 was not taken')|$(calls | grep -cE "\[($KILLS)\]")|$(calls | grep -c '\[move-window\]')"
 takeover_setup
 out=$(REC_KEEP_WINDOW=1 heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 check "a window still listed by the server after the kill stops it too" "1|1|0" \
-  "$(printf '%s' "$out" | grep -c 'takeover: the window @0 is still there; window 0 was not taken')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+  "$(printf '%s' "$out" | grep -c 'takeover: the window @0 is still there; window 0 was not taken')|$(calls | grep -cE "\[($KILLS)\]")|$(calls | grep -c '\[move-window\]')"
 takeover_setup
 out=$(heir takeover --tty /dev/ttys900 2>&1)
 check "a takeover without the expected title is refused before anything is killed" "1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'takeover: --expect-title is required')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+  "$(printf '%s' "$out" | grep -c 'takeover: --expect-title is required')|$(calls | grep -cE "\[($KILLS)\]")|$(calls | grep -c '\[move-window\]')"
 takeover_setup
 printf '{"tab_id":"tmux:%s:@0","tty":"/dev/ttys905","owner":"tmux:%s:%%9"}\n{"tab_id":"tmux:%s:@7","tty":"/dev/ttys906","owner":"tmux:%s:%%9"}\n' "$TSOCK" "$TSOCK" "$TSOCK" "$TSOCK" > "$TSTATE/chains/ttys905.jsonl"
 out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
@@ -9770,6 +9939,114 @@ else
   echo "  skip the conf is not loaded: no tmux"
 fi
 
+echo "== iterm-agents: a home server refuses its clients' kills =="
+# Closing a view's tab, iTerm2 can be answered « Terminate », which sends kill-window, kill-pane or
+# kill-session to the server: a home server refuses them from its creation (home.conf), and
+# unlink-window with them, and the launcher's closes go through killw. Real throwaway servers of the suite's own, no tab and no app;
+# each is ended by the launcher's kill_home, which takes its socket file too.
+if command -v tmux >/dev/null 2>&1; then
+  RKSRV="remoteview-c-$$-new"; RKOLD="remoteview-c-$$-old"
+  RKMARK=$((7700 + $$ % 1000))
+  rk() { env -u TMUX -u TMUX_PANE tmux -u -L "$RKSRV" "$@"; }
+  rkold() { env -u TMUX -u TMUX_PANE tmux -u -L "$RKOLD" "$@"; }
+  rkwindows() { "$1" list-panes -a -F '#{window_id}#{pane_id}' 2>/dev/null | paste -sd' ' -; }
+  # One client command: its exit code and whether its answer names the refusal.
+  rkrefused() { local out rc what=$1; out=$(rk "$@" 2>&1); rc=$?; echo "$rc:$(printf '%s' "$out" | grep -c "home-server-refuses-a-clients-$what")"; }
+  # The launcher run as from window 0 of the server `$1`, its python `$2`.
+  rklauncher() { TMUX="$(env -u TMUX -u TMUX_PANE tmux -L "$1" display-message -p '#{socket_path}'),0,0" TMUX_PANE=%0 \
+    ORCHESTRATOR_TMUX="$(command -v tmux)" ORCHESTRATOR_STATE_DIR="$WORK/rkstate" ipy "$2" 2>/dev/null; }
+  # A client in control mode, as a view's: each argument typed as a line, its answers printed.
+  printf '%s\n' 'import os, pty, select, signal, sys, time' \
+    'pid, fd = pty.fork()' \
+    'if pid == 0:' \
+    '    os.execvp("tmux", ["tmux", "-u", "-L", sys.argv[1], "-CC", "attach", "-t", "home"])' \
+    'out = b""' \
+    'def read(done, seconds):' \
+    '    global out' \
+    '    end = time.time() + seconds' \
+    '    while not done() and time.time() < end:' \
+    '        if select.select([fd], [], [], 0.1)[0]:' \
+    '            try: out += os.read(fd, 4096)' \
+    '            except OSError: return' \
+    'read(lambda: b"%session-changed" in out, 10)' \
+    'for n, line in enumerate(sys.argv[2:], 1):' \
+    '    seen = out.count(b"\n%end") + out.count(b"\n%error")' \
+    '    os.write(fd, (line + "\n").encode())' \
+    '    read(lambda: out.count(b"\n%end") + out.count(b"\n%error") > seen, 5)' \
+    'os.kill(pid, signal.SIGKILL)' \
+    'sys.stdout.write(out.decode(errors="replace"))' > "$WORK/ccclient.py"
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$RKSRV', 'Orch: x', '$WORK', 'sleep $RKMARK', 'suite')" >/dev/null 2>&1
+  for n in a b c; do rk new-window -d -t home: -n "Agent: $n" "sleep $RKMARK" 2>/dev/null; done
+  rk split-window -d -t home:2 "sleep $RKMARK" 2>/dev/null
+  rkall=$(rkwindows rk)
+  check "the throwaway home server holds its four windows" "@0%0 @1%1 @2%2 @2%4 @3%3" "$rkall"
+  check "a client's kill-window is refused, one window or every other, and nothing is killed" "1:1|1:1|$rkall" \
+    "$(rkrefused kill-window -t @1)|$(rkrefused kill-window -a -t @0)|$(rkwindows rk)"
+  check "a client's kill-pane is refused, one pane or every other, and nothing is killed" "1:1|1:1|$rkall" \
+    "$(rkrefused kill-pane -t %4)|$(rkrefused kill-pane -a -t %0)|$(rkwindows rk)"
+  check "a client's kill-session is refused, and the server keeps every window" "1:1|$rkall" \
+    "$(rkrefused kill-session -t home)|$(rkwindows rk)"
+  # With -k, unlink-window destroys a window of a single session too.
+  check "a client's unlink-window is refused, with -k or without, and nothing is destroyed" "1:1|1:1|$rkall" \
+    "$(rkrefused unlink-window -k -t @1)|$(rkrefused unlink-window -t @1)|$(rkwindows rk)"
+  # The lines iTerm2's binary holds, from a control-mode client; tmux's messages keep each refusal.
+  rk kill-server 2>/dev/null
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$RKSRV', 'Orch: x', '$WORK', 'sleep $RKMARK', 'suite')" >/dev/null 2>&1
+  for n in a b c; do rk new-window -d -t home: -n "Agent: $n" "sleep $RKMARK" 2>/dev/null; done
+  rk split-window -d -t home:2 "sleep $RKMARK" 2>/dev/null
+  out=$("$py" "$WORK/ccclient.py" "$RKSRV" 'kill-window -t @1' 'kill-pane -t "%4"' 'kill-session -t "$0"' 'unlink-window -k -t @3')
+  check "a control-mode client's three kills and its unlink-window are answered with an error each, nothing is killed, and tmux logs each refusal" \
+    "4|$rkall|kill-pane kill-session kill-window unlink-window" \
+    "$(printf '%s\n' "$out" | grep -c '^%error')|$(rkwindows rk)|$(rk show-messages 2>/dev/null | grep -F ' message: ' | grep -oE 'refuses-a-clients-(kill-(window|pane|session)|unlink-window)' | sed 's/refuses-a-clients-//' | sort -u | paste -sd' ' -)"
+  # The launcher's closes on that server. The window of an agent, closed as a close, a rotation and
+  # a stand-down close it (the same kill ends a takeover's predecessor).
+  rktty=$(rk display-message -p -t @1 '#{pane_tty}')
+  rklauncher "$RKSRV" "ia.TmuxTerminal().close('$rktty', 'Agent: a')" >/dev/null
+  check "the launcher's close ends its agent's window" "@0%0 @2%2 @2%4 @3%3" "$(rkwindows rk)"
+  res=$(rklauncher "$RKSRV" "print(ia.TmuxTerminal().close_made({'window': '@2'}))")
+  check "the launcher ends the window of a spawn it refused, its panes with it" "True|@0%0 @3%3" "$res|$(rkwindows rk)"
+  res=$(rklauncher "$RKSRV" "
+real = ia.tmux_out
+ia.tmux_out = lambda args, what: ' '.join(real(args, what).split()[:2]) if args[0] == 'new-window' else real(args, what)
+made = {}
+try:
+    ia.TmuxTerminal().create('sleep $RKMARK', 'Agent: half', ia.Place('anywhere', '', 'right', False), '', made)
+except SystemExit:
+    print(made.get('window'), made.get('window_killed'))")
+  check "the launcher ends a window tmux made and answered badly" "@4 True|@0%0 @3%3" "$res|$(rkwindows rk)"
+  # Closing the home tab while an agent runs ends window 0 alone: no tab and no app here, another
+  # tab stands as the server's owner.
+  rklauncher "$RKSRV" "
+class Tab:
+    def close(self, tty, expect): pass
+    def find(self, tty): return False
+ia.ITERM = Tab()
+ia.home_clients = ia.home_owners = lambda socket: ['/dev/ttys-other']
+listed = ia.home_panes('$RKSRV')
+ia.window0_session = lambda *a: (listed[0], '')
+ia.keep_home('/dev/ttys-tab', '$RKSRV', listed)" >/dev/null
+  check "the launcher's close of a home tab ends window 0 and keeps the agents'" "@3%3" "$(rkwindows rk)"
+  res=$(rklauncher "$RKSRV" "print(ia.kill_home('$RKSRV'))")
+  check "the launcher still ends a whole home server, as a restart and the close of its tab do" "True|down" \
+    "$res|$(rk has-session -t home 2>/dev/null && echo up || echo down)"
+  # A server made before the refusal reads the new conf at a deploy (home-reload): it keeps taking
+  # the kill-window of its older launcher, and the new launcher's close ends its windows too.
+  rkold -f /dev/null new-session -d -s home "sleep $RKMARK" 2>/dev/null
+  for n in a b; do rkold new-window -d -t home: -n "Agent: $n" "sleep $RKMARK" 2>/dev/null; done
+  rkold source-file "$ROOT/skills/iterm-agents/tmux/home.conf" 2>/dev/null
+  old=$(rkold kill-window -t @1 >/dev/null 2>&1; echo "$?:$(rkwindows rkold)")
+  rklauncher "$RKOLD" "ia.TmuxTerminal().kill('@2', 'close')" >/dev/null
+  check "a server made before the refusal, reading the new conf, still takes kill-window and the launcher's close" \
+    "0:@0%0 @2%2|@0%0|0" "$old|$(rkwindows rkold)|$(rkold show-options -s command-alias 2>/dev/null | grep -c refuses)"
+  rklauncher "$RKOLD" "ia.kill_home('$RKOLD')" >/dev/null
+  pkill -fx "sleep $RKMARK" 2>/dev/null
+  # A server still leaving as it was asked keeps its socket file: taken once nothing answers.
+  sleep 0.5
+  rklauncher "$RKOLD" "ia.remove_exited_home_socket('$RKSRV'); ia.remove_exited_home_socket('$RKOLD')"
+else
+  echo "  skip a home server's refusal of its clients' kills is not checked: no tmux"
+fi
+
 echo "== iterm-agents: an orchestrator moves into its home session =="
 # The one way an orchestrator gets a home session: at the end of the turn that named it, the
 # module runs `home`, which starts a server of its own whose window 0 resumes the SAME
@@ -9802,7 +10079,7 @@ case "$1" in
   has-session) exit 1 ;;
   kill-server) [ -f "$d/kill-err" ] && { cat "$d/kill-err" >&2; exit 1; }; exit 0 ;;
   list-windows) [ -f "$d/windows" ] && cat "$d/windows"; exit 0 ;;
-  kill-window) [ -f "$d/kwin-err" ] && { cat "$d/kwin-err" >&2; exit 1; }; exit 0 ;;
+  killw) [ -f "$d/kwin-err" ] && { cat "$d/kwin-err" >&2; exit 1; }; exit 0 ;;
   list-panes) [ -f "$d/panes-err" ] && { cat "$d/panes-err" >&2; exit 1; }; [ -f "$d/panes" ] && cat "$d/panes"; exit 0 ;;
   # Window 0's host shows its prompt box, empty: nothing the operator typed is waiting.
   capture-pane) printf '%s\n\xe2\x9d\xaf\xc2\xa0\n%s\n' "$(printf '─%.0s' {1..40})" "$(printf '─%.0s' {1..40})"; exit 0 ;;
@@ -10149,13 +10426,128 @@ res=$(rprobe gone "$HSID" "/dev/ttys961 /opt/x/host --resume $HSID
 check "a tab already closed is said so, and nothing is closed twice" "0||home-release: the tab on /dev/ttys900 was already closed" \
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
 
-# Never for anyone but an orchestrator, never twice.
-for who in "Coord: c" "Audit: a" "Agent: x"; do
-  reset_homerec
+# Never for anyone but an orchestrator, the coordinator or an auditor (the operator's order,
+# 2026-11-27: every session he names runs in tmux), never twice.
+reset_homerec
+res=$(hprobe ok "Agent: x")
+check "a session named 'Agent: x' stays where it is, and tmux is never asked" "0|1|" \
+  "$(sfield "$res" exit)|$(sfield "$res" OUT | grep -c '^stay: only an orchestrator moves into a home session')|$(hcalls)"
+for who in "Coord: c" "Audit: a"; do
+  reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
   res=$(hprobe ok "$who")
-  check "a session named '$who' stays where it is, and tmux is never asked" "0|1|" \
-    "$(sfield "$res" exit)|$(sfield "$res" OUT | grep -c '^stay: only an orchestrator moves into a home session')|$(hcalls)"
+  check "a session named '$who' moves into a home session of its own, window 0 named after it, armed to end with its last tab" "0|1|1|1|1|0" \
+    "$(sfield "$res" exit)|$(sfield "$res" OUT | grep -c '^moved: orch-abcdef12')|$(hcalls | grep -cF "[new-session][-d][-s][home][-n][$who]")|$(hcalls | grep -cF '[set-option][-s][@home-owners][ /dev/ttys970 ]')|$(hcalls | grep -cF '[set-option][-s][exit-unattached][on]')|$(sfield "$res" OUT | grep -c '^stay:')"
 done
+
+# Window 0 of the coordinator's or an auditor's home session is shown by the server's tab, which
+# only the app finds: its own move and its successor's place are that tab's; a wake or an opening
+# it launches sits beside it; a successor launched from a tab, and an auditor, start in a home
+# server of their own, armed to end with their last tab. The app is a stand-in, tmux a recorder.
+cat > "$WORK/role_probe.py" <<'PYEOF'
+import contextlib, io, os, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+scenario = sys.argv[2]
+calls = []
+# The app's tabs: the one that shows the caller's home session, a stranger's, and a new one.
+TABS = {"/dev/ttys004", "/dev/ttys800", "/dev/ttys970"}
+if scenario in ("succ-tab", "audit-tab"):
+    # Outside a home session the caller's own tty is a tab of the app's.
+    TABS.add("/dev/ttys900")
+class FakeIterm(ia.Terminal):
+    def find(self, tty):
+        return tty in TABS
+    def can_place(self, anchor, side):
+        return anchor in TABS
+    def move(self, tty, anchor, right, leftmost):
+        calls.append("iterm-move %s %s %s %s" % (tty, anchor, right, leftmost))
+        return 3
+    def create(self, command, title, place, chain, made):
+        calls.append("create %s %s %s %s" % (place.at, place.anchor, place.side, title))
+        made["session_id"] = "NEW-SESSION"
+        return "/dev/ttys970", "NEW-TAB"
+    def close_made(self, made):
+        calls.append("close_made"); return True
+ia.ITERM = FakeIterm()
+ia.time.sleep = lambda s: None
+ia.SPAWN_TIMEOUT = 0
+ia.start_home_watch = lambda socket, tty: None
+ia.read_order = lambda: None
+ia.in_home_session = lambda: scenario not in ("succ-tab", "audit-tab")
+ia.put_beside = lambda tty, anchor, side, what: calls.append("put_beside %s %s %s" % (tty, anchor, side))
+if scenario in ("succ-tab", "wake-home"):
+    # The server is made and shown by a tab: what is asked of each is what is read.
+    def make_home(socket, title, cwd, program, what):
+        calls.append("make_home %s" % title); return "/dev/ttys961"
+    def open_home_tab(socket, title, anchor, what, place=None):
+        calls.append("open_home_tab %s %s %s %s" % (title, place.at, place.anchor, place.side))
+        return "/dev/ttys970", {"terminal": ia.ITERM}
+    ia.make_home, ia.open_home_tab = make_home, open_home_tab
+out, err = io.StringIO(), io.StringIO()
+code = 0
+try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        if scenario.startswith("move"):
+            where = {"move-leftmost": ["--leftmost"], "move-tab": ["--right-of", "/dev/ttys800"],
+                     "move-unread": ["--leftmost"], "move-window": ["--right-of", "/dev/ttys800"]}[scenario]
+            ia.cmd_move(ia.args_from_line("move", ["--tty", os.environ["ORCHESTRATOR_SELF_TTY"]] + where))
+        elif scenario == "place":
+            ia.predecessor_of_caller = lambda own, tty: True
+            ia.take_predecessors_place("/dev/ttys800", "close")
+        elif scenario == "succ-tab":
+            ia.cmd_spawn(ia.args_from_line("spawn", ["--dir", sys.argv[3], "--coordinator-successor", "--title",
+                                                     "Coord: machine", "--prompt", "p", "--no-verify"]))
+        elif scenario == "wake-home":
+            # A wake reads its caller from the real process table: the line is read without the
+            # stand-ins, which the launch then reads as the caller.
+            kept = {k: os.environ.pop(k) for k in ("ORCHESTRATOR_SELF_TTY", "ORCHESTRATOR_PS_TABLE")}
+            args = ia.args_from_line("spawn", ["--dir", sys.argv[3], "--wake", "--title", "Orch: slept",
+                                               "--prompt", "p", "--no-verify"])
+            os.environ.update(kept)
+            ia.cmd_spawn(args)
+        elif scenario == "audit-tab":
+            ia.cmd_spawn(ia.args_from_line("spawn", ["--dir", sys.argv[3], "--auditor", "--title", "Audit: tm",
+                                                     "--prompt", "p", "--no-verify"]))
+except SystemExit as e:
+    code = e.code
+print("exit=%s" % code)
+print("calls=%s" % ",".join(calls))
+print("OUT:" + " ".join(out.getvalue().split()))
+print("ERR:" + " ".join(err.getvalue().split()))
+PYEOF
+roleprobe() { # <scenario> [caller's tty] [caller's name]: the launcher's call, the stand-ins' record
+  local rec="$TR"; [ "$1" = audit-tab ] && rec="$HR"
+  rm -f "$rec/calls" "$rec/clients" "$rec/owners"; printf '1\n' > "$rec/mark"
+  printf '%s\n' '$1	0	@0	%0	/dev/ttys900	home	✳ Coord: machine' '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' > "$TR/panes"
+  case "$1" in move-unread) ;; audit-tab) printf '/dev/ttys970\n' > "$rec/clients" ;; *) printf '/dev/ttys004\n' > "$rec/clients" ;; esac
+  printf '/dev/ttys900 claude --name %s\n' "${3:-Orch: home}" > "$WORK/role-probe-ps"
+  env TMUX="$TSOCK,4242,1" TMUX_PANE=%0 ORCHESTRATOR_TMUX="$rec/tmux" ORCHESTRATOR_OSASCRIPT=/usr/bin/false ORCHESTRATOR_STATE_DIR="$WORK/role-probe-state" \
+    ORCHESTRATOR_SELF_TTY="${2:-/dev/ttys900}" ORCHESTRATOR_PS_TABLE="$WORK/role-probe-ps" ORCHESTRATOR_LOGIN_SHELL=/bin/sh CLAUDE_CODE_SESSION_ID=s-suite REC_CWD="$WORK" \
+    "$py" "$WORK/role_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" "$WORK" 2>&1; }
+cp "$TR/panes" "$WORK/role-probe-panes.kept"
+res=$(roleprobe move-leftmost)
+check "window 0 moved first of its window moves the tab that shows its home session" "0|iterm-move /dev/ttys004 leftmost False True|moved /dev/ttys004 to position 3" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
+res=$(roleprobe move-tab)
+check "and moved beside a tab of the app's, that tab beside it" "0|iterm-move /dev/ttys004 /dev/ttys800 True False" "$(sfield "$res" exit)|$(sfield "$res" calls)"
+res=$(roleprobe move-unread)
+check "a home tab that cannot be read is a refusal, nothing moved" "1||1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -c 'is window 0 of a home session whose tab cannot be read; nothing was moved')"
+res=$(roleprobe move-window /dev/ttys901)
+check "a caller in another window than 0 never moves the home tab" "" "$(sfield "$res" calls)"
+res=$(roleprobe place)
+check "a successor born in window 0 of its own home takes its predecessor's place by that home's tab" "put_beside /dev/ttys004 /dev/ttys800 right" "$(sfield "$res" calls)"
+res=$(roleprobe wake-home /dev/ttys900 "Coord: machine")
+check "an orchestrator the coordinator wakes from its home session sits right of the coordinator's tab" "0|make_home Orch: slept,open_home_tab Orch: slept beside /dev/ttys004 right" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)"
+res=$(roleprobe succ-tab /dev/ttys900 "Coord: machine")
+check "a coordinator's successor launched from a tab starts in window 0 of a home server of its own, its tab first of the window" \
+  "0|make_home Coord: machine,open_home_tab Coord: machine first /dev/ttys900 left|/dev/ttys961" "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
+res=$(roleprobe audit-tab)
+check "an auditor launched from a tab starts in its own home server, left of its orchestrator, armed to end with its last tab" \
+  "create beside /dev/ttys900 left Audit: tm|1|1|1" \
+  "$(sfield "$res" calls)|$(hcalls | grep -cF '[new-session][-d][-s][home][-n][Audit: tm]')|$(hcalls | grep -cF '[set-option][-s][@home-owners][ /dev/ttys970 ]')|$(hcalls | grep -cF '[set-option][-s][exit-unattached][on]')"
+cp "$WORK/role-probe-panes.kept" "$TR/panes"; reset_homerec
 reset_homerec; printf '1\n' > "$HR/mark"
 res=$(HTMUX=/private/tmp/tmux-501/orch-x,1,0 hprobe ok)
 check "an orchestrator already in a home session stays, asking only for the mark" \
@@ -10548,6 +10940,12 @@ check "one that stays wrong after the repair is said" "2|1" "$(sfield "$res" mov
 check "a coordinator's successor, wherever it was opened, takes its predecessor's place on closing it" "t1 t2 t3 t4|t4 t2 t3" "$(ordered coordinator)"
 check "so does an auditor's" "t1 t2 t3 t4|t4 t2 t3" "$(ordered auditor)"
 check "a coordinator that closes a duplicate keeps its own place" "t1 t2 t3 t4|t1 t2 t3" "$(ordered duplicate)"
+res=$(tabs_order moved-coordinator)
+check "a coordinator's successor launched on plan 2 from a tab takes its predecessor's place" "A g B|A g B|2|same" \
+  "$(sfield "$res" before)|$(sfield "$res" after)|$(sfield "$res" successor)"
+res=$(tabs_order moved-auditor)
+check "so does an auditor's, left of its orchestrator" "c x A|c x A|2|same" \
+  "$(sfield "$res" before)|$(sfield "$res" after)|$(sfield "$res" successor)"
 check "a rotation's replacement takes the old agent's place" "c a b c a2|c a2 b c" "$(ordered rotate)"
 check "a home tab is known by its server and its window 0's name, not by the title it follows" "Orch: h|orch-abc" \
   "$(sfield "$(tabs_order home-identity)" entry)"
@@ -10927,11 +11325,11 @@ export LIFE_NEW_TTY=/dev/ttys983
 agent_home
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "closing a home tab whose server runs an agent keeps the server with no flag: it is never disarmed, window 0 alone is killed, never the server" "0|0|1|0|1" \
-  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-hook][-gu]')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(hcalls | grep -cF '[kill-server]')|$(hcalls | grep -c 'kill-window')"
+  "$(sfield "$res" exit)|$(hcalls | grep -cF '[set-hook][-gu]')|$(hcalls | grep -cF '[killw][-t][home:0]')|$(hcalls | grep -cF '[kill-server]')|$(hcalls | grep -cE "$KILLS")"
 check "and says the server is kept, the tab that shows it now, then each agent with its attach line" "closed 1 session on /dev/ttys970|home: kept the server orch-abcdef12 for 1 agent(s), session abcdef12-3456-4789-8abc-def012345678, shown on /dev/ttys983|agent: Agent: m1a on /dev/ttys962: $HR/tmux -L orch-abcdef12 attach -t home:1" \
   "$(sfield "$res" OUT)"
-check "and a new tab is opened right of the old one, proved and made an owner beside it before window 0 is killed" "1|@home-owners][ /dev/ttys970 /dev/ttys983 ],kill-window" \
-  "$(sfield "$res" calls | tr ',' '\n' | grep -c '^create beside /dev/ttys970 right Agent: m1a$')|$(hcalls | grep -oE '@home-owners\]\[ /dev/ttys970 /dev/ttys983 \]|kill-window' | paste -sd, -)"
+check "and a new tab is opened right of the old one, proved and made an owner beside it before window 0 is killed" "1|@home-owners][ /dev/ttys970 /dev/ttys983 ],killw" \
+  "$(sfield "$res" calls | tr ',' '\n' | grep -c '^create beside /dev/ttys970 right Agent: m1a$')|$(hcalls | grep -oE "@home-owners\]\[ /dev/ttys970 /dev/ttys983 \]|$KILLS" | paste -sd, -)"
 agent_home
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--end-agents"]')
 check "--end-agents ends the server and the agent with it" "0|1|closed 1 session on /dev/ttys970" \
@@ -10942,8 +11340,8 @@ check "a window 0 tmux refuses to kill closes the new tab and nothing else" "1|1
   "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close_made')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'tmux refused to kill window 0.*the tab opened on /dev/ttys983 was closed; the server orch-abcdef12 keeps its tab /dev/ttys970 and nothing else was closed')"
 agent_home; printf '/dev/ttys970\n/dev/ttys984\n' > "$HR/clients"; printf ' /dev/ttys970 /dev/ttys984 \n' > "$HR/owners"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
-check "a server another tab of this machine owns stays that tab's: no tab is opened, nothing is armed, window 0 is killed and the tab closed" "0|0|0|1|closed 1 session on /dev/ttys970|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create')|$(hcalls | grep -c '@home-owners\]\[ ')|$(hcalls | grep -cF '[kill-window][-t][home:0]')|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')|$(sfield "$res" OUT | grep -c 'shown on /dev/ttys984')"
+check "a server another tab of this machine owns stays that tab's: no tab is opened, nothing is armed, window 0 is killed and the tab closed" "0|0|0|1|1|closed 1 session on /dev/ttys970|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create')|$(hcalls | grep -c '@home-owners\]\[ ')|$(hcalls | grep -cF '[killw][-t][home:0]')|$(hcalls | grep -cE "$KILLS")|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')|$(sfield "$res" OUT | grep -c 'shown on /dev/ttys984')"
 agent_home; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a new tab that shows no client is closed, and nothing is killed, armed or closed" "1|1|0|0|0|1" \
@@ -10953,16 +11351,16 @@ check "a new tab that shows no client is closed, and nothing is killed, armed or
 agent_home; printf 'arm refused\n' > "$HR/arm-err"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a new tab that cannot be made an owner is closed, and nothing is killed or closed" "1|1|0|0|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close_made')|$(hcalls | grep -c 'kill-window')|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'the tab on /dev/ttys983 could not be made an owner.*the tab opened on /dev/ttys983 was closed; the server orch-abcdef12 keeps its tab /dev/ttys970')"
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close_made')|$(hcalls | grep -cE "$KILLS")|$(sfield "$res" OUT | grep -c 'closed 1 session')|$(sfield "$res" ERR | grep -c 'the tab on /dev/ttys983 could not be made an owner.*the tab opened on /dev/ttys983 was closed; the server orch-abcdef12 keeps its tab /dev/ttys970')"
 agent_home; printf ' /dev/ttys970 /dev/ttys984 \n' > "$HR/owners"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
-check "an owner listed but no longer attached stands for no tab: a new tab is opened and made an owner before window 0 is killed" "0|1|@home-owners][ /dev/ttys970 /dev/ttys983 ],kill-window|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create beside /dev/ttys970')|$(hcalls | grep -oE '@home-owners\]\[ /dev/ttys970 /dev/ttys983 \]|kill-window' | paste -sd, -)|$(sfield "$res" OUT | grep -c 'shown on /dev/ttys983')"
+check "an owner listed but no longer attached stands for no tab: a new tab is opened and made an owner before window 0 is killed" "0|1|@home-owners][ /dev/ttys970 /dev/ttys983 ],killw|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^create beside /dev/ttys970')|$(hcalls | grep -oE "@home-owners\]\[ /dev/ttys970 /dev/ttys983 \]|$KILLS" | paste -sd, -)|$(sfield "$res" OUT | grep -c 'shown on /dev/ttys983')"
 unset LIFE_NEW_TTY
 agent_home; printf '0 /dev/ttys961\n' > "$HR/panes"
 res=$(LIFE_PS="$WORK/life-ps-agent" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a server with no agent is ended as before" "0|1|0" \
-  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -c 'kill-window')"
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(hcalls | grep -cE "$KILLS")"
 # Fail closed: whether an agent lives is read on the process table and the server's panes, and a
 # reading that cannot be made is no answer of « none ».
 agent_home
@@ -12163,7 +12561,7 @@ check "two orchestrators in one checkout are still a pull request collision; a f
 CT="$WORK/coord-tree/skills"
 mkdir -p "$CT/iterm-agents/scripts"
 cp -R "$ROOT/skills/coordinator" "$ROOT/skills/orchestrator" "$CT/" && cp -R "$ROOT/core" "$WORK/coord-tree/"
-mkdir -p "$WORK/coord-tree/hooks" && cp "$ROOT/hooks/pr-file-format.ts" "$WORK/coord-tree/hooks/"
+cp -R "$ROOT/hooks" "$WORK/coord-tree/"
 printf '#!/bin/bash\necho "workspace: cannot read the root" >&2\nexit 1\n' > "$CT/orchestrator/scripts/workspace.sh"
 check "a workspace list that fails is said, and exit 2" "unread checkouts: workspace: cannot read the root|exit 2" \
   "$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" ORCHESTRATOR_STATE_DIR="$CS" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" ORCHESTRATOR_STATE_DIR="$CS" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"
@@ -12247,7 +12645,7 @@ SLCMD="$ROOT/commands/sleeping.md"
 # local session names and a temporary file are passed over; a malformed file is unread (exit 2).
 # Its pull requests join owners where the chain gives « unknown », and count as one more
 # orchestrator on a collision; a repository this machine did not read is said so.
-CRCFG="$WORK/coord-remote-config"; RREM="$CRCFG/claude-orchestrator/store/remote"
+CRCFG="$WORK/coord-remote-config"; RREM="$CRCFG/claude-orchestrator/store/remote-rows"
 mkdir -p "$RREM" "$CRCFG/claude-orchestrator/store/waits"
 RNOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z); ROLD=2020-01-01T00:00:00.000Z
 cat > "$RREM/Orch___far" <<EOF
@@ -12443,14 +12841,14 @@ check "round reads no temporary file beside the sessions files as a sender's" \
 # doing: its header names the machine its remote row says, and « sender gone » is left to a sender
 # with neither a row nor a session.
 RSTATE="$WORK/coord-remote"; RMOD="$WORK/coord-remote-module"
-mkdir -p "$RSTATE/round" "$RMOD/store/sessions" "$RMOD/store/remote"
+mkdir -p "$RSTATE/round" "$RMOD/store/sessions" "$RMOD/store/remote-rows"
 cp "$CS/pane.json" "$RSTATE/pane.json"
 for who in far lost; do
   jq -n --arg id "$who" '{id:$id, from:("Orch: " + $id), session:("s-" + $id), kind:"operator", since:"2026-10-18T10:01:00.000Z",
     blocks:"phase 3", question:"Ship it?", choices:[], recommendation:null, status:"open", at:"T", answer:null,
     origin:{machine:"bench-mac", address:"uds:/tmp/x.sock"}}' > "$RSTATE/round/$who.json"
 done
-jq -n '{name:"Orch: far", role:"orchestrator", machine:"bench-mac", updated_at:"2026-11-14T10:00:00.000Z"}' > "$RMOD/store/remote/Orch__far"
+jq -n '{name:"Orch: far", role:"orchestrator", machine:"bench-mac", updated_at:"2026-11-14T10:00:00.000Z"}' > "$RMOD/store/remote-rows/Orch__far"
 check "round names the machine of a sender on another machine whose remote row is stored, and says gone of one with no row" \
   "round far | operator | from Orch: far | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | remote on bench-mac|round lost | operator | from Orch: lost | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone" \
   "$(ORCHESTRATOR_STATE_DIR="$RSTATE" ORCHESTRATOR_MODULE_DIR="$RMOD" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round ' | paste -sd'|' -)"

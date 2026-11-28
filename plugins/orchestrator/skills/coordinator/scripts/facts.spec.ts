@@ -393,6 +393,34 @@ describe('facts', () => {
     assert.ok(!existsSync(join(f.state, 'prs.wanted')))
   })
 
+  it('shows the rows of the earlier releases\' directory for the names the new one lacks, said and never removed', () => {
+    const { f } = bench()
+    const store = join(f.ctx.env['ORCHESTRATOR_MODULE_DIR'] ?? '', 'store')
+    const put = (sub: string, name: string, text: string) => {
+      mkdirSync(join(store, sub), { recursive: true })
+      writeFileSync(join(store, sub, name), text)
+    }
+    const fresh = '2026-10-18T10:00:00.000Z'
+    const row = (name: string, machine: string, updated_at = fresh) => JSON.stringify({
+      name, role: 'orchestrator', context_tokens: 5, context_percent: 1, window: 100, waiting: null, blocks: null, waiting_since: null, updated_at, machine,
+    })
+    put('remote', 'Orch__cut', row('Orch: cut', 'bench'))
+    put('remote', 'Orch__both', row('Orch: both', 'earlier'))
+    put('remote', 'Orch__day', row('Orch: day', 'bench', '2026-10-17T09:00:00.000Z'))
+    put('remote', 'Orch__torn', 'not json')
+    const remoteLines = () => f.out.filter(l => /^(remote|unread remote)/.test(l)).map(l => l.split(' | ').slice(0, 2).join(' | '))
+    // At the switch the new directory does not exist yet.
+    run(f, 'facts')
+    assert.deepEqual(remoteLines(), ['remote Orch: both | on earlier', 'remote Orch: cut | on bench'])
+    f.out.length = 0
+    f.err.length = 0
+    put('remote-rows', 'Orch__both', row('Orch: both', 'now'))
+    run(f, 'facts')
+    assert.deepEqual(remoteLines(), ['remote Orch: both | on now', 'remote Orch: cut | on bench'])
+    assert.deepEqual(f.err.filter(l => l.includes('store/remote/')), ['coordinator: the remote row of Orch: cut is read from store/remote/, which an earlier release writes'])
+    for (const name of ['Orch__cut', 'Orch__both', 'Orch__day', 'Orch__torn']) assert.ok(existsSync(join(store, 'remote', name)))
+  })
+
   it('shows the live waits, the unattended lines and the fresh remote rows', () => {
     const { f } = bench()
     const module = f.ctx.env['ORCHESTRATOR_MODULE_DIR'] ?? ''
@@ -408,14 +436,14 @@ describe('facts', () => {
     put('sessions', 's-alpha', '{"role":"orchestrator","name":"Orch: alpha","pid":"100","unattended":{"line":"PR délaissées : o/app#9"}}\n')
     put('sessions', 's-none', '{"role":"orchestrator","pid":"100","unattended":{"line":null}}\n{"role":"orchestrator","name":[],"pid":"100","unattended":{"line":"x"}}\n')
     const fresh = '2026-10-18T10:00:00.000Z'
-    put('remote', 'far', JSON.stringify({ name: 'Orch: far', machine: 'bench', waiting: 'operator', blocks: 'b', waiting_since: fresh, updated_at: fresh, context_tokens: 5, context_percent: 1, repo: 'o/app', prs: ['o/app#7', 'o/app#9', 'o/app#99', 'o/gone#5'] }))
-    put('remote', 'near', JSON.stringify({ name: 'Orch: near', machine: 'lab', waiting: 'done', updated_at: fresh, prs: ['o/gone#5', 'nohash'] }))
-    put('remote', 'quiet', JSON.stringify({ name: 'Orch: quiet', machine: 'lab', updated_at: fresh }))
-    put('remote', 'old', JSON.stringify({ name: 'Orch: old', updated_at: '2020-01-01T00:00:00Z' }))
-    put('remote', 'local', JSON.stringify({ name: 'Orch: alpha', updated_at: fresh }))
-    put('remote', 'empty', '')
-    put('remote', 'bad', 'not json')
-    put('remote', 'far.tmp-1', 'half')
+    put('remote-rows', 'far', JSON.stringify({ name: 'Orch: far', machine: 'bench', waiting: 'operator', blocks: 'b', waiting_since: fresh, updated_at: fresh, context_tokens: 5, context_percent: 1, repo: 'o/app', prs: ['o/app#7', 'o/app#9', 'o/app#99', 'o/gone#5'] }))
+    put('remote-rows', 'near', JSON.stringify({ name: 'Orch: near', machine: 'lab', waiting: 'done', updated_at: fresh, prs: ['o/gone#5', 'nohash'] }))
+    put('remote-rows', 'quiet', JSON.stringify({ name: 'Orch: quiet', machine: 'lab', updated_at: fresh }))
+    put('remote-rows', 'old', JSON.stringify({ name: 'Orch: old', updated_at: '2020-01-01T00:00:00Z' }))
+    put('remote-rows', 'local', JSON.stringify({ name: 'Orch: alpha', updated_at: fresh }))
+    put('remote-rows', 'empty', '')
+    put('remote-rows', 'bad', 'not json')
+    put('remote-rows', 'far.tmp-1', 'half')
     assert.equal(run(f, 'facts'), 2)
     const lines = f.out.filter(l => /^(waiting|unattended|remote|collision pr|unread remote)/.test(l))
     assert.deepEqual(lines, [
@@ -427,7 +455,7 @@ describe('facts', () => {
       `remote Orch: quiet | on lab | updated ${fresh} | context 0 (0%) | repository none | prs none | working`,
       'collision pr | github.com/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222], Orch: far',
       'collision pr | o/gone#5 | - | Orch: far, Orch: near',
-      `unread remote ${join(f.ctx.env['ORCHESTRATOR_MODULE_DIR'] ?? '', 'store', 'remote', 'bad')}: not a JSON row`,
+      `unread remote ${join(f.ctx.env['ORCHESTRATOR_MODULE_DIR'] ?? '', 'store', 'remote-rows', 'bad')}: not a JSON row`,
     ])
     assert.ok(NOW.getTime() > Date.parse(fresh))
 

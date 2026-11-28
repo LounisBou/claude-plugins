@@ -64,6 +64,10 @@ export const TAKEN_OVER_HOME_TEXT = 'Your takeover is done and this session alre
 // its turn ended on the announcement and nothing of its own is there yet to start the next one.
 export const TAKEN_OVER_STAYED_TEXT = 'Your takeover is done but this session stays in its tab: the move into a home session did not happen. Go on to step 4 of your takeover, unless your takeover turn already did it: dispatch every open row with no agent that the phase rules allow, or declare the wait naming what you wait on.'
 
+// The roles a rename moves into a home session of their own: every session the operator names runs in
+// tmux, and none outlives its last tab of this machine (his order, 2026-11-27).
+const MOVES_HOME: ReadonlySet<string> = new Set(['orchestrator', 'coordinator'])
+
 export function checkName(raw: unknown): { name: string } | { refused: string } {
   const name = typeof raw === 'string' ? raw : ''
   const role = parseSessionName(name)?.role
@@ -231,11 +235,11 @@ export function register(on: On<Held>): void {
       // very completion is still holding. Its failure is said in the log.
       $.command.run({ command: 'rename', args: name })
         .catch((err: unknown) => logLine($, 'naming', `rename to "${name}" failed: ${reasonOf(err)}`))
-      // An orchestrator moves into its home session here, where it is resumed anyway:
-      // the launcher starts the home server whose window 0 resumes this very session,
+      // An orchestrator or a coordinator moves into its home session here, where it is resumed
+      // anyway: the launcher starts the home server whose window 0 resumes this very session,
       // and the tab that shows it, then this session ends and window 0 takes over with
       // the resume's prompt. Anything but a move leaves the session where it is.
-      if (!ending && parseSessionName(name)?.role === 'orchestrator' && await moveHome($, hold, name, resumeText(name)) === 'moved') {
+      if (!ending && MOVES_HOME.has(parseSessionName(name)?.role ?? '') && await moveHome($, hold, name, resumeText(name)) === 'moved') {
         askMoveExit($, hold, 'exit after the move into the home session failed')
         return next(e)
       }

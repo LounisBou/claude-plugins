@@ -56,6 +56,24 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     runs: [] as string[],
     labelled: [] as string[],
     said: [] as string[],
+    // The lines the session is shown, in the transcript: those not sent to the debug log alone.
+    shown: [] as string[],
+    // A call of the session's own (pr-status, pr-checks, pr-threads, light_ci.py): the text it fails with, and what holds
+    // the engine's answer while it is in flight.
+    ownFails: undefined as string | undefined,
+    ownWaits: undefined as Promise<void> | undefined,
+    // With `gateFails`, the text the gate fails with.
+    gateError: 'gh: HTTP 502',
+    // Removing a file fails; the gate's second read of the head finds another one.
+    rmFails: false,
+    headMoves: false,
+    // The permission check denies pr-ready; pr-ready itself fails.
+    denied: false,
+    readyFails: false,
+    // The head of the session's checkout, clean; none, git answers nothing.
+    checkout: undefined as string | undefined,
+    // pr-fingerprint's answer; none, the commits cannot be fingerprinted.
+    fingerprint: undefined as string | undefined,
     gateFails: false,
     panelFails: undefined as string | undefined,
     // With `panelFails`, only the listing of this repository fails (all, when undefined).
@@ -90,10 +108,11 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
   on('session.start', () => ({ cwd: '/work' }))
   on('session.id', () => ({ value: 'session-r' }))
   on('tool.register', () => ({ value: undefined }))
-  on('tool.check', () => ({ decision: 'allow' }))
+  on('tool.check', (_$, e) => (state.denied && fieldsOf(e.input)?.['command'] === 'pr-ready' ? { decision: 'deny', reason: 'no pr-ready here' } : { decision: 'allow' }))
   on('command.register', () => ({ value: undefined }))
   on('ui.log', (_$, e) => {
     state.said.push(e.text)
+    if (fieldsOf(e)?.['to'] !== 'debug') state.shown.push(e.text)
     return { value: undefined }
   })
   on('env.get', (_$, e) => ({ value: ({ CLAUDE_CONFIG_DIR: CFG, CLAUDE_PLUGIN_DATA: '/data/github' } as Record<string, string>)[e.name] }))
@@ -141,10 +160,17 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
       return done()
     }
     if (argv[0] === 'rm') {
+      // The readings only: a lock is still removed.
+      if (state.rmFails && argv.some((path) => String(path).endsWith('/3.json'))) return done('', 1, 'rm: Permission denied')
       for (const path of argv.slice(1)) files.delete(String(path))
       return done()
     }
     const flag = (name: string) => String(argv[argv.indexOf(name) + 1] ?? '')
+    if (argv[0] === 'git' && state.checkout !== undefined) return done(argv[1] === 'rev-parse' ? state.checkout + '\n' : '')
+    if (String(argv[1] ?? '').endsWith('/engine/light_ci.py')) return done('', 1, state.ownFails)
+    if (String(argv[1] ?? '').endsWith('/engine/record.py') && argv.includes('--status')) {
+      return done(JSON.stringify({ what: flag('--kind'), state: 'success', description: 'v1 2026-11-19T10:00:00Z pass ' + flag('--producer') }))
+    }
     if (String(argv[1] ?? '').endsWith('/engine/forge_status.py')) {
       state.postedRepos.push(flag('--repo'))
       state.posted.push(flag('--what') + ' ' + flag('--head').slice(0, 1) + ' ' + flag('--description'))
@@ -166,13 +192,21 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
     const args = fieldsOf(request['args']) ?? {}
     const command = String(request['command'] ?? '')
     state.runs.push(command + (args['head-only'] ? ' head' : '') + (args['state'] ? ' ' + String(args['state']) : '') + (args['for-ci'] ? ' for-ci' : ''))
+    if (['pr-status', 'pr-checks', 'pr-threads'].includes(command)) {
+      const answer = () => (state.ownFails === undefined ? done('{}') : done('', 1, state.ownFails))
+      return state.ownWaits ? state.ownWaits.then(answer) : answer()
+    }
+    if (command === 'pr-fingerprint' && state.fingerprint !== undefined) return done(state.fingerprint)
     if (command === 'pr-panel') {
       state.listedRepos.push(String(request['repo']))
       if (state.panelFails !== undefined && (state.panelFailsRepo === undefined || state.panelFailsRepo === request['repo'])) return done('', 1, state.panelFails)
       return done(JSON.stringify({ rows: request['repo'] === 'acme/other' ? state.otherPulls : state.pulls, ...(state.archived && request['repo'] === 'acme/app' ? { archived: true } : {}), ...(over.viewer ? { viewer: over.viewer } : {}), rate: { remaining: state.remaining, resetAt: state.resetAt, cost: 1 } }))
     }
     const pull = state.pulls.find((p) => p.number === Number(args['pr']))
-    if (command === 'pr-gate' && state.gateFails) return done('', 1, 'gh: HTTP 502')
+    if (command === 'pr-gate' && state.gateFails) return done('', 1, state.gateError)
+    if (command === 'pr-gate' && pull && args['head-only'] && state.headMoves) {
+      return done(JSON.stringify({ head: 'c'.repeat(40), labels: pull.labels, draft: pull.draft }))
+    }
     if (command === 'pr-gate' && pull) {
       return done(JSON.stringify({
         repo: 'acme/app', pr: pull.number, state: 'open', draft: pull.draft, head: pull.head, labels: pull.labels, commits: 1, base: pull.base, stacked: false,
@@ -180,6 +214,7 @@ function world(on: TestOn, over: { pulls?: Pull[]; files?: Record<string, string
         ci: pull.ci ?? { result: pull.rollup === 'SUCCESS' ? 'SUCCESS' : 'PENDING', failed: [], running: pull.rollup === 'SUCCESS' ? 0 : 1, skipped: [], total: 1, checks: [{ name: 'ci', bucket: 'pass' }] },
       }))
     }
+    if (command === 'pr-ready' && state.readyFails) return done('', 1, 'gh: HTTP 403 draft')
     if (command === 'pr-ready' && pull) {
       pull.draft = false
       return done('ok')
@@ -1256,3 +1291,392 @@ test('a draft carrying neither label that misses only its CI gets Not Ready, the
   expect(state.pulls[0]?.draft).toBe(false)
   expect(state.said.some((line) => line.includes('out of draft to run CI, still Not Ready'))).toBe(true)
 })
+
+// ---- which of the lines a session is shown ----
+
+// The lines carrying `part`: all the module said, and those the session was shown.
+const lines = (state: { said: string[]; shown: string[] }, part: string) => ({
+  said: state.said.filter((line) => line.includes(part)).length,
+  shown: state.shown.filter((line) => line.includes(part)).length,
+})
+const LOGGED = { said: 1, shown: 0 }
+const SHOWN = { said: 1, shown: 1 }
+// The session pushed HEAD: the pull request at that head is its own.
+const PUSHED = { [CFG + '/pushed-heads/' + HEAD]: 'session-r\n' }
+const ownCall = ($: Engine) => $.tool.call({ tool: 'mcp__github__gh', command: 'pr-status', args: { pr: 7 }, repo: 'acme/app' })
+
+test('a repository listed as archived is a line of the debug log alone', async ($, on) => {
+  const { clock, state } = await started($, on)
+  state.archived = true
+  await beat(clock)
+  expect(lines(state, 'leaves acme/app alone: it is archived')).toEqual(LOGGED)
+})
+
+test('a repository found archived by a refused post is a line of the debug log alone, even on the session\'s own pull request', async ($, on) => {
+  const { clock, state } = await started($, on, { pulls: pullWith([]), files: { [PLAN]: planAt('2026-11-19T09:00:00Z'), ...PUSHED }, viewer: 'operator' })
+  state.postFails = true
+  state.postRefusal = 'error: Repository was archived so is read-only.'
+  await beat(clock)
+  expect(lines(state, 'stops on acme/app, which is archived')).toEqual(LOGGED)
+})
+
+// A review passed at an earlier head: the gate would carry it, once both heads are fingerprinted.
+const earlierPass = (): Record<string, string> => ({
+  [RECORDS + '/acme/app/' + OTHER + '/review.20261119T090000Z.p-review.json']: JSON.stringify({ v: 1, repo: 'acme/app', pr: 7, head: OTHER, kind: 'review', result: 'pass', producer: 'p-review', detail: '', session: '', at: '2026-11-19T09:00:00Z' }),
+})
+
+test('a head whose commits cannot be fingerprinted is a line of the debug log alone, even on the session\'s own pull request', async ($, on) => {
+  const { clock, state } = await started($, on, { files: { ...earlierPass(), ...PUSHED } })
+  await beat(clock)
+  expect(lines(state, 'record carried to aaaaaaa: aaaaaaa\'s commits cannot be fingerprinted')).toEqual(LOGGED)
+})
+
+test('an earlier head never read, so not fingerprinted, is a line of the debug log alone', async ($, on) => {
+  const { clock, state } = await started($, on, { files: earlierPass() })
+  state.fingerprint = JSON.stringify({ commits: 1, fingerprint: 'f'.repeat(64) })
+  await beat(clock)
+  expect(lines(state, 'bbbbbbb\'s commits cannot be fingerprinted: the pull request was never read at that head')).toEqual(LOGGED)
+})
+
+test('a fingerprint line is the debug log\'s on the session\'s own read of the gate too, whose gate line it is still shown', async ($, on) => {
+  // The pull request carries Ready: reading its gate takes the label back, a line of the session's own call.
+  const { state } = await started($, on, { pulls: readyPull(['Ready']), files: earlierPass() })
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-gate', args: { pr: 7 }, repo: 'acme/app' })
+  expect(lines(state, 'cannot be fingerprinted')).toEqual(LOGGED)
+  expect(lines(state, 'acme/app#7')).toEqual({ said: 2, shown: 1 })
+})
+
+test('an outage the session waits on nothing through is the debug log\'s, its end too', async ($, on) => {
+  const w = await started($, on)
+  const outage = outageBeats(w)
+  await outage.run(NO_DNS, ...through(OUTAGE_OVER_MS))
+  expect(lines(w.state, OFFLINE_LINE)).toEqual(LOGGED)
+  expect(lines(w.state, ANSWERS_LINE)).toEqual(LOGGED)
+})
+
+test('an outage that refused a call of the session\'s own is shown to it, its end too', async ($, on) => {
+  const w = await started($, on)
+  w.state.ownFails = NO_DNS
+  await ownCall($)
+  const outage = outageBeats(w)
+  await outage.run(NO_DNS, ...through(OUTAGE_OVER_MS))
+  expect(lines(w.state, OFFLINE_LINE)).toEqual(SHOWN)
+  expect(lines(w.state, ANSWERS_LINE)).toEqual(SHOWN)
+})
+
+test('an outage found while a call of the session\'s own is in flight is shown to it', async ($, on) => {
+  const w = await started($, on)
+  let answer = (): void => undefined
+  w.state.ownWaits = new Promise<void>((resolve) => { answer = resolve })
+  const call = ownCall($)
+  await outageBeats(w).run(NO_DNS)
+  expect(lines(w.state, OFFLINE_LINE)).toEqual(SHOWN)
+  answer()
+  await call
+})
+
+test('a call refused after the outage was logged shows it then, once, and its end', async ($, on) => {
+  const w = await started($, on)
+  const outage = outageBeats(w)
+  await outage.run(NO_DNS)
+  expect(w.state.shown.filter((line) => line.includes(OFFLINE_LINE))).toEqual([])
+  w.state.ownFails = NO_DNS
+  await ownCall($)
+  await ownCall($)
+  expect(w.state.shown.filter((line) => line.includes(OFFLINE_LINE))).toHaveLength(1)
+  await outage.run(...through(OUTAGE_OVER_MS))
+  expect(lines(w.state, ANSWERS_LINE)).toEqual(SHOWN)
+})
+
+test('a refused call that GitHub answered since, or refused for another reason, makes no outage the session\'s', async ($, on) => {
+  const w = await started($, on)
+  w.state.ownFails = 'gh: HTTP 404'
+  await ownCall($)
+  w.state.ownFails = NO_DNS
+  await ownCall($)
+  w.state.ownFails = undefined
+  await ownCall($)
+  await outageBeats(w).run(NO_DNS)
+  expect(lines(w.state, OFFLINE_LINE)).toEqual(LOGGED)
+})
+
+test('a call refused before a listing that goes through makes no later outage the session\'s', async ($, on) => {
+  const w = await started($, on)
+  w.state.ownFails = NO_DNS
+  await ownCall($)
+  await outageBeats(w).run(undefined, NO_DNS)
+  expect(lines(w.state, OFFLINE_LINE)).toEqual(LOGGED)
+})
+
+for (const [by, call] of [
+  ['the shell guard', ($: Engine) => $.tool.call({ tool: 'Bash', command: 'gh pr ready 7 -R acme/app' })],
+  ['pr-readiness, answering readiness unverified', ($: Engine) => $.tool.call({ tool: 'mcp__github__gh', command: 'pr-readiness', args: { pr: 7, state: 'ready' }, repo: 'acme/app' })],
+] as const) {
+  test('an outage that left a call of the session\'s own unanswered through ' + by + ' is shown to it', async ($, on) => {
+    on('tool.call', () => ({ result: 'ran' }))
+    const w = await started($, on)
+    w.state.gateFails = true
+    w.state.gateError = NO_DNS
+    await call($)
+    w.state.gateFails = false
+    await outageBeats(w).run(NO_DNS)
+    expect(lines(w.state, OFFLINE_LINE)).toEqual(SHOWN)
+  })
+}
+
+test('a listing that fails is the debug log\'s', async ($, on) => {
+  const { clock, state } = await started($, on, { files: PUSHED })
+  state.panelFails = 'gh: HTTP 502'
+  await beat(clock)
+  expect(lines(state, 'could not list acme/app')).toEqual(LOGGED)
+})
+
+test('a listing that cannot be kept, and an exemption too long for the forge, are the debug log\'s', async ($, on) => {
+  const long = JSON.stringify({ v: 1, repo: 'acme/app', exempt: true, paths: Array.from({ length: 12 }, (_, i) => 'docs/part-' + i + '/**'), labels: [], detail: '« ok », 2026-11-19', session: 's', at: '2026-11-19T09:00:00Z' })
+  const { clock, state } = await started($, on, { pulls: pullWith([]), viewer: 'operator', files: { [EXEMPTION]: long } })
+  state.writeFails = /\.listed/
+  await beat(clock)
+  expect(lines(state, 'could not be kept')).toEqual(LOGGED)
+  expect(lines(state, 'too long for the forge')).toEqual(LOGGED)
+})
+
+for (const [whose, files, expected] of [['another\'s', {}, LOGGED], ['the session\'s own', PUSHED, SHOWN]] as const) {
+  test('a post refused on ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const { clock, state } = await started($, on, { pulls: pullWith([]), files: { [PLAN]: planAt('2026-11-19T09:00:00Z'), ...files }, viewer: 'operator' })
+    state.postFails = true
+    await beat(clock)
+    expect(lines(state, 'could not post readiness/plan')).toEqual(expected)
+  })
+
+  test('a status that cannot be copied on ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const pulls = pullWith([status('readiness/review', 'success', 'v1 2026-11-19T09:00:00Z pass orchestrator')])
+    const { clock, state } = await started($, on, { pulls, files, viewer: 'operator' })
+    state.copyFails = true
+    await beat(clock)
+    expect(lines(state, 'could not copy readiness/review')).toEqual(expected)
+  })
+
+  test('records that cannot be read on ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const { clock, state } = await started($, on, { pulls: pullWith([]), files: { ...passingRecords(), ...files }, viewer: 'operator' })
+    state.listFails = RECORDS + '/acme/app/' + HEAD
+    await beat(clock)
+    expect(lines(state, 'could not read the records of acme/app#7')).toEqual(expected)
+  })
+
+  test('a gate that cannot be read on ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const { clock, state } = await started($, on, { files })
+    state.gateFails = true
+    await beat(clock)
+    expect(lines(state, 'label of acme/app#7 is left as it is')).toEqual(expected)
+  })
+
+  test('a label that cannot be written on ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const { clock, state } = await started($, on, { files })
+    state.readinessFails = true
+    await beat(clock)
+    expect(lines(state, 'label not written')).toEqual(expected)
+  })
+
+  test('a label another machine keeps undoing on ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const { clock, state } = await started($, on, { files })
+    const pull = state.pulls[0]
+    for (let i = 0; i < 2 * FLAP_UNDONE + 4; i++) {
+      await beat(clock)
+      if (pull) pull.labels = ['Ready']
+      await clock.advance(IDLE_MAX_MS)
+      await clock.settle()
+    }
+    expect(lines(state, 'put back')).toEqual(expected)
+  })
+
+  test('a record that does not parse at an earlier head of ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const broken = { [RECORDS + '/acme/app/' + OTHER + '/review.20261119T093000Z.p-review.json']: '{' }
+    // The earlier head was read: its fingerprint is kept, the same as the head's.
+    const print = 'f'.repeat(64)
+    const kept = { ['/data/github/fingerprint.acme%2Fapp.7.' + OTHER + '.json']: JSON.stringify({ v: 3, repo: 'acme/app', pr: 7, head: OTHER, commits: 1, fingerprint: print }) }
+    const { clock, state } = await started($, on, { files: { ...earlierPass(), ...broken, ...kept, ...files } })
+    state.fingerprint = JSON.stringify({ commits: 1, fingerprint: print })
+    await beat(clock)
+    expect(lines(state, 'does not parse')).toEqual(expected)
+  })
+
+  test('a draft of ' + whose + ' that cannot be taken out of draft for its CI: shown only when it is its own', async ($, on) => {
+    const { clock, state } = await started($, on, {
+      pulls: [{ number: 7, draft: true, head: HEAD, base: 'main', labels: [], rollup: null, ci: { result: 'PENDING', failed: [], running: 0, skipped: [], total: 0, checks: [] } }],
+      files: { ...passingRecords(), ...files },
+    })
+    state.denied = true
+    await beat(clock)
+    expect(lines(state, 'not taken out of draft for its CI')).toEqual(expected)
+  })
+}
+
+test('the undraft for CI the reconciler makes is the debug log\'s, even on the session\'s own pull request', async ($, on) => {
+  const { clock, state } = await started($, on, {
+    pulls: [{ number: 7, draft: true, head: HEAD, base: 'main', labels: [], rollup: null, ci: { result: 'PENDING', failed: [], running: 0, skipped: [], total: 0, checks: [] } }],
+    files: { ...passingRecords(), ...PUSHED },
+  })
+  await beat(clock)
+  expect(lines(state, 'out of draft to run CI, still Not Ready')).toEqual(LOGGED)
+})
+
+test('a Ready that no longer waits for a copy is the debug log\'s, even on the session\'s own pull request', async ($, on) => {
+  const { clock, state } = await started($, on, { pulls: readyPull([]), files: { ...passingRecords(), [PLAN]: planAt('2026-11-19T09:00:00Z'), ...PUSHED }, viewer: 'operator' })
+  state.postFails = true
+  await beat(clock, PUBLISH_WAIT_MS / TICK_MS + 1)
+  expect(lines(state, 'no longer waits for readiness/plan')).toEqual(LOGGED)
+})
+
+test('a head that moved under the gate is the debug log\'s, even on the session\'s own pull request', async ($, on) => {
+  const { clock, state } = await started($, on, { files: PUSHED })
+  state.headMoves = true
+  await beat(clock)
+  expect(lines(state, 'the head moved from')).toEqual(LOGGED)
+})
+
+test('a Ready that gives up waiting for the forge is the debug log\'s, even on the session\'s own pull request', async ($, on) => {
+  const { clock, state } = await started($, on, { pulls: readyPull(['Not Ready']), files: { ...passingRecords(), ...PUSHED }, viewer: 'operator' })
+  await beat(clock)
+  state.panelFails = 'gh: HTTP 502'
+  await beat(clock, PUBLISH_WAIT_MS / TICK_MS + 2)
+  expect(lines(state, 'goes over the Not Ready')).toEqual(LOGGED)
+})
+
+test('readings that cannot be removed are the debug log\'s', async ($, on) => {
+  const { clock, state } = await started($, on, { files: { [CFG + '/pr-reconcile/acme/app/3.json']: '{}' } })
+  state.rmFails = true
+  await beat(clock)
+  expect(lines(state, 'could not remove the readings')).toEqual(LOGGED)
+})
+
+test('counts that cannot be journaled are the debug log\'s', async ($, on) => {
+  const { clock, state } = await started($, on)
+  state.writeFails = /journal/
+  await beat(clock, 4)
+  expect(lines(state, 'counts could not be journaled')).toEqual(LOGGED)
+})
+
+test('a beat that fails is the debug log\'s', async ($, on) => {
+  const { clock, state } = await started($, on, { files: PUSHED })
+  state.writeFails = /pr-reconcile\/acme\/app\/7/
+  await beat(clock)
+  expect(lines(state, 'beat failed')).toEqual(LOGGED)
+})
+
+// A line the session's own call asks for is shown to it as before, on a pull request it never pushed too.
+for (const [what, denied, part] of [
+  ['the undraft for CI', false, 'out of draft to run CI, still Not Ready'],
+  ['an undraft for CI that a rule refuses', true, 'not taken out of draft for its CI'],
+] as const) {
+  test(what + ' that the session\'s own read of the gate leads to is shown to it', async ($, on) => {
+    const { state } = await started($, on, {
+      pulls: [{ number: 7, draft: true, head: HEAD, base: 'main', labels: [], rollup: null, ci: { result: 'PENDING', failed: [], running: 0, skipped: [], total: 0, checks: [] } }],
+      files: passingRecords(),
+    })
+    state.denied = denied
+    await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-gate', args: { pr: 7 }, repo: 'acme/app' })
+    expect(lines(state, part)).toEqual(SHOWN)
+  })
+}
+
+test('a record that does not parse is shown to the session whose own read of the gate meets it', async ($, on) => {
+  const print = 'f'.repeat(64)
+  const broken = { [RECORDS + '/acme/app/' + OTHER + '/review.20261119T093000Z.p-review.json']: '{' }
+  const kept = { ['/data/github/fingerprint.acme%2Fapp.7.' + OTHER + '.json']: JSON.stringify({ v: 3, repo: 'acme/app', pr: 7, head: OTHER, commits: 1, fingerprint: print }) }
+  const { state } = await started($, on, { files: { ...earlierPass(), ...broken, ...kept } })
+  state.fingerprint = JSON.stringify({ commits: 1, fingerprint: print })
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-gate', args: { pr: 7 }, repo: 'acme/app' })
+  expect(lines(state, 'does not parse')).toEqual(SHOWN)
+})
+
+// A line logged before the pull request was the session's own is still shown to it once it is.
+const NEXT = 'c'.repeat(40)
+for (const [what, part, pulls, files, fail] of [
+  ['a post refused', 'could not post readiness/plan', pullWith([]), { [PLAN]: planAt('2026-11-19T09:00:00Z') }, 'postFails'],
+  ['a gate that cannot be read', 'label of acme/app#7 is left as it is', undefined, {}, 'gateFails'],
+] as const) {
+  test(what + ', logged at a head the session did not push, is shown to it at the one it pushed', async ($, on) => {
+    const { clock, state, put } = await started($, on, {
+      ...(pulls ? { pulls: pulls.map((pull) => ({ ...pull })), viewer: 'operator' } : {}),
+      files: { ...files, [CFG + '/pushed-heads/' + NEXT]: 'session-r\n' },
+    })
+    state[fail] = true
+    await beat(clock)
+    expect(lines(state, part)).toEqual(LOGGED)
+    const pull = state.pulls[0]
+    if (pull) pull.head = NEXT
+    put(EDGE, '', T0 + 2 * TICK_MS - 1)
+    await beat(clock)
+    expect(lines(state, part)).toEqual({ said: 2, shown: 1 })
+  })
+}
+
+// An act that reads nothing on GitHub is no answer of it: a call the outage refused still waits.
+for (const [by, act] of [
+  ['gh pr create', ($: Engine) => $.tool.call({ tool: 'Bash', command: 'gh pr create --draft -R acme/app' })],
+  ['gh pr ready --undo', ($: Engine) => $.tool.call({ tool: 'Bash', command: 'gh pr ready 7 --undo -R acme/app' })],
+  ['a command answered from this machine', ($: Engine) => $.tool.call({ tool: 'mcp__github__gh', command: 'auto-merge-list', args: {} })],
+] as const) {
+  test('a call the outage refused still waits on GitHub after ' + by, async ($, on) => {
+    on('tool.call', () => ({ result: 'ran' }))
+    const w = await started($, on)
+    w.state.ownFails = NO_DNS
+    await ownCall($)
+    await act($)
+    await outageBeats(w).run(NO_DNS)
+    expect(lines(w.state, OFFLINE_LINE)).toEqual(SHOWN)
+  })
+}
+
+test('a record whose status the outage refused, its cause past the length of a shown reason, leaves the session waiting', async ($, on) => {
+  const w = await started($, on)
+  w.state.checkout = HEAD
+  w.state.postFails = true
+  w.state.postRefusal = 'error: cannot post readiness/e2e at aaaaaaa: <urlopen error [Errno 8] nodename nor servname provided, or not known>'
+  const out = await $.tool.call({ tool: 'mcp__github__record', pr: 7, repo: 'acme/app', result: 'pass', detail: 'ran on the other machine: ' + 'claude plugin test plugins/github '.repeat(4) })
+  expect(String(fieldsOf(out)?.['result'])).toContain('the forge refused its status')
+  await outageBeats(w).run(NO_DNS)
+  expect(lines(w.state, OFFLINE_LINE)).toEqual(SHOWN)
+})
+
+for (const [by, call] of [
+  ['mcp__github__light_ci', ($: Engine) => $.tool.call({ tool: 'mcp__github__light_ci', action: 'run', pr: 7, repo: 'acme/app' })],
+  ['/checks', ($: Engine) => $.command.run({ command: 'checks', args: '7' })],
+  ['/threads', ($: Engine) => $.command.run({ command: 'threads', args: '7' })],
+] as const) {
+  test('an outage that refused ' + by + ' is shown to the session', async ($, on) => {
+    const w = await started($, on)
+    w.state.ownFails = NO_DNS
+    await call($)
+    await outageBeats(w).run(NO_DNS)
+    expect(lines(w.state, OFFLINE_LINE)).toEqual(SHOWN)
+  })
+}
+
+for (const [whose, files, expected] of [['another\'s', {}, LOGGED], ['the session\'s own', PUSHED, SHOWN]] as const) {
+  test('records of an earlier head that cannot be listed on ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const unlisted = RECORDS + '/acme/app/' + 'd'.repeat(40)
+    const { clock, state } = await started($, on, { files: { ...earlierPass(), [unlisted + '/review.x.json']: '{}', ...files } })
+    state.listFails = unlisted
+    await beat(clock)
+    expect(lines(state, 'record carried to aaaaaaa: ')).toEqual(expected)
+  })
+
+  test('a plan that cannot be copied on ' + whose + ' pull request: shown only when it is its own', async ($, on) => {
+    const pulls = pullWith([status('readiness/plan', 'success', 'v1 2026-11-19T09:00:00Z e2e=none norms=required review=required/2')])
+    const { clock, state } = await started($, on, { pulls, files, viewer: 'operator' })
+    state.writeFails = /check-plans\//
+    await beat(clock)
+    expect(lines(state, 'could not copy readiness/plan')).toEqual(expected)
+  })
+
+  test('a draft of ' + whose + ' that GitHub refuses to take out of draft for its CI: shown only when it is its own', async ($, on) => {
+    const { clock, state } = await started($, on, {
+      pulls: [{ number: 7, draft: true, head: HEAD, base: 'main', labels: [], rollup: null, ci: { result: 'PENDING', failed: [], running: 0, skipped: [], total: 0, checks: [] } }],
+      files: { ...passingRecords(), ...files },
+    })
+    state.readyFails = true
+    await beat(clock)
+    expect(lines(state, 'not taken out of draft for its CI')).toEqual(expected)
+  })
+}

@@ -82,7 +82,9 @@ versioned, written in one rename by its owner alone.
 The orchestrator's state has two roots (core's `orchestration.ts`): the protected one under the
 configuration directory, for what runs or is trusted, and a data root the protected root's
 `data-root.json` places, for what any session writes. Nothing read from the data root decides what
-runs; `plugins/orchestrator/docs/state.md` gives each file its root.
+runs, but for one bounded exception: a remote orchestrator's row picks which view the coordinator
+opens, among the destinations the protected root maps and the sockets of a home server's shape.
+`plugins/orchestrator/docs/state.md` gives each file its root.
 
 ## Tools installed once per machine
 

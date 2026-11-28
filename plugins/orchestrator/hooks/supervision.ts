@@ -38,10 +38,11 @@ import { answerAskedFromPane, askedAsEntry, clearFailed, closeRound, moveAsked, 
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, plainText, textSpans, prPieces, repositoryOwners, isDue, dueText, isRoundKind, type RoundAnswer, type RoundDelivery, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow, type Fleet,
-  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS, UNREACHED_RETRY_MS,
+  remoteKey, withRemote, isRemoteStale, isDeadRow, oldRemoteRow, REMOTE_ROWS_DIR, OLD_REMOTE_ROWS_DIR, homeOf, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, prShaped, capPrs, cleanBlocks, ROW_MARKER, REMOTE_STALE_AFTER_MS, UNREACHED_RETRY_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
 import { qAskLine, qAnswerLine, qAckLine, parseQ, parseQAck, isQ, isQAck, joinLines, splitLines, seqOf, type QAck, type QEvent } from './remote-round.ts'
+import { newViewsMemory, syncViews } from './remote-view.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, panesArgv, panesOf, stateAfterPr, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, COST_RULE, type Price, type Prices, type UsageBook } from './usage.ts'
@@ -819,19 +820,22 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
   const now = Date.now()
   return Object.entries(rows)
     .map(([key, row]) => {
-      const past = tripGate(row.context_percent, row.context_tokens, row.window).tripped
+      // A row with no measure yet (written at its first turn's start, its updated_at empty) draws no
+      // figure and no age, and sorts after every measured row, as an unmeasured agent does.
+      const measured = row.updated_at !== ''
+      const past = measured && tripGate(row.context_percent, row.context_tokens, row.window).tripped
       const name = row.name ?? 'unnamed'
       const head = [row.role ?? 'no role', ...(row.machine ? [`remote ${row.machine}`] : [])].join(' · ')
-      const percent = `${row.context_percent}%`
-      const fill = `${percent}${past ? ' past the gate' : ''}`
-      const age = ageLabel(row.updated_at, now)
+      const percent = measured ? `${row.context_percent}%` : ''
+      const fill = measured ? `${percent}${past ? ' past the gate' : ''}` : ''
+      const age = measured ? ageLabel(row.updated_at, now) : null
       const wait = waitLabel(row)
       const split = waitParts(row)
       const parts = [name, head, fill]
       if (age !== null) parts.push(age)
       if (wait !== null) parts.push(wait)
       return {
-        label: parts.join(' · '), urgency: (past ? GATE_URGENCY_FLOOR : 0) + row.context_percent,
+        label: parts.filter(part => part !== '').join(' · '), urgency: measured ? (past ? GATE_URGENCY_FLOOR : 0) + row.context_percent : -1,
         key, role: row.role, name, head, fill, percent, past, age, wait, status: split?.status ?? null, blocked: split?.blocks ?? null,
         waiting: wait !== null ? row.waiting ?? null : null,
         unattended: unattendedOfRow(row),
@@ -1152,6 +1156,60 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
   ), bound)
   if (isDegradedPass(walked)) return { tty: null, name: null, pid: null, known: false, late: true }
   return { ...walked, late: !walked.known && Date.now() >= until }
+}
+
+// The session's own row: its identity, read by a walk (a walk that did not finish leaves the name,
+// role, pid and tty as they were), its window, configuration directory, chain owner and repository,
+// and, when a reading is given, its figures. Written at each measure, and at the first turn's start
+// of a session with no row yet (turnStartRow), so a session shows in the pane from its first turn.
+// Returns the walk, which the measure reads on.
+async function writeOwnRow($: Held, sessionId: string, reading: NonNullable<ReturnType<typeof currentReading>> | null, repo: string | null) {
+  // The side reads run bounded: a walk that cannot answer in time is quietly no new name — the
+  // figures still land, and the next measure names the row.
+  const walked = await walkWithinBound($, sessionId)
+  await writeSession($, sessionId, {
+    ...(walked.known ? { role: roleOf(walked.name), name: walked.name } : {}),
+    ...(walked.pid ? { pid: walked.pid } : {}),
+    ...(walked.tty ? { tty: walked.tty } : {}),
+    tmux: await windowAddress($),
+    config: await configDir($),
+    chain_owner: (await chainOwner($)) || null,
+    repo,
+    // Without a reading the row holds no measure: its figures stay the parser's and its updated_at is
+    // empty, so the pane draws neither a percentage nor an age for it (paneRows).
+    ...(reading ? {
+      context_percent: reading.context_percent,
+      context_tokens: reading.context_tokens,
+      window: reading.context_window,
+      model: reading.model,
+      busy: false,
+      updated_at: reading.updated_at,
+    } : { updated_at: '' }),
+  })
+  return walked
+}
+
+// The session's repository, read once it answers and kept in the module's cache (`ownRepo`), not at every
+// measure or turn start. A read that did not answer is no repository, and the next read asks again.
+type OwnRepo = { read: Promise<string | null | undefined> | null }
+async function originOf($: Held, ownRepo: OwnRepo): Promise<string | null> {
+  const origin = await withDeadline((async () => {
+    const repo = await (ownRepo.read ??= repoRead($))
+    if (repo === undefined) ownRepo.read = null
+    return repo ?? null
+  })(), await sideReadBoundMs($))
+  return isDegradedPass(origin) ? null : origin
+}
+
+// A session's first turn starts with no row of its own in the store (the measure writes it at the
+// turn's end): its row is written here, once, from the same identity read. A row already there is
+// left to the measure, so a turn start costs no walk after the first.
+async function turnStartRow($: Held, ownRepo: OwnRepo): Promise<void> {
+  const sessionId = await $.session.id()
+  const existing = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
+  if (existing !== null) return
+  await writeOwnRow($, sessionId, currentReading(), await originOf($, ownRepo))
+  await refreshDeck($)
 }
 
 // The pane as the module remembers it: what it was opened to list, and its clock, started by
@@ -1625,6 +1683,11 @@ async function wakeTick($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process' | 
   } catch (err) {
     await logLine($, 'supervision', `round resend: ${messageOf(err)}`)
   }
+  try {
+    await syncViews($, await readRemoteRows($), views)
+  } catch (err) {
+    await logLine($, 'views', messageOf(err))
+  }
   if (wake.generation === generation) armWake($, wake)
 }
 
@@ -1843,6 +1906,8 @@ let inFlightAtStop: readonly string[] | null = null
 // The coordinator's round reading, module memory that register and registerWake share: a reload
 // starts it afresh, the host having dropped the old environment's timers with it.
 let wake: WakeMemory = { timer: null, generation: 0, told: false }
+// The remote views' retries, lines said and homes seen (remote-view.ts), for the module's life.
+const views = newViewsMemory()
 
 // The pane's memory, module memory that register and the record's reconciliation share, started
 // afresh by register like the wake's.
@@ -1852,7 +1917,7 @@ let shownPane: PaneMemory = freshPane()
 // directory the module writes in is listed at a session's start, which spawns nothing, and those
 // older than core's STALE_MS are removed in one process, none when there are none. The readers of
 // the store and of the round sweep their own directory at each read the same way.
-export const WRITTEN_DIRS = ['sessions', 'waits', 'gates', 'rows', 'answered', 'successors', 'remote']
+export const WRITTEN_DIRS = ['sessions', 'waits', 'gates', 'rows', 'answered', 'successors', REMOTE_ROWS_DIR]
 export async function sweepTemporaries($: Host<'env' | 'fs' | 'process'>): Promise<string[]> {
   const store = await storeOf($)
   const state = await dataDir($)
@@ -1994,7 +2059,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
   let focusedFor: string | null = null
   // This session's own repository, read once it answers: its owner names the pull requests the
   // pane links. A read that did not answer is no answer, and the next render reads it again.
-  let ownRepo: Promise<string | null | undefined> | null = null
+  const ownRepo: { read: Promise<string | null | undefined> | null } = { read: null }
   // Whether the last render went past its bound: a slow render is said once per crossing of it.
   let renderSlow = false
   const stopTicker = () => {
@@ -2021,32 +2086,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
       const reading = currentReading()
       if (reading) {
         const sessionId = e.sessionId ?? await $.session.id()
-        // The side reads run bounded: a walk or an origin read that cannot
-        // answer in time is quietly no new name and no repository — the
-        // figures still land, and the next measure names the row.
-        const walked = await walkWithinBound($, sessionId)
-        // The repository is the pane's own memory (ownRepo): read once it answers, not at every measure.
-        const origin = await withDeadline((async () => {
-          const repo = await (ownRepo ??= repoRead($))
-          if (repo === undefined) ownRepo = null
-          return repo ?? null
-        })(), await sideReadBoundMs($))
-        await writeSession($, sessionId, {
-          // A walk that did not finish leaves the row's name, role and pid as they were.
-          ...(walked.known ? { role: roleOf(walked.name), name: walked.name } : {}),
-          ...(walked.pid ? { pid: walked.pid } : {}),
-          ...(walked.tty ? { tty: walked.tty } : {}),
-          tmux: await windowAddress($),
-          config: await configDir($),
-          chain_owner: (await chainOwner($)) || null,
-          repo: isDegradedPass(origin) ? null : origin,
-          context_percent: reading.context_percent,
-          context_tokens: reading.context_tokens,
-          window: reading.context_window,
-          model: reading.model,
-          busy: false,
-          updated_at: reading.updated_at,
-        })
+        const walked = await writeOwnRow($, sessionId, reading, await originOf($, ownRepo))
         // The window's tab shows the gate crossed, or left.
         await showGate($, reading)
         // A successor whose pass left an agent untold goes on with it, only while that holds.
@@ -2211,6 +2251,11 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
     if (!e.agentId) {
       const restored = await withDeadline(restorePane($, pane), RELAY_BOUND_MS).catch((err: unknown) => logLine($, 'supervision', `pane: ${messageOf(err)}`))
       if (isDegradedPass(restored)) await logLine($, 'supervision', `pane: did not finish within ${RELAY_BOUND_MS} ms`)
+    }
+    // A session's first turn shows it in the pane: its row is written at the turn's start (turnStartRow).
+    if (!e.agentId) {
+      const started = await withDeadline(turnStartRow($, ownRepo), RELAY_BOUND_MS).catch((err: unknown) => logLine($, 'supervision', `row: ${messageOf(err)}`))
+      if (isDegradedPass(started)) await logLine($, 'supervision', `row: did not finish within ${RELAY_BOUND_MS} ms`)
     }
     try {
       const sessionId = await $.session.id()
@@ -2402,8 +2447,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
         const home = (await $.env.get('HOME') ?? '').replace(/\/+$/, '')
         pane.gaps ??= new Set()
         fleet = new Map(await Promise.all(supervised.map(async ([key, row]) => [key, fleetText(await fleetOf($, row, home, store.alive, pane.gaps ?? new Set()))] as const)))
-        const repo = await (ownRepo ??= repoRead($))
-        if (repo === undefined) ownRepo = null
+        const repo = await (ownRepo.read ??= repoRead($))
+        if (repo === undefined) ownRepo.read = null
         owners = repositoryOwners([repo ?? null, ...Object.values(merged).flatMap(row => [row.repo, ...('prs' in row && Array.isArray(row.prs) ? row.prs.filter(isText) : []), ...(row.unattended?.prs.map(u => u.repo) ?? [])])])
         none = WORDS.noSession
         // Stat before the read: a write landing between the two is seen by the next tick.
@@ -2506,8 +2551,8 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             el.Text({ color: state, children: '●' }),
             el.Text({ children: ' ' }),
             el.Text({ bold: true, children: row.name }),
-            el.Text({ children: ` · ${head} · ` }),
-            el.Text(row.past ? { color: 'error', children: row.fill } : { children: row.fill }),
+            el.Text({ children: row.fill === '' ? ` · ${head}` : ` · ${head} · ` }),
+            ...(row.fill === '' ? [] : [el.Text(row.past ? { color: 'error', children: row.fill } : { children: row.fill })]),
             ...(row.age !== null ? [el.Text({ children: ` · ${row.age}` })] : []),
           ],
         })
@@ -2533,7 +2578,7 @@ export function register(on: On<Held>, declarations: Declarations = DECLARATIONS
             ],
           }),
           rows: (i > 0 ? 1 : 0)
-            + rowsOf(`● ${row.name} · ${head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
+            + rowsOf(`● ${row.name} · ${head}${row.fill === '' ? '' : ` · ${row.fill}`}${row.age !== null ? ` · ${row.age}` : ''}`, width)
             + (row.status !== null ? rowsOf(row.status, textWidth) : 0)
             + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0)
             + (row.unattended ?? []).reduce((sum, said) => sum + (said.wraps ? rowsOf(takesRows(said.text), unattendedWidth) : width > 0 ? 1 : 0), 0),
@@ -3814,7 +3859,8 @@ export async function sendRow($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'proce
   const fill = await hostFill($)
   // The reading is the one of this instant: its stamp is now, not the last measure's.
   const measured = { ...read, updated_at: new Date().toISOString(), ...(fill ? { context_tokens: fill.tokens, context_percent: fill.percent, window: fill.window } : {}) }
-  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)), fleet)
+  // The home server it runs in travels too: the coordinator's machine opens its view (remote-view.ts).
+  const row = remoteRowOf(withWait(measured, waitText), await machineOf($), prs, openQuestions(parseWaitRecord(waitText)), fleet, homeOf(await $.env.get('TMUX')))
   if (!row) return
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`
@@ -4107,14 +4153,14 @@ async function receiveWithdrawal($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'pr
   return { consumed: 'coordinator: a remote withdrawal, applied' }
 }
 
-// The rows received from other machines, each checked again as it is read; a stale or
-// malformed one is removed, so the directory never outgrows the live set. A row met dead is read
-// again under the lock its writer takes (receiveRow), and removed only when it is still dead: a
-// sender's newer row landing between the first read and the removal, or a read that failed once,
-// never loses a live row.
+// The rows received from other machines, each checked again as it is read; only a dead one
+// (isDeadRow) is removed, and one this release cannot read stays, never returned. A row met not live
+// is read again under the lock its writer takes (receiveRow), and removed only when it is dead then:
+// a sender's newer row landing between the first read and the removal, or a read that failed once,
+// never loses a live row. The old directory's rows come after (readOldRemoteRows).
 const REMOTE_READ_CAP = 64
-export async function readRemoteRows($: Host<'clock' | 'env' | 'fs' | 'process'>): Promise<RemoteRow[]> {
-  const dir = `${await storeOf($)}/remote`
+export async function readRemoteRows($: Host<'clock' | 'env' | 'fs' | 'plugin' | 'process'>): Promise<RemoteRow[]> {
+  const dir = `${await storeOf($)}/${REMOTE_ROWS_DIR}`
   const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
   const rows: RemoteRow[] = []
   const now = Date.now()
@@ -4131,10 +4177,34 @@ export async function readRemoteRows($: Host<'clock' | 'env' | 'fs' | 'process'>
     const kept = await withLockOver(io, path, async () => {
       const text = await io.read(path)
       const again = live(text)
-      if (!again && text !== undefined) await io.run(removeArgv(path))
+      if (!again && text !== undefined && isDeadRow(text, now, REMOTE_STALE_AFTER_MS)) await io.run(removeArgv(path))
       return again
     }, { tries: 5 }).catch(() => null)
     if (kept) rows.push(kept)
+  }
+  return [...rows, ...await readOldRemoteRows($, entries.map(entry => entry.name))]
+}
+
+// The module's one read of the old directory (oldRemoteRow), read only: no lock, no removal. A pane
+// reads it at every draw, so a line is logged once.
+const oldRowsSaid = new Set<string>()
+export async function readOldRemoteRows($: Host<'env' | 'fs' | 'plugin' | 'process'>, current: readonly string[]): Promise<RemoteRow[]> {
+  const dir = `${await storeOf($)}/${OLD_REMOTE_ROWS_DIR}`
+  const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
+  const names = new Set(current)
+  const rows: RemoteRow[] = []
+  const lines: string[] = []
+  const now = Date.now()
+  for (const entry of entries.slice(0, REMOTE_READ_CAP)) {
+    if (!entry || entry.kind !== 'file') continue
+    const text = String(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))
+    const row = oldRemoteRow(entry.name, text, names, now, line => lines.push(line))
+    if (row) rows.push(row)
+  }
+  for (const line of lines) {
+    if (oldRowsSaid.has(line)) continue
+    oldRowsSaid.add(line)
+    await logLine($, 'supervision', line)
   }
   return rows
 }

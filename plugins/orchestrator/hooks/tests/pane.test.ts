@@ -576,6 +576,45 @@ test('a pane the module no longer remembers opening asks to be opened again', as
   expect(text).toContain('type /orchestrator-supervision to open the pane again')
 })
 
+test('a session in its first turn is listed: its row is written at the turn start, before any measure, and the pane lists it', async () => {
+  // Row 547: a freshly placed auditor stayed out of the pane until its first turn ended, the row
+  // being written only at the measure. Its row now exists from the first turn's start, and the
+  // pane's rows, read from the store, list it as an auditor.
+  const fx = fakeDollar({ launchName: 'Audit: collecte' })
+  fx.env['ORCHESTRATOR_OSASCRIPT'] = '/usr/bin/false'
+  expect(fx.files.has(`${SESSIONS}/s-one`)).toBe(false)
+  const { handlers } = mounted(registerSupervision)
+  await handlers['turn.start'](fx.dollar, { turnId: 't' }, (x: unknown) => x)
+  const stored = parseSessionRow(String(fx.files.get(`${SESSIONS}/s-one`)))
+  expect(stored?.role).toBe('auditor')
+  expect(stored?.name).toBe('Audit: collecte')
+  const listed = paneRows({ 'sessions/s-one': stored! })
+  expect(listed.map(pane => pane.name)).toEqual(['Audit: collecte'])
+  expect(listed[0]!.head).toContain('auditor')
+})
+
+test('a row written at the first turn start, with no reading, draws no figure and no age, and sorts after a measured row', async () => {
+  // A session in its first turn has no measure: its row keeps an empty updated_at, and the pane
+  // draws its name and role only, sorted as unmeasured, never as a 0 % reading of this minute.
+  const fresh = fakeDollar({ launchName: 'Audit: collecte' })
+  fresh.env['ORCHESTRATOR_OSASCRIPT'] = '/usr/bin/false'
+  const { handlers } = mounted(registerSupervision)
+  await handlers['turn.start'](fresh.dollar, { turnId: 't' }, (x: unknown) => x)
+  const stored = parseSessionRow(String(fresh.files.get(`${SESSIONS}/s-one`)))
+  expect(stored?.updated_at).toBe('')
+  const listed = paneRows({ 'sessions/s-alpha': orch('Orch: alpha', { context_percent: 12 }), 'sessions/s-one': stored! })
+  expect(listed.map(pane => pane.name)).toEqual(['Orch: alpha', 'Audit: collecte'])
+  expect(listed[1]!.label).toBe('Audit: collecte · auditor')
+  expect(listed[1]!.fill).toBe('')
+  expect(listed[1]!.age).toBeNull()
+  // Drawn by the coordinator's pane: the row's name and role, and no percentage.
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/s-one`, String(fresh.files.get(`${SESSIONS}/s-one`)))
+  const drawn = JSON.stringify(await coordinatorRender(fx))
+  expect(drawn).toContain('Audit: collecte')
+  expect(drawn).not.toContain('0%')
+})
+
 test('a name walk that cannot answer in time costs the row its name, never the measure', async () => {
   // The Task 9 review's bounded-reads carry: the measure's side reads run
   // under their own deadline, and one that loses the race is quietly no name —
@@ -2467,7 +2506,7 @@ test('a dim rule line, the pane\'s width wide, stands between the questions and 
 
 // --- a remote orchestrator's question, drawn and answered from the pane -----------------------
 
-const REMOTE_DIR = `${HOME}/.claude/claude-orchestrator/store/remote`
+const REMOTE_DIR = `${HOME}/.claude/claude-orchestrator/store/remote-rows`
 const FAR = 'uds:/tmp/cc-socks/far.sock'
 const remoteEntry = (over: Partial<RoundEntry> = {}) => entry('Orch: belt', '2026-10-30T10:03:00.000Z', {
   session: 's-far', choices: CHOICES, recommendation: 'A', origin: { machine: 'far', address: FAR }, ...over,
@@ -2479,6 +2518,23 @@ function remoteRow(fx: Fx, name: string, machine: string, updatedAt = new Date()
     waiting_since: '2026-10-30T10:03:00.000Z', updated_at: updatedAt, machine, repo: null, prs: [],
   }) + '\n')
 }
+
+// What a coordinator stored before the switch, or stores while it still runs an earlier release.
+test('a question from another machine whose sender\'s row is only in the earlier releases\' directory is drawn: pending, being delivered, not delivered', async () => {
+  const replica = askedObject('s-far', 'Orch: belt', '2026-10-30T10:04:00.000Z', { origin: { machine: 'far', address: FAR } })
+  const { fx, render } = await askedPane([replica])
+  const drawnNow = async () => texts(await render())
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__belt`, JSON.stringify({
+    name: 'Orch: belt', role: 'orchestrator', context_tokens: 1, context_percent: 30, window: 100, waiting: 'operator', blocks: 'phase 3',
+    waiting_since: '2026-10-30T10:03:00.000Z', updated_at: new Date().toISOString(), machine: 'far', repo: null, prs: [],
+  }) + '\n')
+  expect(await drawnNow()).toContain('Questions for you — 1 pending')
+  const answered = { ...replica, status: 'answered', answer: { text: 'A : acme/app#1 first', by: 'pane', at: '2026-10-30T10:05:00.000Z', settler: 'Coord: main' } }
+  fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'sent', at: '2026-10-30T10:05:00.000Z', attempts: 1 } }) + '\n')
+  expect(await drawnNow()).toContain('being delivered: the answer to Orch: belt on far (blocks: acme/app#1) — sent 1 of 3, not acknowledged yet')
+  fx.files.set(`${ROUND}/${replica.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'failed', at: '2026-10-30T10:05:00.000Z', attempts: 1, reason: 'no answer' } }) + '\n')
+  expect(await drawnNow()).toContain('not delivered: no answer — the answer to Orch: belt on far (blocks: acme/app#1)')
+})
 
 test('a replica of a question asked with ask on another machine is drawn only while a live remote row of its asker was measured on that machine', async () => {
   const replica = askedObject('s-far', 'Orch: belt', '2026-10-30T10:04:00.000Z', { origin: { machine: 'far', address: FAR } })
@@ -3376,7 +3432,7 @@ test('a row with no chain owner counts no agent of a tty whose chain names two o
 // A remote row with neither figure: each gap is logged once, naming the machine, however often the pane draws.
 test('a remote row with no account and no count logs each gap once, naming its machine, however often the pane draws', async () => {
   const pane = fleet({}, {})
-  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__r`, JSON.stringify({
+  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote-rows/Orch__r`, JSON.stringify({
     name: 'Orch: r', role: 'orchestrator', context_tokens: 47000, context_percent: 30, window: 1000000,
     waiting: null, blocks: null, waiting_since: null, updated_at: AGO(), machine: 'mini',
     repo: null, prs: [], held: null,
@@ -3392,7 +3448,7 @@ test('a remote row with no account and no count logs each gap once, naming its m
 test('a remote row draws the account and the agent count its sender sent', async () => {
   const pane = fleet({}, {})
   // The row as its sender sends it, read back from the store's remote directory.
-  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote/Orch__r`, JSON.stringify({
+  pane.fx.files.set(`${HOME}/.claude/claude-orchestrator/store/remote-rows/Orch__r`, JSON.stringify({
     name: 'Orch: r', role: 'orchestrator', context_tokens: 47000, context_percent: 30, window: 1000000,
     waiting: null, blocks: null, waiting_since: null, updated_at: AGO(), machine: 'mini',
     repo: null, prs: [], held: null, account: 'plan 2', agents: 2,
@@ -3499,4 +3555,41 @@ test('at a phone\'s width each role\'s line wraps with its role, account and cou
   const drawn = shown(await pane.draw(), 40).join(' ')
   for (const said of ['orchestrator · plan 2', 'auditor · plan 1', '(this session)', 'plan 2 · 1 agent', '30%', '21%', '12%']) expect(drawn).toContain(said)
   expect(await countedRows(pane.draw, 40)).toBe(drawScreen(await pane.draw({ bodyColumns: 40 }), 38).length)
+})
+
+test('the coordinator\'s wake opens a remote orchestrator\'s view once, and a sync that throws still arms the next wake', async () => {
+  mounted(registerSupervision)
+  const waking = mounted(registerWake).handlers
+  const fx = coordinatorSession()
+  const state = `${HOME}/.claude/claude-orchestrator`
+  fx.files.set(`${state}/remote-machines.json`, JSON.stringify({ version: 1, machines: { iznoserver: 'izno' } }))
+  fx.files.set(`${state}/store/remote-rows/Orch__far`, JSON.stringify({
+    name: 'Orch: far', role: 'orchestrator', context_tokens: 1, context_percent: 1, window: 100, waiting: null, blocks: null,
+    waiting_since: null, updated_at: new Date().toISOString(), machine: 'IznoServer', repo: null, prs: [], held: null, account: null, agents: null, home: 'orch-0a0b0c0d',
+  }) + '\n')
+  await waking['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+  const fired = new Set<object>()
+  const tick = async () => {
+    const timer = fx.later.filter(t => t.ms === 30000 && !t.cancelled && !fired.has(t)).at(-1)
+    expect(timer).toBeDefined()
+    fired.add(timer!)
+    await timer!.fn()
+  }
+  const opened = () => fx.ran.filter(line => line.startsWith('osascript -e ')).length
+  await tick()
+  expect(opened()).toBe(1)
+  expect(fx.ran.some(line => line.includes('tmux -L orch-0a0b0c0d has-session -t home'))).toBe(true)
+  // The next tick keeps the module's memory: the opening is within its bound, not made again.
+  await tick()
+  expect(opened()).toBe(1)
+  const read = fx.dollar.fs.read
+  Object.assign(fx.dollar.fs, {
+    read: (p: string) => {
+      if (p.endsWith('/remote-machines.json')) throw new Error('the disk is gone')
+      return read(p)
+    },
+  })
+  await tick()
+  expect(fx.written.some(line => line.includes('the disk is gone'))).toBe(true)
+  expect(fx.later.filter(t => t.ms === 30000 && !t.cancelled && !fired.has(t)).length).toBe(1)
 })

@@ -1182,7 +1182,7 @@ test('a turn end is one message, and received whole it enters the entry, stores 
   const consumed = await receive(chains, coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', only(sender.messages)))
   expect(typeof consumed.consumed).toBe('string')
   expect(entries(coordinator).length).toBe(1)
-  expect([...coordinator.files.keys()].some(k => k.includes('/remote/'))).toBe(true)
+  expect([...coordinator.files.keys()].some(k => k.includes('/remote-rows/'))).toBe(true)
   expect(coordinator.sent.length).toBe(1)
 })
 

@@ -324,6 +324,43 @@ test('coordinator-takeover prints the capped notes and the to-do list, or none',
   assert.equal(run(), noted, 'two runs on one state print the same takeover')
 })
 
+// The coordinator and an auditor run in a home server of their own (the operator's order, 2026-11-27):
+// a successor spawned in it ends a predecessor in window 0 with the launcher's takeover, as an
+// orchestrator's does; one in a tab still closes that tab, in the words the template always had.
+test('a coordinator\'s or an auditor\'s takeover closes a predecessor\'s tab, and takes window 0 from one in a home session', () => {
+  const launcher = join(import.meta.dirname, '..', '..', 'iterm-agents', 'scripts', 'iterm-agent.sh')
+  const report = (w: ReturnType<typeof world>) => join(w.briefs, 'audits', '2026-11-15-cost.md')
+  const runs = {
+    coordinator: (w: ReturnType<typeof world>) => w.run('coordinator-takeover', '--name', 'Coord: machine', '--tty', '/dev/ttys002'),
+    auditor: (w: ReturnType<typeof world>) => w.run('auditor-takeover', '--name', 'Audit: cost [a1b2c3]', '--tty', '/dev/ttys002', '--report', report(w), '--repository', w.worktree),
+  }
+  const tab = {
+    coordinator: `3. **CLOSE ITS TAB**, nothing asked of the operator, one the launcher did not open included, once \`list\` still shows a session on /dev/ttys002 that is not \`self\`; its \`closed 1 session\` line is the proof (a predecessor the launcher did not open: the title \`list\` printed for it as \`--expect-title\`):\n\n   \`\`\`\n   ${launcher} close --tty /dev/ttys002 --expect-title "Coord:"\n   \`\`\`\n\n   Where the host refuses the close, message \`Coord: machine\` « call mcp__orchestrator__end_session », prove its end with \`verify --tty /dev/ttys002\` failing, and tell the operator in one line that its tab holds only a shell.\n4. **THEN register**`,
+    auditor: `4. **Close its tab**, once \`list\` still shows an \`Audit:\` session on /dev/ttys002 that is not yours; its \`closed 1 session\` line is the proof:\n\n   \`\`\`\n   ${launcher} close --tty /dev/ttys002 --expect-title "Audit: cost"\n   \`\`\`\n\n5. **Tell the operator**`,
+  }
+  const expect = { coordinator: 'Coord:', auditor: 'Audit: cost' }
+  for (const role of ['coordinator', 'auditor'] as const) {
+    const inTab = world()
+    assert.equal(runs[role](inTab), 0)
+    assert.ok(inTab.text().includes(tab[role]), `${role}: the tab's step, word for word`)
+    const inHome = world({}, tty => (tty === '/dev/ttys002' ? 0 : undefined))
+    assert.equal(runs[role](inHome), 0)
+    const text = inHome.text()
+    assert.ok(text.includes(`**TAKE WINDOW 0**`), role)
+    assert.ok(text.includes(`${launcher} takeover --tty /dev/ttys002 --expect-title "${expect[role]}"`), role)
+    assert.ok(!text.includes(' close --tty /dev/ttys002'), `${role}: no close of a window 0`)
+    // The whole brief as printed lints clean in either place, and its close dropped is a finding.
+    for (const printed of [text, inTab.text()]) {
+      assert.deepEqual(lintOf(printed), [], role)
+      const open = printed.split('\n').filter(line => !line.includes('--expect-title')).join('\n')
+      assert.match(lintOf(open).map(f => f.text).join('\n'), /^succession brief without the predecessor's close: /, role)
+    }
+    const elsewhere = world({}, () => 2)
+    assert.equal(runs[role](elsewhere), 0)
+    assert.ok(elsewhere.text().includes(tab[role]), `${role}: a predecessor in another window than 0 is closed`)
+  }
+})
+
 test('coordinator-takeover on a data root placed apart: the state directory is the protected root, the notes and the data directory the data root\'s', () => {
   const w = world()
   const data = join(dirname(w.state), 'shared')
