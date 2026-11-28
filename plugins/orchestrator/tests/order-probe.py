@@ -137,6 +137,8 @@ ia.host_cli_cwd = lambda tty: None
 # Nothing typed in any prompt: the empty box a close reads where it finds a host on the tab.
 ia.ITERM.prompt_lines = lambda tty: ["─" * 40, "❯\u00a0", "─" * 40]
 ia.recorded_pids = lambda ttys: {}
+# No close gate holds a close here: the order is under test, the gate has its own specs.
+ia.await_gate = lambda *a, **k: "none"
 ia.in_home_session = lambda: False
 # A woken orchestrator's home server, stood in for: its tab is the app's.
 ia.make_home = lambda socket, title, cwd, program, what: "/dev/pts9"
