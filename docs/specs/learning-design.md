@@ -313,7 +313,7 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
   check-run failures per pull request (the forge), cost per pull request where a dispatch record
   maps sessions to it, eval pass rate from the last baselines it is given. No model turn
   (conventions, « Code decides »), no new field in `deck.json` (program non-goal 3).
-- **Canary.** Question 8: the `next` profile that was to be one before the cutover was left
+- **Canary.** None (question 8, answered): the `next` profile that was to be one before the cutover was left
   (`migration.md`).
 
 ### 8. Safeguards
@@ -349,7 +349,7 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
 | 4. Code first, prose last | kept | already a convention; adds warn before enforce and the after-landing check |
 | 5. Evals decide; outcome evals at each release, a regression blocks or rolls back | corrected | a release is a merge (`architecture.md`), and a measure is capped at 120 USD (`evals/outcome/caps.json`): the operator set the cadence (question 4: free weekly, paid monthly and before a learned method change); only code-computed grades decide; one behaviour suite exists |
 | 6. Forget rules never triggered nor named by an eval | corrected | a prose rule's triggering cannot be observed; counters serve guards, ablation serves prose; `npm run rules` names no eval today |
-| 7. Resilience: canary, automatic rollback, dashboard | corrected | rollback is a forward revert; the dashboard is a command answered by code; the canary after the cutover is an open question |
+| 7. Resilience: canary, automatic rollback, dashboard | corrected | rollback is a forward revert; the dashboard is a command answered by code; no canary after the cutover (question 8, answered) |
 | 8. Provenance, promotion by proven pull request, no chore, operator confirms method changes | kept | trust classes; the confirmation of method changes is a new approval step, against program non-goal 2, so it is question 1 |
 
 ## Goals
@@ -394,7 +394,7 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
 | L5 | Distiller and retrospective | 6, 7, 8, 13 | L4; outcome pilot run (program phase 8) | clusters and candidates in code — 1; the retrospective's skill, its scenario, the launch from implement's close — 1; from the orchestrator — 1 | contract `candidate` v1 |
 | L6 | Promotion | 9, 10, 14, 17 | L5 | warn-then-enforce in core — 1; rule ablation in the evals harness (`scripts/lib/outcome/`) — 1; `/norms:learn` as an entry to the distiller — 1; a caps entry for retrospectives — with the harness. Built: the outcomes reader of the guards in warn (`plugins/learning/skills/learning/scripts/outcomes.ts`, the forge through `gh`); the rule ablation (`scripts/lib/outcome/ablation.ts`, `npm run ablation`), paired by case with its smallest detectable effect, tested with fakes, no paid run recorded | `evals/` caps entry |
 | L7 | Forget and check | 11, 12 | L6 and two windows of data | 1 to 2. The code is built and tested on fixtures (`afterLanding`, `isSilentGuard`, `FORGET_CONTRACT` in core; `plugins/learning/skills/learning/scripts/forget.ts`); its proof on live data needs two 30-day windows of journals after a remedy merges | — |
-| L8 | Canary after the cutover | — | program phase 9; question 8 | 0 to 2 | — |
+| L8 | Canary after the cutover: not built (question 8, answered: no canary) | — | — | none | — |
 
 About fifteen to eighteen pull requests. Sizes are estimates, to be read again at L0: the contract
 about 150 lines and its tests 150; a writer about 60 lines and 80 of tests per plugin, plus a
@@ -409,7 +409,7 @@ under 1,200 tokens.
 | Health | no model token | — |
 | A retrospective | its skill (under 1,200 tokens) and a digest under a fixed ceiling (about 4,000 tokens), then the files its remedies touch; an estimate of 40,000 to 80,000 tokens a run, to be measured | `npm run context` for the start; `deck.json` for the run |
 | A learned prompt rule | one case, two variants, three runs each: about 6 × 0.31–0.42 USD, so 2 to 3 USD (the behaviour suite's per-run cost, `program-design.md`, « Eval spend caps ») | the run's report |
-| A retrospective's eval spend | proposed cap 10 USD, the program's cap for one run per case after a rewrite: at most three prompt-rule candidates a retrospective | the cap in `evals/` |
+| A retrospective's eval spend | 0 USD (question 11, answered): code remedies only, no paid eval | — |
 | A release measure | the outcome measure's cap, 120 USD (`evals/outcome/caps.json`), monthly and before a learned method change merges (question 4), about 120 USD a month | the harness's ledger |
 
 ## Risks and their mitigations
@@ -695,14 +695,13 @@ What it shows:
 
 - **Pairing by case cuts the smallest effect by a third or more** (√(σw² / (σb² + σw²)) =
   0.66 at one run per case; more where the runs share a case), as note 5 proposed. It does not make a single rule's ablation conclusive.
-- **At the per-rule budget the smallest effect is 62 points.** The proposed cap of 10 USD
+- **At the per-rule budget then proposed the smallest effect is 62 points.** A cap of 10 USD
   for at most three candidates is 3.33 USD each, which buys 3 runs per variant. Spent whole on
   one candidate, 10 USD buys 11 runs per variant and 33 points. An effect of 40 points needs
   8 runs per variant (6.68 USD); 30 points needs 13 (10.85 USD); 20 points needs 30 (25.04 USD).
   Under note 5's rule, a result under that effect is « inconclusive » and the rule does not
-  enter: with question 11's 10 USD on a single candidate, that is every candidate whose
-  effect is under about 33 points. The cap in question 11 and the count in goal 9 are the operator's to read against
-  these figures.
+  enter: with those 10 USD on a single candidate, that is every candidate whose effect is under
+  about 33 points. Question 11 is answered at 0 USD: no ablation is paid for.
 - **The six-case outcome measure sees 44 points paired, 67 unpaired** (note 6: about 73 points
   from a 79 % rate, by the two-proportion formula of note 7). Twelve cases of 3 runs would
   bring the paired figure to 18 points; what that costs in outcome runs is not measured.
