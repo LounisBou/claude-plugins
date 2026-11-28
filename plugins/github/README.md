@@ -354,9 +354,9 @@ asks for a missing or malformed argument writes none.
 
 Each of these events names its repository (`subject.repo`) and the pull request the call names (`subject.pr`):
 the repository the call names, or the one a refused deploy is declared for, else that of the checkout it is
-refused in. It is left null when it cannot be read, and for a Bash act that names none while its line hides what
-it acts on (a request on stdin, a GraphQL mutation, a pull request or a path that cannot be read) or changes
-directory.
+refused in. It is left null when it cannot be read; for a Bash act that names none while its line hides what
+it acts on (a request on stdin, a GraphQL mutation, a pull request or a path that cannot be read), speaks of
+`GH_REPO` or changes directory; and for any act of a line whose `-R` or `--repo` a substitution computes.
 
 ## Tests
 

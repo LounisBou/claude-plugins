@@ -321,6 +321,14 @@ export function toolAct(command: string, args: Record<string, unknown>): Act | u
   return undefined
 }
 
+// A -R or --repo whose value a substitution makes: the argv holds no word for it, so the act reads no
+// repository, or reads the next word as one.
+const COMPUTED_REPO = /(?:^|\s)(?:-R|--repo)(?:=|\s|\\\n)*["']?(?:\$\(|`)/
+export const computesRepo = (line: string): boolean => COMPUTED_REPO.test(line)
+// The line speaks of GH_REPO (a prefix, `export`, `env`, `unset`): an act that names no repository may go to
+// another than the checkout's.
+export const namesGhRepo = (line: string): boolean => /\bGH_REPO\b/.test(line)
+
 // ---- pushes ----
 
 const PUSH_VALUED = new Set(['--repo', '--push-option', '-o', '--receive-pack', '--exec'])

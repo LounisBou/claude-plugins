@@ -37,7 +37,7 @@ import {
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, missingItems, notReadyAnswer, onlyAbsentRecords, stackedCi, unverifiedAnswer,
   closedRefusal, notReadyRefusal, opaqueGraphqlRefusal, parseGate, parseHeadRead, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unreadableRecords, unrecorded,
   kindRefusal, recordKindFor, toolAct, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal,
-  COMPUTING_ITEM, LIGHT_CI_ABSENT,
+  COMPUTING_ITEM, LIGHT_CI_ABSENT, computesRepo, namesGhRepo,
   type Act, type Carried, type Gate, type HeadRead, type RecordFile,
 } from './ready.ts'
 
@@ -758,12 +758,13 @@ async function refusedAt($: Mod, call: Named = {}, pr?: unknown, dir?: string): 
   }
 }
 
-// The same for a Bash line, whose `act` may name them. The repository of an act that names none stays unknown
-// when the line hides what it acts on (a request on stdin, a GraphQL mutation, a target no reader finds) or
-// changes directory.
+// The same for a Bash line, whose `act` may name them. A computed -R leaves the repository unknown. So does an
+// act that names none when the line hides what it acts on (a request on stdin, a GraphQL mutation, a target no
+// reader finds), speaks of GH_REPO or changes directory.
 async function bashRefused($: Mod, line: string, act: Act | undefined): Promise<Refused> {
+  if (computesRepo(line)) return { pr: act?.pr }
   if (act?.repo !== undefined) return { repo: act.repo, pr: act.pr }
-  if (act?.stdin || act?.unnamed || act?.unreadable) return { pr: act.pr }
+  if (act?.stdin || act?.unnamed || act?.unreadable || namesGhRepo(line)) return { pr: act?.pr }
   try {
     if (bashPushes(line).moves) return { pr: act?.pr }
   } catch {
