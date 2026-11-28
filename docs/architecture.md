@@ -98,7 +98,8 @@ through `core` and names its own install command when it is missing.
 - Playwright: `packages/core/src/playwright.ts`, `PLAYWRIGHT_VERSION`; `@playwright/test` and its
   Chromium headless shell in `<config dir>/playwright/<version>/` (the browser under `browsers/`,
   through `PLAYWRIGHT_BROWSERS_PATH`); a marker written last tells a complete install from a
-  half-done one, which is removed and redone. Installed by `/drift:install`.
+  half-done one, which is removed and redone. Installed by `/drift:install`, which the continuous
+  deploy runs itself (« Continuous deploy »).
 
 The pin is raised in that constant, with the integrity the registry publishes for each package it
 installs (`PLAYWRIGHT_PACKAGES`, read with `npm view <name>@<version> dist.integrity`): the install
@@ -165,9 +166,20 @@ does not create, whatever it finds, and `current` only once it has installed a g
 `main` (with none yet it says so and leaves no `current`, so the agent has nothing to run until a
 later run installs one).
 
-`deploy.ts` runs no plugin's `install.sh`, which sets up what the host's plugin update does not
-(the orchestrator's state directory and short commands, the status bar's copy of its script in the
-config directory). One copy it does keep current itself: at each run, no-op runs included, it
+At each run, no-op runs included (a machine's settings change without a commit here), every plugin
+of the marketplace that the `settings.json` of the deploy's configuration directory enables and the
+host does not have at the user scope is installed, when the installed commit carries it; a failed
+install leaves the deploy pending, like a failed update. How `settings.json` reaches a machine is not
+the deploy's: it pulls nothing.
+
+Of the plugins' `install.sh`, which set up what the host's plugin update does not, `deploy.ts` runs
+only those its `INSTALL_STEPS` lists, each one asking nothing and writing no setting: drift's, for an
+enabled and installed drift, while the Playwright it pins is not installed whole, in the directory
+that owns the `plugins` (a sibling links to it when its launcher next starts). It runs after the
+plugins; a failure holds none of them back, is the run's last failure and is retried by the next
+run. The others are not run (the orchestrator's state directory and short commands, the status bar's
+copy of its script in the config directory; github's and pr-review's sign in). One copy it does keep
+current itself: at each run, no-op runs included, it
 writes the installed tree's status line launcher (`plugins/statusbar/statusline/launcher.sh`) over
 `<config>/statusbar/statusline.sh` in every configuration directory sharing the plugins, where that
 file exists and differs (atomically, mode 755, through a link to its target, `settings.json`

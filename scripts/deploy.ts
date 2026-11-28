@@ -18,13 +18,19 @@
 // whose own `deploy.ts --status` fails is refused before the link moves). The directory installed
 // and the one before are kept, and any left within KEEP_MS: a running session finishes on its own.
 //
+// Every run also installs, at the user scope, each plugin of the marketplace `settings.json` enables
+// and the host does not have, the run that installs no commit included: settings arrive on their own.
+// A plugin of INSTALL_STEPS then has its install script run, while what it installs is not there.
+//
 // Green is a successful run of the `ci` workflow (WORKFLOW_PATH) for a push to `main`: its Linux
 // jobs; the night's macOS run does not hold an install back. `installed.json` (version 1) is what
 // another machine reads. Reads GitHub through `gh`, the host through `claude plugin`.
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { configDir } from '../packages/core/src/paths.ts'
+import { NotInstalled } from '../packages/core/src/locate.ts'
+import { configDir, type Env } from '../packages/core/src/paths.ts'
+import { INSTALL_TIMEOUT_MS, locatePlaywright } from '../packages/core/src/playwright.ts'
 import { readText, withLock, writeAtomic } from '../packages/core/src/store.ts'
 import { lockOf } from '../packages/core/src/store-io.ts'
 import { DEPLOY_MARKETPLACE as MARKETPLACE, DEPLOY_STATE_FILE, DEPLOY_STATE_VERSION as STATE_VERSION, DEPLOYS_DIR, parseDeployState as parseState, type DeployState as State } from '../packages/core/src/deploy-state.ts'
@@ -38,6 +44,8 @@ export { DEPLOYS_DIR, MARKETPLACE, parseState, STATE_VERSION, type State }
 /** A directory left this recently (replaced, rolled back from, or extracted) may still be read by a running session; kept. */
 export const KEEP_MS = 14 * 24 * 3_600_000
 const COMMAND_TIMEOUT_MS = 5 * 60_000
+/** Past the install's own deadline, so that it is the one that stops and cleans up. */
+const STEP_TIMEOUT_MS = INSTALL_TIMEOUT_MS + 60_000
 /** Longer than any deploy (the commands of one, each at its timeout): a lock this old was left by one that died. */
 const LOCK_STALE_MS = 6 * 60 * 60_000
 const SHA = /^[0-9a-f]{40}$/
@@ -167,6 +175,25 @@ export interface Installed {
   readonly projectPath?: string
 }
 
+/**
+ * The plugins whose install script the deploy runs, which must ask nothing and write no setting. `done`
+ * reads whether what the script installs for its pin is there, so a raised pin and a failed run are both
+ * taken up again. The pin is the running script's: right after a commit raises it, the next run sees it.
+ */
+const INSTALL_STEPS: readonly { readonly plugin: string; readonly script: string; readonly done: (env: Env) => boolean }[] = [
+  { plugin: 'drift', script: join('plugins', 'drift', 'install.sh'), done: hasPlaywright },
+]
+
+function hasPlaywright(env: Env): boolean {
+  try {
+    locatePlaywright(env, '/drift:install')
+    return true
+  } catch (error) {
+    if (error instanceof NotInstalled) return false
+    throw error
+  }
+}
+
 /** What the deploy reaches outside: GitHub, the host's plugin commands, the clock. */
 export interface Host {
   /** The API's JSON answer at `path`. */
@@ -181,13 +208,17 @@ export interface Host {
   readonly installed: () => Installed[]
   /** Updates the entry of one installed plugin at `scope` to the version its marketplace now names. */
   readonly update: (id: string, scope: string, projectPath?: string) => void
+  /** Installs one plugin of the marketplace at the user scope. */
+  readonly installPlugin: (id: string) => void
+  /** Runs a plugin's install script for the configuration directory `config`; returns what it printed. */
+  readonly installStep: (script: string, config: string) => string
   /** Whether the process `pid` still runs. */
   readonly alive: (pid: number) => boolean
   readonly now: () => number
 }
 
-function commandOf(file: string, args: readonly string[], options: { input?: Buffer; encoding?: 'utf8'; env?: NodeJS.ProcessEnv; cwd?: string } = {}): string | Buffer {
-  return execFileSync(file, args, { ...options, stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], timeout: COMMAND_TIMEOUT_MS, maxBuffer: 1 << 30 })
+function commandOf(file: string, args: readonly string[], options: { input?: Buffer; encoding?: 'utf8'; env?: NodeJS.ProcessEnv; cwd?: string; timeout?: number } = {}): string | Buffer {
+  return execFileSync(file, args, { timeout: COMMAND_TIMEOUT_MS, ...options, stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'], maxBuffer: 1 << 30 })
 }
 
 /* node:coverage disable */
@@ -214,6 +245,8 @@ export function processHost(): Host {
     },
     // Without `--scope` the host updates the one entry its working directory selects (the project's when the scheduler runs from the project's directory), and the other stays behind.
     update: (id, scope, projectPath) => void commandOf('claude', ['plugin', 'update', id, '--scope', scope], projectPath === undefined ? {} : { cwd: projectPath }),
+    installPlugin: id => void commandOf('claude', ['plugin', 'install', id, '--scope', 'user']),
+    installStep: (script, config) => String(commandOf('bash', [script], { encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: config }, timeout: STEP_TIMEOUT_MS })),
     alive: pid => {
       try {
         process.kill(pid, 0)
@@ -328,7 +361,98 @@ function atScope(plugin: Installed): string {
   return plugin.scope === 'user' ? '' : ` at ${plugin.scope}${plugin.projectPath === undefined ? '' : ` ${plugin.projectPath}`}`
 }
 
-/** Points the marketplace and the `current` link at `commit`'s directory, then updates every plugin of it. */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+/** The plugin's name in the id the host knows it by, `<name>@lounisbou`. */
+function nameOf(id: string): string {
+  return id.slice(0, -`@${MARKETPLACE}`.length)
+}
+
+/** Whether the commit of `state` has the plugin `id`. */
+function carries(state: State, id: string): boolean {
+  return Object.hasOwn(state.plugins, nameOf(id))
+}
+
+/** The marketplace's plugins the `settings.json` of `config` enables, by id; none without the file. */
+function enabledIn(config: string): string[] {
+  const path = join(config, 'settings.json')
+  const text = readText(path)
+  if (text === undefined) return []
+  let settings: unknown
+  try {
+    settings = JSON.parse(text)
+  } catch {
+    throw new Error(`${path} is not JSON: the plugins it enables are not known`)
+  }
+  const enabled = isRecord(settings) ? settings['enabledPlugins'] : undefined
+  if (!isRecord(enabled)) return []
+  return Object.keys(enabled).filter(id => id.endsWith(`@${MARKETPLACE}`) && enabled[id] === true)
+}
+
+/** The plugins `config` enables with no installation at the user scope among those `installed` lists. */
+function absent(config: string, installed: () => readonly Installed[]): string[] {
+  const enabled = enabledIn(config)
+  if (enabled.length === 0) return []
+  const atUser = new Set(installed().filter(plugin => plugin.scope === 'user').map(plugin => plugin.id))
+  return enabled.filter(id => !atUser.has(id))
+}
+
+/** Installs each enabled plugin the host does not have; returns the failures, one never holding back the next. */
+function installAbsent(paths: Paths, host: Host, state: State, installed: readonly Installed[], io: Io): string[] {
+  const failures: string[] = []
+  try {
+    for (const id of absent(paths.config, () => installed)) {
+      if (!carries(state, id)) {
+        io.err(`deploy: ${id} is enabled and not in ${(state.history[0]?.commit ?? '').slice(0, 7)}: not installed`)
+        continue
+      }
+      try {
+        host.installPlugin(id)
+        io.out(`deploy: installed ${id}, enabled in settings.json`)
+      } catch (error) {
+        failures.push(`${id}: ${messageOf(error)}`)
+      }
+    }
+  } catch (error) {
+    failures.push(messageOf(error))
+  }
+  return failures
+}
+
+/**
+ * Runs the install script of each plugin of INSTALL_STEPS that is enabled, installed, in the installed
+ * commit and not done, for the configuration directory that owns the plugins (its siblings link what it
+ * holds). Run after the plugins, at every run: a failure leaves no update pending and returns here.
+ */
+function installSteps(paths: Paths, host: Host, io: Io): string[] {
+  let state: State | undefined
+  try {
+    state = readState(paths)
+  } catch {
+    // The run read it first and has said why it cannot.
+    return []
+  }
+  const commit = state?.history[0]?.commit
+  if (state === undefined || commit === undefined) return []
+  const owner = sharingConfigs(paths.config)[0] ?? paths.config
+  const failures: string[] = []
+  for (const step of INSTALL_STEPS) {
+    const id = `${step.plugin}@${MARKETPLACE}`
+    try {
+      if (!carries(state, id) || step.done({ ...io.env, CLAUDE_CONFIG_DIR: owner })) continue
+      if (!enabledIn(paths.config).includes(id) || !host.installed().some(plugin => plugin.id === id)) continue
+      const said = host.installStep(join(paths.root, commit, step.script), owner)
+      io.out(`deploy: ${id} install step: ${said.trim().split('\n').at(-1) ?? ''}`)
+    } catch (error) {
+      failures.push(`${id} install step: ${messageOf(error)}`)
+    }
+  }
+  return failures
+}
+
+/** Points the marketplace and the `current` link at `commit`'s directory, installs the enabled plugins it lacks and updates the others. */
 function install(paths: Paths, host: Host, state: State, io: Io): State {
   const commit = state.history[0]?.commit ?? ''
   const dir = join(paths.root, commit)
@@ -345,11 +469,12 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
   writeState(paths, { ...state, pending: true })
   // Before the plugin updates: the launcher does not wait on them, and a plugin that cannot update must not freeze it.
   refreshLaunchers(paths, dir, io)
-  const nameOf = (id: string): string => id.slice(0, -`@${MARKETPLACE}`.length)
   const ours = (): Installed[] => host.installed().filter(plugin => plugin.id.endsWith(`@${MARKETPLACE}`))
-  const failures: string[] = []
-  for (const plugin of ours()) {
-    if (!Object.hasOwn(state.plugins, nameOf(plugin.id))) {
+  // Listed before the installs: a plugin installed now is at the commit's version already.
+  const present = ours()
+  const failures = installAbsent(paths, host, state, present, io)
+  for (const plugin of present) {
+    if (!carries(state, plugin.id)) {
       io.err(`deploy: ${plugin.id} is not in ${commit.slice(0, 7)}: left as installed`)
       continue
     }
@@ -360,7 +485,7 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
     }
   }
   if (failures.length > 0) throw new Error(`${failures.join('; ')}: run npm run deploy again`)
-  const behind = ours().filter(plugin => Object.hasOwn(state.plugins, nameOf(plugin.id)) && plugin.version !== state.plugins[nameOf(plugin.id)])
+  const behind = ours().filter(plugin => carries(state, plugin.id) && plugin.version !== state.plugins[nameOf(plugin.id)])
   if (behind.length > 0) throw new Error(`the host did not update ${behind.map(plugin => `${plugin.id} (${plugin.version})${atScope(plugin)}`).join(', ')}: run npm run deploy again`)
   const done = { ...state, pending: false }
   writeState(paths, done)
@@ -368,7 +493,7 @@ function install(paths: Paths, host: Host, state: State, io: Io): State {
   return done
 }
 
-function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): number {
+function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): void {
   const repo = optionOf(args, '--repo') ?? REPOSITORY
   if (!REPO.test(repo)) throw new Error(`--repo takes owner/name, not ${JSON.stringify(repo)}`)
   const only = optionOf(args, '--commit')
@@ -379,7 +504,7 @@ function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): numb
   if (green === null) {
     if (only !== undefined) throw new Error(`${only} has no successful push run on main among the last 100`)
     io.out('deploy: no commit of main with a successful push run')
-    return 0
+    return
   }
   const installed = state?.history[0]?.commit === green
   if (installed || (only === undefined && !isNew(state, green))) {
@@ -387,9 +512,13 @@ function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): numb
     else {
       io.out(`deploy: ${green.slice(0, 7)}, the newest green commit, is ${installed ? 'installed' : 'not deployed again (rolled back from)'}`)
       const current = state?.history[0]?.commit
-      if (current !== undefined) refreshLaunchers(paths, join(paths.root, current), io)
+      if (state !== undefined && current !== undefined) {
+        refreshLaunchers(paths, join(paths.root, current), io)
+        // Settings change without a commit here: a plugin they now enable is installed by this run.
+        if (absent(paths.config, host.installed).some(id => carries(state, id))) install(paths, host, state, io)
+      }
     }
-    return 0
+    return
   }
   const dir = join(paths.root, green)
   if (!existsSync(dir)) {
@@ -417,10 +546,9 @@ function deploy(paths: Paths, host: Host, args: readonly string[], io: Io): numb
   } catch (error) {
     io.err(`deploy: installed, but the old directories were not removed: ${error instanceof Error ? error.message : String(error)}`)
   }
-  return 0
 }
 
-function rollback(paths: Paths, host: Host, io: Io): number {
+function rollback(paths: Paths, host: Host, io: Io): void {
   const state = readState(paths)
   const [current, previous] = state?.history ?? []
   if (state === undefined || current === undefined || previous === undefined || !existsSync(join(paths.root, previous.commit))) {
@@ -429,7 +557,6 @@ function rollback(paths: Paths, host: Host, io: Io): number {
   const left = join(paths.root, current.commit)
   if (existsSync(left)) utimesSync(left, new Date(host.now()), new Date(host.now()))
   install(paths, host, { ...state, history: state.history.slice(1), skipped: [...state.skipped, current.commit], plugins: versionsIn(join(paths.root, previous.commit)) }, io)
-  return 0
 }
 
 function prune(paths: Paths, state: State, now: number): void {
@@ -465,15 +592,21 @@ export function run(args: readonly string[], io: Io, host: Host = processHost())
     }
     return withLock(paths.state, () => {
       for (const name of readdirSync(root)) if (name.includes(TEMPORARY)) remove(join(root, name))
+      const failures: string[] = []
       try {
-        const code = args.includes('--rollback') ? rollback(paths, host, io) : deploy(paths, host, args, io)
-        const state = code === 0 ? readState(paths) : undefined
-        if (state?.lastError !== undefined) writeState(paths, withoutFailure(state))
-        return code
+        if (args.includes('--rollback')) rollback(paths, host, io)
+        else deploy(paths, host, args, io)
       } catch (error) {
-        recordFailure(paths, error instanceof Error ? error.message : String(error), host.now(), io)
-        throw error
+        failures.push(messageOf(error))
       }
+      failures.push(...installSteps(paths, host, io))
+      if (failures.length > 0) {
+        recordFailure(paths, failures.join('; '), host.now(), io)
+        throw new Error(failures.join('; '))
+      }
+      const state = readState(paths)
+      if (state?.lastError !== undefined) writeState(paths, withoutFailure(state))
+      return 0
     }, { waitMs: 0, staleMs: LOCK_STALE_MS, now: host.now })
   } catch (error) {
     io.err(`deploy: ${error instanceof Error ? error.message : String(error)}`)
