@@ -132,7 +132,7 @@ test('the review tool\'s refusal reads the origin of the checkout its call names
 })
 
 test('an origin that is no github.com repository gives a refusal none, never its last two segments', async () => {
-  for (const origin of ['/Users/someone/dev/app', '/srv/mirrors/app.git', 'https://gitlab.com/o/app.git', 'https://gitlab.com/g/sub/app.git', '../app']) {
+  for (const origin of ['/srv/checkouts/dev/app','/srv/mirrors/app.git', 'https://gitlab.com/o/app.git', 'https://gitlab.com/g/sub/app.git', '../app']) {
     const fx = fake({ origin })
     await mounted().on('tool.call', fx.dollar, { tool: 'Bash', command: 'pkill -f agent' }, killDecision('1', 'pkill -f agent'))
     expect(fx.journal().map(e => [origin, e.subject.repo])).toEqual([[origin, null]])
